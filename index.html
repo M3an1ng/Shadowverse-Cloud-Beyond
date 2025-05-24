@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>影之诗 Demo</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- defer 确保在 HTML 解析完成后执行脚本 -->
+    <!-- type="module" 启用 ES Module 功能 -->
+    <script src="src/main.js" type="module" defer></script>
+</head>
+<body>
+    <div id="game-container">
+        <!-- 对手信息区 -->
+        <div id="player2-info" class="player-info opponent-info">
+            <div class="player-avatar" id="player2-avatar">AI</div><span class="player-turn-indicator" id="player2-turn-indicator"></span>
+            <div class="player-stats">
+                <span class="stat hp">生命: <span id="player2-hp">20</span></span>
+                <span class="stat pp">PP: <span id="player2-pp">0</span>/<span id="player2-max-pp">0</span></span>
+                <span class="stat ep">EP: <span id="player2-ep">0</span>/<span id="player2-max-ep">0</span></span>
+                <span class="stat deck">牌库: <span id="player2-deck">0</span></span>
+                <span class="stat graveyard">墓地: <span id="player2-graveyard">0</span></span>
+            </div>
+            <div id="player2-hand" class="hand opponent-hand">
+                <!-- 对手手牌 (通常只显示牌背或数量) -->
+                <div class="card-back"></div>
+                <div class="card-back"></div>
+                <div class="card-back"></div>
+            </div>
+        </div>
+
+        <!-- 战场区 -->
+        <div id="battlefield">
+            <div id="player2-field" class="field opponent-field"></div>
+            <div id="player1-field" class="field player-field"></div>
+        </div>
+
+        <!-- 玩家信息区 -->
+        <div id="player1-info" class="player-info player-info-self">
+            <div class="player-avatar" id="player1-avatar">玩家</div><span class="player-turn-indicator" id="player1-turn-indicator"></span>
+            <div class="player-stats">
+                <span class="stat hp">生命: <span id="player1-hp">20</span></span>
+                <span class="stat pp">PP: <span id="player1-pp">0</span>/<span id="player1-max-pp">0</span></span>
+                <span class="stat ep">EP: <span id="player1-ep">0</span>/<span id="player1-max-ep">0</span></span>
+                <span class="stat deck">牌库: <span id="player1-deck">0</span></span>
+                <span class="stat graveyard">墓地: <span id="player1-graveyard">0</span></span>
+            </div>
+            <!-- 添加确认调度按钮，初始隐藏 -->
+            <button id="confirm-mulligan-button" class="action-button" style="display: none;">确认调度</button>
+            <button id="end-turn-button" class="action-button">结束回合</button>
+            <div id="turn-info">第 1 回合</div>
+        </div>
+        <div id="player1-hand" class="hand player-hand">
+            <!-- 玩家手牌 -->
+        </div>
+
+    </div>
+
+    <!-- (可选) 游戏结束遮罩 -->
+    <!-- <div id="game-over-overlay" class="hidden">
+        <h2 id="game-over-message"></h2>
+        <button id="restart-button">重新开始</button>
+    </div> -->
+</body>
+</html>

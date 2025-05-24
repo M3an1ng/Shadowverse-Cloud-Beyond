@@ -1,0 +1,211 @@
+[
+  {
+    "id": "F001",
+    "name": "哥布林",
+    "cost": 1,
+    "type": "Follower",
+    "attack": 1,
+    "health": 2,
+    "description": "一个普通的哥布林。",
+    "keywords": [],
+    "effects": [],
+    "art": "goblin_base.png",
+    "isEvolved": false,
+    "can_evolve": true,
+    "evolves_into": ["F001_evo"]
+  },
+  {
+    "id": "F002",
+    "name": "战士",
+    "cost": 2,
+    "type": "Follower",
+    "attack": 2,
+    "health": 2,
+    "description": "久经沙场的战士。",
+    "keywords": ["Storm"],
+    "effects": [],
+    "art": "fighter_base.png",
+    "isEvolved": false,
+    "can_evolve": true,
+    "evolves_into": ["F002_evo"]
+  },
+  {
+    "id": "F003",
+    "name": "骑士",
+    "cost": 3,
+    "type": "Follower",
+    "attack": 3,
+    "health": 3,
+    "description": "忠诚的骑士。",
+    "keywords": [],
+    "effects": [],
+    "art": "knight_base.png",
+    "isEvolved": false,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "F004",
+    "name": "重装哥布林",
+    "cost": 4,
+    "type": "Follower",
+    "attack": 2,
+    "health": 5,
+    "description": "穿戴重甲，更加耐打。",
+    "keywords": [],
+    "effects": [],
+    "art": "armored_goblin_base.png",
+    "isEvolved": false,
+    "can_evolve": true,
+    "evolves_into": ["F004_evo"]
+  },
+  {
+    "id": "F001_evo",
+    "name": "哥布林 (进化)",
+    "cost": 1,
+    "type": "Follower",
+    "attack": 3,
+    "health": 4,
+    "description": "进化后的哥布林，更加凶猛。",
+    "keywords": [],
+    "effects": [],
+    "art": "goblin_evo.png",
+    "is_evolved_form_of": "F001",
+    "isEvolved": true,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "F002_evo",
+    "name": "战士 (进化)",
+    "cost": 2,
+    "type": "Follower",
+    "attack": 4,
+    "health": 4,
+    "description": "觉醒了真正力量的战士。",
+    "keywords": ["Storm"],
+    "effects": [],
+    "art": "fighter_evo.png",
+    "is_evolved_form_of": "F002",
+    "isEvolved": true,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "LDR000",
+    "name": "主战者",
+    "cost": 0,
+    "type": "Leader",
+    "attack": 0,
+    "health": 20,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "art": null,
+    "isEvolved": false,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "F004_evo",
+    "name": "重装哥布林 (进化)",
+    "cost": 4,
+    "type": "Follower",
+    "attack": 4,
+    "health": 7,
+    "description": "全副武装的哥布林，坚不可摧！",
+    "keywords": [],
+    "effects": [],
+    "art": "armored_goblin_evo.png",
+    "is_evolved_form_of": "F004",
+    "isEvolved": true,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "F005",
+    "name": "护盾卫士",
+    "cost": 1,
+    "type": "Follower",
+    "attack": 1,
+    "health": 1,
+    "description": "守护者不会让你轻易通过。",
+    "keywords": ["Ward"],
+    "effects": [],
+    "art": "goblin_base.png",
+    "isEvolved": false,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "F006",
+    "name": "摇铃天使",
+    "cost": 2,
+    "type": "Follower",
+    "attack": 2,
+    "health": 1,
+    "description": "战吼：抽取 1 张卡牌。",
+    "keywords": [],
+    "effects": [
+      {
+        "trigger": "Fanfare",
+        "action": "drawCards",
+        "value": 1
+      }
+    ],
+    "art": "fighter_base.png",
+    "isEvolved": false,
+    "can_evolve": true,
+    "evolves_into": ["F006_evo"]
+  },
+  {
+    "id": "F006_evo",
+    "name": "摇铃天使 (进化)",
+    "cost": 2,
+    "type": "Follower",
+    "attack": 3,
+    "health": 2,
+    "description": "钟声响起，带来希望。",
+    "keywords": [],
+    "effects": [],
+    "art": "fighter_evo.png",
+    "is_evolved_form_of": "F006",
+    "isEvolved": true,
+    "can_evolve": false,
+    "evolves_into": []
+  },
+  {
+    "id": "S001",
+    "name": "智慧之光",
+    "cost": 1,
+    "type": "Spell",
+    "description": "抽取 1 张卡牌。",
+    "keywords": [],
+    "effects": [
+      {
+        "trigger": "OnPlay",
+        "action": "drawCards",
+        "value": 1
+      }
+    ],
+    "art": "spell_placeholder.png"
+  },
+  {
+    "id": "S002",
+    "name": "天使之箭",
+    "cost": 1,
+    "type": "Spell",
+    "description": "对 1 个敌方目标造成 1 点伤害。",
+    "keywords": [],
+    "effects": [
+      {
+        "trigger": "OnPlay",
+        "action": "dealDamage",
+        "value": 1
+      }
+    ],
+    "art": "spell_placeholder_snipe.png",
+    "requiresTarget": true,
+    "validTargets": ["EnemyFollower", "EnemyLeader"]
+  }
+]
