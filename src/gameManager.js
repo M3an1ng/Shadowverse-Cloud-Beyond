@@ -4,7 +4,7 @@ import { createPlayer } from './player.js'; // 正确导入
 import { getCardDefinition } from './cardManager.js'; // ADDED: Renamed import needed for evolveCard
 // import { getCardDefinition } from './cardManager.js'; // initGame 不需要
 // import { renderGame } from './ui.js'; // 渲染调用在 main.js
-import { renderGame } from './ui.js'; // For updating UI after actions
+import { renderGame } from './ui.js'; // Import UI functions for feedback (Removed displayError, displayInfo)
 import { startTurn } from './turnManager.js'; // Import startTurn to begin the first turn
 import { showDamageNumber } from './ui.js'; // Import the damage number display function
 import { performAIMulligan } from './ai.js'; // Placeholder for AI mulligan logic
@@ -15,6 +15,8 @@ import { performAIMulligan } from './ai.js'; // Placeholder for AI mulligan logi
     const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
 
 console.log("gameManager.js loaded");
+// --- SignalR Connection ---
+let signalRConnection = null; // Holds the connection object passed from main.js
 
 // 核心游戏状态 (可导出或通过函数访问)
 export let gameState = {
@@ -22,6 +24,8 @@ export let gameState = {
     currentPlayerId: null,
     turnNumber: 0,
     // 'Mulligan', 'TurnStart', 'Main', 'Battle', 'TurnEnd', 'GameOver'
+gameId: null,           // Unique ID for the current game session
+    localPlayerId: null,    // ID of the player using this client instance
     gamePhase: 'Initializing',
     activePlayer: null, // 对当前玩家实例的引用
     opponentPlayer: null, // 对对手玩家实例的引用
@@ -35,204 +39,218 @@ export let gameState = {
 };
 
 // 初始化游戏 (已实现版本)
-export function initGame() {
-    console.log("GAME MANAGER: Initializing New Game...");
+/**
+ * Receives the SignalR connection object from main.js.
+ * @param {signalR.HubConnection} connection - The active SignalR connection.
+ */
+export function setSignalRConnection(connection) { // ADDED export
+   console.log("GAME MANAGER: Setting SignalR connection.");
+   signalRConnection = connection;
+}
+export function initializeGame(idOfGame, idOfPlayer) { // ADDED export
+console.log(`GAME MANAGER: Initializing with GameID=${idOfGame}, PlayerID=${idOfPlayer}. Waiting for server state...`);
+    // Reset or initialize a minimal local state structure if needed.
+    // Primarily, store the IDs for context.
+    gameState.gameId = idOfGame; // Use properties added earlier
+    gameState.localPlayerId = idOfPlayer; // Use properties added earlier
 
-    // 1. Reset State
-    console.log("Resetting game state...");
-    gameState.players = [];
-    gameState.currentPlayerId = null;
-    gameState.turnNumber = 0;
-    gameState.gamePhase = 'Initializing';
+    // Clear out potentially stale complex objects from previous local games
+    gameState.players = []; // Server will populate this via ReceiveGameState
     gameState.activePlayer = null;
     gameState.opponentPlayer = null;
+    gameState.turnNumber = 0;
+    gameState.gamePhase = 'Connecting'; // Indicate waiting for server state
     gameState.gameOver = false;
     gameState.winner = null;
     gameState.selectedCardUid = null;
     gameState.selectedAttackerUid = null;
-    gameState.player1MulliganComplete = false; // Reset mulligan flags
-    gameState.player2MulliganComplete = false;
-
-    // 2. Create Players
-    console.log("Creating players...");
-    const player1 = createPlayer('player1');
-    const player2 = createPlayer('player2', true); // Player 2 is AI
-    gameState.players.push(player1, player2);
-    console.log(`Players created: ${player1.id}, ${player2.id} (AI: ${player2.isAI})`);
-
-    // 3. Define and Initialize Decks
-    // Updated deck list including cards with new abilities for testing (IDs Corrected)
-    const sampleDeckList = [ // 20 cards total
-        // Storm
-        'F002', 'F002', 'F002', 'F002',        // Fighter (ID: F002, Storm) x4
-        // Vanilla
-        'S001', 'S001', 'S001',                // Insight (ID: S001, Spell: Draw 1) x3
-        'F001',                                // Goblin (ID: F001) x1
-        'F003', 'F003', 'F003',                // Knight (ID: F003) x3
-        'S002', 'S002', 'S002',                // Angelic Snipe (ID: S002) x3
-        // Ward
-        'F005', 'F005', 'F005',                // Shield Guardian (ID: F005, Ward) x3
-        // Fanfare
-        'F006', 'F006', 'F006',                // Bellringer Angel (ID: F006, Fanfare: Draw 1) x3
-    ]; // Total: 4 + 3 + 1 + 3 + 3 + 3 + 3 = 20 cards (Storm x4, Insight x3, Goblin x1, Knight x3, Armored x3, Ward x3, Fanfare x3)
-    console.log("Initializing decks...");
-    player1.initializeDeck([...sampleDeckList]); // Pass copy, initializes and shuffles
-    player2.initializeDeck([...sampleDeckList]); // Pass copy, initializes and shuffles
-
-    // 4. Randomly Determine First Player & Set Initial PP
-    console.log("Randomly determining first player...");
-    const firstPlayerIndex = Math.floor(Math.random() * 2); // 0 or 1
-    const firstPlayer = gameState.players[firstPlayerIndex];
-    const secondPlayer = gameState.players[1 - firstPlayerIndex];
-
-    gameState.firstPlayerId = firstPlayer.id;
-    gameState.secondPlayerId = secondPlayer.id;
-    gameState.currentPlayerId = firstPlayer.id; // First turn goes to the first player
-    gameState.activePlayer = firstPlayer;
-    gameState.opponentPlayer = secondPlayer;
-
-    console.log(`GAME MANAGER: First player is ${gameState.firstPlayerId}, Second player is ${gameState.secondPlayerId}.`);
-    console.log("GM_TRACE_ID: After determineFirstPlayer - FirstPlayer:", gameState.firstPlayerId, "SecondPlayer:", gameState.secondPlayerId); // ADDED LOG
-
-    // Initialize PP for both players (EP and MaxEP are handled in startTurn)
-    firstPlayer.pp = 0;
-    firstPlayer.maxPP = 0;
-    secondPlayer.pp = 0;
-    secondPlayer.maxPP = 0;
-    console.log(`GAME MANAGER: Initial PP set to 0/0 for both players.`);
-
-    // 5. Initial Draw (跳过调度)
-    console.log("Performing initial draw (3 cards each)...");
-    const initialHandSize = 3;
-    player1.drawCard(initialHandSize);
-    console.log(`GAME MANAGER: Player 1 hand after draw (${player1.hand?.length || 0}):`, player1.hand?.map(c => c?.name || 'ERROR'));
-    player2.drawCard(initialHandSize);
-    console.log(`GAME MANAGER: Player 2 hand after draw (${player2.hand?.length || 0}):`, player2.hand?.map(c => c?.name || 'ERROR'));
+    // Remove mulligan flags, server handles mulligan phase start/end
+    // delete gameState.player1MulliganComplete; // Commented out deletion for now
+    // delete gameState.player2MulliganComplete; // Commented out deletion for now
 
 
-    // 6. Set game phase to Mulligan
-    gameState.turnNumber = 1; // Turn 1 hasn't officially started yet, but setup is for it
-    gameState.gamePhase = 'Mulligan'; // Start the Mulligan phase
-    gameState.gameOver = false;
-    gameState.winner = null;
-    console.log("GM: Game phase set to Mulligan.");
+    // NO local setup of decks, hands, first player, PP, EP, or turn start.
+    // All this will be received from the server via ReceiveGameState or ReceiveGameEvent.
 
-    // Log final state before exiting initGame
-    try {
-        const p1State = gameState.players.find(p => p.id === 'player1');
-        const p2State = gameState.players.find(p => p.id === 'player2');
-        console.log(`GAME MANAGER: Final check before exit - Turn: ${gameState.turnNumber}, CurrentPlayer: ${gameState.currentPlayerId}`);
-        if (p1State) {
-            console.log(`  P1 State: PP=${p1State.pp}/${p1State.maxPP}, EP=${p1State.ep}/${p1State.maxEP}, Deck=${p1State.deck?.length || 0}, Hand=${p1State.hand?.length || 0}`);
-        } else {
-             console.log("  P1 State: Not found in gameState!");
-        }
-        if (p2State) {
-            console.log(`  P2 State: PP=${p2State.pp}/${p2State.maxPP}, EP=${p2State.ep}/${p2State.maxEP}, Deck=${p2State.deck?.length || 0}, Hand=${p2State.hand?.length || 0}`);
-        } else {
-             console.log("  P2 State: Not found in gameState!");
-        }
-    } catch (e) {
-        console.error("Error logging final game state:", e);
+    // Optionally, render a 'Connecting...' or 'Waiting for game state...' UI message
+    // renderGame(gameState); // Render the initial 'connecting' state
+} // Closing brace for initializeGame
+
+/**
+ * Processes incremental game events received from the SignalR hub.
+ * Updates the local gameState and triggers UI refresh.
+ * @param {object} gameEvent - The event object received from the server.
+ * Expected structure: { eventType: "...", payload: { ... } }
+ */
+ function processGameEvent(gameEvent) { // REMOVED EXPORT
+    if (!gameEvent || !gameEvent.eventType) {
+        console.error("GAME MANAGER: Received invalid game event object:", gameEvent);
+        return;
     }
 
-    console.log(`GAME MANAGER: Game Initialized. Turn ${gameState.turnNumber}. Current Player: ${gameState.currentPlayerId}`);
-    // 可以打印状态进行调试，但注意对象可能很大
-    // console.log("Initial gameState:", JSON.parse(JSON.stringify(gameState)));
+    console.log(`GAME MANAGER: Processing Game Event - Type: ${gameEvent.eventType}`, gameEvent.payload);
 
-    // Schedule the start of the Mulligan phase
-    console.log("GM: Scheduling Mulligan phase start...");
-    setTimeout(startMulliganPhase, 50); // Short delay before starting mulligan
-}
+    try {
+        switch (gameEvent.eventType) {
+            case 'TurnEnded':
+                // Payload might contain: { nextPlayerId: "...", newTurnNumber: N, playerUpdates: [{playerId:"..", pp: N, maxPP: N, ep: N, maxEP: N, drawnCard: {...}? }] }
+                if (gameEvent.payload) {
+                    gameState.currentPlayerId = gameEvent.payload.nextPlayerId;
+                    gameState.turnNumber = gameEvent.payload.newTurnNumber;
+                    gameState.gamePhase = 'TurnStart'; // Assume server moves phase
 
+                    // Update player states (PP, EP, drawn card)
+                    gameEvent.payload.playerUpdates?.forEach(update => {
+                        const player = getPlayerState(update.playerId);
+                        if (player) {
+                            player.pp = update.pp;
+                            player.maxPP = update.maxPP;
+                            player.ep = update.ep;
+                            player.maxEP = update.maxEP;
+                            if(update.drawnCard) {
+                                // Need to ensure the drawnCard object matches client-side card structure
+                                player.hand.push(update.drawnCard);
+                                console.log(`GM: Player ${update.playerId} drew ${update.drawnCard.name}`);
+                            }
+                        }
+                    });
+                    // Update active/opponent player references
+                    gameState.activePlayer = getPlayerState(gameState.currentPlayerId);
+                    gameState.opponentPlayer = gameState.players.find(p => p && p.id !== gameState.currentPlayerId) || null;
+
+                     // Reset attack status for the new turn's player field
+                     gameState.activePlayer?.field.forEach(f => f.canAttack = true);
+                }
+                break;
+
+            case 'CardPlayed':
+                // Payload might contain: { playerId: "...", cardPlayed: {...}, ppLeft: N, fieldUpdate: [...], handUpdate: [...] }
+                // Server sends the new state after the card play resolves.
+                // We might just need to update the specific player's state based on the payload.
+                if (gameEvent.payload) {
+                     const player = getPlayerState(gameEvent.payload.playerId);
+                     if (player) {
+                         player.pp = gameEvent.payload.ppLeft;
+                         // Find the played card in hand and remove it
+                         const handIndex = player.hand.findIndex(c => c.uid === gameEvent.payload.cardPlayed.uid);
+                         if (handIndex > -1) player.hand.splice(handIndex, 1);
+
+                         // If it was a follower/amulet, add it to the field
+                         if (gameEvent.payload.cardPlayed.location === 'field') {
+                             // Ensure no duplicates if fieldUpdate also contains it
+                             if (!player.field.some(f => f.uid === gameEvent.payload.cardPlayed.uid)) {
+                                 player.field.push(gameEvent.payload.cardPlayed);
+                             }
+                         }
+                         // Potentially update field/hand fully if payload provides complete lists? Simpler might be delta updates.
+                         console.log(`GM: Card ${gameEvent.payload.cardPlayed.name} played by ${gameEvent.payload.playerId}.`);
+                     }
+                }
+                break;
+
+            case 'AttackOccurred':
+                // Payload might contain: { attackerUid: "...", targetUid: "...", damageDealtToTarget: N, damageDealtToAttacker: N, attackerState: {...}, targetState: {...} }
+                // Update health of involved units based on server calculation.
+                if (gameEvent.payload) {
+                    const attacker = findCardInstanceByUid(gameEvent.payload.attackerUid);
+                    const target = findCardInstanceByUid(gameEvent.payload.targetUid);
+                    if (attacker) {
+                         Object.assign(attacker, gameEvent.payload.attackerState); // Update attacker state
+                         console.log(`GM: Attacker ${attacker.name} state updated after attack.`);
+                    }
+                     if (target) {
+                         Object.assign(target, gameEvent.payload.targetState); // Update target state
+                         console.log(`GM: Target ${target.name} state updated after attack.`);
+                         // Show damage number feedback? Server might send this as separate event?
+                         // showDamageNumber(target.uid, gameEvent.payload.damageDealtToTarget);
+                     }
+                }
+                break;
+
+            case 'UnitEvolved':
+                 // Payload might contain: { playerId: "...", unitUid: "...", evolvedState: {...}, epLeft: N }
+                 if (gameEvent.payload) {
+                    const player = getPlayerState(gameEvent.payload.playerId);
+                     const unit = findCardInstanceByUid(gameEvent.payload.unitUid);
+                     if (player) player.ep = gameEvent.payload.epLeft;
+                     if (unit) {
+                          Object.assign(unit, gameEvent.payload.evolvedState);
+                          console.log(`GM: Unit ${unit.name} evolved by ${gameEvent.payload.playerId}.`);
+                     }
+                 }
+                 break;
+
+            case 'UnitDestroyed':
+                // Payload might contain: { unitUid: "..." }
+                 if (gameEvent.payload) {
+                     const unit = findCardInstanceByUid(gameEvent.payload.unitUid);
+                     if (unit) {
+                         handleDestruction(unit); // Fixed call
+                     } // Closing brace for if(unit)
+                 } // Closing brace for if(gameEvent.payload)
+                 break; // Closing break for case 'UnitDestroyed'
+
+            case 'MulliganStarted':
+                 // Payload might contain: { mulliganTimer: N } or initial hand for local player?
+                 console.log("GM: Mulligan phase started.", gameEvent.payload);
+                 gameState.gamePhase = 'Mulligan';
+                 // UI should now allow mulligan actions if this is the local player
+                 // May need logic here to enable UI elements based on player ID?
+                 break;
+
+            case 'GameOver':
+                 // Payload might contain: { winnerId: "...", loserId: "...", reason: "..." }
+                 console.log("GM: Game over event received.", gameEvent.payload);
+                 gameState.gameOver = true;
+                 gameState.gamePhase = 'GameOver';
+                 gameState.winner = gameEvent.payload?.winnerId;
+                 // Update UI to show game over screen with winner/loser info
+                 alert(`游戏结束！ 玩家 ${gameState.winner} 获胜！ (${gameEvent.payload?.reason || '原因未知'})`); // Simple alert for now
+                 break;
+
+            case 'PlayerActionError':
+                 // Payload might contain: { playerId: "...", actionType: "...", message: "..." }
+                 console.warn(`GM: Player action error received for ${gameEvent.payload?.playerId} (${gameEvent.payload?.actionType}): ${gameEvent.payload?.message}`);
+                 // Display the error message to the specific player (if it's the local player)
+                 if (gameEvent.payload?.playerId === gameState.localPlayerId) {
+                     alert(`操作错误: ${gameEvent.payload?.message}`);
+                 }
+                 break;
+
+            // TODO: Add more event types from SignalR hub if needed later
+            // case 'ReceiveGameState': // This should likely be handled separately in main.js on initial connect? Or here?
+            //     // Payload would be the full gameState object
+            //     console.log("GM: Received full game state update.");
+            //     Object.assign(gameState, gameEvent.payload);
+            //     // Need to update active/opponent player references after full update
+            //     gameState.activePlayer = getPlayerState(gameState.currentPlayerId);
+            //     gameState.opponentPlayer = gameState.players.find(p => p.id !== gameState.currentPlayerId);
+            //     break;
+
+            default:
+                console.warn(`GAME MANAGER: Unhandled game event type received: ${gameEvent.eventType}`);
+        } // Closing brace for switch
+    } catch (error) {
+        console.error(`GAME MANAGER: Error processing game event type ${gameEvent.eventType}:`, error);
+        // Potentially display an error to the user via UI function
+        alert(`处理游戏事件 ${gameEvent.eventType} 时出错: ${error.message}`);
+    }
+
+    // Always re-render the game state after processing an event
+    // Ensure gameState and renderGame are correctly referenced/imported
+    if (typeof renderGame === 'function') {
+         console.log("GAME MANAGER: Game state rendered after event processing.");
+         renderGame(gameState); // Pass the updated gameState
+    } else {
+         console.error("GAME MANAGER: renderGame function is not available for UI update after event processing.");
+    }
+} // Closing brace for processGameEvent
 // --- Mulligan Phase Logic ---
 
-// Called after initGame to start the mulligan process
-export function startMulliganPhase() {
-    console.log("GM: Starting Mulligan Phase...");
-    gameState.gamePhase = 'Mulligan';
-    gameState.player1MulliganComplete = false; // Ensure flags are reset
-    gameState.player2MulliganComplete = false;
-
-    // Render the mulligan UI (UI needs to know how to display this phase)
-    renderGame(gameState);
-
-    // Trigger AI mulligan immediately (AI makes its decision instantly)
-    const aiPlayer = gameState.players.find(p => p.isAI);
-    if (aiPlayer) {
-        console.log("GM: Triggering AI mulligan...");
-        performAIMulligan(aiPlayer); // This function needs to be defined in ai.js
-                                    // and call handleMulligan('player2', chosenCards)
-    } else {
-        console.warn("GM: AI player not found, cannot trigger AI mulligan.");
-    }
-}
+// Removed startMulliganPhase - Server now dictates phase start via events.
 
 // Handles the mulligan action for a specific player
-export function handleMulligan(playerId, cardUidsToReplace = []) {
-    console.log(`GM: Handling mulligan for ${playerId}. Cards to replace:`, cardUidsToReplace);
-    console.log("GM_TRACE_ID: Entering handleMulligan for", playerId, "- Current secondPlayerId:", gameState.secondPlayerId); // ADDED LOG
-
-    const playerState = getPlayerState(playerId);
-
-    // --- Validations ---
-    if (gameState.gamePhase !== 'Mulligan') {
-        console.warn(`GM: Mulligan rejected - Not in Mulligan phase (Current: ${gameState.gamePhase}).`);
-        return;
-    }
-    if (!playerState) {
-        console.error(`GM: Mulligan failed - Player state not found for ID: ${playerId}.`);
-        return;
-    }
-    if (!Array.isArray(cardUidsToReplace)) {
-         console.error(`GM: Mulligan failed - cardUidsToReplace must be an array.`);
-         return;
-    }
-    if (cardUidsToReplace.length > playerState.hand.length || cardUidsToReplace.length > 3) { // Assuming initial hand size is 3
-         console.warn(`GM: Mulligan rejected - Invalid number of cards to replace (${cardUidsToReplace.length}). Max 3.`);
-         return;
-    }
-
-    // Check if this player already completed their mulligan
-    const isPlayer1 = playerId === 'player1';
-    if ((isPlayer1 && gameState.player1MulliganComplete) || (!isPlayer1 && gameState.player2MulliganComplete)) {
-        console.warn(`GM: Mulligan rejected - Player ${playerId} already completed mulligan.`);
-        return;
-    }
-
-    // --- Execute Mulligan (using Player method - to be implemented) ---
-    try {
-        playerState.performMulligan(cardUidsToReplace); // This method needs to exist in player.js
-        console.log(`GM: Player ${playerId} mulligan performed. Hand size: ${playerState.hand.length}`);
-    } catch (error) {
-        console.error(`GM: Error during playerState.performMulligan for ${playerId}:`, error);
-        return; // Stop processing if mulligan failed
-    }
-
-
-    // --- Update State ---
-    if (isPlayer1) {
-        gameState.player1MulliganComplete = true;
-        console.log("GM: Player 1 mulligan complete.");
-    } else {
-        gameState.player2MulliganComplete = true;
-        console.log("GM: Player 2 mulligan complete.");
-    }
-
-    // --- Check if Both Completed ---
-    console.log("GM_TRACE_ID: Exiting handleMulligan for", playerId, "- Current secondPlayerId:", gameState.secondPlayerId); // ADDED LOG (before check)
-    if (gameState.player1MulliganComplete && gameState.player2MulliganComplete) {
-        console.log("GM: Both players finished mulligan. Starting first turn...");
-        gameState.gamePhase = 'TurnStart';
-        // No need for setTimeout here, transition directly
-        startTurn(); // Proceed to the first turn
-    } else {
-        // If only one player finished, just update the UI to reflect their new hand/state
-        console.log("GM: One player finished mulligan, waiting for the other. Rendering game state.");
-         renderGame(gameState);
-    }
-}
-
+// Removed handleMulligan - Client interaction should trigger SignalR invoke, state updates via events.
 
 // 新增：根据 UID 查找卡牌实例 (手牌或战场)
     export function findCardInstanceByUid(uid) {
@@ -271,81 +289,14 @@ export function handleMulligan(playerId, cardUidsToReplace = []) {
     // 新增：根据玩家ID获取玩家状态对象
     export function getPlayerState(playerId) {
         if (!playerId) return null;
-        return gameState.players.find(p => p && p.id === playerId);
+        return gameState.players.find(p => p && p.playerId === playerId); // FIX: Use p.playerId to match server DTO
     }
 // --- 其他函数占位符 (保持不变) ---
 
 // --- Effect Resolution ---
 // context can contain { targetUid: "some-uid" } for targeted effects
-function resolveEffects(cardInstance, triggerType, context = {}) {
-    if (!cardInstance || !cardInstance.effects || !Array.isArray(cardInstance.effects)) {
-        return; // No effects to resolve or invalid effects array
-    }
+// Removed resolveEffects - Server now handles effect resolution.
 
-    const ownerPlayer = getPlayerState(cardInstance.ownerId);
-    if (!ownerPlayer) {
-         console.error(`GM: ResolveEffects failed - Cannot find owner player state for ID: ${cardInstance.ownerId}`);
-         return;
-    }
-
-    console.log(`GM: Resolving effects for ${cardInstance.name} (UID: ${cardInstance.uid}) triggered by: ${triggerType}, Context:`, JSON.stringify(context)); // Log context
-
-    cardInstance.effects.forEach(effect => {
-        // Basic check for effect object existence and trigger match
-        if (effect && effect.trigger === triggerType) {
-            console.log(`GM: Processing ${triggerType} effect:`, JSON.stringify(effect)); // Log the effect being processed
-
-            try { // Add error handling for each effect resolution
-                switch (effect.action) {
-                    case 'drawCards':
-                        if (typeof effect.value === 'number' && effect.value > 0) {
-                            console.log(`GM: Executing drawCards(${effect.value}) for player ${ownerPlayer.id}.`);
-                            ownerPlayer.drawCard(effect.value);
-                            // Note: renderGame will be called later in the calling function (e.g., playCard)
-                        } else {
-                            console.warn(`GM: Invalid 'value' for drawCards effect:`, effect.value);
-                        }
-                        break;
-                    case 'dealDamage':
-                        const targetUid = context?.targetUid; // Get target from context
-                        if (!targetUid) {
-                            console.error(`GM: 'dealDamage' effect requires targetUid in context, but none provided for ${cardInstance.name}. Context:`, JSON.stringify(context));
-                            break; // Skip this effect if no target
-                        }
-                        const targetInstance = findCardInstanceByUid(targetUid);
-                        if (!targetInstance) {
-                            console.error(`GM: 'dealDamage' target UID ${targetUid} not found.`);
-                            break; // Skip if target not found
-                        }
-                        const damage = effect.value || 0;
-                        if (typeof damage === 'number' && damage > 0) {
-                            console.log(`GM: Dealing ${damage} damage to ${targetInstance.name} (UID: ${targetUid}). Current HP: ${targetInstance.currentHealth}`);
-                            targetInstance.currentHealth -= damage;
-                            showDamageNumber(targetUid, damage); // Show damage number in UI
-                            console.log(`GM: ${targetInstance.name} HP after damage: ${targetInstance.currentHealth}`);
-
-                            // Handle destruction only for Followers here. Leaders handled by checkGameOver after all effects.
-                            if (targetInstance.currentHealth <= 0 && (targetInstance.type === 'Follower' || targetInstance.type === 'Follower_Evolved')) {
-                                console.log(`GM: Target ${targetInstance.name} destroyed by damage.`);
-                                handleDestruction(targetInstance); // Use the existing helper
-                            } else if (targetInstance.currentHealth <= 0 && targetInstance.type === 'Leader') {
-                                 console.log(`GM: Target Leader ${targetInstance.ownerId} health dropped to ${targetInstance.currentHealth}. Game over check will handle.`);
-                            }
-                        } else {
-                             console.warn(`GM: Invalid 'value' for dealDamage effect:`, effect.value);
-                        }
-                        break;
-                    // TODO: Add cases for other actions (e.g., giveKeyword, modifyStats)
-                    default:
-                        console.warn(`GM: Unhandled effect action in ${triggerType}: ${effect.action}`);
-                }
-            } catch (error) {
-                console.error(`GM: Error resolving ${triggerType} effect action '${effect.action}' for ${cardInstance.name}:`, error);
-            }
-        }
-    });
-}
-// 出牌逻辑
 // Helper to validate if a target instance matches the spell's requirements
 export function isValidSpellTarget(targetInstance, validTargets, castingPlayerId) {
     if (!targetInstance || !Array.isArray(validTargets) || validTargets.length === 0) {
@@ -408,192 +359,122 @@ export function isValidSpellTarget(targetInstance, validTargets, castingPlayerId
     console.log("isValidSpellTarget: No criteria matched.");
     return false; // If no criteria matched
 }
-export function playCard(cardUid, targetUid = null) { // Keep targetUid for future use
-    if (gameState.gameOver) {
+export async function playCard(cardUid, targetUid = null) {
+if (gameState.gameOver) {
         console.warn("GM: Cannot play card - Game is over.");
+        alert("游戏已经结束，无法出牌！"); // User feedback
         return;
     }
-    console.log(`GM: Attempting to play card UID: ${cardUid}`);
+    console.log(`GM: Attempting to play card UID: ${cardUid}, Target UID: ${targetUid}`);
 
     const cardInstance = findCardInstanceByUid(cardUid);
     if (!cardInstance) {
         console.error(`GM: PlayCard failed - Card instance ${cardUid} not found.`);
-        return; // Exit if instance not found
+        alert("内部错误：无法找到卡牌实例。");
+        return;
     }
 
     if (cardInstance.location !== 'hand') {
          console.warn(`GM: PlayCard failed - Card ${cardUid} (${cardInstance.name}) is not in hand (Location: ${cardInstance.location}).`);
-         return; // Exit if not in hand
+         // No error display needed, UI should prevent this.
+         return;
     }
 
     const playerState = getPlayerState(cardInstance.ownerId);
     if (!playerState) {
         console.error(`GM: PlayCard failed - Player state not found for owner ${cardInstance.ownerId}.`);
-        return; // Exit if player state not found
-    }
-
-    // --- Pre-condition Checks ---
-    if (playerState.id !== gameState.currentPlayerId) {
-        console.warn(`GM: PlayCard failed - Not player ${playerState.id}'s turn.`);
-        // alert("现在不是你的回合！"); // Optional UI feedback
+        alert("内部错误：无法找到玩家状态。");
         return;
     }
-    // TODO: 确认游戏阶段检查，暂时只允许 'Main'
+
+    // --- Pre-condition Checks (Client-side) ---
+    // IMPORTANT: Ensure we check against localPlayerId provided during initGame
+    if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
+        console.warn(`GM: PlayCard rejected - Not local player's turn or local player ID mismatch (Local: ${gameState.localPlayerId}, Current: ${gameState.currentPlayerId}, CardOwner: ${playerState.id}).`);
+        alert("现在不是你的回合！");
+        return;
+    }
     if (gameState.gamePhase !== 'Main') {
-        console.warn(`GM: PlayCard failed - Can only play cards during Main phase (Current: ${gameState.gamePhase}).`);
-        // alert("只能在主阶段出牌！"); // Optional UI feedback
+        console.warn(`GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.gamePhase}).`);
+        alert("只能在你的回合主阶段出牌！");
         return;
     }
     if (playerState.pp < cardInstance.cost) {
-        console.warn(`GM: PlayCard failed - Not enough PP for ${cardInstance.name} (Cost: ${cardInstance.cost}, Have: ${playerState.pp}).`);
-        // Note: UI should have already alerted for this, but check anyway.
+        console.warn(`GM: PlayCard rejected - Not enough PP for ${cardInstance.name} (Cost: ${cardInstance.cost}, Have: ${playerState.pp}).`);
+        alert("PP不足！"); // UI should prevent this, but double check.
         return;
     }
 
-    // --- Card Type Specific Logic ---
-    if (cardInstance.type === 'Follower') {
-        // Check field space
+    // Follower/Amulet specific checks before invoking server
+    if (cardInstance.type === 'Follower' || cardInstance.type === 'Amulet') {
+        // Use MAX_FIELD_SIZE constant defined at the top of the file
         if (playerState.field.length >= MAX_FIELD_SIZE) {
-            console.warn(`GM: PlayCard (Follower) failed - Field is full (${playerState.field.length}/${MAX_FIELD_SIZE}).`);
-            alert("战场已满，无法召唤更多随从！");
-            return;
+             console.warn(`GM: PlayCard rejected - Field is full (${playerState.field.length}/${MAX_FIELD_SIZE}).`);
+             alert("战场已满！");
+             return;
         }
-
-        // All checks passed for Follower - Execute play
-        console.log(`GM: Playing Follower ${cardInstance.name} (UID: ${cardUid}).`);
-
-        // 1. Deduct PP
-        playerState.pp -= cardInstance.cost;
-        console.log(`GM: PP updated for ${playerState.id}: ${playerState.pp}`);
-
-        // 2. Remove from hand
-        const handIndex = playerState.hand.findIndex(card => card && card.uid === cardUid);
-        if (handIndex > -1) {
-            playerState.hand.splice(handIndex, 1);
-            console.log(`GM: Card ${cardUid} removed from hand.`);
-        } else {
-            console.error(`GM: Critical Error - Card ${cardUid} passed checks but not found in hand for removal!`);
-            // Attempt to continue? Or stop? For now, continue but log error.
-        }
-
-        // 3. Set instance state for field
-        cardInstance.location = 'field';
-        // Summoning sickness check: Allow Storm followers to attack immediately
-        const hasStorm = cardInstance.keywords?.includes('Storm');
-        cardInstance.canAttack = hasStorm; // True if Storm, False otherwise
-        console.log(`GM: Follower ${cardInstance.name} played. Has Storm: ${hasStorm}. Can Attack: ${cardInstance.canAttack}`);
-        cardInstance.isEvolved = false; // Ensure it's not evolved on play
-        // Reset current stats to base, could be modified by Fanfare later
-        cardInstance.currentAttack = cardInstance.attack;
-        cardInstance.currentHealth = cardInstance.health;
-        console.log(`GM: Card ${cardUid} state updated for field.`);
-
-        // 4. Add to field
-        playerState.field.push(cardInstance);
-            cardInstance.turnPlayed = gameState.turnNumber; // Track turn played for summoning sickness rules <-- CORRECTED
-        console.log(`GM: Card ${cardUid} added to field.`);
-
-        // 5. Trigger Fanfare effects
-        resolveEffects(cardInstance, 'Fanfare');
-
-        // 6. Render Update
-         console.log("GM: Calling renderGame after playing follower.");
-         renderGame(gameState); // Update the UI
-
-    } else if (cardInstance.type === 'Spell') {
-        // --- Spell Logic Implementation (REVISED FLOW) ---
-        console.log(`GM: Playing Spell ${cardInstance.name} (UID: ${cardUid}). Provided target UID: ${targetUid}`);
-
-        // --- Get Card Data ---
-        const cardData = getCardDefinition(cardInstance.id); // Get base data for checks
-        if (!cardData) {
-            // This case should be rare, as the card instance exists.
-            console.error(`GM: PlayCard failed - Could not find card definition for existing spell instance ID: ${cardInstance.id}`);
-            return; // Cannot proceed without card data
-        }
-
-        // --- Pre-Validation: Targeting ---
-        let context = {}; // Initialize context
-        if (cardData.requiresTarget) {
-            console.log(`GM: Spell ${cardInstance.name} requires target. Validating target UID: ${targetUid}`);
-            if (!targetUid) {
-                console.warn(`GM: PlayCard REJECTED - Targeting spell ${cardInstance.name} played without a target UID.`);
-                alert(`法术 ${cardInstance.name} 需要一个目标！`); // User feedback
-                return; // <<< EXIT EARLY: Target required but not provided
-            }
-
-            const targetInstance = findCardInstanceByUid(targetUid);
-            if (!targetInstance) {
-                console.warn(`GM: PlayCard REJECTED - Target UID ${targetUid} not found for spell ${cardInstance.name}.`);
-                alert(`选择的目标无效！`);
-                return; // <<< EXIT EARLY: Target instance not found
-            }
-
-            if (!isValidSpellTarget(targetInstance, cardData.validTargets || [], playerState.id)) {
-                 console.warn(`GM: PlayCard REJECTED - Target ${targetInstance.name} (Type: ${targetInstance.type}, Owner: ${targetInstance.ownerId}) is not a valid target for spell ${cardInstance.name}. Valid: ${cardData.validTargets.join(', ')}`);
-                 alert(`选择的 [${targetInstance.name}] 不是 ${cardInstance.name} 的有效目标！`);
-                 return; // <<< EXIT EARLY: Target instance invalid
-            }
-
-            // Target is valid! Set context.
-            console.log(`GM: Target ${targetInstance.name} (UID: ${targetUid}) validated successfully for spell ${cardInstance.name}.`);
-            context = { targetUid: targetUid }; // Set context for resolveEffects
-        }
-        // --- End Pre-Validation ---
-
-        // --- Resource Consumption (Only if target validation passed or wasn't needed) ---
-
-        // 1. Deduct PP
-        playerState.pp -= cardInstance.cost;
-        console.log(`GM: PP updated for ${playerState.id}: ${playerState.pp}`);
-
-        // 2. Remove from hand
-        const handIndex = playerState.hand.findIndex(card => card && card.uid === cardUid);
-        let removedCard = null;
-        if (handIndex > -1) {
-            removedCard = playerState.hand.splice(handIndex, 1)[0]; // Get the removed card instance
-            console.log(`GM: Spell ${cardUid} removed from hand.`);
-        } else {
-            // This is inconsistent state, should not happen if checks passed
-            console.error(`GM: Critical Error - Spell ${cardUid} passed PP/Target checks but not found in hand for removal!`);
-            // Attempt to rollback PP
-            playerState.pp += cardInstance.cost;
-            console.log(`GM: PP Refunded due to removal error for ${playerState.id}: ${playerState.pp}`);
-            // Re-render to show correct PP? Or let subsequent render handle?
-            renderGame(gameState); // Render to reflect refunded PP
-            return; // Stop processing
-        }
-
-        // --- Effect Resolution ---
-        if (removedCard) { // Should always be true here now
-            // No need to check targetValid again, as we returned early if it was invalid.
-             console.log(`GM: Resolving OnPlay effects for ${removedCard.name}...`);
-             resolveEffects(removedCard, 'OnPlay', context); // Pass context (empty or with targetUid)
-
-            // --- Move to Graveyard ---
-            removedCard.location = 'graveyard';
-            playerState.graveyard.push(removedCard);
-            console.log(`GM: Spell ${removedCard.name} (UID: ${removedCard.uid}) moved to graveyard.`);
-        } else {
-            // Defensive coding, should be unreachable due to earlier return
-             console.error(`GM: Logic Error - removedCard is null after successful removal check and target validation.`);
-        }
-
-        // --- Clear Selection & Render Update ---
-        gameState.selectedCardUid = null; // Clear hand selection AFTER successful play
-        console.log("GM: Calling renderGame after playing spell.");
-        renderGame(gameState); // Update the UI
-
-    } else if (cardInstance.type === 'Amulet') {
-        // TODO: Implement Amulet logic
-         console.log(`GM: Playing Amulet ${cardInstance.name} (UID: ${cardUid}) - Logic Pending.`);
-         alert(`尝试使用护符牌 ${cardInstance.name} (功能待实现)`);
-         // Deduct PP, remove from hand, add to field (or special zone), render
-
-    } else {
-        console.error(`GM: PlayCard failed - Unknown card type: ${cardInstance.type}`);
-        alert(`未知的卡牌类型: ${cardInstance.type}`);
     }
+
+    // Spell target check (basic) - Requires cardData access
+    // NOTE: This check might be better handled server-side for consistency,
+    // but a basic client-side check can provide faster feedback.
+    // We need access to card definitions here, assuming getCardDefinition is available.
+    const cardData = getCardDefinition(cardInstance.id); // Needs cardManager import
+    if (cardInstance.type === 'Spell' && cardData?.requires_target && !targetUid) {
+         console.warn(`GM: PlayCard rejected - Spell ${cardInstance.name} requires a target, but none provided.`);
+         alert("该法术需要指定一个目标！");
+         // TODO: Add more specific target validation later if needed (e.g., using isValidSpellTarget helper)
+         return;
+    }
+    // Consider adding isValidSpellTarget check here if spell has targets
+
+
+    // --- SignalR Invocation ---
+    // Ensure signalRConnection is accessible (should be via module scope variable set by setSignalRConnection)
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: PlayCard failed - SignalR connection not available or not connected.");
+        alert("与服务器连接丢失，无法出牌！");
+        // Optionally try to reconnect or inform the user more drastically
+        return;
+    }
+
+    console.log(`GM: Invoking SignalR Hub method 'PlayCard'. GameID: ${gameState.gameId}, CardUID: ${cardUid}, TargetUID: ${targetUid}`);
+    try {
+        // Invoke the server method. The server will validate everything again (cost, turn, phase, target, etc.)
+        // and handle the actual game logic.
+        await signalRConnection.invoke("PlayCard", gameState.gameId, cardUid, targetUid);
+
+        // If invoke succeeds, DO NOT modify local state directly.
+        // Wait for the server to send back game events (e.g., CardPlayed, UnitSpawned, PPDeducted, EffectResolved, UnitDestroyed, TurnEnded...)
+        // The processGameEvent function will handle these events and update the state.
+        console.log("GM: 'PlayCard' invocation sent successfully. Waiting for server response...");
+
+        // Provide immediate feedback to the user that the action is in progress
+        alert(`正在使用 ${cardInstance.name}...`);
+
+        // Clear the local hand selection *optimistically* after successful invocation.
+        // If the server rejects the play later via an error event, the UI might need to adjust.
+        gameState.selectedCardUid = null;
+        // Re-render *might* be needed just to clear highlight, but event processing should handle final state render.
+        // Rely on event processing for rendering for now.
+        // renderGame(gameState); // Consider removing or making conditional
+
+    } catch (err) {
+        console.error("GM: SignalR 'PlayCard' invocation failed:", err);
+        // Attempt to parse a more specific error message if available
+        let errorMessage = "服务器通信错误";
+        if (err && err.message) {
+            // Example: Hub exceptions might be in err.message
+             errorMessage = err.message;
+             // You might want to sanitize or simplify complex server error messages here
+        }
+        alert(`出牌失败：${errorMessage}`);
+
+        // Clear selection on error too
+        gameState.selectedCardUid = null;
+        renderGame(gameState); // Re-render needed to clear selection highlight on error.
+    }
+    // New body will be inserted here by next step
 }
 // 发起攻击 (选择我方攻击者)
 export function initiateAttack(attackerUid) {
@@ -648,7 +529,7 @@ console.log('GM_DBG: Checking attacker instance before canAttack check:', JSON.s
 }
 
 // 选择攻击目标 (敌方随从或英雄)
-export function selectAttackTarget(targetUid) {
+export async function selectAttackTarget(targetUid) {
     console.log(`GM: Attempting to select target UID: ${targetUid}`);
     const attackerUid = gameState.selectedAttackerUid;
 
@@ -732,11 +613,42 @@ export function selectAttackTarget(targetUid) {
     console.log(`GM: Attack target selected - ${attackerInstance.name} (${attackerUid}) will attack ${targetInstance.name} (${targetUid})`);
 
     // Execute the attack (this will now handle both follower and leader targets)
-    executeAttack(attackerUid, targetUid); // Pass control to the updated executeAttack
+        // --- SignalR Invocation ---
+        if (!signalRConnection || signalRConnection.state !== "Connected") {
+            console.error("GM: SelectTarget failed - SignalR connection not available.");
+            alert("与服务器连接丢失，无法进行攻击！");
+            // Clear selection on connection error before trying to attack
+            gameState.selectedAttackerUid = null;
+            renderGame(gameState); // Render to clear selection
+            return;
+        }
 
-    // Post-attack state updates (These happen AFTER executeAttack completes)
-    attackerInstance.canAttack = false; // Mark as attacked this turn
-    gameState.selectedAttackerUid = null; // Clear selection
+        console.log(`GM: Invoking SignalR Hub method 'PerformAttack'. GameID: ${gameState.gameId}, AttackerUID: ${attackerUid}, TargetUID: ${targetUid}`);
+        try {
+            // Invoke server method. Server handles validation and attack execution.
+            await signalRConnection.invoke("PerformAttack", gameState.gameId, attackerUid, targetUid);
+
+            // Wait for server events (AttackOccurred, UnitDestroyed, GameOver) via processGameEvent.
+            // DO NOT change attackerInstance.canAttack here. Server manages the authoritative state.
+            console.log("GM: 'PerformAttack' invocation sent successfully. Waiting for server response...");
+
+            // Optimistically clear selection and provide feedback
+            alert(`${attackerInstance.name} 正在攻击 ${targetInstance.name}...`);
+            gameState.selectedAttackerUid = null; // Clear selection locally *after* successful invoke
+            renderGame(gameState); // Re-render to clear highlights after successful invocation.
+
+        } catch (err) {
+            console.error("GM: SignalR 'PerformAttack' invocation failed:", err);
+            let errorMessage = "服务器通信错误";
+            if (err && err.message) {
+                errorMessage = err.message;
+            }
+            alert(`攻击失败：${errorMessage}`);
+
+            // Clear selection on error
+            gameState.selectedAttackerUid = null;
+            renderGame(gameState); // Re-render to clear highlights on error.
+        }
 
     // Trigger UI update
     console.log("GM: Calling renderGame after selecting attack target.");
@@ -776,106 +688,6 @@ function handleDestruction(cardInstance) {
 }
 
 // --- Combat Execution ---
-export function executeAttack(attackerUid, targetUid) {
-    console.log(`GM: Executing attack - Attacker: ${attackerUid}, Target: ${targetUid}`);
-    const attacker = findCardInstanceByUid(attackerUid);
-    const target = findCardInstanceByUid(targetUid);
-
-    // Basic validation
-    if (!attacker || !target) {
-        console.error(`GM: ExecuteAttack failed - Attacker (found: ${!!attacker}) or Target (found: ${!!target}) not found.`);
-        if (gameState.selectedAttackerUid === attackerUid) {
-             gameState.selectedAttackerUid = null; // Clear selection if invalid
-        }
-        // Avoid rendering here? selectAttackTarget should have done necessary UI cleanup if target was invalid.
-        return;
-    }
-
-    // --- Pre-attack state log ---
-    const attackerInitialHealth = attacker.currentHealth;
-    const targetInitialHealth = target.currentHealth;
-    const attackerAttack = attacker.currentAttack || 0; // Ensure attack is not null/undefined
-    const targetAttack = (target.type === 'Follower' || target.type === 'Follower_Evolved') ? (target.currentAttack || 0) : 0; // Leaders don't attack back
-
-    console.log(`GM: Combat Start - ${attacker.name}(${attackerAttack}/${attackerInitialHealth}) vs ${target.name}(${targetAttack}/${targetInitialHealth})`);
-
-    let attackerDestroyed = false;
-    let targetDestroyed = false;
-
-    // --- Damage Calculation & Application ---
-    if (target.type === 'Follower' || target.type === 'Follower_Evolved') {
-        // --- Follower vs Follower ---
-        console.log(`GM: Dealing ${attackerAttack} damage to Follower ${target.name}.`);
-        target.currentHealth -= attackerAttack;
-        showDamageNumber(target.uid, attackerAttack); // Show damage number in UI
-        console.log(`GM: ${target.name} health after damage: ${target.currentHealth}`);
-
-        console.log(`GM: Dealing ${targetAttack} damage back to Attacker ${attacker.name}.`);
-        attacker.currentHealth -= targetAttack;
-        showDamageNumber(attacker.uid, targetAttack); // Show damage number in UI
-        console.log(`GM: ${attacker.name} health after damage: ${attacker.currentHealth}`);
-
-        // Check destruction after combat
-        if (target.currentHealth <= 0) {
-             targetDestroyed = true;
-             console.log(`GM: Target Follower ${target.name} destroyed.`);
-        }
-        if (attacker.currentHealth <= 0) {
-             attackerDestroyed = true;
-             console.log(`GM: Attacker Follower ${attacker.name} destroyed.`);
-        }
-
-    } else if (target.type === 'Leader') {
-        // --- Follower vs Leader ---
-        console.log(`GM: Dealing ${attackerAttack} damage to Leader ${target.name}.`);
-        target.currentHealth -= attackerAttack; // Target IS the leader instance
-        showDamageNumber(target.uid, attackerAttack); // Show damage number in UI
-        console.log(`GM: Leader ${target.ownerId} health after damage: ${target.currentHealth}`);
-
-        // Check if leader health dropped to 0 or below
-        if (target.currentHealth <= 0) {
-            console.log(`GM: Leader ${target.ownerId} has been defeated.`);
-            // checkGameOver will handle setting the game state flags
-            targetDestroyed = true; // conceptually, for flow
-        }
-        // Attacker takes no damage from leader in standard combat
-        // Still check if attacker died from other effects (e.g., reflect?) - unlikely now
-        if (attacker.currentHealth <= 0) {
-             attackerDestroyed = true;
-             console.log(`GM: Attacker Follower ${attacker.name} destroyed.`);
-        }
-    } else {
-         console.error(`GM: ExecuteAttack failed - Target type ${target.type} is not attackable.`);
-         // Clear selection?
-          if (gameState.selectedAttackerUid === attackerUid) {
-             gameState.selectedAttackerUid = null;
-         }
-         return; // Exit if target type invalid
-    }
-
-    // --- Post-Combat State Updates & Cleanup ---
-    attacker.canAttack = false; // Mark attacker as having attacked this turn
-    gameState.selectedAttackerUid = null; // Clear selection state regardless of outcome
-    console.log(`GM: Attacker ${attacker.name} canAttack set to false. Selection cleared.`);
-
-    // Handle Destruction (only for followers via helper)
-    if (targetDestroyed && target.type !== 'Leader') {
-         handleDestruction(target);
-    }
-    if (attackerDestroyed) {
-         handleDestruction(attacker);
-    }
-
-    // Check Game Over (important after any health change)
-    const isGameOver = checkGameOver(); // This should update gameState.gameOver and gameState.winner
-
-    // --- Final Render ---
-    // Always render to reflect health changes, destruction, and removal of highlights.
-    console.log("GM: Calling renderGame after executing attack.");
-    renderGame(gameState);
-
-    // Optional: TODO - Trigger post-attack effects (e.g., Drain, Bane) here?
-}
 // --- Cancel Selection ---
     export function cancelSelection() {
         console.log("GM: Cancelling selection.");
@@ -893,154 +705,294 @@ export function executeAttack(attackerUid, targetUid) {
 
 // 检查游戏是否结束
 // 检查游戏是否结束 (Refactored to check leaderCard health)
-export function checkGameOver(forcedLoserId = null, reason = null) {
-    // Avoid redundant checks if game already ended
-    if (gameState.gameOver) {
-        console.log("GM: checkGameOver called, but game is already over.");
-        return true;
-    }
+// Removed checkGameOver - Server now dictates game end via events.
 
-    let loserId = forcedLoserId;
-    let gameOverReason = reason ? ` (${reason})` : ' (HP 归零)'; // Default reason if not provided
-
-    // If not forced, check HP condition
-    if (!loserId) {
-        // console.log("GM: Checking HP for game over condition..."); // Can be noisy
-        for (const player of gameState.players) {
-            if (player && player.leaderCard && player.leaderCard.currentHealth <= 0) {
-                loserId = player.id;
-                console.log(`GM: Detected HP <= 0 for player ${loserId}.`);
-                break; // Found the loser by HP
-            }
-        }
-    } else {
-         console.log(`GM: Game over triggered externally for loser ${loserId} due to ${reason || 'unknown reason'}.`);
-    }
-
-    // If a loser was determined (either by force or by HP check)
-    if (loserId) {
-        gameState.gameOver = true;
-        gameState.gamePhase = 'GameOver';
-        // Determine the winner
-        const winnerPlayer = gameState.players.find(p => p && p.id !== loserId);
-        if (winnerPlayer) {
-            gameState.winner = winnerPlayer.id;
-            console.log(`GM: Game Over! Loser: ${loserId}, Winner: ${gameState.winner}, Reason: ${gameOverReason.trim()}`);
-            // Simple alert for now, UI should handle a proper game over screen
-            alert(`游戏结束！ 玩家 ${gameState.winner} 获胜！${gameOverReason}`);
-        } else {
-            console.error("GM: Game over condition met, but could not determine the winner.");
-            gameState.winner = 'Unknown';
-            alert(`游戏结束！无法确定胜者。 原因: ${gameOverReason.trim()}`);
-        }
-        return true; // Game has ended
-    }
-
-    // If no loser was determined
-    // console.log("GM: Game continues, no loser determined."); // Can be noisy
-    return false; // Game is not over
-}
 
 // 进化随从
 // 进化随从 (Implemented Version)
-    export function evolveCard(cardUid) {
-        if (gameState.gameOver) {
-            console.warn("GM: Cannot evolve card - Game is over.");
-            return;
-        }
-        console.log(`GM: Attempting to evolve card UID: ${cardUid}`);
-
-        const playerState = getPlayerState(gameState.currentPlayerId);
-        const cardInstance = findCardInstanceByUid(cardUid);
-        
-        // --- Basic Validations ---
-        if (!playerState) {
-            console.error("GM: EvolveCard failed - Cannot get current player state.");
-            return;
-        }
-        if (!cardInstance) {
-            console.error(`GM: EvolveCard failed - Card instance ${cardUid} not found.`);
-            return;
-        }
-        // Need base card data to check can_evolve and evolves_into
-        const cardData = getCardDefinition(cardInstance.id); // Use .id property from instance 
-         if (!cardData) {
-            console.error(`GM: EvolveCard failed - Base card data not found for ID: ${cardInstance.cardId}.`);
-            return;
-        }
-
-        // --- Condition Checks ---
-        let failReason = null;
-        if (gameState.gamePhase !== 'Main') { // Can only evolve in Main phase normally
-            failReason = `Cannot evolve outside Main phase (Current: ${gameState.gamePhase}).`;
-        } else if (!playerState.canEvolveThisTurn) {
-            failReason = "Evolution not unlocked or already used this turn.";
-        } else if (playerState.ep < 1) { // Assuming evolve costs 1 EP
-            failReason = `Not enough EP (Have: ${playerState.ep}, Need: 1).`;
-        } else if (cardInstance.ownerId !== playerState.id) {
-            failReason = "Cannot evolve opponent's card.";
-        } else if (cardInstance.location !== 'field') {
-            failReason = `Card not on field (Location: ${cardInstance.location}).`;
-        } else if (cardInstance.type !== 'Follower') { 
-             failReason = `Cannot evolve non-Follower type (${cardInstance.type}).`;
-        } else if (cardInstance.isEvolved === true) { // Check INSTANCE state
-             failReason = `Card is already evolved.`;
-        } else if (cardData.can_evolve !== true) { // Check BASE DATA property
-            failReason = "Card definition does not allow evolution.";
-        } else if (!cardData.evolves_into || cardData.evolves_into.length === 0) {
-            failReason = "Card definition missing 'evolves_into' data.";
-        }
-
-        if (failReason) {
-            console.warn(`GM: EvolveCard failed for ${cardInstance.name} (${cardUid}): ${failReason}`);
-            // Optional: alert(`无法进化：${failReason}`);
-            return;
-        }
-
-        // --- Branching (Simplified: Use first path) ---
-        // TODO: Implement UI choice if cardData.evolves_into.length > 1
-        const targetEvolvedCardId = cardData.evolves_into[0];
-        const newCardData = getCardDefinition(targetEvolvedCardId);
-
-        if (!newCardData) {
-             console.error(`GM: EvolveCard failed - Evolved card data not found for ID: ${targetEvolvedCardId}.`);
-             return;
-        }
-
-        console.log(`GM: Evolving ${cardInstance.name} (${cardUid}) into ${newCardData.name} (${targetEvolvedCardId})...`);
-
-        // --- Execute Evolution ---
-        if (!playerState.spendEP(1)) { // Use the method from player.js to decrement EP
-             console.error(`GM: EvolveCard failed - spendEP reported failure unexpectedly.`); // Should have been caught by check above
-             return;
-        }
-        playerState.canEvolveThisTurn = false; // Consume the one evolution allowed per turn
-
-        // Update Card Instance State
-        cardInstance.id = targetEvolvedCardId; // Update .id property // Link instance to the new card data ID
-        cardInstance.name = newCardData.name;
-        cardInstance.baseAttack = newCardData.attack; // Update BASE stats
-        cardInstance.baseHealth = newCardData.health;
-        cardInstance.abilities = newCardData.abilities ? [...newCardData.abilities] : []; // Deep copy abilities array
-        cardInstance.art = newCardData.art; // Update art reference
-        cardInstance.description = newCardData.description;
-        cardInstance.isEvolved = true; // Mark THIS INSTANCE as evolved
-
-        // HP Handling: Heal to new max health for simplicity (Shadowverse rules often do this)
-        cardInstance.currentHealth = cardInstance.baseHealth;
-        // Attack Handling: Reset currentAttack to new baseAttack (Assume buffs are lost for now)
-        cardInstance.currentAttack = cardInstance.baseAttack;
-
-        // Allow evolved follower to attack this turn (mimics typical Rush-on-evolve behavior)
-        // Can be refined later based on specific card having Rush or not.
-        cardInstance.canAttack = true; 
-
-        console.log(`GM: ${cardInstance.name} (UID: ${cardUid}) successfully evolved. State updated.`);
-
-        // TODO: Trigger "on Evolve" effects here
-        // executeEffects(cardInstance, 'OnEvolve', playerState.id);
-
-        // --- Final Render ---
-        renderGame(gameState); // Update UI to show evolved state
+export async function evolveCard(cardUid) {
+    if (gameState.gameOver) {
+        console.warn("GM: Cannot evolve card - Game is over.");
+        alert("游戏已经结束，无法进化！");
+        return;
     }
+    console.log(`GM: Attempting to evolve card UID: ${cardUid}`);
+
+    const playerState = getPlayerState(gameState.currentPlayerId);
+    const cardInstance = findCardInstanceByUid(cardUid);
+    const cardData = cardInstance ? getCardDefinition(cardInstance.id) : null; // Base data
+
+    // --- Basic Client-Side Validations ---
+    if (!playerState || !cardInstance || !cardData) {
+        console.error(`GM: EvolveCard failed - Missing player state, card instance, or card definition for UID ${cardUid}.`);
+        alert("内部错误：无法找到进化所需信息。");
+        return;
+    }
+
+    // Check if it's the local player's turn
+    if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
+         console.warn(`GM: EvolveCard rejected - Not local player's turn.`);
+         alert("现在不是你的回合！");
+         return;
+    }
+    if (gameState.gamePhase !== 'Main') {
+        console.warn(`GM: EvolveCard rejected - Cannot evolve outside Main phase.`);
+        alert("只能在你的回合主阶段进化！");
+        return;
+    }
+    // Optimistic client-side checks (Server will re-validate)
+    if (!playerState.canEvolveThisTurn) { // Check local flag
+        console.warn("GM: EvolveCard rejected - Local state indicates evolution already used or unavailable.");
+        alert("本回合已使用过进化点或无法进化。");
+        return;
+    }
+    if (playerState.ep < 1) { // Check local EP
+        console.warn("GM: EvolveCard rejected - Local state shows insufficient EP.");
+        alert("进化点不足！");
+        return;
+    }
+    if (cardInstance.location !== 'field') {
+        console.warn(`GM: EvolveCard rejected - Card not on field.`);
+        alert("只能进化场上的随从！");
+        return;
+    }
+    if (cardInstance.type !== 'Follower') {
+        console.warn(`GM: EvolveCard rejected - Cannot evolve non-Follower.`);
+        alert("只能进化随从！");
+        return;
+    }
+    if (cardInstance.isEvolved === true) {
+        console.warn(`GM: EvolveCard rejected - Card is already evolved.`);
+         alert("该随从已经进化！");
+        return;
+    }
+    if (cardData.can_evolve !== true || !cardData.evolves_into || cardData.evolves_into.length === 0) {
+        console.warn("GM: EvolveCard rejected - Card definition does not allow evolution or lacks target.");
+         alert("该随从无法进化！");
+        return;
+    }
+     // --- End Client-Side Validations ---
+
+    // --- SignalR Invocation ---
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: EvolveCard failed - SignalR connection not available.");
+        alert("与服务器连接丢失，无法进化！");
+        return;
+    }
+
+    console.log(`GM: Invoking SignalR Hub method 'EvolveCard'. GameID: ${gameState.gameId}, CardUID: ${cardUid}`);
+    try {
+        await signalRConnection.invoke("EvolveCard", gameState.gameId, cardUid);
+
+        // Wait for server event 'UnitEvolved' via processGameEvent for state update.
+        console.log("GM: 'EvolveCard' invocation sent successfully. Waiting for server response...");
+        alert(`正在进化 ${cardInstance.name}...`);
+
+        // Optimistically update the local flag? Or wait for server confirmation?
+        // Let's wait for server confirmation via event processing to keep client thin.
+        // playerState.canEvolveThisTurn = false; // DO NOT DO THIS HERE
+
+    } catch (err) {
+        console.error("GM: SignalR 'EvolveCard' invocation failed:", err);
+        let errorMessage = "服务器通信错误";
+        if (err && err.message) {
+             errorMessage = err.message;
+        }
+        alert(`进化失败：${errorMessage}`);
+        // No state change locally on error
+    }
+}
 // Duplicate evolveCard function removed to fix SyntaxError
+// --- SignalR Hub Invocation Wrappers ---
+
+/**
+ * Submits the player's mulligan decision to the server.
+ * @param {string[]} cardUidsToReplace - An array of card UIDs the player wishes to replace.
+ */
+export async function submitMulligan(cardUidsToReplace = []) {
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: SubmitMulligan failed - SignalR connection not available.");
+        alert("与服务器连接丢失，无法提交调度！");
+        return;
+    }
+    if (gameState.gamePhase !== 'Mulligan') {
+        console.warn("GM: SubmitMulligan rejected - Not in Mulligan phase.");
+        // No user error display needed, UI should prevent this call
+        return;
+    }
+     // Additional check: Ensure it's the local player trying to submit
+     if (gameState.localPlayerId !== gameState.currentPlayerId) {
+          console.warn("GM: SubmitMulligan rejected - Not the local player's turn to mulligan.");
+          return; // Silently fail if UI somehow allows this
+     }
+
+
+    console.log(`GM: Invoking SignalR Hub method 'SubmitMulligan'. GameID: ${gameState.gameId}, CardsToReplace:`, cardUidsToReplace);
+    try {
+        await signalRConnection.invoke("SubmitMulligan", gameState.gameId, cardUidsToReplace);
+        console.log("GM: 'SubmitMulligan' invocation sent successfully. Waiting for server response...");
+        alert("正在提交调度决定...");
+        // Do not modify local state (like player1MulliganComplete) here.
+        // Server should send an event (e.g., MulliganEnded, TurnStarted) to confirm and update state.
+
+    } catch (err) {
+        console.error("GM: SignalR 'SubmitMulligan' invocation failed:", err);
+        let errorMessage = "服务器通信错误";
+        if (err && err.message) {
+            errorMessage = err.message;
+        }
+        alert(`提交调度失败：${errorMessage}`);
+    }
+}
+
+/**
+ * Sends a request to the server to end the current player's turn.
+ */
+export async function endTurnRequest() {
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: EndTurnRequest failed - SignalR connection not available.");
+        alert("与服务器连接丢失，无法结束回合！");
+        return;
+    }
+    // Optional: Add phase check? Should EndTurn be allowed outside Main phase? Usually yes.
+    if (gameState.gamePhase === 'Mulligan' || gameState.gamePhase === 'GameOver') {
+         console.warn(`GM: EndTurnRequest rejected - Cannot end turn during ${gameState.gamePhase} phase.`);
+         return; // Silently reject if UI somehow allows this
+    }
+      // Additional check: Ensure it's the local player trying to end the turn
+      if (gameState.localPlayerId !== gameState.currentPlayerId) {
+           console.warn("GM: EndTurnRequest rejected - Not the local player's turn.");
+           return; // Silently fail
+      }
+
+    console.log(`GM: Invoking SignalR Hub method 'EndTurn'. GameID: ${gameState.gameId}`);
+    try {
+        await signalRConnection.invoke("EndTurn", gameState.gameId);
+        console.log("GM: 'EndTurn' invocation sent successfully. Waiting for server response...");
+        alert("正在结束回合...");
+        // Wait for TurnEnded event from server via processGameEvent.
+
+    } catch (err) {
+        console.error("GM: SignalR 'EndTurn' invocation failed:", err);
+        let errorMessage = "服务器通信错误";
+        if (err && err.message) {
+            errorMessage = err.message;
+        }
+        alert(`结束回合失败：${errorMessage}`);
+    }
+}
+/**
+ * Sends a generic game action object to the SignalR Hub.
+ * Used for actions initiated by the client (Player or AI) that need server processing,
+ * especially when a dedicated function wrapper isn't necessary or available yet.
+ * @param {object} actionData - The action data object (e.g., { actionType: "Attack", attackerUid: "...", targetUid: "..." }). Requires at least `actionType`.
+ */
+export async function sendGameAction(actionData) {
+    if (!actionData || !actionData.actionType) {
+        console.error("GM: sendGameAction failed - Invalid actionData received:", actionData);
+        alert("内部错误：无效的游戏动作数据。");
+        return;
+    }
+
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error(`GM: sendGameAction (${actionData.actionType}) failed - SignalR connection not available.`);
+        alert(`与服务器连接丢失，无法执行动作 (${actionData.actionType})！`);
+        return;
+    }
+
+    // Optional: Add client-side player turn/phase checks if deemed useful for immediate feedback,
+    // but the server MUST perform the authoritative validation.
+    // Example:
+    // if (gameState.localPlayerId !== gameState.currentPlayerId) {
+    //     console.warn(`GM: sendGameAction (${actionData.actionType}) rejected - Not local player's turn.`);
+    //     alert("现在不是你的回合！");
+    //     return;
+    // }
+    // if (gameState.gamePhase !== 'Main' && actionData.actionType !== 'SomeActionAllowedOutsideMain') { // Adjust condition based on action
+    //     console.warn(`GM: sendGameAction (${actionData.actionType}) rejected - Action not allowed during ${gameState.gamePhase} phase.`);
+    //     alert(`无法在 ${gameState.gamePhase} 阶段执行此动作！`);
+    //     return;
+    // }
+
+
+    console.log(`GM: Invoking SignalR Hub method 'SendGameAction' with GameID: ${gameState.gameId}, Action:`, actionData);
+    try {
+        // Invoke the generic server method. Server uses actionData.actionType to route internally.
+        await signalRConnection.invoke("SendGameAction", gameState.gameId, actionData);
+
+        // Wait for server events triggered by this action via processGameEvent.
+        console.log(`GM: 'SendGameAction' (${actionData.actionType}) invocation sent successfully. Waiting for server response...`);
+        alert(`正在执行动作: ${actionData.actionType}...`); // Generic feedback
+
+    } catch (err) {
+        console.error(`GM: SignalR 'SendGameAction' (${actionData.actionType}) invocation failed:`, err);
+        let errorMessage = "服务器通信错误";
+        if (err && err.message) {
+            // Try to extract a more specific error from potential HubException
+             errorMessage = err.message.split(': ').pop() || err.message;
+        }
+        alert(`执行动作 (${actionData.actionType}) 失败：${errorMessage}`);
+        // Optionally clear selection state if applicable based on actionType (e.g., clear selected attacker on attack fail)
+        // if(actionData.actionType === 'Attack') { gameState.selectedAttackerUid = null; renderGame(gameState); }
+    }
+}
+
+// Export the necessary functions/variables
+// REMOVED export block - functions are now exported directly at definition.
+
+/**
+ * Updates the entire local game state based on a full state object received from the server.
+ * This is typically used for the initial state synchronization.
+ * @param {object} serverState - The complete game state object from the server.
+ */
+export function updateFullGameState(serverState) {
+    console.log("GAME MANAGER: Receiving full game state update from server.", serverState);
+
+    if (!serverState || !serverState.players || !serverState.gameId) {
+        console.error("GAME MANAGER: Received invalid or incomplete full game state object:", serverState);
+        alert("错误：收到无效的游戏状态数据！");
+        return;
+    }
+
+    // Deep merge or careful assignment is needed if local state has properties server doesn't send.
+    // For now, assuming serverState is the complete source of truth for shared properties.
+    // We preserve local-only properties like signalRConnection if they exist outside gameState.
+
+    // Merge the server state into the local gameState
+    Object.assign(gameState, serverState);
+
+    // --- Crucial: Update player references after assigning players array ---
+    // The players array from serverState now replaces the old one.
+    // Find the active and opponent player *instances* within the *new* players array.
+    gameState.activePlayer = gameState.players.find(p => p && p.playerId === gameState.currentPlayerId) || null;
+    gameState.opponentPlayer = gameState.players.find(p => p && p.playerId !== gameState.currentPlayerId) || null;
+
+    // Add detailed logging to verify player references
+    if (gameState.activePlayer) {
+        console.log(`GM: Updated activePlayer reference to Player ID: ${gameState.activePlayer.playerId}`);
+    } else {
+        console.warn(`GM: Could not find active player instance for ID: ${gameState.currentPlayerId} after full state update.`);
+    }
+    if (gameState.opponentPlayer) {
+        console.log(`GM: Updated opponentPlayer reference to Player ID: ${gameState.opponentPlayer.playerId}`);
+    } else {
+        // This might be normal in a single-player context initially if opponent reference isn't needed immediately
+        console.warn(`GM: Could not find opponent player instance after full state update (might be expected).`);
+    }
+
+
+    // Additional sanity checks/logging:
+    console.log(`GM: Full state update complete. CurrentTurn=${gameState.turnNumber}, CurrentPlayer=${gameState.currentPlayerId}, Phase=${gameState.gamePhase}`);
+    console.log("GM: Active Player Hand:", gameState.activePlayer?.hand); // Log hand to check card data
+
+    // Ensure the UI is re-rendered with the fully updated state
+    if (typeof renderGame === 'function') {
+        console.log("GAME MANAGER: Rendering game after full state update.");
+        renderGame(gameState); // Pass the updated complete gameState
+    } else {
+        console.error("GAME MANAGER: renderGame function is not available for UI update after full state update.");
+    }
+}
+
+
+// TODO: Add other exports here later if needed (e.g., processGameEvent) - Updated export list

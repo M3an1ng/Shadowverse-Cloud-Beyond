@@ -3,7 +3,7 @@
 import { getCardDefinition } from './cardManager.js'; // 获取卡牌定义
 // 导入依赖
 // MODIFIED: Added getPlayerState, getCurrentPlayerId, findCardInstanceByUid, executeAttack
-import { playCard, handleMulligan, getPlayerState, getCurrentPlayerId, findCardInstanceByUid, executeAttack, evolveCard } from './gameManager.js'; // 添加 evolveCard
+import { playCard, getPlayerState, getCurrentPlayerId, findCardInstanceByUid, sendGameAction, evolveCard, submitMulligan } from './gameManager.js'; // handleMulligan, executeAttack removed, sendGameAction/submitMulligan added
 import { endTurn } from './turnManager.js'; // 结束回合
 
 // TODO: Move constants like MAX_FIELD_SIZE to a dedicated constants.js file
@@ -271,10 +271,15 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
         }
 
         try {
-             console.log(`AI: Calling executeAttack with Attacker UID: ${currentAttackerState.uid}, Target UID: ${target.uid}`);
-            executeAttack(currentAttackerState.uid, target.uid); // Use imported function from gameManager
-             console.log(`AI: Attack initiated successfully by ${currentAttackerState.name} on ${target.name}.`);
-            // executeAttack is responsible for setting canAttack = false on the attacker instance in gameState
+            console.log(`AI: Requesting Attack via sendGameAction. Attacker UID: ${currentAttackerState.uid}, Target UID: ${target.uid}`);
+            const attackActionData = {
+                actionType: "Attack",
+                attackerUid: currentAttackerState.uid,
+                targetUid: target.uid
+            };
+            sendGameAction(attackActionData); // Use imported function from gameManager
+            // Server will handle attack execution and update canAttack status via events.
+            // No immediate state change here.
         } catch (error) {
              console.error(`AI: Error executing attack for ${currentAttackerState.name} on ${target.name}:`, error);
         }
@@ -292,7 +297,8 @@ export function performAIMulligan(aiPlayerState) {
     if (!aiPlayerState || !aiPlayerState.hand) {
         console.error("AI Mulligan Error: Invalid AI player state provided.");
         // Call handleMulligan with empty array to signal completion without replacement
-        handleMulligan(aiPlayerState?.id || 'player2', []);
+        // Call submitMulligan with empty array to signal completion without replacement (via SignalR)
+        submitMulligan([]); // Use imported submitMulligan
         return;
     }
 
@@ -308,11 +314,11 @@ export function performAIMulligan(aiPlayerState) {
 
     // Call the handleMulligan function from gameManager
     try {
-        handleMulligan(aiPlayerState.id, uidsToReplace);
+        submitMulligan(uidsToReplace); // Use imported submitMulligan
         console.log(`AI [${aiPlayerState.id}]: Mulligan request submitted.`);
     } catch (error) {
         console.error(`AI [${aiPlayerState.id}]: Error calling handleMulligan:`, error);
         // Failsafe: Still signal completion even if call fails
-        handleMulligan(aiPlayerState.id, []);
+        submitMulligan([]); // Use imported submitMulligan as failsafe
     }
 }

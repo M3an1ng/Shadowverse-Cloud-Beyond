@@ -1,0 +1,32 @@
+// File: Server/Dtos/UnitStateDto.cs
+using System;
+using System.Collections.Generic;
+
+namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
+{
+    /// <summary>
+    /// Data Transfer Object representing the state of a unit (Follower or Amulet) on the battlefield.
+    /// </summary>
+    public record UnitStateDto
+    {
+        // Instance specific
+        public Guid Uid { get; init; } // Unique instance identifier
+        public string CardId { get; init; } = string.Empty; // Definition ID
+        public string Name { get; init; } = string.Empty; // Copied from definition for display
+        public string Type { get; init; } = string.Empty; // "Follower" or "Amulet"
+
+        // State for Followers (null for Amulets?)
+        public int? CurrentAttack { get; set; } // Current attack value including buffs/debuffs
+        public int? MaxAttack { get; init; }    // Base attack + permanent buffs (can change?)
+        public int? CurrentHealth { get; set; } // Current health value including damage
+        public int? MaxHealth { get; init; }    // Base health + permanent buffs (can change?)
+        public bool CanAttack { get; set; }     // Whether the unit can currently initiate an attack
+        public bool IsEvolved { get; set; }     // Evolution status
+        public int AttackCountThisTurn { get; set; } // Tracks attacks made this turn
+
+        // Common State / Keywords
+        public List<string> Keywords { get; set; } = new(); // Current active keywords (e.g., Ward)
+
+        // Add other state properties as needed (e.g., status effects, last turn attacked)
+    }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "shadowverse-beyond",
+  "version": "1.0.0",
+  "description": "Shadowverse-Cloud-Beyond",
+  "main": "script.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/q9q9qq92007/Shadowverse-Cloud-Beyond.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/q9q9qq92007/Shadowverse-Cloud-Beyond/issues"
+  },
+  "homepage": "https://github.com/q9q9qq92007/Shadowverse-Cloud-Beyond#readme",
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.7"
+  }
+}

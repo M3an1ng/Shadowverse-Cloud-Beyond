@@ -1,19 +1,48 @@
+using Microsoft.Extensions.DependencyInjection; // Added for CreateScope, GetRequiredService
+using Microsoft.Extensions.Logging;         // Added for ILogger
+using System.IO;                             // Added for Path, File
+using System.Linq;                           // Added for AnyAsync, Select
+using System.Collections.Generic;            // Added for List<> in DTOs
+using Server.Domain.Entities; // Added to resolve CardDefinition class
 using Microsoft.Extensions.FileProviders; // Added for PhysicalFileProvider
 using System.Text.Json; // Needed for JsonSerializer
 using System.Text.Json.Serialization; // Needed for JsonPropertyName attribute
+using ShadowverseBeyond.Server.Services; // Corrected namespace for GameService
+using Microsoft.EntityFrameworkCore; // Added for DbContext
+using Server.Infrastructure.Data;   // Added for ApplicationDbContext
+// Using statements for the new layers based on recent file creation
+using Server.Application.Interfaces;
+using Server.Application.Services;
+using Server.Domain.Interfaces;
+using Server.Infrastructure.Persistence;
+// using Server.Domain.Entities; // Line 6 already includes this, no need to duplicate
+using ShadowverseBeyond.Server.Hubs; // Corrected namespace for GameHub
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer(); // Use standard .NET 8 methods
+builder.Services.AddSwaggerGen();       // Use standard .NET 8 methods
 
+builder.Services.AddScoped<IGameService, GameService>(); // Added DI registration
+
+// Register Repository and Service for Card Data
+builder.Services.AddScoped<ICardRepository, EFCardRepository>();
+builder.Services.AddScoped<ICardService, CardService>();
+
+// Register ApplicationDbContext with SQLite
+// Reads connection string from configuration ("DefaultConnection") or defaults to Data/shadowverse.db
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db"));
+builder.Services.AddSignalR(); // Added for SignalR support
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();   // Use standard .NET 8 middleware
+    app.UseSwaggerUI(); // Use standard .NET 8 middleware
 }
 
 // Serve default files (like index.html) from the configured web root
@@ -58,96 +87,91 @@ app.MapGet("/weatherforecast", () =>
 
 // --- Card Data API Endpoint ---
 var cardDataPath = Path.Combine(builder.Environment.ContentRootPath, "..", "data", "card_data.json");
-List<CardDefinition>? cardDatabase = null; // Cache the data after first read
+// List<CardDefinition>? cardDatabase = null; // Removed unused variable (Warning CS0219)
 
-app.MapGet("/api/cards", async (HttpContext context) =>
+app.MapGet("/api/cards", async (ICardService cardService, ILogger<Program> logger) => // Inject ICardService
 {
-    // Read and cache data on first request (simple caching)
-    if (cardDatabase == null)
+    try
     {
-        try
-        {
-            using FileStream jsonStream = File.OpenRead(cardDataPath);
-            // Use options if needed, e.g., for case sensitivity, but JsonPropertyName handles snake_case/camelCase diffs
-            cardDatabase = await JsonSerializer.DeserializeAsync<List<CardDefinition>>(jsonStream) ?? new List<CardDefinition>();
-            Console.WriteLine($"Successfully loaded {cardDatabase.Count} card definitions.");
-        }
-        catch (FileNotFoundException)
-        {
-            Console.WriteLine($"Error: Card data file not found at {cardDataPath}");
-            context.Response.StatusCode = 500; // Internal Server Error
-            await context.Response.WriteAsync("Card data file not found.");
-            return Results.StatusCode(500); // Return error using Results helper
-        }
-        catch (JsonException ex)
-        {
-            Console.WriteLine($"Error: Failed to deserialize card data. {ex.Message}");
-            context.Response.StatusCode = 500; // Internal Server Error
-            await context.Response.WriteAsync("Failed to parse card data.");
-            return Results.StatusCode(500);
-        }
-        
-         catch (Exception ex)
-        {
-            Console.WriteLine($"Error loading card data: {ex.Message}");
-             context.Response.StatusCode = 500; // Internal Server Error
-            await context.Response.WriteAsync("An unexpected error occurred while loading card data.");
-            return Results.StatusCode(500);
-        }
+        logger.LogInformation("API endpoint /api/cards called.");
+        var cards = await cardService.GetAllCardsAsync();
+        logger.LogInformation("Returning {CardCount} cards from /api/cards.", cards?.Count() ?? 0);
+        return Results.Ok(cards);
     }
-
-    // Return the cached data (or an empty list if loading failed initially but wasn't caught by return above)
-    return Results.Ok(cardDatabase ?? new List<CardDefinition>());
-
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "An error occurred while handling /api/cards request.");
+        // Return a generic server error response
+        return Results.Problem("An unexpected error occurred while retrieving card data.");
+    }
 })
 .WithName("GetCardData");
 // --- End Card Data API Endpoint ---
 
 // --- M3 API Endpoints ---
-app.MapPost("/api/game/playCard", (PlayCardRequest request) => {
-    // TODO: Implement actual game logic here (Validation, State Update)
-    Console.WriteLine($"[API SERVER] Received playCard request: Card={request.CardUid}, Target={request.TargetUid}");
-    // Placeholder: Always return success for now
-    return Results.Ok(new { success = true });
-});
+// // --- M3 API Endpoints (Replaced by SignalR) ---
+// app.MapPost("/api/game/playCard", async (PlayCardRequest request, IGameService gameService) => {
+//     // Delegate the work to the service
+//     var response = await gameService.HandlePlayCardAsync(request);
+//
+//     if (response.Success)
+//     {
+//         // In M4+, response would contain the updated game state to return
+//         // For M3, just return the success status (or the simple response object)
+//         return Results.Ok(response);
+//     }
+//     else
+//     {
+//         // Return a Bad Request or other appropriate error code
+//         return Results.BadRequest(response);
+//     }
+// })
+// .WithName("PlayCard") // Optional: OpenAPI metadata
+// .WithTags("GameActions"); // Optional: OpenAPI metadata
+// // --- End M3 API Endpoints ---
 // --- End M3 API Endpoints ---
 
+// Map SignalR Hub
+app.MapHub<GameHub>("/gamehub");
 
 
 
+// ============================================================
+// Apply migrations and Seed the database on startup
+// ============================================================
+try
+{
+    // Create a scope to resolve services
+    using (var scope = app.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
+        var logger = services.GetRequiredService<ILogger<Program>>(); // Use a generic logger for Program
+        var context = services.GetRequiredService<ApplicationDbContext>();
+        var cardDataPathForSeeding = Path.Combine(builder.Environment.ContentRootPath, "..", "data", "card_data.json"); // Get path for seeding
+
+        // Apply pending migrations automatically
+        logger.LogInformation("Applying database migrations (if any)...");
+        context.Database.Migrate(); // Applies pending migrations or does nothing if up-to-date
+        logger.LogInformation("Database migrations applied successfully.");
+
+        // Seed the database using the static DataSeeder class
+        await DataSeeder.SeedDatabaseAsync(app); // Call the new static method, pass the app instance
+    }
+}
+catch (Exception ex)
+{
+    // Use the application's logger instance directly if scope creation fails or during seeding
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogError(ex, "An error occurred during database migration or seeding.");
+    // Depending on the severity, you might want to stop the application:
+    // Environment.Exit(1);
+}
 app.Run();
 
 // --- C# Records ---
 
-// Represents a single effect definition within a card's effects array
-public record CardEffect(
-    [property: JsonPropertyName("trigger")] string Trigger,
-    [property: JsonPropertyName("action")] string Action,
-    // Value might be int or other types depending on action, using object and checking later might be safer
-    // For now, assuming int based on current data. If other types appear, change to object or handle specific actions.
-    [property: JsonPropertyName("value")] int Value
-);
-
-// Represents a card definition from card_data.json
-public record CardDefinition(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("cost")] int Cost,
-    [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("attack")] int? Attack, // Nullable for non-followers
-    [property: JsonPropertyName("health")] int? Health, // Nullable for non-followers
-    [property: JsonPropertyName("description")] string? Description,
-    [property: JsonPropertyName("keywords")] List<string> Keywords,
-    // Effects might be null or empty, handle gracefully
-    [property: JsonPropertyName("effects")] List<CardEffect>? Effects,
-    [property: JsonPropertyName("art")] string? Art,
-    [property: JsonPropertyName("isEvolved")] bool IsEvolved,
-    [property: JsonPropertyName("can_evolve")] bool CanEvolve,
-    [property: JsonPropertyName("evolves_into")] List<string>? EvolvesInto,
-    [property: JsonPropertyName("is_evolved_form_of")] string? IsEvolvedFormOf,
-    [property: JsonPropertyName("requiresTarget")] bool? RequiresTarget,
-    [property: JsonPropertyName("validTargets")] List<string>? ValidTargets
-);
+// Removed CardEffect and CardDefinition records from here as they conflict with Entities/Definitions
+// and should reside in separate files.
 
 // Represents the weather forecast data
 record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
@@ -156,7 +180,9 @@ record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 }
 
 // --- M3 API Models ---
-record PlayCardRequest(string CardUid, string? TargetUid);
+// Removed duplicate PlayCardRequest record definition from here.
+// It is now defined in Server/Services/IGameService.cs
 
 // --- End C# Records ---
+
 

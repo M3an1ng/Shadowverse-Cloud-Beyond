@@ -5,9 +5,23 @@
 // import { playCard, initiateAttack, selectAttackTarget, evolveCard } from './gameManager.js'; // 调用动作
 
 // Import necessary functions and the gameState object
-import { gameState, playCard, findCardInstanceByUid, getCurrentPlayerId, getPlayerState, initiateAttack, selectAttackTarget, cancelSelection, evolveCard, handleMulligan, isValidSpellTarget } from './gameManager.js'; // Added targeting utils, removed getCardDefinition
+import {
+    gameState,
+    playCard,
+    findCardInstanceByUid,
+    getCurrentPlayerId,
+    getPlayerState,
+    initiateAttack,
+    selectAttackTarget,
+    cancelSelection,
+    evolveCard,
+    // handleMulligan, // Removed import - Now uses submitMulligan
+    isValidSpellTarget,
+    submitMulligan, // Added import for SignalR mulligan submission
+    endTurnRequest  // Added import for SignalR end turn request
+} from './gameManager.js';
 import { getCardDefinition } from './cardManager.js'; // Import card data helper
-import { endTurn } from './turnManager.js';
+// import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 console.log("ui.js loaded");
 
 export { renderGame, showDamageNumber };
@@ -107,6 +121,7 @@ if (document.readyState === 'loading') {
 // --- 主渲染函数 ---
 // 接收完整的 gameState 作为参数
 function renderGame(currentGameState) {
+console.log("UI Received Game State:", JSON.stringify(currentGameState, null, 2)); // 打印接收到的完整状态
     console.log("UI: renderGame called");
     if (!currentGameState || !currentGameState.players || currentGameState.players.length < 2) {
         // 游戏状态无效，可能在初始化阶段，或者出错
@@ -116,8 +131,8 @@ function renderGame(currentGameState) {
     }
 
     // 假设 gameManager.gameState.players 存储了 player 对象
-    const player1 = currentGameState.players.find(p => p.id === 'player1'); // 需要确保 player 对象存在
-    const player2 = currentGameState.players.find(p => p.id === 'player2');
+    const player1 = currentGameState.players.find(p => p.playerId === 'player1'); // 使用 playerId
+    const player2 = currentGameState.players.find(p => p.playerId === 'player2'); // 使用 playerId
 
     if(!player1 || !player2) {
         console.error("UI: Could not find player objects in gameState for rendering.");
@@ -366,8 +381,9 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         ${
             // 仅为随从显示攻击力和生命值区域
             (cardInstance.type === 'Follower' || cardInstance.type === 'Follower_Evolved') ?
+            // Use baseAttack and baseHealth from the DTO received from server
             `<div class="stats">
-                <span class="attack">${cardInstance.currentAttack ?? '?'}</span>/<span class="health">${cardInstance.currentHealth ?? '?'}</span>
+                <span class="attack">${cardInstance.baseAttack ?? '?'}</span>/<span class="health">${cardInstance.baseHealth ?? '?'}</span>
             </div>`
             : '' // 法术和护符不显示 stats 区域
         }
@@ -680,7 +696,7 @@ function handleGameClick(event) {
 
             // Call handleMulligan from gameManager
             if (typeof handleMulligan === 'function') {
-                handleMulligan('player1', selectedUids); // Pass player ID and selected UIDs
+                submitMulligan(selectedUids); // Call new SignalR wrapper
             } else {
                 console.error("UI Error: handleMulligan function is not available/imported!");
                 alert("错误：调度功能未加载！");
@@ -712,7 +728,7 @@ function handleGameClick(event) {
         if (clickedEndTurnButton) {
             console.log("UI: End Turn button clicked!");
             if (typeof endTurn === 'function') {
-                endTurn(); // Call the imported function
+                endTurnRequest(); // Call new SignalR wrapper
             } else {
                 console.error("UI Error: endTurn function is not available/imported!");
                 alert("Error: End Turn functionality not loaded.");

@@ -2,7 +2,6 @@
 
 // 导入依赖 (稍后需要)
 import { createCardInstance } from './cardManager.js'; // Needed for drawCard
-import { checkGameOver } from './gameManager.js'; // Import checkGameOver for deck out
 
 console.log("player.js loaded");
 
@@ -88,7 +87,9 @@ export function createPlayer(id, isAI = false) {
                 if (this.deck.length === 0) {
                     console.warn(`Player ${this.id}: Deck is empty! Cannot draw. Triggering game over.`);
                     // Trigger game over immediately with 'deck_out' reason
-                    checkGameOver(this.id, '牌库抽空'); // Call the modified checkGameOver
+                    // TODO: Implement proper game over handling (triggered by server ideally)
+                    // For now, just log and return, preventing infinite draw loops.
+                    console.error(`Player ${this.id} triggered DECK OUT condition! Game should end.`);
                     return drawnCards; // Exit the drawCard function immediately after triggering game over
                 }
                 if (this.hand.length >= this.maxHandSize) {
