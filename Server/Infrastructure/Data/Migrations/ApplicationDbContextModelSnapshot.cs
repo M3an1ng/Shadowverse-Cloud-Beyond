@@ -3,7 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Infrastructure.Data;
 
 #nullable disable
 
@@ -17,7 +17,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.0");
 
-            modelBuilder.Entity("Server.Domain.Entities.CardDefinition", b =>
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
@@ -35,7 +35,16 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
                     b.Property<string>("EffectsJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("EvolveId")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("Health")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsCollectible")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEvolved")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Keywords")

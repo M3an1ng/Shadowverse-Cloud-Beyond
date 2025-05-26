@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using Server.Domain.Entities; // To access CardDefinition
+using ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
 
-namespace Server.Infrastructure.Data;
+namespace ShadowverseBeyond.Server.Infrastructure.Data; // Added ShadowverseBeyond prefix
 
 /// <summary>
 /// Represents the database context for the application, interfacing with EF Core.
@@ -52,6 +52,6 @@ public class ApplicationDbContext : DbContext
         //     .Property(e => e.EffectsJson)
         //     .HasColumnType("TEXT");
 
-         // Add configuration for other entities or complex property mappings here later.
+        // Add configuration for other entities or complex property mappings here later.
     }
 }

@@ -2,21 +2,22 @@ using Microsoft.Extensions.DependencyInjection; // Added for CreateScope, GetReq
 using Microsoft.Extensions.Logging;         // Added for ILogger
 using System.IO;                             // Added for Path, File
 using System.Linq;                           // Added for AnyAsync, Select
-using System.Collections.Generic;            // Added for List<> in DTOs
-using Server.Domain.Entities; // Added to resolve CardDefinition class
-using Microsoft.Extensions.FileProviders; // Added for PhysicalFileProvider
-using System.Text.Json; // Needed for JsonSerializer
-using System.Text.Json.Serialization; // Needed for JsonPropertyName attribute
-using ShadowverseBeyond.Server.Services; // Corrected namespace for GameService
-using Microsoft.EntityFrameworkCore; // Added for DbContext
-using Server.Infrastructure.Data;   // Added for ApplicationDbContext
-// Using statements for the new layers based on recent file creation
-using Server.Application.Interfaces;
-using Server.Application.Services;
-using Server.Domain.Interfaces;
-using Server.Infrastructure.Persistence;
-// using Server.Domain.Entities; // Line 6 already includes this, no need to duplicate
-using ShadowverseBeyond.Server.Hubs; // Corrected namespace for GameHub
+using System.Collections.Generic;
+using Microsoft.Extensions.FileProviders;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
+
+// --- ShadowverseBeyond Namespaces ---
+using ShadowverseBeyond.Server.Domain.Entities;         // Added Correct
+using ShadowverseBeyond.Server.Domain.Interfaces;         // Existing Correct (was line 19)
+// Removed using for Application layer
+// Removed using for Application layer
+using ShadowverseBeyond.Server.Infrastructure.Data;       // Added Correct
+using ShadowverseBeyond.Server.Infrastructure.Persistence; // Existing Correct (was line 20)
+using ShadowverseBeyond.Server.Hubs;                    // Existing Correct (was line 22)
+using ShadowverseBeyond.Server.Services;               // Added for IGameService (located in Services namespace for now)
+// Removed all incorrect 'using Server.*' statements
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,17 +26,36 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer(); // Use standard .NET 8 methods
 builder.Services.AddSwaggerGen();       // Use standard .NET 8 methods
 
-builder.Services.AddScoped<IGameService, GameService>(); // Added DI registration
+// Explicitly specify the implementation namespace to resolve ambiguity
+// CRITICAL FIX: GameService holds shared game state (_gameStates), must be Singleton.
+builder.Services.AddSingleton<IGameService, ShadowverseBeyond.Server.Services.GameService>(); // Changed from AddScoped to AddSingleton
 
 // Register Repository and Service for Card Data
-builder.Services.AddScoped<ICardRepository, EFCardRepository>();
-builder.Services.AddScoped<ICardService, CardService>();
+builder.Services.AddScoped<ICardRepository, EFCardRepository>(); // Keep as Scoped due to DbContext dependency
+// Removed ICardService registration (Controller will use ICardRepository directly)
+builder.Services.AddSingleton<IGameStateManager, InMemoryGameStateManager>(); // Register InMemoryGameStateManager as singleton
 
 // Register ApplicationDbContext with SQLite
 // Reads connection string from configuration ("DefaultConnection") or defaults to Data/shadowverse.db
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db"));
-builder.Services.AddSignalR(); // Added for SignalR support
+// Configure System.Text.Json serialization options globally to handle enums as strings
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
+{
+    // Removed WriteIndented setting as 'app' is not available here. Set elsewhere if needed.
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    // Add other global options if needed, e.g.:
+    // options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+});
+
+// Add SignalR services and explicitly configure its JSON protocol to use the string enum converter
+// (Applying both global Http.Json.JsonOptions and specific SignalR protocol config)
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        // Ensure SignalR's specific protocol options also include the converter
+        options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -73,7 +93,7 @@ var summaries = new[]
 
 app.MapGet("/weatherforecast", () =>
 {
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
+    var forecast = Enumerable.Range(1, 5).Select(index =>
         new WeatherForecast
         (
             DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
@@ -89,14 +109,16 @@ app.MapGet("/weatherforecast", () =>
 var cardDataPath = Path.Combine(builder.Environment.ContentRootPath, "..", "data", "card_data.json");
 // List<CardDefinition>? cardDatabase = null; // Removed unused variable (Warning CS0219)
 
-app.MapGet("/api/cards", async (ICardService cardService, ILogger<Program> logger) => // Inject ICardService
+// Inject ICardRepository directly instead of ICardService
+app.MapGet("/api/cards", async (ICardRepository cardRepository, ILogger<Program> logger) =>
 {
     try
     {
         logger.LogInformation("API endpoint /api/cards called.");
-        var cards = await cardService.GetAllCardsAsync();
+        // Use the repository directly
+        var cards = await cardRepository.GetAllAsync(); // Assuming GetAllAsync is the correct method on ICardRepository
         logger.LogInformation("Returning {CardCount} cards from /api/cards.", cards?.Count() ?? 0);
-        return Results.Ok(cards);
+        return Results.Ok(cards ?? System.Linq.Enumerable.Empty<CardDefinition>()); // Handle potential null from repo
     }
     catch (Exception ex)
     {

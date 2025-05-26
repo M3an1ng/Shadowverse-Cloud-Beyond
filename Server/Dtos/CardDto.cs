@@ -11,13 +11,13 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     public record CardDto
     {
         // Instance specific
-        public Guid Uid { get; init; } = Guid.NewGuid(); // Unique instance identifier
+        public string Uid { get; init; } = string.Empty; // Unique instance identifier (Changed from Guid to string)
 
         // Definition based (copied from CardDefinition or source)
         public string CardId { get; init; } = string.Empty; // Definition ID (e.g., "S001")
         public string Name { get; init; } = string.Empty;
         public string Type { get; init; } = string.Empty; // e.g., "Follower", "Spell", "Amulet"
-        public int Cost { get; init; }
+        public int Cost { get; init; } // Current cost (considering modifications), mapped from CardState.CurrentCost
         public int? BaseAttack { get; init; } // Base value from definition
         public int? BaseHealth { get; init; } // Base value from definition
         public List<string> Keywords { get; init; } = new();

@@ -5,7 +5,7 @@ using System.Linq; // Required for .Any()
 using System.Text.Json; // Keep for CardEffect record
 using System.Text.Json.Serialization; // Keep for CardEffect record
 
-namespace Server.Domain.Entities;
+namespace ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
 
 // Represents the structure of an effect as stored in JSON
 // Consider moving to a shared DTOs location if reused extensively.
@@ -69,6 +69,22 @@ public class CardDefinition
     /// </summary>
     public string? EffectsJson { get; set; }
 
+    /// <summary>
+    /// Indicates if this card definition represents a base, collectible form (true)
+    /// intended for deck building, or a derived form like an evolved state (false).
+    /// </summary>
+    public bool IsCollectible { get; set; } = true; // Default to true
+
+    /// <summary>
+    /// Indicates if this card definition represents the evolved form of a follower (true).
+    /// Base forms and non-follower cards should have this as false.
+    /// </summary>
+    public bool IsEvolved { get; set; } = false; // Default to false
+
+    /// <summary>
+    /// The ID of the card this card evolves into. Null if this card cannot evolve or is already evolved.
+    /// </summary>
+    public string? EvolveId { get; set; }
     /// <summary>
     /// Gets or sets the list of card effects. Handled in code, not directly mapped to DB.
     /// Populates EffectsJson property when set.

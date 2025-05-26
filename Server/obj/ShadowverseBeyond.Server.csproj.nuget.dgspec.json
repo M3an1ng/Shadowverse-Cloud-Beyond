@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj": {}
+    "d:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj": {}
   },
   "projects": {
-    "D:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj": {
+    "d:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj",
+        "projectUniqueName": "d:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj",
         "projectName": "ShadowverseBeyond.Server",
-        "projectPath": "D:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj",
+        "projectPath": "d:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj",
         "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
-        "outputPath": "D:\\workspace\\Shadowverse-beyond\\Server\\obj\\",
+        "outputPath": "d:\\workspace\\Shadowverse-beyond\\Server\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Administrator\\AppData\\Roaming\\NuGet\\NuGet.Config"

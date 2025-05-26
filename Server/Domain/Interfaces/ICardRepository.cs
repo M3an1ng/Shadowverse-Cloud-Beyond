@@ -1,8 +1,8 @@
-using Server.Domain.Entities; // Assuming CardDefinition is within Server project structure
+using ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
-namespace Server.Domain.Interfaces
+namespace ShadowverseBeyond.Server.Domain.Interfaces // Added ShadowverseBeyond prefix
 {
     /// <summary>
     /// Interface for accessing card data.
@@ -15,7 +15,7 @@ namespace Server.Domain.Interfaces
         /// <returns>A task that represents the asynchronous operation. The task result contains a collection of all card definitions.</returns>
         Task<IEnumerable<CardDefinition>> GetAllAsync();
 
-/// <summary>
+        /// <summary>
         /// Retrieves a specific card definition by its ID asynchronously.
         /// </summary>
         /// <param name="id">The ID of the card definition to retrieve.</param>

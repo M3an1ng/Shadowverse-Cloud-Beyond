@@ -1,7 +1,7 @@
 // File: ShadowverseBeyond.Server.Hubs.ClientInterfaces.IGameClient.cs
-using ShadowverseBeyond.Server.Dtos.SignalR; // Correct DTO namespace
+using ShadowverseBeyond.Server.Dtos; // For GameStateDto etc.
+using ShadowverseBeyond.Server.Dtos.SignalR.Events; // <<< USE EVENTS NAMESPACE for GameEventDto and specific events
 using System.Threading.Tasks;
-using ShadowverseBeyond.Server.Dtos; // Add for GameStateDto etc.
 
 namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
 {
@@ -13,24 +13,24 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
     {
         /// <summary>
         /// Sends a specific game event DTO to the client.
-        /// The client should inspect the EventType of the DTO to determine how to process it.
+        /// The client should inspect the Type property of the DTO to determine how to process it.
         /// </summary>
-        /// <param name="gameEvent">The event data.</param>
-        Task ReceiveGameEvent(GameEventDto gameEvent);
+        /// <param name="gameEvent">The event data (base class from .Events namespace).</param>
+        Task ReceiveGameEvent(GameEventDto gameEvent); // Should now resolve to Events.GameEventDto due to using statement
 
         /// <summary>
         /// Sends an error message related to game logic or player action to the client.
         /// </summary>
         /// <param name="errorMessage">The error message content.</param>
         Task ReceiveError(string errorMessage);
-/// &lt;summary&gt;
+        /// <summary>
         /// Notifies the client that a unit (follower) has been played onto the board.
-        /// &lt;/summary&gt;
+        /// </summary>
         Task UnitPlayed(UnitPlayedEventDto eventDto);
 
-        /// &lt;summary&gt;
+        /// <summary>
         /// Notifies the client of an update to a player's Play Points (PP).
-        /// &lt;/summary&gt;
+        /// </summary>
         Task PpUpdate(PpUpdateEventDto eventDto);
 
         // --- Methods requiring DTOs not yet created (Commented out for now) ---

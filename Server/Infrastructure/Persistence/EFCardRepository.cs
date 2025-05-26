@@ -1,11 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using Server.Domain.Entities; // Assuming CardDefinition entity is here
-using Server.Domain.Interfaces; // The interface we just created
-using Server.Infrastructure.Data; // Assuming ApplicationDbContext is here
+using ShadowverseBeyond.Server.Domain.Entities; // Corrected prefix was already applied (Good!)
+using ShadowverseBeyond.Server.Domain.Interfaces; // Corrected prefix was already applied (Good!)
+using ShadowverseBeyond.Server.Infrastructure.Data; // Corrected prefix was already applied (Good!)
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
-namespace Server.Infrastructure.Persistence
+namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefix was already applied (Good!)
 {
     /// <summary>
     /// Entity Framework Core implementation of the card repository.

@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,7 +11,7 @@ using Microsoft.AspNetCore.Builder; // Needed for WebApplication extension metho
 using System;                   // Needed for Exception
 using Microsoft.Extensions.Hosting; // Needed for IHostEnvironment via WebApplication
 
-namespace Server.Infrastructure.Data
+namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyond prefix
 {
     // DTO matching the structure of data/card_data.json
     // Kept internal as they are only used within this seeding process
@@ -48,7 +48,7 @@ namespace Server.Infrastructure.Data
         public string Action { get; set; } = null!;
         public int? Value { get; set; }
     }
-public static class DataSeeder
+    public static class DataSeeder
     {
         // Changed signature to accept WebApplication for easier service/environment access
         public static async Task SeedDatabaseAsync(WebApplication app)
@@ -68,7 +68,8 @@ public static class DataSeeder
 
 
                 var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var entityJsonOptions = new JsonSerializerOptions {
+                var entityJsonOptions = new JsonSerializerOptions
+                {
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 };
@@ -99,8 +100,8 @@ public static class DataSeeder
 
                     if (cardDtos == null || !cardDtos.Any())
                     {
-                         logger.LogWarning("No card data found after deserializing {FilePath}, or the file format is incorrect.", jsonFilePath);
-                         return;
+                        logger.LogWarning("No card data found after deserializing {FilePath}, or the file format is incorrect.", jsonFilePath);
+                        return;
                     }
                     logger.LogInformation("Successfully deserialized {Count} card DTOs.", cardDtos.Count);
 
@@ -130,9 +131,9 @@ public static class DataSeeder
                                    .Select(e => new CardEffect( // ...select each EffectDto...
                                        e.Trigger ?? "DefaultTrigger", // Provide default for CardEffect record non-nullable string
                                        e.Action ?? "DefaultAction",   // Provide default for CardEffect record non-nullable string
-                                       e.Value                     // Assign int? to object is okay
+                                       e.Value ?? (object)0 // If e.Value is null, pass boxed 0 // Assign int? to object is okay
                                    )).ToList() // ...and convert to List<CardEffect>
-                                   // If dto.Effects is null, assign null to entity.Effects
+                                               // If dto.Effects is null, assign null to entity.Effects
                                    ?? null
                         // Removed mapping for: KeywordsJson, EffectsJson, Art, IsEvolved, CanEvolve, EvolvesInto, IsEvolvedFormOf, RequiresTarget, ValidTargets
                     }).ToList();
@@ -148,18 +149,18 @@ public static class DataSeeder
                 }
                 catch (JsonException jsonEx)
                 {
-                     logger.LogError(jsonEx, "Error deserializing seed data from {FilePath}. Please check the JSON format.", jsonFilePath);
-                     // Optionally rethrow or handle to prevent app startup? For now, log and continue.
+                    logger.LogError(jsonEx, "Error deserializing seed data from {FilePath}. Please check the JSON format.", jsonFilePath);
+                    // Optionally rethrow or handle to prevent app startup? For now, log and continue.
                 }
                 catch (DbUpdateException dbEx)
                 {
-                     logger.LogError(dbEx, "Error saving seed data to the database. Check database connection, schema, and permissions.");
-                     // Optionally rethrow or handle
+                    logger.LogError(dbEx, "Error saving seed data to the database. Check database connection, schema, and permissions.");
+                    // Optionally rethrow or handle
                 }
                 catch (IOException ioEx)
                 {
                     logger.LogError(ioEx, "Error reading seed data file from {FilePath}.", jsonFilePath);
-                     // Optionally rethrow or handle
+                    // Optionally rethrow or handle
                 }
                 catch (Exception ex)
                 {
