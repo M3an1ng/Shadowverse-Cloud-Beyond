@@ -4,7 +4,9 @@
   "description": "Shadowverse-Cloud-Beyond",
   "main": "script.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build"
   },
   "repository": {
     "type": "git",
@@ -19,5 +21,8 @@
   "homepage": "https://github.com/q9q9qq92007/Shadowverse-Cloud-Beyond#readme",
   "dependencies": {
     "@microsoft/signalr": "^8.0.7"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
   }
 }

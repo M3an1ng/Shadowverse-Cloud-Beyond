@@ -1,4 +1,4 @@
-# M5: SignalR 实时通信设计文档 V1.1
+# M5: SignalR 实时通信设计文档 V1.2
 
 ## 1. 概述 (Overview)
 
@@ -156,6 +156,75 @@ namespace ShadowverseBeyond.Server.Hubs
         }
 
         // ... 其他动作方法，如 PerformAttack, PerformEvolve 等 ...
+/// <summary>
+        /// 客户端调用此方法来请求执行“单位进化”动作。
+        /// </summary>
+        /// <param name="actionDto">包含进化动作所需参数的 DTO (要进化的单位 ID)。</param>
+        public async Task PerformEvolve(EvolveActionDto actionDto)
+        {
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting to evolve unit {UnitId}",
+                    playerId, gameId, actionDto.UnitId);
+
+                // 调用核心游戏逻辑服务处理进化动作
+                await _gameService.EvolveAsync(gameId.ToString(), actionDto);
+
+                _logger.LogInformation("Player {PlayerId} successfully initiated evolving unit {UnitId} in Game {GameId}",
+                    playerId, gameId, actionDto.UnitId);
+            }
+            catch (GameLogicException ex)
+            {
+                _logger.LogWarning("Game Logic Error for Player {PlayerId} in Game {GameId} evolving unit {UnitId}: {Message}",
+                    playerId, gameId, actionDto.UnitId, ex.Message);
+                await Clients.Caller.ReceiveError($"Evolve Error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error processing Evolve for Player {PlayerId} in Game {GameId}, Unit {UnitId}",
+                    playerId, gameId, actionDto.UnitId);
+                await Clients.Caller.ReceiveError("An unexpected server error occurred while evolving the unit.");
+            }
+        }
+
+        /// <summary>
+        /// 客户端调用此方法来请求执行“攻击”动作。
+        /// </summary>
+        /// <param name="actionDto">包含攻击动作所需参数的 DTO (攻击者和目标单位 ID)。</param>
+        public async Task PerformAttack(AttackActionDto actionDto)
+        {
+             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+             if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+             try
+             {
+                 _logger.LogInformation("Player {PlayerId} in Game {GameId} declaring attack: Attacker={AttackerUid}, Target={TargetUid}",
+                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
+
+                 // 调用核心游戏逻辑服务处理攻击动作
+                 await _gameService.AttackAsync(gameId.ToString(), actionDto); // 确保 AttackAsync 接收 ActionDto 或重载
+
+                 _logger.LogInformation("Player {PlayerId} successfully initiated attack: Attacker={AttackerUid}, Target={TargetUid} in Game {GameId}",
+                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
+             }
+             catch (GameLogicException ex)
+             {
+                 _logger.LogWarning("Game Logic Error for Player {PlayerId} in Game {GameId} attacking (Attacker={AttackerUid}, Target={TargetUid}): {Message}",
+                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid, ex.Message);
+                 await Clients.Caller.ReceiveError($"Attack Error: {ex.Message}");
+             }
+             catch (Exception ex)
+             {
+                 _logger.LogError(ex, "Unexpected error processing Attack for Player {PlayerId} in Game {GameId} (Attacker={AttackerUid}, Target={TargetUid})",
+                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
+                 await Clients.Caller.ReceiveError("An unexpected server error occurred during the attack.");
+             }
+        }
+
+        // ... 其他动作方法，如 ... (可以保留或移除这行注释)
 
         // --- 连接管理 ---
 
@@ -184,15 +253,23 @@ namespace ShadowverseBeyond.Server.Hubs
                  _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}, Added to Group={GroupName}",
                      Context.ConnectionId, playerId, gameId, groupName);
 
-                 // 3. (可选) 推送当前游戏状态给新连接者
-                 // 这需要 GameService 提供一个获取特定玩家视角的 DTO 的方法
-                 // GameStateDto currentState = await _gameService.GetGameStateForPlayerAsync(gameId.ToString(), playerId);
-                 // if (currentState != null) {
-                 //    await Clients.Caller.ReceiveGameState(currentState);
-                 // } else {
-                 //    _logger.LogWarning("Could not retrieve initial game state for Player {PlayerId} in Game {GameId}", playerId, gameId);
-                 //    await Clients.Caller.ReceiveError("Failed to load initial game state.");
-                 // }
+                 // 3. 主动推送当前游戏状态给新连接者
+                 // GameService.GetOrCreateGameStateAsync 负责生成或获取状态。
+                 // 推送操作可能由 GameService 内部通过 IHubContext 完成，或由 Hub 在此调用。
+                 // 此处演示 Hub 直接推送的概念流程：
+                 try
+                 {
+                     // 假设 GameService 返回了状态或需要 Hub 推送
+                     // 注意：实际实现中 GetOrCreateGameStateAsync 可能已包含推送逻辑
+                     GameStateDto currentState = await _gameService.GetOrCreateGameStateAsync(gameId.ToString());
+                     await Clients.Caller.ReceiveGameState(currentState);
+                     _logger.LogInformation("Sent initial game state to Player {PlayerId} in Game {GameId}", playerId, gameId);
+                 }
+                 catch (Exception ex)
+                 {
+                     _logger.LogError(ex, "Error getting or sending initial game state for Player {PlayerId} in Game {GameId}", playerId, gameId);
+                     await Clients.Caller.ReceiveError("Failed to load initial game state.");
+                 }
 
                  // TODO M6+: 需要更健壮的连接管理，处理同一玩家多设备连接、断线重连等场景。
                  // 可能需要一个 ConnectionMappingService 来管理 PlayerId <-> ConnectionId 的关系。
@@ -490,6 +567,36 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR
         public int? FieldIndex { get; set; }
 
         // TODO: Add Evolve
+/// <summary>
+    /// DTO for the client action of evolving a unit.
+    /// </summary>
+    public class EvolveActionDto
+    {
+        /// <summary>
+        /// Unique ID of the unit instance on the field to be evolved.
+        /// </summary>
+        public Guid UnitId { get; set; }
+
+        // Note: PlayerId is implicitly obtained from the Hub context.
+    }
+
+    /// <summary>
+    /// DTO for the client action of declaring an attack.
+    /// </summary>
+    public class AttackActionDto
+    {
+        /// <summary>
+        /// Unique ID of the attacking unit instance on the field.
+        /// </summary>
+        public Guid AttackerUid { get; set; }
+
+        /// <summary>
+        /// Unique ID of the target unit instance on the field, or a predefined Guid/null for the opponent leader.
+        /// </summary>
+        public Guid TargetUid { get; set; }
+    }
+
+    // TODO: Add DTOs for target selection response, etc. if needed
 ## 3. 后端实现细节 (Backend Implementation Details)
 
 ### 3.1 GameService 与 SignalR Hub 的交互
@@ -620,10 +727,50 @@ PerformPlayCard`) 直接调用 `GameService`中对应的业务逻辑方法（如
 
 #### 3.4.1 玩家出牌 (无交互)
 
-```mermaid
+````mermaid
 sequenceDiagram
     participant Client
     participant GameHub
+#### 3.4.4 单位进化 (Evolve Unit)
+
+```mermaid
+    sequenceDiagram
+        participant Client
+        participant GameHub
+        participant GameService
+        participant OtherClients
+
+        Client->>+GameHub: PerformEvolve(actionDto)
+        GameHub->>+GameService: EvolveAsync(gameId, actionDto)
+        Note over GameService: 处理进化逻辑 (扣 EP, 检查条件, 获取进化后卡牌, 替换场上单位, 触发进化时效果)
+        GameService-->>-GameHub: (Task completes) // EvolveAsync returns Task, events broadcast via HubContext
+
+        alt 进化成功并产生事件
+            GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, EpUpdateEventDto(...))
+            GameHub->>Client: ReceiveGameEvent(EpUpdateEventDto)
+            GameHub->>OtherClients: ReceiveGameEvent(EpUpdateEventDto)
+
+            GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, StatChangeEventDto(...)) // If stats change
+            GameHub->>Client: ReceiveGameEvent(StatChangeEventDto)
+            GameHub->>OtherClients: ReceiveGameEvent(StatChangeEventDto)
+
+            GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, UnitEvolvedEventDto(...))
+            GameHub->>Client: ReceiveGameEvent(UnitEvolvedEventDto)
+            GameHub->>OtherClients: ReceiveGameEvent(UnitEvolvedEventDto)
+            Note over Client, OtherClients: 接收事件, 更新本地状态/UI
+        end
+        alt 进化失败 (GameLogicException)
+            GameService-->>GameHub: Throws GameLogicException
+            GameHub->>-Client: ReceiveError(errorMessage)
+        end
+        alt 意外错误
+             GameService-->>GameHub: Throws Exception
+             Note over GameHub: Log Error
+             GameHub->>-Client: ReceiveError("Unexpected error...")
+        end
+
+````
+
     participant GameService
     participant OtherClients
 
@@ -650,7 +797,7 @@ sequenceDiagram
          GameHub->>-Client: ReceiveError("Unexpected error...")
     end
 
-```
+````
 
 #### 3.4.2 玩家出牌 (需要目标选择)
 
@@ -687,7 +834,7 @@ sequenceDiagram
         GameHub->>Client: ReceiveError(errorMsg)
     end
 
-```
+````
 
 #### 3.4.3 回合结束与开始
 
@@ -730,15 +877,26 @@ sequenceDiagram
 - **连接 Hub:**
 
   - 使用 `@microsoft/signalr` JavaScript 库（或 Unity 的 C# 客户端库）。
+
+- **构建工具依赖:** 请注意，直接在浏览器中使用 `import * as signalR from "@microsoft/signalr";` 语法需要前端构建工具（如 Vite, Webpack, Rollup 等）的支持来处理模块解析和打包。本项目已根据 [文档/技术文档/M6\_构建工具与开发流程\_V1.0.md](文档/技术文档/M6_构建工具与开发流程_V1.0.md:0) 集成了 Vite 来解决此问题。
+
   - 建立连接时需要提供 Hub 的 URL (e.g., `/gamehub`)。
   - **关键:** 在连接 URL 中传递必要的参数（如 `gameId`, `playerId` 或认证 token），以便后端 `OnConnectedAsync` 进行识别和分组。例如：
+
     ```javascript
     const connection = new signalR.HubConnectionBuilder()
       .withUrl("/gamehub?gameId=" + gameId + "&playerId=" + playerId) // Add parameters
       .configureLogging(signalR.LogLevel.Information)
       .build();
     ```
+
     _(注意：直接在 URL 查询字符串中传递 playerId 可能不安全，最好通过认证 Token)_
+
+    **重要初始化流程:** 客户端在成功连接 SignalR 后，通常会执行以下初始化步骤：
+
+  1.  等待服务器通过 `ReceiveGameState` 推送初始游戏状态。
+  2.  **调用 `/api/cards` 端点 (见 `API_CardsController_V1.0.md`) 获取卡牌定义数据。**
+  3.  使用接收到的游戏状态和卡牌数据完成 UI 的初始渲染。
 
 - **注册服务器方法回调:** 客户端需要注册 `IGameClient` 接口中定义的方法的回调函数。
 

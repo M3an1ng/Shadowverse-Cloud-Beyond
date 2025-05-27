@@ -2,8 +2,8 @@
 console.log("main.js loaded");
 
 // 导入核心模块
-// import * as signalR from "@microsoft/signalr"; // REMOVED: Now using global signalR from CDN
-import { gameState, initializeGame, setSignalRConnection, updateFullGameState } from './gameManager.js'; // ADDED updateFullGameState
+import * as signalR from "@microsoft/signalr";
+import { gameState, initializeGame, setSignalRConnection, updateFullGameState, processGameEvent } from './gameManager.js'; // ADDED updateFullGameState, processGameEvent
 import { loadCards } from './cardManager.js'; // Keep existing correct import
 import { renderGame } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 // import { endTurn } from './turnManager.js'; // Keep commented out
@@ -11,9 +11,18 @@ import { renderGame } from './ui.js'; // Removed non-existent displayError/Info/
 // --- End SignalR Setup ---
 
 
+// Simple GUID generator (RFC4122 v4 simulation)
+function generateGuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 let isInitializing = false;
 const HUB_URL = "/gamehub"; // Use relative URL, assumes same origin or proxy configured
 let connection = null; // Module-level variable for SignalR connection - Moved here
+let initialStateReceived = false; // Flag to track if initial state has been handled
 
 // --- SignalR Connection Logic ---
 
@@ -21,9 +30,10 @@ let connection = null; // Module-level variable for SignalR connection - Moved h
  * Sets up and starts the SignalR connection.
  * @param {string} gameId - The ID of the game.
  * @param {string} playerId - The ID of the player.
- * @returns {Promise<signalR.HubConnection>} A promise that resolves with the connection instance.
+ * @param {function} resolveInitialState - The resolve function for the initialStatePromise.
+ * @returns {Promise<signalR.HubConnection>} A promise that resolves with the connection object, or rejects on failure.
  */
-async function setupSignalRConnection(gameId, playerId) {
+async function setupSignalRConnection(gameId, playerId, resolveInitialState) { // ADDED resolveInitialState parameter
     if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
         console.warn("MAIN: SignalR connection already exists and is not disconnected. Stopping existing one.");
         await connection.stop();
@@ -38,7 +48,7 @@ async function setupSignalRConnection(gameId, playerId) {
         .configureLogging(signalR.LogLevel.Information)
         .build();
 
-    registerSignalREventHandlers(connection);
+    registerSignalREventHandlers(connection, resolveInitialState); // Pass resolver down
 
     try {
         await connection.start();
@@ -56,22 +66,45 @@ async function setupSignalRConnection(gameId, playerId) {
  * Registers handlers for events received from the SignalR Hub.
  * @param {signalR.HubConnection} conn - The SignalR connection instance.
  */
-function registerSignalREventHandlers(conn) {
+function registerSignalREventHandlers(conn, resolveInitialState) { // Accept resolver as parameter
     // Handler for full game state updates (e.g., on connect/reconnect)
+    // --- MODIFIED FOR M6 ---
     conn.on("ReceiveGameState", (receivedGameState) => {
-        console.log('[main.js] ReceiveGameState handler invoked.'); // Add this log point
-        console.log("MAIN: Received Full GameState:", receivedGameState);
-        // Delegate the full state update to gameManager
-        updateFullGameState(receivedGameState);
-        // renderGame(gameState); // REMOVED: updateFullGameState now handles rendering
-        alert("游戏状态已同步。"); // Use alert instead of displayInfo
+        console.log('[main.js] ReceiveGameState handler invoked.');
+        console.log("MAIN: Received Full GameState via SignalR:", receivedGameState);
+
+        if (!initialStateReceived && typeof resolveInitialState === 'function') {
+            // Initial state handling during initializeApp
+            console.log("MAIN: Resolving initialStatePromise with received state (Initial Load)...");
+            resolveInitialState(receivedGameState); // Resolve the promise in initializeApp
+            initialStateReceived = true; // Mark initial state as received
+            console.log("MAIN: Initial state processed via Promise.");
+            // NOTE: updateFullGameState is called in initializeApp after Promise.all resolves based on this promise.
+        } else if (initialStateReceived) {
+            // Subsequent state handling after initialization
+            console.log("MAIN: Received subsequent full game state update. Processing directly...");
+            // Directly call gameManager's update function to handle the state and re-render
+            // Ensure gameManager and updateFullGameState are imported correctly
+             try {
+                 updateFullGameState(receivedGameState); // Directly update the game state and UI
+                 console.log("MAIN: Subsequent game state processed via updateFullGameState.");
+             } catch (error) {
+                  console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
+                  alert("处理游戏状态更新时出错！");
+             }
+        } else {
+            // This case should ideally not happen if setupSignalRConnection is always called with a resolver during init
+            console.error("MAIN Error: Received game state but initialization seems incomplete or resolver missing!");
+            alert("内部错误：无法正确处理游戏状态！");
+        }
     });
+    // --- END M6 MODIFICATION ---
 
     // Handler for incremental game events
     conn.on("ReceiveGameEvent", (gameEvent) => {
         console.log("MAIN: Received GameEvent:", gameEvent.eventType, gameEvent);
         // Delegate event processing to gameManager
-        // processGameEvent(gameEvent); // REMOVED: processGameEvent is not exported from gameManager. Events are handled by specific '.on()' listeners.
+        processGameEvent(gameEvent); // UNCOMMENTED: Call the exported function from gameManager
         // processGameEvent should update gameState and trigger UI updates (full or partial) via ui.js
     });
 
@@ -157,40 +190,73 @@ async function initializeApp() {
         console.log("MAIN: Initializing basic UI...");
         // initializeUI(); // REMOVED: ui.js does not export this. UI setup might need review later.
 
-        // 1. Load static card data
-        console.log("MAIN: Loading card data...");
-        await loadCards();
-        console.log("MAIN: Card data loaded.");
+        // --- M6 Coordination Logic Start ---
+        console.log("MAIN: Starting M6 Coordination...");
 
-        // 2. Get Game and Player IDs (Placeholder: from URL query params)
+        // 2. Get Game and Player IDs (BEFORE starting async ops)
         console.log("MAIN: Getting Game/Player IDs...");
         const urlParams = new URLSearchParams(window.location.search);
-        const gameId = urlParams.get('gameId') || '00000000-0000-0000-0000-000000000001'; // Default for testing - MUST be a valid GUID
-        const playerId = urlParams.get('playerId') || 'player1';   // Default for testing
+        const gameId = urlParams.get('gameId') || generateGuid(); // Generate GUID if not provided
+        const playerId = urlParams.get('playerId') || 'player1';
         console.log(`MAIN: Using GameID=${gameId}, PlayerID=${playerId}`);
 
-        // 3. Render initial empty/loading state (optional, depends on UX)
-        // renderGame(createEmptyGameState()); // Render board structure
+        // 3. Render initial empty/loading state (optional)
+        // renderGame(createEmptyGameState());
 
-        // 4. Connect to SignalR Hub
-        console.log("MAIN: Establishing SignalR connection...");
-        const currentConnection = await setupSignalRConnection(gameId, playerId);
+        // Create a promise that resolves when the initial game state is received
+        let resolveInitialStatePromise;
+        const initialStatePromise = new Promise(resolve => {
+            resolveInitialStatePromise = resolve;
+        });
 
-        // 5. Pass connection to gameManager
-        console.log("MAIN: Setting SignalR connection for gameManager...");
-        setSignalRConnection(currentConnection); // Make connection available to gameManager
+        // 4. Start SignalR connection setup (PASSING the resolver)
+        console.log("MAIN: Establishing SignalR connection (part of coordination)...");
+        const connectionPromise = setupSignalRConnection(gameId, playerId, resolveInitialStatePromise); // Pass resolver
 
-        // 6. Initialize core game logic (will likely rely on ReceiveGameState now)
-        console.log("MAIN: Initializing game logic structure...");
-        initializeGame(gameId, playerId); // Initialize gameManager with context, but state comes from server
+        // 1. Start loading card data concurrently
+        console.log("MAIN: Loading card data (part of coordination)...");
+        const cardLoadPromise = loadCards(); // Returns a promise
 
-        // 7. Setup core event listeners (like End Turn button)
-        console.log("MAIN: Setting up core event listeners...");
-        setupEventListeners(); // Setup listeners after connection is available
+        try {
+            // Wait for BOTH card data loading AND SignalR connection (implicitly via initialStatePromise) + initial state reception
+            console.log("MAIN: Waiting for Promise.all([cardLoadPromise, initialStatePromise, connectionPromise])...");
+            // connectionPromise ensures we handle setup errors even if initialStatePromise never resolves/rejects
+            // We need the connection object resolved from connectionPromise to pass to gameManager
+            const [_, serverState, currentConnection] = await Promise.all([cardLoadPromise, initialStatePromise, connectionPromise]);
+            // serverState is from initialStatePromise resolver, currentConnection from connectionPromise resolver
 
-        // Note: Initial full game render is triggered by ReceiveGameState handler upon successful connection.
+            console.log("MAIN: Promise.all resolved. Card data loaded, SignalR connected, initial state received.");
+            console.log("MAIN: Received initial server state:", serverState); // Log the received state
 
-        console.log("MAIN: Application initialization sequence complete! Waiting for game state from server...");
+            // 5. Pass connection to gameManager (AFTER connection is confirmed ready)
+            console.log("MAIN: Setting SignalR connection for gameManager...");
+            setSignalRConnection(currentConnection);
+
+            // 6. Initialize gameManager with context (AFTER connection and IDs are ready)
+            console.log("MAIN: Initializing game logic structure...");
+            initializeGame(gameId, playerId); // Still needed to set IDs in gameManager
+
+            // CRITICAL: Restore the call to updateFullGameState here.
+            // This ensures the *initial* state (received via the promise)
+            // is processed and rendered correctly (e.g., showing the Mulligan phase).
+            // The ReceiveGameState handler handles *subsequent* updates directly.
+            console.log("MAIN: Applying initial server state via updateFullGameState..."); // Added log
+            updateFullGameState(serverState); // <-- RESTORED
+
+            // 7. Setup core event listeners (AFTER connection and UI are ready)
+            console.log("MAIN: Setting up core event listeners...");
+            setupEventListeners();
+
+            console.log("MAIN: M6 Coordination complete. Game ready.");
+
+        } catch (error) {
+             console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
+             // Handle errors from loadCards, setupSignalRConnection, or state reception issues
+             alert(`游戏初始化失败：${error.message || '未知错误'}. 请刷新页面重试。`);
+             // Optionally disable UI or show persistent error
+             return; // Stop initialization on error
+        }
+        // --- M6 Coordination Logic End ---
 
     } catch (error) {
         console.error("MAIN: Application initialization failed:", error);

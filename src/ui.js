@@ -368,8 +368,11 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         cardDiv.classList.add('hand-card');
     } else if (context === 'field') {
         cardDiv.classList.add('field-card');
-        // 如果是已进化的随从，添加 'evolved' class (需要 cardInstance 有 isEvolved 属性)
-        // if (cardInstance.isEvolved) { cardDiv.classList.add('evolved'); }
+        // 如果是已进化的随从，添加 'evolved' class
+        if (cardInstance.isEvolved === true) {
+            cardDiv.classList.add('evolved');
+            console.log(`UI DBG: Added .evolved class to ${cardInstance.name} (UID: ${cardInstance.uid})`); // 添加调试日志
+        }
     }
 
     // 基本的 Inner HTML 结构 - 需要根据 style.css 进行调整
@@ -404,7 +407,7 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
                     playerState && // Ensure playerState exists
                     currentPlayerId === 'player1' && // Only show button for human player's turn
                         currentPlayerId === cardInstance.ownerId &&
-                    gameState.gamePhase === 'Main' &&
+                    gameState.phase === 'Main' &&
                     playerState.ep > 0 &&
                     playerState.canEvolveThisTurn === true &&
                     cardInstance.type === 'Follower' &&
@@ -585,16 +588,16 @@ function renderActionButtons(currentGameState) {
 
     const isPlayer1Turn = currentGameState.currentPlayerId === 'player1';
 
-    if (currentGameState.gamePhase === 'Mulligan') {
+    if (currentGameState.phase === 'Mulligan') {
         // Mulligan Phase: Show confirm button (only if P1 hasn't confirmed), hide end turn
         confirmMulliganButtonEl.style.display = currentGameState.player1MulliganComplete ? 'none' : 'inline-block';
         endTurnButtonEl.style.display = 'none';
         console.log("UI: Phase Mulligan - Confirm Button:", confirmMulliganButtonEl.style.display, "End Turn Button: none");
-    } else if (currentGameState.gamePhase === 'Main' && isPlayer1Turn) {
-        // Player 1's Main Phase: Show end turn, hide confirm
+    } else if ((currentGameState.phase === 'TurnStart' || currentGameState.phase === 'Main') && isPlayer1Turn) { // Check for TurnStart OR Main
+        // Player 1's Turn Start or Main Phase: Show end turn, hide confirm
         confirmMulliganButtonEl.style.display = 'none';
         endTurnButtonEl.style.display = 'inline-block';
-         console.log("UI: Phase Main (P1) - Confirm Button: none", "End Turn Button: inline-block");
+         console.log(`UI: Phase ${currentGameState.phase} (P1) - Confirm Button: none`, "End Turn Button: inline-block"); // Log current phase
     } else {
         // Other phases or opponent's turn: Hide both (or just hide confirm, end turn might be handled by turn manager logic implicitly)
         confirmMulliganButtonEl.style.display = 'none';
@@ -680,10 +683,10 @@ function setupGlobalEventListeners() {
 
 // 全局点击事件处理器 (事件委托)
 function handleGameClick(event) {
-    console.log("UI_DBG: handleGameClick fired! Phase:", gameState.gamePhase); // Log phase on click
+    console.log("UI_DBG: handleGameClick fired! Phase:", gameState.phase); // Log phase on click
 
     // --- Mulligan Phase Logic ---
-    if (gameState.gamePhase === 'Mulligan') {
+    if (gameState.phase === 'Mulligan') {
         const clickedMulliganConfirm = event.target.closest('#confirm-mulligan-button');
         const clickedHandCard = event.target.closest('#player1-hand .card'); // Only care about player 1 hand
 
@@ -694,12 +697,12 @@ function handleGameClick(event) {
             const selectedUids = Array.from(selectedCards).map(card => card.dataset.uid);
             console.log("UI: Selected UIDs for mulligan:", selectedUids);
 
-            // Call handleMulligan from gameManager
-            if (typeof handleMulligan === 'function') {
+            // Call submitMulligan (the imported SignalR wrapper) from gameManager
+            if (typeof submitMulligan === 'function') { // <<< FIXED: Check for the correct imported function 'submitMulligan'
                 submitMulligan(selectedUids); // Call new SignalR wrapper
             } else {
-                console.error("UI Error: handleMulligan function is not available/imported!");
-                alert("错误：调度功能未加载！");
+                console.error("UI Error: submitMulligan function is not available/imported!"); // Log the correct function name in error
+                alert("错误：调度功能未加载！(submitMulligan)"); // Clarify alert slightly for debugging
             }
             // Note: No need to manually remove 'selected-for-mulligan' class here,
             // as the next renderGame call after handleMulligan will redraw the hand.

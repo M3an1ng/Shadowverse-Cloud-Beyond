@@ -327,3 +327,17 @@ body {
     opacity: 0; /* 完全淡出 */
   }
 }
+/* --- Evolved Follower Styles --- */
+.card.field-card.evolved {
+  border: 2px solid gold; /* Example: Gold border for evolved state */
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.7); /* Example: Subtle gold glow */
+  /* background-color: #f0e68c; /* Example: Slightly change background */
+}
+
+/* Optional: Adjust evolved stats appearance if needed */
+/*
+.card.field-card.evolved .stats {
+  color: darkred;
+  font-weight: bold;
+}
+*/

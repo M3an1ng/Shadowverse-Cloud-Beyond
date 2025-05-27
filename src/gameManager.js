@@ -59,7 +59,7 @@ console.log(`GAME MANAGER: Initializing with GameID=${idOfGame}, PlayerID=${idOf
     gameState.activePlayer = null;
     gameState.opponentPlayer = null;
     gameState.turnNumber = 0;
-    gameState.gamePhase = 'Connecting'; // Indicate waiting for server state
+    gameState.phase = 'Connecting'; // Indicate waiting for server state
     gameState.gameOver = false;
     gameState.winner = null;
     gameState.selectedCardUid = null;
@@ -82,9 +82,9 @@ console.log(`GAME MANAGER: Initializing with GameID=${idOfGame}, PlayerID=${idOf
  * @param {object} gameEvent - The event object received from the server.
  * Expected structure: { eventType: "...", payload: { ... } }
  */
- function processGameEvent(gameEvent) { // REMOVED EXPORT
-    if (!gameEvent || !gameEvent.eventType) {
-        console.error("GAME MANAGER: Received invalid game event object:", gameEvent);
+ export function processGameEvent(gameEvent) { // ADDED EXPORT
+     if (!gameEvent || !gameEvent.eventType) {
+         console.error("GAME MANAGER: Received invalid game event object:", gameEvent);
         return;
     }
 
@@ -97,7 +97,7 @@ console.log(`GAME MANAGER: Initializing with GameID=${idOfGame}, PlayerID=${idOf
                 if (gameEvent.payload) {
                     gameState.currentPlayerId = gameEvent.payload.nextPlayerId;
                     gameState.turnNumber = gameEvent.payload.newTurnNumber;
-                    gameState.gamePhase = 'TurnStart'; // Assume server moves phase
+                    gameState.phase = 'TurnStart'; // Assume server moves phase
 
                     // Update player states (PP, EP, drawn card)
                     gameEvent.payload.playerUpdates?.forEach(update => {
@@ -190,10 +190,37 @@ console.log(`GAME MANAGER: Initializing with GameID=${idOfGame}, PlayerID=${idOf
                  } // Closing brace for if(gameEvent.payload)
                  break; // Closing break for case 'UnitDestroyed'
 
+            case 'EpUpdate':
+                 // Payload example: { playerId: "...", newEpValue: N }
+                 if (gameEvent.payload) {
+                     const player = getPlayerState(gameEvent.payload.playerId);
+                    if (player) {
+                        player.ep = gameEvent.payload.newEpValue;
+                        console.log(`GM: Player ${player.playerId} EP updated to ${player.ep}/${player.maxEP}`);
+                    }
+                 }
+                 break;
+
+            case 'StatChange':
+                 // Payload example: { unitId: "...", newAttack: N, newHealth: N }
+                 // Assumes server sends the new base stats after modification (e.g., buffs, debuffs)
+                 if (gameEvent.payload) {
+                    const unit = findCardInstanceByUid(gameEvent.payload.unitId);
+                    if (unit) {
+                        // Update both base and current stats for consistency
+                        unit.attack = gameEvent.payload.newAttack;
+                        unit.health = gameEvent.payload.newHealth;
+                        unit.currentAttack = gameEvent.payload.newAttack; // Reflect change in current stats too
+                        unit.currentHealth = gameEvent.payload.newHealth; // Reflect change in current stats too
+                        console.log(`GM: Unit ${unit.name} (UID: ${unit.uid}) stats changed to A:${unit.attack}/H:${unit.health}`);
+                    }
+                 }
+                 break;
+
             case 'MulliganStarted':
                  // Payload might contain: { mulliganTimer: N } or initial hand for local player?
                  console.log("GM: Mulligan phase started.", gameEvent.payload);
-                 gameState.gamePhase = 'Mulligan';
+                 gameState.phase = 'Mulligan';
                  // UI should now allow mulligan actions if this is the local player
                  // May need logic here to enable UI elements based on player ID?
                  break;
@@ -202,7 +229,7 @@ console.log(`GAME MANAGER: Initializing with GameID=${idOfGame}, PlayerID=${idOf
                  // Payload might contain: { winnerId: "...", loserId: "...", reason: "..." }
                  console.log("GM: Game over event received.", gameEvent.payload);
                  gameState.gameOver = true;
-                 gameState.gamePhase = 'GameOver';
+                 gameState.phase = 'GameOver';
                  gameState.winner = gameEvent.payload?.winnerId;
                  // Update UI to show game over screen with winner/loser info
                  alert(`游戏结束！ 玩家 ${gameState.winner} 获胜！ (${gameEvent.payload?.reason || '原因未知'})`); // Simple alert for now
@@ -394,8 +421,8 @@ if (gameState.gameOver) {
         alert("现在不是你的回合！");
         return;
     }
-    if (gameState.gamePhase !== 'Main') {
-        console.warn(`GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.gamePhase}).`);
+    if (gameState.phase !== 'Main') {
+        console.warn(`GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.phase}).`);
         alert("只能在你的回合主阶段出牌！");
         return;
     }
@@ -485,8 +512,8 @@ export function initiateAttack(attackerUid) {
         return;
     }
 
-    if (gameState.gamePhase !== 'Main') {
-        console.warn(`GM: Cannot initiate attack - Not in Main phase (Current: ${gameState.gamePhase}).`);
+    if (gameState.phase !== 'Main') {
+        console.warn(`GM: Cannot initiate attack - Not in Main phase (Current: ${gameState.phase}).`);
         // alert("只能在主阶段攻击！"); // Optional UI feedback
         return;
     }
@@ -735,7 +762,7 @@ export async function evolveCard(cardUid) {
          alert("现在不是你的回合！");
          return;
     }
-    if (gameState.gamePhase !== 'Main') {
+    if (gameState.phase !== 'Main') {
         console.warn(`GM: EvolveCard rejected - Cannot evolve outside Main phase.`);
         alert("只能在你的回合主阶段进化！");
         return;
@@ -815,21 +842,18 @@ export async function submitMulligan(cardUidsToReplace = []) {
         alert("与服务器连接丢失，无法提交调度！");
         return;
     }
-    if (gameState.gamePhase !== 'Mulligan') {
+    if (gameState.phase !== 'Mulligan') {
         console.warn("GM: SubmitMulligan rejected - Not in Mulligan phase.");
         // No user error display needed, UI should prevent this call
         return;
     }
-     // Additional check: Ensure it's the local player trying to submit
-     if (gameState.localPlayerId !== gameState.currentPlayerId) {
-          console.warn("GM: SubmitMulligan rejected - Not the local player's turn to mulligan.");
-          return; // Silently fail if UI somehow allows this
-     }
+     // Removed check: 'localPlayerId !== currentPlayerId' as it's incorrect during Mulligan phase.
+     // Server-side validation handles individual player mulligan submission correctly.
 
 
-    console.log(`GM: Invoking SignalR Hub method 'SubmitMulligan'. GameID: ${gameState.gameId}, CardsToReplace:`, cardUidsToReplace);
+     console.log(`GM: Invoking SignalR Hub method 'SubmitMulligan'. GameID: ${gameState.gameId}, CardsToReplace:`, cardUidsToReplace);
     try {
-        await signalRConnection.invoke("SubmitMulligan", gameState.gameId, cardUidsToReplace);
+        await signalRConnection.invoke("SubmitMulligan", cardUidsToReplace); // REMOVED gameState.gameId argument
         console.log("GM: 'SubmitMulligan' invocation sent successfully. Waiting for server response...");
         alert("正在提交调度决定...");
         // Do not modify local state (like player1MulliganComplete) here.
@@ -855,8 +879,8 @@ export async function endTurnRequest() {
         return;
     }
     // Optional: Add phase check? Should EndTurn be allowed outside Main phase? Usually yes.
-    if (gameState.gamePhase === 'Mulligan' || gameState.gamePhase === 'GameOver') {
-         console.warn(`GM: EndTurnRequest rejected - Cannot end turn during ${gameState.gamePhase} phase.`);
+    if (gameState.phase === 'Mulligan' || gameState.phase === 'GameOver') {
+         console.warn(`GM: EndTurnRequest rejected - Cannot end turn during ${gameState.phase} phase.`);
          return; // Silently reject if UI somehow allows this
     }
       // Additional check: Ensure it's the local player trying to end the turn
@@ -908,9 +932,9 @@ export async function sendGameAction(actionData) {
     //     alert("现在不是你的回合！");
     //     return;
     // }
-    // if (gameState.gamePhase !== 'Main' && actionData.actionType !== 'SomeActionAllowedOutsideMain') { // Adjust condition based on action
-    //     console.warn(`GM: sendGameAction (${actionData.actionType}) rejected - Action not allowed during ${gameState.gamePhase} phase.`);
-    //     alert(`无法在 ${gameState.gamePhase} 阶段执行此动作！`);
+    // if (gameState.phase !== 'Main' && actionData.actionType !== 'SomeActionAllowedOutsideMain') { // Adjust condition based on action
+    //     console.warn(`GM: sendGameAction (${actionData.actionType}) rejected - Action not allowed during ${gameState.phase} phase.`);
+    //     alert(`无法在 ${gameState.phase} 阶段执行此动作！`);
     //     return;
     // }
 
@@ -961,7 +985,31 @@ export function updateFullGameState(serverState) {
     // Merge the server state into the local gameState
     Object.assign(gameState, serverState);
 
+    // --- Add Mapping Logic START ---
+    // Map server DTO names (leaderHealth, currentPP, currentEP) to UI expected names (health, pp, ep)
+    gameState.players.forEach(player => {
+        if (player) {
+            player.health = player.leaderHealth; // Map leaderHealth to health
+            player.pp = player.currentPP;         // Map currentPP to pp
+            player.ep = player.currentEP;         // Map currentEP to ep
+            // Note: maxPP and maxEP seem consistent or handled by TurnEnded, check later if needed.
+            // console.log(`GM MAP: Mapped player ${player.playerId} - Health:${player.health}, PP:${player.pp}, EP:${player.ep}`); // Debug log removed
+           // Optionally delete old properties if they cause confusion, but keep for now maybe
+           // delete player.leaderHealth;
+           // delete player.currentPP;
+            // delete player.currentEP;
+        }
+    });
+    // --- Add Mapping Logic END ---
+
+
     // --- Crucial: Update player references after assigning players array ---
+    // GM DEBUG START: Log received player structure in full state update - REMOVED
+    // console.log("GM DEBUG: Received players array in full state:", JSON.stringify(serverState.players, null, 2));
+    // if (serverState.players && serverState.players.length > 0) {
+    //     console.log("GM DEBUG: Inspecting first player object structure:", JSON.stringify(serverState.players[0], null, 2));
+    // }
+     // GM DEBUG END - REMOVED
     // The players array from serverState now replaces the old one.
     // Find the active and opponent player *instances* within the *new* players array.
     gameState.activePlayer = gameState.players.find(p => p && p.playerId === gameState.currentPlayerId) || null;
@@ -982,7 +1030,7 @@ export function updateFullGameState(serverState) {
 
 
     // Additional sanity checks/logging:
-    console.log(`GM: Full state update complete. CurrentTurn=${gameState.turnNumber}, CurrentPlayer=${gameState.currentPlayerId}, Phase=${gameState.gamePhase}`);
+    console.log(`GM: Full state update complete. CurrentTurn=${gameState.turnNumber}, CurrentPlayer=${gameState.currentPlayerId}, Phase=${gameState.phase}`);
     console.log("GM: Active Player Hand:", gameState.activePlayer?.hand); // Log hand to check card data
 
     // Ensure the UI is re-rendered with the fully updated state
