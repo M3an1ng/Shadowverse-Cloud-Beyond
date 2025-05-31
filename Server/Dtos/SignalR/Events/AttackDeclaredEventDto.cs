@@ -8,12 +8,16 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class AttackDeclaredEventDto : GameEventDto
     {
-        public override string Type => "AttackDeclared";
+        // Constructor added to fix CS0506 and initialize properties
+        public AttackDeclaredEventDto(string playerId, string attackerUid, string targetUid)
+            : base(playerId, "AttackDeclared") // Call base constructor
+        {
+            AttackerUid = attackerUid;
+            TargetUid = targetUid;
+        }
 
-        /// <summary>
-        /// The identifier of the player whose unit is attacking.
-        /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
+        // Removed override string Type => "AttackDeclared"; (causes CS0506)
+        // Removed redundant PlayerId property (inherited from base)
 
         /// <summary>
         /// The unique identifier (UID) of the attacking unit.

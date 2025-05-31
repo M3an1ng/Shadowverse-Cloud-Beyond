@@ -43,9 +43,18 @@ export async function loadCards() {
 
 // 根据 ID 获取卡牌定义
 export function getCardDefinition(cardId) {
-    const definition = cardDatabase.find(card => card.id === cardId);
+    // --- UNKNOWNCARD BUG DIAGNOSIS START ---
+    console.log(`GM_DBG_UNKNOWN: getCardDefinition called with cardId: ${cardId}`);
+    console.log(`GM_DBG_UNKNOWN: Current cardDatabase length: ${cardDatabase?.length ?? 'undefined'}`);
+    // Log first few IDs for comparison, only if database has items
+    if (cardDatabase && cardDatabase.length > 0) {
+        console.log(`GM_DBG_UNKNOWN: First few IDs in cardDatabase: ${cardDatabase.slice(0, 5).map(c => c.id).join(', ')}`);
+    }
+    // --- UNKNOWNCARD BUG DIAGNOSIS END ---
+
+    const definition = cardDatabase.find(card => card && card.id === cardId); // Added check for card existence before accessing id
     if (!definition) {
-        console.warn(`Card definition not found for ID: ${cardId}`);
+        console.warn(`Card definition not found for ID: ${cardId}. cardDatabase length was ${cardDatabase?.length ?? 'undefined'}.`); // Added length to warning
         // 返回 null 或 undefined，调用者需要处理
         return null;
     }
@@ -70,10 +79,11 @@ export function createCardInstance(cardIdOrDefinition) {
     uidCounter++;
     const instance = {
         ...definition, // 复制基础属性 (id, name, cost, attack, health, etc.)
-        uid: `${definition.type.charAt(0)}${uidCounter}`, // 运行时唯一 ID (e.g., F1, F2)
-        currentAttack: definition.attack,   // 当前攻击力 (可能因 buff/debuff 变化)
-        currentHealth: definition.health,   // 当前生命值
-        maxHealth: definition.health,     // 最大生命值 (用于显示伤害)
+        // --- FIXED: Prioritize UID from definition (server DTO) if available ---
+        uid: definition.uid || `${definition.type?.charAt(0) ?? 'U'}${uidCounter}`, // Use DTO's uid (Guid string), fallback to local generator only if missing
+        currentAttack: definition.currentAttack ?? definition.attack, // Use currentAttack from DTO if available, else base attack
+        currentHealth: definition.currentHealth ?? definition.health, // Use currentHealth from DTO if available, else base health
+        maxHealth: definition.maxHealth ?? definition.health,     // Use maxHealth from DTO if available, else base health (Important for evolved/damaged units)
         canAttack: false, // 本回合是否能攻击 (召唤当回合通常不能, 除非 Rush/Storm)
         turnPlayed: null, // Track the turn this instance was played to the field
         attackCount: 0,   // 本回合已攻击次数

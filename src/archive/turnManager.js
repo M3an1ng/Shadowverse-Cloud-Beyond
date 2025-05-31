@@ -129,70 +129,86 @@ export function startTurn() {
 }
 
 // 结束回合
-export function endTurn() {
-    console.log(`TM: Ending turn for player ${gameState.currentPlayerId}...`);
-
-    // Check for game over before proceeding
-    if (gameState.gameOver) {
-         console.log("TM: Game is over. Halting turn end.");
-         return;
-    }
-
-    // Check if activePlayer is valid (should be set by startTurn)
-    // Use getPlayerState for safety, though gameState.activePlayer should be correct if startTurn worked
-    const currentPlayerToEnd = getPlayerState(gameState.currentPlayerId);
-    if (!currentPlayerToEnd) {
-        console.error(`TM: Cannot end turn, active player ${gameState.currentPlayerId} not found in gameState.players!`);
-        return; // Avoid errors if state is somehow corrupt
-    }
-
-    // Disable end turn button (regardless of AI or player)
-    const endTurnButton = document.getElementById('end-turn-button');
-    if (endTurnButton) {
-        endTurnButton.disabled = true;
-        console.log("TM: End turn button disabled.");
-    }
-
-
-    // TODO: Trigger End of Turn Effects for the player whose turn is ending
-    // executeEffects(currentPlayerToEnd.field, 'EndOfTurn', currentPlayerToEnd.id);
-
-    // Clear transient states (like selections) at end of turn
-    gameState.selectedCardUid = null;
-    gameState.selectedAttackerUid = null;
-    console.log("TM: Cleared selections.");
-
-
-    // Switch Player ID
-    const oldPlayerId = gameState.currentPlayerId;
-    gameState.currentPlayerId = oldPlayerId === 'player1' ? 'player2' : 'player1';
-    console.log(`TM: Switched current player ID to ${gameState.currentPlayerId}.`);
-
-    // Update active/opponent references in gameState (important for next startTurn)
-    gameState.activePlayer = getPlayerState(gameState.currentPlayerId);
-    gameState.opponentPlayer = getPlayerState(oldPlayerId); // The player whose turn just ended is now the opponent
-
-
-    // Increment Turn Number only AFTER the second player finishes their turn.
-    console.log(`TM_TURN_INC_CHECK: Ending turn for ${oldPlayerId}. Current turn: ${gameState.turnNumber}. Second player is ${gameState.secondPlayerId}. Checking if ended player was second player to increment turn.`); // MODIFIED LOG
-    if (oldPlayerId === gameState.secondPlayerId) { // **** THE FIX: Check if the player who JUST FINISHED was the second player ****
-        // If the player who just finished IS the second player, advance the game turn counter.
-        // This ensures the turn number advances from 1 to 2 only after the second player completes their actions in turn 1.
-        gameState.turnNumber++;
-        console.log(`TM: Advanced to game turn: ${gameState.turnNumber}`);
-    }
-    // If the first player finished, the game turn number does not advance yet.
-
-    // Set phase for the *next* turn start
-    gameState.gamePhase = 'TurnStart';
-    console.log(`TM: Set game phase to ${gameState.gamePhase} for next turn.`);
-
-    // Update UI immediately before the delay to show opponent's turn starting etc.
-    console.log("TM: Calling renderGame after ending turn actions.");
-    renderGame(gameState);
-
-    // Schedule the start of the next turn
-    // Using setTimeout prevents potential deep call stacks and allows UI to update
-    console.log("TM: Scheduling startTurn for the new player...");
-    setTimeout(startTurn, 50); // Short delay (e.g., 50ms) before starting next turn
-}
+// // 结束回合 (功能已废弃，由服务器事件驱动)
+// export function endTurn() {
+//     console.log(`TM: Ending turn for player ${gameState.currentPlayerId}...`);
+//
+//     // Check for game over before proceeding
+//     if (gameState.gameOver) {
+//          console.log("TM: Game is over. Halting turn end.");
+//          return;
+//     }
+//
+//     // Check if activePlayer is valid (should be set by startTurn)
+//     // Use getPlayerState for safety, though gameState.activePlayer should be correct if startTurn worked
+//     const currentPlayerToEnd = getPlayerState(gameState.currentPlayerId);
+//     if (!currentPlayerToEnd) {
+//         console.error(`TM: Cannot end turn, active player ${gameState.currentPlayerId} not found in gameState.players!`);
+//         return; // Avoid errors if state is somehow corrupt
+//     }
+//
+//     try { // ADDED try block
+//         // Disable end turn button (regardless of AI or player)
+//         const endTurnButton = document.getElementById('end-turn-button');
+//         if (endTurnButton) {
+//             endTurnButton.disabled = true;
+//             console.log("TM: End turn button disabled.");
+//         }
+//
+//
+//     // TODO: Trigger End of Turn Effects for the player whose turn is ending
+//     // executeEffects(currentPlayerToEnd.field, 'EndOfTurn', currentPlayerToEnd.id);
+//
+//     // Clear transient states (like selections) at end of turn
+//     gameState.selectedCardUid = null;
+//     gameState.selectedAttackerUid = null;
+//     console.log("TM: Cleared selections.");
+//
+//
+//     // Switch Player ID  <<< !!! CONFLICTING LOCAL LOGIC !!! >>>
+//     const oldPlayerId = gameState.currentPlayerId;
+//     // gameState.currentPlayerId = oldPlayerId === 'player1' ? 'player2' : 'player1'; // <<< CONFLICTING LINE COMMENTED OUT
+//     console.log(`TM (Obsolete): Attempted to switch current player ID locally to ${oldPlayerId === 'player1' ? 'player2' : 'player1'}.`);
+//
+//     // Update active/opponent references in gameState (important for next startTurn)
+//     // gameState.activePlayer = getPlayerState(gameState.currentPlayerId); // Obsolete
+//     // gameState.opponentPlayer = getPlayerState(oldPlayerId); // Obsolete
+//
+//
+//     // Increment Turn Number only AFTER the second player finishes their turn.
+//     console.log(`TM_TURN_INC_CHECK (Obsolete): Ending turn for ${oldPlayerId}. Current turn: ${gameState.turnNumber}. Second player is ${gameState.secondPlayerId}. Checking if ended player was second player to increment turn.`); // MODIFIED LOG
+//     if (oldPlayerId === gameState.secondPlayerId) { // **** THE FIX: Check if the player who JUST FINISHED was the second player ****
+//         // If the player who just finished IS the second player, advance the game turn counter.
+//         // This ensures the turn number advances from 1 to 2 only after the second player completes their actions in turn 1.
+//         // gameState.turnNumber++; // Obsolete
+//         console.log(`TM (Obsolete): Would have advanced game turn number.`);
+//     }
+//     // If the first player finished, the game turn number does not advance yet.
+//
+//     // Set phase for the *next* turn start
+//     // gameState.gamePhase = 'TurnStart'; // Obsolete
+//     console.log(`TM (Obsolete): Would have set game phase to TurnStart for next turn.`);
+//
+//     // Update UI immediately before the delay to show opponent's turn starting etc.
+//     console.log("TM (Obsolete): Would have called renderGame after ending turn actions.");
+//     // renderGame(gameState); // Obsolete
+//
+//     // Schedule the start of the next turn
+//     // Using setTimeout prevents potential deep call stacks and allows UI to update
+//     console.log("TM (Obsolete): Would have scheduled startTurn for the new player...");
+//     //    setTimeout(startTurn, 50); // Obsolete
+//     } catch (error) { // ADDED catch block
+//         console.error("TM: CRITICAL ERROR caught within obsolete endTurn:", error);
+//         console.error("TM: Error Stack Trace:", error.stack); // Add stack trace
+//         try {
+//             // Use try...catch to prevent stringify itself from erroring
+//             console.log("TM: GameState at time of error:", JSON.stringify(gameState, null, 2));
+//         } catch (stringifyError) {
+//             console.error("TM: Error stringifying gameState:", stringifyError);
+//             console.log("TM: Raw gameState object:", gameState); // Attempt to log raw object
+//         }
+//         // Optional: Notify the user more clearly, but logging is the primary goal for debugging
+//         alert("发生严重错误，回合无法结束（在已废弃的函数中），请检查控制台日志！");
+//         // Do NOT schedule startTurn here, as the state is likely broken
+//     } // End of added catch block
+// }

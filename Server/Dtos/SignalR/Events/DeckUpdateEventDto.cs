@@ -9,12 +9,15 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class DeckUpdateEventDto : GameEventDto
     {
-        public override string Type => "DeckUpdate";
+        // Constructor added to fix CS0506 and initialize properties
+        public DeckUpdateEventDto(string playerId, int deckCount)
+            : base(playerId, "DeckUpdate") // Call base constructor
+        {
+            DeckCount = deckCount;
+        }
 
-        /// <summary>
-        /// The identifier of the player whose deck was updated.
-        /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
+        // Removed override string Type => "DeckUpdate"; (causes CS0506)
+        // Removed redundant PlayerId property (inherited from base)
 
         /// <summary>
         /// The total number of cards currently in the player's deck after the update.

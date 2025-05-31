@@ -11,7 +11,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// Gets the type of the game event.
         /// </summary>
-        public override string Type => "PlayerAttacked";
         /// <summary>
         /// The unique identifier of the attacking unit.
         /// </summary>
@@ -22,14 +21,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// </summary>
         public string TargetPlayerId { get; set; } = string.Empty; // Use PlayerId for the leader
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="PlayerAttackedEventDto"/> class.
-        /// Sets the event type for client-side discrimination.
-        /// </summary>
-        public PlayerAttackedEventDto()
+        // Added constructor according to standard fix pattern
+        public PlayerAttackedEventDto(string playerId, string attackerUid, string targetPlayerId)
+            : base(playerId, "PlayerAttacked") // Use attacker's owner ID for base playerId
         {
-            // The event type is handled by the override Type property.
-            // Remove the incorrect assignment to the non-existent EventType property.
+            AttackerUid = attackerUid;
+            TargetPlayerId = targetPlayerId;
         }
+
+        // Removed override Type and parameterless constructor
     }
 }

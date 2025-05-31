@@ -8,12 +8,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class EpUpdateEventDto : GameEventDto
     {
-        public override string Type => "EpUpdate";
 
-        /// <summary>
-        /// The identifier of the player whose EP was updated.
-        /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
 
         /// <summary>
         /// The player's current EP amount after the update.
@@ -24,5 +19,17 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// The player's maximum EP amount after the update (usually doesn't change mid-game, but included for completeness).
         /// </summary>
         public int MaxEp { get; set; }
+        /// <summary>
+        /// Initializes a new instance of the <see cref="EpUpdateEventDto"/> class.
+        /// </summary>
+        /// <param name="playerId">The identifier of the player whose EP was updated.</param>
+        /// <param name="currentEp">The player's current EP amount after the update.</param>
+        /// <param name="maxEp">The player's maximum EP amount after the update.</param>
+        public EpUpdateEventDto(string playerId, int currentEp, int maxEp)
+            : base(playerId, "EpUpdate") // Set base PlayerId and Type
+        {
+            this.CurrentEp = currentEp;
+            this.MaxEp = maxEp;
+        }
     }
 }

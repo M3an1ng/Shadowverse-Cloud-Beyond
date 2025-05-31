@@ -9,13 +9,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class HandUpdateEventDto : GameEventDto
     {
-        public override string Type => "HandUpdate";
-
-        /// <summary>
-        /// The identifier of the player whose hand was updated.
-        /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
-
         /// <summary>
         /// The total number of cards currently in the player's hand after the update.
         /// Essential for the opponent client to display the correct hand size.
@@ -38,8 +31,19 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// Optional: Indicates if the discard was due to hand size limit (overdraw/burn).
         /// </summary>
-        public bool IsBurned { get; set; } = false;
+        public bool IsBurned { get; set; }
 
+        // Added constructor according to standard fix pattern
+        public HandUpdateEventDto(string playerId, int handCount, List<CardDto>? drawnCards = null, string? discardedCardUid = null, bool isBurned = false)
+            : base(playerId, "HandUpdate") // Call base with required params
+        {
+            HandCount = handCount;
+            DrawnCards = drawnCards;
+            DiscardedCardUid = discardedCardUid;
+            IsBurned = isBurned;
+        }
+
+        // Removed override Type and local PlayerId properties
         // Consider adding CardId if DiscardedCardUid is present for graveyard visuals.
     }
 }

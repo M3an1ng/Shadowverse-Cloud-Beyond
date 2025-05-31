@@ -8,10 +8,8 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class UnitAttackedEventDto : GameEventDto // Inherit from base event DTO
     {
-        /// <summary>
-        /// Gets the type of the game event.
-        /// </summary>
-        public override string Type => "UnitAttacked";
+        // Removed the problematic 'override Type' property
+
         /// <summary>
         /// The unique identifier of the attacking unit.
         /// </summary>
@@ -24,10 +22,15 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
 
         /// <summary>
         /// Initializes a new instance of the <see cref="UnitAttackedEventDto"/> class.
-        /// Sets the event type for client-side discrimination.
         /// </summary>
-        public UnitAttackedEventDto()
+        /// <param name="sourcePlayerId">The ID of the player initiating the attack.</param>
+        /// <param name="attackerUid">The UID of the attacking unit.</param>
+        /// <param name="targetUid">The UID of the target unit.</param>
+        public UnitAttackedEventDto(string sourcePlayerId, string attackerUid, string targetUid)
+            : base(sourcePlayerId, "UnitAttacked") // Call base constructor
         {
+            AttackerUid = attackerUid;
+            TargetUid = targetUid;
         }
     }
 }

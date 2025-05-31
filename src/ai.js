@@ -3,8 +3,9 @@
 import { getCardDefinition } from './cardManager.js'; // 获取卡牌定义
 // 导入依赖
 // MODIFIED: Added getPlayerState, getCurrentPlayerId, findCardInstanceByUid, executeAttack
-import { playCard, getPlayerState, getCurrentPlayerId, findCardInstanceByUid, sendGameAction, evolveCard, submitMulligan } from './gameManager.js'; // handleMulligan, executeAttack removed, sendGameAction/submitMulligan added
-import { endTurn } from './turnManager.js'; // 结束回合
+// MODIFIED: Added endTurnRequest, removed handleMulligan/executeAttack
+import { playCard, getPlayerState, getCurrentPlayerId, findCardInstanceByUid, sendGameAction, evolveCard, submitMulligan, endTurnRequest } from './gameManager.js';
+// import { endTurn } from './turnManager.js'; // Obsolete: Removed import of local endTurn
 
 // TODO: Move constants like MAX_FIELD_SIZE to a dedicated constants.js file
 const MAX_FIELD_SIZE = 5; // Define locally for now
@@ -17,7 +18,7 @@ export function runAILogic(currentGameState) { // 接收当前游戏状态
     console.log("AI Turn: Running AI logic...");
     if (!currentGameState || !currentGameState.players) {
         console.error("AI Error: Missing game state or players for decision making.");
-        setTimeout(endTurn, 500); // Failsafe: End turn if state is bad
+        setTimeout(endTurnRequest, 500); // Failsafe: Request server to end turn
         return;
     }
 
@@ -25,7 +26,7 @@ export function runAILogic(currentGameState) { // 接收当前游戏状态
     const aiPlayer = currentGameState.players.find(p => p && p.id === 'player2');
     if (!aiPlayer || !aiPlayer.isAI) { // Also check the isAI flag
          console.error("AI Error: Could not find AI player (player2) state or it's not marked as AI.");
-         setTimeout(endTurn, 500); // Failsafe
+         setTimeout(endTurnRequest, 500); // Failsafe: Request server to end turn
          return;
     }
 
@@ -35,24 +36,27 @@ export function runAILogic(currentGameState) { // 接收当前游戏状态
         console.log("AI: Deciding card to play...");
         // Pass gameState for context if needed by future, more complex decisions
         aiDecideAndPlayCard(aiPlayer, currentGameState);
+        console.log("AI_TRACE: Finished aiDecideAndPlayCard."); // ADDED LOG
 
         // 2. 进化决策 (V0.1)
         console.log("AI: Deciding evolves...");
         aiDecideAndEvolve(aiPlayer, currentGameState); // Call the new evolve logic function
+        console.log("AI_TRACE: Finished aiDecideAndEvolve."); // ADDED LOG
 
         // 3. 攻击决策
         console.log("AI: Deciding attacks...");
         aiDecideAndAttack(aiPlayer, currentGameState); // Call the attack logic function
+        console.log("AI_TRACE: Finished aiDecideAndAttack."); // ADDED LOG
 
         // 4. 结束回合 (总是在最后执行)
         console.log("AI: Actions processing finished. Ending turn shortly.");
         // Add a short delay before ending turn to simulate thinking/allow UI updates
-        setTimeout(endTurn, 1000); // Call imported endTurn
+        setTimeout(endTurnRequest, 1000); // Request server to end turn
 
     } catch (error) {
         console.error("AI Error during logic execution:", error);
         // Failsafe: 即使出错，也要确保能结束回合，避免卡死
-        setTimeout(endTurn, 500); // Call imported endTurn
+        setTimeout(endTurnRequest, 500); // Failsafe: Request server to end turn
     }
 }
 

@@ -7,8 +7,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class DamageDealtEventDto : GameEventDto
     {
-        public override string Type => "DamageDealt";
-
         /// <summary>
         /// The unique identifier (UID) of the entity that received the damage (unit or leader identifier).
         /// </summary>
@@ -33,14 +31,21 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string? SourceUid { get; set; }
 
         /// <summary>
-        /// Optional: The identifier of the player who owns the source of the damage.
-        /// </summary>
-        public string? SourcePlayerId { get; set; }
-
-        /// <summary>
         /// Optional: Describes the type of damage (e.g., "Attack", "Spell", "Effect").
         /// Helps client determine appropriate visual/sound effect.
         /// </summary>
         public string DamageType { get; set; } = "Generic"; // Default to Generic
+
+        // Constructor
+        public DamageDealtEventDto(string sourcePlayerId, string targetUid, int damageAmount, string targetPlayerId, string? sourceUid, string damageType)
+            : base(sourcePlayerId, "DamageDealt") // Call base constructor
+        {
+            TargetUid = targetUid;
+            DamageAmount = damageAmount;
+            TargetPlayerId = targetPlayerId;
+            SourceUid = sourceUid;
+            DamageType = damageType;
+            // Inherited SourcePlayerId is set by the base constructor call
+        }
     }
 }

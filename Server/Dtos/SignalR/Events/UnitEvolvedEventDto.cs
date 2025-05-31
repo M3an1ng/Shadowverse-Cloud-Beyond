@@ -1,5 +1,6 @@
 using ShadowverseBeyond.Server.Dtos;         // For UnitStateDto
 using ShadowverseBeyond.Server.Dtos.SignalR; // For GameEventDto
+using System.Diagnostics.CodeAnalysis; // For [SetsRequiredMembers]
 
 namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
 {
@@ -8,7 +9,15 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class UnitEvolvedEventDto : GameEventDto
     {
-        public override string Type => "UnitEvolved";
+        // Constructor
+        [SetsRequiredMembers]
+        public UnitEvolvedEventDto(string sourcePlayerId, string evolvingUnitUid, UnitStateDto evolvedUnitState)
+            : base(sourcePlayerId, "UnitEvolved") // Call base constructor
+        {
+            // Initialize required properties
+            EvolvingUnitUid = evolvingUnitUid;
+            EvolvedUnitState = evolvedUnitState;
+        }
 
         /// <summary>
         /// The unique identifier of the unit that evolved.

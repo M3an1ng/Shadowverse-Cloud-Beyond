@@ -7,10 +7,10 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class AmuletPlayedEventDto : GameEventDto
     {
-        public override string Type => "AmuletPlayed";
+        // Removed the problematic 'override Type' property
 
         /// <summary>
-        /// The identifier of the player who played the amulet.
+        /// The identifier of the player who played the amulet. This corresponds to SourcePlayerId in the base DTO.
         /// </summary>
         public string PlayerId { get; set; } = string.Empty;
 
@@ -34,6 +34,17 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// The Play Point cost paid to play the amulet.
         /// </summary>
         public int CostPaid { get; set; }
+
+        // Constructor
+        public AmuletPlayedEventDto(string playerId, string amuletUid, CardDto amuletCard, int boardIndex, int costPaid)
+            : base(playerId, "AmuletPlayed") // Call base constructor, using PlayerId as sourcePlayerId
+        {
+            PlayerId = playerId;
+            AmuletUid = amuletUid;
+            AmuletCard = amuletCard;
+            BoardIndex = boardIndex;
+            CostPaid = costPaid;
+        }
 
         // Consider adding initial countdown if applicable to the amulet type.
         // Or perhaps amulet state needs its own specific DTO like UnitStateDto.

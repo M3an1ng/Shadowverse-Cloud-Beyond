@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     {
         public string GameId { get; init; } = string.Empty; // Identifier for the game session
         public string CurrentPlayerId { get; set; } = string.Empty; // Whose turn it is
-        public int TurnNumber { get; set; } // Current turn number
+        // public int TurnNumber { get; set; } // Removed global turn number
         public GamePhase Phase { get; set; } = GamePhase.Initialization; // Changed type to GamePhase Enum and updated default
 
         public string FirstPlayerId { get; set; } = string.Empty; // ID of the player who went first

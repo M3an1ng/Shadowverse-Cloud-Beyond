@@ -2,7 +2,8 @@
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos; // For GameStateDto etc.
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // <<< ADDED for Action DTOs
-using ShadowverseBeyond.Server.Dtos.SignalR.Events; // <<< ADDED for Event DTOs
+using ShadowverseBeyond.Server.Dtos.SignalR; // <<< CORRECTED for Event DTOs (Base class is here)
+using ShadowverseBeyond.Server.Models; // <<< ADDED for GameActionContext
 using System; // For Guid
 using System.Collections.Generic; // Needed for List
 
@@ -24,7 +25,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="playerId">The ID of the player performing the action.</param>
         /// <param name="actionDto">The DTO containing the details of the card play action.</param>
         /// <exception cref="GameLogicException">Thrown if the action is invalid according to game rules.</exception>
-        Task<List<GameEventDto>> PlayCardAsync(string gameId, string playerId, PlayCardActionDto actionDto);
+        Task<bool> PlayCardAsync(string gameId, string playerId, PlayCardActionDto actionDto, GameActionContext context);
 
         /// <summary>
         /// Processes the "Attack" action initiated by a player.
@@ -35,7 +36,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="playerId">The ID of the player performing the action.</param>
         /// <param name="actionDto">The DTO containing the details of the attack action.</param>
         /// <exception cref="GameLogicException">Thrown if the action is invalid according to game rules.</exception>
-        Task<List<GameEventDto>> AttackAsync(string gameId, string playerId, AttackActionDto actionDto);
+        Task<bool> AttackAsync(string gameId, string playerId, AttackActionDto actionDto, GameActionContext context);
 
         /// <summary>
         /// Processes the "Evolve Unit" action initiated by a player.
@@ -57,17 +58,19 @@ namespace ShadowverseBeyond.Server.Services
 
 
 
-        Task<List<GameEventDto>> EvolveAsync(string gameId, string playerId, EvolveActionDto actionDto);
+        Task<bool> EvolveAsync(string gameId, string playerId, EvolveActionDto actionDto, GameActionContext context);
 
         /// <summary>
-        /// Processes the "End Turn" action initiated by a player via the SignalR Hub.
-        /// Handles end-of-turn effects, switches the active player, handles start-of-turn effects
-        /// for the new player (e.g., PP increase, card draw), and returns resulting game events.
+        /// Processes the "End Turn" action initiated by a player.
+        /// Handles end-of-turn effects for the current player and determines the next player.
+        /// Does NOT handle start-of-turn effects for the next player or return events (See V2 Plan in M7).
         /// </summary>
         /// <param name="gameId">The ID of the game instance.</param>
-        /// <param name="playerId">The ID of the player ending their turn.</param>
+        /// <param name="endingPlayerId">The ID of the player ending their turn.</param>
+        /// <returns>The ID of the next player whose turn should start.</returns>
         /// <exception cref="GameLogicException">Thrown if the action is invalid (e.g., not the player's turn).</exception>
-        Task<List<GameEventDto>> EndTurnAsync(string gameId, string playerId);
+        // V2 Refactor (BUG-009 Fix): Signature changed to return tuple including IsNextPlayerAi and Events.
+        Task<(bool Success, bool IsNextPlayerAi, string? NextPlayerId)> EndTurnAsync(string gameId, string endingPlayerId, GameActionContext context);
 
         /// <summary>
         /// Processes the "Submit Mulligan" action initiated by a player via the SignalR Hub.
@@ -78,7 +81,28 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="playerId">The ID of the player submitting their mulligan decision.</param>
         /// <param name="cardUidsToReplace">A list of card UIDs the player wishes to replace.</param>
         /// <exception cref="GameLogicException">Thrown if the action is invalid (e.g., not Mulligan phase, player already submitted).</exception>
-        Task SubmitMulliganAsync(string gameId, string playerId, List<string> cardUidsToReplace);
+        Task SubmitMulliganAsync(string gameId, string playerId, List<Guid> cardUidsToReplace, GameActionContext context);
+
+        /// <summary>
+        /// Processes the start-of-turn logic for the specified player.
+        /// This includes incrementing turn count, updating PP/EP, drawing cards,
+        /// resetting unit states (e.g., attack readiness), and generating necessary start-of-turn events.
+        /// This method is called by the component responsible for turn transition (e.g., GameHub, AiTurnExecutor)
+        /// after the previous turn has fully ended (See V2 Plan in M7).
+        /// </summary>
+        /// <param name="gameId">The ID of the game instance.</param>
+        /// <param name="startingPlayerId">The ID of the player whose turn is starting.</param>
+        /// <returns>A tuple containing the list of generated game events and a boolean flag indicating if the starting player is an AI.</returns>
+        /// <exception cref="GameLogicException">Thrown if the game or player state is invalid.</exception>
+        Task<bool> StartPlayerTurnAsync(string gameId, string startingPlayerId, GameActionContext context); // Returns IsAiTurn
+        /// &lt;summary&gt;
+        /// Explicitly triggers the execution of an AI player's turn.
+        /// This is typically called by the Hub after StartPlayerTurnAsync indicates it's an AI's turn.
+        /// &lt;/summary&gt;
+        /// &lt;param name="gameId"&gt;The ID of the game instance.&lt;/param&gt;
+        /// &lt;param name="aiPlayerId"&gt;The ID of the AI player whose turn should be executed.&lt;/param&gt;
+        /// &lt;returns&gt;A task representing the asynchronous operation.&lt;/returns&gt;
+        Task TriggerAiTurnAsync(string gameId, string aiPlayerId);
 
         // --- Optional / Future Methods ---
 
@@ -89,6 +113,16 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <returns>The GameStateDto for the game, or null if creation failed unexpectedly.</returns>
         Task<GameStateDto?> GetOrCreateGameStateAsync(string gameId);
+
+        /// <summary>
+        /// Retrieves the current game state for the specified game ID.
+        /// Does not create a new game if the state does not exist.
+        /// </summary>
+        /// <param name="gameId">The unique identifier for the game.</param>
+        /// <returns>The GameStateDto if found, otherwise null.</returns>
+        Task<GameStateDto?> GetGameStateAsync(string gameId);
+
+        // BroadcastEventsAsync removed - Broadcasting responsibility moved to Hub after context processing.
 
         // /// <summary>
         // /// Handles logic when a player disconnects from the SignalR Hub.

@@ -7,7 +7,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class GameOverEventDto : GameEventDto
     {
-        public override string Type => "GameOver";
+        // Type is now set in the base constructor
 
         /// <summary>
         /// The identifier of the player who won the game.
@@ -23,5 +23,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// Optional: Reason for the game ending (e.g., "Player Conceded", "Leader Health Reached Zero", "Deck Out").
         /// </summary>
         public string? Reason { get; set; }
+
+        // Constructor to initialize properties and call base constructor
+        public GameOverEventDto(string playerId, string winnerId, string loserId, string? reason = null)
+            : base(playerId, "GameOver") // Set base PlayerId and Type
+        {
+            this.WinnerId = winnerId;
+            this.LoserId = loserId;
+            this.Reason = reason;
+        }
     }
 }

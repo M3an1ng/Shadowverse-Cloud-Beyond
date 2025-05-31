@@ -8,12 +8,12 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class HealthChangedEventDto : GameEventDto
     {
-        public override string Type => "HealthChanged";
+        // Type property is inherited from GameEventDto and set in the constructor.
 
         /// <summary>
         /// The unique identifier of the entity whose health changed.
         /// </summary>
-        public string TargetUid { get; set; } = string.Empty;
+        public string TargetUid { get; set; } // Removed default value for required property
 
         /// <summary>
         /// The new health value of the entity after the change.
@@ -26,10 +26,18 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public int ChangeAmount { get; set; }
 
         /// <summary>
-        /// Constructor setting the event type.
+        /// Initializes a new instance of the <see cref="HealthChangedEventDto"/> class.
         /// </summary>
-        public HealthChangedEventDto()
+        /// <param name="playerId">The ID of the player this event is relevant to.</param>
+        /// <param name="targetUid">The unique identifier of the entity whose health changed.</param>
+        /// <param name="newHealth">The new health value of the entity.</param>
+        /// <param name="changeAmount">The amount the health changed.</param>
+        public HealthChangedEventDto(string playerId, string targetUid, int newHealth, int changeAmount)
+            : base(playerId, "HealthChanged")
         {
+            this.TargetUid = targetUid;
+            this.NewHealth = newHealth;
+            this.ChangeAmount = changeAmount;
         }
     }
 }

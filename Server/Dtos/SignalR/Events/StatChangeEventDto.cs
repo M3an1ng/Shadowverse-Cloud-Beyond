@@ -1,4 +1,5 @@
 using ShadowverseBeyond.Server.Dtos.SignalR; // Assuming GameEventDto is here
+using System.Diagnostics.CodeAnalysis; // Add required using
 
 namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
 {
@@ -7,8 +8,16 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class StatChangeEventDto : GameEventDto
     {
-        public override string Type => "StatChange";
-
+        // Constructor to initialize properties and call the base constructor
+        [SetsRequiredMembers] // Add attribute here
+        public StatChangeEventDto(string sourcePlayerId, string targetEntityUid, int? newAttack, int? newCurrentHealth, int? newMaxHealth)
+            : base(sourcePlayerId, "StatChange")
+        {
+            TargetEntityUid = targetEntityUid;
+            NewAttack = newAttack;
+            NewCurrentHealth = newCurrentHealth;
+            NewMaxHealth = newMaxHealth;
+        }
         /// <summary>
         /// The unique identifier of the entity (Unit or Player Leader) whose stats changed.
         /// </summary>

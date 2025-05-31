@@ -8,13 +8,12 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class PpUpdateEventDto : GameEventDto
     {
-        public override string Type => "PpUpdate";
-
-        /// <summary>
-        /// The identifier of the player whose PP was updated.
-        /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
-
+        // Constructor to initialize properties and call the base constructor
+        public PpUpdateEventDto(string playerId, int currentPp, int maxPp) : base(playerId, "PpUpdate")
+        {
+            CurrentPp = currentPp;
+            MaxPp = maxPp;
+        }
         /// <summary>
         /// The player's current PP amount after the update.
         /// </summary>

@@ -7,17 +7,25 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class SpellPlayedEventDto : GameEventDto
     {
-        public override string Type => "SpellPlayed";
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SpellPlayedEventDto"/> class.
+        /// </summary>
+        /// <param name="playerId">The ID of the player playing the spell.</param>
+        /// <param name="cardId">The definition ID of the spell card.</param>
+        /// <param name="sourceCardUid">The UID of the card instance from the hand.</param>
+        /// <param name="targetUid">The UID of the target, if any.</param>
+        // Pass both sourcePlayerId (using the 'playerId' parameter) and the event type string to the base constructor
+        public SpellPlayedEventDto(string playerId, string cardId, string sourceCardUid, string? targetUid) : base(playerId, "SpellPlayed") // Changed: int cardId -> string cardId
+        {
+            CardId = cardId;
+            SourceCardUid = sourceCardUid;
+            TargetUid = targetUid;
+        }
 
         /// <summary>
-        /// The identifier of the player who played the spell.
+        /// The definition ID (string format, e.g., "S001") of the spell card that was played.
         /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
-
-        /// <summary>
-        /// The definition ID of the spell card that was played.
-        /// </summary>
-        public int CardId { get; set; }
+        public string CardId { get; set; } = string.Empty; // Changed: int -> string, added initializer
 
         /// <summary>
         /// The UID of the card instance from the hand that was used to play this spell.

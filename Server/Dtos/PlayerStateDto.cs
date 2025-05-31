@@ -31,10 +31,12 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public List<CardDto> Deck { get; set; } = new(); // Stores the actual cards in the player's deck. Needed for drawing.
         public List<UnitStateDto> Field { get; set; } = new(); // Units on the player's side of the field
 
+        public List<CardDto> Graveyard { get; set; } = new(); // Cards destroyed or spells/amulets resolved
         // Turn State
         public int PlayedCardCountThisTurn { get; set; }
         public bool HasCompletedMulligan { get; set; } = false; // Flag indicating if the player has submitted their mulligan choice.
         public bool HasTakenFirstTurn { get; set; } = false; // Indicates if the player has finished their first turn (for draw 2 logic)
+        public int TurnNumber { get; set; } = 0; // Renamed: Tracks the player's individual turn number, starts at 0 before their first turn begins.
 
         // Add Graveyard count, Banished count, etc., if needed by UI
         // public int GraveyardCount { get; set; }

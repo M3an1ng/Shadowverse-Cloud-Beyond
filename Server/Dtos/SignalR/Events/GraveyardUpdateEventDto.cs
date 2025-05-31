@@ -8,12 +8,8 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class GraveyardUpdateEventDto : GameEventDto
     {
-        public override string Type => "GraveyardUpdate";
-
-        /// <summary>
-        /// The identifier of the player whose graveyard was updated.
-        /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
+        // Type is now set in the base constructor
+        // PlayerId is inherited from GameEventDto
 
         /// <summary>
         /// The total number of cards currently in the player's graveyard after the update.
@@ -34,5 +30,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string? CardRemovedUid { get; set; }
 
         // Consider adding the CardId of the removed card if needed for visual tracking.
+
+        // Constructor to initialize properties and call base constructor
+        public GraveyardUpdateEventDto(string playerId, int graveyardCount, CardDto? cardAdded = null, string? cardRemovedUid = null)
+            : base(playerId, "GraveyardUpdate") // Set base PlayerId and Type
+        {
+            this.GraveyardCount = graveyardCount;
+            this.CardAdded = cardAdded;
+            this.CardRemovedUid = cardRemovedUid;
+        }
     }
 }

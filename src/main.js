@@ -3,7 +3,15 @@ console.log("main.js loaded");
 
 // 导入核心模块
 import * as signalR from "@microsoft/signalr";
-import { gameState, initializeGame, setSignalRConnection, updateFullGameState, processGameEvent } from './gameManager.js'; // ADDED updateFullGameState, processGameEvent
+import { LogLevel } from "@microsoft/signalr"; // Added for Trace logging
+import {
+    gameState, initializeGame, setSignalRConnection, updateFullGameState, endTurnRequest,
+    // Import specific event handlers instead of processGameEvent
+    handleTurnStarted, handleTurnEnded, handlePpUpdate, handleEpUpdate, handleHandUpdate,
+    handleDeckUpdate, handleGraveyardUpdate, handleUnitPlayed, handleSpellPlayed, handleAmuletPlayed,
+    handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealthChanged, handleStatChange,
+    handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleCardDrawn
+} from './gameManager.js';
 import { loadCards } from './cardManager.js'; // Keep existing correct import
 import { renderGame } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 // import { endTurn } from './turnManager.js'; // Keep commented out
@@ -44,8 +52,8 @@ async function setupSignalRConnection(gameId, playerId, resolveInitialState) { /
 
     connection = new signalR.HubConnectionBuilder()
         .withUrl(hubUrlWithParams)
-        .withAutomaticReconnect() // Enable automatic reconnection
-        .configureLogging(signalR.LogLevel.Information)
+        .withAutomaticReconnect()
+        .configureLogging(signalR.LogLevel.Trace) // Changed level to Trace
         .build();
 
     registerSignalREventHandlers(connection, resolveInitialState); // Pass resolver down
@@ -101,12 +109,93 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     // --- END M6 MODIFICATION ---
 
     // Handler for incremental game events
-    conn.on("ReceiveGameEvent", (gameEvent) => {
-        console.log("MAIN: Received GameEvent:", gameEvent.eventType, gameEvent);
-        // Delegate event processing to gameManager
-        processGameEvent(gameEvent); // UNCOMMENTED: Call the exported function from gameManager
-        // processGameEvent should update gameState and trigger UI updates (full or partial) via ui.js
+    // Register specific handlers for different event types from IGameClient.cs
+    // For now, all delegate to processGameEvent in gameManager, which needs implementation.
+    // Call specific handlers from gameManager.js for each event type
+    conn.on("TurnStarted", (eventData) => {
+        console.log("MAIN: Received TurnStarted:", eventData);
+        handleTurnStarted(eventData); // Call specific handler
     });
+    conn.on("TurnEnded", (eventData) => {
+        console.log("MAIN: Received TurnEnded:", eventData);
+        handleTurnEnded(eventData); // Call specific handler
+    });
+    conn.on("PpUpdate", (eventData) => {
+        console.log("MAIN: Received PpUpdate:", eventData);
+        handlePpUpdate(eventData); // Call specific handler
+    });
+    conn.on("EpUpdate", (eventData) => { // Renamed from EvolvePointUpdate to match backend DTO/Interface
+        console.log("MAIN: Received EpUpdate:", eventData);
+        handleEpUpdate(eventData); // Call specific handler
+    });
+    conn.on("HandUpdate", (eventData) => {
+        console.log("MAIN: Received HandUpdate:", eventData);
+        handleHandUpdate(eventData); // Call specific handler
+    });
+    conn.on("DeckUpdate", (eventData) => {
+        console.log("MAIN: Received DeckUpdate:", eventData);
+        handleDeckUpdate(eventData); // Call specific handler
+    });
+    conn.on("CardDrawn", (eventData) => {
+        console.log("MAIN: Received CardDrawn:", eventData);
+        handleCardDrawn(eventData); // Call specific handler
+    });
+    conn.on("GraveyardUpdate", (eventData) => {
+        console.log("MAIN: Received GraveyardUpdate:", eventData);
+        handleGraveyardUpdate(eventData); // Call specific handler
+    });
+    conn.on("UnitPlayed", (eventData) => {
+        console.log("MAIN: Received UnitPlayed:", eventData);
+        handleUnitPlayed(eventData); // Call specific handler
+    });
+    conn.on("SpellPlayed", (eventData) => {
+        console.log("MAIN: Received SpellPlayed:", eventData);
+        handleSpellPlayed(eventData); // Call specific handler
+    });
+    conn.on("AmuletPlayed", (eventData) => {
+        console.log("MAIN: Received AmuletPlayed:", eventData);
+        handleAmuletPlayed(eventData); // Call specific handler
+    });
+    conn.on("AttackDeclared", (eventData) => { // Renamed from UnitAttacked to match backend DTO/Interface
+        console.log("MAIN: Received AttackDeclared:", eventData);
+        handleAttackDeclared(eventData); // Call specific handler
+    });
+    conn.on("UnitDestroyed", (eventData) => {
+        console.log("MAIN: Received UnitDestroyed:", eventData);
+        handleUnitDestroyed(eventData); // Call specific handler
+    });
+    conn.on("DamageDealt", (eventData) => {
+        console.log("MAIN: Received DamageDealt:", eventData);
+        handleDamageDealt(eventData); // Call specific handler
+    });
+    conn.on("HealthChanged", (eventData) => { // Added handler
+        console.log("MAIN: Received HealthChanged:", eventData);
+        handleHealthChanged(eventData); // Call specific handler
+    });
+     conn.on("StatChange", (eventData) => { // Added handler
+        console.log("MAIN: Received StatChange:", eventData);
+        handleStatChange(eventData); // Call specific handler
+    });
+     conn.on("UnitEvolved", (eventData) => { // Added handler (was missing)
+         console.log("MAIN: Received UnitEvolved:", eventData);
+         handleUnitEvolved(eventData); // Call specific handler
+     });
+    // LeaderStatusUpdate seems specific, keep it if needed, or handle via other events?
+    // For now, let's comment it out as other events cover health/stats.
+    // conn.on("LeaderStatusUpdate", (eventData) => {
+    //     console.log("MAIN: Received LeaderStatusUpdate:", eventData);
+    //     // processGameEvent(eventData); // Or handleLeaderStatusUpdate(eventData) if needed
+    // });
+    conn.on("PlayerMulliganCompleted", (eventData) => {
+        console.log("MAIN: Received PlayerMulliganCompleted:", eventData);
+        handlePlayerMulliganCompleted(eventData); // Call specific handler
+    });
+    conn.on("GameOver", (eventData) => {
+        console.log("MAIN: Received GameOver:", eventData);
+        handleGameOver(eventData); // Call specific handler
+    });
+
+    // The generic ReceiveGameEvent handler is implicitly removed by replacing this whole block.
 
     // Handler for server-side errors
     conn.on("ReceiveError", (errorMessage) => {
@@ -282,23 +371,8 @@ function setupEventListeners() {
     console.log("MAIN: Setting up event listeners...");
     const endTurnButton = document.getElementById('end-turn-button');
     if (endTurnButton) {
-        endTurnButton.addEventListener('click', () => {
-            console.log("MAIN: End Turn button clicked.");
-            // Check connection status before invoking
-            if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
-                console.error("MAIN: SignalR connection not available for EndTurn");
-                alert("连接已断开，无法结束回合。"); // Use alert instead of displayError
-                return;
-            }
-            console.log("MAIN: Invoking EndTurn Hub method...");
-            connection.invoke("EndTurn")
-                .then(() => console.log("MAIN: EndTurn invoked successfully.")) // Add success log
-                .catch(err => {
-                     console.error("MAIN: Error invoking EndTurn:", err);
-                     alert(`结束回合失败: ${err.message}`); // Use alert instead of displayError
-                 });
-        });
-        console.log("MAIN: End Turn button listener attached.");
+        // Removed redundant event listener for end-turn-button.
+        // Event delegation in ui.js handles this now.
     } else {
         console.error("MAIN: Element with ID 'end-turn-button' not found!");
     }

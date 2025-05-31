@@ -8,7 +8,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// </summary>
     public class ErrorOccurredEventDto : GameEventDto
     {
-        public override string Type => "ErrorOccurred";
 
         /// <summary>
         /// A user-friendly message describing the error.
@@ -20,12 +19,21 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// </summary>
         public string? ErrorCode { get; set; }
 
+
+        // Consider adding details about the failed action if relevant,
+        // but keep it minimal to avoid leaking too much internal state.
         /// <summary>
-        /// Optional: The identifier of the player who triggered the error (if applicable).
-        /// Useful for displaying the error message only to the relevant player.
-        /// If null or empty, the error might be global or server-side.
+        /// Initializes a new instance of the <see cref="ErrorOccurredEventDto"/> class.
         /// </summary>
-        public string? PlayerId { get; set; }
+        /// <param name="playerId">Identifier of the player primarily associated with the error (e.g., who caused it, or empty/null for global errors).</param>
+        /// <param name="errorMessage">The user-friendly error message.</param>
+        /// <param name="errorCode">Optional error code for client-side handling.</param>
+        public ErrorOccurredEventDto(string playerId, string errorMessage, string? errorCode = null)
+            : base(playerId, "ErrorOccurred") // Set base PlayerId and Type
+        {
+            this.ErrorMessage = errorMessage;
+            this.ErrorCode = errorCode;
+        }
 
         // Consider adding details about the failed action if relevant,
         // but keep it minimal to avoid leaking too much internal state.

@@ -15,6 +15,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public string CardId { get; init; } = string.Empty; // Definition ID
         public string Name { get; init; } = string.Empty; // Copied from definition for display
         public string Type { get; init; } = string.Empty; // "Follower" or "Amulet"
+        public int Cost { get; init; } // Add Cost property, initialized from definition
 
         // State for Followers (null for Amulets?)
         public int? CurrentAttack { get; set; } // Current attack value including buffs/debuffs
@@ -23,8 +24,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public int? MaxHealth { get; set; }    // Base health + permanent buffs (can change?)
         public bool CanAttack { get; set; }     // Whether the unit can currently initiate an attack
         public bool IsEvolved { get; set; }     // Evolution status
-        public int AttackCountThisTurn { get; set; } // Tracks attacks made this turn
+        public int AttacksMadeThisTurn { get; set; } = 0; // Tracks attacks made this turn (Renamed, set setter for compatibility, default 0 as per M7)
 
+        public int MaxAttacksPerTurn { get; init; } = 1; // Max attacks per turn (Default 1, as per M7)
         // Common State / Keywords
         public List<string> Keywords { get; set; } = new(); // Current active keywords (e.g., Ward)
 
