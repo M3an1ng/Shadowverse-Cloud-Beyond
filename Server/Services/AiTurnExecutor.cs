@@ -33,7 +33,7 @@ namespace ShadowverseBeyond.Server.Services
 
         // The core AI turn logic, moved from GameService
         // M8 Change: Reverted - Context should be created internally per action
-        public async Task ExecuteTurnAsync(string gameId, string aiPlayerId)
+        public async Task ExecuteTurnAsync(string gameId, string aiPlayerId, GameActionContext context) // Re-added context parameter for M8 sequence
         {
             _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI turn execution started.", gameId, aiPlayerId);
             bool actionTaken = false;
@@ -114,8 +114,8 @@ namespace ShadowverseBeyond.Server.Services
                             _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Calling _gameService.PlayCardAsync: Card={CardUid}, Target={TargetUid}", gameId, aiPlayerId, playCardAction.CardUid, playCardAction.TargetUid ?? "None");
                             // --- End Roo Debug Log ---
                             // M8 Change: Create context, pass it, then broadcast events
-                            var playCardContext = new GameActionContext(); // Use parameterless constructor
-                            await _gameService.PlayCardAsync(gameId, aiPlayerId, playCardAction, playCardContext);
+                            // Pass the received context down
+                            await _gameService.PlayCardAsync(gameId, aiPlayerId, playCardAction, context);
                             // Broadcasting is handled within PlayCardAsync
                             _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] PlayCardAsync and BroadcastEventsAsync completed.", gameId, aiPlayerId);
                             actionTaken = true;
@@ -159,8 +159,8 @@ namespace ShadowverseBeyond.Server.Services
                             _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Calling _gameService.EvolveAsync: Unit={UnitUid}", gameId, aiPlayerId, evolveAction.UnitUid);
                             // --- End Roo Debug Log ---
                             // M8 Change: Create context, pass it, then broadcast events
-                            var evolveContext = new GameActionContext(); // Use parameterless constructor
-                            await _gameService.EvolveAsync(gameId, aiPlayerId, evolveAction, evolveContext);
+                            // Pass the received context down
+                            await _gameService.EvolveAsync(gameId, aiPlayerId, evolveAction, context);
                             // Broadcasting is handled within EvolveAsync
                             _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] EvolveAsync and BroadcastEventsAsync completed.", gameId, aiPlayerId);
                             actionTaken = true;
@@ -213,8 +213,8 @@ namespace ShadowverseBeyond.Server.Services
                                 _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Calling _gameService.AttackAsync: Attacker={AttackerUid}, Target={TargetUid}", gameId, aiPlayerId, attackAction.AttackerUid, attackAction.TargetUid);
                                 // --- End Roo Debug Log ---
                                 // M8 Change: Create context, pass it, then broadcast events
-                                var attackContext = new GameActionContext(); // Use parameterless constructor
-                                await _gameService.AttackAsync(gameId, aiPlayerId, attackAction, attackContext);
+                                // Pass the received context down
+                                await _gameService.AttackAsync(gameId, aiPlayerId, attackAction, context);
                                 // Broadcasting is handled within AttackAsync
                                 _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] AttackAsync and BroadcastEventsAsync completed for one attack.", gameId, aiPlayerId);
                                 anyAttackSucceeded = true;
@@ -282,8 +282,8 @@ namespace ShadowverseBeyond.Server.Services
                     // Roo Change: Deconstruct the tuple returned by the updated EndTurnAsync
                     // Call EndTurnAsync and discard the result tuple, as it's handled elsewhere.
                     // M8 Change: Create context, pass it, then broadcast events
-                    var endTurnContext = new GameActionContext(); // Use parameterless constructor
-                    await _gameService.EndTurnAsync(gameId, aiPlayerId, endTurnContext);
+                    // Pass the received context down
+                    await _gameService.EndTurnAsync(gameId, aiPlayerId, context);
                     // Broadcasting is handled within EndTurnAsync
                     // --- Roo Debug Log: Final End Turn Call End ---
                     _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] _gameService.EndTurnAsync and BroadcastEventsAsync completed normally.", gameId, aiPlayerId);
@@ -329,8 +329,8 @@ namespace ShadowverseBeyond.Server.Services
                         // Roo Change: Deconstruct tuple, ignoring next player info in emergency
                         // Call emergency EndTurnAsync, ignore the returned string (nextPlayerId)
                         // M8 Change: Create context, pass it, then broadcast events
-                        var emergencyEndTurnContext = new GameActionContext(); // Use parameterless constructor
-                        await _gameService.EndTurnAsync(gameId, aiPlayerId, emergencyEndTurnContext); // RESTORED emergency call
+                        // Pass the received context down
+                        await _gameService.EndTurnAsync(gameId, aiPlayerId, context); // RESTORED emergency call
                         // Broadcasting is handled within EndTurnAsync
                         // --- Roo Debug Log: Emergency End Turn End ---
                         _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Emergency EndTurn and BroadcastEventsAsync completed.", gameId, aiPlayerId);

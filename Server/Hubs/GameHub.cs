@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging;
 using System.Text.Json; // Added for JSON Serialization in logging
+using ShadowverseBeyond.Server.Models; // Add using for GameActionContext
 using ShadowverseBeyond.Server.Dtos.SignalR; // Added for base GameEventDto
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces; // IGameClient
 using ShadowverseBeyond.Server.Services;            // IGameService
@@ -67,23 +68,24 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.CardUid);
                 // Removed extraneous braces {} that previously wrapped lines 63-80
 
-                // Delegate to core game logic service and get resulting events
-                var events = await _gameService.PlayCardAsync(gameId.ToString(), playerId, actionDto);
+                // Create context, delegate to core game logic service, and broadcast collected events
+                var context = new GameActionContext();
+                await _gameService.PlayCardAsync(gameId.ToString(), playerId, actionDto, context); // Pass context
 
                 // Log message below already correctly used CardUid
                 _logger.LogInformation("Player {PlayerId} successfully executed PlayCard {CardUid} in Game {GameId}. Broadcasting {EventCount} events.",
-                    playerId, gameId, actionDto.CardUid, events.Count);
+                    playerId, gameId, actionDto.CardUid, context.Events.Count); // Use context.Events.Count
 
-                // Broadcast events returned by the service
-                if (events.Count > 0)
+                // Broadcast events collected by the service
+                if (context.Events.Count > 0)
                 {
                     string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in events)
+                    foreach (var gameEvent in context.Events) // Use context.Events
                     {
                         // **FIXED: Use specific client methods based on event type**
                         await BroadcastEventToGroupAsync(groupName, gameEvent); // Use helper
                     }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after PlayCard.", events.Count, groupName);
+                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after PlayCard.", context.Events.Count, groupName); // Use context.Events.Count
                 }
             } // End of try block
             // Catch block now correctly follows the main try logic
@@ -145,12 +147,14 @@ namespace ShadowverseBeyond.Server.Hubs
             try
             {
                 _logger.LogInformation("Player {PlayerId} ending turn in Game {GameId}", playerId, gameId);
-                // Delegate to core game logic service and get resulting events
+                var context = new GameActionContext(); // Create context
+
+                // Delegate EndTurn to core game logic service
                 _logger.LogInformation("[GameHub:{GameId}] >>>>> PRE-CALL: Attempting to call _gameService.EndTurnAsync for Player {PlayerId}...", gameId, playerId);
-                // Call EndTurnAsync and get the result tuple
-                var endTurnResult = await _gameService.EndTurnAsync(gameId.ToString(), playerId);
-                _logger.LogInformation("[GameHub:{GameId}] <<<<< POST-CALL: Completed _gameService.EndTurnAsync for Player {PlayerId}. Success: {Success}, IsNextAI: {IsNextAI}, NextPlayer: {NextPlayerId}, Events: {EventCount}",
-                   gameId, playerId, endTurnResult.Success, endTurnResult.IsNextPlayerAi, endTurnResult.NextPlayerId ?? "N/A", endTurnResult.Events?.Count ?? 0);
+                // Call EndTurnAsync, passing the context
+                var endTurnResult = await _gameService.EndTurnAsync(gameId.ToString(), playerId, context);
+                _logger.LogInformation("[GameHub:{GameId}] <<<<< POST-CALL: Completed _gameService.EndTurnAsync for Player {PlayerId}. Success: {Success}, IsNextAI: {IsNextAI}, NextPlayer: {NextPlayerId}. Context Events: {EventCount}",
+                   gameId, playerId, endTurnResult.Success, endTurnResult.IsNextPlayerAi, endTurnResult.NextPlayerId ?? "N/A", context.Events.Count); // Log context event count
 
                 // Check if the EndTurn operation itself was successful
                 if (!endTurnResult.Success)
@@ -158,26 +162,26 @@ namespace ShadowverseBeyond.Server.Hubs
                     _logger.LogError("[GameHub:{GameId}] _gameService.EndTurnAsync reported failure for Player {PlayerId}.", gameId, playerId);
                     // Optionally send a specific error if the service indicated failure
                     await Clients.Caller.ReceiveError("Failed to process end turn logic in the game service.");
+                    // Broadcast any events collected *before* the failure? Probably not.
                     return; // Stop processing if the service failed
                 }
 
-                // --- Refactor: Start next player's turn explicitly ---
-                List<GameEventDto> startTurnEvents = new List<GameEventDto>();
+                // Start next player's turn explicitly, passing the SAME context
                 if (!string.IsNullOrEmpty(endTurnResult.NextPlayerId))
                 {
-                    _logger.LogInformation("[GameHub:{GameId}] Calling StartPlayerTurnAsync for next player {NextPlayerId}.", gameId, endTurnResult.NextPlayerId);
+                    _logger.LogInformation("[GameHub:{GameId}] Calling StartPlayerTurnAsync for next player {NextPlayerId}...", gameId, endTurnResult.NextPlayerId);
                     try
                     {
-                        // Call StartPlayerTurnAsync and capture the result tuple
-                        var startTurnResultTuple = await _gameService.StartPlayerTurnAsync(gameId.ToString(), endTurnResult.NextPlayerId);
-                        startTurnEvents = startTurnResultTuple.Events ?? new List<GameEventDto>(); // Capture events from the tuple
-                        _logger.LogInformation("[GameHub:{GameId}] StartPlayerTurnAsync completed for {NextPlayerId}. Got {EventCount} events.", gameId, endTurnResult.NextPlayerId, startTurnEvents.Count);
+                        // Call StartPlayerTurnAsync, passing the context
+                        // No need to capture result tuple for events anymore, they are in the context
+                        await _gameService.StartPlayerTurnAsync(gameId.ToString(), endTurnResult.NextPlayerId, context);
+                        _logger.LogInformation("[GameHub:{GameId}] StartPlayerTurnAsync completed for {NextPlayerId}. Context Events (after start): {EventCount}", gameId, endTurnResult.NextPlayerId, context.Events.Count); // Log context event count
                     }
                     catch (Exception startEx)
                     {
                         _logger.LogError(startEx, "[GameHub:{GameId}] Error calling StartPlayerTurnAsync for {NextPlayerId}.", gameId, endTurnResult.NextPlayerId);
                         await Clients.Caller.ReceiveError($"Server error starting next turn for {endTurnResult.NextPlayerId}.");
-                        // Consider if we should return here or continue broadcasting EndTurn events
+                        // Broadcast events collected *before* this error? Yes, likely important.
                     }
                 }
                 else
@@ -185,46 +189,38 @@ namespace ShadowverseBeyond.Server.Hubs
                     _logger.LogWarning("[GameHub:{GameId}] NextPlayerId from EndTurnAsync was null or empty. Cannot start next turn.", gameId);
                 }
 
-                // Combine events from EndTurn and StartTurn
-                var allEventsToBroadcast = new List<GameEventDto>();
-                if (endTurnResult.Events != null) allEventsToBroadcast.AddRange(endTurnResult.Events);
-                allEventsToBroadcast.AddRange(startTurnEvents); // Add start turn events
-                _logger.LogInformation("[GameHub:{GameId}] Combined events: {EndTurnEventCount} from EndTurn + {StartTurnEventCount} from StartTurn = {TotalEventCount} total.",
-                    gameId, endTurnResult.Events?.Count ?? 0, startTurnEvents.Count, allEventsToBroadcast.Count);
-                // --- End Refactor ---
-
-                // Broadcast the COMBINED events generated by EndTurnAsync AND StartPlayerTurnAsync
-                if (allEventsToBroadcast.Count > 0) // Use the combined list
+                // Broadcast ALL events collected in the context from BOTH service calls
+                if (context.Events.Count > 0) // Use context.Events
                 {
                     string groupName = $"Game_{gameId}";
-                    _logger.LogInformation("[GameHub:{GameId}] Broadcasting {EventCount} combined events to group {GroupName}.", gameId, allEventsToBroadcast.Count, groupName); // Update log message
+                    _logger.LogInformation("[GameHub:{GameId}] Broadcasting {EventCount} collected events to group {GroupName}.", gameId, context.Events.Count, groupName); // Update log message
                     int eventIndex = 0;
-                    foreach (var gameEvent in allEventsToBroadcast) // Use the combined list
+                    foreach (var gameEvent in context.Events) // Use context.Events
                     {
                         eventIndex++;
                         try
                         {
                             if (gameEvent == null)
                             {
-                                _logger.LogWarning("[GameHub:{GameId}] Skipping broadcast for null event at index {Index} from combined list.", gameId, eventIndex);
+                                _logger.LogWarning("[GameHub:{GameId}] Skipping broadcast for null event at index {Index} from context.", gameId, eventIndex);
                                 continue;
                             }
                             string eventType = gameEvent.GetType().Name;
-                            _logger.LogDebug("[GameHub:{GameId}] Broadcasting Combined Event #{Index} ({EventType}) to group {GroupName}...", gameId, eventIndex, eventType, groupName);
+                            _logger.LogDebug("[GameHub:{GameId}] Broadcasting Context Event #{Index} ({EventType}) to group {GroupName}...", gameId, eventIndex, eventType, groupName);
                             await BroadcastEventToGroupAsync(groupName, gameEvent);
-                            _logger.LogDebug("[GameHub:{GameId}] Successfully broadcasted Combined Event #{Index} ({EventType}) to group {GroupName}.", gameId, eventIndex, eventType, groupName);
+                            _logger.LogDebug("[GameHub:{GameId}] Successfully broadcasted Context Event #{Index} ({EventType}) to group {GroupName}.", gameId, eventIndex, eventType, groupName);
                         }
                         catch (Exception ex)
                         {
                             string eventTypeInfo = gameEvent?.GetType()?.Name ?? "Unknown (event was null)";
-                            _logger.LogError(ex, "[GameHub:{GameId}] --- FAILED to broadcast Combined Event #{Index} ({EventTypeInfo}) to group {GroupName} ---", gameId, eventIndex, eventTypeInfo, groupName);
+                            _logger.LogError(ex, "[GameHub:{GameId}] --- FAILED to broadcast Context Event #{Index} ({EventTypeInfo}) to group {GroupName} ---", gameId, eventIndex, eventTypeInfo, groupName);
                         }
                     }
-                    _logger.LogInformation("[GameHub:{GameId}] Finished broadcasting loop for {EventCount} combined events to group {GroupName}.", gameId, allEventsToBroadcast.Count, groupName);
+                    _logger.LogInformation("[GameHub:{GameId}] Finished broadcasting loop for {EventCount} collected events to group {GroupName}.", gameId, context.Events.Count, groupName);
                 }
                 else
                 {
-                    _logger.LogInformation("[GameHub:{GameId}] EndTurnAsync and StartPlayerTurnAsync completed successfully for Player {PlayerId}, but returned no combined events.", gameId, playerId);
+                    _logger.LogInformation("[GameHub:{GameId}] EndTurnAsync and StartPlayerTurnAsync completed successfully for Player {PlayerId}, but collected no events in context.", gameId, playerId);
                 }
 
 
@@ -277,22 +273,23 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting attack: {Attacker} -> {Target}",
                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
 
-                // Delegate to core game logic service and get resulting events
-                var events = await _gameService.AttackAsync(gameId.ToString(), playerId, actionDto);
+                // Create context, delegate to core game logic service, and broadcast collected events
+                var context = new GameActionContext();
+                await _gameService.AttackAsync(gameId.ToString(), playerId, actionDto, context); // Pass context
 
                 _logger.LogInformation("Player {PlayerId} successfully executed Attack in Game {GameId}. Broadcasting {EventCount} events.",
-                                      playerId, gameId, events.Count);
+                                      playerId, gameId, context.Events.Count); // Use context.Events.Count
 
-                // Broadcast events returned by the service
-                if (events.Count > 0)
+                // Broadcast events collected by the service
+                if (context.Events.Count > 0)
                 {
                     string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in events)
+                    foreach (var gameEvent in context.Events) // Use context.Events
                     {
                         // **FIXED: Use specific client methods based on event type**
                         await BroadcastEventToGroupAsync(groupName, gameEvent); // Use helper
                     }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after Attack.", events.Count, groupName);
+                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after Attack.", context.Events.Count, groupName); // Use context.Events.Count
                 }
             }
             catch (GameLogicException ex)
@@ -329,22 +326,23 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting to evolve unit {UnitUid}",
                     playerId, gameId, actionDto.UnitUid);
 
-                // Delegate to core game logic service and get resulting events
-                var events = await _gameService.EvolveAsync(gameId.ToString(), playerId, actionDto);
+                // Create context, delegate to core game logic service, and broadcast collected events
+                var context = new GameActionContext();
+                await _gameService.EvolveAsync(gameId.ToString(), playerId, actionDto, context); // Pass context
 
                 _logger.LogInformation("Player {PlayerId} successfully executed Evolve on {UnitUid} in Game {GameId}. Broadcasting {EventCount} events.",
-                                       playerId, gameId, actionDto.UnitUid, events.Count);
+                                       playerId, gameId, actionDto.UnitUid, context.Events.Count); // Use context.Events.Count
 
-                // Broadcast events returned by the service
-                if (events.Count > 0)
+                // Broadcast events collected by the service
+                if (context.Events.Count > 0)
                 {
                     string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in events)
+                    foreach (var gameEvent in context.Events) // Use context.Events
                     {
                         // **FIXED: Use specific client methods based on event type**
                         await BroadcastEventToGroupAsync(groupName, gameEvent); // Use helper
                     }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after Evolve.", events.Count, groupName);
+                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after Evolve.", context.Events.Count, groupName); // Use context.Events.Count
                 }
             }
             catch (GameLogicException ex)
@@ -391,6 +389,8 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} submitting mulligan in Game {GameId}. Replacing {Count} cards.",
                     playerId, gameId, cardUidsToReplace.Count);
 
+                var context = new GameActionContext(); // Create context
+
                 // Delegate to core game logic service
                 // Note: Ensure IGameService has a corresponding SubmitMulliganAsync method
                 _logger.LogDebug("Attempting to call _gameService.SubmitMulliganAsync for Game {GameId}, Player {PlayerId}", gameId, playerId);
@@ -408,11 +408,22 @@ namespace ShadowverseBeyond.Server.Hubs
                 }
 
                 _logger.LogDebug("Attempting to call _gameService.SubmitMulliganAsync for Game {GameId}, Player {PlayerId} with {GuidCount} parsed GUIDs.", gameId, playerId, parsedUids.Count); // Adjusted log before call
-                await _gameService.SubmitMulliganAsync(gameId.ToString(), playerId, parsedUids); // Pass the parsed List<Guid>
+                await _gameService.SubmitMulliganAsync(gameId.ToString(), playerId, parsedUids, context); // Pass context
 
-                // GameService is responsible for broadcasting events/state updates after mulligan completion.
-                _logger.LogInformation("Player {PlayerId} successfully submitted mulligan in Game {GameId}", playerId, gameId);
-                // --- AI Trigger logic removed, now handled by GameService after mulligan completion ---
+                // Broadcast events collected by the service
+                _logger.LogInformation("Player {PlayerId} successfully submitted mulligan in Game {GameId}. Broadcasting {EventCount} events.",
+                                       playerId, gameId, context.Events.Count); // Log context event count
+
+                if (context.Events.Count > 0)
+                {
+                    string groupName = $"Game_{gameId}";
+                    foreach (var gameEvent in context.Events)
+                    {
+                        await BroadcastEventToGroupAsync(groupName, gameEvent);
+                    }
+                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after SubmitMulligan.", context.Events.Count, groupName);
+                }
+                // --- AI Trigger logic removed previously, still handled by GameService ---
             }
             catch (GameLogicException ex)
             {
