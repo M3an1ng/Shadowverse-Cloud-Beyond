@@ -2106,8 +2106,12 @@ namespace ShadowverseBeyond.Server.Services
             // StartPlayerTurnAsync is now called externally before this method.
             // Call the AI execution logic using the resolved instance
             _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Executing AI's main turn actions.", gameId, aiPlayerId);
-            await aiTurnExecutorInstance.ExecuteTurnAsync(gameId, aiPlayerId);
-            _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] AiTurnExecutor (resolved via scope) completed successfully.", gameId, aiPlayerId);
+            // M8 Step 6: Create context, pass it, and broadcast after
+            var context = new GameActionContext();
+            _logger.LogDebug("[AI_TURN:{GameId}:{PlayerId}] Created GameActionContext for AI turn.", gameId, aiPlayerId);
+            await aiTurnExecutorInstance.ExecuteTurnAsync(gameId, aiPlayerId, context); // Pass context
+            _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] AiTurnExecutor (resolved via scope) completed successfully. Broadcasting {EventCount} collected events.", gameId, aiPlayerId, context.Events.Count);
+            await BroadcastEventsAsync(gameId, context.Events); // Broadcast collected events
 
             // --- START: Logic to start next human player's turn ---
             _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] AI turn execution complete. Checking if next player's turn should start.", gameId, aiPlayerId);
