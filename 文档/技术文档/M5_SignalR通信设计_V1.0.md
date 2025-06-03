@@ -1,4 +1,4 @@
-# M5: SignalR 实时通信设计文档 V1.2
+# M5: SignalR 实时通信设计文档 V1.4
 
 ## 1. 概述 (Overview)
 
@@ -19,7 +19,7 @@
 
 `GameHub` 是 SignalR 通信的核心。为了清晰和类型安全，我们使用强类型 Hub。
 
-### 2.1 服务器 -&gt; 客户端方法 (Server-to-Client Methods)
+### 2.1 服务器 -> 客户端方法 (Server-to-Client Methods)
 
 定义一个 C# 接口 `IGameClient`，包含所有服务器可以调用客户端的方法。
 
@@ -31,8 +31,8 @@ using System.Threading.Tasks;
 public interface IGameClient
 {
     // 核心状态更新
-    Task ReceiveGameState(GameStateDto gameState); // 推送完整的游戏状态 (可能较少使用，主要用于初始加载或重连)
-    Task ReceiveGameEvent(GameEventDto gameEvent); // 推送具体的游戏事件 (更常用)
+    Task ReceiveGameState(GameStateDto gameState); // [已调整] 主要用于初始加载或重连时的完整状态同步。
+    Task ReceiveGameEvent(GameEventDto gameEvent); // [已调整] 用于推送增量的游戏事件，如单位受伤、PP/EP变化、卡牌效果触发、卡牌进入战场 (`CardSummonedEventDto`) 等。回合开始时的状态同步由 GameStateUpdateEventDto (包含在 GameEventDto 基类下) 处理。
     Task ReceiveError(string errorMessage);       // 推送游戏逻辑错误或警告信息
 
     // 特殊交互请求
@@ -43,12 +43,12 @@ public interface IGameClient
 
 **关键方法说明:**
 
-- `ReceiveGameState`: 用于发送完整的游戏状态快照。适用于游戏开始、玩家重连等场景。数据量可能较大。
-- `ReceiveGameEvent`: 这是最常用的方法，用于推送增量的游戏事件，如卡牌抽取、单位受伤、PP/EP 变化、回合结束等。客户端根据事件类型更新本地状态。使用基类 `GameEventDto` 并利用多态性处理不同的事件类型。
+- `ReceiveGameState`: [说明调整] 用于发送**初始**的完整游戏状态快照，主要在客户端首次连接或请求重同步时使用。数据量较大。
+- `ReceiveGameEvent`: [说明调整] 这是**增量更新**的主要方法。用于推送具体的、原子化的游戏事件，如单位受伤、PP/EP 变化、卡牌效果结算等。客户端根据事件类型更新本地状态。使用基类 `GameEventDto` 并利用多态性处理不同的事件类型。**回合开始时的状态同步将通过一个新的特定事件 `GameStateUpdateEventDto` (继承自 `GameEventDto`) 来完成，该事件包含完整的 `GameStateDto`。**
 - `ReceiveError`: 用于向特定客户端发送游戏规则相关的错误或提示信息（例如，“PP 不足”、“目标无效”）。
 - `RequestTargetSelection`: 当服务器需要玩家指定一个或多个目标时（如法术指定目标、攻击目标选择），调用此方法。DTO 包含选择的上下文信息（如可选目标列表、数量要求等）。
 
-### 2.2 客户端 -&gt; 服务器方法 (Client-to-Server Methods)
+### 2.2 客户端 -> 服务器方法 (Client-to-Server Methods)
 
 这些方法定义在 `GameHub` 类中，由客户端调用以执行游戏动作。
 
@@ -399,7 +399,9 @@ public enum GameStatus
       - 分配 `PlayerId`。
       - **随机决定先手:** `FirstPlayerId` 随机设为 Player1 或 Player2。
       - 设置双方初始状态 (HP, MaxPP=0, MaxEP=根据先后手规则, DeckCount 等)。
-      - 洗牌 (需加载卡组定义)。
+      - **加载所有卡牌定义:** 从数据源 (如 JSON 或数据库) 加载 *全部* 卡牌定义，包括非收藏卡牌 (如主战者、进化形态)，因为游戏逻辑可能需要它们。**[V1.3 注]**
+      - **填充主战者:** 使用加载的定义创建双方的 `LeaderCard` 实例并放入 `PlayerStateDto`。**[V1.3 注]**
+      - 洗牌 (根据玩家选择的卡组定义)。
       - 抽取初始手牌。
       - 设置 `CurrentPlayerId` 为 `FirstPlayerId`。
       - 设置 `CurrentPhase = GamePhase.Mulligan` (或 `Initialization` 如果跳过换牌)。
@@ -460,7 +462,7 @@ public enum GameStatus
         - 广播 `GameOverEvent`。
         - **流程终止。**
   8.  **切换到主要阶段:** 如果游戏未结束，设置 `gameState.CurrentPhase = GamePhase.MainPhase`。
-  9.  **广播最终状态:** （可选）广播一次包含主要变化的 `GameStateUpdateEvent`，或依赖之前的细分事件。
+  9.  **广播回合开始状态:** **[修改]** 广播一次包含当前完整游戏状态快照的 `GameStateUpdateEventDto` 给所有客户端。这将取代之前分散的 `TurnStartEvent`, `HandUpdateEvent` 等回合开始时的状态同步事件。(`TurnStartedEventDto` 和 `HandUpdateEventDto` 将被**完全弃用**，不再用于任何场景)。
 
 ```mermaid
 graph TD
@@ -483,12 +485,13 @@ graph TD
     O --> Q[End Flow];
     P --> Q;
 
-    subgraph Broadcast Events
-        D --> EV_PP(PpUpdateEvent);
+    subgraph Broadcast Events [修改]
+        D --> EV_PP(PpUpdateEvent); // PP/EP 更新仍可作为独立增量事件
         E --> EV_EP(EpUpdateEvent);
-        F --> EV_Unit(UnitStateUpdateEvent);
-        N --> EV_Draw(CardDrawn/OpponentCardDrawn);
-        O --> EV_Over(GameOverEvent);
+        F --> EV_Unit(UnitStateUpdateEvent); // 单位状态重置仍可作为独立增量事件
+        N --> EV_Draw(CardDrawn/OpponentCardDrawn); // 抽卡事件保留
+        O --> EV_Over(GameOverEvent); // 游戏结束事件保留
+        P --> EV_FullState(GameStateUpdateEventDto); // 在进入 MainPhase 前广播完整状态
     end
 
 ```
@@ -516,22 +519,48 @@ graph TD
   - `CurrentEp (int)`: 当前可用 Evolve Points。
   - `MaxEp (int)`: 最大 Evolve Points 上限 (通常先手 2, 后手 3)。
   - `IsFirst (bool)`: 是否为先手玩家。
-  - `Hand (List<CardDto>)`: 手牌列表。
+  - `Hand (List<CardInstanceDto>)`: 手牌列表。**[修改]** 使用 CardInstanceDto。
   - `DeckCount (int)`: 牌库剩余卡牌数量。
-  - `Field (List<UnitStateDto>)`: 场上单位列表。 (注意：服务器端可能需要 List<UnitState?> 或类似结构处理空位)。
-  - `Graveyard (List<CardDto>)`: 墓地卡牌列表 (可选，根据需要)。
+  - `Field (List<CardInstanceDto>)`: 场上单位/护符列表。**[修改]** 使用 CardInstanceDto，包含随从和护符。客户端需要根据 `CardInstanceDto.CardType` (需要添加) 或 DefinitionId 区分渲染。
+  - `GraveyardCount (int)`: 墓地卡牌数量。**[修改]** 通常客户端不需要完整列表，只需数量。
+  - `BanishedCount (int)`: 消失区卡牌数量。**[新增]**
   - `MulliganState (string)`: (临时) 换牌阶段的状态 ("Waiting", "Done")。
   - `IsCurrentTurn (bool)`: (冗余) 是否为该玩家的当前回合。
+  - `LeaderCard (CardInstanceDto)`: **[新增 V1.3]** 代表玩家的主战者卡牌实例 (用于显示生命值、状态等)。
 
-- **`UnitStateDto`:**
-  - `Uid (Guid)`: 单位在场上的唯一实例 ID。
-  - `CardId (string)`: 单位对应的卡牌定义 ID。
-  - `CurrentAttack (int)`: 当前攻击力。
-  - `CurrentDefense (int)`: 当前生命值。
-  - `MaxDefense (int)`: 最大生命值。
-  - `CanAttack (bool)`: 本回合是否还能攻击。
-  - `IsEvolved (bool)`: 是否已进化。
-  - `Effects (List<string>)`: (简化
+- **`CardInstanceDto`:** **[新增/核心]** 用于表示任何区域卡牌实例的 DTO。
+  ```csharp
+  // Namespace: ShadowverseBeyond.Server.Dtos.SignalR (or a shared DTO location)
+  public class CardInstanceDto
+  {
+      public Guid InstanceId { get; set; } // 实例唯一ID (替代之前的 Uid)
+      public int DefinitionId { get; set; } // 卡牌定义ID (来自数据库)
+      public int OwnerPlayerId { get; set; } // 所属玩家 (1 or 2)
+      public CardZone CurrentZone { get; set; } // 卡牌当前区域 (Hand, Field, Deck, Graveyard, Banished, Playing)
+      public int? FieldPosition { get; set; } // 在战场上的位置 (0-4), 其他区域为 null
+      public int CurrentCost { get; set; } // 当前费用
+      public int CurrentAttack { get; set; } // 当前攻击力 (随从/护符)
+      public int CurrentHp { get; set; } // 当前生命值 (随从/护符/玩家)
+      public int MaxHp { get; set; } // 最大生命值 (随从/护符/玩家)
+      public bool IsEvolved { get; set; } // 是否已进化 (随从)
+      public int? Countdown { get; set; } // 倒计时 (护符)
+      // --- 客户端计算/显示所需状态 ---
+      public bool IsPlayable { get; set; } // 是否可打出 (基于费用、区域、阶段)
+      public bool CanAttack { get; set; } // 是否可攻击 (基于区域、召唤失调、效果、回合状态)
+      public bool CanEvolve { get; set; } // 是否可进化 (基于区域、EP、回合、进化状态)
+      public bool CanBeAttacked { get; set; } // 是否可被攻击 (基于区域、潜行等效果)
+      public bool CanBeTargetedByAbilities { get; set; } // 是否可被能力指定 (基于区域、效果)
+      // --- 其他状态追踪 ---
+      // public List<CardKeyword> TemporaryKeywords { get; set; } // 临时获得的效果 (e.g., +1/+0 until end of turn) - M7+
+      public int AttacksThisTurn { get; set; } // 本回合已攻击次数 - M7+
+      // public int SpellboostCount { get; set; } // 法术共鸣次数 - M7+
+      // ... 其他需要的状态 ...
+  }
+
+  // 需要定义 CardZone 枚举
+  public enum CardZone { Deck, Hand, Field, Graveyard, Banished, Playing, Leader } // Playing 是临时区域, Leader 用于 PlayerStateDto.LeaderCard
+  ```
+- **`UnitStateDto`:** **[废弃]** 由 `CardInstanceDto` 替代。
 
 #### 2.3.1 Action DTOs (客户端 -> 服务器)
 
@@ -552,7 +581,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR
         /// <summary>
         /// Unique ID of the card instance being played from the player's hand.
         /// </summary>
-        public Guid CardUidInHand { get; set; }
+        public Guid CardInstanceId { get; set; } // [修改] Renamed from CardUidInHand for consistency
 
         /// <summary>
         /// Optional list of unique IDs for units on the field targeted by the card's effect.
@@ -591,12 +620,62 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR
         public Guid AttackerUid { get; set; }
 
         /// <summary>
-        /// Unique ID of the target unit instance on the field, or a predefined Guid/null for the opponent leader.
+        /// Unique ID of the target instance on the field (follower or opponent leader).
+        /// **必须**使用目标的 `CardInstanceDto.InstanceId` (Guid)。
         /// </summary>
         public Guid TargetUid { get; set; }
     }
 
     // TODO: Add DTOs for target selection response, etc. if needed
+
+    /// <summary>
+    /// [新增] Event DTO carrying the full game state snapshot, typically sent at the start of a player's turn.
+    /// </summary>
+    public class GameStateUpdateEventDto : GameEventDto // Inherits from base event DTO
+    {
+/// <summary>
+    /// [更名] Event DTO representing a card instance being summoned to the battlefield (Follower or Amulet).
+    /// </summary>
+    public class CardSummonedEventDto : GameEventDto // Renamed from CardEnteredFieldEventDto
+    {
+        /// <summary>
+        /// The full DTO of the card instance that was summoned.
+        /// </summary>
+        public CardInstanceDto CardInstance { get; set; }
+
+        /// <summary>
+        /// The ID of the player whose field the card entered.
+        /// </summary>
+        public int PlayerId { get; set; }
+
+        /// <summary>
+        /// The 0-based index where the card was placed on the field.
+        /// </summary>
+        public int FieldIndex { get; set; }
+
+        public CardSummonedEventDto(CardInstanceDto cardInstance, int playerId, int fieldIndex)
+        {
+            EventType = "CardSummoned"; // Renamed from CardEnteredField
+            CardInstance = cardInstance;
+            PlayerId = playerId;
+            FieldIndex = fieldIndex;
+            // Ensure the card instance reflects its new state (zone, position)
+            CardInstance.CurrentZone = CardZone.Field;
+            CardInstance.FieldPosition = fieldIndex;
+        }
+    }
+        /// <summary>
+        /// The complete game state at the time the event was generated.
+        /// </summary>
+        public GameStateDto FullGameState { get; set; }
+
+        public GameStateUpdateEventDto(GameStateDto fullState)
+        {
+             EventType = "GameStateUpdate"; // Define a constant or enum for event types
+             FullGameState = fullState;
+        }
+    }
+} // Closing namespace ShadowverseBeyond.Server.Dtos.SignalR
 ## 3. 后端实现细节 (Backend Implementation Details)
 
 ### 3.1 GameService 与 SignalR Hub 的交互
@@ -778,14 +857,16 @@ sequenceDiagram
     GameHub->>+GameService: PlayCardAsync(gameId, playerId, actionDto)
     Note over GameService: 处理出牌逻辑 (扣费, 卡牌效果, 状态变更)
     GameService-->>-GameHub: (Task completes)
-    alt 游戏状态改变
-        GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, eventDto1)
-        GameHub->>Client: ReceiveGameEvent(eventDto1)
-        GameHub->>OtherClients: ReceiveGameEvent(eventDto1)
-        GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, eventDto2)
-        GameHub->>Client: ReceiveGameEvent(eventDto2)
-        GameHub->>OtherClients: ReceiveGameEvent(eventDto2)
+    alt 游戏状态改变 (示例)
+        GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, PpUpdateEventDto(...))
+        GameHub->>Client: ReceiveGameEvent(PpUpdateEventDto)
+        GameHub->>OtherClients: ReceiveGameEvent(PpUpdateEventDto)
+        GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, CardSummonedEventDto(...)) // [更名] 使用 CardSummonedEventDto
+        GameHub->>Client: ReceiveGameEvent(CardSummonedEventDto) // [更名]
+        GameHub->>OtherClients: ReceiveGameEvent(CardSummonedEventDto) // [更名]
         Note over Client, OtherClients: 接收事件, 更新本地状态/UI
+
+        Note right of GameService: 攻击处理完成后 (AttackAsync 内部), 服务器会广播事件 (如 DamageDealtEvent 或 UnitStateUpdateEvent) 来更新攻击者和防御者的状态，包括攻击者的 CanAttack=false 和 AttacksThisTurn 计数增加。
     end
     alt 出牌失败 (GameLogicException)
         GameService-->>GameHub: Throws GameLogicException
@@ -850,21 +931,17 @@ sequenceDiagram
     Note over GameService: 处理回合结束逻辑 (触发效果, 切换玩家) (详见 3.2.2 EndTurnAsync)
     Note over GameService: 处理新回合开始逻辑 (详见 3.2.3 StartTurnInternal, 包括抽卡, PP恢复, 触发效果)
 
-    GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, TurnEndEvent(playerAId))
+    GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, TurnEndEvent(playerAId)) // TurnEndEvent 仍可用于标记回合结束动作
     GameHub->>ClientA: ReceiveGameEvent(TurnEndEvent)
     GameHub->>ClientB: ReceiveGameEvent(TurnEndEvent)
 
-    GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, TurnStartEvent(playerBId))
-    GameHub->>ClientA: ReceiveGameEvent(TurnStartEvent)
-    GameHub->>ClientB: ReceiveGameEvent(TurnStartEvent)
-
-    GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, CardDrawnEvent(playerBId, ...))
-    GameHub->>ClientB: ReceiveGameEvent(CardDrawnEvent) // Only player B sees the card drawn details
-    GameHub->>ClientA: ReceiveGameEvent(OpponentCardDrawnEvent(playerBId)) // Player A sees opponent drew a card
-
-    GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, PpUpdateEvent(...))
-    GameHub->>ClientA: ReceiveGameEvent(PpUpdateEvent)
-    GameHub->>ClientB: ReceiveGameEvent(PpUpdateEvent)
+    Note over GameService: StartTurnInternal 处理完毕, 准备广播完整状态
+    GameService->>GameHub (via HubContext): BroadcastGameEventAsync(gameId, GameStateUpdateEventDto(fullStateForPlayerB))
+    GameHub->>ClientA: ReceiveGameEvent(GameStateUpdateEventDto) // 双方都收到完整状态
+    GameHub->>ClientB: ReceiveGameEvent(GameStateUpdateEventDto)
+    Note over ClientA, ClientB: 接收完整状态, 覆盖本地 gameState, 重新渲染UI
+    Note right of GameService: TurnStartEvent, HandUpdateEvent 等被 GameStateUpdateEventDto 取代，将被**完全弃用**。
+    Note right of GameService: CardDrawnEvent, PpUpdateEvent 等仍可能在 StartTurnInternal 内部作为增量事件发出，但最终状态由 GameStateUpdateEventDto 保证。
 
     GameService-->>-GameHub: (EndTurnAsync Task completes)
 
@@ -908,10 +985,20 @@ sequenceDiagram
     gameManager.updateFullGameState(receivedGameState);
   });
 
-  // 增量游戏事件 (当前服务器尚未实现推送，但客户端处理框架预留)
+  // 游戏事件处理
   connection.on("ReceiveGameEvent", (gameEvent) => {
     console.log("Received GameEvent:", gameEvent.eventType, gameEvent);
-    // TODO: 当服务器开始推送增量事件时，完善 gameManager.processGameEvent 逻辑
+    // [修改] 根据 eventType 调用不同的处理函数
+    if (gameEvent.eventType === "GameStateUpdate") {
+        // 回合开始时的完整状态更新
+        console.log("Processing GameStateUpdate event.");
+        gameManager.updateFullGameState(gameEvent.fullGameState); // 假设 DTO 结构如上定义
+    } else {
+        // 处理其他增量事件 (如单位受伤、卡牌效果等)
+        console.log(`Processing incremental event: ${gameEvent.eventType}`);
+        // TODO: 完善 gameManager.processIncrementalGameEvent(gameEvent) 逻辑
+        // gameManager.processIncrementalGameEvent(gameEvent);
+    }
     // gameManager.processGameEvent(gameEvent);
   });
 
@@ -1002,7 +1089,7 @@ sequenceDiagram
 
   ```
 
-- **状态管理:** 前端维护一个本地 `gameState` 对象 (在 `gameManager.js` 中)。当前实现是：服务器连接后推送 `ReceiveGameState`，由 `main.js` 接收并调用 `gameManager.updateFullGameState()` 来**完全替换**本地状态并触发 `ui.renderGame()`。增量事件 (`ReceiveGameEvent`) 的处理逻辑 (`gameManager.processGameEvent`) 已预留，但目前依赖服务器实现推送。
+- **状态管理:** 前端维护一个本地 `gameState` 对象 (在 `gameManager.js` 中)。服务器连接后推送 `ReceiveGameState` (完整状态)，由 `main.js` 接收并调用 `gameManager.updateFullGameState()` 来**完全替换**本地状态并触发 `ui.renderGame()`。后续的增量事件 (`ReceiveGameEvent`，如 `CardEnteredFieldEventDto`) 由 `gameManager` 负责处理，**增量地**修改本地 `gameState` (例如，向 `gameState.players[playerId].field` 数组中添加或更新 `CardInstanceDto`) 并触发 UI 更新。
 - **错误处理:** 客户端通过注册 `ReceiveError` 处理器来响应服务器推送的游戏逻辑错误，并显示给用户。`invoke` 调用本身的失败主要通过 `catch` 块记录日志，因为具体的业务错误会由 `ReceiveError` 传达。连接错误由 `onclose`, `onreconnecting`, `onreconnected` 处理。
 - **交互处理:** 对于 `RequestTargetSelection` (尚未实现)，客户端需要在收到请求后，显示 UI 供用户选择，并将选择结果通过 `invoke("RespondToTargetSelection", ...)` 发回服务器。
 

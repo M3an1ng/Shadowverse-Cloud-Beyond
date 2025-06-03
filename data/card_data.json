@@ -1,6 +1,6 @@
 [
   {
-    "id": "F001",
+    "id": "1001",
     "name": "哥布林",
     "cost": 1,
     "type": "Follower",
@@ -12,10 +12,11 @@
     "art": "goblin_base.png",
     "isEvolved": false,
     "can_evolve": true,
-    "evolves_into": ["F001_evo"]
+    "evolves_into": ["10011"],
+    "isCollectible": true
   },
   {
-    "id": "F002",
+    "id": "1002",
     "name": "战士",
     "cost": 2,
     "type": "Follower",
@@ -27,10 +28,11 @@
     "art": "fighter_base.png",
     "isEvolved": false,
     "can_evolve": true,
-    "evolves_into": ["F002_evo"]
+    "evolves_into": ["10021"],
+    "isCollectible": true
   },
   {
-    "id": "F003",
+    "id": "1003",
     "name": "骑士",
     "cost": 3,
     "type": "Follower",
@@ -41,11 +43,12 @@
     "effects": [],
     "art": "knight_base.png",
     "isEvolved": false,
-    "can_evolve": false,
-    "evolves_into": []
+    "can_evolve": true,
+    "evolves_into": ["10031"],
+    "isCollectible": true
   },
   {
-    "id": "F004",
+    "id": "1004",
     "name": "重装哥布林",
     "cost": 4,
     "type": "Follower",
@@ -57,10 +60,11 @@
     "art": "armored_goblin_base.png",
     "isEvolved": false,
     "can_evolve": true,
-    "evolves_into": ["F004_evo"]
+    "evolves_into": ["10041"],
+    "isCollectible": true
   },
   {
-    "id": "F001_evo",
+    "id": "10011",
     "name": "哥布林 (进化)",
     "cost": 1,
     "type": "Follower",
@@ -70,13 +74,14 @@
     "keywords": [],
     "effects": [],
     "art": "goblin_evo.png",
-    "is_evolved_form_of": "F001",
+    "is_evolved_form_of": "1001",
     "isEvolved": true,
     "can_evolve": false,
-    "evolves_into": []
+    "evolves_into": [],
+    "isCollectible": false
   },
   {
-    "id": "F002_evo",
+    "id": "10021",
     "name": "战士 (进化)",
     "cost": 2,
     "type": "Follower",
@@ -86,13 +91,14 @@
     "keywords": ["Storm"],
     "effects": [],
     "art": "fighter_evo.png",
-    "is_evolved_form_of": "F002",
+    "is_evolved_form_of": "1002",
     "isEvolved": true,
     "can_evolve": false,
-    "evolves_into": []
+    "evolves_into": [],
+    "isCollectible": false
   },
   {
-    "id": "LDR000",
+    "id": "0",
     "name": "主战者",
     "cost": 0,
     "type": "Leader",
@@ -104,10 +110,11 @@
     "art": null,
     "isEvolved": false,
     "can_evolve": false,
-    "evolves_into": []
+    "evolves_into": [],
+    "isCollectible": false
   },
   {
-    "id": "F004_evo",
+    "id": "10041",
     "name": "重装哥布林 (进化)",
     "cost": 4,
     "type": "Follower",
@@ -117,13 +124,14 @@
     "keywords": [],
     "effects": [],
     "art": "armored_goblin_evo.png",
-    "is_evolved_form_of": "F004",
+    "is_evolved_form_of": "1004",
     "isEvolved": true,
     "can_evolve": false,
-    "evolves_into": []
+    "evolves_into": [],
+    "isCollectible": false
   },
   {
-    "id": "F005",
+    "id": "1005",
     "name": "护盾卫士",
     "cost": 1,
     "type": "Follower",
@@ -134,11 +142,12 @@
     "effects": [],
     "art": "goblin_base.png",
     "isEvolved": false,
-    "can_evolve": false,
-    "evolves_into": []
+    "can_evolve": true,
+    "evolves_into": ["10051"],
+    "isCollectible": true
   },
   {
-    "id": "F006",
+    "id": "1006",
     "name": "摇铃天使",
     "cost": 2,
     "type": "Follower",
@@ -156,10 +165,11 @@
     "art": "fighter_base.png",
     "isEvolved": false,
     "can_evolve": true,
-    "evolves_into": ["F006_evo"]
+    "evolves_into": ["10061"],
+    "isCollectible": true
   },
   {
-    "id": "F006_evo",
+    "id": "10061",
     "name": "摇铃天使 (进化)",
     "cost": 2,
     "type": "Follower",
@@ -169,13 +179,14 @@
     "keywords": [],
     "effects": [],
     "art": "fighter_evo.png",
-    "is_evolved_form_of": "F006",
+    "is_evolved_form_of": "1006",
     "isEvolved": true,
     "can_evolve": false,
-    "evolves_into": []
+    "evolves_into": [],
+    "isCollectible": false
   },
   {
-    "id": "S001",
+    "id": "2001",
     "name": "智慧之光",
     "cost": 1,
     "type": "Spell",
@@ -188,10 +199,11 @@
         "value": 1
       }
     ],
-    "art": "spell_placeholder.png"
+    "art": "spell_placeholder.png",
+    "isCollectible": true
   },
   {
-    "id": "S002",
+    "id": "2002",
     "name": "天使之箭",
     "cost": 1,
     "type": "Spell",
@@ -206,6 +218,41 @@
     ],
     "art": "spell_placeholder_snipe.png",
     "requiresTarget": true,
-    "validTargets": ["EnemyFollower", "EnemyLeader"]
+    "validTargets": ["EnemyFollower", "EnemyLeader"],
+    "isCollectible": true
+  },
+  {
+    "id": "10031",
+    "name": "骑士 (进化)",
+    "cost": 3,
+    "type": "Follower",
+    "attack": 5,
+    "health": 5,
+    "description": "忠诚的骑士 (进化)",
+    "keywords": [],
+    "effects": [],
+    "art": "knight_evo.png",
+    "isEvolved": true,
+    "can_evolve": false,
+    "evolves_into": [],
+    "is_evolved_form_of": "1003",
+    "isCollectible": false
+  },
+  {
+    "id": "10051",
+    "name": "护盾卫士 (进化)",
+    "cost": 1,
+    "type": "Follower",
+    "attack": 3,
+    "health": 3,
+    "description": "守护者不会让你轻易通过。 (进化)",
+    "keywords": ["Ward"],
+    "effects": [],
+    "art": "shield_guardian_evo.png",
+    "isEvolved": true,
+    "can_evolve": false,
+    "evolves_into": [],
+    "is_evolved_form_of": "1005",
+    "isCollectible": false
   }
 ]

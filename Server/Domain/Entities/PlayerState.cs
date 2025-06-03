@@ -3,35 +3,38 @@ using System.Collections.Generic;
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
-    // Note: CardState is now defined in CardState.cs
-    // Placeholder record 'CardStatePlaceholder' is no longer needed here.
-    // We will use the actual CardState class below.
+    // Note: CardInstance is now defined in CardInstance.cs
+    // This class has been updated to use CardInstance instead of CardState
+    // Leader health management has been moved to LeaderState in GameState
 
     /// <summary>
     /// Represents the state of a single player within a game.
+    /// Leader health is now managed through the associated LeaderState in GameState.
     /// </summary>
     public class PlayerState
     {
         public string PlayerId { get; set; } = string.Empty;
 
-        // Leader / Core Stats
-        public int LeaderHealth { get; set; } = 20; // Default starting health
-        public int LeaderMaxHealth { get; set; } = 20;
+        // Core Stats (Leader health removed - now managed via LeaderState)
         public int MaxPlayPoints { get; set; } = 0; // Starts at 0, increases per turn
         public int CurrentPlayPoints { get; set; } = 0;
         public int MaxEvolutionPoints { get; set; } = 0; // Determined by going first/second
         public int CurrentEvolutionPoints { get; set; } = 0;
 
-        // Card Zones (Using actual CardState)
-        public List<CardState> Hand { get; set; } = new List<CardState>();
-        public List<CardState> Deck { get; set; } = new List<CardState>();
-        public List<CardState> Graveyard { get; set; } = new List<CardState>();
-        public List<CardState> BanishZone { get; set; } = new List<CardState>();
-        public List<UnitState> Field { get; set; } = new List<UnitState>(); // Represents units on the field
+        // Card Zones (Using CardInstance instead of CardState)
+        public List<CardInstance> Hand { get; set; } = new List<CardInstance>();
+        public List<CardInstance> Deck { get; set; } = new List<CardInstance>();
+        public List<CardInstance> Field { get; set; } = new List<CardInstance>();
+        public List<CardInstance> Graveyard { get; set; } = new List<CardInstance>();
+        public List<CardInstance> BanishZone { get; set; } = new List<CardInstance>();
+
+        // Note: Field units are now managed separately in GameState as Player1Units/Player2Units
+        // This removes the redundant Field property from PlayerState
 
         // Player Statuses/Effects (Consider a dedicated class/struct later)
         // public List<string> ActiveEffects { get; set; } = new List<string>();
-        public bool IsVengeanceActive => LeaderHealth <= 10; // Example calculated property
+
+        // Note: IsVengeanceActive calculation moved to service layer since it depends on LeaderState
 
         // Constructor
         public PlayerState(string playerId)
@@ -45,10 +48,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         private PlayerState()
         {
             PlayerId = string.Empty; // Or handle nullability if preferred
-            Hand = new List<CardState>();
-            Deck = new List<CardState>();
-            Graveyard = new List<CardState>();
-            BanishZone = new List<CardState>();
+            Hand = new List<CardInstance>();
+            Deck = new List<CardInstance>();
+            Field = new List<CardInstance>();
+            Graveyard = new List<CardInstance>();
+            BanishZone = new List<CardInstance>();
         }
 
         // --- Potential methods for state manipulation ---

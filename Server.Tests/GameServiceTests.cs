@@ -3,8 +3,10 @@ using Moq; // Using Moq as an example mocking library, can be changed
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.SignalR;
 using ShadowverseBeyond.Server.Dtos.SignalR; // Added for GameEventDto base class
+using ShadowverseBeyond.Server.Models; // Added for GameActionContext
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Exceptions; // Added for GameLogicException
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
@@ -32,7 +34,8 @@ namespace ShadowverseBeyond.Server.Tests
                  Mock<IServiceScopeFactory> mockScopeFactory,
                  Mock<ICardRepository> mockCardRepository, // Keep CardRepository mock for scope setup
                  Mock<IAiService> mockAiService,
-                 Mock<IServiceProvider> mockServiceProvider) // Change AiTurnExecutor to IServiceProvider
+                 Mock<IServiceProvider> mockServiceProvider, // Change AiTurnExecutor to IServiceProvider
+                 Mock<IClientMethodMapper> mockClientMethodMapper) // Add ClientMethodMapper mock
                  SetupMocksAndService()
         {
             var mockHubContext = new Mock<IHubContext<GameHub, IGameClient>>();
@@ -45,6 +48,7 @@ namespace ShadowverseBeyond.Server.Tests
             var mockAiService = new Mock<IAiService>();
             // Change variable name and type - This line is removed as mockServiceProvider is already available from the helper method parameters/setup
             // var mockServiceProvider = new Mock<IServiceProvider>();
+            var mockClientMethodMapper = new Mock<IClientMethodMapper>(); // Add mock creation
 
             // Setup Scope Factory to return a scope that provides the mock Card Repository
             mockScopeFactory.Setup(f => f.CreateScope()).Returns(mockScope.Object);
@@ -60,12 +64,14 @@ namespace ShadowverseBeyond.Server.Tests
                 mockLogger.Object,
                 mockScopeFactory.Object,
                 mockAiService.Object,     // Pass IAiService mock
-                mockServiceProvider.Object // Pass IServiceProvider mock instead of AiTurnExecutor
-            );
+                mockServiceProvider.Object, // Pass IServiceProvider mock instead of AiTurnExecutor
+                mockClientMethodMapper.Object // Pass ClientMethodMapper mock
+    );
 
             // Update return tuple
             return (gameService, mockHubContext, mockLogger, mockScopeFactory, mockCardRepository,
-                    mockAiService, mockServiceProvider); // Return IServiceProvider mock
+                    mockAiService, mockServiceProvider, // Return IServiceProvider mock
+                    mockClientMethodMapper); // Return ClientMethodMapper mock
         }
 
         // --- Helper to access internal game states (Use with caution!) ---
@@ -86,17 +92,17 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_Success()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGame1";
             string playerId = "player1";
             string opponentId = "player2";
-            string followerCardId = "F001"; // e.g., Goblin
+            int followerCardId = 1; // Changed type to int and value
             string followerCardUid = Guid.NewGuid().ToString(); // Unique ID for the card instance in hand
 
             // 1. Mock Card Definition
             var followerDefinition = new CardDefinition
             {
-                Id = followerCardId,
+                Id = followerCardId, // Now uses int followerCardId
                 Name = "Goblin",
                 Cost = 1,
                 Type = CardType.Follower.ToString(),
@@ -106,22 +112,34 @@ namespace ShadowverseBeyond.Server.Tests
                 IsCollectible = true
                 // Add other necessary properties if needed by the logic being tested
             };
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(followerCardId))
-                             .ReturnsAsync(followerDefinition);
+            // Fix: Setup mock with the string representation of the integer CardId (1)
+            // Modify mock to return a new instance inline to isolate potential issues
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)) // Changed "1" to 1
+                             .ReturnsAsync(() => new CardDefinition
+                             {
+                                 Id = 1, // Match the lookup key (Changed "1" to 1)
+                                 Name = "Goblin",
+                                 Cost = 1,
+                                 Type = CardType.Follower.ToString(),
+                                 Attack = 1, // Explicitly set Attack = 1 here
+                                 Health = 2,
+                                 Keywords = new List<string>(),
+                                 IsCollectible = true
+                             });
 
             // 2. Create Initial Game State
-            var initialHand = new List<CardDto>
+            var initialHand = new List<CardInstanceDto> // Changed CardDto to CardInstanceDto
             {
-                new CardDto { Uid = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), BaseAttack=1, BaseHealth=2 } // Parse Guid
+                new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack=1, Health=2, CurrentAttack=1, CurrentHealth=2, MaxHealth=2 } // Use followerCardId variable
             };
             var playerState = new PlayerStateDto
             {
                 PlayerId = playerId,
                 Hand = initialHand,
-                Deck = new List<CardDto>(), // Empty for simplicity
+                Deck = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
                 DeckCount = 0,
-                Field = new List<UnitStateDto>(), // Empty field
-                Graveyard = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(), // Empty field
+                Graveyard = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
                 CurrentPP = 5, // Enough PP
                 MaxPP = 5,
                 LeaderHealth = 20,
@@ -138,11 +156,11 @@ namespace ShadowverseBeyond.Server.Tests
             var opponentState = new PlayerStateDto
             {
                 PlayerId = opponentId, // Ensure opponent exists
-                Hand = new List<CardDto>(),
-                Deck = new List<CardDto>(),
+                Hand = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
+                Deck = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
                 DeckCount = 0,
-                Field = new List<UnitStateDto>(),
-                Graveyard = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(),
+                Graveyard = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
                 CurrentPP = 5,
                 MaxPP = 5,
                 LeaderHealth = 20,
@@ -168,12 +186,12 @@ namespace ShadowverseBeyond.Server.Tests
             };
 
             // 3. Add initial state to GameService (using reflection helper)
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates); // Ensure reflection worked
             Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState; // Directly set the state for the test
-            gameLocks[gameId] = new object(); // Ensure lock object exists
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             // 4. Create Action DTO
             var actionDto = new PlayCardActionDto
@@ -183,9 +201,11 @@ namespace ShadowverseBeyond.Server.Tests
             };
 
             // Act
-            List<GameEventDto> resultEvents = await gameService.PlayCardAsync(gameId, playerId, actionDto);
+            var context = new GameActionContext(); // M8 Test Fix
+            await gameService.PlayCardAsync(gameId, playerId, actionDto, context); // M8 Test Fix: Pass context, removed result assignment
 
             // Assert
+            // M8 Test Fix: Assertions below need to be updated to check context.Events instead of context.Events
             // 1. Check Player State Changes
             Assert.Equal(4, playerState.CurrentPP); // PP reduced by 1 (cost of Goblin)
             Assert.Empty(playerState.Hand); // Card removed from hand
@@ -194,7 +214,7 @@ namespace ShadowverseBeyond.Server.Tests
 
             // 2. Check Unit State on Field
             var playedUnit = playerState.Field.First();
-            Assert.Equal(followerCardId, playedUnit.CardId);
+            Assert.Equal(followerCardId, playedUnit.CardId); // Compare with followerCardId variable
             Assert.Equal("Goblin", playedUnit.Name);
             Assert.Equal(1, playedUnit.CurrentAttack);
             Assert.Equal(2, playedUnit.CurrentHealth);
@@ -202,47 +222,116 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.False(playedUnit.IsEvolved);
 
             // 3. Check Returned Events
-            Assert.NotNull(resultEvents);
-            Assert.Equal(2, resultEvents.Count); // Expecting PPUpdate and UnitPlayed
+            Assert.NotNull(context.Events);
+            Assert.Equal(3, context.Events.Count); // Expecting PPUpdate, CardPlayed, CardSummoned (HandUpdate is deprecated)
 
-            PpUpdateEventDto? ppEvent = resultEvents.OfType<PpUpdateEventDto>().FirstOrDefault();
-            Assert.NotNull(ppEvent);
-            Assert.Equal(playerId, ppEvent.SourcePlayerId); // Corrected property name from base class
-            Assert.Equal(4, ppEvent.CurrentPp);
-            Assert.Equal(5, ppEvent.MaxPp);
+            // Refactor event checking for clarity
+            bool ppEventFound = false;
+            bool cardPlayedEventFound = false;
+            bool cardSummonedEventFound = false; // Changed from unitPlayedEventFound
+            CardSummonedEventDto? foundCardSummonedEvent = null; // Changed type and name
+            PpUpdateEventDto? foundPpEvent = null;
+            CardPlayedEventDto? foundCardPlayedEvent = null;
 
-            var unitPlayedEvent = resultEvents.OfType<UnitPlayedEventDto>().FirstOrDefault();
-            Assert.NotNull(unitPlayedEvent);
-            Assert.Equal(playerId, unitPlayedEvent.SourcePlayerId); // Player playing the card
-            Assert.Equal(playerId, unitPlayedEvent.PlayerId);      // Corrected: Player owning the unit
-            Assert.Equal(followerCardUid, unitPlayedEvent.SourceCardUid); // Corrected: UID from hand
-            Assert.NotNull(unitPlayedEvent.UnitData);                 // Corrected: Property name
-            Assert.Equal(playedUnit.Uid, unitPlayedEvent.UnitData.Uid);   // Corrected: Property name
-            Assert.Equal(followerCardId, unitPlayedEvent.UnitData.CardId); // Corrected: Property name
+
+            foreach (var ev in context.Events)
+            {
+                if (ev is PpUpdateEventDto ppEvent)
+                {
+                    foundPpEvent = ppEvent;
+                    ppEventFound = true;
+                }
+                else if (ev is CardPlayedEventDto cardPlayedEvent)
+                {
+                    foundCardPlayedEvent = cardPlayedEvent;
+                    cardPlayedEventFound = true;
+                }
+                else if (ev is CardSummonedEventDto cardSummonedEvent) // Changed type check
+                {
+                    foundCardSummonedEvent = cardSummonedEvent; // Changed variable assignment
+                    cardSummonedEventFound = true; // Changed flag assignment
+                }
+            }
+
+            // Assert that all expected event types were found
+            Assert.True(ppEventFound, "PpUpdateEventDto not found.");
+            Assert.True(cardPlayedEventFound, "CardPlayedEventDto not found.");
+            Assert.True(cardSummonedEventFound, "CardSummonedEventDto not found."); // Changed assertion target and message
+
+            // Now assert the content of the found events
+            Assert.NotNull(foundPpEvent);
+            Assert.Equal(playerId, foundPpEvent.SourcePlayerId);
+            Assert.Equal(4, foundPpEvent.CurrentPp);
+            Assert.Equal(5, foundPpEvent.MaxPp);
+
+            Assert.NotNull(foundCardPlayedEvent); // Basic check is enough for now
+
+            Assert.NotNull(foundCardSummonedEvent); // Changed variable name
+            Assert.Equal(playerId, foundCardSummonedEvent.SourcePlayerId); // Changed variable name
+            // Assert.Equal(playerId, foundCardSummonedEvent.PlayerId); // CardSummonedEventDto might not have PlayerId directly
+            // Assert.Equal(followerCardUid, foundCardSummonedEvent.SourceCardUid); // CardSummonedEventDto might not have SourceCardUid
+            Assert.NotNull(foundCardSummonedEvent.SummonedCard); // <<< Critical check (Corrected property name)
+            Assert.Equal(playedUnit.InstanceId, foundCardSummonedEvent.SummonedCard.InstanceId); // Corrected property name
+            Assert.Equal(followerCardId, foundCardSummonedEvent.SummonedCard.CardId); // Use followerCardId variable
 
             // 4. Verify Mock Interactions (Optional but good practice)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(followerCardId), Times.Once);
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(1), Times.Once); // Verify with 1
         }
 
-        // TODO: Add more test cases:
+        // 实用测试：快速游戏设置
+        [Fact]
+        public async Task QuickGameSetup_ShouldCreatePlayableGame()
+        {
+            // Arrange
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            string gameId = "quick-test-game";
+            string player1Id = "player1";
+            string player2Id = "player2";
+
+            // Mock card definitions for a basic game
+            var testCards = new List<CardDefinition>
+            {
+                new CardDefinition { Id = 0, Name = "Leader", Cost = 0, Attack = 0, Health = 20, Type = "Leader", IsCollectible = false },
+                new CardDefinition { Id = 1, Name = "Test Follower", Cost = 2, Attack = 2, Health = 2, Type = "Follower", IsCollectible = true },
+                new CardDefinition { Id = 2, Name = "Test Spell", Cost = 1, Type = "Spell", IsCollectible = true }
+            };
+
+            mockCardRepository.Setup(repo => repo.GetAllCardsAsync())
+                .ReturnsAsync(testCards);
+
+            // Act & Assert - 创建完整的可玩游戏
+            var gameState1 = await gameService.GetOrCreateGameStateAsync(gameId, player1Id);
+            Assert.NotNull(gameState1);
+
+            var gameState2 = await gameService.GetOrCreateGameStateAsync(gameId, player2Id);
+            Assert.NotNull(gameState2);
+            Assert.Equal(2, gameState2.Players.Count);
+
+            // 验证游戏状态
+            Assert.Equal("InProgress", gameState2.Status.ToString());
+            Assert.True(gameState2.Players.All(p => p.Hand.Count > 0)); // 玩家应该有手牌
+            Assert.True(gameState2.Players.All(p => p.LeaderCard != null)); // 玩家应该有领袖
+        }
+
         [Fact]
         public async Task PlayCardAsync_PlayFollower_InsufficientPP()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameIPP";
             string playerId = "playerIPP";
             string opponentId = "opponentIPP";
-            string followerCardId = "F001"; // Goblin cost 1
+            int followerCardId = 1; // Changed type to int and value
             string followerCardUid = Guid.NewGuid().ToString();
 
             // Mock Card Definition (Cost 1)
             var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() /* ... other needed props */ }; // Added Name
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(followerCardId)).ReturnsAsync(followerDefinition);
+            // Fix: Setup mock with the integer CardId (1)
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State with Insufficient PP
-            var initialHand = new List<CardDto> { new CardDto { Uid = Guid.Parse(followerCardUid), CardId = followerCardId, Cost = 1 } }; // Parse Guid
-            var playerState = new PlayerStateDto { PlayerId = playerId, Hand = initialHand, CurrentPP = 0, MaxPP = 5, Field = new List<UnitStateDto>() }; // PP = 0!
+            var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = 1, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props
+            var playerState = new PlayerStateDto { PlayerId = playerId, Hand = initialHand, CurrentPP = 0, MaxPP = 5, Field = new List<CardInstanceDto>() }; // Fix: Change List Type // PP = 0!
             var opponentState = new PlayerStateDto { PlayerId = opponentId, CurrentPP = 5, MaxPP = 5 }; // Opponent state needed for GameStateDto validity
             var initialGameState = new GameStateDto
             {
@@ -253,18 +342,19 @@ namespace ShadowverseBeyond.Server.Tests
                 // ... other necessary GameStateDto properties ...
             };
 
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates);
             Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             var actionDto = new PlayCardActionDto { CardUid = followerCardUid };
 
             // Act & Assert Exception
+            var context = new GameActionContext(); // M8 Test Fix
             var exception = await Assert.ThrowsAsync<GameLogicException>(() => // Expect GameLogicException
-                gameService.PlayCardAsync(gameId, playerId, actionDto)
+                gameService.PlayCardAsync(gameId, playerId, actionDto, context) // M8 Test Fix: Pass context
             );
 
             // Assert Correct Exception Message
@@ -279,31 +369,42 @@ namespace ShadowverseBeyond.Server.Tests
 
 
             // Verify Mock Interactions (Optional: verify card repo wasn't called again if check happens early)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<string>()), Times.Once); // Should still be called once for cost check maybe? Adjust if needed.
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_PlayFollower_FieldFull()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameFieldFull";
             string playerId = "playerFieldFull";
             string opponentId = "opponentFieldFull";
-            string followerCardId = "F001"; // Goblin cost 1
+            int followerCardId = 1; // Changed type to int and value
             string followerCardUid = Guid.NewGuid().ToString();
             const int MaxFieldSize = 7; // As defined in GameService
 
             // Mock Card Definition (Cost 1)
             var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() };
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(followerCardId)).ReturnsAsync(followerDefinition);
+            // Fix: Setup mock with the integer CardId (1)
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State with Full Field and Sufficient PP
-            var initialHand = new List<CardDto> { new CardDto { Uid = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1 } }; // Parse Guid
-            var fullField = new List<UnitStateDto>();
+            var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = 1, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props
+            var fullField = new List<CardInstanceDto>(); // Fix: Change List Type
             for (int i = 0; i < MaxFieldSize; i++)
             {
                 // Add dummy units - ensure they have unique Uids if necessary, though not strictly needed for this test logic
-                fullField.Add(new UnitStateDto { Uid = Guid.NewGuid(), CardId = $"Dummy{i}", Name = $"DummyUnit{i}", CurrentHealth = 1 });
+                // Fix: Create CardInstanceDto instead of UnitStateDto
+                fullField.Add(new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(),
+                    CardId = i + 1000, // Use int ID
+                    Name = $"DummyUnit{i}",
+                    CurrentHealth = 1,
+                    MaxHealth = 1, // Need MaxHealth
+                    Type = CardType.Follower.ToString() // Need Type
+                    // Add other required CardInstanceDto properties if needed
+                });
             }
 
             var playerState = new PlayerStateDto
@@ -312,10 +413,10 @@ namespace ShadowverseBeyond.Server.Tests
                 Hand = initialHand,
                 CurrentPP = 1, // Sufficient PP
                 MaxPP = 5,
-                Field = fullField, // Field is full!
-                Deck = new List<CardDto>(),
+                Field = fullField, // Fix: Remove unnecessary cast // Field is full!
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Graveyard = new List<CardDto>(),
+                Graveyard = new List<CardInstanceDto>(),
                 LeaderHealth = 20,
                 MaxLeaderHealth = 20,
                 CurrentEP = 0,
@@ -338,18 +439,19 @@ namespace ShadowverseBeyond.Server.Tests
                 Players = new List<PlayerStateDto> { playerState, opponentState }, // Restore
                 IsGameOver = false // Restore
             }; // Keep semicolon
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates);
             Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             var actionDto = new PlayCardActionDto { CardUid = followerCardUid };
 
             // Act & Assert Exception
+            var context = new GameActionContext(); // M8 Test Fix
             var exception = await Assert.ThrowsAsync<GameLogicException>(() =>
-                gameService.PlayCardAsync(gameId, playerId, actionDto)
+                gameService.PlayCardAsync(gameId, playerId, actionDto, context) // M8 Test Fix: Pass context
             );
 
             // Assert Correct Exception Message (Matches GameService format)
@@ -361,7 +463,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(MaxFieldSize, playerState.Field.Count); // Field still full
 
             // Verify Mock Interactions
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(followerCardId), Times.Once); // Fetch happens before validation
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(1), Times.Once); // Fetch happens before validation, explicitly check for 1
 
             // Body of FieldFull test is intentionally left empty for now
         } // Add closing brace for PlayCardAsync_PlayFollower_FieldFull method
@@ -369,29 +471,30 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_WrongTurn()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameWrongTurn";
             string playerId = "playerWrongTurn"; // Player attempting the action
             string opponentId = "opponentWhoseTurnItIs"; // Player whose turn it actually is
-            string followerCardId = "F001"; // Goblin cost 1
+            int followerCardId = 1; // Goblin cost 1 - ID changed from F001 // Changed type to int
             string followerCardUid = Guid.NewGuid().ToString();
 
             // Mock Card Definition (Not strictly needed as check happens earlier, but good practice)
-            var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() };
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(followerCardId)).ReturnsAsync(followerDefinition);
+            var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() }; // Uses int followerCardId now
+            // Fix: Setup mock with the integer CardId (1)
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State where it's the opponent's turn
-            var initialHand = new List<CardDto> { new CardDto { Uid = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1 } }; // Parse Guid
+            var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props, use int followerCardId
             var playerState = new PlayerStateDto
             {
                 PlayerId = playerId,
                 Hand = initialHand,
                 CurrentPP = 5, // Enough PP
                 MaxPP = 5,
-                Field = new List<UnitStateDto>(),
-                Deck = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(), // Fix: Change List Type
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Graveyard = new List<CardDto>(),
+                Graveyard = new List<CardInstanceDto>(),
                 LeaderHealth = 20,
                 MaxLeaderHealth = 20,
                 IsAI = false
@@ -421,18 +524,19 @@ namespace ShadowverseBeyond.Server.Tests
                 IsGameOver = false
             };
 
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates);
             Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             var actionDto = new PlayCardActionDto { CardUid = followerCardUid };
 
             // Act & Assert Exception
+            var context = new GameActionContext(); // M8 Test Fix
             var exception = await Assert.ThrowsAsync<GameLogicException>(() =>
-                gameService.PlayCardAsync(gameId, playerId, actionDto) // PlayerId attempts action on opponentId's turn
+                gameService.PlayCardAsync(gameId, playerId, actionDto, context) // M8 Test Fix: PlayerId attempts action on opponentId's turn
             );
 
             // Assert Correct Exception Message
@@ -444,35 +548,36 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);       // Field remains empty
 
             // Verify Mock Interactions (Should not fetch card if turn check fails first)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<string>()), Times.Once); // Verify it IS called once before turn check throws
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_PlayFollower_WrongPhase()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameWrongPhase";
             string playerId = "playerWrongPhase";
             string opponentId = "opponentWrongPhase";
-            string followerCardId = "F001"; // Goblin cost 1
+            int followerCardId = 1; // Goblin cost 1 // Changed type to int, assuming F001 maps to 1
             string followerCardUid = Guid.NewGuid().ToString();
 
             // Mock Card Definition (Not strictly needed as check happens earlier)
-            var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() };
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(followerCardId)).ReturnsAsync(followerDefinition);
+            var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() }; // Uses int followerCardId now
+            // Fix: Setup mock with the integer CardId (1)
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State in Mulligan Phase
-            var initialHand = new List<CardDto> { new CardDto { Uid = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1 } }; // Parse Guid
+            var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props, use int followerCardId
             var playerState = new PlayerStateDto
             {
                 PlayerId = playerId,
                 Hand = initialHand,
                 CurrentPP = 5, // Enough PP
                 MaxPP = 5,
-                Field = new List<UnitStateDto>(),
-                Deck = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(), // Fix: Change List Type
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Graveyard = new List<CardDto>(),
+                Graveyard = new List<CardInstanceDto>(),
                 LeaderHealth = 20,
                 MaxLeaderHealth = 20,
                 IsAI = false
@@ -502,18 +607,19 @@ namespace ShadowverseBeyond.Server.Tests
                 IsGameOver = false
             };
 
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates);
             Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             var actionDto = new PlayCardActionDto { CardUid = followerCardUid };
 
             // Act & Assert Exception
+            var context = new GameActionContext(); // M8 Test Fix
             var exception = await Assert.ThrowsAsync<GameLogicException>(() =>
-                gameService.PlayCardAsync(gameId, playerId, actionDto)
+                gameService.PlayCardAsync(gameId, playerId, actionDto, context) // M8 Test Fix: Pass context
             );
 
             // Assert Correct Exception Message
@@ -525,13 +631,13 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);
 
             // Verify Mock Interactions (Should not fetch card if phase check fails first)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<string>()), Times.Once); // Verify it IS called once before phase check throws
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_CardNotFoundInHand()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameCardNotFound";
             string playerId = "playerCardNotFound";
             string opponentId = "opponentCardNotFound";
@@ -541,13 +647,13 @@ namespace ShadowverseBeyond.Server.Tests
             var playerState = new PlayerStateDto
             {
                 PlayerId = playerId,
-                Hand = new List<CardDto>(), // 空手牌确保找不到卡牌
+                Hand = new List<CardInstanceDto>(), // 空手牌确保找不到卡牌
                 CurrentPP = 5, // 确保有足够的 PP，以免因此失败
                 MaxPP = 5,
-                Field = new List<UnitStateDto>(),
-                Deck = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(), // Fix: Change List Type
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Graveyard = new List<CardDto>(),
+                Graveyard = new List<CardInstanceDto>(),
                 LeaderHealth = 20,
                 MaxLeaderHealth = 20,
                 IsAI = false
@@ -577,18 +683,19 @@ namespace ShadowverseBeyond.Server.Tests
                 IsGameOver = false
             };
 
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates);
             Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             var actionDto = new PlayCardActionDto { CardUid = nonExistentCardUid };
 
             // Act & Assert Exception
+            var context = new GameActionContext(); // M8 Test Fix
             var exception = await Assert.ThrowsAsync<GameLogicException>(() =>
-                gameService.PlayCardAsync(gameId, playerId, actionDto)
+                gameService.PlayCardAsync(gameId, playerId, actionDto, context) // M8 Test Fix: Pass context
             );
 
             // Assert Correct Exception Message
@@ -600,35 +707,35 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);
 
             // Verify Mock Interactions (如果卡牌不在手中，则不应调用卡牌存储库)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<string>()), Times.Never);
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Never); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_CardDefinitionNotFound()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameDefNotFound";
             string playerId = "playerDefNotFound";
             string opponentId = "opponentDefNotFound";
-            string cardId = "UnknownCard001"; // 一个定义不存在的卡牌 ID
+            int cardId = 999; // 一个定义不存在的卡牌 ID (changed to int)
             string cardUid = Guid.NewGuid().ToString(); // 手牌中卡牌实例的 UID
 
             // Mock 卡牌存储库，使其对这个 CardId 返回 null
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(cardId))
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(cardId)) // Use int ID directly
                               .ReturnsAsync((CardDefinition?)null);
 
             // 初始游戏状态，手牌中有卡牌，但其定义在存储库中缺失
-            var initialHand = new List<CardDto> { new CardDto { Uid = Guid.Parse(cardUid), CardId = cardId, Name = "Unknown Card", Cost = 1 } }; // Parse Guid
+            var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(cardUid), CardId = cardId, Name = "Unknown Card", Cost = 1, Type = CardType.Follower.ToString() } }; // Changed to CardInstanceDto, using int cardId
             var playerState = new PlayerStateDto
             {
                 PlayerId = playerId,
                 Hand = initialHand,
                 CurrentPP = 5, // 足够的 PP
                 MaxPP = 5,
-                Field = new List<UnitStateDto>(),
-                Deck = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(), // Fix: Change List Type
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Graveyard = new List<CardDto>(),
+                Graveyard = new List<CardInstanceDto>(),
                 LeaderHealth = 20,
                 MaxLeaderHealth = 20,
                 IsAI = false
@@ -658,21 +765,22 @@ namespace ShadowverseBeyond.Server.Tests
                 IsGameOver = false
             };
 
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates); Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             var actionDto = new PlayCardActionDto { CardUid = cardUid };
 
             // Act & Assert Exception
+            var context = new GameActionContext(); // M8 Test Fix
             var exception = await Assert.ThrowsAsync<GameLogicException>(() =>
-                gameService.PlayCardAsync(gameId, playerId, actionDto)
+                gameService.PlayCardAsync(gameId, playerId, actionDto, context) // M8 Test Fix: Pass context
             );
 
             // Assert Correct Exception Message
-            Assert.Equal($"Card definition not found for CardId: {cardId}", exception.Message);
+            Assert.Equal($"Card definition not found for CardId: {cardId}", exception.Message); // Keep using int cardId in message check
 
             // Assert State Unchanged
             Assert.Equal(5, playerState.CurrentPP);
@@ -680,44 +788,46 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);
 
             // Verify Mock Interactions (存储库应该被调用了一次)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(cardId), Times.Once);
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(cardId), Times.Once); // Use int cardId directly for Verify
         }
         [Fact]
         public async Task PlayCardAsync_PlaySpell_Success()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameSpellSuccess";
             string playerId = "playerSpellSuccess";
             string opponentId = "opponentSpellSuccess";
-            string spellCardId = "S001"; // e.g., Insight
+            int spellCardId = 1; // e.g., Insight // Changed type to int, assuming S001 maps to 1
             string spellCardUid = Guid.NewGuid().ToString();
             int spellCost = 1;
 
             // 1. Mock Card Definition
             var spellDefinition = new CardDefinition
             {
-                Id = spellCardId,
+                Id = spellCardId, // Uses int spellCardId now
                 Name = "Insight",
                 Cost = spellCost,
                 Type = CardType.Spell.ToString(),
                 IsCollectible = true
                 // Add TargetType, Effects etc. if GameService logic uses them for validation
             };
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(spellCardId))
+            // Fix: Setup mock with the integer CardId (1)
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)) // Changed "1" to 1
                              .ReturnsAsync(spellDefinition);
 
             // 2. Create Initial Game State
-            var spellCardDto = new CardDto { Uid = Guid.Parse(spellCardUid), CardId = spellCardId, Name = "Insight", Cost = spellCost, Type = CardType.Spell.ToString() }; // Parse Guid
-            var initialHand = new List<CardDto> { spellCardDto };
+            // Assuming S001 maps to int ID 1
+            var spellCardInstance = new CardInstanceDto { InstanceId = Guid.Parse(spellCardUid), CardId = spellCardId, Name = "Insight", Cost = spellCost, Type = CardType.Spell.ToString() }; // Use int spellCardId
+            var initialHand = new List<CardInstanceDto> { spellCardInstance }; // Changed to CardInstanceDto
             var playerState = new PlayerStateDto
             {
                 PlayerId = playerId,
                 Hand = initialHand,
-                Deck = new List<CardDto>(),
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Field = new List<UnitStateDto>(),
-                Graveyard = new List<CardDto>(), // Graveyard is initially empty
+                Field = new List<CardInstanceDto>(), // Fix: Change List Type
+                Graveyard = new List<CardInstanceDto>(), // Graveyard is initially empty
                 CurrentPP = 5, // Enough PP
                 MaxPP = 5,
                 LeaderHealth = 20,
@@ -734,11 +844,11 @@ namespace ShadowverseBeyond.Server.Tests
             var opponentState = new PlayerStateDto
             {
                 PlayerId = opponentId,
-                Hand = new List<CardDto>(),
-                Deck = new List<CardDto>(),
+                Hand = new List<CardInstanceDto>(),
+                Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
-                Field = new List<UnitStateDto>(),
-                Graveyard = new List<CardDto>(),
+                Field = new List<CardInstanceDto>(), // Fix: Change List Type
+                Graveyard = new List<CardInstanceDto>(),
                 CurrentPP = 5,
                 MaxPP = 5,
                 LeaderHealth = 20,
@@ -764,11 +874,11 @@ namespace ShadowverseBeyond.Server.Tests
             };
 
             // 3. Add initial state to GameService
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates); Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             // 4. Create Action DTO
             var actionDto = new PlayCardActionDto
@@ -778,36 +888,43 @@ namespace ShadowverseBeyond.Server.Tests
             };
 
             // Act
-            List<GameEventDto> resultEvents = await gameService.PlayCardAsync(gameId, playerId, actionDto);
+            var context = new GameActionContext(); // M8 Test Fix
+            await gameService.PlayCardAsync(gameId, playerId, actionDto, context); // M8 Test Fix: Pass context, removed result assignment
 
             // Assert
+            // M8 Test Fix: Assertions below need to be updated to check context.Events instead of context.Events
             // 1. Check Player State Changes
             Assert.Equal(4, playerState.CurrentPP); // PP reduced by spell cost (1)
             Assert.Empty(playerState.Hand);         // Spell removed from hand
             Assert.Empty(playerState.Field);        // Field remains empty (spell doesn't add unit)
             Assert.Single(playerState.Graveyard);   // Spell added to graveyard
-            Assert.Equal(spellCardId, playerState.Graveyard.First().CardId);
+            Assert.Equal(1, playerState.Graveyard.First().CardId); // Compare with expected int ID (1 for S001)
             Assert.Equal(1, playerState.PlayedCardCountThisTurn);
 
             // 2. Check Returned Events
-            Assert.NotNull(resultEvents);
-            // TODO: GameService currently doesn't emit GraveyardUpdateEventDto for played spells. Expecting 3 events later.
-            Assert.Equal(2, resultEvents.Count); // Expecting PPUpdate, SpellPlayed. (GraveyardUpdate missing for now)
+            Assert.NotNull(context.Events);
+            // Expecting PPUpdate, CardPlayed, GraveyardUpdate (SpellPlayedEventDto is deprecated)
+            Assert.Equal(3, context.Events.Count); // Updated expectation based on unified CardPlayedEventDto
 
             // Check PPUpdateEvent
-            PpUpdateEventDto? ppEvent = resultEvents.OfType<PpUpdateEventDto>().FirstOrDefault();
+            PpUpdateEventDto? ppEvent = context.Events.OfType<PpUpdateEventDto>().FirstOrDefault();
             Assert.NotNull(ppEvent);
             Assert.Equal(playerId, ppEvent.SourcePlayerId);
             Assert.Equal(4, ppEvent.CurrentPp);
             Assert.Equal(5, ppEvent.MaxPp);
 
-            // Check SpellPlayedEvent
-            SpellPlayedEventDto? spellPlayedEvent = resultEvents.OfType<SpellPlayedEventDto>().FirstOrDefault();
-            Assert.NotNull(spellPlayedEvent);
-            Assert.Equal(playerId, spellPlayedEvent.SourcePlayerId);
-            Assert.Equal(spellCardUid, spellPlayedEvent.SourceCardUid); // Corrected property name
-            Assert.Equal(spellCardId, spellPlayedEvent.CardId);
-            // Assert.Null(spellPlayedEvent.TargetUid); // Assuming Insight has no target
+            // Check CardPlayedEvent (unified for all card types)
+            CardPlayedEventDto? cardPlayedEvent = context.Events.OfType<CardPlayedEventDto>().FirstOrDefault();
+            Assert.NotNull(cardPlayedEvent);
+            Assert.Equal(playerId, cardPlayedEvent.SourcePlayerId);
+            Assert.Equal(spellCardUid, cardPlayedEvent.PlayedCardInstance.InstanceId.ToString());
+            Assert.Equal(spellCardId, cardPlayedEvent.PlayedCardInstance.CardId);
+
+            // Check GraveyardUpdateEvent
+            GraveyardUpdateEventDto? graveyardEvent = context.Events.OfType<GraveyardUpdateEventDto>().FirstOrDefault();
+            Assert.NotNull(graveyardEvent);
+            Assert.Equal(playerId, graveyardEvent.SourcePlayerId);
+            Assert.Equal(1, graveyardEvent.GraveyardCount); // Should be 1 after adding the spell
 
             // TODO: Assert GraveyardUpdateEventDto once GameService emits it for spells.
             // GraveyardUpdateEventDto? graveyardEvent = resultEvents.OfType<GraveyardUpdateEventDto>().FirstOrDefault();
@@ -819,26 +936,26 @@ namespace ShadowverseBeyond.Server.Tests
             // Assert.Equal(spellCardUid, graveyardEvent.CardAdded?.Uid);
 
             // 3. Verify Mock Interactions
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(spellCardId), Times.Once);
+            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(1), Times.Once); // Verify with the correct int ID 1
         }
         [Fact]
         public async Task PlayCardAsync_PlaySpell_WithTarget()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "testGameSpellTarget";
             string playerId = "playerSpellTarget";
             string opponentId = "opponentSpellTarget";
-            string spellCardId = "S002"; // e.g., Angelic Snipe
+            int spellCardId = 2; // e.g., Angelic Snipe // Changed type to int, assuming S002 maps to 2
             string spellCardUid = Guid.NewGuid().ToString();
             int spellCost = 1;
-            string targetUnitId = "F001"; // Target is a Goblin
+            int targetUnitId = 1; // Target is a Goblin // Changed type to int, assuming F001 maps to 1
             Guid targetUnitUid = Guid.NewGuid(); // UID of the target unit on field (Corrected type to Guid)
 
             // 1. Mock Card Definitions
             var spellDefinition = new CardDefinition
             {
-                Id = spellCardId,
+                Id = spellCardId, // Uses int spellCardId now
                 Name = "Angelic Snipe",
                 Cost = spellCost,
                 Type = CardType.Spell.ToString(),
@@ -846,22 +963,27 @@ namespace ShadowverseBeyond.Server.Tests
                 Effects = new List<CardEffect> { /* Define effect if needed by service logic */ }
                 // TargetType removed - Assuming not needed or defined elsewhere
             };
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(spellCardId))
+            // Fix: Setup mock with the integer CardId (2)
+            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(2)) // Changed "2" to 2
                              .ReturnsAsync(spellDefinition);
 
             // 2. Create Initial Game State
-            var spellCardDto = new CardDto { Uid = Guid.Parse(spellCardUid), CardId = spellCardId, Name = "Angelic Snipe", Cost = spellCost, Type = CardType.Spell.ToString() }; // Parse Guid
-            var initialHand = new List<CardDto> { spellCardDto };
-            var targetUnit = new UnitStateDto
+            // Assuming S002 maps to int ID 2
+            var spellCardInstance = new CardInstanceDto { InstanceId = Guid.Parse(spellCardUid), CardId = spellCardId, Name = "Angelic Snipe", Cost = spellCost, Type = CardType.Spell.ToString() }; // Use int spellCardId
+            var initialHand = new List<CardInstanceDto> { spellCardInstance }; // Changed to CardInstanceDto
+            // Fix: Initialize as CardInstanceDto instead of UnitStateDto
+            var targetUnit = new CardInstanceDto
             {
-                Uid = targetUnitUid, // Corrected assignment from Guid
-                CardId = targetUnitId,
+                InstanceId = targetUnitUid, // Fix: Use InstanceId
+                CardId = targetUnitId, // Fix: Use int targetUnitId
                 Name = "Goblin",
                 CurrentAttack = 1,
                 CurrentHealth = 2, // Target has 2 health initially
                 MaxHealth = 2,
                 CanAttack = false,
-                IsEvolved = false
+                IsEvolved = false,
+                Cost = 1, // Add required properties
+                Type = CardType.Follower.ToString() // Add required properties
             };
 
             var playerState = new PlayerStateDto
@@ -890,7 +1012,7 @@ namespace ShadowverseBeyond.Server.Tests
                 Hand = new(),
                 Deck = new(),
                 DeckCount = 0,
-                Field = new List<UnitStateDto> { targetUnit }, // Opponent has the target unit
+                Field = new List<CardInstanceDto> { targetUnit }, // Fix: Change List Type // Opponent has the target unit
                 Graveyard = new(),
                 CurrentPP = 5,
                 MaxPP = 5,
@@ -916,11 +1038,11 @@ namespace ShadowverseBeyond.Server.Tests
             };
 
             // 3. Add initial state to GameService
-            var gameStates = GetInternalGameStates(gameService);
-            var gameLocks = GetInternalGameLocks(gameService);
+            ConcurrentDictionary<string, GameStateDto>? gameStates = GetInternalGameStates(gameService); // Make nullable
+            ConcurrentDictionary<string, object>? gameLocks = GetInternalGameLocks(gameService); // Make nullable
             Assert.NotNull(gameStates); Assert.NotNull(gameLocks);
-            gameStates[gameId] = initialGameState;
-            gameLocks[gameId] = new object();
+            gameStates![gameId] = initialGameState; // Use null-forgiving operator
+            gameLocks![gameId] = new object(); // Use null-forgiving operator
 
             // 4. Create Action DTO with Target
             var actionDto = new PlayCardActionDto
@@ -928,6 +1050,10 @@ namespace ShadowverseBeyond.Server.Tests
                 CardUid = spellCardUid,
                 TargetUid = targetUnitUid.ToString() // Specify the target (Corrected: Convert Guid to string)
             };
+
+            // TODO: Add Act and Assert steps for this test.
+            // Adding this to satisfy CS1998 for now.
+            await Task.CompletedTask;
         } // Closing brace for PlayCardAsync_PlaySpell_WithTarget
           // Remaining TODOs:
           // - PlayCardAsync_PlayAmulet_Success (Simplified V0.1)

@@ -4,7 +4,7 @@ import { createPlayer } from "./player.js"; // 正确导入
 import { getCardDefinition, createCardInstance } from "./cardManager.js"; // ADDED: createCardInstance for hydration
 // import { getCardDefinition } from './cardManager.js'; // initGame 不需要
 // import { renderGame } from './ui.js'; // 渲染调用在 main.js
-import { renderGame, showDamageNumber } from "./ui.js"; // Import UI functions + showDamage (Removed enable/disable interaction calls)
+import { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
 //import { startTurn } from "./turnManager.js"; // Import startTurn to begin the first turn
 //import { performAIMulligan } from "./ai.js"; // Placeholder for AI mulligan logic
 // Note: Player's performMulligan is a method, called via playerState.performMulligan
@@ -35,6 +35,7 @@ export let gameState = {
     player1MulliganComplete: false, // Player 1 mulligan status
     player2MulliganComplete: false, // Player 2 mulligan status
     // 稍后可能添加: eventLog, effectQueue 等
+    lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
 };
 // 初始化游戏 (已实现版本)
 /**
@@ -105,6 +106,7 @@ export function findCardInstanceByUid(uid) {
             return cardOnField;
         }
         // 检查主战者
+        // Original leader check (now acts as fallback for GUIDs or if player ID didn't match)
         // Ensure player.leaderCard exists before checking its uid
         if (player.leaderCard && player.leaderCard.uid === uid) {
             console.log(
@@ -250,7 +252,15 @@ export async function playCard(cardUid, targetUid = null) {
     console.log(`GM_DBG_BUG003: Attempting to get player state for ownerId: ${cardInstance?.ownerId}`);
     console.log(`GM_DBG_BUG003: Current gameState.players:`, JSON.stringify(gameState.players.map(p => ({ id: p?.id, isAI: p?.isAI })), null, 2));
     // BUG-003 DIAGNOSIS END
-    const playerState = getPlayerState(cardInstance.ownerId);
+
+    // --- DEBUG: Check player state retrieval ---
+    console.log(`%c[DEBUG_PLAYER_STATE] Attempting playCard for card UID: ${cardUid}`, 'color: orange; font-weight: bold;');
+    console.log(`%c[DEBUG_PLAYER_STATE] Card Instance found:`, 'color: orange;', cardInstance ? JSON.parse(JSON.stringify(cardInstance)) : 'null'); // Log instance copy
+    console.log(`%c[DEBUG_PLAYER_STATE] Attempting to get player state for ownerId: ${cardInstance?.ownerId}`, 'color: orange;');
+    console.log(`%c[DEBUG_PLAYER_STATE] Current gameState.players (IDs): [${gameState.players?.map(p => p?.id).join(', ')}]`, 'color: orange;');
+    // --- END DEBUG ---
+
+    const playerState = getPlayerState(cardInstance?.ownerId); // Use optional chaining for safety
     if (!playerState) {
         console.error(
             `GM: PlayCard failed - Player state not found for owner ${cardInstance.ownerId}.`
@@ -302,7 +312,7 @@ export async function playCard(cardUid, targetUid = null) {
     // NOTE: This check might be better handled server-side for consistency,
     // but a basic client-side check can provide faster feedback.
     // We need access to card definitions here, assuming getCardDefinition is available.
-    const cardData = getCardDefinition(cardInstance.cardId); // FIX: Use cardId instead of id
+    const cardData = getCardDefinition(cardInstance.id); // FIX: Use lowercase 'id' property
     if (
         cardInstance.type === "Spell" &&
         cardData?.requires_target &&
@@ -334,15 +344,18 @@ export async function playCard(cardUid, targetUid = null) {
     try {
         // Invoke the server method. The server will validate everything again (cost, turn, phase, target, etc.)
         // and handle the actual game logic.
-        // Construct the DTO object expected by the server Hub method
+        // Construct the DTO object expected by the server Hub method (PascalCase)
         const actionDto = {
-            cardUid: cardUid, // Property names should match C# DTO (camelCase after JSON serialization)
-            targetUid: targetUid
+            CardUid: cardUid, // Use PascalCase
+            TargetUid: targetUid // Use PascalCase
         };
         console.log("GM: Constructed PlayCard DTO for invoke:", actionDto); // Log the object being sent
 
         // Invoke with the single DTO object
-        await signalRConnection.invoke("PlayCard", actionDto);
+        // BUG-016: Store UID before invoking, so PpUpdate can remove it from hand
+        gameState.lastPlayedCardInstanceId = cardUid;
+        console.log(`%c[BUG-016] Stored lastPlayedCardInstanceId: ${gameState.lastPlayedCardInstanceId}`, 'color: magenta; font-weight: bold;');
+        await signalRConnection.invoke("PlayCard", actionDto); // Pass the DTO object
 
         // If invoke succeeds, DO NOT modify local state directly.
         // Wait for the server to send back game events (e.g., CardPlayed, UnitSpawned, PPDeducted, EffectResolved, UnitDestroyed, TurnEnded...)
@@ -373,7 +386,7 @@ export async function playCard(cardUid, targetUid = null) {
 
         // Clear selection on error too
         gameState.selectedCardUid = null;
-        renderGame(gameState); // Re-render needed to clear selection highlight on error.
+        clearSelectionHighlights(); // Use specific UI update to clear selection highlight on error.
     }
     // New body will be inserted here by next step
 }
@@ -440,8 +453,10 @@ export function initiateAttack(attackerUid) {
     // }
 
     // Trigger UI update to highlight attacker and potential targets
-    console.log("GM: Calling renderGame after initiating attack.");
-    renderGame(gameState);
+    console.log("GM: Calling specific UI functions for attack initiation highlights.");
+    clearSelectionHighlights(); // Clear previous highlights first
+    highlightAttacker(attackerUid); // Highlight the selected attacker
+    highlightTargets(attackerInstance); // Highlight potential targets for this attacker
 }
 
 // 选择攻击目标 (敌方随从或英雄)
@@ -466,7 +481,7 @@ export async function selectAttackTarget(targetUid) {
             `GM: SelectTarget failed - Selected attacker instance ${attackerUid} not found!`
         );
         gameState.selectedAttackerUid = null; // Reset selection if attacker is invalid
-        renderGame(gameState); // Update UI to remove highlight
+        clearSelectionHighlights(); // Use specific UI update
         return;
     }
     if (!targetInstance) {
@@ -560,24 +575,32 @@ export async function selectAttackTarget(targetUid) {
         alert("与服务器连接丢失，无法进行攻击！");
         // Clear selection on connection error before trying to attack
         gameState.selectedAttackerUid = null;
-        renderGame(gameState); // Render to clear selection
+        clearSelectionHighlights(); // Render to clear selection
         return;
     }
 
+    // Construct the DTO object expected by the server Hub method (PascalCase)
+    const actionDto = {
+        AttackerUid: attackerUid, // Use PascalCase
+        TargetUid: targetUid      // Use PascalCase
+    };
     console.log(
-        `GM: Invoking SignalR Hub method 'PerformAttack'. GameID: ${gameState.gameId}, AttackerUID: ${attackerUid}, TargetUID: ${targetUid}`
+        `GM: Invoking SignalR Hub method 'PerformAttack'. GameID: ${gameState.gameId}, Action DTO:`, actionDto
     );
     try {
-        // Invoke server method. Server handles validation and attack execution.
-        await signalRConnection.invoke(
-            "PerformAttack",
-            gameState.gameId,
-            attackerUid,
-            targetUid
-        );
+        // Invoke server method with the single DTO object. Server handles validation and attack execution.
+        await signalRConnection.invoke("PerformAttack", actionDto); // Pass the DTO object
 
         // Wait for server events (AttackOccurred, UnitDestroyed, GameOver) via processGameEvent.
-        // DO NOT change attackerInstance.canAttack here. Server manages the authoritative state.
+        // --- BUG-017 FIX: Optimistically disable attacker client-side ---
+        const attackerToDisable = findCardInstanceByUid(attackerUid); // Find instance again
+        if (attackerToDisable) {
+            attackerToDisable.canAttack = false;
+            console.log(`%c[BUG-017] Optimistically set ${attackerToDisable.name} (UID: ${attackerUid}) canAttack to false client-side.`, 'color: blue; font-weight: bold;');
+        } else {
+             console.warn(`%c[BUG-017] Could not find attacker instance (UID: ${attackerUid}) to optimistically disable canAttack.`, 'color: orange;');
+        }
+        // --- END BUG-017 FIX ---
         console.log(
             "GM: 'PerformAttack' invocation sent successfully. Waiting for server response..."
         );
@@ -585,7 +608,9 @@ export async function selectAttackTarget(targetUid) {
         // Optimistically clear selection and provide feedback
         alert(`${attackerInstance.name} 正在攻击 ${targetInstance.name}...`);
         gameState.selectedAttackerUid = null; // Clear selection locally *after* successful invoke
-        renderGame(gameState); // Re-render to clear highlights after successful invocation.
+        // Re-render specifically to clear highlights and update attacker state
+        clearSelectionHighlights();
+        updateUnitDisplay(attackerInstance); // Update the attacker's display (shows canAttack=false)
     } catch (err) {
         console.error("GM: SignalR 'PerformAttack' invocation failed:", err);
         let errorMessage = "服务器通信错误";
@@ -596,12 +621,12 @@ export async function selectAttackTarget(targetUid) {
 
         // Clear selection on error
         gameState.selectedAttackerUid = null;
-        renderGame(gameState); // Re-render to clear highlights on error.
+        clearSelectionHighlights(); // Use specific UI update
     }
 
     // Trigger UI update
-    console.log("GM: Calling renderGame after selecting attack target.");
-    renderGame(gameState);
+    console.log("GM: Attack target selected and PerformAttack invoked. UI updated in try block."); // Updated log message
+    // renderGame(gameState); // REMOVED redundant render call
 }
 
 // --- Destruction Helper ---
@@ -631,7 +656,7 @@ function handleDestruction(cardInstance) {
         if (destroyedCard) {
             destroyedCard.location = "graveyard";
             // Reset stats? Or keep them as they were upon destruction? Keeping them for now.
-            ownerPlayer.graveyard.push(destroyedCard);
+            ownerPlayer.graveyard = [...ownerPlayer.graveyard, destroyedCard]; // Create new array
             console.log(
                 `GM: ${destroyedCard.name} (UID: ${destroyedCard.uid}) removed from field and added to graveyard.`
             );
@@ -654,7 +679,7 @@ export function cancelSelection() {
         gameState.selectedAttackerUid = null;
         console.log("GM: Attacker selection cancelled.");
         // Trigger UI update to remove highlights
-        renderGame(gameState);
+        clearSelectionHighlights(); // <<<< REPLACED with specific UI call
     } else {
         console.log("GM: Cancel selection called, but nothing was selected.");
     }
@@ -703,11 +728,8 @@ export async function evolveCard(cardUid) {
         return;
     }
     // Optimistic client-side checks (Server will re-validate)
-    if (!playerState.canEvolveThisTurn) {
-        // Check local flag
-        console.warn(
-            "GM: EvolveCard rejected - Local state indicates evolution already used or unavailable."
-        );
+    if (!playerState.canEvolve) {
+        console.warn("GM: EvolveCard rejected - Local state indicates evolution already used or unavailable.");
         alert("本回合已使用过进化点或无法进化。");
         return;
     }
@@ -758,7 +780,9 @@ export async function evolveCard(cardUid) {
         `GM: Invoking SignalR Hub method 'EvolveCard'. GameID: ${gameState.gameId}, CardUID: ${cardUid}`
     );
     try {
-        await signalRConnection.invoke("EvolveCard", gameState.gameId, cardUid);
+        // Construct DTO (PascalCase) - Fixed property name to match backend
+        const actionDto = { UnitUid: cardUid }; // Use PascalCase and correct property name
+        await signalRConnection.invoke("PerformEvolve", actionDto); // Corrected Hub method name and pass DTO
 
         // Wait for server event 'UnitEvolved' via processGameEvent for state update.
         console.log(
@@ -807,7 +831,8 @@ export async function submitMulligan(cardUidsToReplace = []) {
         cardUidsToReplace
     );
     try {
-        await signalRConnection.invoke("SubmitMulligan", cardUidsToReplace); // REMOVED gameState.gameId argument
+        // Pass the array directly, as expected by the Hub method List<string> parameter
+        await signalRConnection.invoke("SubmitMulligan", cardUidsToReplace); // Pass the array directly
         console.log(
             "GM: 'SubmitMulligan' invocation sent successfully. Waiting for server response..."
         );
@@ -875,8 +900,8 @@ export async function endTurnRequest() {
             if (endTurnButtonOnError) { endTurnButtonOnError.disabled = false; }
             return; // Stop execution before invalid invoke
         }
-
-        await signalRConnection.invoke("EndTurn", requestId); // Send requestId to the Hub
+        // Send the string directly, as expected by the Hub method string parameter
+        await signalRConnection.invoke("EndTurn", requestId); // Send the string directly
 
         // --- END DETAILED INVOKE LOGGING ---
         alert("正在结束回合...");
@@ -978,16 +1003,20 @@ export async function sendGameAction(actionData) {
  */
 function _hydratePlayerProperties(playerInstance, playerDto) {
     if (!playerInstance || !playerDto) return;
-    playerInstance.pp = playerDto.currentPP ?? 0;
-    playerInstance.maxPP = playerDto.maxPP ?? 0;
-    playerInstance.ep = playerDto.currentEP ?? 0;
-    playerInstance.maxEP = playerDto.maxEP ?? 0;
-    playerInstance.canEvolveThisTurn = playerDto.canEvolveThisTurn ?? false;
-    playerInstance.hasUnlockedEvolution = playerDto.hasUnlockedEvolution ?? false;
-    playerInstance.turn = playerDto.turn ?? 0;
-    playerInstance.deckCount = playerDto.deckCount ?? (Array.isArray(playerDto.deck) ? playerDto.deck.length : 0); // Calculate deck count too
+    // Use PascalCase: CurrentPP, MaxPP, CurrentEP, MaxEP, CanEvolve, HasUnlockedEvolution, TurnNumber, DeckCount, Deck
+    playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
+    playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
+    playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
+    playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
+    // FIXED: Backend sends CanEvolve, not CanEvolveThisTurn
+    playerInstance.canEvolve = playerDto.CanEvolve ?? false; // PascalCase - Fixed property name
+    playerInstance.hasUnlockedEvolution = playerDto.HasUnlockedEvolution ?? false; // PascalCase
+    playerInstance.turn = playerDto.TurnNumber ?? 0; // PascalCase (Already was, but good to confirm)
+    playerInstance.deckCount = playerDto.DeckCount ?? (Array.isArray(playerDto.Deck) ? playerDto.Deck.length : 0); // PascalCase (x2)
     // Keep deck as simple array of IDs/DTOs from server if no methods needed client-side
-    playerInstance.deck = Array.isArray(playerDto.deck) ? [...playerDto.deck] : [];
+    playerInstance.deck = Array.isArray(playerDto.Deck) ? [...playerDto.Deck] : []; // PascalCase (x2)
+
+
 }
 
 /**
@@ -996,14 +1025,17 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
  * @param {object} playerDto - The player DTO containing the leader card DTO.
  */
 function _hydrateLeaderCard(playerInstance, playerDto) {
-    if (!playerInstance || !playerDto || !playerDto.leaderCard || !playerInstance.leaderCard) {
-        console.warn(`GM HYDRATION HELPER: Missing data for leader card hydration for player ${playerDto?.playerId}`);
+    // Use PascalCase: LeaderCard, PlayerId, CurrentHealth, Uid
+    if (!playerInstance || !playerDto || !playerDto.LeaderCard || !playerInstance.leaderCard) { // PascalCase LeaderCard
+        console.warn(`GM HYDRATION HELPER: Missing data for leader card hydration for player ${playerDto?.PlayerId}`); // PascalCase PlayerId
         return;
     }
     // Update currentHealth, the most critical dynamic stat
-    playerInstance.leaderCard.currentHealth = playerDto.leaderCard.currentHealth ?? playerInstance.leaderCard.health;
+    playerInstance.leaderCard.currentHealth = playerDto.LeaderCard.CurrentHealth ?? playerInstance.leaderCard.health; // PascalCase LeaderCard.CurrentHealth
     // Update UID if server sends it (should be stable, but good practice)
-    playerInstance.leaderCard.uid = playerDto.leaderCard.uid ?? playerInstance.leaderCard.uid;
+    // Look for InstanceId first (likely from C# DTO), then instanceId, then Uid/uid as fallbacks
+    const serverUid = playerDto.LeaderCard.InstanceId || playerDto.LeaderCard.instanceId || playerDto.LeaderCard.Uid || playerDto.LeaderCard.uid;
+    playerInstance.leaderCard.uid = serverUid ?? playerInstance.leaderCard.uid; // Assign if found, otherwise keep existing (which might be null initially)
     // Add hydration for leader effects if applicable later
 }
 
@@ -1022,19 +1054,33 @@ function _hydrateCardZone(zoneDtoArray, ownerId, zoneName) {
     }
 
     for (const cardDto of zoneDtoArray) {
-        const cardInstance = createCardInstance(cardDto); // Use the factory from cardManager
+        // Pass the DTO directly, assuming it now contains 'id' instead of 'CardId'
+        // createCardInstance expects an object with an 'id' property.
+        const cardInstance = createCardInstance(cardDto);
         if (cardInstance) {
+            // ownerId and location are set based on the zone being hydrated, not from DTO directly
             cardInstance.ownerId = ownerId;
             cardInstance.location = zoneName;
 
             // Add specific hydration for field units' dynamic state
             if (zoneName === 'field') {
-                cardInstance.canAttack = cardDto.canAttack ?? false;
-                cardInstance.currentAttack = cardDto.currentAttack ?? cardInstance.attack;
-                cardInstance.currentHealth = cardDto.currentHealth ?? cardInstance.health;
-                cardInstance.isEvolved = cardDto.isEvolved ?? false;
-                // Add hydration for effects, keywords etc. if needed
+                // Use PascalCase: CanAttack, CurrentAttack, CurrentHealth, IsEvolved, Keywords
+                cardInstance.canAttack = cardDto.CanAttack ?? false; // PascalCase
+                cardInstance.currentAttack = cardDto.CurrentAttack ?? cardInstance.attack; // PascalCase
+                cardInstance.currentHealth = cardDto.CurrentHealth ?? cardInstance.health; // PascalCase
+                cardInstance.isEvolved = cardDto.IsEvolved ?? false; // PascalCase
+                // ADDED: Hydrate keywords (Ensure DTO has 'Keywords' property as an array)
+                cardInstance.keywords = Array.isArray(cardDto.Keywords) ? [...cardDto.Keywords] : []; // PascalCase
+                // console.log(`GM HYDRATION DBG: Hydrated keywords for ${cardInstance.name} (UID: ${cardInstance.uid}):`, cardInstance.keywords); // Optional Debug
             }
+            // ADDED: Hydrate keywords for hand cards too (needed for UI checks like Ward indicator)
+            else if (zoneName === 'hand') {
+                 // Use PascalCase: Keywords
+                 cardInstance.keywords = Array.isArray(cardDto.Keywords) ? [...cardDto.Keywords] : []; // PascalCase
+                 // console.log(`GM HYDRATION DBG: Hydrated keywords for hand card ${cardInstance.name} (UID: ${cardInstance.uid}):`, cardInstance.keywords); // Optional Debug
+            }
+            // Graveyard keywords might not be needed client-side unless effects depend on them
+
             hydratedZone.push(cardInstance);
         } else {
             console.error(`GM HYDRATION HELPER: Failed to create ${zoneName} card instance from DTO for player ${ownerId}:`, cardDto);
@@ -1055,7 +1101,8 @@ export function updateFullGameState(serverState) {
         serverState
     );
 
-    if (!serverState || !serverState.players || !serverState.gameId) {
+    // Use PascalCase: Players, GameId
+    if (!serverState || !serverState.Players || !serverState.GameId) { // PascalCase check for Players and GameId
         console.error(
             "GAME MANAGER: Received invalid or incomplete full game state object:",
             serverState
@@ -1071,23 +1118,32 @@ export function updateFullGameState(serverState) {
     // Merge the server state into the local gameState
     // --- Smart Hydration: Assign top-level properties ---
     console.log("GM HYDRATION: Starting Smart Hydration process...");
-    gameState.gameId = serverState.gameId;
+    // Use PascalCase: GameId
+    gameState.gameId = serverState.GameId; // PascalCase
     // Preserve localPlayerId if it was already set during initializeGame
-    // gameState.localPlayerId = gameState.localPlayerId || serverState.localPlayerId; // Already set in init
-    gameState.currentPlayerId = serverState.currentPlayerId;
+    // gameState.localPlayerId = gameState.localPlayerId || serverState.LocalPlayerId; // Already set in init, PascalCase if needed elsewhere
+    // Use PascalCase: CurrentPlayerId
+    gameState.currentPlayerId = serverState.CurrentPlayerId; // PascalCase
     console.log(`GM_LOG_CID: Updated currentPlayerId to ${gameState.currentPlayerId} from updateFullGameState.`); // ADDED LOG
-    gameState.turnNumber = serverState.turnNumber;
-    gameState.phase = serverState.phase || "Unknown"; // Use the phase from the server state
-    gameState.gameOver = serverState.gameOver || false;
-    gameState.winner = serverState.winner || null;
+    // gameState.turnNumber = serverState.TurnNumber; // FIX: Removed, TurnNumber is not in GameStateDto and global turn is deprecated
+    // Use PascalCase: Phase
+    gameState.phase = serverState.Phase || "Unknown"; // PascalCase // Use the phase from the server state
+    // Use PascalCase: GameOver
+    gameState.gameOver = serverState.GameOver || false; // PascalCase
+    // Use PascalCase: Winner
+    gameState.winner = serverState.Winner || null; // PascalCase
     gameState.selectedCardUid = null; // Reset selections on full update
     gameState.selectedAttackerUid = null; // Reset selections on full update
     // Find player DTOs to get mulligan status
-    const player1Dto = serverState.players?.find(p => p.playerId === 'player1');
-    const player2Dto = serverState.players?.find(p => p.playerId === 'player2');
-    // Read 'hasCompletedMulligan' from the correct player DTO (JS uses camelCase)
-    gameState.player1MulliganComplete = player1Dto?.hasCompletedMulligan ?? false;
-    gameState.player2MulliganComplete = player2Dto?.hasCompletedMulligan ?? false;
+    // Use PascalCase: Players, PlayerId
+    const player1Dto = serverState.Players?.find(p => p.PlayerId === 'player1'); // PascalCase (x2)
+    // Use PascalCase: Players, PlayerId
+    const player2Dto = serverState.Players?.find(p => p.PlayerId === 'player2'); // PascalCase (x2)
+    // Read 'hasCompletedMulligan' from the correct player DTO
+    // Use PascalCase: HasCompletedMulligan
+    gameState.player1MulliganComplete = player1Dto?.HasCompletedMulligan ?? false; // PascalCase
+    // Use PascalCase: HasCompletedMulligan
+    gameState.player2MulliganComplete = player2Dto?.HasCompletedMulligan ?? false; // PascalCase
     gameState.isEndingTurn = false; // Reset flag
     // Corrected log to show the actual phase being set
     console.log(`GM HYDRATION: Assigned top-level state. GameID=${gameState.gameId}, CurrentPlayer=${gameState.currentPlayerId}, Turn=${gameState.turnNumber}, Phase=${gameState.phase}`);
@@ -1096,38 +1152,106 @@ export function updateFullGameState(serverState) {
     // Player instantiation will happen next (original player mapping logic removed below)
     // --- Smart Hydration: Hydrate Players using Helper Functions ---
     const hydratedPlayers = [];
-    if (Array.isArray(serverState.players)) {
-        for (const playerDto of serverState.players) {
-            if (!playerDto || !playerDto.playerId) {
+    // Use PascalCase: Players
+    if (Array.isArray(serverState.Players)) { // PascalCase
+        // Use PascalCase: Players
+        for (const playerDto of serverState.Players) { // PascalCase
+            // Use PascalCase: PlayerId
+            if (!playerDto || !playerDto.PlayerId) { // PascalCase
                 console.warn("GM HYDRATION: Skipping invalid player DTO:", playerDto);
                 continue;
             }
-            console.log(`GM HYDRATION: Processing Player DTO ID: ${playerDto.playerId}`);
 
-            const playerInstance = createPlayer(playerDto.playerId, playerDto.isAI ?? false);
+            // --- REFACTOR: Find existing or create new player instance ---
+            let playerInstance = gameState.players.find(p => p && p.id === playerDto.PlayerId); // Find existing by ID
+            let isNewPlayer = false;
+
             if (!playerInstance) {
-                console.error(`GM HYDRATION: Failed to create player instance for ID ${playerDto.playerId}.`);
-                continue;
+                // If not found, create a new one using the modified createPlayer
+                // Use PascalCase: PlayerId, IsAI
+                playerInstance = createPlayer(playerDto.PlayerId, playerDto.IsAI ?? false); // PascalCase (x2)
+                isNewPlayer = true; // Flag that this is a new instance
+                if (!playerInstance) {
+                    // Use PascalCase: PlayerId
+                    console.error(`GM HYDRATION: Failed to create NEW player instance for ID ${playerDto.PlayerId}. Skipping.`); // PascalCase
+                    continue; // Skip this player DTO if creation fails
+                }
+                console.log(`%cGM HYDRATION: Created NEW player instance for ID ${playerDto.PlayerId}.`, 'color: green; font-weight: bold;');
+            } else {
+                console.log(`%cGM HYDRATION: Found EXISTING player instance for ID ${playerDto.PlayerId}. Updating...`, 'color: blue; font-weight: bold;');
             }
+            // --- END REFACTOR ---
 
-            // Use helpers for hydration
+            // Hydrate basic properties (works for both new and existing instances)
             _hydratePlayerProperties(playerInstance, playerDto);
-            _hydrateLeaderCard(playerInstance, playerDto);
-            playerInstance.hand = _hydrateCardZone(playerDto.hand, playerInstance.id, 'hand');
-            playerInstance.field = _hydrateCardZone(playerDto.field, playerInstance.id, 'field');
-            playerInstance.graveyard = _hydrateCardZone(playerDto.graveyard, playerInstance.id, 'graveyard');
+
+            // --- REFACTOR: Integrate Leader Card Hydration ---
+            // Use PascalCase: LeaderCard
+            if (playerDto.LeaderCard) { // PascalCase
+                // Use PascalCase: LeaderCard
+                const serverLeaderDto = playerDto.LeaderCard; // PascalCase
+                // Use PascalCase: InstanceId, instanceId, Uid, uid
+                const serverLeaderUid = serverLeaderDto.InstanceId || serverLeaderDto.instanceId || serverLeaderDto.Uid || serverLeaderDto.uid; // PascalCase (multiple checks)
+
+                // Check if client leader exists and matches UID, or if it needs creation/replacement
+                if (!playerInstance.leaderCard || playerInstance.leaderCard.uid !== serverLeaderUid) {
+                    // Create a new leader instance from the server DTO
+                    // NOTE: Assumes createCardInstance can handle the server DTO directly. May need adjustment later.
+                    const newLeaderInstance = createCardInstance(serverLeaderDto); // Pass DTO
+                    if (newLeaderInstance) {
+                        newLeaderInstance.ownerId = playerInstance.id;
+                        newLeaderInstance.location = 'leader_zone';
+                        // Hydrate dynamic state from DTO
+                        // Use PascalCase: CurrentHealth
+                        newLeaderInstance.currentHealth = serverLeaderDto.CurrentHealth ?? newLeaderInstance.health; // PascalCase
+                        // Assign the new instance
+                        playerInstance.leaderCard = newLeaderInstance;
+                        console.log(`%cGM HYDRATION: ${isNewPlayer ? 'Created' : 'Replaced'} leader card instance (UID: ${newLeaderInstance.uid}) for player ${playerInstance.id}. Health: ${newLeaderInstance.currentHealth}`, 'color: green;');
+                    } else {
+                        console.error(`GM HYDRATION: Failed to create leader card instance from DTO for player ${playerInstance.id}:`, serverLeaderDto);
+                        playerInstance.leaderCard = null; // Ensure it's null if creation failed
+                    }
+                } else {
+                    // Leader exists and UID matches, just update dynamic properties
+                    // Use PascalCase: CurrentHealth
+                    playerInstance.leaderCard.currentHealth = serverLeaderDto.CurrentHealth ?? playerInstance.leaderCard.health; // PascalCase
+                    // Add other dynamic updates if needed (e.g., effects, keywords)
+                    console.log(`%cGM HYDRATION: Updated existing leader card instance (UID: ${playerInstance.leaderCard.uid}) for player ${playerInstance.id}. Health: ${playerInstance.leaderCard.currentHealth}`, 'color: blue;');
+                }
+            } else if (playerInstance.leaderCard) {
+                // Server DTO doesn't have a leader, but client does? Log warning and remove client leader.
+                console.warn(`GM HYDRATION: Server DTO for player ${playerInstance.id} missing LeaderCard, but client has one (UID: ${playerInstance.leaderCard.uid}). Removing client leader.`);
+                playerInstance.leaderCard = null;
+            }
+            // --- End Leader Card Hydration ---
+
+            // Hydrate other zones (using existing _hydrateCardZone which recreates zones)
+            // Use PascalCase: Hand
+            playerInstance.hand = _hydrateCardZone(playerDto.Hand, playerInstance.id, 'hand'); // PascalCase
+            // Use PascalCase: Field
+            playerInstance.field = _hydrateCardZone(playerDto.Field, playerInstance.id, 'field'); // PascalCase
+            // Use PascalCase: Graveyard
+            playerInstance.graveyard = _hydrateCardZone(playerDto.Graveyard, playerInstance.id, 'graveyard'); // PascalCase
             // Deck is handled in _hydratePlayerProperties
 
-            console.log(`GM HYDRATION: Finished hydrating player ${playerDto.playerId} using helpers. Hand:${playerInstance.hand.length}, Field:${playerInstance.field.length}, Graveyard:${playerInstance.graveyard.length}, Deck:${playerInstance.deckCount}`);
-            console.log(`GM HYDRATION DEBUG: Player ${playerInstance.id} hydrated hand:`, JSON.stringify(playerInstance.hand.map(c => ({ id: c.id, uid: c.uid, name: c.name })), null, 2)); // ADDED: Log hydrated hand UIDs
+            // Add the updated or new instance to the temporary array
             hydratedPlayers.push(playerInstance);
         }
     } else {
-        console.warn("GM HYDRATION: serverState.players is not an array or is missing.");
+        // Use PascalCase: Players
+        console.warn("GM HYDRATION: serverState.Players is not an array or is missing."); // PascalCase
     }
-    // Replace the old players array entirely
-    gameState.players = hydratedPlayers;
-    console.log("GM HYDRATION: Replaced gameState.players with instances hydrated by helpers.");
+    // --- DEBUG START: Log hydrated players array before assignment ---
+    console.log(`DEBUG_GM HYDRATION: Array of hydrated player instances (before filtering nulls):`, hydratedPlayers.map(p => p ? `Player ${p.id}`: 'null'));
+    // --- DEBUG END ---
+
+    // Filter out nulls before assigning
+    gameState.players = hydratedPlayers.filter(p => p !== null);
+
+    // --- DEBUG START: Log final assigned gameState.players ---
+    console.log(`DEBUG_GM HYDRATION: Final gameState.players after filtering nulls:`, gameState.players.map(p => `Player ${p.id}`));
+    // --- DEBUG END ---
+    console.log("GM HYDRATION: Assigned hydrated player instances to gameState.players.");
     // Player reference updates will happen in the next block (original code remains)
 
     // --- Crucial: Update player references after assigning players array ---
@@ -1139,14 +1263,20 @@ export function updateFullGameState(serverState) {
     // GM DEBUG END - REMOVED
     // The players array from serverState now replaces the old one.
     // Find the active and opponent player *instances* within the *new* players array.
+    console.log(`DEBUG_GM HYDRATION: Attempting to find active player with ID: ${gameState.currentPlayerId}`); // Log before find
     gameState.activePlayer =
         gameState.players.find(
             (p) => p && p.id === gameState.currentPlayerId // FIX: Use p.id
         ) || null;
+    console.log(`DEBUG_GM HYDRATION: Found active player:`, gameState.activePlayer ? `Player ${gameState.activePlayer.id}` : 'null'); // Log result
+
+    console.log(`DEBUG_GM HYDRATION: Attempting to find opponent player (ID not equal to ${gameState.currentPlayerId})`); // Log before find
     gameState.opponentPlayer =
         gameState.players.find(
             (p) => p && p.id !== gameState.currentPlayerId // FIX: Use p.id
         ) || null;
+    console.log(`DEBUG_GM HYDRATION: Found opponent player:`, gameState.opponentPlayer ? `Player ${gameState.opponentPlayer.id}` : 'null'); // Log result
+
 
     // Add detailed logging to verify player references
     if (gameState.activePlayer) {
@@ -1192,60 +1322,37 @@ export function updateFullGameState(serverState) {
 // --- NEW Specific Event Handlers ---
 
 export function handleTurnStarted(eventData) {
-    console.log('%c[EVENT RECEIVED] handleTurnStarted:', 'background: #28a745; color: #ffffff; font-weight: bold;', eventData); // Green background
-    // DTO: TurnStartedEventDto { string PlayerId, int TurnNumber, GamePhase Phase }
-    console.log(`%cGM HANDLE: handleTurnStarted`, 'color: #28a745; font-weight: bold;', eventData);
-    // Robust check for turnNumber (null or undefined)
-    // Refined validation: Check for object, property existence, and non-null/undefined values
-    if (!eventData ||
-        !eventData.hasOwnProperty('currentPlayerId') || eventData.currentPlayerId === null || eventData.currentPlayerId === undefined || // CORRECTED: playerId -> currentPlayerId
-        !eventData.hasOwnProperty('turnNumber') || eventData.turnNumber === null || eventData.turnNumber === undefined ||
-        !eventData.hasOwnProperty('phase') || eventData.phase === null || eventData.phase === undefined) {
-        console.error("GM Error: Invalid data structure or null/undefined values in handleTurnStarted:", eventData);
-        return;
-    }
+    console.log('%c[EVENT RECEIVED] handleTurnStarted (now calling updateFullGameState):', 'background: #28a745; color: #ffffff; font-weight: bold;', eventData); // Green background
 
-    gameState.currentPlayerId = eventData.currentPlayerId; // CORRECTED: playerId -> currentPlayerId
-    gameState.turnNumber = eventData.turnNumber; // FIX BUG-001: Update global turn number from event
-    gameState.gamePhase = eventData.phase; // Trust the phase sent by server
+    // --- ROO DEBUG: Log raw event data received by handleTurnStarted ---
+    console.log(`%c[DEBUG_TURN_START_EVENT] handleTurnStarted received raw eventData:`, 'color: purple; font-weight: bold;', JSON.parse(JSON.stringify(eventData))); // Log deep copy
+    // --- END ROO DEBUG ---
 
-    // Update player references which might have changed if players reconnect etc.
-    gameState.activePlayer = getPlayerState(gameState.currentPlayerId);
-    gameState.opponentPlayer = gameState.players.find(p => p && p.id !== gameState.currentPlayerId);
-
-    // Update the active player's specific turn count (important for evolve conditions etc.)
-    if (gameState.activePlayer) {
-        // Use the turn number from the event DTO if it represents the player's turn count,
-        // otherwise, increment locally (incrementing seems safer if DTO turnNumber is global)
-        gameState.activePlayer.turn = (gameState.activePlayer.turn || 0) + 1;
-        console.log(`GM: Player ${gameState.activePlayer.id}'s specific turn counter updated to ${gameState.activePlayer.turn}`);
+    // The "TurnStarted" event now carries the full GameStateDto nested within GameState property.
+    // Delegate the processing to the function designed for full state updates, passing the nested object.
+    // Use PascalCase: GameState
+    if (eventData && eventData.GameState) { // PascalCase
+        updateFullGameState(eventData.GameState); // Pass the nested GameState object
     } else {
-        console.warn(`GM: Cannot update active player turn counter, activePlayer not found for ID ${gameState.currentPlayerId}`);
+        console.error("GM Error: TurnStarted event received without a valid nested GameState object:", eventData);
+        alert("错误：回合开始事件数据无效！");
     }
 
-    // Enable/Disable UI Interactions based on who's turn it is
-    if (gameState.currentPlayerId === gameState.localPlayerId) {
-        console.log("GM: It's the local player's turn. Enabling interactions.");
-        // enablePlayerInteractions(); // REMOVED: Relying on existing logic per user preference
-    } else {
-        console.log("GM: It's the opponent's turn. Disabling interactions.");
-        // disablePlayerInteractions(); // REMOVED: Relying on existing logic per user preference
-    }
-
-    renderGame(gameState); // Render the updated state
+    // No need for separate logic here to update currentPlayerId, phase, player turns, or render.
+    // updateFullGameState handles all necessary state updates and the final render call.
+    console.log("GM: Delegated TurnStarted event processing to updateFullGameState.");
 }
 
 export function handleTurnEnded(eventData) {
     console.log('%c[EVENT RECEIVED] handleTurnEnded:', 'background: #dc3545; color: #ffffff; font-weight: bold;', eventData); // Red background
-    // DTO: TurnEndedEventDto { string NextPlayerId, int NewTurnNumber, List&lt;PlayerTurnEndUpdateDto&gt; PlayerUpdates }
+    // DTO: TurnEndedEventDto { string NextPlayerId, int NewTurnNumber, List<PlayerTurnEndUpdateDto> PlayerUpdates }
     // Note: Most state updates (currentPlayerId, turnNumber, PP/EP, card draw) are now handled by the subsequent TurnStarted event.
     // This handler primarily logs and renders the intermediate state if needed.
-    console.log(`%cGM HANDLE: handleTurnEnded`, 'color: #dc3545; font-weight: bold;', eventData);
     // Robust check for newTurnNumber (null or undefined)
     // Refined validation: Check for object, property existence, and non-null/undefined values
     // REMOVED check for newTurnNumber as it's no longer in the DTO
     if (!eventData ||
-        !eventData.hasOwnProperty('nextPlayerId') || eventData.nextPlayerId === null || eventData.nextPlayerId === undefined) {
+        !eventData.hasOwnProperty('NextPlayerId') || eventData.NextPlayerId === null || eventData.NextPlayerId === undefined) { // PascalCase
         console.error("GM Error: Invalid data structure or null/undefined values in handleTurnEnded:", eventData);
         return;
     }
@@ -1259,188 +1366,123 @@ export function handleTurnEnded(eventData) {
     // gameState.opponentPlayer = gameState.players.find(p => p && p.id !== gameState.currentPlayerId);
 
     // Log expected next player for debugging purposes
-    console.log(`GM: Turn ended. Expected next player: ${eventData.nextPlayerId}. Waiting for TurnStarted event.`);
+    console.log(`GM: Turn ended. Expected next player: ${eventData.NextPlayerId}. Waiting for TurnStarted event.`); // PascalCase
 
     // Do NOT change currentPlayerId or turnNumber here.
     // Do NOT update PP/EP or draw cards here.
 
-    renderGame(gameState); // Render the state potentially reflecting 'TurnEnding' phase
+    // renderGame(gameState); // REMOVED: Rendering handled by subsequent TurnStarted event.
 }
 export function handlePpUpdate(eventData) {
     console.log('%c[EVENT RECEIVED] handlePpUpdate:', 'background: #ffc107; color: #000000; font-weight: bold;', eventData); // Yellow background
     // DTO: PpUpdateEventDto { string SourcePlayerId, int CurrentPp, int MaxPp }
     console.log(`%cGM HANDLE: handlePpUpdate`, 'color: #ffc107; font-weight: bold;', eventData);
-    if (!eventData || !eventData.sourcePlayerId || eventData.currentPp === undefined || eventData.maxPp === undefined) {
+    if (!eventData || !eventData.SourcePlayerId || eventData.CurrentPp === undefined || eventData.MaxPp === undefined) { // PascalCase
         console.error("GM Error: Invalid data in handlePpUpdate:", eventData);
         return;
     }
-    const playerToUpdate = getPlayerState(eventData.sourcePlayerId);
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId); // PascalCase
+    console.log(`%cGM HANDLE: handlePpUpdate SourcePlayerId`, 'color: #ffc107; font-weight: bold;', eventData.SourcePlayerId);
+
+    let handChanged = false; // BUG-016 Flag to track if hand was modified
+
     if (playerToUpdate) {
-        playerToUpdate.pp = eventData.currentPp;
-        playerToUpdate.maxPP = eventData.maxPp;
+        playerToUpdate.pp = eventData.CurrentPp; // PascalCase
+        playerToUpdate.maxPP = eventData.MaxPp; // PascalCase
         console.log(`GM: Updated player ${playerToUpdate.id} PP to ${playerToUpdate.pp}/${playerToUpdate.maxPP}`);
-        console.log('%c[EVENT RECEIVED] handleEpUpdate:', 'background: #17a2b8; color: #ffffff; font-weight: bold;', eventData); // Cyan background
-        renderGame(gameState); // Re-render after PP update
+
+        // BUG-016: Remove the card that was just played (cost deducted) from hand
+        const cardToRemoveUid = gameState.lastPlayedCardInstanceId;
+        console.log(`%c[BUG-016] Checking if lastPlayedCardInstanceId (${cardToRemoveUid}) needs removal from hand for player ${playerToUpdate.id}`, 'color: magenta; font-weight: bold;');
+        if (cardToRemoveUid) {
+            const cardIndex = playerToUpdate.hand.findIndex(c => c && c.uid === cardToRemoveUid);
+            if (cardIndex > -1) {
+                const removedCard = playerToUpdate.hand.splice(cardIndex, 1)[0];
+                console.log(`%c[BUG-016] Removed card ${removedCard?.name} (UID: ${cardToRemoveUid}) from player ${playerToUpdate.id}'s hand via PpUpdate.`, 'color: magenta; font-weight: bold;');
+                handChanged = true;
+            } else {
+                console.warn(`%c[BUG-016] PpUpdate handler tried to remove card UID ${cardToRemoveUid}, but it was not found in player ${playerToUpdate.id}'s hand. Maybe it was summoned from elsewhere?`, 'color: magenta;');
+            }
+            // Clear the temporary state regardless of whether the card was found in hand
+            gameState.lastPlayedCardInstanceId = null;
+            console.log(`%c[BUG-016] Cleared lastPlayedCardInstanceId.`, 'color: magenta; font-weight: bold;');
+        } else {
+             console.log(`%c[BUG-016] No lastPlayedCardInstanceId found, skipping hand removal check.`, 'color: magenta;');
+        }
+
+        // Render only if PP changed OR hand changed
+        updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP); // Use specific UI update
+        // BUG-022 FIX: Update hand display if it was changed
+        // Hand update is now handled by handleCardPlayed
     } else {
-        console.warn(`GM: PpUpdate event received for invalid player: ${eventData.sourcePlayerId}`);
+        console.warn(`GM: PpUpdate event received for invalid player: ${eventData.SourcePlayerId}`); // PascalCase
     }
 }
 
 export function handleEpUpdate(eventData) {
-    // DTO: EpUpdateEventDto { string SourcePlayerId, int NewEpValue (current), int NewMaxEpValue (max) }
+    // DTO: EpUpdateEventDto { string SourcePlayerId, int CurrentEp, int MaxEp }
     console.log(`%cGM HANDLE: handleEpUpdate`, 'color: #17a2b8; font-weight: bold;', eventData);
-    // Note: DTO properties might be NewEpValue/NewMaxEpValue based on old handler, adjust if needed
-    if (!eventData || !eventData.sourcePlayerId || eventData.newEpValue === undefined || eventData.newMaxEpValue === undefined) {
-        console.error("GM Error: Invalid data in handleEpUpdate (expected sourcePlayerId, newEpValue, newMaxEpValue):", eventData);
-        console.log('%c[EVENT RECEIVED] handleHandUpdate:', 'background: #6f42c1; color: #ffffff; font-weight: bold;', eventData); // Purple background
+    // Fixed: Use correct DTO property names CurrentEp and MaxEp
+    if (!eventData || !eventData.SourcePlayerId || eventData.CurrentEp === undefined || eventData.MaxEp === undefined) {
+        console.error("GM Error: Invalid data in handleEpUpdate (expected SourcePlayerId, CurrentEp, MaxEp):", eventData);
         return;
     }
-    const playerToUpdate = getPlayerState(eventData.sourcePlayerId);
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
     if (playerToUpdate) {
-        playerToUpdate.ep = eventData.newEpValue;
-        playerToUpdate.maxEP = eventData.newMaxEpValue;
+        playerToUpdate.ep = eventData.CurrentEp;
+        playerToUpdate.maxEP = eventData.MaxEp;
+
+        // Update canEvolve flag based on EP availability
+        playerToUpdate.canEvolve = playerToUpdate.maxEP > 0 && playerToUpdate.ep > 0;
+
         console.log(`GM: Updated player ${playerToUpdate.id} EP to ${playerToUpdate.ep}/${playerToUpdate.maxEP}`);
-        renderGame(gameState); // Re-render after EP update
+
+        updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
+
+        // Trigger UI re-render to update evolution buttons
+        if (typeof renderGame === "function") {
+            renderGame(gameState);
+        }
     } else {
-        console.warn(`GM: EpUpdate event received for invalid player: ${eventData.sourcePlayerId}`);
+        console.warn(`GM: EpUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
     }
 }
 
-export function handleHandUpdate(eventData) {
-    // DTO: HandUpdateEventDto { string SourcePlayerId, int HandCount, bool IsBurned, CardDto? CardAdded, string? CardRemovedUid }
-    console.log(`%cGM HANDLE: handleHandUpdate`, 'color: #6f42c1; font-weight: bold;', eventData);
-    if (!eventData || !eventData.sourcePlayerId || eventData.handCount === undefined) {
-        console.error("GM Error: Invalid data in handleHandUpdate (missing sourcePlayerId or handCount):", eventData);
-        return;
-    }
-    const playerToUpdate = getPlayerState(eventData.sourcePlayerId);
-    if (!playerToUpdate) {
-        console.warn(`GM: HandUpdate event received for invalid player: ${eventData.sourcePlayerId}`);
-        console.log('%c[EVENT RECEIVED] handleDeckUpdate:', 'background: #fd7e14; color: #ffffff; font-weight: bold;', eventData); // Orange background
-        return;
-    }
-
-    let updated = false;
-
-    // Handle card removal (if specified)
-    if (eventData.cardRemovedUid) {
-        const cardIndex = playerToUpdate.hand.findIndex(c => c && c.uid === eventData.cardRemovedUid);
-        if (cardIndex > -1) {
-            const removedCard = playerToUpdate.hand.splice(cardIndex, 1)[0];
-            console.log(`GM: Removed card ${removedCard?.name} (UID: ${eventData.cardRemovedUid}) from player ${playerToUpdate.id}'s hand.`);
-            updated = true;
-            console.log('%c[EVENT RECEIVED] handleFieldUpdate:', 'background: #20c997; color: #ffffff; font-weight: bold;', eventData); // Teal background
-        } else {
-            console.warn(`GM: HandUpdate requested removal of card UID ${eventData.cardRemovedUid}, but it was not found in player ${playerToUpdate.id}'s hand.`);
-        }
-    }
-
-    // Handle card addition (if specified)
-    // Check for the DrawnCards list property instead of cardAdded
-
-
-    // FIX: Use lowercase 'drawnCards' due to CamelCase policy
-    if (eventData.drawnCards && Array.isArray(eventData.drawnCards) && eventData.drawnCards.length > 0) {
-        const drawnCardDto = eventData.drawnCards[0]; // FIX: Use lowercase 'drawnCards'
-        console.log(`%c  [DBG_HAND_UPDATE] Received drawnCards DTO for Player ${playerToUpdate.id}. Processing first card:`, 'color: #e83e8c', JSON.parse(JSON.stringify(drawnCardDto))); // Deep copy for logging
-        const newCardInstance = createCardInstance(drawnCardDto); // Use the DTO from the list
-        console.log(`%c  [DBG_HAND_UPDATE] Result of createCardInstance from DrawnCards[0]:`, 'color: #e83e8c', newCardInstance ? JSON.parse(JSON.stringify(newCardInstance)) : null); // Deep copy for logging
-
-        // --- DEBUG START: Inspect created instance ---
-        console.log(`%c  [DBG_HAND_UPDATE] INSPECT INSTANCE BEFORE ADD: UID=${newCardInstance?.uid}, Name=${newCardInstance?.name}, Owner=${newCardInstance?.ownerId}, Loc=${newCardInstance?.location}`, 'color: #007bff; font-weight: bold;');
-        // --- DEBUG END ---
-        if (newCardInstance) {
-            newCardInstance.ownerId = playerToUpdate.id;
-            newCardInstance.location = 'hand';
-            // Check if hand is full *before* adding, considering server might have already burned it
-            const isHandFull = playerToUpdate.hand.length >= 10; // Max hand size 10
-            console.log(`%c  [DBG_HAND_UPDATE] Hand size check: Current=${playerToUpdate.hand.length}, IsFull=${isHandFull}`, 'color: #e83e8c');
-            if (!isHandFull) {
-                const cardAlreadyExists = playerToUpdate.hand.some(c => c && c.uid === newCardInstance.uid);
-                console.log(`%c  [DBG_HAND_UPDATE] Duplicate check: Card UID ${newCardInstance.uid} already exists? ${cardAlreadyExists}`, 'color: #e83e8c');
-                if (!cardAlreadyExists) {
-                    console.log(`%c  [DBG_HAND_UPDATE] BEFORE PUSH: Hand length = ${playerToUpdate.hand.length}`, 'color: #e83e8c');
-                    playerToUpdate.hand.push(newCardInstance);
-                    console.log(`%c  [DBG_HAND_UPDATE] AFTER PUSH: Hand length = ${playerToUpdate.hand.length}. Added: ${newCardInstance.name} (UID: ${newCardInstance.uid})`, 'color: #e83e8c');
-                    console.log('%c[EVENT RECEIVED] handleGraveyardUpdate:', 'background: #6c757d; color: #ffffff; font-weight: bold;', eventData); // Gray background
-                    // console.log(`GM: Added card ${newCardInstance.name} (UID: ${newCardInstance.uid}) to player ${playerToUpdate.id}'s hand.`); // Covered by DBG log above
-                    // --- DEBUG START: Inspect hand array after push ---
-                    console.log(`%c  [DBG_HAND_UPDATE] INSPECT HAND AFTER PUSH: Player ${playerToUpdate.id} Hand (UIDs): [${playerToUpdate.hand.map(c => c?.uid).join(', ')}]`, 'color: #007bff; font-weight: bold;');
-                    // --- DEBUG END ---
-                    updated = true;
-                    console.log(`%c  [DBG_HAND_UPDATE] Set updated = true because card was added.`, 'color: #e83e8c');
-                } else {
-                    console.warn(`GM: HandUpdate attempted to add duplicate card UID ${newCardInstance.uid} (${newCardInstance.name}) for player ${playerToUpdate.id}.`);
-                    console.log(`%c  [DBG_HAND_UPDATE] Set updated = false (or kept false) because card was duplicate.`, 'color: #e83e8c');
-                }
-            } else { // Hand is full
-                console.warn(`GM: HandUpdate received CardAdded ${newCardInstance.name} (UID: ${newCardInstance.uid}) for player ${playerToUpdate.id}, but hand is full (client-side). Expecting IsBurned flag.`);
-                console.log(`%c  [DBG_HAND_UPDATE] Set updated = false (or kept false) because hand was full.`, 'color: #e83e8c');
-            }
-        } else { // Failed to create instance
-            console.error(`GM: Failed to create instance for added card via HandUpdate (from DrawnCards) for player ${playerToUpdate.id}:`, drawnCardDto);
-            console.log(`%c  [DBG_HAND_UPDATE] Set updated = false (or kept false) because instance creation failed.`, 'color: #e83e8c');
-        }
-    } // End of DrawnCards check block
-    console.log('%c[EVENT RECEIVED] handleBanishedUpdate:', 'background: #343a40; color: #ffffff; font-weight: bold;', eventData); // Dark gray background
-
-    // Handle burned card indication (Check drawnCards instead of cardAdded)
-    // FIX: Use lowercase 'drawnCards'
-    if (eventData.isBurned && eventData.drawnCards && eventData.drawnCards.length > 0) {
-        const burnedCardDto = eventData.drawnCards[0]; // FIX: Use lowercase 'drawnCards'
-        console.warn(`GM: Card ${burnedCardDto.name} (UID: ${burnedCardDto.uid}) was burned due to full hand for player ${playerToUpdate.id}.`);
-        // Optionally trigger a "card burned" visual effect
-    }
-
-    // Update hand count (server is source of truth)
-    // Note: This might seem redundant if we add/remove locally, but it corrects any drift.
-    // We should ideally rely *only* on add/remove events, but the DTO provides the count.
-    // Let's log if the count mismatches our local calculation.
-    const localHandCount = playerToUpdate.hand.length;
-    console.log('%c[EVENT RECEIVED] handleLeaderHpUpdate:', 'background: #e83e8c; color: #ffffff; font-weight: bold;', eventData); // Pink background
-    if (localHandCount !== eventData.handCount) {
-        console.warn(`GM: Hand count mismatch for player ${playerToUpdate.id}. Local: ${localHandCount}, Server DTO: ${eventData.handCount}. Server count will be used if UI relies on it.`);
-        // If UI directly uses playerToUpdate.hand.length, this log is sufficient.
-        // If UI uses a separate count variable, update it here:
-        // playerToUpdate.handCount = eventData.handCount;
-    }
-
-    console.log(`%c  [DBG_HAND_UPDATE] Final check before render: updated = ${updated}`, 'color: #e83e8c');
-    if (updated) {
-        console.log(`%c  [DBG_HAND_UPDATE] Calling renderGame() because updated is true.`, 'color: #e83e8c');
-        renderGame(gameState); // Re-render if hand changed
-    } else {
-        console.log(`%c  [DBG_HAND_UPDATE] Skipping renderGame() because updated is false.`, 'color: #e83e8c');
-    }
-}
+// BUG-016: handleHandUpdate function removed as it's deprecated.
+// Hand updates are now handled by handlePpUpdate (for card removal after play)
+// and potentially handleCardDrawn (if a specific draw event exists) or full state sync.
 
 export function handleDeckUpdate(eventData) {
-    console.log('%c[EVENT RECEIVED] handleUnitSpawned:', 'background: #007bff; color: #ffffff; font-weight: bold;', eventData); // Blue background
     // DTO: DeckUpdateEventDto { string SourcePlayerId, int DeckCount }
-    console.log(`%cGM HANDLE: handleDeckUpdate`, 'color: #fd7e14; font-weight: bold;', eventData);
-    if (!eventData || !eventData.sourcePlayerId || eventData.deckCount === undefined) {
+    console.log(`%cGM HANDLE: handleDeckUpdate`, 'color: #fd7e14; font-weight: bold;', eventData); // Orange color
+    // Use PascalCase: SourcePlayerId, DeckCount
+    if (!eventData || !eventData.SourcePlayerId || eventData.DeckCount === undefined) { // PascalCase
         console.error("GM Error: Invalid data in handleDeckUpdate:", eventData);
         return;
     }
-    const playerToUpdate = getPlayerState(eventData.sourcePlayerId);
+    // Use PascalCase: SourcePlayerId
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId); // PascalCase
     if (playerToUpdate) {
-        playerToUpdate.deckCount = eventData.deckCount;
-        console.log(`GM: Updated player ${playerToUpdate.id} deck count to ${playerToUpdate.deckCount}`);
-        renderGame(gameState); // Re-render if deck count display needs update
+        // Use PascalCase: DeckCount
+        playerToUpdate.deckCount = eventData.DeckCount; // PascalCase
+        console.log(`GM: Updated player ${playerToUpdate.id}'s deck count to ${playerToUpdate.deckCount}`);
+        // renderGame(gameState); // Re-render after deck count update - REPLACED
+        updateDeckCountDisplay(playerToUpdate.id, playerToUpdate.deckCount); // Use specific UI update
     } else {
-        console.warn(`GM: DeckUpdate event received for invalid player: ${eventData.sourcePlayerId}`);
+        // Use PascalCase: SourcePlayerId
+        console.warn(`GM: DeckUpdate event received for invalid player: ${eventData.SourcePlayerId}`); // PascalCase
     }
-}
+} // Restored function definition
 export function handleGraveyardUpdate(eventData) {
     // DTO: GraveyardUpdateEventDto { string SourcePlayerId, int GraveyardCount, CardDto? CardAdded, string? CardRemovedUid }
     console.log(`%cGM HANDLE: handleGraveyardUpdate`, 'color: #6c757d; font-weight: bold;', eventData); // Gray color
-    if (!eventData || !eventData.sourcePlayerId || eventData.graveyardCount === undefined) {
-        console.error("GM Error: Invalid data in handleGraveyardUpdate (missing sourcePlayerId or graveyardCount):", eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.GraveyardCount === undefined) { // PascalCase
+        console.error("GM Error: Invalid data in handleGraveyardUpdate (missing SourcePlayerId or GraveyardCount):", eventData); // PascalCase in message
         return;
     }
-    const playerToUpdate = getPlayerState(eventData.sourcePlayerId);
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId); // PascalCase
     if (!playerToUpdate) {
-        console.warn(`GM: GraveyardUpdate event received for invalid player: ${eventData.sourcePlayerId}`);
+        console.warn(`GM: GraveyardUpdate event received for invalid player: ${eventData.SourcePlayerId}`); // PascalCase
         return;
     }
 
@@ -1448,20 +1490,20 @@ export function handleGraveyardUpdate(eventData) {
     console.log('%c[EVENT RECEIVED] handleUnitAttacked:', 'background: #dc3545; color: #ffffff; font-weight: bold;', eventData); // Red background (same as TurnEnded)
 
     // Handle card removal (e.g., Necromancy effect)
-    if (eventData.cardRemovedUid) {
-        const cardIndex = playerToUpdate.graveyard.findIndex(c => c && c.uid === eventData.cardRemovedUid);
+    if (eventData.CardRemovedUid) { // PascalCase
+        const cardIndex = playerToUpdate.graveyard.findIndex(c => c && c.uid === eventData.CardRemovedUid); // PascalCase
         if (cardIndex > -1) {
             const removedCard = playerToUpdate.graveyard.splice(cardIndex, 1)[0];
-            console.log(`GM: Removed card ${removedCard?.name} (UID: ${eventData.cardRemovedUid}) from player ${playerToUpdate.id}'s graveyard.`);
+            console.log(`GM: Removed card ${removedCard?.name} (UID: ${eventData.CardRemovedUid}) from player ${playerToUpdate.id}'s graveyard.`); // PascalCase
             updated = true;
         } else {
-            console.warn(`GM: GraveyardUpdate requested removal of card UID ${eventData.cardRemovedUid}, but it was not found in player ${playerToUpdate.id}'s graveyard.`);
+            console.warn(`GM: GraveyardUpdate requested removal of card UID ${eventData.CardRemovedUid}, but it was not found in player ${playerToUpdate.id}'s graveyard.`); // PascalCase
         }
     }
 
     // Handle card addition (e.g., unit destroyed, card discarded)
-    if (eventData.cardAdded) {
-        const newCardInstance = createCardInstance(eventData.cardAdded);
+    if (eventData.CardAdded) { // PascalCase
+        const newCardInstance = createCardInstance(eventData.CardAdded); // PascalCase
         if (newCardInstance) {
             newCardInstance.ownerId = playerToUpdate.id;
             newCardInstance.location = 'graveyard';
@@ -1475,298 +1517,158 @@ export function handleGraveyardUpdate(eventData) {
                 console.warn(`GM: GraveyardUpdate attempted to add duplicate card UID ${newCardInstance.uid} (${newCardInstance.name}) to player ${playerToUpdate.id}'s graveyard.`);
             }
         } else {
-            console.error(`GM: Failed to create instance for added card via GraveyardUpdate for player ${playerToUpdate.id}:`, eventData.cardAdded);
+            console.error(`GM: Failed to create instance for added card via GraveyardUpdate for player ${playerToUpdate.id}:`, eventData.CardAdded); // PascalCase
         }
     }
 
     console.log('%c[EVENT RECEIVED] handleUnitDamaged:', 'background: #ffc107; color: #000000; font-weight: bold;', eventData); // Yellow background (same as PpUpdate)
     // Update graveyard count (server is source of truth)
     const localGraveyardCount = playerToUpdate.graveyard.length;
-    if (localGraveyardCount !== eventData.graveyardCount) {
-        console.warn(`GM: Graveyard count mismatch for player ${playerToUpdate.id}. Local: ${localGraveyardCount}, Server DTO: ${eventData.graveyardCount}.`);
+    if (localGraveyardCount !== eventData.GraveyardCount) { // PascalCase
+        console.warn(`GM: Graveyard count mismatch for player ${playerToUpdate.id}. Local: ${localGraveyardCount}, Server DTO: ${eventData.GraveyardCount}.`); // PascalCase
         // If UI relies on a separate count variable, update it:
-        // playerToUpdate.graveyardCount = eventData.graveyardCount;
+        // playerToUpdate.graveyardCount = eventData.GraveyardCount; // PascalCase
     } else {
-        console.log(`GM: Updated player ${playerToUpdate.id}'s graveyard. New count: ${eventData.graveyardCount}`);
+        console.log(`GM: Updated player ${playerToUpdate.id}'s graveyard. New count: ${eventData.GraveyardCount}`); // PascalCase
     }
 
 
-    if (updated) {
-        renderGame(gameState); // Re-render if graveyard changed
-    }
-}
-export function handleCardDrawn(eventData) {
-    // DTO: CardDrawnEventDto { string SourcePlayerId, string DrawnCardUid, string DrawnCardId }
-    console.log(`%cGM HANDLE: handleCardDrawn`, 'color: #007bff; font-weight: bold;', eventData); // Blue color
-    if (!eventData || !eventData.sourcePlayerId || !eventData.drawnCardUid || !eventData.drawnCardId) {
-        console.error("GM Error: Invalid data in handleCardDrawn (missing sourcePlayerId, drawnCardUid, or drawnCardId):", eventData);
-        return;
-    }
-    console.log('%c[EVENT RECEIVED] handleUnitHealed:', 'background: #28a745; color: #ffffff; font-weight: bold;', eventData); // Green background (same as TurnStarted) // Note: This log seems misplaced, but keeping it for diff accuracy
-
-    // const playerToUpdate = getPlayerState(eventData.sourcePlayerId);
-    // if (!playerToUpdate) {
-    //     console.warn(`GM: CardDrawn event received for invalid player: ${eventData.sourcePlayerId}`);
-    //     return;
+    // Update the graveyard count display specifically
+    // The server DTO count is the source of truth
+    updateGraveyardCountDisplay(playerToUpdate.id, eventData.GraveyardCount); // Use specific UI update
+    // No full render needed if only the count changed and UI reflects it
+    // if (updated) { // Keep this conditional logic if other graveyard-related UI needs full refresh
+    //     renderGame(gameState); // Re-render if graveyard changed
     // }
-
-    // let updated = false;
-
-
-    // // Update deck count (server should send DeckUpdate, but this provides immediate feedback)
-    // // This might be slightly inaccurate if server draws multiple cards before sending DeckUpdate
-    // if (playerToUpdate.deckCount > 0) {
-    //     playerToUpdate.deckCount--;
-    //     console.log(`GM (handleCardDrawn): Decremented local deck count for player ${playerToUpdate.id} to ${playerToUpdate.deckCount}.`);
-    //     updated = true; // Deck count changed, need render
-    // }
-
-    // // Future: Add any draw-specific animation triggers here if needed.
-
-    // if (updated) {
-    //     renderGame(gameState); // Re-render if hand or deck count changed
-    // }
-}
-export function handleUnitPlayed(eventData) {
-    // DTO: UnitPlayedEventDto { string PlayerId, UnitStateDto UnitData, string SourceCardUid }
-    console.log(`%cGM HANDLE: handleUnitPlayed`, 'color: #007bff; font-weight: bold;', eventData);
-    if (!eventData || !eventData.playerId || !eventData.unitData) {
-        console.error("GM Error: Invalid data in handleUnitPlayed:", eventData);
-        return;
-    }
-    const ownerPlayer = getPlayerState(eventData.playerId);
-    if (!ownerPlayer) {
-        console.log('%c[EVENT RECEIVED] handleUnitBuffed:', 'background: #17a2b8; color: #ffffff; font-weight: bold;', eventData); // Cyan background (same as EpUpdate)
-        console.warn(`GM: UnitPlayed event received for invalid player: ${eventData.playerId}`);
-        return;
-    }
-
-    // Remove the card from hand using sourceCardUid if provided
-    if (eventData.sourceCardUid) {
-        const handIndex = ownerPlayer.hand.findIndex(c => c && c.uid === eventData.sourceCardUid);
-        if (handIndex > -1) {
-            const removedCard = ownerPlayer.hand.splice(handIndex, 1)[0];
-            console.log(`GM: Removed played unit source card ${removedCard?.name} (UID: ${eventData.sourceCardUid}) from player ${ownerPlayer.id}'s hand.`);
-            // No separate render needed here, render happens after adding to field or if field is full
-        } else {
-            // This might happen if the card was generated (e.g., token) or if state is slightly out of sync.
-            console.warn(`GM: UnitPlayed event sourceCardUid ${eventData.sourceCardUid} not found in player ${ownerPlayer.id}'s hand.`);
-        }
-    }
-
-    // HYDRATION: Create full instance from the UnitStateDto
-    const unitInstance = createCardInstance(eventData.unitData);
-    if (!unitInstance) {
-        console.error(`GM: Failed to create instance for UnitPlayed DTO for player ${ownerPlayer.id}:`, eventData.unitData);
-        return;
-    }
-    console.log('%c[EVENT RECEIVED] handleUnitDebuffed:', 'background: #6f42c1; color: #ffffff; font-weight: bold;', eventData); // Purple background (same as HandUpdate)
-
-    unitInstance.ownerId = ownerPlayer.id; // Ensure owner is set
-    unitInstance.location = 'field'; // Ensure location
-
-    // Hydrate dynamic state from the DTO
-    unitInstance.canAttack = eventData.unitData.canAttack ?? false;
-    unitInstance.currentAttack = eventData.unitData.currentAttack ?? unitInstance.attack;
-    unitInstance.currentHealth = eventData.unitData.currentHealth ?? unitInstance.health;
-    unitInstance.isEvolved = eventData.unitData.isEvolved ?? false;
-    // Add hydration for other potential dynamic properties from UnitStateDto if added later
-
-    console.log(`GM_UNITPLAYED_DEBUG: Hydrated Unit Instance for UID ${unitInstance.uid}: Atk=${unitInstance.currentAttack}, HP=${unitInstance.currentHealth}. Raw unitData:`, eventData.unitData);
-
-    // Avoid adding duplicates if server sends redundant events
-    if (!ownerPlayer.field.some(f => f && f.uid === unitInstance.uid)) {
-        if (ownerPlayer.field.length < MAX_FIELD_SIZE) {
-            ownerPlayer.field.push(unitInstance);
-            console.log(`GM: Added unit ${unitInstance.name} (UID: ${unitInstance.uid}, Type: ${unitInstance.type}) to player ${ownerPlayer.id}'s field.`);
-            renderGame(gameState); // Re-render after adding unit to field AND removing from hand
-        } else {
-            console.warn(`GM: UnitPlayed event received for ${unitInstance.name}, but player ${ownerPlayer.id}'s field is full (${ownerPlayer.field.length}/${MAX_FIELD_SIZE}). Unit not added client-side.`);
-            renderGame(gameState); // Re-render even if field is full, because hand might have changed
-        }
-        console.log('%c[EVENT RECEIVED] handleUnitDestroyed:', 'background: #fd7e14; color: #ffffff; font-weight: bold;', eventData); // Orange background (same as DeckUpdate)
-    } else {
-        console.warn(`GM: UnitPlayed event received for unit UID ${unitInstance.uid} which is already present on player ${ownerPlayer.id}'s field.`);
-        // Consider rendering if hand changed even if unit wasn't added to field
-        if (eventData.sourceCardUid) {
-            renderGame(gameState);
-        }
-    }
-}
-export function handleAmuletPlayed(eventData) {
-    // DTO: Assume AmuletPlayedEventDto { string PlayerId, object AmuletData, string SourceCardUid }
-    console.log(`%cGM HANDLE: handleAmuletPlayed`, 'color: #17a2b8; font-weight: bold;', eventData); // Use a distinct color for amulets
-    if (!eventData || !eventData.playerId || !eventData.amuletData) { // Check for amuletData
-        console.error("GM Error: Invalid data in handleAmuletPlayed:", eventData);
-        return;
-    }
-    const ownerPlayer = getPlayerState(eventData.playerId);
-    if (!ownerPlayer) {
-        console.warn(`GM: AmuletPlayed event received for invalid player: ${eventData.playerId}`);
-        return;
-    }
-
-    let handChanged = false;
-    // Remove the card from hand using sourceCardUid if provided
-    if (eventData.sourceCardUid) {
-        console.log('%c[EVENT RECEIVED] handleUnitEvolved:', 'background: #20c997; color: #ffffff; font-weight: bold;', eventData); // Teal background (same as FieldUpdate)
-        const handIndex = ownerPlayer.hand.findIndex(c => c && c.uid === eventData.sourceCardUid);
-        if (handIndex > -1) {
-            const removedCard = ownerPlayer.hand.splice(handIndex, 1)[0];
-            console.log(`GM: Removed played amulet source card ${removedCard?.name} (UID: ${eventData.sourceCardUid}) from player ${ownerPlayer.id}'s hand.`);
-            handChanged = true;
-            // No separate render needed here, render happens after adding to field or if field is full
-        } else {
-            // This might happen if the card was generated or if state is slightly out of sync.
-            console.warn(`GM: AmuletPlayed event sourceCardUid ${eventData.sourceCardUid} not found in player ${ownerPlayer.id}'s hand.`);
-        }
-    }
-
-    // HYDRATION: Create full instance from the AmuletData
-    // Note: AmuletData structure might be simpler than UnitStateDto. Adapt if needed.
-    const amuletInstance = createCardInstance(eventData.amuletData);
-    if (!amuletInstance) {
-        console.error(`GM: Failed to create instance for AmuletPlayed DTO for player ${ownerPlayer.id}:`, eventData.amuletData);
-        return;
-    }
-
-    amuletInstance.ownerId = ownerPlayer.id; // Ensure owner is set
-    amuletInstance.location = 'field'; // Ensure location is field
-
-    // Hydrate dynamic state specific to amulets if any (e.g., countdown, health if applicable)
-    // Example: amuletInstance.countdown = eventData.amuletData.countdown ?? amuletInstance.countdown;
-    // For now, assume basic hydration handled by createCardInstance
-
-    console.log('%c[EVENT RECEIVED] handleSpellPlayed:', 'background: #6c757d; color: #ffffff; font-weight: bold;', eventData); // Gray background (same as Graveyard)
-    console.log(`GM_AMULETPLAYED_DEBUG: Hydrated Amulet Instance for UID ${amuletInstance.uid}. Raw amuletData:`, eventData.amuletData);
-
-    let fieldChanged = false;
-    // Avoid adding duplicates if server sends redundant events
-    if (!ownerPlayer.field.some(f => f && f.uid === amuletInstance.uid)) {
-        if (ownerPlayer.field.length < MAX_FIELD_SIZE) {
-            ownerPlayer.field.push(amuletInstance);
-            console.log(`GM: Added amulet ${amuletInstance.name} (UID: ${amuletInstance.uid}, Type: ${amuletInstance.type}) to player ${ownerPlayer.id}'s field.`);
-            fieldChanged = true;
-        } else {
-            console.warn(`GM: AmuletPlayed event received for ${amuletInstance.name}, but player ${ownerPlayer.id}'s field is full (${ownerPlayer.field.length}/${MAX_FIELD_SIZE}). Amulet not added client-side.`);
-        }
-    } else {
-        console.warn(`GM: AmuletPlayed event received for amulet UID ${amuletInstance.uid} which is already present on player ${ownerPlayer.id}'s field.`);
-    }
-
-    // Re-render if hand or field changed
-    if (handChanged || fieldChanged) {
-        renderGame(gameState);
-    }
+    // REMOVED EXTRA BRACE
 }
 
-export function handleSpellPlayed(eventData) {
-    // DTO: SpellPlayedEventDto { string PlayerId, string SpellCardId, string OriginalCardUid, string TargetUid }
-    console.log(`%cGM HANDLE: handleSpellPlayed`, 'color: #6610f2; font-weight: bold;', eventData);
-    console.log('%c[EVENT RECEIVED] handleAmuletPlayed:', 'background: #343a40; color: #ffffff; font-weight: bold;', eventData); // Dark gray background (same as Banished)
-    // Corrected validation to use camelCase properties from DTO: sourcePlayerId, cardId, sourceCardUid
-    if (!eventData || !eventData.sourcePlayerId || !eventData.cardId || !eventData.sourceCardUid) {
-        console.error("GM Error: Invalid data in handleSpellPlayed (expected sourcePlayerId, cardId, sourceCardUid):", eventData);
-        return;
-    }
-    // Spells don't create persistent entities. State changes (PP, hand, target stats, destruction)
-    // are handled by other dedicated events (PpUpdate, HandUpdate, StatChange, UnitDestroyed, etc.).
-    // This handler is primarily for logging or triggering VFX.
-    // Corrected log to use camelCase properties
-    console.log(`GM: Spell (Original UID: ${eventData.sourceCardUid}, CardID: ${eventData.cardId}) played by ${eventData.sourcePlayerId}. Target: ${eventData.targetUid ?? 'None'}`);
-    // Future: Trigger spell animation/VFX based on spellCardId or other event properties?
-    // No state change or re-render needed here, rely on subsequent events.
-}
+// Removed handleUnitPlayed function
+// Removed handleAmuletPlayed function
+
+// Removed handleSpellPlayed function
 
 export function handleUnitEvolved(eventData) {
-    // DTO: UnitEvolvedEventDto { string PlayerId, string UnitUid, UnitStateDto EvolvedState, int EpLeft }
+    console.log('%c[BUG-015 LOG] handleUnitEvolved START', 'color: orange; font-weight: bold;', eventData); // ADDED BUG LOG
+    // DTO: UnitEvolvedEventDto { string SourcePlayerId, CardInstanceDto EvolvedUnitState }
     console.log(`%cGM HANDLE: handleUnitEvolved`, 'color: #e83e8c; font-weight: bold;', eventData);
-    if (!eventData || !eventData.playerId || !eventData.unitUid || !eventData.evolvedState || eventData.epLeft === undefined) {
+    if (!eventData || !eventData.SourcePlayerId || !eventData.EvolvedUnitState) { // PascalCase - Fixed to match actual DTO
         console.error("GM Error: Invalid data in handleUnitEvolved:", eventData);
+        console.log('%c[BUG-015 LOG] handleUnitEvolved END (Invalid Data)', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
         return;
     }
-    const player = getPlayerState(eventData.playerId);
-    const unit = findCardInstanceByUid(eventData.unitUid);
+    const player = getPlayerState(eventData.SourcePlayerId); // PascalCase - Fixed property name
+    const unitUid = eventData.EvolvedUnitState.InstanceId; // Get UID from EvolvedUnitState
+    const unit = findCardInstanceByUid(unitUid);
 
-    console.log('%c[EVENT RECEIVED] handleGameOver:', 'background: #000000; color: #ff0000; font-weight: bold;', eventData); // Black background, Red text
+    console.log('%c[EVENT RECEIVED] handleUnitEvolved:', 'background: #e83e8c; color: #ffffff; font-weight: bold;', eventData); // Fixed log message
     let updated = false;
-    if (player) {
-        player.ep = eventData.epLeft;
-        console.log(`GM: Player ${player.id} EP updated to ${player.ep} after evolution.`);
-        updated = true;
-    } else {
-        console.warn(`GM: UnitEvolved event received for invalid player: ${eventData.playerId}`);
-    }
 
-    if (unit && eventData.evolvedState) {
-        // HYDRATION: Update specific properties from evolvedState DTO
-        unit.isEvolved = eventData.evolvedState.isEvolved ?? true; // Assume true if state provided
-        unit.currentAttack = eventData.evolvedState.currentAttack ?? unit.currentAttack;
-        unit.currentHealth = eventData.evolvedState.currentHealth ?? unit.currentHealth;
-        unit.maxHealth = eventData.evolvedState.maxHealth ?? unit.maxHealth; // Update max health too
-        unit.canAttack = eventData.evolvedState.canAttack ?? unit.canAttack; // Update canAttack status (Rush on evolve)
-        // Potentially update keywords or other properties based on evolvedState DTO
+    // Note: EP update should be handled by separate EpUpdateEvent, not here
+    // This event only handles the unit evolution state changes
+
+    if (unit && eventData.EvolvedUnitState) { // PascalCase
+        console.log(`%c[BUG-015 LOG] handleUnitEvolved Unit ${unit?.name} state before update: Atk=${unit?.currentAttack}, HP=${unit?.currentHealth}, Evolved=${unit?.isEvolved}, CanAttack=${unit?.canAttack}`, 'color: orange;'); // ADDED BUG LOG
+        // HYDRATION: Update specific properties from EvolvedUnitState DTO
+        unit.isEvolved = eventData.EvolvedUnitState.IsEvolved ?? true; // PascalCase (nested) // Assume true if state provided
+        unit.currentAttack = eventData.EvolvedUnitState.CurrentAttack ?? unit.currentAttack; // PascalCase (nested)
+        unit.currentHealth = eventData.EvolvedUnitState.CurrentHealth ?? unit.currentHealth; // PascalCase (nested)
+        unit.maxHealth = eventData.EvolvedUnitState.MaxHealth ?? unit.maxHealth; // PascalCase (nested) // Update max health too
+        unit.canAttack = eventData.EvolvedUnitState.CanAttack ?? unit.canAttack; // PascalCase (nested) // Update canAttack status (Rush on evolve)
+
+        // Update card type to evolved version if needed
+        if (unit.type === 'Follower' && unit.isEvolved) {
+            unit.type = 'Follower_Evolved';
+        }
+
+        // Potentially update keywords or other properties based on EvolvedUnitState DTO
         console.log(`GM: Unit ${unit.name} evolved. New State: Atk=${unit.currentAttack}, HP=${unit.currentHealth}/${unit.maxHealth}, Evolved=${unit.isEvolved}, CanAttack=${unit.canAttack}`);
+        console.log(`%c[BUG-015 LOG] handleUnitEvolved Unit ${unit?.name} state AFTER update: Atk=${unit?.currentAttack}, HP=${unit?.currentHealth}, Evolved=${unit?.isEvolved}, CanAttack=${unit?.canAttack}`, 'color: orange;'); // ADDED BUG LOG
         updated = true;
     } else {
-        console.warn(`GM: UnitEvolved event received for invalid unit UID: ${eventData.unitUid}`);
+        console.warn(`GM: UnitEvolved event received for invalid unit UID: ${unitUid}`); // PascalCase
     }
 
     if (updated) {
-        renderGame(gameState); // Re-render if player EP or unit state changed
+        console.log('%c[BUG-015 LOG] handleUnitEvolved calling specific UI updates', 'color: orange;'); // ADDED BUG LOG & MODIFIED
+        // Re-render specifically the unit (EP display will be updated by separate EpUpdateEvent)
+        updateUnitDisplay(unit);
     }
+    console.log('%c[BUG-015 LOG] handleUnitEvolved END', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
 }
 
 export function handleStatChange(eventData) {
+    console.log('%c[BUG-015 LOG] handleStatChange START', 'color: orange; font-weight: bold;', eventData); // ADDED BUG LOG
     // DTO: StatChangeEventDto { string UnitId, int NewAttack, int NewHealth }
     console.log(`%cGM HANDLE: handleStatChange`, 'color: #fd7e14; font-weight: bold;', eventData);
     // Note: DTO uses UnitId
-    if (!eventData || !eventData.unitId || eventData.newAttack === undefined || eventData.newHealth === undefined) {
+    if (!eventData || !eventData.UnitId || eventData.NewAttack === undefined || eventData.NewHealth === undefined) { // PascalCase
         console.error("GM Error: Invalid data in handleStatChange:", eventData);
+        console.log('%c[BUG-015 LOG] handleStatChange END (Invalid Data)', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
         return;
     }
-    const unit = findCardInstanceByUid(eventData.unitId); // Use unitId from DTO
+    const unit = findCardInstanceByUid(eventData.UnitId); // PascalCase // Use UnitId from DTO
     if (unit) {
+        console.log(`%c[BUG-015 LOG] handleStatChange Unit ${unit?.name} state before update: Atk=${unit?.currentAttack}, HP=${unit?.currentHealth}`, 'color: orange;'); // ADDED BUG LOG
         // Update base and current stats for consistency unless server logic differs
-        unit.attack = eventData.newAttack;
-        unit.health = eventData.newHealth;
-        unit.currentAttack = eventData.newAttack; // Reflect change in current stats too
-        unit.currentHealth = eventData.newHealth; // Reflect change in current stats too
+        unit.attack = eventData.NewAttack; // PascalCase
+        unit.health = eventData.NewHealth; // PascalCase
+        unit.currentAttack = eventData.NewAttack; // PascalCase // Reflect change in current stats too
+        unit.currentHealth = eventData.NewHealth; // PascalCase // Reflect change in current stats too
         console.log(`GM: Unit ${unit.name} (UID: ${unit.uid}) stats changed to A:${unit.attack}/H:${unit.health}`);
-        renderGame(gameState); // Re-render after stat update
+        console.log(`%c[BUG-015 LOG] handleStatChange Unit ${unit?.name} state AFTER update: Atk=${unit?.currentAttack}, HP=${unit?.currentHealth}`, 'color: orange;'); // ADDED BUG LOG
+        console.log('%c[BUG-015 LOG] handleStatChange calling specific UI update', 'color: orange;'); // MODIFIED LOG
+        updateUnitDisplay(unit); // Use specific UI update instead of full render
     } else {
-        console.warn(`GM: StatChange event received for invalid unit ID: ${eventData.unitId}`);
+        console.warn(`GM: StatChange event received for invalid unit ID: ${eventData.UnitId}`); // PascalCase
     }
+    console.log('%c[BUG-015 LOG] handleStatChange END', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
 }
 
 export function handleUnitDestroyed(eventData) {
+    console.log('%c[BUG-015 LOG] handleUnitDestroyed START', 'color: orange; font-weight: bold;', eventData); // ADDED BUG LOG
     // DTO: UnitDestroyedEventDto { string UnitUid }
     console.log(`%cGM HANDLE: handleUnitDestroyed`, 'color: #dc3545; font-weight: bold;', eventData);
-    if (!eventData || !eventData.unitUid) {
+    if (!eventData || !eventData.UnitUid) { // PascalCase
         console.error("GM Error: Invalid data in handleUnitDestroyed:", eventData);
+        console.log('%c[BUG-015 LOG] handleUnitDestroyed END (Invalid Data)', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
         return;
     }
-    const unit = findCardInstanceByUid(eventData.unitUid);
+    const unit = findCardInstanceByUid(eventData.UnitUid); // PascalCase
     if (unit) {
+        const ownerPlayer = getPlayerState(unit.ownerId); // Get owner before destruction
+        console.log(`%c[BUG-015 LOG] handleUnitDestroyed Player ${ownerPlayer?.id} state before update: Field=${ownerPlayer?.field?.length}, Graveyard=${ownerPlayer?.graveyard?.length}`, 'color: orange;'); // ADDED BUG LOG
         handleDestruction(unit); // Use the existing helper function
-        renderGame(gameState); // Re-render after destruction
+        console.log(`%c[BUG-015 LOG] handleUnitDestroyed Player ${ownerPlayer?.id} state AFTER update: Field=${ownerPlayer?.field?.length}, Graveyard=${ownerPlayer?.graveyard?.length}`, 'color: orange;'); // ADDED BUG LOG
+        console.log('%c[BUG-015 LOG] handleUnitDestroyed calling renderGame', 'color: orange;'); // ADDED BUG LOG
+        // Replace full render with specific UI updates
+        const destroyedUnit = findCardInstanceByUid(eventData.UnitUid); // Find the unit again to get ownerId
+        const playerState = destroyedUnit ? getPlayerState(destroyedUnit.ownerId) : null; // Get player state for graveyard count
+        removeUnitFromField(eventData.UnitUid); // Remove the unit's element
+        if (playerState) {
+            updateGraveyardCountDisplay(destroyedUnit.ownerId, playerState.graveyard.length); // Update graveyard count
+        } else {
+            console.warn(`[GM_DESTROY] Could not find player state for owner ${destroyedUnit?.ownerId} to update graveyard count.`);
+        }
+        console.log(`%c[GM_DESTROY] Called specific UI updates for unit ${eventData.UnitUid} destruction.`, 'color: red;'); // Log specific update
     } else {
-        console.warn(`GM: UnitDestroyed event received for invalid unit UID: ${eventData.unitUid}`);
+        console.warn(`GM: UnitDestroyed event received for invalid unit UID: ${eventData.UnitUid}`); // PascalCase
     }
+    console.log('%c[BUG-015 LOG] handleUnitDestroyed END', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
 }
 
 export function handleAttackDeclared(eventData) {
     // DTO: Assume AttackDeclaredEventDto { string AttackerUid, string TargetUid }
     console.log(`%cGM HANDLE: handleAttackDeclared`, 'color: #dc3545; font-weight: bold;', eventData); // Red color for attack declaration
-    if (!eventData || !eventData.attackerUid || !eventData.targetUid) {
+    if (!eventData || !eventData.AttackerUid || !eventData.TargetUid) { // PascalCase
         console.error("GM Error: Invalid data in handleAttackDeclared:", eventData);
         return;
     }
-    const attacker = findCardInstanceByUid(eventData.attackerUid);
-    const target = findCardInstanceByUid(eventData.targetUid);
+    const attacker = findCardInstanceByUid(eventData.AttackerUid); // PascalCase
+    const target = findCardInstanceByUid(eventData.TargetUid); // PascalCase
 
     if (!attacker || !target) {
-        console.warn(`GM: AttackDeclared event received for invalid attacker/target UID: Attacker=${eventData.attackerUid}, Target=${eventData.targetUid}`);
+        console.warn(`GM: AttackDeclared event received for invalid attacker/target UID: Attacker=${eventData.AttackerUid}, Target=${eventData.TargetUid}`); // PascalCase
         return;
     }
 
@@ -1779,62 +1681,113 @@ export function handleAttackDeclared(eventData) {
     // renderGame(gameState); // Avoid re-rendering unless specific UI effect requires it
 }
 export function handleDamageDealt(eventData) {
-    // DTO: Assume DamageDealtEventDto { string? SourceUid, string TargetUid, int DamageAmount }
-    console.log(`%cGM HANDLE: handleDamageDealt`, 'color: #ff6347; font-weight: bold;', eventData); // Tomato color for damage
-    if (!eventData || !eventData.targetUid || eventData.damageAmount === undefined) {
-        console.error("GM Error: Invalid data in handleDamageDealt:", eventData);
-        return;
+        console.debug(`%c[DMG_HANDLER] START`, 'color: tomato; font-weight: bold;', eventData); // DEBUG LOG START
+        // DTO: Assume DamageDealtEventDto { string? SourceUid, string TargetUid, int DamageAmount }
+        // console.log(`%cGM HANDLE: handleDamageDealt`, 'color: #ff6347; font-weight: bold;', eventData); // Tomato color for damage
+        // Use PascalCase: TargetUid, DamageAmount
+        if (!eventData || !eventData.TargetUid || eventData.DamageAmount === undefined) { // PascalCase
+            console.error("GM Error: Invalid data in handleDamageDealt:", eventData);
+            console.debug(`%c[DMG_HANDLER] END (Invalid Data)`, 'color: tomato; font-weight: bold;'); // DEBUG LOG END
+            return;
+        }
+    
+        // Use PascalCase: TargetUid
+        const targetUid = eventData.TargetUid; // PascalCase
+        console.debug(`%c[DMG_HANDLER] Finding target with UID: ${targetUid}`, 'color: tomato;'); // DEBUG LOG
+        const target = findCardInstanceByUid(targetUid); // PascalCase
+        console.debug(`%c[DMG_HANDLER] Found target instance:`, 'color: tomato;', target ? JSON.parse(JSON.stringify(target)) : 'null'); // DEBUG LOG (log copy)
+    
+        if (!target) {
+            // Use PascalCase: TargetUid
+            console.warn(`GM: DamageDealt event received for invalid target UID: ${targetUid}`); // PascalCase
+            console.debug(`%c[DMG_HANDLER] END (Invalid Target)`, 'color: tomato; font-weight: bold;'); // DEBUG LOG END
+            return;
+        } // Closing brace for if (!target)
+    
+        console.debug(`%c[DMG_HANDLER] Target ${target?.name} (UID: ${targetUid}) state BEFORE update: HP=${target?.currentHealth}`, 'color: tomato;'); // DEBUG LOG
+    
+        // Log source if available
+        // Use PascalCase: SourceUid
+        if (eventData.SourceUid) { // PascalCase
+            // Use PascalCase: SourceUid
+            const source = findCardInstanceByUid(eventData.SourceUid); // PascalCase
+            // Use PascalCase: DamageAmount, SourceUid
+            console.debug(`%c[DMG_HANDLER] Target received ${eventData.DamageAmount} damage from Source UID: ${eventData.SourceUid} (${source?.name ?? 'Unknown Source'}).`, 'color: tomato;'); // PascalCase (x2) // DEBUG LOG
+        } else {
+            // Use PascalCase: DamageAmount
+            console.debug(`%c[DMG_HANDLER] Target received ${eventData.DamageAmount} damage from Unknown Source.`, 'color: tomato;'); // PascalCase // DEBUG LOG
+        }
+    
+    
+        // Update target health locally (Server should send UnitDestroyed separately if HP <= 0)
+        // We might receive a StatChange event too, but updating here provides immediate feedback.
+        // Let's be cautious and only update if health > 0, let UnitDestroyed handle removal.
+        const oldHealth = target.currentHealth; // Store old health for logging
+        if (oldHealth > 0) {
+            // Avoid going below zero visually before destruction event arrives
+            // Use PascalCase: DamageAmount
+            target.currentHealth = Math.max(0, oldHealth - eventData.DamageAmount); // PascalCase
+            console.debug(`%c[DMG_HANDLER] Updated target ${target.name} health from ${oldHealth} to ${target.currentHealth}.`, 'color: tomato;'); // DEBUG LOG
+        } else {
+            console.debug(`%c[DMG_HANDLER] Target ${target.name} health was already ${oldHealth} or less. Awaiting potential destruction event.`, 'color: tomato;'); // DEBUG LOG
+        }
+    
+        console.debug(`%c[DMG_HANDLER] Target ${target?.name} (UID: ${targetUid}) state AFTER update: HP=${target?.currentHealth}`, 'color: tomato;'); // DEBUG LOG
+    
+        // Show damage number visual effect
+        // Use PascalCase: DamageAmount
+        if (eventData.DamageAmount > 0) { // PascalCase
+            console.debug('%c[DMG_HANDLER] Calling showDamageNumber...', 'color: tomato;'); // DEBUG LOG
+            // Use PascalCase: DamageAmount
+            showDamageNumber(target.uid, eventData.DamageAmount); // PascalCase
+        }
+    
+        console.debug('%c[DMG_HANDLER] Calling renderGame...', 'color: tomato;'); // DEBUG LOG
+        // Determine target element ID
+        let targetElementId = '';
+        if (target.location === 'leader_zone') {
+            targetElementId = `${target.ownerId}-leader`;
+        } else if (target.location === 'field') {
+            targetElementId = `unit-${target.uid}`;
+        } else {
+            console.warn(`[DMG_HANDLER] Cannot determine targetElementId for unit in location: ${target.location}`);
+        }
+
+        // Update the health display specifically
+        if (targetElementId) {
+            updateHealthDisplay(targetElementId, target.currentHealth, target.maxHealth);
+            console.debug(`%c[DMG_HANDLER] Called specific health update for ${targetElementId}.`, 'color: tomato;');
+        }
+        // renderGame(gameState); // <<<< REMOVED THIS LINE
+        console.debug(`%c[DMG_HANDLER] END`, 'color: tomato; font-weight: bold;'); // DEBUG LOG END
     }
-
-    const target = findCardInstanceByUid(eventData.targetUid);
-    if (!target) {
-        console.warn(`GM: DamageDealt event received for invalid target UID: ${eventData.targetUid}`);
-        return;
-    } // Closing brace for if (!target)
-
-    // Log source if available
-    if (eventData.sourceUid) {
-        const source = findCardInstanceByUid(eventData.sourceUid);
-        console.log(`GM: Target ${target.name} (UID: ${target.uid}) received ${eventData.damageAmount} damage from Source UID: ${eventData.sourceUid} (${source?.name ?? 'Unknown Source'}).`);
-    } else {
-        console.log(`GM: Target ${target.name} (UID: ${target.uid}) received ${eventData.damageAmount} damage from Unknown Source.`);
-    }
-
-
-    // Update target health locally (Server should send UnitDestroyed separately if HP <= 0)
-    // We might receive a StatChange event too, but updating here provides immediate feedback.
-    // Let's be cautious and only update if health > 0, let UnitDestroyed handle removal.
-    if (target.currentHealth > 0) {
-        // Avoid going below zero visually before destruction event arrives
-        target.currentHealth = Math.max(0, target.currentHealth - eventData.damageAmount);
-        console.log(`GM: Updated target ${target.name} health to ${target.currentHealth}.`);
-    } else {
-        console.log(`GM: Target ${target.name} health was already ${target.currentHealth} or less. Awaiting potential destruction event.`);
-    }
-
-
-    // Show damage number visual effect
-    if (eventData.damageAmount > 0) {
-        showDamageNumber(target.uid, eventData.damageAmount);
-    }
-
-    renderGame(gameState); // Re-render after health update and damage number display
-}
-
 export function handleHealthChanged(eventData) {
+    console.log('%c[BUG-015 LOG] handleHealthChanged START', 'color: orange; font-weight: bold;', eventData); // ADDED BUG LOG
     // DTO: Assume HealthChangedEventDto { string UnitUid, int NewHealth }
-    console.log(`%cGM HANDLE: handleHealthChanged`, 'color: #20c997; font-weight: bold;', eventData); // Teal color
-    if (!eventData || !eventData.unitUid || eventData.newHealth === undefined) {
+console.debug(`%c[HP_HANDLER] START`, 'color: mediumseagreen; font-weight: bold;', eventData); // DEBUG LOG START
+    // console.log(`%cGM HANDLE: handleHealthChanged`, 'color: #20c997; font-weight: bold;', eventData); // Teal color
+    // Use PascalCase: TargetUid, NewHealth
+    if (!eventData || !eventData.TargetUid || eventData.NewHealth === undefined) { // PascalCase - Changed UnitUid to TargetUid
         console.error("GM Error: Invalid data in handleHealthChanged:", eventData);
         return;
     }
-    const unit = findCardInstanceByUid(eventData.unitUid); // Can affect followers or leaders
+    // Use PascalCase: TargetUid
+    const unit = findCardInstanceByUid(eventData.TargetUid); // PascalCase - Changed UnitUid to TargetUid // Can affect followers or leaders
+const unitUid = eventData.TargetUid; // PascalCase - Changed UnitUid to TargetUid // Can affect followers or leaders
+console.debug(`%c[HP_HANDLER] Finding unit with UID: ${unitUid}`, 'color: mediumseagreen;'); // DEBUG LOG
     if (unit) {
+console.debug(`%c[HP_HANDLER] Found unit instance:`, 'color: mediumseagreen;', unit ? JSON.parse(JSON.stringify(unit)) : 'null'); // DEBUG LOG (log copy)
+        console.log(`%c[BUG-015 LOG] handleHealthChanged Unit ${unit?.name} state before update: HP=${unit?.currentHealth}`, 'color: orange;'); // ADDED BUG LOG
         const oldHealth = unit.currentHealth;
-        unit.currentHealth = eventData.newHealth;
+console.debug(`%c[HP_HANDLER] Unit ${unit?.name} (UID: ${unitUid}) state BEFORE update: HP=${unit?.currentHealth}`, 'color: mediumseagreen;'); // DEBUG LOG
+        // Use PascalCase: NewHealth
+        unit.currentHealth = eventData.NewHealth; // PascalCase
 
         console.log(`GM: Unit ${unit.name} (UID: ${unit.uid}) health changed from ${oldHealth} to ${unit.currentHealth}.`);
+        console.log(`%c[BUG-015 LOG] handleHealthChanged Unit ${unit?.name} state AFTER update: HP=${unit?.currentHealth}`, 'color: orange;'); // ADDED BUG LOG
+console.debug(`%c[HP_HANDLER] Unit ${unit.name} (UID: ${unit.uid}) health changed from ${oldHealth} to ${unit.currentHealth}.`, 'color: mediumseagreen;'); // DEBUG LOG
 
+console.debug(`%c[HP_HANDLER] Unit ${unit?.name} (UID: ${unitUid}) state AFTER update: HP=${unit?.currentHealth}`, 'color: mediumseagreen;'); // DEBUG LOG
         // Optional: Show healing/damage number visual effect (needs more context)
         // if (unit.currentHealth > oldHealth) { showHealingNumber(unit.uid, unit.currentHealth - oldHealth); }
 
@@ -1842,34 +1795,69 @@ export function handleHealthChanged(eventData) {
         if (unit.currentHealth <= 0) {
             console.log(`GM: Unit ${unit.name} health reached ${unit.currentHealth}. Waiting for server destruction event.`);
         }
+console.debug(`%c[HP_HANDLER] Unit ${unit.name} health reached ${unit.currentHealth}. Waiting for server destruction event.`, 'color: mediumseagreen;'); // DEBUG LOG
+        console.log('%c[BUG-015 LOG] handleHealthChanged calling specific UI update', 'color: orange;'); // ADDED BUG LOG & MODIFIED
 
-        renderGame(gameState); // Re-render after health update
+        // Determine target element ID
+        let targetElementId = '';
+        if (unit.location === 'leader_zone') { // Check if it's the leader
+            targetElementId = `${unit.ownerId}-leader`;
+        } else if (unit.location === 'field') { // Check if it's on the field
+            targetElementId = `unit-${unit.uid}`;
+        } else {
+             console.warn(`[HP_HANDLER] Cannot determine targetElementId for unit in location: ${unit.location}`);
+        }
+
+        if (targetElementId) {
+             // Update UI specifically
+             console.debug(`%c[HP_HANDLER] Calling updateHealthDisplay for ${targetElementId}...`, 'color: mediumseagreen;'); // DEBUG LOG
+             updateHealthDisplay(targetElementId, unit.currentHealth, unit.maxHealth); // Use specific UI update
+        }
+        // Note: showDamageNumber is NOT called here as ChangeAmount is unavailable in this event.
+        // renderGame(gameState); // REPLACED
+
+console.debug('%c[HP_HANDLER] Finished specific UI update.', 'color: mediumseagreen;'); // DEBUG LOG MODIFIED
     } else {
-        console.warn(`GM: HealthChanged event received for invalid unit UID: ${eventData.unitUid}`);
+        // Use PascalCase: TargetUid
+        console.warn(`GM: HealthChanged event received for invalid unit UID: ${eventData.TargetUid}`); // PascalCase - Changed UnitUid to TargetUid
+        console.log('%c[BUG-015 LOG] handleHealthChanged END (Invalid Unit)', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
     }
+console.debug(`%c[HP_HANDLER] END (Invalid Unit)`, 'color: mediumseagreen; font-weight: bold;'); // DEBUG LOG END
+    console.log('%c[BUG-015 LOG] handleHealthChanged END', 'color: orange; font-weight: bold;'); // ADDED BUG LOG
+    console.debug(`%c[HP_HANDLER] END`, 'color: mediumseagreen; font-weight: bold;'); // DEBUG LOG END // MOVED INSIDE
 }
 
 export function handleMulliganStarted(eventData) {
-    // DTO: MulliganStartedEventDto { mulliganTimer?: int }
+    // DTO: MulliganStartedEventDto { MulliganTimer?: int } // Assuming PascalCase DTO
     console.log(`%cGM HANDLE: handleMulliganStarted`, 'color: #20c997; font-weight: bold;', eventData);
     gameState.gamePhase = "Mulligan";
-    // UI should now allow mulligan actions. Timer handling (if any) would use eventData.mulliganTimer
-    console.log(`GM: Mulligan phase started. Timer (if provided): ${eventData?.mulliganTimer}`);
+    // UI should now allow mulligan actions. Timer handling (if any) would use eventData.MulliganTimer
+    // Use PascalCase: MulliganTimer
+    console.log(`GM: Mulligan phase started. Timer (if provided): ${eventData?.MulliganTimer}`); // PascalCase
     // Reset player mulligan completion flags here? Server DTO should be source of truth,
     // but resetting ensures clean state if reconnect happens during mulligan.
     gameState.player1MulliganComplete = false;
     gameState.player2MulliganComplete = false;
-    renderGame(gameState); // Render to show mulligan interface
+    // Get local player's hand for the UI function
+    const localPlayerState = getPlayerState(gameState.localPlayerId);
+    const handArray = localPlayerState ? localPlayerState.hand : [];
+    if (!localPlayerState) {
+        console.error("GM Error: handleMulliganStarted could not find local player state for ID:", gameState.localPlayerId);
+        return; // Exit if local player state is missing
+    }
+    showMulliganInterface(gameState.localPlayerId, handArray); // Use specific UI update
 }
 
 export function handlePlayerMulliganCompleted(eventData) {
-    // DTO: PlayerMulliganCompletedEventDto { sourcePlayerId: string }
+    // DTO: PlayerMulliganCompletedEventDto { SourcePlayerId: string } // Assuming PascalCase DTO
     console.log(`%cGM HANDLE: handlePlayerMulliganCompleted`, 'color: #20c997; font-weight: bold;', eventData);
-    if (!eventData || !eventData.sourcePlayerId) {
+    // Use PascalCase: SourcePlayerId
+    if (!eventData || !eventData.SourcePlayerId) { // PascalCase
         console.error("GM Error: Invalid data in handlePlayerMulliganCompleted:", eventData);
         return;
     }
-    const completedPlayerId = eventData.sourcePlayerId;
+    // Use PascalCase: SourcePlayerId
+    const completedPlayerId = eventData.SourcePlayerId; // PascalCase
     if (completedPlayerId === 'player1') { // Assuming player IDs are 'player1', 'player2'
         gameState.player1MulliganComplete = true;
         console.log("GM: Updated gameState.player1MulliganComplete to true.");
@@ -1880,38 +1868,183 @@ export function handlePlayerMulliganCompleted(eventData) {
         console.warn(`GM: PlayerMulliganCompleted event received for unknown player ID: ${completedPlayerId}`);
     }
     // Re-render to reflect the change (e.g., hide the mulligan button for the completed player)
-    renderGame(gameState);
+    updateMulliganStatus(completedPlayerId, true); // Use specific UI update
+}
+// --- NEW Refactored Event Handlers ---
+
+export function handleCardPlayed(eventData) {
+    // DTO: CardPlayedEventDto { SourcePlayerId: string, PlayedCardInstance: CardInstanceDto, TargetUid?: string } // Corrected DTO structure based on error log
+    console.log(`%cGM HANDLE: handleCardPlayed`, 'color: #6610f2; font-weight: bold;', eventData);
+
+    try {
+        // Use PascalCase: SourcePlayerId, PlayedCardInstance, PlayedCardInstance.InstanceId
+        // Validate the corrected DTO structure based on the error log
+        if (!eventData || !eventData.SourcePlayerId || !eventData.PlayedCardInstance || !eventData.PlayedCardInstance.InstanceId) {
+            console.error("GM Error: Invalid data in handleCardPlayed (Expected SourcePlayerId and PlayedCardInstance with InstanceId):", eventData);
+            return;
+        }
+
+        // Find the player who played the card using SourcePlayerId
+        const playingPlayer = getPlayerState(eventData.SourcePlayerId); // Use SourcePlayerId
+        if (!playingPlayer) {
+            console.error(`[handleCardPlayed] Player not found: ${eventData.SourcePlayerId}`); // Use SourcePlayerId
+            return;
+        }
+
+        // --- BUG-022 Fix Start ---
+        // Extract the UID from the nested instance object
+        const playedCardUid = eventData.PlayedCardInstance.InstanceId; // Get UID from instance
+
+        // Find the index of the played card in the player's hand using the extracted UID
+        const cardIndex = playingPlayer.hand.findIndex(card => card && card.uid === playedCardUid);
+
+        if (cardIndex !== -1) {
+            // Remove the card from the hand state
+            const playedCard = playingPlayer.hand.splice(cardIndex, 1)[0]; // Remove and get the card
+            console.log(`%c[BUG-022 Fix] Removed card ${playedCard?.name} (UID: ${playedCardUid}) from ${playingPlayer.id}'s hand state via handleCardPlayed.`, 'color: blue; font-weight: bold;');
+
+            // Update the hand UI
+            console.log(`%c[BUG-022 Fix] Calling updateHandDisplay for player ${playingPlayer.id} via handleCardPlayed.`, 'color: green; font-weight: bold;');
+            updateHandDisplay(playingPlayer.id, playingPlayer.hand);
+        } else {
+            // This might happen if the card was already removed by another event
+            // or if the event data is inconsistent.
+            console.warn(`[handleCardPlayed] Card with UID ${playedCardUid} not found in ${playingPlayer.id}'s hand state. Hand UI might be already updated or state is inconsistent.`);
+            // Still update the display just in case the UI is out of sync with the state we have
+            updateHandDisplay(playingPlayer.id, playingPlayer.hand);
+        }
+        // --- BUG-022 Fix End ---
+
+        // TODO: Implement logic to visually show the card being played (animation?)
+        // Note: PP update should be handled by PpUpdateEvent.
+        // Note: Graveyard update should be handled by GraveyardUpdateEvent.
+
+    } catch (error) {
+        console.error("Error handling CardPlayed event:", error, eventData);
+    }
 }
 
+export function handleCardSummoned(eventData) {
+    // DTO: CardSummonedEventDto { SourcePlayerId, SummonedCard (CardInstanceDto), Source, TimestampUtc }
+    console.log(`%cGM HANDLE: handleCardSummoned`, 'color: #007bff; font-weight: bold;', eventData); // Corrected function name in log
+    // Use PascalCase: SourcePlayerId, SummonedCard
+    if (!eventData || !eventData.SourcePlayerId || !eventData.SummonedCard) { // Corrected property check
+        console.error("GM Error: Invalid data in handleCardSummoned:", eventData); // Corrected function name in error
+        return;
+    }
+    // Use PascalCase: SourcePlayerId
+    const ownerPlayer = getPlayerState(eventData.SourcePlayerId); // Corrected property access
+    if (!ownerPlayer) {
+        // Use PascalCase: SourcePlayerId
+        console.warn(`GM: CardSummoned event received for invalid player: ${eventData.SourcePlayerId}`); // Corrected property access
+        return;
+    }
+
+    let handChanged = false;
+    // Remove the card from hand using SourceCardUid if provided (optional) - Assuming SourceCardUid might still be relevant if summoned from hand effect
+    // Use PascalCase: SourceCardUid
+    if (eventData.SourceCardUid) { // PascalCase
+        // Use PascalCase: SourceCardUid
+        const handIndex = ownerPlayer.hand.findIndex(c => c && c.uid === eventData.SourceCardUid); // PascalCase
+        if (handIndex > -1) {
+            const removedCard = ownerPlayer.hand.splice(handIndex, 1)[0];
+            // Use PascalCase: SourceCardUid
+            console.log(`GM: Removed source card ${removedCard?.name} (UID: ${eventData.SourceCardUid}) from player ${ownerPlayer.id}'s hand.`); // PascalCase
+            handChanged = true;
+        } else {
+            // Use PascalCase: SourceCardUid
+            console.warn(`GM: CardSummoned event SourceCardUid ${eventData.SourceCardUid} not found in player ${ownerPlayer.id}'s hand.`); // PascalCase
+        }
+    }
+
+    // HYDRATION: Create full instance from the SummonedCard DTO
+    // Use PascalCase: SummonedCard
+    const entityInstance = createCardInstance(eventData.SummonedCard); // Corrected property access
+    if (!entityInstance) {
+        // Use PascalCase: SummonedCard
+        console.error(`GM: Failed to create instance for CardSummoned DTO for player ${ownerPlayer.id}:`, eventData.SummonedCard); // Corrected property access
+        return;
+    }
+
+    entityInstance.ownerId = ownerPlayer.id; // Ensure owner is set
+    entityInstance.location = 'field'; // Ensure location
+
+    // Hydrate dynamic state from the SummonedCard DTO (which is a CardInstanceDto)
+    if (entityInstance.type === 'Follower' || entityInstance.type === 'Follower_Evolved') {
+        // Use PascalCase: SummonedCard.CanAttack, SummonedCard.CurrentAttack, SummonedCard.CurrentHealth, SummonedCard.IsEvolved
+        entityInstance.canAttack = eventData.SummonedCard.CanAttack ?? false; // Corrected property access
+        entityInstance.currentAttack = eventData.SummonedCard.CurrentAttack ?? entityInstance.attack; // Corrected property access
+        entityInstance.currentHealth = eventData.SummonedCard.CurrentHealth ?? entityInstance.health; // Corrected property access
+        entityInstance.isEvolved = eventData.SummonedCard.IsEvolved ?? false; // Corrected property access
+    } else if (entityInstance.type === 'Amulet') {
+        // Add amulet-specific hydration if needed (e.g., countdown)
+        // Use PascalCase: SummonedCard.Countdown
+        // entityInstance.countdown = eventData.SummonedCard.Countdown ?? entityInstance.countdown; // Corrected property access
+    }
+
+    // Use PascalCase: SummonedCard
+    console.log(`GM_CARDSUMMONED_DEBUG: Hydrated Entity Instance for UID ${entityInstance.uid}: Type=${entityInstance.type}, Atk=${entityInstance.currentAttack}, HP=${entityInstance.currentHealth}. Raw SummonedCard DTO:`, eventData.SummonedCard); // Corrected log and property access
+
+    let fieldChanged = false;
+    // Avoid adding duplicates
+    if (!ownerPlayer.field.some(f => f && f.uid === entityInstance.uid)) {
+        if (ownerPlayer.field.length < MAX_FIELD_SIZE) {
+            ownerPlayer.field = [...ownerPlayer.field, entityInstance]; // Create new array
+            console.log(`GM: Added entity ${entityInstance.name} (UID: ${entityInstance.uid}, Type: ${entityInstance.type}) to player ${ownerPlayer.id}'s field.`);
+            fieldChanged = true;
+        } else {
+            console.warn(`GM: EntityEnteredPlay event received for ${entityInstance.name}, but player ${ownerPlayer.id}'s field is full (${ownerPlayer.field.length}/${MAX_FIELD_SIZE}). Entity not added client-side.`);
+        }
+    } else {
+        console.warn(`GM: EntityEnteredPlay event received for entity UID ${entityInstance.uid} which is already present on player ${ownerPlayer.id}'s field.`);
+    }
+
+    // Re-render if hand or field changed
+    if (fieldChanged) { // Only update field if field changed
+        addUnitToField(ownerPlayer.id, entityInstance); // Add the specific unit to the field UI
+    }
+    // Hand update is now handled by handleCardPlayed
+}
+
+// --- END NEW Refactored Event Handlers ---
+
 export function handleGameOver(eventData) {
-    // DTO: GameOverEventDto { winnerId: string, reason?: string }
+    // DTO: GameOverEventDto { WinnerId: string, Reason?: string } // Assuming PascalCase DTO
     console.log(`%cGM HANDLE: handleGameOver`, 'color: #dc3545; font-weight: bold;', eventData);
-    if (!eventData || !eventData.winnerId) {
+    // Use PascalCase: WinnerId
+    if (!eventData || !eventData.WinnerId) { // PascalCase
         console.error("GM Error: Invalid data in handleGameOver:", eventData);
         return;
     }
     gameState.gameOver = true;
     gameState.gamePhase = "GameOver";
-    gameState.winner = eventData.winnerId;
+    // Use PascalCase: WinnerId
+    gameState.winner = eventData.WinnerId; // PascalCase
     // Update UI to show game over screen with winner/loser info
-    console.log(`GM: Game over! Winner: ${gameState.winner}. Reason: ${eventData.reason || 'N/A'}`);
-    alert(`游戏结束！ 玩家 ${gameState.winner} 获胜！ (${eventData.reason || "原因未知"})`);
+    // Use PascalCase: Reason
+    console.log(`GM: Game over! Winner: ${gameState.winner}. Reason: ${eventData.Reason || 'N/A'}`); // PascalCase
+    // Use PascalCase: Reason
+    alert(`游戏结束！ 玩家 ${gameState.winner} 获胜！ (${eventData.Reason || "原因未知"})`); // PascalCase
     renderGame(gameState); // Render final game over state
     // Consider disabling all further interactions more forcefully
     // disablePlayerInteractions(); // REMOVED: Relying on existing logic per user preference
 }
 
 export function handlePlayerActionError(eventData) {
-    // DTO: PlayerActionErrorEventDto { playerId: string, actionType?: string, message: string }
+    // DTO: PlayerActionErrorEventDto { PlayerId: string, ActionType?: string, Message: string } // Assuming PascalCase DTO
     console.log(`%cGM HANDLE: handlePlayerActionError`, 'color: #ffc107; font-weight: bold;', eventData);
-    if (!eventData || !eventData.playerId || !eventData.message) {
+    // Use PascalCase: PlayerId, Message
+    if (!eventData || !eventData.PlayerId || !eventData.Message) { // PascalCase
         console.error("GM Error: Invalid data in handlePlayerActionError:", eventData);
         return;
     }
-    console.warn(`GM: Player action error received for ${eventData.playerId} (Action: ${eventData.actionType || 'Unknown'}): ${eventData.message}`);
+    // Use PascalCase: PlayerId, ActionType, Message
+    console.warn(`GM: Player action error received for ${eventData.PlayerId} (Action: ${eventData.ActionType || 'Unknown'}): ${eventData.Message}`); // PascalCase (x3)
     // Display the error message *only* to the specific player who caused the error
-    if (eventData.playerId === gameState.localPlayerId) {
-        alert(`操作错误 (${eventData.actionType || '未知'}): ${eventData.message}`);
+    // Use PascalCase: PlayerId
+    if (eventData.PlayerId === gameState.localPlayerId) { // PascalCase
+        // Use PascalCase: ActionType, Message
+        alert(`操作错误 (${eventData.ActionType || '未知'}): ${eventData.Message}`); // PascalCase (x2)
         // Optionally re-enable controls or clear selections if the action failed
         // e.g., if play card failed, maybe clear selectedCardUid
         // This depends on server guarantees and desired UX

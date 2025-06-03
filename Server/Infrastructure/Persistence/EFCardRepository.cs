@@ -33,9 +33,10 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
         }
 
         /// <inheritdoc /> // Corrected line 33
-        public async Task<CardDefinition?> GetCardByIdAsync(string id) // Corrected line 34
+        public async Task<CardDefinition?> GetCardByIdAsync(int id) // Change parameter type to int
         {
             // FindAsync is suitable for querying by primary key and returns null if not found.
+            // It works with int primary keys directly.
             return await _context.CardDefinitions.FindAsync(id);
         }
     }

@@ -1,32 +1,26 @@
 // src/player.js - 玩家状态与行为
 
-// 导入依赖 (稍后需要)
-import { createCardInstance } from './cardManager.js'; // Needed for drawCard
+// 导入依赖
+import { createCardInstance, getCardDefinition } from './cardManager.js'; // Import getCardDefinition
 
 console.log("player.js loaded");
 
 // 使用工厂函数创建玩家对象，更灵活简单
 export function createPlayer(id, isAI = false) {
     console.log(`Creating player object for ID: ${id}, isAI: ${isAI}`);
-    // Create the leader card instance first
-    const leaderInstance = createCardInstance("LDR000"); // Assuming "LDR000" is the ID in card_data.json
-    if (!leaderInstance) {
-        console.error(`PLAYER [${id}]: Failed to create leader card instance (LDR000). Player creation failed.`);
-        // Handle error appropriately, maybe return null or throw
-        return null;
-    }
-    leaderInstance.ownerId = id; // Set the owner
-    leaderInstance.location = 'leader_zone'; // Assign a special location
-    // Initialize currentHealth based on the definition's health
-    leaderInstance.currentHealth = leaderInstance.health;
-    console.log(`PLAYER [${id}]: Leader card instance created (UID: ${leaderInstance.uid}):`, JSON.stringify(leaderInstance)); // Use stringify for better object logging
+    // --- REMOVED: Leader instance creation is now handled by gameManager hydration ---
+    // const leaderId = 0;
+    // const leaderDefinition = getCardDefinition(leaderId);
+    // ... (rest of the removed leader creation logic) ...
+    // const leaderInstance = createCardInstance(leaderDefinition);
+    // ... (rest of the removed leader creation logic) ...
 
 
     // Return the player object
     return {
         id: id,
         isAI: isAI,
-        leaderCard: leaderInstance, // Store the leader card instance
+        leaderCard: null, // Initialize leaderCard as null, will be populated during hydration
         // NOTE: Direct 'health' and 'maxHealth' properties are removed. Use getters below.
         pp: 0,         // 当前 Play Points
         maxPP: 0,      // 当前回合 Play Points 上限
@@ -100,7 +94,14 @@ export function createPlayer(id, isAI = false) {
                 }
 
                 const cardId = this.deck.pop(); // Draw from the end (top) of the deck
-                const cardInstance = createCardInstance(cardId); // Use imported function
+                // --- FIX: Get card definition first, then create instance ---
+                const cardDefinition = getCardDefinition(cardId);
+                if (!cardDefinition) {
+                    console.error(`Player ${this.id}: Failed to get definition for card ID: ${cardId}. Skipping draw.`);
+                    continue; // Skip to next iteration if definition not found
+                }
+                // Pass the definition object (acting as DTO) to createCardInstance
+                const cardInstance = createCardInstance(cardDefinition);
 
                 if (cardInstance) {
                     cardInstance.location = 'hand'; // <-- Set location

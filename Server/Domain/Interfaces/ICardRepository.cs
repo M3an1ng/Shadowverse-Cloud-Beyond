@@ -20,7 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Interfaces // Added ShadowverseBeyond 
         /// </summary>
         /// <param name="id">The ID of the card definition to retrieve.</param>
         /// <returns>A task that represents the asynchronous operation. The task result contains the card definition, or null if not found.</returns>
-        Task<CardDefinition?> GetCardByIdAsync(string id);
+        Task<CardDefinition?> GetCardByIdAsync(int id); // Changed id parameter type to int
         // Future methods like GetByIdAsync, AddAsync, etc., can be added here.
     }
 }

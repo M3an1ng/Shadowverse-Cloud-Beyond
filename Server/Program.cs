@@ -68,6 +68,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
                                                   // Register the custom Hub filter for global exception logging
     builder.Services.AddScoped<HubExceptionLoggerFilter>(); // Register the custom Hub filter for global exception logging
     builder.Services.AddMemoryCache(); // Add Memory Cache service for idempotency checks
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Register the client method mapper
     // Register ApplicationDbContext with SQLite
     // Reads connection string from configuration ("DefaultConnection") or defaults to Data/shadowverse.db
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
@@ -93,7 +94,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         // Ensure SignalR's specific protocol options also include the converter
         options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
         // Explicitly set CamelCase naming policy for SignalR JSON protocol
-        options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase; // Restore CamelCase naming policy
+        options.PayloadSerializerOptions.PropertyNamingPolicy = null; // FIX: Preserve PascalCase from C# DTOs // Restore CamelCase naming policy
         // Note: hubOptions configuration is separate from AddJsonProtocol options
     }); // End AddJsonProtocol lambda body and add semicolon at the end of the statement
     var app = builder.Build();

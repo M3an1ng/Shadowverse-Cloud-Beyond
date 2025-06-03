@@ -21,6 +21,9 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Events; // Base Event DTO
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 // Updated Namespace
 using ShadowverseBeyond.Server.Models; // Added for GameActionContext
+using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
+using ShadowverseBeyond.Server.Domain.Abilities; // Added for ability system
+using ShadowverseBeyond.Server.Domain.Events; // Added for event system
 namespace ShadowverseBeyond.Server.Services
 {
     public class GameService : IGameService
@@ -28,10 +31,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IHubContext<GameHub, IGameClient> _hubContext;
         private readonly ILogger<GameService> _logger;
 
-        // Delegate type for event broadcasting handlers
-        private delegate Task EventBroadcastHandler(string groupName, GameEventDto gameEvent);
-        // Dictionary to map event types to their broadcast handlers
-        private readonly Dictionary<Type, EventBroadcastHandler> _eventHandlers;
+        // Removed EventBroadcastHandler delegate and _eventHandlers dictionary
 
         // Remove Scoped ICardRepository injection from Singleton GameService constructor
         // private readonly ICardRepository _cardRepository;
@@ -43,62 +43,43 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, GameStateDto> _gameStates = new();
         // Lock objects per game to prevent concurrent modification of a single game's state
         private readonly ConcurrentDictionary<string, object> _gameLocks = new();
+        // Ability managers per game for handling card abilities
+        private readonly ConcurrentDictionary<string, AbilityManager> _abilityManagers = new();
         // Flag to prevent re-entrant EndTurn processing for the same game - REMOVED by Roo
         // private readonly ConcurrentDictionary<string, bool> _isProcessingEndTurn = new();
         // Define the fixed 20-card test deck list
-        private static readonly List<string> _fixedTestDeckCardIds = new List<string>
+        // Updated to use integer IDs
+        private static readonly List<int> _fixedTestDeckCardIds = new List<int>
         {
-            "F001", "F001", "F001", // Goblin x3
-            "F002", "F002", "F002", // Fighter x3
-            "F005", "F005", "F005", // Shield Guardian x3
-            "F006", "F006", "F006", // Bellringer Angel x3
-            "S001", "S001", "S001", // Insight x3
-            "S002", "S002", "S002", // Angelic Snipe x3
-            "F003",                 // Knight x1
-            "F004"                  // Heavy Goblin x1
+            1001, 1001, 1001, // Goblin x3
+            1002, 1002, 1002, // Fighter x3
+            1005, 1005, 1005, // Shield Guardian x3
+            1006, 1006, 1006, // Bellringer Angel x3 (Assuming F006 is Bellringer Angel with ID 1006)
+            2001, 2001, 2001, // Insight x3
+            2002, 2002, 2002, // Angelic Snipe x3
+            1003,                 // Knight x1
+            1004                  // Heavy Goblin x1 (Assuming F004 is Heavy Goblin with ID 1004)
         };
 
         // Duplicate declaration removed by Roo.
         // Update constructor signature
-        public GameService(IHubContext<GameHub, IGameClient> hubContext, ILogger<GameService> logger, IServiceScopeFactory serviceScopeFactory, IAiService aiService, IServiceProvider serviceProvider) // Inject IServiceProvider
+        private readonly IClientMethodMapper _clientMethodMapper; // Added field declaration
+        // Inject IClientMethodMapper
+        public GameService(IHubContext<GameHub, IGameClient> hubContext, ILogger<GameService> logger, IServiceScopeFactory serviceScopeFactory, IAiService aiService, IServiceProvider serviceProvider, IClientMethodMapper clientMethodMapper)
         {
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            // Assign IServiceScopeFactory
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
-            _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService)); // Assign IAiService
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider)); // Assign IServiceProvider
-            // _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository)); // Removed assignment
+            _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
+            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+            _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // Assign mapper
 
-            // Initialize the event handler dictionary
-            _eventHandlers = new Dictionary<Type, EventBroadcastHandler>
-            {
-                { typeof(TurnStartedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).TurnStarted((TurnStartedEventDto)evt) },
-                { typeof(TurnEndedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).TurnEnded((TurnEndedEventDto)evt) },
-                { typeof(PpUpdateEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).PpUpdate((PpUpdateEventDto)evt) },
-                { typeof(EpUpdateEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).EpUpdate((EpUpdateEventDto)evt) },
-                { typeof(HandUpdateEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).HandUpdate((HandUpdateEventDto)evt) },
-                { typeof(DeckUpdateEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).DeckUpdate((DeckUpdateEventDto)evt) },
-                { typeof(CardDrawnEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).CardDrawn((CardDrawnEventDto)evt) }, // Added CardDrawnEventDto handler
-                { typeof(UnitPlayedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).UnitPlayed((UnitPlayedEventDto)evt) },
-                { typeof(SpellPlayedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).SpellPlayed((SpellPlayedEventDto)evt) },
-                { typeof(AmuletPlayedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).AmuletPlayed((AmuletPlayedEventDto)evt) },
-                { typeof(UnitEvolvedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).UnitEvolved((UnitEvolvedEventDto)evt) },
-                { typeof(UnitDestroyedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).UnitDestroyed((UnitDestroyedEventDto)evt) },
-                { typeof(AttackDeclaredEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).AttackDeclared((AttackDeclaredEventDto)evt) },
-                { typeof(DamageDealtEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).DamageDealt((DamageDealtEventDto)evt) },
-                { typeof(HealthChangedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).HealthChanged((HealthChangedEventDto)evt) },
-                { typeof(StatChangeEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).StatChange((StatChangeEventDto)evt) },
-                { typeof(GraveyardUpdateEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).GraveyardUpdate((GraveyardUpdateEventDto)evt) },
-                { typeof(GameOverEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).GameOver((GameOverEventDto)evt) },
-                { typeof(PlayerMulliganCompletedEventDto), async (groupName, evt) => await _hubContext.Clients.Group(groupName).PlayerMulliganCompleted((PlayerMulliganCompletedEventDto)evt) }
-                // Add other existing event types here if any were missed
-            };
+            // Removed _eventHandlers dictionary initialization
         }
 
         // Updated PlayCardAsync implementation
         // M8 Change: Signature updated to use GameActionContext and return Task
-        public async Task PlayCardAsync(GameActionContext context, string gameId, string playerId, PlayCardActionDto actionDto)
+        public async Task<bool> PlayCardAsync(string gameId, string playerId, PlayCardActionDto actionDto, GameActionContext context)
         { // Start of PlayCardAsync body (replacement for line 64 onwards)
             _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting PlayCard: CardUID={CardUID}, TargetUID={TargetUID}.",
                 gameId, playerId, actionDto.CardUid, actionDto.TargetUid ?? "None");
@@ -107,7 +88,7 @@ namespace ShadowverseBeyond.Server.Services
 
             // Step 1: Fetch card data asynchronously before acquiring the main lock
             CardDefinition? cardDefinition = null;
-            CardDto? cardInHand = null;
+            CardInstanceDto? cardInHand = null; // Changed type from CardDto?
             try
             {
                 _logger.LogWarning("--- PlayCardAsync TRYING to await FetchCardDataAsync ---"); // Roo Added Log
@@ -164,12 +145,17 @@ namespace ShadowverseBeyond.Server.Services
                         throw new GameLogicException($"Unknown card type: {cardDefinition.Type}");
                     }
 
+                    // Process card abilities and events (will be handled after the lock)
+                    // Store card information for ability processing outside the lock
+
                     switch (cardType)
                     {
                         case CardType.Follower:
-                            var unitState = CreateUnitState(cardDefinition);
+                            // Refactored: Call new method, pass playerId
+                            var cardInstance = CreateCardInstanceForBattle(cardDefinition, playerState.PlayerId);
                             // M8 Change: Pass context instead of events
-                            ExecuteFollowerPlay(context, gameState, playerState, unitState, cardInHand, actionDto);
+                            // Refactored: Pass cardInstance instead of unitState
+                            ExecuteFollowerPlay(context, gameState, playerState, cardInstance, cardInHand, actionDto);
                             break;
                         case CardType.Spell:
                             // M8 Change: Pass context instead of events
@@ -205,8 +191,13 @@ namespace ShadowverseBeyond.Server.Services
                 }
             } // End lock
 
-            // Step 3: Return collected events
+            // Step 3: Process card abilities outside the lock
+            await ProcessCardPlayAbilitiesAsync(gameId, cardDefinition, cardInHand, actionDto, context);
+
+            // Step 4: Return collected events
             // M8 Change: Method now returns Task, no events list to return
+            // Add await Task.CompletedTask to satisfy async Task return type
+            return true;
         } // End of PlayCardAsync method body
 
         // Implement EndTurnAsync
@@ -215,9 +206,10 @@ namespace ShadowverseBeyond.Server.Services
         // Updated signature to return tuple Task<(List<GameEventDto> Events, bool AiTurnTriggered)>
         // Roo Change: Update return type to match the actual return value (List<GameEventDto>)
         // V2 Refactor: Signature changed to return tuple including IsNextPlayerAi and Events.
-        public async Task<(bool Success, bool IsNextPlayerAi, string? NextPlayerId, List<GameEventDto> Events)> EndTurnAsync(string gameId, string endingPlayerId)
+        // M8 Change: Signature updated to use GameActionContext and return Task
+        public async Task EndTurnAsync(string gameId, string playerId, GameActionContext context) // Renamed endingPlayerId to playerId
         {
-            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting EndTurn.", gameId, endingPlayerId);
+            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting EndTurn.", gameId, playerId);
             var events = new List<GameEventDto>();
             string? nextPlayerId = null; // Roo Add: Store next player ID for potential AI trigger outside lock
             string? resultPlayerId = null; // Variable to store result outside lock
@@ -248,7 +240,7 @@ namespace ShadowverseBeyond.Server.Services
                     // --- ADD DETAILED LOGGING BEFORE THE CHECK ---
                     _logger.LogWarning("[GameService:{GameId}] EndTurn CHECK: Received PlayerId={ReceivedPlayerId}, Server State CurrentPlayerId={ServerCurrentPlayerId}, Server State FirstPlayerId={ServerFirstPlayerId}, Phase={Phase}",
                         gameId,
-                        endingPlayerId,                  // The ID received from the client request
+                        playerId,                  // The ID received from the client request
                         gameState.CurrentPlayerId, // The ID currently stored in the server state
                         gameState.FirstPlayerId,   // Double-check who should be first
                                                    // Removed: gameState.TurnNumber,
@@ -256,13 +248,13 @@ namespace ShadowverseBeyond.Server.Services
                     // --- END ADDED LOGGING ---
 
                     bool ignoreStaleRequest = false; // Flag to indicate stale request
-                    if (gameState.CurrentPlayerId != endingPlayerId) // <<< The check that fails
+                    if (gameState.CurrentPlayerId != playerId) // <<< The check that fails
                     {
                         // Log a warning instead of error for stale/duplicate EndTurn requests
                         _logger.LogWarning("[GameService:{GameId}] Received EndTurn request for player {ReceivedPlayerId} but current player is {ServerCurrentPlayerId}. Ignoring stale/duplicate request.",
-                           gameId, endingPlayerId, gameState.CurrentPlayerId);
+                           gameId, playerId, gameState.CurrentPlayerId);
                         // --- ROO DEBUG: ADDING UNIQUE LOG BEFORE SETTING FLAG ---
-                        _logger.LogError("!!!!!!!!!! ROO DEBUG: STALE EndTurn DETECTED for {PlayerId}. Setting ignoreStaleRequest = true. !!!!!!!!!!!", endingPlayerId);
+                        _logger.LogError("!!!!!!!!!! ROO DEBUG: STALE EndTurn DETECTED for {PlayerId}. Setting ignoreStaleRequest = true. !!!!!!!!!!!", playerId);
                         // --- END ROO DEBUG ---
                         ignoreStaleRequest = true; // Set flag to ignore
                         // Removed: throw new GameLogicException(...)
@@ -275,7 +267,9 @@ namespace ShadowverseBeyond.Server.Services
                         // V2 Change: Return tuple indicating failure but providing next player info for stale request.
                         string staleNextPlayerId = actualNextPlayerId ?? throw new GameLogicException($"Opponent not found for stale request in game {gameId}.");
                         _logger.LogDebug("[GameService:{GameId}] Stale request detected. Returning failure tuple with NextPlayerId='{StaleNextPlayerId}', IsAI={ActualIsNextPlayerAi}.", gameId, staleNextPlayerId, actualIsNextPlayerAi);
-                        return (Success: false, IsNextPlayerAi: actualIsNextPlayerAi, NextPlayerId: staleNextPlayerId, Events: new List<GameEventDto>());
+                        // M8 Fix: Method signature is Task, cannot return tuple. Just return early for stale request.
+                        _logger.LogWarning("[GameService:{GameId}] Stale EndTurn request for Player {PlayerId} ignored. Returning early.", gameId, playerId); // Log added for clarity
+                        return;
                         // --- END EARLY RETURN ---
                     }
                     else if (gameState.Phase == GamePhase.Mulligan) // Check phase only if player ID was valid
@@ -288,34 +282,34 @@ namespace ShadowverseBeyond.Server.Services
                     if (!ignoreStaleRequest)
                     {
                         // ===>>> ADDED CHECK: Re-verify current player *before* any processing within the !ignoreStaleRequest block <<<===
-                        if (gameState.CurrentPlayerId != endingPlayerId)
+                        if (gameState.CurrentPlayerId != playerId)
                         {
                             // This should theoretically not happen if the check at line 243 worked and ignoreStaleRequest was handled,
                             // unless the state changed between line 243 and here despite the lock.
                             _logger.LogError("[GameService:{GameId}] CRITICAL STATE MISMATCH DETECTED INSIDE LOCK (within !ignoreStaleRequest)! Player {PlayerId} initiated EndTurn, but CurrentPlayerId is now {CurrentPlayer}. Aborting processing.",
-                                gameId, endingPlayerId, gameState.CurrentPlayerId);
+                                gameId, playerId, gameState.CurrentPlayerId);
                             // Skip the entire turn processing logic below if mismatch detected here.
                         }
                         else
                         {
                             // --- Original processing logic starts here ---
                             // 3. Get current and opponent player states
-                            var currentPlayerState = gameState.Players.FirstOrDefault(p => p.PlayerId == endingPlayerId);
-                            var opponentPlayerState = gameState.Players.FirstOrDefault(p => p.PlayerId != endingPlayerId);
+                            var currentPlayerState = gameState.Players.FirstOrDefault(p => p.PlayerId == playerId);
+                            var opponentPlayerState = gameState.Players.FirstOrDefault(p => p.PlayerId != playerId);
 
                             if (currentPlayerState == null || opponentPlayerState == null)
                             {
                                 // Should not happen if game state is valid
-                                _logger.LogError("[GameService:{GameId}] Critical error: Player state not found for player {PlayerId} or opponent.", gameId, endingPlayerId);
+                                _logger.LogError("[GameService:{GameId}] Critical error: Player state not found for player {PlayerId} or opponent.", gameId, playerId);
                                 throw new GameLogicException($"Player state not found for game {gameId}.");
                             }
 
-                            _logger.LogDebug("[GameService:{GameId}] Validation successful for EndTurn by {PlayerId}.", gameId, endingPlayerId);
+                            _logger.LogDebug("[GameService:{GameId}] Validation successful for EndTurn by {PlayerId}.", gameId, playerId);
 
                             // 4. Call ProcessEndOfTurn for the current player
                             _logger.LogWarning("[GS_DEBUG_ENDTURN:{GameId}] Lock acquired. Before ProcessEndOfTurn for {PlayerId}. Current gameState.CurrentPlayerId = {CurrentPlayer}", gameId, currentPlayerState.PlayerId, gameState.CurrentPlayerId); // DEBUG LOG
-                            events.AddRange(ProcessEndOfTurn(currentPlayerState, gameState)); // Call commented out until helper exists
-                                                                                              // _logger.LogInformation("[GameService:{GameId}] Placeholder: Call to ProcessEndOfTurn for {PlayerId}.", gameId, endingPlayerId); // Original log
+                            ProcessEndOfTurn(currentPlayerState, gameState, context); // M8 Change: Pass context, removed AddRange
+                                                                                      // _logger.LogInformation("[GameService:{GameId}] Placeholder: Call to ProcessEndOfTurn for {PlayerId}.", gameId, endingPlayerId); // Original log
 
 
                             // Global turn increment logic and associated checks/logs removed.
@@ -332,84 +326,276 @@ namespace ShadowverseBeyond.Server.Services
                             nextPlayerId = opponentPlayerState.PlayerId; // Store next player ID regardless
                             isNextPlayerAi = opponentPlayerState.IsAI;   // Store AI status regardless
 
-                            // Roo Change START: Remove ProcessStartOfTurn call from EndTurnAsync
-                            // The StartPlayerTurnAsync will be called separately by the Hub or AiTurnExecutor.
-                            // We still need to determine the next player and if they are AI for the trigger logic below.
-                            // if (!isNextPlayerAi || currentPlayerState.IsAI) // Condition no longer needed here
-                            // {
-                            //     _logger.LogInformation("[GameService:{GameId}] Intentionally NOT processing StartOfTurn for {NextPlayerId} within EndTurnAsync.",
-                            //         gameId, nextPlayerId);
-                            // }
-                            // else // Condition no longer needed here
-                            // {
-                            // Roo Change END
-                            // Log that we are intentionally skipping the AI's ProcessStartOfTurn here.
-                            _logger.LogInformation("[GameService:{GameId}] Skipping ProcessStartOfTurn for AI player {NextPlayerId} within human player {PlayerId}'s EndTurnAsync call. AI turn will be triggered separately.",
-                                gameId, nextPlayerId, endingPlayerId);
-                            // Do NOT call ProcessStartOfTurn or add its events here for the AI.
-                        }
+                            // Determine next player and AI status
+                            nextPlayerId = opponentPlayerState.PlayerId;
+                            isNextPlayerAi = opponentPlayerState.IsAI;
 
-                        // Store next player info for AI trigger check outside lock
-                        _logger.LogDebug("[GameService:{GameId}] Stored next player info inside lock: NextPlayerId={NextId}, IsAI={IsAI}", gameId, nextPlayerId, isNextPlayerAi);
-                        // _logger.LogInformation("[GameService:{GameId}] Called ProcessStartOfTurn for next player {OpponentId}.", gameId, opponentPlayerState.PlayerId); // Removed GlobalTurn from log // Original log
-
-
-                        // 7. Log completion
-                        _logger.LogInformation("[GameService:{GameId}] EndTurn processing completed for {PlayerId}.", gameId, endingPlayerId);
-                        // V2 Change: Store the determined next player ID and mark success for return after lock
-                        resultPlayerId = nextPlayerId;
-                        success = true; // Mark as successful if we reached here without throwing inside lock
-                        // Removed previous placeholder log and comment from original line 232
-                    }
-                    // ===>>> END ADDED CHECK <<<===
-                }
-            } // End lock block
+                            // Log completion of locked section
+                            _logger.LogInformation("[GameService:{GameId}] EndTurn processing (locked section) completed for {PlayerId}.", gameId, playerId);
+                            resultPlayerId = nextPlayerId; // Store for return outside lock
+                            success = true; // Mark success
+                        } // This closes the 'else' block from line 305
+                    } // This closes the 'if (!ignoreStaleRequest)' block
+                    // ===>>> END ADDED CHECK <<<=== // This comment might be slightly misplaced after revert, but harmless
+                } // End lock block
+            } // End try block for lock
             catch (GameLogicException ex) // Catch blocks restored after lock
             {
-                _logger.LogWarning(ex, "[GameService:{GameId}] Game Logic Error during EndTurn (inside lock) for Player {PlayerId}.", gameId, endingPlayerId);
+                _logger.LogWarning(ex, "[GameService:{GameId}] Game Logic Error during EndTurn (inside lock) for Player {PlayerId}.", gameId, playerId);
                 // Re-throw for the Hub filter to handle
                 throw;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during EndTurn (inside lock) for Player {PlayerId}.", gameId, endingPlayerId);
+                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during EndTurn (inside lock) for Player {PlayerId}.", gameId, playerId);
                 // Wrap and re-throw
                 throw new GameLogicException("An unexpected error occurred while ending the turn.", ex);
             }
 
+            // --- Trigger Next Turn Start (REMOVED BY REVERT) ---
+            // The logic to trigger the next turn (human or AI) outside the lock is removed.
+            // The caller (Hub or Executor) will need to handle triggering the next turn based on the outcome (which is now implicit via Task completion).
+            // This reverts to the state where the race condition existed.
+
             // Return the stored result tuple after the lock has been released
             _logger.LogDebug("[GameService:{GameId}] Exiting EndTurnAsync. Success: {Success}, IsNextAI: {IsNextAI}, NextPlayer: {NextPlayer}, EventCount: {EventCount}",
-                gameId, success, isNextPlayerAi, resultPlayerId ?? "null", events.Count);
-            return (Success: success, IsNextPlayerAi: isNextPlayerAi, NextPlayerId: resultPlayerId, Events: events);
-            // V2 Change: AI Trigger logic removed from EndTurnAsync. It should be handled by the caller (e.g., GameHub or AiTurnExecutor).
+                gameId, success, isNextPlayerAi, resultPlayerId ?? "null", context.Events.Count); // Use context.Events.Count
+            // Method returns Task. Add await Task.CompletedTask to satisfy CS1998 if no other await is hit.
+            await Task.CompletedTask;
         } // This closes EndTurnAsync
 
-        /// &lt;summary&gt;
+        /// <summary>
+        /// Processes card abilities after a card is played, outside of the main game state lock.
+        /// This method handles the Event-driven ability system integration.
+        /// </summary>
+        /// <param name="gameId">The game ID.</param>
+        /// <param name="cardDefinition">The definition of the card that was played.</param>
+        /// <param name="cardInHand">The card instance that was played from hand.</param>
+        /// <param name="actionDto">The play card action details.</param>
+        /// <param name="context">The game action context for collecting events.</param>
+        private async Task ProcessCardPlayAbilitiesAsync(string gameId, CardDefinition cardDefinition, CardInstanceDto? cardInHand, PlayCardActionDto actionDto, GameActionContext context)
+        {
+            if (cardInHand == null || cardDefinition == null)
+            {
+                _logger.LogDebug("[GameService:{GameId}] Skipping ability processing - null card data.", gameId);
+                return;
+            }
+
+            try
+            {
+                // Get or create ability manager for this game
+                var abilityManager = _abilityManagers.GetOrAdd(gameId, _ => new AbilityManager());
+
+                // Create a CardInstance for the ability system
+                var cardInstance = new CardInstance(cardInHand.InstanceId.ToString(), cardDefinition.Id, cardInHand.ControllerPlayerId)
+                {
+                    CurrentZone = cardInHand.Zone,
+                    CardType = cardDefinition.Type,
+                    CurrentCost = cardDefinition.Cost,
+                    CurrentAttack = cardDefinition.Attack ?? 0,
+                    CurrentHealth = cardDefinition.Health ?? 0,
+                    MaxHealth = cardDefinition.Health ?? 0,
+                    OwnerPlayerId = cardInHand.ControllerPlayerId
+                };
+
+                // Create abilities for the card if it has any
+                var abilityData = ParseCardAbilities(cardDefinition);
+                if (abilityData.Count > 0)
+                {
+                    var abilities = abilityManager.CreateAbilitiesForCard(cardInstance, abilityData);
+                    foreach (var ability in abilities)
+                    {
+                        abilityManager.RegisterAbility(ability);
+                    }
+
+                    _logger.LogDebug("[GameService:{GameId}] Registered {AbilityCount} abilities for card {CardName}.",
+                        gameId, abilities.Count, cardDefinition.Name);
+                }
+
+                // Create and process the PlayCard event
+                var gameState = _gameStates.GetValueOrDefault(gameId);
+                if (gameState != null)
+                {
+                    var playerState = gameState.Players.FirstOrDefault(p => p.PlayerId == cardInHand.ControllerPlayerId);
+                    var opponentState = gameState.Players.FirstOrDefault(p => p.PlayerId != cardInHand.ControllerPlayerId);
+
+                    if (playerState != null && opponentState != null)
+                    {
+                        var gameContext = new GameContext(gameState, playerState, opponentState);
+                        var playCardEvent = new PlayCardEvent(playerState, cardInstance);
+
+                        // Process the event through the ability system
+                        var generatedEvents = await abilityManager.ProcessEventAsync(playCardEvent, gameContext);
+
+                        // Convert ability events to DTOs and add to context
+                        var abilityEventDtos = abilityManager.ConvertToEventDtos(generatedEvents);
+                        foreach (var dto in abilityEventDtos)
+                        {
+                            context.AddEvent(dto);
+                        }
+
+                        _logger.LogDebug("[GameService:{GameId}] Processed card play abilities, generated {EventCount} events.",
+                            gameId, abilityEventDtos.Count);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[GameService:{GameId}] Error processing card abilities for {CardName}.",
+                    gameId, cardDefinition.Name);
+                // Don't throw - ability processing errors shouldn't break card playing
+            }
+        }
+
+        /// <summary>
+        /// Parses card definition to extract ability data for the ability system.
+        /// </summary>
+        /// <param name="cardDefinition">The card definition to parse.</param>
+        /// <returns>A dictionary of ability data.</returns>
+        private Dictionary<string, object> ParseCardAbilities(CardDefinition cardDefinition)
+        {
+            var abilityData = new Dictionary<string, object>();
+
+            // Parse keywords into abilities
+            if (cardDefinition.Keywords != null)
+            {
+                foreach (var keyword in cardDefinition.Keywords)
+                {
+                    var lowerKeyword = keyword.ToLowerInvariant();
+                    switch (lowerKeyword)
+                    {
+                        case "rush":
+                        case "storm":
+                        case "ward":
+                        case "drain":
+                        case "bane":
+                            abilityData[lowerKeyword] = new Dictionary<string, object>();
+                            break;
+                    }
+                }
+            }
+
+            // Parse effect description for Fanfare, Last Words, etc.
+            if (!string.IsNullOrEmpty(cardDefinition.Description))
+            {
+                var effectDesc = cardDefinition.Description.ToLowerInvariant();
+
+                if (effectDesc.Contains("fanfare"))
+                {
+                    abilityData["fanfare"] = ParseEffectParameters(cardDefinition.Description, "fanfare");
+                }
+
+                if (effectDesc.Contains("last words"))
+                {
+                    abilityData["lastwords"] = ParseEffectParameters(cardDefinition.Description, "last words");
+                }
+
+                if (effectDesc.Contains("evolve effect"))
+                {
+                    abilityData["evolveeffect"] = ParseEffectParameters(cardDefinition.Description, "evolve effect");
+                }
+            }
+
+            return abilityData;
+        }
+
+        /// <summary>
+        /// Parses effect parameters from effect description text.
+        /// This is a simplified parser for basic effects.
+        /// </summary>
+        /// <param name="effectDescription">The effect description text.</param>
+        /// <param name="abilityType">The type of ability being parsed.</param>
+        /// <returns>Parameters for the ability.</returns>
+        private Dictionary<string, object> ParseEffectParameters(string effectDescription, string abilityType)
+        {
+            var parameters = new Dictionary<string, object>();
+
+            // Simple text parsing for common effects
+            var lowerDesc = effectDescription.ToLowerInvariant();
+
+            // Parse damage effects
+            if (lowerDesc.Contains("deal") && lowerDesc.Contains("damage"))
+            {
+                parameters["effect"] = "damage";
+
+                // Try to extract damage amount
+                var damageMatch = System.Text.RegularExpressions.Regex.Match(lowerDesc, @"deal (\d+) damage");
+                if (damageMatch.Success && int.TryParse(damageMatch.Groups[1].Value, out int damage))
+                {
+                    parameters["damage"] = damage;
+                }
+
+                // Try to extract target
+                if (lowerDesc.Contains("enemy leader"))
+                {
+                    parameters["target"] = "enemy_leader";
+                }
+                else if (lowerDesc.Contains("all enemies"))
+                {
+                    parameters["target"] = "all_enemies";
+                }
+                else if (lowerDesc.Contains("random enemy"))
+                {
+                    parameters["target"] = "random_enemy";
+                }
+            }
+
+            // Parse draw effects
+            if (lowerDesc.Contains("draw"))
+            {
+                parameters["effect"] = "draw";
+
+                var drawMatch = System.Text.RegularExpressions.Regex.Match(lowerDesc, @"draw (\d+) card");
+                if (drawMatch.Success && int.TryParse(drawMatch.Groups[1].Value, out int count))
+                {
+                    parameters["count"] = count;
+                }
+                else
+                {
+                    parameters["count"] = 1; // Default to 1 card
+                }
+            }
+
+            // Parse summon effects
+            if (lowerDesc.Contains("summon"))
+            {
+                parameters["effect"] = "summon";
+                // For now, we'd need more sophisticated parsing to extract what to summon
+                // This is a placeholder for future enhancement
+            }
+
+            return parameters;
+        }
+
+        /// <summary>
         /// Processes the start-of-turn logic for the specified player.
         /// This includes incrementing turn count, updating PP/EP, drawing cards,
         /// resetting unit states, and generating necessary start-of-turn events.
         /// This method is called after mulligan completion for the first player,
         /// and by EndTurnAsync (for human players) or AiTurnExecutor (for AI players)
         /// for subsequent turns.
-        /// &lt;/summary&gt;
-        /// &lt;param name="gameId"&gt;The ID of the game instance.&lt;/param&gt;
-        /// &lt;param name="playerId"&gt;The ID of the player whose turn is starting.&lt;/param&gt;
-        /// &lt;returns&gt;A list of game events generated during start-of-turn processing.&lt;/returns&gt;
-        /// &lt;exception cref="GameLogicException"&gt;Thrown if the game or player state is invalid.&lt;/exception&gt;
+        /// </summary>
+        /// <param name="gameId">The ID of the game instance.</param>
+        /// <param name="playerId">The ID of the player whose turn is starting.</param>
+        /// <returns>A list of game events generated during start-of-turn processing.</returns>
+        /// <exception cref="GameLogicException">Thrown if the game or player state is invalid.</exception>
         // V2 Refactor: Signature changed to return tuple (Events, IsAiTurn) and use startingPlayerId parameter.
-        public async Task<(List<GameEventDto> Events, bool IsAiTurn)> StartPlayerTurnAsync(string gameId, string startingPlayerId)
+        // M7 V1.1 Change: Signature updated to remove context and return Task<TurnStartedEventDto>
+        public async Task<TurnStartedEventDto> StartPlayerTurnAsync(string gameId, string startingPlayerId)
         {
             _logger.LogInformation("[GameService:{GameId}] Executing StartPlayerTurnAsync for Player {StartingPlayerId}.", gameId, startingPlayerId);
-            var events = new List<GameEventDto>();
+            // M8 Change: Removed local events list creation. Using context.
 
             // Acquire lock for this specific game
-            bool isAiTurnResult = false; // Variable to store AI status, declared outside lock
+            bool isAiTurn = false; // M8 Change: Declare isAiTurn here to be accessible for return value
             object gameLock = _gameLocks.GetOrAdd(gameId, _ => new object()); // Fixed lambda syntax
+            GameStateDto? gameState = null; // Declare gameState here to be accessible after the lock (Corrected Type)
             lock (gameLock)
             {
                 // 1. Validate gameId and retrieve GameState.
                 // bool isAiTurnResult = false; // Declaration moved outside lock
-                if (!_gameStates.TryGetValue(gameId, out var gameState))
+                // M8 Change: Retrieve gameState inside lock, assign to pre-declared variable
+                if (!_gameStates.TryGetValue(gameId, out gameState)) // Removed 'var'
                 {
                     throw new GameLogicException($"Game not found: {gameId} (in StartPlayerTurnAsync)");
                 }
@@ -426,7 +612,7 @@ namespace ShadowverseBeyond.Server.Services
                 // --- Increment Player's Individual Turn Count ---
                 startingPlayerState.TurnNumber++;
                 // V2 Change: Determine AI status inside lock
-                isAiTurnResult = startingPlayerState.IsAI;
+                isAiTurn = startingPlayerState.IsAI; // M8 Change: Assign value inside lock where startingPlayerState is valid
                 int currentPlayerTurn = startingPlayerState.TurnNumber; // Use this for player-specific logic
                 _logger.LogInformation("[GameService:{GameId}] Incrementing TurnNumber for {PlayerId} to {PlayerTurn}.",
                     gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn);
@@ -448,26 +634,39 @@ namespace ShadowverseBeyond.Server.Services
                     startingPlayerState.MaxPP++;
                 }
                 startingPlayerState.CurrentPP = startingPlayerState.MaxPP; // Refill PP
-                events.Add(new PpUpdateEventDto(startingPlayerState.PlayerId, startingPlayerState.CurrentPP, startingPlayerState.MaxPP));
-                _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} PP updated: {CurrentPP}/{MaxPP}. Event added.",
+                // M7 V1.1 Change: Removed context.AddEvent for PpUpdateEventDto
+                _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} PP updated: {CurrentPP}/{MaxPP}.", // Removed "Event added."
                     gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.CurrentPP, startingPlayerState.MaxPP);
 
-                // --- M7 Design Doc Step 5.3: Update Player EP ---
+                // --- M7 Design Doc Step 5.3: Update Player EP (Fixed for Shadowverse Rules) ---
                 int requiredEvoTurn = startingPlayerState.IsFirst ? 5 : 4; // P1 needs Turn 5, P2 needs Turn 4
-                bool canGainEp = currentPlayerTurn >= requiredEvoTurn;
+                bool shouldUnlockEvolution = currentPlayerTurn >= requiredEvoTurn && startingPlayerState.MaxEP == 0;
                 int previousEP = startingPlayerState.CurrentEP; // Store previous EP for logging/event
-                if (canGainEp && startingPlayerState.CurrentEP < startingPlayerState.MaxEP)
+
+                // Evolution unlock: Set EP limit and grant full EP on first unlock
+                if (shouldUnlockEvolution)
                 {
-                    startingPlayerState.CurrentEP++;
-                    _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} gained EP (PlayerTurn {PlayerTurn} &gt;= Required {ReqTurn}). New EP: {CurrentEP}/{MaxEP}.",
-                       gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn, requiredEvoTurn, startingPlayerState.CurrentEP, startingPlayerState.MaxEP); // Log uses currentPlayerTurn
+                    int maxEpForPlayer = startingPlayerState.IsFirst ? 2 : 3; // P1 gets 2 EP, P2 gets 3 EP
+                    startingPlayerState.MaxEP = maxEpForPlayer;
+                    startingPlayerState.CurrentEP = maxEpForPlayer; // Grant full EP immediately on unlock
+                    _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} evolution UNLOCKED (Turn {PlayerTurn}). Granted {MaxEP} EP.",
+                       gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn, maxEpForPlayer);
                 }
+                // Note: EP does NOT auto-recover after unlock - only consumed through evolution
+
                 if (startingPlayerState.CurrentEP != previousEP)
                 {
-                    events.Add(new EpUpdateEventDto(startingPlayerState.PlayerId, startingPlayerState.CurrentEP, startingPlayerState.MaxEP));
-                    _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} EP changed. New EP: {CurrentEP}/{MaxEP}. Event added.",
-                       gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.CurrentEP, startingPlayerState.MaxEP);
+                    // M7 V1.1 Change: Removed context.AddEvent for EpUpdateEventDto
+                    _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} EP changed. New EP: {CurrentEP}/{MaxEP}.", // Removed "Event added."
+                      gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.CurrentEP, startingPlayerState.MaxEP);
                 } // <<< Closing brace for the if block
+
+                // --- M7 Design Doc Step 5.3.1: Update CanEvolve Flag ---
+                // Player can evolve if they have unlocked evolution and have EP available
+                bool canEvolveThisTurn = startingPlayerState.MaxEP > 0 && startingPlayerState.CurrentEP > 0;
+                startingPlayerState.CanEvolve = canEvolveThisTurn;
+                _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} CanEvolve set to {CanEvolve} (MaxEP: {MaxEP}, CurrentEP: {CurrentEP}).",
+                    gameState.GameId, startingPlayerState.PlayerId, canEvolveThisTurn, startingPlayerState.MaxEP, startingPlayerState.CurrentEP);
 
                 // --- M7 Design Doc Step 5.4: Draw Card(s) at Start of Turn ---
                 // Determine number of cards to draw (1 normally, 2 for P2T1)
@@ -489,7 +688,7 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogWarning("[DEBUG_DRAW:{GameId}] Before calling DrawCards for Player {PlayerId}. Requesting {DrawCount} cards. Current Deck Count: {DeckCount}",
                     gameState.GameId, startingPlayerState.PlayerId, cardsToDraw, startingPlayerState.Deck.Count);
                 // --- End Roo Debug ---
-                List<CardDto> drawnCards = DrawCards(startingPlayerState, cardsToDraw); // Use helper
+                List<CardInstanceDto> drawnCards = DrawCards(startingPlayerState, cardsToDraw); // Use helper (Changed variable type)
                 // --- Roo Debug: Log after DrawCards ---
                 _logger.LogWarning("[DEBUG_DRAW:{GameId}] After calling DrawCards for Player {PlayerId}. Drawn cards count: {DrawnCount}. New Deck Count: {DeckCount}",
                     gameState.GameId, startingPlayerState.PlayerId, drawnCards.Count, startingPlayerState.DeckCount);
@@ -501,47 +700,56 @@ namespace ShadowverseBeyond.Server.Services
                 // Generate events for drawn cards (HandUpdate, DeckUpdate, CardDrawn)
                 if (drawnCards.Any())
                 {
-                    // Hand Update (Size Change)
-                    // Pass the entire list of drawn cards to the HandUpdateEventDto constructor
-                    events.Add(new HandUpdateEventDto(startingPlayerState.PlayerId, startingPlayerState.Hand.Count, drawnCards)); // Pass the list to the 3rd parameter
-                    // Deck Update (Size Change)
-                    events.Add(new DeckUpdateEventDto(startingPlayerState.PlayerId, startingPlayerState.DeckCount));
-                    // Individual Card Drawn Events (for animations/triggers)
-                    foreach (var card in drawnCards)
-                    {
-                        // Convert Guid card.Uid to string for DTO constructor
-                        events.Add(new CardDrawnEventDto(startingPlayerState.PlayerId, card.Uid.ToString(), card.CardId));
-                    }
-                    _logger.LogDebug("[GameService:{GameId}] Added HandUpdate, DeckUpdate, and {DrawnCount} CardDrawn events.",
+                    // M7 V1.1 Change: Removed context.AddEvent for HandUpdate, DeckUpdate, CardDrawn events
+                    _logger.LogDebug("[GameService:{GameId}] Hand/Deck updated after drawing {DrawnCount} cards.", // Simplified log
                         gameState.GameId, drawnCards.Count);
                 }
 
-                // --- M7 Design Doc Step 5.5: Reset Unit States ---
+                // --- M7 Design Doc Step 5.5: Reset Unit States (Updated based on BUG-017 analysis/design doc) ---
+                _logger.LogDebug("[GameService:{GameId}] Resetting unit states for Player {PlayerId} at start of turn.", gameState.GameId, startingPlayerState.PlayerId);
                 foreach (var unit in startingPlayerState.Field)
                 {
-                    // Reset CanAttack for units that didn't just arrive (unless they have Storm)
-                    // Simplified V0.1: Always allow attack at start of turn if unit survived.
-                    // More complex logic (Summoning Sickness) can be added later.
-                    unit.CanAttack = true; // Reset attack permission
-                                           // Note: AttacksMadeThisTurn is reset in ProcessEndOfTurn
+                    // Units already on the field at the start of the turn should be able to attack
+                    // (unless affected by a status effect later). Reset flags explicitly here.
+                    // Summoning sickness is handled by units starting with CanAttack=false when played (unless Rush/Storm).
+                    unit.CanAttack = true;          // Reset attack permission
+                    unit.AttacksMadeThisTurn = 0; // Reset attack count for the new turn
+                    _logger.LogTrace("[GameService:{GameId}] Reset state for unit {UnitName} ({UnitInstanceId}): CanAttack=True, AttacksMade=0",
+                        gameState.GameId, unit.Name, unit.InstanceId); // Added Trace log
                 }
-                _logger.LogDebug("[GameService:{GameId}] Reset CanAttack flag for Player {PlayerId}'s units.", gameState.GameId, startingPlayerState.PlayerId);
+                _logger.LogDebug("[GameService:{GameId}] Finished resetting CanAttack and AttacksMadeThisTurn flags for Player {PlayerId}'s {UnitCount} units.",
+                    gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.Field.Count); // Updated log message
 
-                // --- M7 Design Doc Step 5.6: Generate TurnStartedEvent ---
-                // Use the player's current turn number
-                events.Add(new TurnStartedEventDto(startingPlayerState.PlayerId, currentPlayerTurn, gameState.Phase.ToString())); // Added gameState.Phase.ToString()
-                _logger.LogInformation("[GameService:{GameId}] Generated TurnStartedEvent for Player {PlayerId}, PlayerTurn {PlayerTurn}, Phase {Phase}.", // Added Phase to log
+                // M7 V1.1 Change: Removed context.AddEvent for TurnStartedEvent
+                _logger.LogInformation("[GameService:{GameId}] StartOfTurn state updates complete for Player {PlayerId}, PlayerTurn {PlayerTurn}, Phase {Phase}.", // Simplified log
                     gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn, gameState.Phase);
 
                 // --- End of logic adapted from ProcessStartOfTurn ---
             } // <<< Closing brace for the lock block
-            // V2 Change: Return tuple using the determined AI status stored in isAiTurnResult
-            _logger.LogDebug("[GameService:{GameId}] StartPlayerTurnAsync finished for {StartingPlayerId}. Is AI Turn: {IsAiTurnResult}. Event Count: {EventCount}", gameId, startingPlayerId, isAiTurnResult, events.Count);
-            return (events, isAiTurnResult);
+              // M8 Change: Method returns Task<bool>. Re-calculate IsAiTurn. Events collected in context.
+              // M8 Change: isAiTurn is now assigned within the lock block. Remove recalculation here.
+              // M7 V1.1 Change: Create and return the full game state DTO (Log message adjusted)
+            _logger.LogInformation("[GS_SOT:{GameId}] Turn start processed for player {PlayerId}. Preparing full state DTO.", gameId, startingPlayerId);
+
+            // M8 Change: Add null check for gameState declared outside lock and use it directly
+            if (gameState == null) // Null check for the variable declared outside lock
+            {
+                _logger.LogError("[GS_SOT:{GameId}] Game state became null unexpectedly after lock for player {PlayerId}", gameId, startingPlayerId);
+                // Throw exception as this indicates an internal error, the DTO cannot represent this failure.
+                throw new InvalidOperationException($"Internal server error: Game state for game {gameId} became null unexpectedly after turn processing for player {startingPlayerId}.");
+            }
+            // Directly use the DTO retrieved/modified in the lock. No ToDto() call needed.
+            var updateEvent = new TurnStartedEventDto(gameState, startingPlayerId); // Create event directly with gameState
+
+            _logger.LogDebug("[GameService:{GameId}] Returning TurnStartedEventDto for player {PlayerId}.",
+                gameState.GameId, startingPlayerId);
+
+            return await Task.FromResult(updateEvent); // Use Task.FromResult for async Task<T>
         } // <<< Closing brace for StartPlayerTurnAsync method
         // Implement SubmitMulliganAsync from IGameService
         // Removed duplicate signature inserted by previous diff
-        public async Task SubmitMulliganAsync(string gameId, string playerId, List<Guid> cardUidsToReplace)
+        // M8 Change: Added GameActionContext parameter
+        public async Task SubmitMulliganAsync(string gameId, string playerId, List<Guid> cardUidsToReplace, GameActionContext context)
         {
             _logger.LogInformation("[GameService] Player {PlayerId} in Game {GameId} attempting SubmitMulligan with {CardCount} cards.",
                 playerId, gameId, cardUidsToReplace?.Count ?? 0);
@@ -550,7 +758,6 @@ namespace ShadowverseBeyond.Server.Services
 
             // Variables to store results from lock block for use outside
             GameStateDto? stateToBroadcast = null;
-            List<GameEventDto>? firstTurnStartEvents = null; // Declare outside lock, initialize null
             bool shouldBroadcastState = false;
             PlayerMulliganCompletedEventDto? mulliganEventToBroadcast = null; // Variable for intermediate event
             bool shouldStartFirstTurn = false; // Flag to trigger first turn start outside lock
@@ -622,7 +829,7 @@ namespace ShadowverseBeyond.Server.Services
                                                                                                              // --- Actual Card Replacement Logic ---
 
                         // 1. Validate UIDs are in hand
-                        var currentHandUids = playerState.Hand.Select(c => c.Uid).ToHashSet();
+                        var currentHandUids = playerState.Hand.Select(c => c.InstanceId).ToHashSet(); // Changed Uid to InstanceId
                         var invalidUids = cardUidsToReplace.Where(uid => !currentHandUids.Contains(uid)).ToList();
                         if (invalidUids.Any())
                         {
@@ -631,8 +838,8 @@ namespace ShadowverseBeyond.Server.Services
                         _logger.LogWarning("--- DEBUG MULLIGAN: Human Replace - UIDs Validated ---"); // DEBUG LOG
 
                         // 2. Separate cards
-                        var cardsToReplace = playerState.Hand.Where(c => cardUidsToReplace.Contains(c.Uid)).ToList();
-                        var cardsToKeep = playerState.Hand.Where(c => !cardUidsToReplace.Contains(c.Uid)).ToList();
+                        var cardsToReplace = playerState.Hand.Where(c => cardUidsToReplace.Contains(c.InstanceId)).ToList(); // Changed Uid to InstanceId
+                        var cardsToKeep = playerState.Hand.Where(c => !cardUidsToReplace.Contains(c.InstanceId)).ToList(); // Changed Uid to InstanceId
                         _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} keeping {KeepCount}, replacing {ReplaceCount} cards.", gameId, playerId, cardsToKeep.Count, cardsToReplace.Count);
                         _logger.LogWarning("--- DEBUG MULLIGAN: Human Replace - Cards Separated ---"); // DEBUG LOG
 
@@ -655,13 +862,13 @@ namespace ShadowverseBeyond.Server.Services
 
                         // 6. Draw new cards
                         int cardsToDrawCount = cardsToReplace.Count;
-                        List<CardDto> drawnCards = new List<CardDto>();
+                        List<CardInstanceDto> drawnCards = new List<CardInstanceDto>(); // Changed type from CardDto
                         _logger.LogDebug("[GameService:{GameId}] Attempting to draw {DrawCount} new cards.", gameId, cardsToDrawCount);
                         for (int i = 0; i < cardsToDrawCount; i++)
                         {
                             if (playerState.Deck.Any())
                             {
-                                CardDto drawnCard = playerState.Deck[0];
+                                var drawnCard = playerState.Deck[0]; // Changed CardDto to var for type inference
                                 drawnCards.Add(drawnCard);
                                 playerState.Deck.RemoveAt(0);
                             }
@@ -731,7 +938,7 @@ namespace ShadowverseBeyond.Server.Services
                             _logger.LogInformation("[GameService:{GameId}] AI {OpponentId} replacing {Count} cards.", gameId, opponentState.PlayerId, aiCardsToReplaceUids.Count);
 
                             // 1. Validate UIDs are in hand (Defensive check)
-                            var currentHandUids = opponentState.Hand.Select(c => c.Uid).ToHashSet();
+                            var currentHandUids = opponentState.Hand.Select(c => c.InstanceId).ToHashSet(); // Changed Uid to InstanceId
                             // Parse string UIDs from AI to Guid for HashSet comparison
                             var invalidUids = aiCardsToReplaceUids
                                 .Where(uidStr => !(Guid.TryParse(uidStr, out Guid parsedGuid) && currentHandUids.Contains(parsedGuid)))
@@ -748,9 +955,9 @@ namespace ShadowverseBeyond.Server.Services
                                 _logger.LogWarning("--- DEBUG MULLIGAN: AI Replace - UIDs Validated ---"); // DEBUG LOG
                                                                                                            // 2. Separate cards
                                                                                                            // Convert Guid c.Uid to string for List<string>.Contains comparison
-                                var cardsToReplace = opponentState.Hand.Where(c => aiCardsToReplaceUids.Contains(c.Uid.ToString())).ToList();
+                                var cardsToReplace = opponentState.Hand.Where(c => aiCardsToReplaceUids.Contains(c.InstanceId.ToString())).ToList(); // Changed Uid to InstanceId
                                 // Convert Guid c.Uid to string for List<string>.Contains comparison
-                                var cardsToKeep = opponentState.Hand.Where(c => !aiCardsToReplaceUids.Contains(c.Uid.ToString())).ToList();
+                                var cardsToKeep = opponentState.Hand.Where(c => !aiCardsToReplaceUids.Contains(c.InstanceId.ToString())).ToList(); // Changed Uid to InstanceId
                                 _logger.LogDebug("[GameService:{GameId}] AI {OpponentId} keeping {KeepCount}, replacing {ReplaceCount} cards.", gameId, opponentState.PlayerId, cardsToKeep.Count, cardsToReplace.Count);
 
                                 // 3. Return cards to deck
@@ -770,7 +977,7 @@ namespace ShadowverseBeyond.Server.Services
 
                                 // 6. Draw new cards (Using DrawCards helper which modifies state)
                                 int cardsToDrawCount = cardsToReplace.Count;
-                                List<CardDto> drawnCards = DrawCards(opponentState, cardsToDrawCount); // Use DrawCards helper
+                                List<CardInstanceDto> drawnCards = DrawCards(opponentState, cardsToDrawCount); // Use DrawCards helper (Changed variable type)
                                 _logger.LogDebug("[GameService:{GameId}] AI {OpponentId} drew {DrawnCount} new cards.", gameId, opponentState.PlayerId, drawnCards.Count);
                                 _logger.LogWarning("--- DEBUG MULLIGAN: AI Replace - New Cards Drawn ---"); // DEBUG LOG
 
@@ -854,19 +1061,37 @@ namespace ShadowverseBeyond.Server.Services
                 } // <<< LOCK BLOCK ENDS HERE
 
                 // --- Start First Turn (if needed, outside lock) ---
+                GameActionContext? firstTurnContext = null; // Declare context for first turn (nullable)
                 if (shouldStartFirstTurn && !string.IsNullOrEmpty(startingPlayerIdForTurn1))
                 {
                     _logger.LogInformation("[GameService:{GameId}] Triggering StartPlayerTurnAsync for first turn (outside lock). Player: {PlayerId}", gameId, startingPlayerIdForTurn1);
                     try
                     {
-                        // Explicitly use 'this' qualifier
-                        // Capture the tuple result
-                        var startTurnResult = await this.StartPlayerTurnAsync(gameId, startingPlayerIdForTurn1);
-                        firstTurnStartEvents = startTurnResult.Events; // Assign events part
-                        _logger.LogInformation("[GameService:{GameId}] StartPlayerTurnAsync completed for first turn. Is AI Turn: {IsAiTurn}. Generated {EventCount} events.", gameId, startTurnResult.IsAiTurn, firstTurnStartEvents?.Count ?? 0); // Update log
+                        // M8 Change: Initialize context and pass it to StartPlayerTurnAsync
+                        firstTurnContext = new GameActionContext(); // Initialize the pre-declared context
+                        _logger.LogDebug("[GameService:{GameId}] Initialized context for first turn start.", gameId);
+                        // M7 V1.1 Change: Call new signature, get DTO, determine AI status from DTO
+                        TurnStartedEventDto firstTurnStateEvent = await this.StartPlayerTurnAsync(gameId, startingPlayerIdForTurn1);
+                        bool isAiTurn = firstTurnStateEvent.GameState.Players.FirstOrDefault(p => p.PlayerId == firstTurnStateEvent.GameState.CurrentPlayerId)?.IsAI ?? false;
+                        // Use firstTurnStateEvent.FullState for any state checks if needed
+                        _logger.LogInformation("[GameService:{GameId}] StartPlayerTurnAsync completed for first turn. Is AI Turn: {IsAiTurn}. Returned TurnStartedEventDto.", gameId, isAiTurn);
+
+                        // --- ROO CHANGE: Broadcast Start Turn Events IMMEDIATELY after generation, BEFORE AI execution ---
+                        // M7 V1.1 Change: Comment out broadcast - StartPlayerTurnAsync now returns state, broadcasting responsibility shifts.
+                        // if (firstTurnContext?.Events != null && firstTurnContext.Events.Any())
+                        // {
+                        //     _logger.LogInformation("[GameService:{GameId}] Broadcasting {EventCount} start-of-turn events from firstTurnContext (outside lock, before potential AI execution).", gameId, firstTurnContext.Events.Count);
+                        //     await BroadcastEventsAsync(gameId, firstTurnContext.Events); // MOVED & UNCOMMENTED
+                        // }
+                        // else
+                        // {
+                        //     _logger.LogDebug("[GameService:{GameId}] No first turn start events found in firstTurnContext to broadcast before AI execution.", gameId);
+                        // }
+                        // --- END ROO CHANGE ---
 
                         // Trigger AI's first turn if applicable
-                        if (startTurnResult.IsAiTurn)
+                        // M7 V1.1 Change: Use the derived boolean result
+                        if (isAiTurn)
                         {
                             _logger.LogInformation("[GameService:{GameId}] First player ({PlayerId}) is AI. Triggering AI's first turn after mulligan.", gameId, startingPlayerIdForTurn1);
                             // Await AI turn execution
@@ -878,6 +1103,7 @@ namespace ShadowverseBeyond.Server.Services
                         _logger.LogError(startTurnEx, "[GameService:{GameId}] Error executing StartPlayerTurnAsync outside lock for Player {PlayerId}.", gameId, startingPlayerIdForTurn1);
                         // Decide how to handle this error. Maybe throw, maybe just log?
                         // For now, log and continue to broadcast whatever might have been prepared before the error.
+                        firstTurnContext = null; // Ensure context is null if start turn failed
                     }
                 }
 
@@ -929,15 +1155,21 @@ namespace ShadowverseBeyond.Server.Services
                     await _hubContext.Clients.Group(groupName).ReceiveGameState(stateToBroadcast);
 
                     // --- Broadcast Start Turn Events AFTER full state ---
-                    if (firstTurnStartEvents != null && firstTurnStartEvents.Any())
-                    {
-                        _logger.LogInformation("[GameService:{GameId}] Broadcasting {EventCount} start-of-turn events (outside lock).", gameId, firstTurnStartEvents.Count);
-                        foreach (var gameEvent in firstTurnStartEvents) // Broadcast each event individually
-                        {
-                            // Assuming BroadcastEventAsync exists or will be added
-                            await BroadcastEventAsync(gameId, gameEvent);
-                        }
-                    }
+                    // M8 Change: Check if context is not null before accessing events
+                    // Roo Change: REMOVED redundant broadcast of first turn events.
+                    // These events should be handled by the actual turn execution flow (AI or Human).
+                    // The full state broadcast above should suffice for post-mulligan sync.
+                    // --- ROO CHANGE: Original broadcast block removed as it was moved earlier ---
+                    // if (firstTurnContext?.Events != null && firstTurnContext.Events.Any()) // Add null-conditional operator ?.
+                    // {
+                    //     _logger.LogWarning("[GameService:{GameId}] Intentionally SKIPPING broadcast of {EventCount} potentially redundant start-of-turn events from firstTurnContext (outside lock).", gameId, firstTurnContext.Events.Count);
+                    //     // await BroadcastEventsAsync(gameId, firstTurnContext.Events); // REMOVED
+                    // }
+                    // else
+                    // {
+                    //     _logger.LogDebug("[GameService:{GameId}] No first turn start events found in firstTurnContext to potentially broadcast (context is null or empty).", gameId);
+                    // }
+                    // --- END ROO CHANGE ---
                 }
                 // No need for await Task.CompletedTask anymore
 
@@ -1019,10 +1251,9 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         // Fetch ALL card definitions
                         var allCardDefinitionsEnumerable = await cardRepository.GetAllAsync();
-                        // Filter for collectible cards BEFORE converting to list
-                        var collectibleCardDefinitions = allCardDefinitionsEnumerable.Where(c => c.IsCollectible).ToList();
-                        allCardDefinitions = collectibleCardDefinitions; // Assign the filtered list
-                        _logger.LogInformation("[GameService:{GameId}] Fetched {Count} collectible card definitions.", gameId, allCardDefinitions.Count);
+                        // Load ALL card definitions (Removed IsCollectible filter)
+                        allCardDefinitions = allCardDefinitionsEnumerable.ToList(); // Assign the full list
+                        _logger.LogInformation("[GameService:{GameId}] Fetched {Count} total card definitions.", gameId, allCardDefinitions.Count);
                     }
                     catch (Exception repoEx)
                     {
@@ -1041,54 +1272,80 @@ namespace ShadowverseBeyond.Server.Services
 
                 // --- Fixed Test Deck Creation Logic ---
                 int targetDeckSize = 20; // Set target deck size to 20 for testing
-                List<CardDto> player1Deck = new List<CardDto>(targetDeckSize);
-                List<CardDto> player2Deck = new List<CardDto>(targetDeckSize);
+                List<CardInstanceDto> player1Deck = new List<CardInstanceDto>(targetDeckSize); // Use CardInstanceDto
+                List<CardInstanceDto> player2Deck = new List<CardInstanceDto>(targetDeckSize); // Use CardInstanceDto
 
                 // Create a lookup dictionary for efficient access to definitions
                 var definitionLookup = allCardDefinitions.ToDictionary(def => def.Id);
 
-                // Validate if all required definitions were fetched
+                // --- Roo Add: Fetch Leader Definition (Using actual Leader ID 0) ---
+                const int leaderCardId = 0; // Use actual Leader ID
+                if (!definitionLookup.TryGetValue(leaderCardId, out var leaderCardDef))
+                {
+                    _logger.LogError("[GameService:{GameId}] Leader card definition (ID: {LeaderId}) not found. Cannot create game state.", gameId, leaderCardId);
+                    return null; // Cannot proceed without leader definition
+                }
+                _logger.LogInformation("[GameService:{GameId}] Found placeholder leader definition: {LeaderName} ({LeaderId})", gameId, leaderCardDef.Name, leaderCardDef.Id);
+                // --- End Roo Add ---
+
+                // Validate if all required definitions were fetched (using integer IDs)
                 var missingDefs = _fixedTestDeckCardIds.Distinct().Where(id => !definitionLookup.ContainsKey(id)).ToList();
                 if (missingDefs.Any())
                 {
-                    _logger.LogError("[GameService:{GameId}] Missing required card definitions for test deck: {MissingIds}. Cannot create game state.", gameId, string.Join(", ", missingDefs));
+                    _logger.LogError("[GameService:{GameId}] Missing required card definitions for test deck (Integers): {MissingIds}. Cannot create game state.", gameId, string.Join(", ", missingDefs));
                     return null; // Cannot proceed
                 }
 
-                // Build decks using the fixed list of card IDs
-                foreach (var cardId in _fixedTestDeckCardIds)
+                // Build decks using the fixed list of integer card IDs
+                foreach (var cardIdInt in _fixedTestDeckCardIds) // Use integer ID directly
                 {
-                    if (definitionLookup.TryGetValue(cardId, out var cardDef))
+                    // Use integer ID directly for lookup
+                    if (definitionLookup.TryGetValue(cardIdInt, out var cardDef))
                     {
-                        // Create unique CardDto instances for each player's deck
-                        player1Deck.Add(new CardDto
+                        // Create unique CardInstanceDto instances for each player's deck
+                        player1Deck.Add(new CardInstanceDto // Use CardInstanceDto with correct properties and conversions
                         {
-                            Uid = Guid.NewGuid(), // Assign Guid directly
+                            InstanceId = Guid.NewGuid(),
+                            // Assign int Id directly
                             CardId = cardDef.Id,
                             Name = cardDef.Name,
                             Cost = cardDef.Cost,
                             Type = cardDef.Type,
-                            BaseAttack = cardDef.Attack,
-                            BaseHealth = cardDef.Health,
-                            // Initialize Current stats from Base stats for initial deck cards
-                            CurrentAttack = cardDef.Attack,
-                            CurrentHealth = cardDef.Health,
-                            Keywords = cardDef.Keywords ?? new List<string>()
+                            Attack = cardDef.Attack ?? 0,             // Handle nullable int?
+                            Health = cardDef.Health ?? 0,             // Handle nullable int?
+                            CurrentAttack = cardDef.Attack ?? 0,      // Initialize Current stats, handle nullable
+                            CurrentHealth = cardDef.Health ?? 0,      // Initialize Current stats, handle nullable
+                            MaxHealth = cardDef.Health ?? 0,          // Initialize Max Health, handle nullable
+                            Description = cardDef.Description ?? string.Empty,
+                            // EffectDescriptions removed as CardDefinition lacks a direct source
+                            Keywords = cardDef.Keywords ?? new List<string>(), // Handle nullable List<string>?
+                            CanEvolve = cardDef.EvolveId.HasValue, // Check HasValue for int?
+                            IsEvolved = false,                   // Starts unevolved
+                            CanAttack = false,                   // Cannot attack from deck
+                            Zone = CardZone.Deck                 // Initial zone
                         });
 
-                        player2Deck.Add(new CardDto
+                        // Create unique CardInstanceDto instances for each player's deck
+                        player2Deck.Add(new CardInstanceDto // Use CardInstanceDto with correct properties and conversions
                         {
-                            Uid = Guid.NewGuid(), // Assign Guid directly
+                            InstanceId = Guid.NewGuid(),
+                            // Assign int Id directly
                             CardId = cardDef.Id,
                             Name = cardDef.Name,
                             Cost = cardDef.Cost,
                             Type = cardDef.Type,
-                            BaseAttack = cardDef.Attack,
-                            BaseHealth = cardDef.Health,
-                            // Initialize Current stats from Base stats for initial deck cards
-                            CurrentAttack = cardDef.Attack,
-                            CurrentHealth = cardDef.Health,
-                            Keywords = cardDef.Keywords ?? new List<string>()
+                            Attack = cardDef.Attack ?? 0,             // Handle nullable int?
+                            Health = cardDef.Health ?? 0,             // Handle nullable int?
+                            CurrentAttack = cardDef.Attack ?? 0,      // Initialize Current stats, handle nullable
+                            CurrentHealth = cardDef.Health ?? 0,      // Initialize Current stats, handle nullable
+                            MaxHealth = cardDef.Health ?? 0,          // Initialize Max Health, handle nullable
+                            Description = cardDef.Description ?? string.Empty,
+                            // EffectDescriptions removed as CardDefinition lacks a direct source
+                            Keywords = cardDef.Keywords ?? new List<string>(), // Handle nullable List<string>?
+                            CanEvolve = cardDef.EvolveId.HasValue, // Check HasValue for int?
+                            IsEvolved = false,                   // Starts unevolved
+                            CanAttack = false,                   // Cannot attack from deck
+                            Zone = CardZone.Deck                 // Initial zone
                         });
                     }
                     // else: Error already logged if definition was missing
@@ -1103,8 +1360,8 @@ namespace ShadowverseBeyond.Server.Services
 
                 // Draw initial hands from the shuffled decks
                 int initialHandSize = 3;
-                List<CardDto> player1Hand = DrawInitialHand(player1Deck, initialHandSize);
-                List<CardDto> player2Hand = DrawInitialHand(player2Deck, initialHandSize);
+                List<CardInstanceDto> player1Hand = DrawInitialHand(player1Deck, initialHandSize); // Changed type
+                List<CardInstanceDto> player2Hand = DrawInitialHand(player2Deck, initialHandSize); // Changed type
                 // Deck count in PlayerStateDto will be updated later when assigning the deck
 
                 // Decide first player randomly
@@ -1112,46 +1369,89 @@ namespace ShadowverseBeyond.Server.Services
                 string firstPlayerId = player1IsFirst ? player1Id : player2Id;
                 string secondPlayerId = player1IsFirst ? player2Id : player1Id;
 
+                // --- Roo Add: Create Leader Card Instances ---
+                var player1LeaderInstance = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(),
+                    CardId = leaderCardDef.Id,
+                    Name = leaderCardDef.Name,
+                    Cost = leaderCardDef.Cost,
+                    Type = leaderCardDef.Type, // Should be Leader type ideally
+                    Attack = leaderCardDef.Attack ?? 0,
+                    Health = leaderCardDef.Health ?? 0, // Leader health is usually tracked separately
+                    CurrentAttack = leaderCardDef.Attack ?? 0,
+                    CurrentHealth = leaderCardDef.Health ?? 0, // Use PlayerStateDto.LeaderHealth instead?
+                    MaxHealth = leaderCardDef.Health ?? 0,
+                    Description = leaderCardDef.Description ?? string.Empty,
+                    Keywords = leaderCardDef.Keywords ?? new List<string>(),
+                    CanEvolve = leaderCardDef.EvolveId.HasValue,
+                    IsEvolved = false,
+                    CanAttack = false, // Leaders typically don't attack directly this way
+                    Zone = CardZone.Leader, // Special zone
+                    ControllerPlayerId = player1Id
+                    // Other properties like MaxAttack, AttacksMadeThisTurn might not apply or need defaults
+                };
+                var player2LeaderInstance = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(),
+                    CardId = leaderCardDef.Id,
+                    Name = leaderCardDef.Name,
+                    Cost = leaderCardDef.Cost,
+                    Type = leaderCardDef.Type, // Should be Leader type ideally
+                    Attack = leaderCardDef.Attack ?? 0,
+                    Health = leaderCardDef.Health ?? 0, // Leader health is usually tracked separately
+                    CurrentAttack = leaderCardDef.Attack ?? 0,
+                    CurrentHealth = leaderCardDef.Health ?? 0, // Use PlayerStateDto.LeaderHealth instead?
+                    MaxHealth = leaderCardDef.Health ?? 0,
+                    Description = leaderCardDef.Description ?? string.Empty,
+                    Keywords = leaderCardDef.Keywords ?? new List<string>(),
+                    CanEvolve = leaderCardDef.EvolveId.HasValue,
+                    IsEvolved = false,
+                    CanAttack = false, // Leaders typically don't attack directly this way
+                    Zone = CardZone.Leader, // Special zone
+                    ControllerPlayerId = player2Id
+                    // Other properties like MaxAttack, AttacksMadeThisTurn might not apply or need defaults
+                };
+                // --- End Roo Add ---
+
                 var player1State = new PlayerStateDto
                 {
                     PlayerId = player1Id,
                     IsAI = false, // Assuming player 1 is human
-                    LeaderHealth = 20,
-                    MaxLeaderHealth = 20,
                     CurrentPP = 0, // Start at 0 PP before turn 1 begins
                     MaxPP = 0,
-                    CurrentEP = 0,
-                    MaxEP = player1IsFirst ? 2 : 3,    // Assuming T4/T5 evo points (P1/P2) - adjust later?
+                    CurrentEP = 0, // Start with 0 EP
+                    MaxEP = 0,     // Start with 0 EP limit, will be set when evolution unlocks
                     CanEvolve = false,
                     Hand = player1Hand,
                     Deck = player1Deck, // Store the actual deck
                     DeckCount = player1Deck.Count, // Sync count after draw
-                    Field = new List<UnitStateDto>(),
+                    Field = new List<CardInstanceDto>(), // Changed type
                     IsFirst = player1IsFirst,
                     PlayedCardCountThisTurn = 0, // Reset counter
                     TurnNumber = 0, // Initialize TurnNumber
-                    Graveyard = new List<CardDto>() // Initialize Graveyard
+                    Graveyard = new List<CardInstanceDto>(), // Initialize Graveyard (Changed type)
+                    LeaderCard = player1LeaderInstance // Roo Add: Assign Leader Card
                 };
 
                 var player2State = new PlayerStateDto
                 {
                     PlayerId = player2Id,
                     IsAI = true, // Assuming player 2 is AI
-                    LeaderHealth = 20,
-                    MaxLeaderHealth = 20,
                     CurrentPP = 0,
                     MaxPP = 0,
-                    CurrentEP = 0,
-                    MaxEP = player1IsFirst ? 3 : 2,    // EP Max
+                    CurrentEP = 0, // Start with 0 EP
+                    MaxEP = 0,     // Start with 0 EP limit, will be set when evolution unlocks
                     CanEvolve = false,
                     Hand = player2Hand,
                     Deck = player2Deck, // Store the actual deck
                     DeckCount = player2Deck.Count, // Sync count after draw
-                    Field = new List<UnitStateDto>(),
+                    Field = new List<CardInstanceDto>(), // Changed type
                     IsFirst = !player1IsFirst,
                     PlayedCardCountThisTurn = 0, // Reset counter
                     TurnNumber = 0, // Initialize TurnNumber
-                    Graveyard = new List<CardDto>() // Initialize Graveyard
+                    Graveyard = new List<CardInstanceDto>(), // Initialize Graveyard (Changed type)
+                    LeaderCard = player2LeaderInstance // Roo Add: Assign Leader Card
                 };
 
                 // Player decks are now stored directly in PlayerStateDto.Deck
@@ -1174,7 +1474,7 @@ namespace ShadowverseBeyond.Server.Services
                 // ADDED: Log initial hand details for player 1 before adding state
                 try // Added try-catch for safety during logging complex objects
                 {
-                    string player1HandDetails = string.Join(", ", player1State.Hand.Select(c => $"{{UID='{c.Uid}', Name='{c.Name}', ID='{c.CardId}'}}"));
+                    string player1HandDetails = string.Join(", ", player1State.Hand.Select(c => $"{{InstanceId='{c.InstanceId}', Name='{c.Name}', ID='{c.CardId}'}}")); // Changed c.Uid to c.InstanceId and label in string
                     _logger.LogInformation("[GameService:{GameId}:GetOrCreate] Player 1 Initial Hand prepared for state: [{Player1HandDetails}]", gameId, player1HandDetails);
                 }
                 catch (Exception logEx)
@@ -1220,12 +1520,13 @@ namespace ShadowverseBeyond.Server.Services
         // Placeholder implementation for AttackAsync
         // --- Attack Logic Implementation (M7.2 - Rev3 Plan) ---
         // Implements IGameService.AttackAsync
-        public async Task<List<GameEventDto>> AttackAsync(string gameId, string playerId, AttackActionDto actionDto)
+        // M8 Change: Added GameActionContext parameter, changed return type to Task<bool>
+        public async Task<bool> AttackAsync(string gameId, string playerId, AttackActionDto actionDto, GameActionContext context)
         {
             _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} executing Attack: Attacker={AttackerUid}, Target={TargetUid}.",
                 gameId, playerId, actionDto.AttackerUid, actionDto.TargetUid);
 
-            var events = new List<GameEventDto>();
+
 
             try
             {
@@ -1262,7 +1563,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 // 2c. Attacker Validation
-                var attacker = currentPlayer.Field.FirstOrDefault(u => u.Uid.ToString() == actionDto.AttackerUid);
+                var attacker = currentPlayer.Field.FirstOrDefault(u => u.InstanceId.ToString() == actionDto.AttackerUid); // Changed Uid to InstanceId
                 if (attacker == null)
                 {
                     throw new GameLogicException($"Attacker unit (UID: {actionDto.AttackerUid}) not found on player {playerId}'s field.");
@@ -1272,9 +1573,11 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     throw new GameLogicException($"Only Followers can attack. Entity type: {attacker.Type}");
                 }
-                if (!attacker.CanAttack)
+                // Modified Check: Fail if CanAttack is false OR if already attacked this turn
+                if (!attacker.CanAttack || attacker.AttacksMadeThisTurn >= attacker.MaxAttacksPerTurn)
                 {
-                    throw new GameLogicException($"Attacker unit {attacker.Name} (UID: {actionDto.AttackerUid}) cannot attack this turn.");
+                    // Updated exception message to be more informative
+                    throw new GameLogicException($"Attacker unit {attacker.Name} (UID: {actionDto.AttackerUid}) cannot attack (CanAttack: {attacker.CanAttack}, AttacksMade: {attacker.AttacksMadeThisTurn}).");
                 }
 
                 // 2d. Target Validation
@@ -1296,9 +1599,10 @@ namespace ShadowverseBeyond.Server.Services
                     isTargetFriendly = targetPlayer.PlayerId == playerId;
                 }
                 // Add null-forgiving operator (!)
-                else if (targetEntity is UnitStateDto targetUnit)
+                else if (targetEntity is CardInstanceDto targetUnit) // Changed type check
                 {
-                    isTargetFriendly = currentPlayer.Field.Any(u => u.Uid == targetUnit.Uid);
+                    // Now targetUnit is CardInstanceDto, InstanceId access is valid
+                    isTargetFriendly = currentPlayer.Field.Any(u => u.InstanceId == targetUnit.InstanceId);
                 }
                 if (isTargetFriendly)
                 {
@@ -1312,7 +1616,8 @@ namespace ShadowverseBeyond.Server.Services
                 if (opponentUnitsWithWard.Any())
                 {
                     // Add null-forgiving operator (!)
-                    if (!(targetEntity is UnitStateDto targetWardUnit && opponentUnitsWithWard.Any(w => w.Uid == targetWardUnit.Uid)))
+                    // Assuming targetEntity/targetWardUnit is now CardInstanceDto, compare InstanceId (Guid)
+                    if (!(targetEntity is CardInstanceDto targetWardUnit && opponentUnitsWithWard.Any(w => w.InstanceId == targetWardUnit.InstanceId))) // Changed UnitStateDto to CardInstanceDto, Uid to InstanceId
                     {
                         throw new GameLogicException($"Must target a unit with Ward. Target UID: {actionDto.TargetUid}");
                     }
@@ -1327,51 +1632,53 @@ namespace ShadowverseBeyond.Server.Services
 
 
                 // Phase 1: Attack Declared Event (Aligned with M7.2)
-                // events.Add(new AttackDeclaredEventDto(playerId, attacker.Uid.ToString(), actionDto.TargetUid)); // Roo Test: Isolate SpellPlayed - Commented out
+                context.AddEvent(new AttackDeclaredEventDto(playerId, attacker.InstanceId.ToString(), actionDto.TargetUid)); // M8 Change: Use context | Changed Uid to InstanceId
                 _logger.LogWarning("[Roo Test:{GameId}] AttackDeclaredEvent generation SKIPPED.", gameState.GameId); // Roo Test: Add log
                 _logger.LogDebug("[GameService:{GameId}] Generated AttackDeclaredEvent (Player: {PlayerId}, Attacker: {AttackerUid}, Target: {TargetUid})",
-                    gameId, playerId, attacker.Uid, actionDto.TargetUid);
+                    gameId, playerId, attacker.InstanceId, actionDto.TargetUid); // Changed Uid to InstanceId
                 // Phase 2: Clash Timing (Placeholder)
                 // TODO: Implement Clash effects if target is Unit
 
                 // Phase 3: Damage Timing
                 _logger.LogDebug("[GameService:{GameId}] Entering Damage Phase.", gameId);
-                int attackerAttack = attacker.CurrentAttack ?? 0;
+                int attackerAttack = attacker.CurrentAttack; // Removed ?? 0 as CurrentAttack is not nullable
                 // Add null-forgiving operator (!) to satisfy non-nullable parameter type
                 // Pass necessary context to ApplyDamage for DamageDealtEventDto
-                ApplyDamage(targetEntity, attackerAttack, events, currentPlayer.PlayerId, opponentPlayer.PlayerId, attacker.Uid.ToString(), "Attack"); // CALL HELPER
+                ApplyDamage(targetEntity, attackerAttack, context, currentPlayer.PlayerId, opponentPlayer.PlayerId, attacker.InstanceId.ToString(), "Attack"); // M8 Change: Pass context | Changed Uid to InstanceId
 
                 // Counter-attack if target is a unit and attacker is still alive
                 // Add null-forgiving operator (!)
-                if (targetEntity is UnitStateDto defendingUnit && (attacker.CurrentHealth ?? 0) > 0) // Check attacker health before counter
+                if (targetEntity is CardInstanceDto defendingUnit && (attacker.CurrentHealth) > 0) // Check attacker health before counter | Removed ?? 0 | Changed type check
                 {
                     _logger.LogDebug("[GameService:{GameId}] Target is unit, initiating counter-attack.", gameId);
-                    int defenderAttack = defendingUnit.CurrentAttack ?? 0;
-                    // Check if defender is still alive before counter-attacking
-                    if ((defendingUnit.CurrentHealth ?? 0) > 0)
-                    {
-                        // Explicit cast for attacker (UnitStateDto) to IBoardEntityState needed for ApplyDamage
-                        // Pass necessary context for counter-attack damage event
-                        ApplyDamage((IBoardEntityState)attacker, defenderAttack, events, opponentPlayer.PlayerId, currentPlayer.PlayerId, defendingUnit.Uid.ToString(), "Attack"); // CALL HELPER
-                    }
-                    else
-                    {
-                        _logger.LogDebug("[GameService:{GameId}] Defending unit {DefenderUid} destroyed before counter-attack.", gameId, defendingUnit.Uid);
-                    }
+                    int defenderAttack = defendingUnit.CurrentAttack; // Removed ?? 0
+                                                                      // Check if defender is still alive before counter-attacking
+                                                                      // BUG-018 Fix: Comment out check to ensure counter-attack happens even if defender dies
+                                                                      // if ((defendingUnit.CurrentHealth) > 0) // Removed ?? 0
+                                                                      // { // BUG-018 Fix: Also comment out braces and else block
+                                                                      // Explicit cast for attacker (UnitStateDto) to IBoardEntityState needed for ApplyDamage
+                                                                      // Pass necessary context for counter-attack damage event
+                    ApplyDamage((IBoardEntityState)attacker, defenderAttack, context, opponentPlayer.PlayerId, currentPlayer.PlayerId, defendingUnit.InstanceId.ToString(), "Attack"); // M8 Change: Pass context | Changed Uid to InstanceId
+                    // } // BUG-018 Fix: Also comment out braces and else block
+                    // else // BUG-018 Fix: Also comment out braces and else block
+                    // { // BUG-018 Fix: Also comment out braces and else block
+                    //     _logger.LogDebug("[GameService:{GameId}] Defending unit {DefenderUid} destroyed before counter-attack.", gameId, defendingUnit.InstanceId); // Changed Uid to InstanceId
+                    // } // BUG-018 Fix: Also comment out braces and else block
                 }
 
                 // Phase 4: Death Timing
                 _logger.LogDebug("[GameService:{GameId}] Entering Death Phase.", gameId);
                 // Explicit cast for attacker (UnitStateDto) to IBoardEntityState needed for CheckAndHandleDeath
-                CheckAndHandleDeath((IBoardEntityState)attacker, currentPlayer, opponentPlayer, gameState, events); // CALL HELPER
+                CheckAndHandleDeath((IBoardEntityState)attacker, currentPlayer, opponentPlayer, gameState, context); // CALL HELPER
                 if (!gameState.IsGameOver) // Check if game ended during attacker's death check
                 {
                     // Add null-forgiving operator (!) to satisfy non-nullable parameter type
-                    CheckAndHandleDeath(targetEntity!, opponentPlayer, currentPlayer, gameState, events); // CALL HELPER
+                    CheckAndHandleDeath(targetEntity!, opponentPlayer, currentPlayer, gameState, context); // CALL HELPER
                 }
 
-                _logger.LogInformation("[GameService:{GameId}] Attack execution completed for Player {PlayerId}. Events generated: {EventCount}", gameId, playerId, events.Count);
-                return await Task.FromResult(events); // Suppress CS1998 by awaiting a completed task
+                _logger.LogInformation("[GameService:{GameId}] Attack execution completed for Player {PlayerId}.", gameId, playerId); // M8 Change: Removed event count
+                                                                                                                                      // M8 Change: Return true indicating successful execution (if no exception)
+                return await Task.FromResult(true); // Use Task.FromResult for async Task<T>
             }
             catch (GameLogicException ex)
             {
@@ -1385,12 +1692,14 @@ namespace ShadowverseBeyond.Server.Services
             }
         } // End of AttackAsync method
           // Implements IGameService.EvolveAsync M7.3 - Chunk 1/5 (Corrected)
-        public async Task<List<GameEventDto>> EvolveAsync(string gameId, string playerId, EvolveActionDto actionDto)
+          // Implements IGameService.EvolveAsync
+          // M8 Change: Added GameActionContext parameter, changed return type to Task<bool>
+        public async Task<bool> EvolveAsync(string gameId, string playerId, EvolveActionDto actionDto, GameActionContext context)
         {
             _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting Evolve: Unit={UnitUID}",
                 gameId, playerId, actionDto.UnitUid);
 
-            var events = new List<GameEventDto>();
+
 
             // Resolve dependencies within a scope
             using var scope = _serviceScopeFactory.CreateScope();
@@ -1414,7 +1723,7 @@ namespace ShadowverseBeyond.Server.Services
                 var playerState = gameState.Players.FirstOrDefault(p => p.PlayerId == playerId);
                 if (playerState == null) throw new GameLogicException($"Player state not found for {playerId}.");
 
-                var targetUnit = playerState.Field.FirstOrDefault(u => u.Uid.ToString() == actionDto.UnitUid);
+                var targetUnit = playerState.Field.FirstOrDefault(u => u.InstanceId.ToString() == actionDto.UnitUid); // Changed Uid to InstanceId
                 if (targetUnit == null) throw new GameLogicException($"Target unit with UID {actionDto.UnitUid} not found on player {playerId}'s board.");
 
                 // --- Evolution Eligibility Validation (Chunk 2 starts next) ---
@@ -1426,7 +1735,7 @@ namespace ShadowverseBeyond.Server.Services
                 // b. Check CanEvolve Flag
                 if (!playerState.CanEvolve) throw new GameLogicException("Player cannot evolve units this turn (likely already evolved or turn restriction).");
                 // Added Check: Unit Already Evolved
-                if (targetUnit.IsEvolved) throw new GameLogicException($"Unit {targetUnit.Name} ({targetUnit.Uid}) is already evolved.");
+                if (targetUnit.IsEvolved) throw new GameLogicException($"Unit {targetUnit.Name} ({targetUnit.InstanceId}) is already evolved."); // Changed Uid to InstanceId
 
 
                 // c. Check Turn Number Restrictions (Placeholder - needs refinement based on exact rules)
@@ -1441,23 +1750,24 @@ namespace ShadowverseBeyond.Server.Services
 
                 // --- Fetch Card Definitions (Chunk 3 starts next) ---
                 // 5. Fetch Base and Evolved Card Definitions - Chunk 3/5
-                var baseCardDef = await cardRepository.GetCardByIdAsync(targetUnit.CardId);
+                var baseCardDef = await cardRepository.GetCardByIdAsync(targetUnit.CardId); // Pass int CardId directly
                 if (baseCardDef == null) throw new GameLogicException($"Base card definition not found for CardId: {targetUnit.CardId}");
-                if (string.IsNullOrEmpty(baseCardDef.EvolveId)) throw new GameLogicException($"Card {baseCardDef.Name} ({baseCardDef.Id}) does not have an evolved form defined.");
+                // Check if EvolveId (now int?) has a value
+                if (!baseCardDef.EvolveId.HasValue) throw new GameLogicException($"Card {baseCardDef.Name} ({baseCardDef.Id}) does not have an evolved form defined.");
 
-                var evolvedCardDef = await cardRepository.GetCardByIdAsync(baseCardDef.EvolveId);
-                if (evolvedCardDef == null) throw new GameLogicException($"Evolved card definition not found for EvolvedCardId: {baseCardDef.EvolveId}");
+                // Pass the int value directly, safe due to the HasValue check above
+                var evolvedCardDef = await cardRepository.GetCardByIdAsync(baseCardDef.EvolveId.Value);
+                if (evolvedCardDef == null) throw new GameLogicException($"Evolved card definition not found for EvolvedCardId: {baseCardDef.EvolveId.Value}"); // Use .Value here too for logging
 
                 // --- Perform Evolution (Chunk 4 starts next) ---
                 // --- Perform Evolution (Chunk 4/5) ---
-                _logger.LogDebug("[GameService:{GameId}] Performing evolution for Unit {UnitName} ({UnitUid}).", gameId, targetUnit.Name, targetUnit.Uid);
+                _logger.LogDebug("[GameService:{GameId}] Performing evolution for Unit {UnitName} ({UnitUid}).", gameId, targetUnit.Name, targetUnit.InstanceId); // Changed Uid to InstanceId
 
                 // a. Deduct EP Cost
                 playerState.CurrentEP -= evolveEpCost;
                 // Corrected to use constructor
                 var epEvent = new EpUpdateEventDto(playerId, playerState.CurrentEP, playerState.MaxEP);
-                // events.Add(epEvent); // Roo Test: Isolate SpellPlayed - Commented out
-                _logger.LogWarning("[Roo Test:{GameId}] EpUpdateEvent generation SKIPPED in EvolveAsync.", gameState.GameId); // Roo Test: Add log
+                context.Events.Add(epEvent); // M8 Change: Add to context instead of events list
                 _logger.LogDebug("[GameService:{GameId}] Deducted {Cost} EP. Player {PlayerId} EP: {CurrentEP}/{MaxEP}.", gameId, evolveEpCost, playerId, playerState.CurrentEP, playerState.MaxEP);
 
 
@@ -1466,12 +1776,12 @@ namespace ShadowverseBeyond.Server.Services
                 var evolvedUnitState = originalUnitState with
                 {
                     // Update core stats from evolved definition
-                    CardId = evolvedCardDef.Id, // Update CardId to evolved version
+                    CardId = evolvedCardDef.Id, // Use int Id directly
                     Name = evolvedCardDef.Name,
-                    CurrentAttack = evolvedCardDef.Attack,
+                    CurrentAttack = evolvedCardDef.Attack ?? 0, // Handle nullable int? from CardDefinition
                     MaxAttack = evolvedCardDef.Attack, // Evolved form starts with full stats
-                    CurrentHealth = evolvedCardDef.Health,
-                    MaxHealth = evolvedCardDef.Health, // Evolved form starts with full stats
+                    CurrentHealth = evolvedCardDef.Health ?? 0, // Handle nullable int? from CardDefinition
+                    MaxHealth = evolvedCardDef.Health ?? 0, // Handle nullable int? from CardDefinition
                     IsEvolved = true, // Mark as evolved
 
                     // Combine keywords (Ensure no duplicates)
@@ -1486,42 +1796,68 @@ namespace ShadowverseBeyond.Server.Services
                 };
 
                 // Replace the old unit state with the new evolved state in the player's field list
-                int unitIndex = playerState.Field.FindIndex(u => u.Uid == targetUnit.Uid);
+                // Assuming targetUnit is now CardInstanceDto, compare InstanceId (Guid)
+                int unitIndex = playerState.Field.FindIndex(u => u.InstanceId == targetUnit.InstanceId); // Changed Uid to InstanceId
                 if (unitIndex != -1)
                 {
                     playerState.Field[unitIndex] = evolvedUnitState;
-                    _logger.LogDebug("[GameService:{GameId}] Unit {UnitUid} state updated to evolved form in player's field.", gameId, targetUnit.Uid);
+                    _logger.LogDebug("[GameService:{GameId}] Unit {UnitUid} state updated to evolved form in player's field.", gameId, targetUnit.InstanceId); // Changed Uid to InstanceId
                 }
                 else
                 {
                     // Should not happen if validation passed, but log defensively
-                    _logger.LogError("[GameService:{GameId}] CRITICAL: Evolving unit {UnitUid} not found in player's field during update phase!", gameId, targetUnit.Uid);
-                    throw new GameLogicException($"Internal error: Evolving unit {targetUnit.Uid} disappeared.");
+                    _logger.LogError("[GameService:{GameId}] CRITICAL: Evolving unit {UnitUid} not found in player's field during update phase!", gameId, targetUnit.InstanceId); // Changed Uid to InstanceId
+                    throw new GameLogicException($"Internal error: Evolving unit {targetUnit.InstanceId} disappeared."); // Changed Uid to InstanceId
                 }
 
 
                 // c. Generate Stat Change & Unit Evolved Events
                 // Corrected StatChangeEventDto initialization based on actual definition
                 // Corrected: Use constructor with sourcePlayerId (playerId is the source in Evolve context)
-                var statEvent = new StatChangeEventDto(playerId, evolvedUnitState.Uid.ToString(), evolvedUnitState.CurrentAttack, evolvedUnitState.CurrentHealth, evolvedUnitState.MaxHealth);
-                // events.Add(statEvent); // Roo Test: Isolate SpellPlayed - Commented out
-                _logger.LogWarning("[Roo Test:{GameId}] StatChangeEvent generation SKIPPED in EvolveAsync.", gameState.GameId); // Roo Test: Add log
+                var statEvent = new StatChangeEventDto(playerId, evolvedUnitState.InstanceId.ToString(), evolvedUnitState.CurrentAttack, evolvedUnitState.CurrentHealth, evolvedUnitState.MaxHealth); // Changed Uid to InstanceId
+                context.Events.Add(statEvent); // M8 Change: Add to context instead of events list
 
                 // Corrected UnitEvolvedEventDto initialization based on actual definition
-                var evolvedEvent = new UnitEvolvedEventDto(playerId, targetUnit.Uid.ToString(), evolvedUnitState);
-                // events.Add(evolvedEvent); // Roo Test: Isolate SpellPlayed - Commented out
-                _logger.LogWarning("[Roo Test:{GameId}] UnitEvolvedEvent generation SKIPPED in EvolveAsync.", gameState.GameId); // Roo Test: Add log
-                _logger.LogDebug("[GameService:{GameId}] Generated StatChange and UnitEvolved events for {UnitUid}.", gameId, evolvedUnitState.Uid);
+                // Create a CardInstanceDto specifically for the event from the UnitStateDto
+                var evolvedCardInstanceForEvent = new CardInstanceDto
+                {
+                    InstanceId = evolvedUnitState.InstanceId, // Map InstanceId (Guid) to InstanceId (Guid) | Changed Uid to InstanceId
+                    CardId = evolvedUnitState.CardId, // Direct assignment as CardId is already int
+                    Name = evolvedUnitState.Name,
+                    Cost = evolvedUnitState.Cost,
+                    Type = evolvedUnitState.Type,
+                    Attack = evolvedUnitState.MaxAttack ?? 0, // Use MaxAttack from UnitStateDto for base Attack in CardInstanceDto? Or Current? Let's use Max for now.
+                    Health = evolvedUnitState.MaxHealth, // Removed ?? 0
+                    CurrentAttack = evolvedUnitState.CurrentAttack, // Removed ?? 0
+                    CurrentHealth = evolvedUnitState.CurrentHealth, // Removed ?? 0
+                    MaxHealth = evolvedUnitState.MaxHealth, // Removed ?? 0
+                    Description = "", // CardInstanceDto doesn't have Description from UnitStateDto
+                    Keywords = evolvedUnitState.Keywords ?? new List<string>(),
+                    CanEvolve = false, // Already evolved
+                    IsEvolved = evolvedUnitState.IsEvolved,
+                    CanAttack = evolvedUnitState.CanAttack,
+                    Zone = CardZone.Field, // It's on the field
+                    AttacksMadeThisTurn = evolvedUnitState.AttacksMadeThisTurn,
+                    MaxAttack = evolvedUnitState.MaxAttack ?? 0 // Assuming CardInstanceDto also has MaxAttack
+                };
+                var evolvedEvent = new UnitEvolvedEventDto(playerId, evolvedCardInstanceForEvent); // Pass the new CardInstanceDto
+                context.Events.Add(evolvedEvent); // M8 Change: Add to context instead of events list
+                _logger.LogDebug("[GameService:{GameId}] Generated StatChange and UnitEvolved events for {UnitUid}.", gameId, evolvedUnitState.InstanceId); // Changed Uid to InstanceId
 
 
                 // d. Update Player State (Prevent further evolution this turn)
                 playerState.CanEvolve = false;
                 _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} CanEvolve flag set to false for the rest of the turn.", gameId, playerId);
-                // --- Broadcasting & Cleanup (Chunk 5/5) ---
-                _logger.LogInformation("[GameService:{GameId}] Evolution logic completed for Player {PlayerId}, Unit {UnitUid}. Returning {EventCount} events.",
-                    gameId, playerId, evolvedUnitState.Uid, events.Count);
 
-                return events; // Return the collected events
+                // Send EP update to sync CanEvolve state to frontend
+                var canEvolveUpdateEvent = new EpUpdateEventDto(playerId, playerState.CurrentEP, playerState.MaxEP);
+                context.Events.Add(canEvolveUpdateEvent);
+
+                // --- Broadcasting & Cleanup (Chunk 5/5) ---
+                _logger.LogInformation("[GameService:{GameId}] Evolution logic completed for Player {PlayerId}, Unit {UnitUid}.", gameId, playerId, evolvedUnitState.InstanceId); // M8 Change: Removed event count from log | Changed Uid to InstanceId
+
+                // M8 Change: Return true indicating successful execution (if no exception)
+                return await Task.FromResult(true); // Use Task.FromResult for async Task<T>
             }
             catch (GameLogicException ex)
             {
@@ -1551,48 +1887,31 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="playerState">The player drawing the cards.</param>
         /// <param name="drawCount">The number of cards to draw.</param>
         /// <returns>A list of cards drawn.</returns>
-        private List<CardDto> DrawCards(PlayerStateDto playerState, int drawCount)
+        private List<CardInstanceDto> DrawCards(PlayerStateDto playerState, int drawCount)
         {
-            // --- Roo Debug: Log DrawCards Entry ---
-            _logger.LogWarning("[DEBUG_DRAW_HELPER] Entering DrawCards for Player {PlayerId}. Requesting {DrawCount} cards. Initial Deck Count: {InitialDeckCount}",
-                playerState.PlayerId, drawCount, playerState.Deck.Count);
-            // --- End Roo Debug ---
-
-            // Assuming GameId is accessible via playerState or context if needed for detailed logging
             _logger.LogDebug("[GameService] Player {PlayerId} attempting to draw {DrawCount} cards. Deck size: {DeckSize}",
                 playerState.PlayerId, drawCount, playerState.Deck.Count);
 
-            List<CardDto> drawnCards = new List<CardDto>();
+            List<CardInstanceDto> drawnCards = new();
             for (int i = 0; i < drawCount; i++)
             {
-                if (playerState.Deck.Any())
+                if (playerState.Deck.Count > 0)
                 {
-                    // --- Roo Debug: Log before accessing Deck[0] ---
-                    _logger.LogWarning("[DEBUG_DRAW_HELPER] Inside loop (i={LoopIndex}), Player {PlayerId}. Attempting to access Deck[0]. Current Deck Count: {DeckCount}",
-                        i, playerState.PlayerId, playerState.Deck.Count);
-                    // --- End Roo Debug ---
-                    CardDto drawnCard = playerState.Deck[0];
+                    CardInstanceDto drawnCard = playerState.Deck[0];
                     drawnCards.Add(drawnCard);
                     playerState.Deck.RemoveAt(0);
-                    // --- Roo Debug: Log after removing from Deck ---
-                    _logger.LogWarning("[DEBUG_DRAW_HELPER] Inside loop (i={LoopIndex}), Player {PlayerId}. Removed card {CardId} ({CardUid}) from deck. New Deck Count: {DeckCount}",
-                       i, playerState.PlayerId, drawnCard.CardId, drawnCard.Uid, playerState.Deck.Count);
-                    // --- End Roo Debug ---
                 }
                 else
                 {
                     _logger.LogWarning("[GameService] Attempted to draw from empty deck for Player {PlayerId}.", playerState.PlayerId);
-                    // TODO: Implement fatigue/damage for drawing from empty deck? For now, just stop drawing.
                     break;
                 }
             }
-            playerState.DeckCount = playerState.Deck.Count; // Update deck count
-            playerState.Hand.AddRange(drawnCards); // Add drawn cards to hand
-            // --- Roo Debug: Log DrawCards Exit ---
-            _logger.LogWarning("[DEBUG_DRAW_HELPER] Exiting DrawCards for Player {PlayerId}. Drawn cards count: {DrawnCount}. Final Hand Count: {HandCount}. Final Deck Count: {FinalDeckCount}",
-                 playerState.PlayerId, drawnCards.Count, playerState.Hand.Count, playerState.DeckCount);
-            // --- End Roo Debug ---
-            _logger.LogDebug("[GameService] Player {PlayerId} drew {ActualDrawCount} cards. New hand size: {HandSize}, New deck size: {DeckSize}", // Keep original debug log too
+
+            playerState.DeckCount = playerState.Deck.Count;
+            playerState.Hand.AddRange(drawnCards);
+
+            _logger.LogDebug("[GameService] Player {PlayerId} drew {ActualDrawCount} cards. New hand size: {HandSize}, New deck size: {DeckSize}",
                  playerState.PlayerId, drawnCards.Count, playerState.Hand.Count, playerState.DeckCount);
             return drawnCards;
         }
@@ -1612,12 +1931,12 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="endingPlayerState">The state of the player whose turn is ending.</param>
         /// <param name="gameState">The current game state.</param>
         /// <returns>A list of events generated during end-of-turn processing.</returns>
-        private List<GameEventDto> ProcessEndOfTurn(PlayerStateDto endingPlayerState, GameStateDto gameState)
+        private void ProcessEndOfTurn(PlayerStateDto endingPlayerState, GameStateDto gameState, GameActionContext context) // M8 Change: Added context, void return
         {
             // Removed TurnNumber from log
             _logger.LogInformation("[GameService:{GameId}] Processing EndOfTurn for Player {PlayerId}.",
                 gameState.GameId, endingPlayerState.PlayerId);
-            var events = new List<GameEventDto>();
+
 
             // M7 Design Doc - Step 4.1: Update HasTakenFirstTurn
             if (!endingPlayerState.HasTakenFirstTurn)
@@ -1653,14 +1972,14 @@ namespace ShadowverseBeyond.Server.Services
 
             // Global turn number removed. TurnEndedEvent now only needs player IDs.
             // Removed: int endingTurnNumber = gameState.TurnNumber;
-            events.Add(new TurnEndedEventDto(endingPlayerState.PlayerId, opponentPlayerState.PlayerId)); // Use 2-argument constructor
-                                                                                                         // Removed endingTurnNumber and {TurnNumber} from log as it no longer exists
+            context.AddEvent(new TurnEndedEventDto(endingPlayerState.PlayerId, opponentPlayerState.PlayerId)); // M8 Change: Use context
+                                                                                                               // Removed endingTurnNumber and {TurnNumber} from log as it no longer exists
             _logger.LogInformation("[GameService:{GameId}] Generated TurnEndedEvent. Next Player: {NextPlayerId}.",
                 gameState.GameId, opponentPlayerState.PlayerId);
 
 
-            _logger.LogInformation("[GameService:{GameId}] EndOfTurn processing complete for Player {PlayerId}. Events generated: {Count}", gameState.GameId, endingPlayerState.PlayerId, events.Count);
-            return events;
+            _logger.LogInformation("[GameService:{GameId}] EndOfTurn processing complete for Player {PlayerId}.", gameState.GameId, endingPlayerState.PlayerId); // M8 Change: Removed event count and return
+                                                                                                                                                                 // M8 Change: Removed return events;
         } // End of ProcessEndOfTurn (Replacement)
 
         /// <summary>
@@ -1673,7 +1992,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="isSecondPlayerFirstTurn">Indicates if this is the second player's very first turn (for draw 2 rule).</param>
         /// <returns>A list of game events generated during start-of-turn processing.</returns>
 
-        private void ShuffleDeck(List<CardDto> deck) // Start of ShuffleDeck
+        private void ShuffleDeck(List<CardInstanceDto> deck) // Start of ShuffleDeck (Parameter type changed)
         {
             _logger.LogWarning("[GameService] Placeholder ShuffleDeck called."); // Original line 725 content
                                                                                  // Placeholder: Simple Fisher-Yates shuffle
@@ -1687,23 +2006,27 @@ namespace ShadowverseBeyond.Server.Services
             {
                 n--;
                 int k = rng.Next(n + 1);
-                CardDto value = deck[k];
+                CardInstanceDto value = deck[k]; // Changed type to match deck parameter
                 deck[k] = deck[n];
                 deck[n] = value;
             }
         }
 
-        private List<CardDto> DrawInitialHand(List<CardDto> deck, int handSize)
+        private List<CardInstanceDto> DrawInitialHand(List<CardInstanceDto> deck, int handSize) // Changed types to CardInstanceDto
         {
             _logger.LogWarning("[GameService] Placeholder DrawInitialHand called.");
             // Placeholder: Draw cards from the top of the deck
-            List<CardDto> hand = new List<CardDto>();
+            List<CardInstanceDto> hand = new List<CardInstanceDto>(); // Changed type to CardInstanceDto
             int drawCount = Math.Min(handSize, deck.Count);
             for (int i = 0; i < drawCount; i++)
             {
                 if (deck.Count > 0) // Check if deck is not empty
                 {
-                    hand.Add(deck[0]);
+                    // Note: The original code directly added deck[0] to hand.
+                    // We need to declare the variable first if we want to use it,
+                    // but since the original didn't, let's keep it direct but with the correct type.
+                    // CardInstanceDto drawnCard = deck[0]; // This would be needed if we used the variable
+                    hand.Add(deck[0]); // Keep direct add, type compatibility handled by List<CardInstanceDto>
                     deck.RemoveAt(0);
                 }
                 else
@@ -1718,52 +2041,109 @@ namespace ShadowverseBeyond.Server.Services
 
         private IBoardEntityState? FindEntityByUid(GameStateDto gameState, string uid)
         {
+            if (!Guid.TryParse(uid, out Guid targetGuid)) // Try parse the target UID string to Guid
+            {
+                // If the UID is not a valid Guid, it might be a PlayerId (for leader targeting via PlayerStateDto)
+                // Check PlayerId first, as PlayerStateDto also implements IBoardEntityState
+                var targetPlayerById = gameState.Players.FirstOrDefault(p => p.PlayerId == uid);
+                if (targetPlayerById != null)
+                {
+                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by PlayerId: {PlayerId}", uid);
+                    // If the target ID matches a player ID, return their LeaderCard as the targetable entity
+                    if (targetPlayerById.LeaderCard != null)
+                    {
+                        return targetPlayerById.LeaderCard;
+                    }
+                    else
+                    {
+                        return null; // Or handle appropriately
+                    }
+                }
+                // If not a valid Guid and not a PlayerId, it's an invalid target UID format
+                _logger.LogWarning("[GameService:FindEntityByUid] Target UID '{TargetUid}' is not a valid Guid or PlayerId.", uid);
+                return null;
+            }
+
+            // If it's a valid Guid, search followers and leader cards by InstanceId
             foreach (var player in gameState.Players)
             {
-                // Check if UID matches PlayerId (assuming PlayerId is the UID for leaders)
-                if (player.PlayerId == uid)
+                // Check Leader Card InstanceId
+                if (player.LeaderCard?.InstanceId == targetGuid)
                 {
-                    return player; // Found player
+                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by LeaderCard InstanceId: {InstanceId} for Player {PlayerId}", targetGuid, player.PlayerId);
+                    return player.LeaderCard; // Return the Leader CardInstanceDto
                 }
-                // Check units on the player's field
-                // Ensure Uid is compared as string
-                var unit = player.Field.FirstOrDefault(u => u.Uid.ToString() == uid);
+
+                // Check units on the player's field by InstanceId
+                var unit = player.Field.FirstOrDefault(u => u.InstanceId == targetGuid);
                 if (unit != null)
                 {
+                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Field Unit InstanceId: {InstanceId} for Player {PlayerId}", targetGuid, player.PlayerId);
                     return unit; // Found unit
                 }
             }
+
+            _logger.LogWarning("[GameService:FindEntityByUid] Target entity with InstanceId/PlayerId '{TargetUid}' not found after checking all players, leaders, and fields.", uid);
             return null; // Not found
         }
 
-        // Modified signature to accept necessary context for DamageDealtEventDto
-        private void ApplyDamage(IBoardEntityState targetEntity, int damage, List<GameEventDto> events, string sourcePlayerId, string targetPlayerId, string? sourceUid, string damageType)
+        // M8 Change: Signature updated to use GameActionContext
+        private void ApplyDamage(IBoardEntityState targetEntity, int damage, GameActionContext context, string sourcePlayerId, string targetPlayerId, string? sourceUid, string damageType)
         {
             // Check for null or non-positive damage first
             if (targetEntity == null || damage <= 0) return; // Corrected <=
 
-            _logger.LogDebug("[GameService] Applying {Damage} damage to Entity {TargetUid} (Owned by {TargetPlayerId}) from Source {SourceUid} (Player {SourcePlayerId}). Type: {DamageType}. Current Health: {CurrentHealth}",
-                damage, targetEntity.Uid, targetPlayerId, sourceUid ?? "Unknown", sourcePlayerId, damageType, targetEntity.Health);
+            // Determine target UID for logging/events and get original health
+            string eventTargetUid;
+            int originalHealth;
+            int newHealth;
+            int changeAmount;
 
-            int originalHealth = targetEntity.Health;
-            targetEntity.Health -= damage;
-            int newHealth = targetEntity.Health;
-            int changeAmount = newHealth - originalHealth;
+            if (targetEntity is CardInstanceDto cardInstance)
+            {
+                eventTargetUid = cardInstance.InstanceId.ToString();
+                originalHealth = cardInstance.CurrentHealth; // Use CurrentHealth for CardInstanceDto
+                _logger.LogTrace("[GameService:ApplyDamage] Target is CardInstanceDto. Using InstanceId '{InstanceId}'. Original Health: {OriginalHealth}", eventTargetUid, originalHealth);
 
-            // Generate Damage Dealt event using the new constructor
-            // events.Add(new DamageDealtEventDto(sourcePlayerId, targetEntity.Uid, damage, targetPlayerId, sourceUid, damageType)); // Roo Test: Isolate SpellPlayed - Commented out
-            _logger.LogWarning("[Roo Test] DamageDealtEvent generation SKIPPED for target {TargetUid}.", targetEntity.Uid); // Roo Test: Add log
+                // Apply damage to CardInstanceDto
+                cardInstance.CurrentHealth -= damage;
+                newHealth = cardInstance.CurrentHealth;
+            }
+            else if (targetEntity is PlayerStateDto playerState && playerState.LeaderCard != null)
+            {
+                // Target is PlayerStateDto, use LeaderCard's InstanceId and Health
+                eventTargetUid = playerState.LeaderCard.InstanceId.ToString();
+                originalHealth = playerState.LeaderCard.CurrentHealth; // Use LeaderCard.CurrentHealth
+                _logger.LogTrace("[GameService:ApplyDamage] Target is PlayerStateDto. Using LeaderCard InstanceId '{InstanceId}'. Original Health: {OriginalHealth}", eventTargetUid, originalHealth);
 
-            // Generate Health Changed event
-            // Corrected to use the new constructor, passing targetPlayerId as the owner of the entity whose health changed
-            // events.Add(new HealthChangedEventDto(targetPlayerId, targetEntity.Uid, newHealth, changeAmount)); // Roo Test: Isolate SpellPlayed - Commented out
-            _logger.LogWarning("[Roo Test] HealthChangedEvent generation SKIPPED for target {TargetUid}.", targetEntity.Uid); // Roo Test: Add log
+                // Apply damage to LeaderCard
+                playerState.LeaderCard.CurrentHealth -= damage;
+                newHealth = playerState.LeaderCard.CurrentHealth;
+            }
+            else
+            {
+                // Fallback/Error case: Log warning and do not apply damage if type is unexpected or LeaderCard is null
+                eventTargetUid = targetEntity.Uid.ToString(); // Use original Uid as fallback for logging
+                originalHealth = targetEntity.Health; // Use original Health as fallback for logging
+                _logger.LogWarning("[GameService:ApplyDamage] Target entity type is unexpected ({EntityType}) or LeaderCard is null for PlayerStateDto. Damage not applied. Fallback UID: '{FallbackUid}'. Original Health: {OriginalHealth}", targetEntity.GetType().Name, eventTargetUid, originalHealth);
+                return; // Do not proceed with damage application or event generation for unexpected types
+            }
 
-            _logger.LogDebug("[GameService] Entity {TargetUid} health changed to {NewHealth}. Change: {ChangeAmount}. Events added.",
-               targetEntity.Uid, newHealth, changeAmount);
+            changeAmount = newHealth - originalHealth;
+
+            // Log damage application (using eventTargetUid)
+            _logger.LogDebug("[GameService] Applying {Damage} damage to Entity {TargetUid} (Owned by {TargetPlayerId}) from Source {SourceUid} (Player {SourcePlayerId}). Type: {DamageType}. Original Health: {OriginalHealth}, New Health: {NewHealth}",
+                damage, eventTargetUid, targetPlayerId, sourceUid ?? "Unknown", sourcePlayerId, damageType, originalHealth, newHealth);
+
+            // Generate events (using eventTargetUid and correct newHealth/changeAmount)
+            context.AddEvent(new DamageDealtEventDto(sourcePlayerId, eventTargetUid, damage, targetPlayerId, sourceUid, damageType));
+            context.AddEvent(new HealthChangedEventDto(targetPlayerId, eventTargetUid, newHealth, changeAmount));
+
+            _logger.LogDebug("[GameService] Entity {TargetUid} health changed to {NewHealth}. Change: {ChangeAmount}.",
+               eventTargetUid, newHealth, changeAmount);
         }
 
-        private void CheckAndHandleDeath(IBoardEntityState entity, PlayerStateDto owner, PlayerStateDto opponent, GameStateDto gameState, List<GameEventDto> events)
+        private void CheckAndHandleDeath(IBoardEntityState entity, PlayerStateDto owner, PlayerStateDto opponent, GameStateDto gameState, GameActionContext context)
         {
             if (entity == null)
             {
@@ -1772,124 +2152,123 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             bool isOnField = true;
-            if (entity is UnitStateDto unitCheck)
+            if (entity is CardInstanceDto unitCheck) // Changed type check
             {
-                isOnField = owner.Field.Any(u => u.Uid == unitCheck.Uid);
+                // Now unitCheck is CardInstanceDto, InstanceId access is valid
+                isOnField = owner.Field.Any(u => u.InstanceId == unitCheck.InstanceId);
             }
 
-            if (!isOnField || entity.Health > 0) return; // Not dead or already removed
+            // Only return early if it's NOT a leader AND (!isOnField or Health > 0)
+            // Leaders should always proceed to the health check regardless of isOnField status.
+            if (entity is CardInstanceDto card && card.Zone != CardZone.Leader && (!isOnField || card.CurrentHealth > 0))
+            {
+                return; // Return early for non-leader entities that are not dead or not on field
+            }
+            // If it IS a leader, or a follower on field with health <= 0, continue processing...
+            // Also check health directly here for leaders, as the above condition skips it for them.
+            if (entity.Health > 0) return; // Return if entity (leader or follower) is not dead
 
-            _logger.LogInformation("[GameService:{GameId}] Entity {EntityUid} has zero or less health ({Health}) and is present. Processing death.",
+            _logger.LogInformation("[GameService:{GameId}] Entity {EntityUid} has zero or less health ({Health}). Processing death/game over check.", // Adjusted log message
                 gameState.GameId, entity.Uid, entity.Health);
 
-            if (entity is UnitStateDto unit)
+            if (entity is CardInstanceDto cardInstance) // Check if the entity is a CardInstanceDto (Follower or Leader)
             {
-                var unitToRemove = owner.Field.FirstOrDefault(u => u.Uid == unit.Uid);
-                if (unitToRemove != null)
+                // Check if this CardInstanceDto is the Leader and is defeated
+                if (cardInstance.Zone == CardZone.Leader && cardInstance.CurrentHealth <= 0)
                 {
-                    bool removed = owner.Field.Remove(unitToRemove);
-                    if (removed)
+                    _logger.LogInformation("[GameService:{GameId}] Player {PlayerId}'s Leader ({LeaderInstanceId}) has been defeated (Health: {LeaderHealth}).",
+                        gameState.GameId, owner.PlayerId, cardInstance.InstanceId, cardInstance.CurrentHealth);
+
+                    if (!gameState.IsGameOver)
                     {
-                        _logger.LogInformation("[GameService:{GameId}] Unit {UnitName} ({UnitUid}) removed from Player {OwnerId}'s field.",
-                           gameState.GameId, unit.Name, unit.Uid, owner.PlayerId);
-                        // events.Add(new UnitDestroyedEventDto(opponent.PlayerId, unit.Uid.ToString(), owner.PlayerId)); // Roo Test: Isolate SpellPlayed - Commented out
-                        _logger.LogWarning("[Roo Test:{GameId}] UnitDestroyedEvent generation SKIPPED for {UnitUid}.", gameState.GameId, unit.Uid); // Roo Test: Add log
-                                                                                                                                                    // TODO: Graveyard logic
+                        gameState.IsGameOver = true;
+                        gameState.WinnerId = opponent.PlayerId;
+                        gameState.GameMessage = $"Game Over! Winner: {opponent.PlayerId}";
+                        _logger.LogInformation("[GameService:{GameId}] Game Over! Winner declared: {WinnerId}", gameState.GameId, opponent.PlayerId);
+                        context.AddEvent(new GameOverEventDto(owner.PlayerId, opponent.PlayerId, opponent.PlayerId, owner.PlayerId)); // Add GameOver event
                     }
                     else
                     {
-                        _logger.LogWarning("[GameService:{GameId}] Failed to remove unit {UnitUid} from owner {OwnerId}'s field list, though it was found and health <= 0.", gameState.GameId, unit.Uid, owner.PlayerId); // Corrected <=
+                        _logger.LogWarning("[GameService:{GameId}] Player {PlayerId}'s Leader defeated, but game was already marked as over.", gameState.GameId, owner.PlayerId);
+                    }
+                    // Important: Return here after handling leader death to prevent follower death logic from running on the leader
+                    return;
+                }
+
+                // If it's not a defeated leader, check if it's a defeated follower on the field
+                if (cardInstance.Zone == CardZone.Field && cardInstance.CurrentHealth <= 0)
+                {
+                    var unitToRemove = owner.Field.FirstOrDefault(u => u.InstanceId == cardInstance.InstanceId);
+                    if (unitToRemove != null)
+                    {
+                        bool removed = owner.Field.Remove(unitToRemove);
+                        if (removed)
+                        {
+                            _logger.LogInformation("[GameService:{GameId}] Unit {UnitName} ({UnitInstanceId}) removed from Player {OwnerId}'s field.",
+                               gameState.GameId, cardInstance.Name, cardInstance.InstanceId, owner.PlayerId);
+                            context.AddEvent(new UnitDestroyedEventDto(opponent.PlayerId, cardInstance.InstanceId.ToString(), owner.PlayerId));
+
+                            // TODO: Graveyard logic
+                        }
+                        else
+                        {
+                            _logger.LogWarning("[GameService:{GameId}] Failed to remove unit {UnitInstanceId} from owner {OwnerId}'s field list, though it was found and health <= 0.", gameState.GameId, cardInstance.InstanceId, owner.PlayerId);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[GameService:{GameId}] Dead unit {UnitInstanceId} checked again but not found on owner {OwnerId}'s field list.", gameState.GameId, cardInstance.InstanceId, owner.PlayerId);
                     }
                 }
-                else
-                {
-                    _logger.LogWarning("[GameService:{GameId}] Dead unit {UnitUid} checked again but not found on owner {OwnerId}'s field list.", gameState.GameId, unit.Uid, owner.PlayerId);
-                }
+                // If it's a CardInstanceDto but not a defeated leader or follower (e.g., healthy leader/follower), do nothing more here.
             }
-            else if (entity is PlayerStateDto player) // Player (Leader) died
+            // Removed the redundant 'else if (entity is PlayerStateDto player)' block
+            else // Handle cases where entity is not CardInstanceDto (shouldn't happen with current logic)
             {
-                // Note: Checking player.Health access later if issues persist
-                _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} has been defeated.", gameState.GameId, player.PlayerId); // Temporarily removed health log
-
-                if (!gameState.IsGameOver)
-                {
-                    gameState.IsGameOver = true;
-                    gameState.WinnerId = opponent.PlayerId;
-                    // Note: Checking gameState.Status access later if issues persist
-                    // gameState.Status = GameStatus.Finished;
-                    gameState.GameMessage = $"Game Over! Winner: {opponent.PlayerId}";
-                    _logger.LogInformation("[GameService:{GameId}] Game Over! Winner declared: {WinnerId}", gameState.GameId, opponent.PlayerId);
-
-                    // Corrected to use constructor, passing necessary IDs from context
-                    // events.Add(new GameOverEventDto(owner.PlayerId, opponent.PlayerId, owner.PlayerId, null)); // Roo Test: Isolate SpellPlayed - Commented out
-                    _logger.LogWarning("[Roo Test:{GameId}] GameOverEvent generation SKIPPED for Player {PlayerId}.", gameState.GameId, owner.PlayerId); // Roo Test: Add log
-                }
-                else
-                {
-                    _logger.LogWarning("[GameService:{GameId}] Player {PlayerId} defeated, but game was already marked as over.", gameState.GameId, player.PlayerId);
-                }
-            }
-            else
-            {
-                _logger.LogError("[GameService:{GameId}] CheckAndHandleDeath called with an unknown entity type implementing IBoardEntityState. UID: {EntityUid}", gameState.GameId, entity.Uid);
+                _logger.LogError("[GameService:{GameId}] CheckAndHandleDeath called with an unexpected entity type: {EntityType}. UID: {EntityUid}", gameState.GameId, entity.GetType().Name, entity.Uid);
             }
         } // End of CheckAndHandleDeath
           // --- Helper Methods for HandlePlayCardAsync ---
 
         // Fetches CardDefinition and CardDto from hand asynchronously before main lock
-        private async Task<(CardDefinition? CardDefinition, CardDto? CardInHand)> FetchCardDataAsync(string gameId, string playerId, string cardUid)
+        private async Task<(CardDefinition? CardDefinition, CardInstanceDto? CardInHand)> FetchCardDataAsync(string gameId, string playerId, string cardUid)
         {
-            _logger.LogWarning("--- FetchCardDataAsync ENTERED for Game {GameId}, Player {PlayerId}, Card {CardUid} ---", gameId, playerId, cardUid); // TRACE 1
             _logger.LogDebug("[GameService:{GameId}:FetchCardData] Starting fetch for CardUID {CardUID}.", gameId, cardUid);
             if (string.IsNullOrEmpty(cardUid))
                 throw new GameLogicException("Card UID cannot be empty for fetching.");
 
             string cardIdToFetch;
-            CardDto? cardInHand;
+            CardInstanceDto? cardInHand;
             object gameLock = _gameLocks.GetOrAdd(gameId, _ => new object());
 
             // Short lock just to get cardId from hand state
             lock (gameLock)
             {
-                _logger.LogWarning("--- FetchCardDataAsync GOT LOCK for Game {GameId}, Player {PlayerId} ---", gameId, playerId); // TRACE 2
                 if (!_gameStates.TryGetValue(gameId, out var tempGameState))
                     throw new GameLogicException($"Game not found: {gameId} (during card fetch)");
                 var tempPlayerState = tempGameState.Players.FirstOrDefault(p => p.PlayerId == playerId);
                 if (tempPlayerState == null)
                     throw new GameLogicException($"Player state error in game {gameId} (during card fetch).");
 
-                // Parse input string cardUid to Guid for comparison
-                // --- ADD DETAILED LOGGING BEFORE FINDING CARD ---
-                var currentHandUidsForLog = tempPlayerState.Hand.Select(c => c.Uid.ToString()).ToList();
-                _logger.LogWarning("[GameService:{GameId}:FetchCardData:DEBUG] Checking hand for Player {PlayerId}. Server believes hand contains UIDs: [{HandUidsString}]. Looking for UID: {CardUidToFind}",
-                    gameId, playerId, string.Join(", ", currentHandUidsForLog), cardUid);
-                // --- END ADDED LOGGING ---
-                cardInHand = tempPlayerState.Hand.FirstOrDefault(c => Guid.TryParse(cardUid, out Guid uidToCompare) && c.Uid == uidToCompare);
-                // TRACE 3 - Log hand state simply before lookup
-                var handUids = tempPlayerState.Hand?.Select(c => c.Uid.ToString()).ToList() ?? new List<string>();
-                _logger.LogWarning("--- FetchCardDataAsync CHECKING HAND for Player {PlayerId}. Hand UIDs: [{HandUidsString}]. Seeking: {CardUid}",
-                    playerId, string.Join(",", handUids), cardUid);
+                cardInHand = tempPlayerState.Hand.FirstOrDefault(c => Guid.TryParse(cardUid, out Guid uidToCompare) && c.InstanceId == uidToCompare);
                 if (cardInHand == null)
                     throw new GameLogicException($"Card with UID {cardUid} not found in player {playerId}'s hand (during card fetch).");
-                cardIdToFetch = cardInHand.CardId;
-            } // Release short lock
+                cardIdToFetch = cardInHand.CardId.ToString();
+            }
 
             _logger.LogDebug("[GameService:{GameId}:FetchCardData] Need definition for CardId {CardIdToFetch}.", gameId, cardIdToFetch);
-            // Fetch definition asynchronously outside the lock
-            using (var scope = _serviceScopeFactory.CreateScope())
-            {
-                var cardRepository = scope.ServiceProvider.GetRequiredService<ICardRepository>();
-                _logger.LogDebug("[GameService:{GameId}:FetchCardData] Resolved ICardRepository.", gameId);
-                var cardDefinition = await cardRepository.GetCardByIdAsync(cardIdToFetch);
-                if (cardDefinition == null)
-                    throw new GameLogicException($"Card definition not found for CardId: {cardIdToFetch}");
-                _logger.LogDebug("[GameService:{GameId}:FetchCardData] Fetched definition for {CardName} ({CardId}).", gameId, cardDefinition.Name, cardDefinition.Id);
-                return (cardDefinition, cardInHand); // Return both pieces of data
-            }
+            using var scope = _serviceScopeFactory.CreateScope();
+            var cardRepository = scope.ServiceProvider.GetRequiredService<ICardRepository>();
+            var cardDefinition = await cardRepository.GetCardByIdAsync(int.Parse(cardIdToFetch));
+            if (cardDefinition == null)
+                throw new GameLogicException($"Card definition not found for CardId: {cardIdToFetch}");
+
+            _logger.LogDebug("[GameService:{GameId}:FetchCardData] Fetched definition for {CardName} ({CardId}).", gameId, cardDefinition.Name, cardDefinition.Id);
+            return (cardDefinition, cardInHand);
         }
 
         // Validates preconditions for playing a card inside the main lock
-        private void ValidatePlayCardPreconditions(GameStateDto gameState, PlayerStateDto playerState, CardDefinition cardDefinition, CardDto cardInHand, PlayCardActionDto actionDto, string playerId)
+        private void ValidatePlayCardPreconditions(GameStateDto gameState, PlayerStateDto playerState, CardDefinition cardDefinition, CardInstanceDto? cardInHand, PlayCardActionDto actionDto, string playerId) // Changed CardDto to CardInstanceDto?
         {
             _logger.LogDebug("[GameService:{GameId}:ValidatePlayCard] Validating preconditions for Player {PlayerId}, Card {CardName}.", gameState.GameId, playerId, cardDefinition.Name);
             if (gameState.IsGameOver) throw new GameLogicException("Game is already over.");
@@ -1897,9 +2276,12 @@ namespace ShadowverseBeyond.Server.Services
             if (gameState.Phase != GamePhase.Main) throw new GameLogicException($"Can only play cards during the Main phase (Current: {gameState.Phase}).");
 
             // Re-validate card still in hand inside lock
-            if (!playerState.Hand.Any(c => c.Uid == cardInHand.Uid))
-                throw new GameLogicException($"Card {cardInHand.Uid} disappeared from hand unexpectedly (inside lock validation).");
+            // Compare InstanceId from CardInstanceDto with InstanceId from CardInstanceDto?
+            if (!playerState.Hand.Any(c => c.InstanceId == cardInHand?.InstanceId)) // Changed cardInHand.Uid to cardInHand?.InstanceId (added null check)
+                throw new GameLogicException($"Card {cardInHand?.InstanceId} disappeared from hand unexpectedly (inside lock validation)."); // Changed cardInHand.Uid to cardInHand?.InstanceId (added null check)
 
+            // Null check for cardInHand before accessing Cost (though definition should exist if hand check passed)
+            if (cardInHand == null) throw new GameLogicException("Internal error: Card instance became null after hand check.");
             if (playerState.CurrentPP < cardDefinition.Cost) throw new GameLogicException($"Not enough PP to play {cardDefinition.Name}. Requires {cardDefinition.Cost}, has {playerState.CurrentPP}.");
 
             const int MaxFieldSize = 7; // Define here or pass as argument
@@ -1920,81 +2302,145 @@ namespace ShadowverseBeyond.Server.Services
 
         // Applies PP cost and removes card from hand inside the main lock - Accepts gameId for logging
         // M8 Change: Signature updated to use GameActionContext
-        private void ApplyPlayCardCostAndRemoveCard(GameActionContext context, string gameId, PlayerStateDto playerState, CardDto cardInHand, CardDefinition cardDefinition)
+        private void ApplyPlayCardCostAndRemoveCard(GameActionContext context, string gameId, PlayerStateDto playerState, CardInstanceDto? cardInHand, CardDefinition cardDefinition) // Changed CardDto to CardInstanceDto?
         {
-            _logger.LogDebug("[GameService:{GameId}:ApplyCost] Applying cost and removing card {CardUID} ({CardName}).", gameId, cardInHand.Uid, cardDefinition.Name); // Use gameId param
+            _logger.LogDebug("[GameService:{GameId}:ApplyCost] Applying cost and removing card {CardInstanceId} ({CardName}).", gameId, cardInHand?.InstanceId, cardDefinition.Name); // Use gameId param, changed Uid to InstanceId
             playerState.CurrentPP -= cardDefinition.Cost;
             // M8 Change: Use context to add event
             context.AddEvent(new PpUpdateEventDto(playerState.PlayerId, playerState.CurrentPP, playerState.MaxPP));
 
-            bool removed = playerState.Hand.Remove(cardInHand);
+            // b. Remove card from hand
+            // Ensure cardInHand is not null before attempting removal (already checked in ValidatePlayCardPreconditions, but defensive check here)
+            if (cardInHand == null)
+            {
+                _logger.LogError("[GameService:{GameId}:ApplyCost] CRITICAL: cardInHand is null before attempting removal!", gameId);
+                throw new GameLogicException("Internal error: Card instance became null unexpectedly.");
+            }
+
+            // Find the card instance in the hand list by InstanceId and remove it
+            var itemToRemove = playerState.Hand.FirstOrDefault(c => c.InstanceId == cardInHand.InstanceId);
+            bool removed = false;
+            if (itemToRemove != null)
+            {
+                removed = playerState.Hand.Remove(itemToRemove);
+            }
+
             if (!removed)
             {
-                _logger.LogError("[GameService:{GameId}:ApplyCost] CRITICAL: Failed to remove card {CardUID} from hand after validation!", gameId, cardInHand.Uid); // Use gameId param
-                throw new GameLogicException("Internal error removing card from hand.");
+                // This indicates a potentially serious state inconsistency
+                _logger.LogError("[GameService:{GameId}:ApplyCost] CRITICAL: Failed to remove card {CardInstanceId} from hand after validation!", gameId, cardInHand.InstanceId); // Changed Uid to InstanceId
+                // Consider if throwing an exception is appropriate here, or if the game can continue.
+                // If this happens, the client's hand and server's hand are out of sync.
+                // For now, log critical error but continue, though this might lead to further issues.
+                // Optionally: throw new GameLogicException($"Failed to remove card {cardInHand.InstanceId} from hand.");
             }
-            playerState.PlayedCardCountThisTurn++;
-
-            // Generate HandUpdateEvent (Card removed from hand)
-            // Convert Guid cardInHand.Uid to string? for DTO constructor
-            // M8 Change: Use context to add event
-            context.AddEvent(new HandUpdateEventDto(playerState.PlayerId, playerState.Hand.Count, discardedCardUid: cardInHand.Uid.ToString()));
-            _logger.LogDebug("[GameService:{GameId}:ApplyCost] Cost applied. Player {PlayerId} PP: {CurrentPP}/{MaxPP}. Hand size: {HandCount}. Played count: {PlayedCount}. HandUpdateEvent added.",
-                gameId, playerState.PlayerId, playerState.CurrentPP, playerState.MaxPP, playerState.Hand.Count, playerState.PlayedCardCountThisTurn); // Use gameId param
-        }
-        // Creates a new UnitStateDto for a follower
-        private UnitStateDto CreateUnitState(CardDefinition cardDefinition)
-        {
-            _logger.LogDebug("[GameService:CreateUnitState] Creating UnitState for {CardName} ({CardId}).", cardDefinition.Name, cardDefinition.Id);
-            return new UnitStateDto
+            else
             {
-                Uid = Guid.NewGuid(), // Unique instance ID on the field
-                CardId = cardDefinition.Id,
+                _logger.LogDebug("[GameService:{GameId}:ApplyCost] Card {CardInstanceId} removed from hand.", gameId, cardInHand.InstanceId); // Changed Uid to InstanceId
+                                                                                                                                              // M8 Change: Use context to add event
+                                                                                                                                              // Use null-conditional operator for safety, though cardInHand shouldn't be null here if removed is true
+                                                                                                                                              // Removed HandUpdateEventDto creation - Rely on PpUpdateEventDto for client hand updates
+            }
+
+            playerState.PlayedCardCountThisTurn++; // Increment played count AFTER successful removal
+
+            _logger.LogDebug("[GameService:{GameId}:ApplyCost] Cost applied. Player {PlayerId} PP: {CurrentPP}/{MaxPP}. Hand size: {HandCount}. Played count: {PlayedCount}.", // Removed "HandUpdateEvent added" as it's logged above
+                gameId, playerState.PlayerId, playerState.CurrentPP, playerState.MaxPP, playerState.Hand.Count, playerState.PlayedCardCountThisTurn); // Use gameId param
+
+            // --- BUG-011 DEBUG LOG 1/3 REMOVED (Contained reference to HandUpdateEventDto) ---
+        }
+        // Creates a new CardInstanceDto representing a follower entering the field
+        private CardInstanceDto CreateCardInstanceForBattle(CardDefinition cardDefinition, string controllerPlayerId)
+        {
+            _logger.LogDebug("[GameService:CreateCardInstanceForField] Creating CardInstance for {CardName} ({CardId}) for Player {PlayerId}.",
+                cardDefinition.Name, cardDefinition.Id, controllerPlayerId);
+
+            // Use int CardId directly
+            int parsedCardId = cardDefinition.Id;
+
+            return new CardInstanceDto
+            {
+                InstanceId = Guid.NewGuid(), // Unique instance ID on the field
+                CardId = parsedCardId,
                 Name = cardDefinition.Name,
-                Type = cardDefinition.Type, // Store type string
-                CurrentAttack = cardDefinition.Attack,
-                MaxAttack = cardDefinition.Attack,
-                CurrentHealth = cardDefinition.Health,
-                MaxHealth = cardDefinition.Health,
+                Cost = cardDefinition.Cost,
+                Type = cardDefinition.Type,
+                Attack = cardDefinition.Attack ?? 0, // Base Attack
+                Health = cardDefinition.Health ?? 0, // Base Health
+                CurrentAttack = cardDefinition.Attack ?? 0, // Initial Current Attack
+                CurrentHealth = cardDefinition.Health ?? 0, // Initial Current Health
+                MaxHealth = cardDefinition.Health ?? 0, // Initial Max Health
+                Description = cardDefinition.Description ?? string.Empty,
+                Keywords = cardDefinition.Keywords ?? new List<string>(),
+                CanEvolve = cardDefinition.EvolveId.HasValue, // Check if int? EvolveId has value
+                IsEvolved = false,
                 // Correctly set initial CanAttack based on Rush/Storm keywords
                 CanAttack = cardDefinition.Keywords?.Contains("Rush", StringComparer.OrdinalIgnoreCase) == true ||
                             cardDefinition.Keywords?.Contains("Storm", StringComparer.OrdinalIgnoreCase) == true, // True if Rush or Storm, else False
-                IsEvolved = false,
+                Zone = CardZone.Field, // Set zone to Field
                 AttacksMadeThisTurn = 0,
-                Keywords = cardDefinition.Keywords ?? new List<string>(),
-                // Add missing Cost property initialization
-                Cost = cardDefinition.Cost
+                MaxAttacksPerTurn = 1, // Default to 1 attack per turn for followers
+                ControllerPlayerId = controllerPlayerId, // Set the controller
+                CurrentCountdown = null, // Followers don't have countdown
+                // MaxCountdown = null, // Removed non-existent property
+                MaxAttack = cardDefinition.Attack // Initialize MaxAttack
+                // EffectDescriptions removed
             };
         }
 
         // Executes the logic for playing a Follower inside the main lock (BoardIndex removed)
         // M8 Change: Signature updated to use GameActionContext
-        private void ExecuteFollowerPlay(GameActionContext context, GameStateDto gameState, PlayerStateDto playerState, UnitStateDto unitState, CardDto cardFromHand, PlayCardActionDto actionDto)
+        // M9 Change: cardFromHand type updated to CardInstanceDto?
+        // Refactored: Changed unitState parameter to cardInstance (CardInstanceDto)
+        private void ExecuteFollowerPlay(GameActionContext context, GameStateDto gameState, PlayerStateDto playerState, CardInstanceDto cardInstance, CardInstanceDto? cardFromHand, PlayCardActionDto actionDto)
         {
-            _logger.LogDebug("[GameService:{GameId}:ExecuteFollower] Executing play for {UnitName} ({UnitUid}).", gameState.GameId, unitState.Name, unitState.Uid);
+            _logger.LogDebug("[GameService:{GameId}:ExecuteFollower] Executing play for {UnitName} ({UnitInstanceId}).", gameState.GameId, cardInstance.Name, cardInstance.InstanceId); // Use InstanceId
             // V0.1 Simplified: Always add follower to the end of the field. BoardIndex logic removed.
-            playerState.Field.Add(unitState);
-            _logger.LogDebug("[GameService:{GameId}:ExecuteFollower] Added {UnitName} to end of field.", gameState.GameId, unitState.Name);
+            // Refactored: Add the CardInstanceDto directly
+            playerState.Field.Add(cardInstance);
+            // Add event for entity entering play
+            // Use CardSummonedEventDto and pass cardFromHand as the summoned card instance
+            // Note: cardFromHand represents the card *as it was in the hand*. cardInstance represents it *on the field*.
+            // CardSummonedEventDto expects the card instance *as it is summoned*. Use cardInstance here.
+            var entityEnteredEvent = new CardSummonedEventDto(playerState.PlayerId, cardInstance, "Played"); // Pass the instance entering the field
+            context.AddEvent(entityEnteredEvent);
+            // Update log to reference CardSummonedEventDto if needed, or keep generic unit log
+            _logger.LogInformation("[GameService:{GameId}] Unit {UnitName} ({UnitInstanceId}) entered play for Player {PlayerId}. CardSummonedEvent added.", // Updated event name in log, use InstanceId
+                gameState.GameId, cardInstance.Name, cardInstance.InstanceId, playerState.PlayerId); // Use InstanceId
+            _logger.LogDebug("[GameService:{GameId}:ExecuteFollower] Added {UnitName} to end of field.", gameState.GameId, cardInstance.Name);
 
             // Convert Guid cardFromHand.Uid to string for DTO constructor
             // M8 Change: Use context to add event
-            context.AddEvent(new UnitPlayedEventDto(playerState.PlayerId, playerState.PlayerId, unitState, cardFromHand.Uid.ToString())); // Restore event generation
-                                                                                                                                          // _logger.LogWarning("[Roo Test:{GameId}] UnitPlayedEvent generation SKIPPED for {UnitName} ({UnitUid}).", gameState.GameId, unitState.Name, unitState.Uid); // Roo Test: Remove log
-            _logger.LogInformation("[GameService:{GameId}] Follower {UnitName} ({UnitUid}) played onto field for Player {PlayerId}. UnitPlayedEvent added.", // Update log
-                gameState.GameId, unitState.Name, unitState.Uid, playerState.PlayerId);
+            // Refactor: Replace UnitPlayedEventDto with CardPlayedEventDto
+            // Use the constructor and initialize CardData
+            context.AddEvent(new CardPlayedEventDto(playerState.PlayerId, cardFromHand)); // Corrected constructor call - This event uses the card *from hand*
+            // _logger.LogWarning("[Roo Test:{GameId}] UnitPlayedEvent generation SKIPPED for {UnitName} ({UnitUid}).", gameState.GameId, unitState.Name, unitState.Uid); // Roo Test: Remove log
+            _logger.LogInformation("[GameService:{GameId}] Follower {UnitName} ({UnitInstanceId}) played onto field for Player {PlayerId}. CardPlayedEvent added.", // Update log message, use InstanceId
+                gameState.GameId, cardInstance.Name, cardInstance.InstanceId, playerState.PlayerId); // Use InstanceId
             // TODO: Fanfare (Future)
         }
 
         // Executes the logic for playing a Spell inside the main lock - Uses playerState.Graveyard
         // M8 Change: Signature updated to use GameActionContext
-        private void ExecuteSpellPlay(GameActionContext context, GameStateDto gameState, PlayerStateDto playerState, CardDto cardFromHand, CardDefinition cardDefinition, PlayCardActionDto actionDto)
+        // M9 Change: cardFromHand type updated to CardInstanceDto?
+        private void ExecuteSpellPlay(GameActionContext context, GameStateDto gameState, PlayerStateDto playerState, CardInstanceDto? cardFromHand, CardDefinition cardDefinition, PlayCardActionDto actionDto)
         {
-            _logger.LogDebug("[GameService:{GameId}:ExecuteSpell] Executing play for {CardName} ({CardUID}).", gameState.GameId, cardFromHand.Name, cardFromHand.Uid);
-            // Assuming constructor takes string UIDs based on other events (Potential type issue flagged by compiler, needs DTO check if persists)
-            // Corrected: Use cardDefinition.Id (int) for 2nd arg, cardFromHand.Uid (string) for 3rd
-            // Convert Guid cardFromHand.Uid to string for DTO constructor
+            // Use null-conditional operator ?. for logging as cardFromHand is now nullable
+            _logger.LogDebug("[GameService:{GameId}:ExecuteSpell] Executing play for {CardName} ({CardInstanceId}).", gameState.GameId, cardFromHand?.Name, cardFromHand?.InstanceId); // Changed Uid to InstanceId
             // M8 Change: Use context to add event
-            context.AddEvent(new SpellPlayedEventDto(playerState.PlayerId, cardDefinition.Id, cardFromHand.Uid.ToString(), actionDto.TargetUid)); // Pass TargetUid
+            // Unified CardPlayedEventDto is used for all card types (Spell, Unit, Amulet)
+            // SpellPlayedEventDto is deprecated and replaced by CardPlayedEventDto
+            // Ensure cardFromHand is not null before accessing properties for the event
+            if (cardFromHand != null)
+            {
+                // Use unified CardPlayedEventDto for spell playing
+                context.AddEvent(new CardPlayedEventDto(playerState.PlayerId, cardFromHand));
+            }
+            else
+            {
+                _logger.LogWarning("[GameService:{GameId}:ExecuteSpell] cardFromHand was null, cannot generate CardPlayedEvent.", gameState.GameId);
+            }
+
 
             // --- Target Finding and Validation ---
             IBoardEntityState? targetEntity = null;
@@ -2029,49 +2475,77 @@ namespace ShadowverseBeyond.Server.Services
 
 
             // Add to graveyard (Use playerState)
-            if (playerState.Graveyard == null) playerState.Graveyard = new List<CardDto>(); // Initialize if null
-            playerState.Graveyard.Add(cardFromHand); // Add the actual CardDto instance
-            _logger.LogDebug("[GameService:{GameId}:ExecuteSpell] Added card {CardUID} to player {PlayerId}'s graveyard. Size: {GraveyardSize}", gameState.GameId, cardFromHand.Uid, playerState.PlayerId, playerState.Graveyard.Count);
+            if (playerState.Graveyard == null) playerState.Graveyard = new List<CardInstanceDto>(); // Initialize if null, Changed type
+            if (cardFromHand != null) // Explicit null check
+            {
+                playerState.Graveyard.Add(cardFromHand); // Add the actual CardInstanceDto instance
+                // Use null-conditional operator ?. and InstanceId for logging
+                _logger.LogDebug("[GameService:{GameId}:ExecuteSpell] Added card {CardInstanceId} to player {PlayerId}'s graveyard. Size: {GraveyardSize}", gameState.GameId, cardFromHand?.InstanceId, playerState.PlayerId, playerState.Graveyard.Count); // Changed Uid to InstanceId
+            }
+            else
+            {
+                _logger.LogWarning("[GameService:{GameId}:ExecuteSpell] cardFromHand was null, not adding to graveyard.", gameState.GameId);
+            }
+
 
             // Generate GraveyardUpdateEvent (Card added to graveyard)
             // M8 Change: Use context to add event
+            // Use null-conditional operator ?. for cardAdded as cardFromHand is nullable
             context.AddEvent(new GraveyardUpdateEventDto(playerState.PlayerId, playerState.Graveyard.Count, cardAdded: cardFromHand)); // Restore event generation
-                                                                                                                                       // _logger.LogWarning("[Roo Test:{GameId}] GraveyardUpdateEvent generation SKIPPED for {CardName} in ExecuteSpellPlay.", gameState.GameId, cardFromHand.Name); // Roo Test: Remove log
-                                                                                                                                       // Corrected truncated log message - Restore log message below
-            _logger.LogDebug("[GameService:{GameId}:ExecuteSpellPlay] Added spell {CardUID} to graveyard. GraveyardUpdateEvent added.", gameState.GameId, cardFromHand.Uid); // Restore log message
+            // _logger.LogWarning("[Roo Test:{GameId}] GraveyardUpdateEvent generation SKIPPED for {CardName} in ExecuteSpellPlay.", gameState.GameId, cardFromHand.Name); // Roo Test: Remove log
+            // Corrected truncated log message - Restore log message below
+            // Use null-conditional operator ?. and InstanceId for logging
+            _logger.LogDebug("[GameService:{GameId}:ExecuteSpellPlay] Added spell {CardInstanceId} to graveyard. GraveyardUpdateEvent added.", gameState.GameId, cardFromHand?.InstanceId); // Changed Uid to InstanceId
         } // Closing brace for ExecuteSpellPlay
 
 
 
         // Executes the logic for playing an Amulet (Simplified for V0.1)
         // M8 Change: Signature updated to use GameActionContext
-        private void ExecuteAmuletPlay(GameActionContext context, GameStateDto gameState, PlayerStateDto playerState, CardDto cardFromHand, PlayCardActionDto actionDto)
+        // M9 Change: cardFromHand type updated to CardInstanceDto?
+        private void ExecuteAmuletPlay(GameActionContext context, GameStateDto gameState, PlayerStateDto playerState, CardInstanceDto? cardFromHand, PlayCardActionDto actionDto)
         {
             // Simplified V0.1: Log and maybe add placeholder event. No state change yet.
-            _logger.LogInformation("[GameService:{GameId}] Amulet {CardName} ({CardUID}) played by Player {PlayerId}. (Logic Deferred in V0.1)",
-                 gameState.GameId, cardFromHand.Name, cardFromHand.Uid, playerState.PlayerId);
-            // Assume AmuletPlayedEventDto exists: AmuletPlayedEventDto(sourcePlayerId, ownerPlayerId, amuletStateDto/cardDto?, cardUidFromHand)
-            // For now, skip AmuletPlayedEvent if DTO is unclear.
-            _logger.LogWarning("[GameService:{GameId}] AmuletPlayedEvent creation skipped - DTO structure needs confirmation.", gameState.GameId);
+            // Use null-conditional operator ?. for logging as cardFromHand is now nullable
+            _logger.LogInformation("[GameService:{GameId}] Amulet {CardName} ({CardInstanceId}) played by Player {PlayerId}. (Logic Deferred in V0.1)",
+                 gameState.GameId, cardFromHand?.Name, cardFromHand?.InstanceId, playerState.PlayerId); // Changed Uid to InstanceId
 
             // Add Amulet to graveyard (Consistent with Spell V0.1)
-            if (playerState.Graveyard == null) playerState.Graveyard = new List<CardDto>();
-            playerState.Graveyard.Add(cardFromHand);
-            // M8 Change: Use context to add event
-            context.AddEvent(new GraveyardUpdateEventDto(playerState.PlayerId, playerState.Graveyard.Count, cardAdded: cardFromHand)); // Restore event generation
-                                                                                                                                       // _logger.LogWarning("[Roo Test:{GameId}] GraveyardUpdateEvent generation SKIPPED for {CardName} in ExecuteAmuletPlay.", gameState.GameId, cardFromHand.Name); // Roo Test: Remove log
-            _logger.LogDebug("[GameService:{GameId}:ExecuteAmuletPlay] Added amulet {CardUID} to player {PlayerId}'s graveyard. Size: {GraveyardSize}. GraveyardUpdateEvent added.", gameState.GameId, cardFromHand.Uid, playerState.PlayerId, playerState.Graveyard.Count); // Keep this log
+            if (playerState.Graveyard == null) playerState.Graveyard = new List<CardInstanceDto>(); // Changed type
+            if (cardFromHand != null) // Explicit null check
+            {
+                // Use unified CardPlayedEventDto for amulet playing
+                // AmuletPlayedEventDto is deprecated and replaced by CardPlayedEventDto
+                context.AddEvent(new CardPlayedEventDto(playerState.PlayerId, cardFromHand));
+                _logger.LogInformation("[GameService:{GameId}:ExecuteAmuletPlay] Added CardPlayedEvent for {AmuletName} ({AmuletInstanceId}).", gameState.GameId, cardFromHand.Name, cardFromHand.InstanceId);
+
+                playerState.Graveyard.Add(cardFromHand); // Add the actual CardInstanceDto instance
+                // M8 Change: Use context to add event
+                // Use null-conditional operator ?. for cardAdded as cardFromHand is nullable
+                context.AddEvent(new GraveyardUpdateEventDto(playerState.PlayerId, playerState.Graveyard.Count, cardAdded: cardFromHand)); // Restore event generation
+                // Use null-conditional operator ?. and InstanceId for logging
+                _logger.LogDebug("[GameService:{GameId}:ExecuteAmuletPlay] Added amulet {CardInstanceId} to player {PlayerId}'s graveyard. Size: {GraveyardSize}. GraveyardUpdateEvent added.", gameState.GameId, cardFromHand?.InstanceId, playerState.PlayerId, playerState.Graveyard.Count); // Changed Uid to InstanceId
+            }
+            else
+            {
+                _logger.LogWarning("[GameService:{GameId}:ExecuteAmuletPlay] cardFromHand was null, not adding to graveyard or sending GraveyardUpdateEvent.", gameState.GameId);
+                // Note: GraveyardUpdateEvent is NOT sent if cardFromHand is null here. Decide if this is correct behavior.
+            }
+            // _logger.LogWarning("[Roo Test:{GameId}] GraveyardUpdateEvent generation SKIPPED for {CardName} in ExecuteAmuletPlay.", gameState.GameId, cardFromHand.Name); // Roo Test: Remove log
+            // Use null-conditional operator ?. and InstanceId for logging
+            _logger.LogDebug("[GameService:{GameId}:ExecuteAmuletPlay] Added amulet {CardInstanceId} to player {PlayerId}'s graveyard. Size: {GraveyardSize}. GraveyardUpdateEvent added.", gameState.GameId, cardFromHand?.InstanceId, playerState.PlayerId, playerState.Graveyard.Count); // Changed Uid to InstanceId
 
 
             // TODO: Add Amulet state handling, add to field, trigger effects (Future)
             // For V0.1, simply add to graveyard (done above)
-            _logger.LogDebug("[GameService:{GameId}] Amulet {CardUID} processing complete for V0.1 (added to graveyard).", gameState.GameId, cardFromHand.Uid);
+            // Use null-conditional operator ?. and InstanceId for logging
+            _logger.LogDebug("[GameService:{GameId}] Amulet {CardInstanceId} processing complete for V0.1 (added to graveyard).", gameState.GameId, cardFromHand?.InstanceId); // Changed Uid to InstanceId
         } // Closing brace for ExecuteAmuletPlay
 
-        /// &lt;summary&gt;
+        /// <summary>
         /// Public method to explicitly trigger the execution of an AI player's turn.
         /// Called by the Hub. Wraps the internal execution logic.
-        /// &lt;/summary&gt;
+        /// </summary>
         public async Task TriggerAiTurnAsync(string gameId, string aiPlayerId)
         {
             _logger.LogInformation("[GameService:{GameId}] TriggerAiTurnAsync called for AI Player {PlayerId}.", gameId, aiPlayerId);
@@ -2111,6 +2585,9 @@ namespace ShadowverseBeyond.Server.Services
             _logger.LogDebug("[AI_TURN:{GameId}:{PlayerId}] Created GameActionContext for AI turn.", gameId, aiPlayerId);
             await aiTurnExecutorInstance.ExecuteTurnAsync(gameId, aiPlayerId, context); // Pass context
             _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] AiTurnExecutor (resolved via scope) completed successfully. Broadcasting {EventCount} collected events.", gameId, aiPlayerId, context.Events.Count);
+
+            // --- BUG-011 DEBUG LOG 2/3 REMOVED (Contained reference to HandUpdateEventDto) ---
+
             await BroadcastEventsAsync(gameId, context.Events); // Broadcast collected events
 
             // --- START: Logic to start next human player's turn ---
@@ -2143,35 +2620,42 @@ namespace ShadowverseBeyond.Server.Services
                     // --- END BUG-010 DIAGNOSTIC LOGGING ---
 
                     _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Next player ({NextPlayerId}) is human. Starting their turn.", gameId, aiPlayerId, nextPlayer.PlayerId); // Keep original log
-
-                    // Start the human player's turn
-                    var (nextHumanStartTurnEvents, isNextTurnAi) = await StartPlayerTurnAsync(gameId, nextPlayer.PlayerId); // isNextTurnAi should be false here
+                                                                                                                                                                                  // Start the human player's turn
+                                                                                                                                                                                  // M8 Change: Create context, pass it, remove tuple deconstruction, capture bool result
+                                                                                                                                                                                  // M7 V1.1 Change: Removed context creation
+                    _logger.LogDebug("[AI_TURN:{GameId}:{PlayerId}] Preparing to start human player {NextPlayerId}'s turn.", gameId, aiPlayerId, nextPlayer.PlayerId);
+                    // M7 V1.1 Change: Call new signature, get DTO
+                    TurnStartedEventDto humanTurnStateEvent = await StartPlayerTurnAsync(gameId, nextPlayer.PlayerId);
+                    // Determine AI status from DTO if needed for logging/logic
+                    bool isNextTurnAiResult = humanTurnStateEvent.GameState.Players.FirstOrDefault(p => p.PlayerId == humanTurnStateEvent.GameState.CurrentPlayerId)?.IsAI ?? false;
 
                     // --- BUG-010 DIAGNOSTIC LOGGING START ---
-                    _logger.LogWarning("[BUG-010_DIAG:{GameId}] StartPlayerTurnAsync call completed. Returned IsAI={IsAiTurn}, EventCount={EventCount}",
-                        gameId, isNextTurnAi, nextHumanStartTurnEvents?.Count ?? 0);
+                    // M7 V1.1 Change: Update log to use derived boolean result and indicate DTO return
+                    _logger.LogWarning("[BUG-010_DIAG:{GameId}] StartPlayerTurnAsync call completed. Returned IsAI={IsAiTurn}, Returned TurnStartedEventDto",
+                        gameId, isNextTurnAiResult);
                     // --- END BUG-010 DIAGNOSTIC LOGGING ---
 
 
-                    if (nextHumanStartTurnEvents != null && nextHumanStartTurnEvents.Any())
+                    // Broadcast the TurnStartedEventDto containing the full state for the human player's turn
+                    if (humanTurnStateEvent != null) // Add null check for safety
                     {
-                        _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Broadcasting {EventCount} events for start of human player {NextPlayerId}'s turn.", gameId, aiPlayerId, nextHumanStartTurnEvents.Count, nextPlayer.PlayerId);
-                        await BroadcastEventsAsync(gameId, nextHumanStartTurnEvents);
+                        _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Broadcasting TurnStartedEventDto for start of human player {NextPlayerId}'s turn.", gameId, aiPlayerId, nextPlayer.PlayerId);
+                        await BroadcastEventAsync(gameId, humanTurnStateEvent); // Broadcast the specific DTO containing the full state
                     }
-                    else
+                    else // Added else block for clarity if DTO was null
                     {
-                        _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] No events generated during start of human player {NextPlayerId}'s turn.", gameId, aiPlayerId, nextPlayer.PlayerId);
+                        _logger.LogWarning("[AI_TURN:{GameId}:{PlayerId}] humanTurnStateEvent was null after StartPlayerTurnAsync. Cannot broadcast turn start state.", gameId, aiPlayerId);
                     }
-                }
-                else if (nextPlayer == null)
+                } // <<< Corrected: This brace closes the 'if (nextPlayer != null && !nextPlayer.IsAI)' block
+                else if (nextPlayer == null) // <<< Corrected: 'else if' now correctly follows the 'if'
                 {
                     _logger.LogWarning("[AI_TURN:{GameId}:{PlayerId}] Could not find opponent player after AI turn. Cannot start next turn.", gameId, aiPlayerId);
                 }
-                else // nextPlayer is AI
+                else // nextPlayer is AI // <<< Corrected: 'else' now correctly follows the 'else if'
                 {
                     _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Next player ({NextPlayerId}) is AI. Not starting their turn here (should be handled by their own trigger).", gameId, aiPlayerId, nextPlayer.PlayerId);
                 }
-            }
+            } // <<< Corrected: This brace now correctly closes the 'try' block starting at line 2129
             catch (Exception postAiEx)
             {
                 _logger.LogError(postAiEx, "[AI_TURN:{GameId}:{PlayerId}] Error during post-AI turn processing (starting next human turn).", gameId, aiPlayerId);
@@ -2229,27 +2713,34 @@ namespace ShadowverseBeyond.Server.Services
             // <<< HUB_TRACE LOGGING ADDED BY ROO >>>
             // <<< END ADDED LOG >>>
             _logger.LogDebug("[GameService:{GameId}] Broadcasting event {EventType} to group {GroupName}.", gameId, gameEvent.GetType().Name, groupName); // Keep original debug log too
-            try
+
+            // --- BUG-011 DETAILED BROADCAST PREP LOG REMOVED (Contained reference to HandUpdateEventDto) ---
+
+
+            // --- BUG-011 DEBUG LOG 3/3 ---
+            if (gameEvent is PpUpdateEventDto ppEvt)
             {
-                // Using dictionary-based dispatch
-                var eventType = gameEvent.GetType();
-                if (_eventHandlers.TryGetValue(eventType, out var handler))
                 {
-                    await handler(groupName, gameEvent); // Invoke the registered delegate
-                    _logger.LogDebug("[GameService:{GameId}] Successfully invoked handler for event type {EventType} via dictionary.", gameId, eventType.Name);
-                }
-                else
-                {
-                    _logger.LogWarning("[GameService:{GameId}] Unknown event type encountered in BroadcastEventAsync (Handler not found in dictionary): {EventType}", gameId, eventType.Name);
+                    // Format string manually to bypass potential compiler issue with structured logging access
+                    string logMessage = $"[BUG-011 DEBUG 3/3:{gameId}] Broadcasting PpUpdateEvent for Player {ppEvt.SourcePlayerId}. PP: {ppEvt.CurrentPp}/{ppEvt.MaxPp}.";
+                    _logger.LogWarning(logMessage);
                 }
             }
-            catch (Exception ex)
+            // Removed HandUpdateEventDto check from BUG-011 DEBUG 3/3
+            // --- END BUG-011 DEBUG LOG ---
+
+            try
             {
-                _logger.LogError(ex, "[GameService:{GameId}] Error broadcasting event {EventType} to group {GroupName}.", gameId, gameEvent.GetType().Name, groupName);
+                // Using IClientMethodMapper for dispatch - Reverted to direct call
+                await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, gameEvent);
+                _logger.LogDebug("[GameService:{GameId}] Successfully invoked BroadcastEventToGroupAllAsync via mapper for event type {EventType}.", gameId, gameEvent.GetType().Name); // Updated log message
+            }
+            catch (Exception ex) // Catch potential errors during mapping or invocation
+            {
+                _logger.LogError(ex, "[GameService:{GameId}] Error mapping or invoking client method for event type {EventType}.", gameId, gameEvent.GetType().Name);
                 // Do not re-throw here, as broadcasting failure shouldn't crash the main game logic flow.
             }
         } // <<< END BroadcastEventAsync method
 
     } // Closing brace for GameService class
 } // Closing brace for ShadowverseBeyond.Server.Services namespace
-

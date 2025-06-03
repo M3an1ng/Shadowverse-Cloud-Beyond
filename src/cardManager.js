@@ -63,36 +63,89 @@ export function getCardDefinition(cardId) {
 }
 
 // 创建卡牌运行时实例 (包含唯一标识和当前状态)
-export function createCardInstance(cardIdOrDefinition) {
-    let definition;
-    if (typeof cardIdOrDefinition === 'string') {
-        definition = getCardDefinition(cardIdOrDefinition);
-    } else if (typeof cardIdOrDefinition === 'object' && cardIdOrDefinition !== null) {
-        definition = cardIdOrDefinition; // 假设传入的是已获取的定义
-    }
-
-    if (!definition) {
-        console.error("Cannot create instance: Invalid card ID or definition provided.");
+// Input is assumed to be a DTO object from the server (e.g., CardDto, UnitStateDto)
+export function createCardInstance(cardDto) {
+    // Input Validation
+    // --- DEBUG START: Log incoming DTO ---
+    console.log(`DEBUG_CARDMANAGER: createCardInstance received:`, JSON.stringify(cardDto, null, 2));
+    // --- DEBUG END ---
+    if (!cardDto || typeof cardDto !== 'object') {
+        console.error("Cannot create instance: Invalid DTO provided. Input was:", cardDto); // Log the problematic input
         return null;
     }
 
+    // --- UNKNOWNCARD BUG DIAGNOSIS ---
+    // Log the received DTO to understand its structure if issues persist
+    // console.log("GM_DBG_UNKNOWN: createCardInstance received DTO:", JSON.stringify(cardDto));
+    // ---
+
+    // --- UNIFIED ID LOGIC START ---
+    // Input object MUST have an 'id' (lowercase) OR 'CardId' (PascalCase) property
+    // Prioritize lowercase 'id' if both exist, otherwise use 'CardId'.
+    const identifier = cardDto.id ?? cardDto.CardId; // Use nullish coalescing
+
+    // Check if identifier is null or undefined (after checking both id and CardId), allowing 0 as a valid ID
+    if (identifier === null || identifier === undefined) {
+         console.error("Cannot create instance: Input object missing required 'id' or 'CardId' property. Input was:", cardDto);
+        return null;
+    }
+
+    // Find the base definition using the resolved identifier
+    const baseDefinition = cardDatabase.find(card => card && card.id === identifier);
+
+    if (!baseDefinition) {
+        console.error(`Cannot create instance: Base definition not found for id '${identifier}'. Input object:`, cardDto);
+        return null;
+    }
+
+    // Increment UID counter for fallback scenario if Uid is missing in DTO/input
     uidCounter++;
+
+    // Create the instance:
+    // - Use baseDefinition for static properties.
+    // - Use cardDto (the input object) for runtime properties if available, otherwise fallback to baseDefinition or defaults.
     const instance = {
-        ...definition, // 复制基础属性 (id, name, cost, attack, health, etc.)
-        // --- FIXED: Prioritize UID from definition (server DTO) if available ---
-        uid: definition.uid || `${definition.type?.charAt(0) ?? 'U'}${uidCounter}`, // Use DTO's uid (Guid string), fallback to local generator only if missing
-        currentAttack: definition.currentAttack ?? definition.attack, // Use currentAttack from DTO if available, else base attack
-        currentHealth: definition.currentHealth ?? definition.health, // Use currentHealth from DTO if available, else base health
-        maxHealth: definition.maxHealth ?? definition.health,     // Use maxHealth from DTO if available, else base health (Important for evolved/damaged units)
-        canAttack: false, // 本回合是否能攻击 (召唤当回合通常不能, 除非 Rush/Storm)
-        turnPlayed: null, // Track the turn this instance was played to the field
-        attackCount: 0,   // 本回合已攻击次数
-        isEvolved: false,
-        // REMOVED: effects: [], // This was overwriting the effects copied from definition!
-        // The spread operator (...) above correctly copies the 'effects' array from definition.
-        // 其他运行时属性...
+        // Base static properties from definition
+        id: baseDefinition.id, // Use id from definition
+        name: baseDefinition.name ?? 'Unknown Card',
+        cost: baseDefinition.cost ?? 0,
+        attack: baseDefinition.attack ?? 0, // Base attack from definition
+        health: baseDefinition.health ?? 0, // Base health from definition
+        type: baseDefinition.type ?? 'Unknown',
+        effects: Array.isArray(baseDefinition.effects) ? [...baseDefinition.effects] : [], // Use definition effects
+        keywords: Array.isArray(baseDefinition.keywords) ? [...baseDefinition.keywords] : [], // Use definition keywords
+
+        // Runtime/State properties, prioritizing input object (cardDto) values if they exist
+        // This assumes cardDto might contain runtime state even if it's primarily a definition (like for the leader)
+        // OR it might be an actual DTO that has been pre-processed to have 'id' instead of 'CardId'.
+
+        // !! 核心修复点 !!
+        // 尝试从服务器 DTO 读取 instanceId (注意 JSON 序列化后的大小写)
+        uid: (() => { // Use IIFE for cleaner logic
+            const serverUid = cardDto.instanceId || cardDto.InstanceId || cardDto.uid || cardDto.Uid;
+            if (serverUid) {
+                return serverUid; // 使用服务器提供的真实 GUID
+            } else {
+                // 服务器未提供 UID，这是一个严重错误，记录日志
+                console.error(`CRITICAL: Server DTO missing instanceId/Uid for card definition ID: ${baseDefinition.id}`, cardDto);
+                // 不应生成备用 UID。让 uid 保持 null。
+                return null;
+            }
+        })(), // End IIFE
+
+        currentAttack: cardDto.CurrentAttack ?? baseDefinition.attack ?? 0,       // Prioritize CurrentAttack from input, fallback to definition base attack
+        currentHealth: cardDto.CurrentHealth ?? baseDefinition.health ?? 0,       // Prioritize CurrentHealth from input, fallback to definition base health
+        maxHealth: cardDto.MaxHealth ?? baseDefinition.health ?? 0,           // Prioritize MaxHealth from input, fallback to definition base health
+
+        // Default runtime state (can be overridden by hydration logic later if needed)
+        canAttack: cardDto.CanAttack ?? false,                                // Prioritize CanAttack from input
+        turnPlayed: null,                                                     // Initialized locally
+        attackCount: 0,                                                       // Initialized locally
+        isEvolved: cardDto.IsEvolved ?? false,                                // Prioritize IsEvolved from input
+        // Add other potential DTO properties here if needed (e.g., Countdown for amulets)
     };
-    // console.log("Created card instance:", instance); // 调试时开启
+    // --- UNIFIED ID LOGIC END ---
+    // console.log("Created card instance:", instance); // Debugging
     return instance;
 }
 

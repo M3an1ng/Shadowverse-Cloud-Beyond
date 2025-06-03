@@ -7,24 +7,24 @@ import { LogLevel } from "@microsoft/signalr"; // Added for Trace logging
 import {
     gameState, initializeGame, setSignalRConnection, updateFullGameState, endTurnRequest,
     // Import specific event handlers instead of processGameEvent
-    handleTurnStarted, handleTurnEnded, handlePpUpdate, handleEpUpdate, handleHandUpdate,
-    handleDeckUpdate, handleGraveyardUpdate, handleUnitPlayed, handleSpellPlayed, handleAmuletPlayed,
-    handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealthChanged, handleStatChange,
-    handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleCardDrawn
+    handleDeckUpdate, handleTurnStarted, handleTurnEnded, handlePpUpdate, handleEpUpdate, // handleHandUpdate removed
+    handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt,
+    handleCardSummoned, handleCardPlayed, handleHealthChanged,
+    handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted
 } from './gameManager.js';
 import { loadCards } from './cardManager.js'; // Keep existing correct import
 import { renderGame } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
+import { initDevConsole } from './devConsole.js'; // 开发者控制台
 // import { endTurn } from './turnManager.js'; // Keep commented out
 // Old SignalR setup code removed. New setup will be added later.
 // --- End SignalR Setup ---
 
-
 // Simple GUID generator (RFC4122 v4 simulation)
 function generateGuid() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 
 let isInitializing = false;
@@ -78,8 +78,10 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     // Handler for full game state updates (e.g., on connect/reconnect)
     // --- MODIFIED FOR M6 ---
     conn.on("ReceiveGameState", (receivedGameState) => {
+        const timestamp = new Date().toISOString();
+        console.log(`%c[SIGNALR_HANDLER_MAIN] ${timestamp} - Event: ReceiveGameState - Phase: ${receivedGameState?.Phase}, ActiveTurn: ${receivedGameState?.ActivePlayer?.TurnNumber}`, 'color: orange; background: #333;'); // Phase, ActivePlayer, TurnNumber
         console.log('[main.js] ReceiveGameState handler invoked.');
-        console.log("MAIN: Received Full GameState via SignalR:", receivedGameState);
+        console.log("MAIN: Received Full GameState via SignalR:", 'color: green; font-weight: bold;', receivedGameState);
 
         if (!initialStateReceived && typeof resolveInitialState === 'function') {
             // Initial state handling during initializeApp
@@ -93,13 +95,32 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
             console.log("MAIN: Received subsequent full game state update. Processing directly...");
             // Directly call gameManager's update function to handle the state and re-render
             // Ensure gameManager and updateFullGameState are imported correctly
-             try {
-                 updateFullGameState(receivedGameState); // Directly update the game state and UI
-                 console.log("MAIN: Subsequent game state processed via updateFullGameState.");
-             } catch (error) {
-                  console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
-                  alert("处理游戏状态更新时出错！");
-             }
+            try {
+                // --- ROO DEBUG: Log TurnNumber from received DTO (Subsequent Update) ---
+                try { // Inner try for debug logging (Line 100)
+                    if (receivedGameState && receivedGameState.Players && receivedGameState.CurrentPlayerId) { // Players, CurrentPlayerId
+                        const activePlayerDto = receivedGameState.Players.find(p => p && p.PlayerId === receivedGameState.CurrentPlayerId); // Players, PlayerId, CurrentPlayerId
+                        if (activePlayerDto) {
+                            // Log the TurnNumber property directly as received
+                            console.warn(`%c[MAIN_DEBUG_ReceiveGameState_Subsequent] Active Player DTO (ID: ${activePlayerDto.PlayerId}) received. TurnNumber property value:`, 'color: fuchsia; font-weight: bold;', activePlayerDto.TurnNumber); // PlayerId
+                            // Also log the entire active player DTO for context
+                            console.warn(`%c[MAIN_DEBUG_ReceiveGameState_Subsequent] Full Active Player DTO received:`, 'color: fuchsia;', activePlayerDto);
+                        } else {
+                            console.warn(`%c[MAIN_DEBUG_ReceiveGameState_Subsequent] Active player DTO not found for CurrentPlayerId: ${receivedGameState.CurrentPlayerId}`, 'color: fuchsia; font-weight: bold;'); // CurrentPlayerId
+                        }
+                    } else {
+                        console.warn(`%c[MAIN_DEBUG_ReceiveGameState_Subsequent] Received serverState is missing Players or CurrentPlayerId.`, 'color: fuchsia; font-weight: bold;'); // Players, CurrentPlayerId
+                    }
+                } catch (e) { // Catch for inner try (Line 100)
+                    console.error(`%c[MAIN_DEBUG_ReceiveGameState_Subsequent] Error during debug logging:`, 'color: red; font-weight: bold;', e); // Moved console.error here
+                }
+                // --- END ROO DEBUG ---
+                updateFullGameState(receivedGameState); // Directly update the game state and UI
+                console.log("MAIN: Subsequent game state processed via updateFullGameState.");
+            } catch (error) { // Catch for outer try (Line 98)
+                console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
+                alert("处理游戏状态更新时出错！");
+            } // Closes outer catch
         } else {
             // This case should ideally not happen if setupSignalRConnection is always called with a resolver during init
             console.error("MAIN Error: Received game state but initialization seems incomplete or resolver missing!");
@@ -113,48 +134,43 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     // For now, all delegate to processGameEvent in gameManager, which needs implementation.
     // Call specific handlers from gameManager.js for each event type
     conn.on("TurnStarted", (eventData) => {
-        console.log("MAIN: Received TurnStarted:", eventData);
-        handleTurnStarted(eventData); // Call specific handler
+        const timestamp = new Date().toISOString();
+        // --- ROO DEBUG: Log raw event data received by main.js ---
+        console.log(`%c[DEBUG_MAIN_EVENT] MAIN.JS Received TurnStarted Event. Raw Data:`, 'color: purple; font-weight: bold;', JSON.parse(JSON.stringify(eventData))); // Log deep copy
+        // --- END ROO DEBUG ---
+        // Call the specific handler in gameManager, which now needs to process the full state
+        handleTurnStarted(eventData);
     });
     conn.on("TurnEnded", (eventData) => {
-        console.log("MAIN: Received TurnEnded:", eventData);
+        // Assuming TurnEndedEventDto might have Phase, check if needed later
         handleTurnEnded(eventData); // Call specific handler
+        conn.on("DeckUpdate", handleDeckUpdate); // Restored handler registration
     });
     conn.on("PpUpdate", (eventData) => {
+        // Properties: PlayerId, CurrentPp, MaxPp
         console.log("MAIN: Received PpUpdate:", eventData);
         handlePpUpdate(eventData); // Call specific handler
     });
     conn.on("EpUpdate", (eventData) => { // Renamed from EvolvePointUpdate to match backend DTO/Interface
+        // Properties: PlayerId, CurrentEp, MaxEp
         console.log("MAIN: Received EpUpdate:", eventData);
         handleEpUpdate(eventData); // Call specific handler
     });
-    conn.on("HandUpdate", (eventData) => {
-        console.log("MAIN: Received HandUpdate:", eventData);
-        handleHandUpdate(eventData); // Call specific handler
-    });
-    conn.on("DeckUpdate", (eventData) => {
-        console.log("MAIN: Received DeckUpdate:", eventData);
-        handleDeckUpdate(eventData); // Call specific handler
-    });
-    conn.on("CardDrawn", (eventData) => {
-        console.log("MAIN: Received CardDrawn:", eventData);
-        handleCardDrawn(eventData); // Call specific handler
-    });
+    // Removed conn.on("HandUpdate", ...) block as it's deprecated
     conn.on("GraveyardUpdate", (eventData) => {
+        // Properties: PlayerId, GraveyardCount
         console.log("MAIN: Received GraveyardUpdate:", eventData);
         handleGraveyardUpdate(eventData); // Call specific handler
     });
-    conn.on("UnitPlayed", (eventData) => {
-        console.log("MAIN: Received UnitPlayed:", eventData);
-        handleUnitPlayed(eventData); // Call specific handler
+    conn.on("CardPlayed", (eventData) => {
+        // Properties: PlayerId, Card, HandIndex, Targets (optional)
+        console.log("MAIN: Received CardPlayed event:", eventData); // Updated log prefix
+        handleCardPlayed(eventData); // Call gameManager method
     });
-    conn.on("SpellPlayed", (eventData) => {
-        console.log("MAIN: Received SpellPlayed:", eventData);
-        handleSpellPlayed(eventData); // Call specific handler
-    });
-    conn.on("AmuletPlayed", (eventData) => {
-        console.log("MAIN: Received AmuletPlayed:", eventData);
-        handleAmuletPlayed(eventData); // Call specific handler
+    conn.on("CardSummoned", (eventData) => {
+        // Properties: PlayerId, EntityType (Unit/Amulet), EntityState (UnitStateDto/AmuletStateDto), BoardIndex
+        console.log("MAIN: Received EntityEnteredPlay event:", eventData); // Updated log prefix
+        handleCardSummoned(eventData); // Call gameManager method
     });
     conn.on("AttackDeclared", (eventData) => { // Renamed from UnitAttacked to match backend DTO/Interface
         console.log("MAIN: Received AttackDeclared:", eventData);
@@ -172,14 +188,14 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
         console.log("MAIN: Received HealthChanged:", eventData);
         handleHealthChanged(eventData); // Call specific handler
     });
-     conn.on("StatChange", (eventData) => { // Added handler
+    conn.on("StatChange", (eventData) => { // Added handler
         console.log("MAIN: Received StatChange:", eventData);
         handleStatChange(eventData); // Call specific handler
     });
-     conn.on("UnitEvolved", (eventData) => { // Added handler (was missing)
-         console.log("MAIN: Received UnitEvolved:", eventData);
-         handleUnitEvolved(eventData); // Call specific handler
-     });
+    conn.on("UnitEvolved", (eventData) => { // Added handler (was missing)
+        console.log("MAIN: Received UnitEvolved:", eventData);
+        handleUnitEvolved(eventData); // Call specific handler
+    });
     // LeaderStatusUpdate seems specific, keep it if needed, or handle via other events?
     // For now, let's comment it out as other events cover health/stats.
     // conn.on("LeaderStatusUpdate", (eventData) => {
@@ -187,6 +203,9 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     //     // processGameEvent(eventData); // Or handleLeaderStatusUpdate(eventData) if needed
     // });
     conn.on("PlayerMulliganCompleted", (eventData) => {
+        const timestamp = new Date().toISOString();
+        // Properties: PlayerId
+        console.log(`%c[SIGNALR_HANDLER_MAIN] ${timestamp} - Event: PlayerMulliganCompleted - Player: ${eventData?.PlayerId}`, 'color: pink; background: #333;'); // PlayerId
         console.log("MAIN: Received PlayerMulliganCompleted:", eventData);
         handlePlayerMulliganCompleted(eventData); // Call specific handler
     });
@@ -246,8 +265,8 @@ export async function respondToTargetSelection(requestId, selectedIds) {
         return;
     }
     const responseDto = {
-        requestId: requestId,
-        selectedTargetIds: selectedIds,
+        RequestId: requestId, // Changed from requestId
+        SelectedTargetIds: selectedIds, // Changed from selectedTargetIds
     };
     console.log("MAIN: Sending target selection response:", responseDto);
     try {
@@ -336,14 +355,18 @@ async function initializeApp() {
             console.log("MAIN: Setting up core event listeners...");
             setupEventListeners();
 
+            // 8. Initialize developer console
+            console.log("MAIN: Initializing developer console...");
+            initDevConsole();
+
             console.log("MAIN: M6 Coordination complete. Game ready.");
 
         } catch (error) {
-             console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
-             // Handle errors from loadCards, setupSignalRConnection, or state reception issues
-             alert(`游戏初始化失败：${error.message || '未知错误'}. 请刷新页面重试。`);
-             // Optionally disable UI or show persistent error
-             return; // Stop initialization on error
+            console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
+            // Handle errors from loadCards, setupSignalRConnection, or state reception issues
+            alert(`游戏初始化失败：${error.message || '未知错误'}. 请刷新页面重试。`);
+            // Optionally disable UI or show persistent error
+            return; // Stop initialization on error
         }
         // --- M6 Coordination Logic End ---
 
@@ -351,11 +374,11 @@ async function initializeApp() {
         console.error("MAIN: Application initialization failed:", error);
         // Display error via ui.js, check if connection error already shown
         if (connection === null || connection.state === signalR.HubConnectionState.Disconnected) {
-             console.log("MAIN: Initialization failed likely due to SignalR connection error.");
-             // alert might have already been called in setupSignalRConnection
-         } else {
-             alert(`游戏初始化失败: ${error.message || '未知错误'}`); // Use alert instead of displayError
-         }
+            console.log("MAIN: Initialization failed likely due to SignalR connection error.");
+            // alert might have already been called in setupSignalRConnection
+        } else {
+            alert(`游戏初始化失败: ${error.message || '未知错误'}`); // Use alert instead of displayError
+        }
     } finally {
         isInitializing = false;
     }
@@ -381,6 +404,9 @@ function setupEventListeners() {
     // We assume ui.js's initializeUI or specific handlers are called elsewhere appropriately.
     console.log("MAIN: Core event listeners set up.");
 }
+
+// 导出 connection 供其他模块使用
+export { connection };
 
 // 启动应用
 initializeApp();

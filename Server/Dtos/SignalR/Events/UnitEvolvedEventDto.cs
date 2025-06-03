@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Dtos;         // For UnitStateDto
+using ShadowverseBeyond.Server.Dtos;         // For CardInstanceDto
 using ShadowverseBeyond.Server.Dtos.SignalR; // For GameEventDto
 using System.Diagnostics.CodeAnalysis; // For [SetsRequiredMembers]
 
@@ -11,23 +11,19 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     {
         // Constructor
         [SetsRequiredMembers]
-        public UnitEvolvedEventDto(string sourcePlayerId, string evolvingUnitUid, UnitStateDto evolvedUnitState)
+        public UnitEvolvedEventDto(string sourcePlayerId, CardInstanceDto evolvedUnitState)
             : base(sourcePlayerId, "UnitEvolved") // Call base constructor
         {
             // Initialize required properties
-            EvolvingUnitUid = evolvingUnitUid;
+            // EvolvingUnitUid is available within EvolvedUnitState.InstanceId
             EvolvedUnitState = evolvedUnitState;
         }
 
+        // EvolvingUnitUid removed as it's redundant (present in EvolvedUnitState.InstanceId)
         /// <summary>
-        /// The unique identifier of the unit that evolved.
+        /// The complete instance data of the unit after evolution.
+        /// Includes updated stats, keywords, and potentially other state changes. The InstanceId identifies the evolved unit.
         /// </summary>
-        public required string EvolvingUnitUid { get; set; }
-
-        /// <summary>
-        /// The complete state of the unit after evolution.
-        /// Includes updated stats, keywords, and the IsEvolved flag set to true.
-        /// </summary>
-        public required UnitStateDto EvolvedUnitState { get; set; }
+        public required CardInstanceDto EvolvedUnitState { get; set; }
     }
 }

@@ -3,6 +3,7 @@ using ShadowverseBeyond.Server.Dtos; // For GameStateDto
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // For Action DTOs
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Models; // For GameActionContext
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -58,6 +59,6 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">游戏 ID。</param>
         /// <param name="aiPlayerId">轮到其行动的 AI 玩家 ID。</param>
         /// <returns>表示异步操作启动的任务。</returns>
-        Task RequestAiActionAsync(string gameId, string aiPlayerId);
+        Task RequestAiActionAsync(string gameId, string aiPlayerId, GameActionContext context);
     }
 }

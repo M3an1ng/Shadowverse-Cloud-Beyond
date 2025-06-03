@@ -1,4 +1,5 @@
 // File: Server/Hubs/GameHub.cs
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging;
@@ -9,8 +10,8 @@ using ShadowverseBeyond.Server.Hubs.ClientInterfaces; // IGameClient
 using ShadowverseBeyond.Server.Services;            // IGameService
 using ShadowverseBeyond.Server.Dtos;            // GameStateDto etc.
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Specific Action DTOs
-using ShadowverseBeyond.Server.Dtos.SignalR.Events;  // Specific Event DTOs (incl. base GameEventDto)
 using ShadowverseBeyond.Server.Exceptions; // GameLogicException
+using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using System;
 using System.Collections.Generic; // List<> for events
 using System.Threading.Tasks;
@@ -29,6 +30,7 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly IGameService _gameService;
         private readonly ILogger<GameHub> _logger;
         private readonly IMemoryCache _memoryCache; // Added for Idempotency Check
+        private readonly IClientMethodMapper _clientMethodMapper; // ADDED
 
         /// <summary>
         /// Initializes a new instance of the GameHub class.
@@ -36,11 +38,13 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <param name="gameService">The core game logic service.</param>
         /// <param name="logger">The logger instance.</param>
         /// <param name="memoryCache">The memory cache instance for idempotency checks.</param> // Added param doc
-        public GameHub(IGameService gameService, ILogger<GameHub> logger, IMemoryCache memoryCache) // REMOVED IAiService param
+        /// <param name="clientMethodMapper">The service to map event types to client method names.</param> // ADDED
+        public GameHub(IGameService gameService, ILogger<GameHub> logger, IMemoryCache memoryCache, IClientMethodMapper clientMethodMapper) // REMOVED IAiService param, ADDED clientMethodMapper
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache)); // Added assignment
+            _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // ADDED assignment
             _logger.LogInformation("<<<<< GameHub INSTANCE CREATED >>>>>"); // Existing log
         }
 
@@ -52,6 +56,7 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <param name="actionDto">DTO containing card play details.</param>
         public async Task PlayCard(PlayCardActionDto actionDto)
         {
+            _logger.LogWarning("[BUG-015_TRACE] Received PlayCard request. Raw CardUid from client: '{RawCardUid}'", actionDto.CardUid); // Added for BUG-015 diagnosis
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
             if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
             {
@@ -147,55 +152,67 @@ namespace ShadowverseBeyond.Server.Hubs
             try
             {
                 _logger.LogInformation("Player {PlayerId} ending turn in Game {GameId}", playerId, gameId);
-                var context = new GameActionContext(); // Create context
+                var endTurnContext = new GameActionContext(); // Create context for EndTurn events
 
                 // Delegate EndTurn to core game logic service
                 _logger.LogInformation("[GameHub:{GameId}] >>>>> PRE-CALL: Attempting to call _gameService.EndTurnAsync for Player {PlayerId}...", gameId, playerId);
-                // Call EndTurnAsync, passing the context
-                var endTurnResult = await _gameService.EndTurnAsync(gameId.ToString(), playerId, context);
-                _logger.LogInformation("[GameHub:{GameId}] <<<<< POST-CALL: Completed _gameService.EndTurnAsync for Player {PlayerId}. Success: {Success}, IsNextAI: {IsNextAI}, NextPlayer: {NextPlayerId}. Context Events: {EventCount}",
-                   gameId, playerId, endTurnResult.Success, endTurnResult.IsNextPlayerAi, endTurnResult.NextPlayerId ?? "N/A", context.Events.Count); // Log context event count
+                // Call EndTurnAsync, passing the endTurnContext
+                // M8 Change: Call EndTurnAsync without assignment as it now returns Task (void)
+                await _gameService.EndTurnAsync(gameId.ToString(), playerId, endTurnContext);
+                // M8 Change: Removed logging of EndTurnAsync result tuple as it no longer returns one.
+                _logger.LogInformation("[GameHub:{GameId}] <<<<< POST-CALL: Completed _gameService.EndTurnAsync for Player {PlayerId}. EndTurn Context Events: {EventCount}",
+                   gameId, playerId, endTurnContext.Events.Count); // Log endTurnContext event count
 
-                // Check if the EndTurn operation itself was successful
-                if (!endTurnResult.Success)
+                // --- BUG-014 FIX: Trigger next turn from Hub ---
+                _logger.LogInformation("[GameHub:{GameId}] Determining next player and triggering next turn...", gameId);
+                GameStateDto? currentState = await _gameService.GetGameStateAsync(gameId.ToString()); // Get current state AFTER EndTurnAsync
+                if (currentState == null)
                 {
-                    _logger.LogError("[GameHub:{GameId}] _gameService.EndTurnAsync reported failure for Player {PlayerId}.", gameId, playerId);
-                    // Optionally send a specific error if the service indicated failure
-                    await Clients.Caller.ReceiveError("Failed to process end turn logic in the game service.");
-                    // Broadcast any events collected *before* the failure? Probably not.
-                    return; // Stop processing if the service failed
+                    _logger.LogError("[GameHub:{GameId}] CRITICAL: Could not retrieve game state after EndTurnAsync for Player {PlayerId}. Cannot proceed with turn transition.", gameId, playerId);
+                    await Clients.Caller.ReceiveError("Critical server error: Failed to retrieve game state after ending turn.");
+                    // Maybe throw an exception or handle more gracefully? For now, log and return.
+                    return;
                 }
 
-                // Start next player's turn explicitly, passing the SAME context
-                if (!string.IsNullOrEmpty(endTurnResult.NextPlayerId))
+                // Determine the next player ID - Use CurrentPlayerId from the *updated* state after EndTurnAsync
+                string nextPlayerId = currentState.Players.FirstOrDefault(p => p.PlayerId != currentState.CurrentPlayerId)?.PlayerId ?? string.Empty;
+
+                if (string.IsNullOrEmpty(nextPlayerId))
                 {
-                    _logger.LogInformation("[GameHub:{GameId}] Calling StartPlayerTurnAsync for next player {NextPlayerId}...", gameId, endTurnResult.NextPlayerId);
-                    try
-                    {
-                        // Call StartPlayerTurnAsync, passing the context
-                        // No need to capture result tuple for events anymore, they are in the context
-                        await _gameService.StartPlayerTurnAsync(gameId.ToString(), endTurnResult.NextPlayerId, context);
-                        _logger.LogInformation("[GameHub:{GameId}] StartPlayerTurnAsync completed for {NextPlayerId}. Context Events (after start): {EventCount}", gameId, endTurnResult.NextPlayerId, context.Events.Count); // Log context event count
-                    }
-                    catch (Exception startEx)
-                    {
-                        _logger.LogError(startEx, "[GameHub:{GameId}] Error calling StartPlayerTurnAsync for {NextPlayerId}.", gameId, endTurnResult.NextPlayerId);
-                        await Clients.Caller.ReceiveError($"Server error starting next turn for {endTurnResult.NextPlayerId}.");
-                        // Broadcast events collected *before* this error? Yes, likely important.
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("[GameHub:{GameId}] NextPlayerId from EndTurnAsync was null or empty. Cannot start next turn.", gameId);
+                    _logger.LogError("[GameHub:{GameId}] CRITICAL: Could not determine next player ID after Player {CallingPlayerId} ended turn. CurrentPlayerId in State: {CurrentPlayerIdInState}", gameId, playerId, currentState.CurrentPlayerId);
+                    await Clients.Caller.ReceiveError("Critical server error: Could not determine the next player.");
+                    return;
                 }
 
-                // Broadcast ALL events collected in the context from BOTH service calls
-                if (context.Events.Count > 0) // Use context.Events
+                _logger.LogInformation("[GameHub:{GameId}] Next player determined: {NextPlayerId}. Calling StartPlayerTurnAsync...", gameId, nextPlayerId);
+
+                // Call StartPlayerTurnAsync to get the full game state DTO for the start of the next turn
+                // M7 V1.1 Change: Remove context argument, capture returned DTO
+                TurnStartedEventDto startTurnEvent = await _gameService.StartPlayerTurnAsync(gameId.ToString(), nextPlayerId);
+                _logger.LogInformation("[GameHub:{GameId}] StartPlayerTurnAsync completed for Player {NextPlayerId}. Received GameStateUpdateEventDto.",
+                                       gameId, nextPlayerId); // Updated log
+
+                // If the next player is AI, trigger their turn execution
+                // M7 V1.1 Change: Check AI status from the returned DTO
+                bool isNextPlayerAi = startTurnEvent?.GameState?.Players.FirstOrDefault(p => p.PlayerId == startTurnEvent.GameState.CurrentPlayerId)?.IsAI ?? false;
+                if (isNextPlayerAi)
                 {
-                    string groupName = $"Game_{gameId}";
-                    _logger.LogInformation("[GameHub:{GameId}] Broadcasting {EventCount} collected events to group {GroupName}.", gameId, context.Events.Count, groupName); // Update log message
+                    _logger.LogInformation("[GameHub:{GameId}] Next player {NextPlayerId} is AI (determined from DTO). Calling TriggerAiTurnAsync...", gameId, nextPlayerId);
+                    // Trigger AI turn asynchronously (fire and forget for the Hub)
+                    // GameService will handle AI execution and subsequent turn end/start internally
+                    // IMPORTANT: Do NOT await this. The Hub's job is done after triggering.
+                    _ = Task.Run(() => _gameService.TriggerAiTurnAsync(gameId.ToString(), nextPlayerId));
+                    _logger.LogInformation("[GameHub:{GameId}] TriggerAiTurnAsync called for AI Player {NextPlayerId}.", gameId, nextPlayerId);
+                }
+                // --- END BUG-014 FIX ---
+
+                // Broadcast events collected ONLY during EndTurnAsync
+                string groupName = $"Game_{gameId}"; // Define groupName once
+                if (endTurnContext.Events.Count > 0) // Use endTurnContext.Events
+                {
+                    _logger.LogInformation("[GameHub:{GameId}] Broadcasting {EventCount} collected events from EndTurn to group {GroupName}.", gameId, endTurnContext.Events.Count, groupName); // Update log message
                     int eventIndex = 0;
-                    foreach (var gameEvent in context.Events) // Use context.Events
+                    foreach (var gameEvent in endTurnContext.Events) // Use endTurnContext.Events
                     {
                         eventIndex++;
                         try
@@ -216,30 +233,37 @@ namespace ShadowverseBeyond.Server.Hubs
                             _logger.LogError(ex, "[GameHub:{GameId}] --- FAILED to broadcast Context Event #{Index} ({EventTypeInfo}) to group {GroupName} ---", gameId, eventIndex, eventTypeInfo, groupName);
                         }
                     }
-                    _logger.LogInformation("[GameHub:{GameId}] Finished broadcasting loop for {EventCount} collected events to group {GroupName}.", gameId, context.Events.Count, groupName);
+                    _logger.LogInformation("[GameHub:{GameId}] Finished broadcasting loop for {EventCount} collected events from EndTurn to group {GroupName}.", gameId, endTurnContext.Events.Count, groupName); // Updated log message
+
+                    // M7 V1.1 Change: Broadcast the GameStateUpdateEventDto received from StartPlayerTurnAsync
+                    if (startTurnEvent != null)
+                    {
+                        _logger.LogInformation("[GameHub:{GameId}] Broadcasting GameStateUpdateEventDto for start of turn {NextPlayerId} to group {GroupName}.", gameId, nextPlayerId, groupName);
+                        await BroadcastEventToGroupAsync(groupName, startTurnEvent);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[GameHub:{GameId}] StartPlayerTurnAsync returned a null DTO for Player {NextPlayerId}. Cannot broadcast turn start state.", gameId, nextPlayerId);
+                    }
                 }
-                else
+                else // No events from EndTurn
                 {
-                    _logger.LogInformation("[GameHub:{GameId}] EndTurnAsync and StartPlayerTurnAsync completed successfully for Player {PlayerId}, but collected no events in context.", gameId, playerId);
+                    // M7 V1.1 Change: Still broadcast StartTurnEvent even if EndTurn had no events
+                    if (startTurnEvent != null)
+                    {
+                        _logger.LogInformation("[GameHub:{GameId}] Broadcasting GameStateUpdateEventDto for start of turn {NextPlayerId} to group {GroupName} (no EndTurn events).", gameId, nextPlayerId, groupName);
+                        await BroadcastEventToGroupAsync(groupName, startTurnEvent);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[GameHub:{GameId}] StartPlayerTurnAsync returned a null DTO for Player {NextPlayerId} (no EndTurn events). Cannot broadcast turn start state.", gameId, nextPlayerId);
+                    }
                 }
 
+                // Updated final log message
+                _logger.LogInformation("[GameHub:{GameId}] EndTurn processing completed for Player {PlayerId}. Broadcasted EndTurn events and StartTurn DTO.", gameId, playerId);
 
-                // Check if the next player is AI and trigger their turn if necessary (AFTER broadcasting all events)
-                if (endTurnResult.IsNextPlayerAi && !string.IsNullOrEmpty(endTurnResult.NextPlayerId))
-                {
-                    _logger.LogInformation("[GameHub:{GameId}] Next player {PlayerId} is AI. Triggering AI action phase via _gameService.TriggerAiTurnAsync (fire-and-forget).", gameId, endTurnResult.NextPlayerId);
-                    // Use fire-and-forget for the trigger from the Hub
-                    _ = _gameService.TriggerAiTurnAsync(gameId.ToString(), endTurnResult.NextPlayerId);
-                }
-                else if (!endTurnResult.IsNextPlayerAi && !string.IsNullOrEmpty(endTurnResult.NextPlayerId))
-                {
-                    _logger.LogInformation("[GameHub:{GameId}] Next player {PlayerId} is Human. Turn started via events broadcast above. No Hub AI trigger needed.", gameId, endTurnResult.NextPlayerId);
-                }
-                else // Handles cases where NextPlayerId is null or empty (e.g., game ended)
-                {
-                    _logger.LogWarning("[GameHub:{GameId}] EndTurnAsync completed, but NextPlayerId is null or empty. Assuming game ended or an issue occurred in GameService.", gameId);
-                    // Game Over events should have been included in the broadcast list if the game ended normally.
-                }
+
             } // Closing brace for the main try block started at L145
             catch (GameLogicException ex)
             {
@@ -564,44 +588,12 @@ namespace ShadowverseBeyond.Server.Hubs
             _logger.LogInformation("[HUB_BROADCAST_ATTEMPT:{GameId}] Broadcasting event of type {EventType} to group {GroupName}. Details: {EventDetails}",
                 gameId, gameEvent.GetType().Name, groupName, eventDetails);
 
-            try
-            {
-                // Switch on the event type and call the corresponding IGameClient method
-                switch (gameEvent)
-                {
-                    case TurnStartedEventDto e: await Clients.Group(groupName).TurnStarted(e); break;
-                    case TurnEndedEventDto e: await Clients.Group(groupName).TurnEnded(e); break;
-                    case PpUpdateEventDto e: await Clients.Group(groupName).PpUpdate(e); break;
-                    case EpUpdateEventDto e: await Clients.Group(groupName).EpUpdate(e); break;
-                    case HandUpdateEventDto e: await Clients.Group(groupName).HandUpdate(e); break;
-                    case DeckUpdateEventDto e: await Clients.Group(groupName).DeckUpdate(e); break;
-                    case UnitPlayedEventDto e: await Clients.Group(groupName).UnitPlayed(e); break;
-                    case SpellPlayedEventDto e: await Clients.Group(groupName).SpellPlayed(e); break;
-                    case AmuletPlayedEventDto e: await Clients.Group(groupName).AmuletPlayed(e); break;
-                    case UnitEvolvedEventDto e: await Clients.Group(groupName).UnitEvolved(e); break;
-                    case UnitDestroyedEventDto e: await Clients.Group(groupName).UnitDestroyed(e); break;
-                    case AttackDeclaredEventDto e: await Clients.Group(groupName).AttackDeclared(e); break;
-                    case DamageDealtEventDto e: await Clients.Group(groupName).DamageDealt(e); break;
-                    case HealthChangedEventDto e: await Clients.Group(groupName).HealthChanged(e); break;
-                    case StatChangeEventDto e: await Clients.Group(groupName).StatChange(e); break;
-                    case GraveyardUpdateEventDto e: await Clients.Group(groupName).GraveyardUpdate(e); break;
-                    case GameOverEventDto e: await Clients.Group(groupName).GameOver(e); break;
-                    case PlayerMulliganCompletedEventDto e: await Clients.Group(groupName).PlayerMulliganCompleted(e); break;
-                    // Add other specific event types from IGameClient here
-                    default:
-                        _logger.LogWarning("[GameHub:{GameId}] Unknown or unhandled event type encountered in BroadcastEventToGroupAsync: {EventType} for group {GroupName}",
-                            gameId, gameEvent.GetType().Name, groupName);
-                        // Fallback to generic if absolutely necessary? Or just log? Let's just log.
-                        // await Clients.Group(groupName).ReceiveGameEvent(gameEvent); // Avoid falling back to the problematic generic method
-                        break;
-                }
-                _logger.LogDebug("[GameHub:{GameId}] Successfully broadcasted event {EventType} to group {GroupName}.", gameId, gameEvent.GetType().Name, groupName);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameHub:{GameId}] Error broadcasting event {EventType} to group {GroupName}.", gameId, gameEvent.GetType().Name, groupName);
-                // Don't re-throw; log the error and continue if possible.
-            }
+            // Delegate the broadcasting logic entirely to the injected mapper service.
+            // The mapper service will handle determining the correct client method and sending the event.
+            _logger.LogDebug("[GameHub:{GameId}] Delegating broadcast of event {EventType} to group {GroupName} via IClientMethodMapper.",
+                gameId, gameEvent.GetType().Name, groupName);
+            await _clientMethodMapper.BroadcastEventToGroupAsync(groupName, gameEvent);
+            // The mapper's implementation should handle its own logging and error handling.
         }
 
         /// <summary>

@@ -25,7 +25,7 @@ public class CardDefinition
     /// Unique identifier for the card (e.g., "F001"). Primary Key.
     /// </summary>
     [Key]
-    public string Id { get; set; } = null!;
+    public int Id { get; set; } // Changed type to int, removed initializer
 
     /// <summary>
     /// Display name of the card.
@@ -84,7 +84,7 @@ public class CardDefinition
     /// <summary>
     /// The ID of the card this card evolves into. Null if this card cannot evolve or is already evolved.
     /// </summary>
-    public string? EvolveId { get; set; }
+    public int? EvolveId { get; set; } // Changed type to int?
     /// <summary>
     /// Gets or sets the list of card effects. Handled in code, not directly mapped to DB.
     /// Populates EffectsJson property when set.

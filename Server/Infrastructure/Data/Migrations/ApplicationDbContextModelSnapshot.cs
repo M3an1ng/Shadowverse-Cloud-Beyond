@@ -19,8 +19,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", b =>
                 {
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT");
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("Attack")
                         .HasColumnType("INTEGER");
@@ -35,8 +36,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
                     b.Property<string>("EffectsJson")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("EvolveId")
-                        .HasColumnType("TEXT");
+                    b.Property<int?>("EvolveId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("Health")
                         .HasColumnType("INTEGER");

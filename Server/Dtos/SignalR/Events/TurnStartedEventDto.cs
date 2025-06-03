@@ -1,36 +1,29 @@
-// File: Server/Dtos/SignalR/Events/TurnStartedEventDto.cs
-using System;
+using ShadowverseBeyond.Server.Dtos.SignalR; // Correct namespace for GameEventDto
+using System; // Added for ArgumentNullException
+using System.Text.Json.Serialization;
 
-namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
+namespace ShadowverseBeyond.Server.Dtos.SignalR.Events // Keep this namespace
 {
     /// <summary>
-    /// Event indicating that a new turn has started.
-    /// Sent at the beginning of a player's turn after start-of-turn effects resolve.
+    /// Event DTO carrying the full game state snapshot,
+    /// specifically sent at the start of a player's turn.
     /// </summary>
-    public class TurnStartedEventDto : GameEventDto
+    public class TurnStartedEventDto : GameEventDto // Renamed class
     {
         /// <summary>
-        /// The ID of the player whose turn is starting (now the current player).
+        /// The complete game state at the time the event was generated.
         /// </summary>
-        public string CurrentPlayerId { get; set; } // Renamed from StartingPlayerId
+        public GameStateDto GameState { get; set; } // Keep this property
 
-        /// <summary>
-        /// The current game phase (e.g., "Main").
-        /// </summary>
-        public string Phase { get; set; } // Added Phase property
-
-        /// <summary>
-        /// The turn number that is starting for the current player.
-        /// </summary>
-        public int TurnNumber { get; set; } // Removed required modifier
-
-        // Constructor updated to accept and set new properties
-        public TurnStartedEventDto(string currentPlayerId, int turnNumber, string phase)
-            : base(currentPlayerId, "TurnStarted") // Call base with currentPlayerId
+        // Constructor now accepts sourcePlayerId and calls the base constructor correctly
+        public TurnStartedEventDto(GameStateDto gameState, string sourcePlayerId)
+            : base(sourcePlayerId, "TurnStarted") // Call base constructor with sourcePlayerId and type "TurnStarted"
         {
-            CurrentPlayerId = currentPlayerId;
-            TurnNumber = turnNumber;
-            Phase = phase; // Set the Phase property
+            // Base constructor handles setting Type and TimestampUtc
+            GameState = gameState ?? throw new ArgumentNullException(nameof(gameState));
+            // No need to set Type here anymore
         }
+
+        // Parameterless constructor removed as it's likely unnecessary and caused errors
     }
 }

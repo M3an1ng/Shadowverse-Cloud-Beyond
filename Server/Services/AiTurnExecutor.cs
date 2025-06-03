@@ -192,6 +192,17 @@ namespace ShadowverseBeyond.Server.Services
                     _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Calling _aiService.DecideAttacksAsync.", gameId, aiPlayerId);
                     // --- End Roo Debug Log ---
                     var attackActions = await _aiService.DecideAttacksAsync(currentGameState, aiPlayerId);
+                    // --- BUG-017 DIAGNOSTIC LOG START ---
+                    if (attackActions == null || !attackActions.Any())
+                    {
+                        _logger.LogWarning("[BUG-017_DIAG:{GameId}:{PlayerId}] AI decided NO attacks. Attack Actions List: null or empty.", gameId, aiPlayerId);
+                    }
+                    else
+                    {
+                        var attackDetails = string.Join(", ", attackActions.Select(a => $"({a.AttackerUid} -> {a.TargetUid})"));
+                        _logger.LogWarning("[BUG-017_DIAG:{GameId}:{PlayerId}] AI decided {Count} attacks: [{Details}]", gameId, aiPlayerId, attackActions.Count, attackDetails);
+                    }
+                    // --- BUG-017 DIAGNOSTIC LOG END ---
                     // --- Roo Debug Log: Decide Attack End ---
                     _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] _aiService.DecideAttacksAsync result: {Count} actions.", gameId, aiPlayerId, attackActions?.Count ?? 0);
                     // --- End Roo Debug Log ---
@@ -215,6 +226,9 @@ namespace ShadowverseBeyond.Server.Services
                                 // M8 Change: Create context, pass it, then broadcast events
                                 // Pass the received context down
                                 await _gameService.AttackAsync(gameId, aiPlayerId, attackAction, context);
+                                // --- BUG-017 DIAGNOSTIC LOG START ---
+                                _logger.LogWarning("[BUG-017_DIAG:{GameId}:{PlayerId}] Attempting attack: Attacker={AttackerUid}, Target={TargetUid}", gameId, aiPlayerId, attackAction.AttackerUid, attackAction.TargetUid);
+                                // --- BUG-017 DIAGNOSTIC LOG END ---
                                 // Broadcasting is handled within AttackAsync
                                 _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] AttackAsync and BroadcastEventsAsync completed for one attack.", gameId, aiPlayerId);
                                 anyAttackSucceeded = true;
@@ -225,6 +239,9 @@ namespace ShadowverseBeyond.Server.Services
                                 _logger.LogError(ex, "[AI_EXEC_DEBUG:{GameId}:{PlayerId}] AI failed Attack (GameLogicException). Attacker={AttackerUid}, Target={TargetUid}. Skipping attack.", gameId, aiPlayerId, attackAction.AttackerUid, attackAction.TargetUid);
                                 // --- End Roo Debug Log ---
                                 // _logger.LogWarning(ex, "[AI_EXECUTOR:{GameId}:{PlayerId}] AI failed to execute one Attack action (Attacker: {AttackerUid}). Skipping this attack.", gameId, aiPlayerId, attackAction.AttackerUid); // Original log
+                                // --- BUG-017 DIAGNOSTIC LOG START ---
+                                _logger.LogError(ex, "[BUG-017_DIAG:{GameId}:{PlayerId}] GameLogicException during attack: Attacker={AttackerUid}, Target={TargetUid}. Exception: {ExceptionString}", gameId, aiPlayerId, attackAction.AttackerUid, attackAction.TargetUid, ex.ToString());
+                                // --- BUG-017 DIAGNOSTIC LOG END ---
                             }
                             catch (Exception ex)
                             {
@@ -233,6 +250,9 @@ namespace ShadowverseBeyond.Server.Services
                                 // --- End Roo Debug Log ---
                                 // _logger.LogError(ex, "[AI_EXECUTOR:{GameId}:{PlayerId}] Unexpected error executing AI Attack action (Attacker: {AttackerUid}). Aborting turn.", gameId, aiPlayerId, attackAction.AttackerUid); // Original log
                                 actionTaken = false; // Ensure loop terminates
+                                                     // --- BUG-017 DIAGNOSTIC LOG START ---
+                                _logger.LogError(ex, "[BUG-017_DIAG:{GameId}:{PlayerId}] Exception during attack: Attacker={AttackerUid}, Target={TargetUid}. Exception: {ExceptionString}", gameId, aiPlayerId, attackAction.AttackerUid, attackAction.TargetUid, ex.ToString());
+                                // --- BUG-017 DIAGNOSTIC LOG END ---
                                 break; // Exit the attack loop and the outer action loop
                             }
                         }

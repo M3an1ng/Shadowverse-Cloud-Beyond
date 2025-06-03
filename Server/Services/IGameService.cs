@@ -1,4 +1,5 @@
 // File: Server/Services/IGameService.cs
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos; // For GameStateDto etc.
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // <<< ADDED for Action DTOs
@@ -70,7 +71,8 @@ namespace ShadowverseBeyond.Server.Services
         /// <returns>The ID of the next player whose turn should start.</returns>
         /// <exception cref="GameLogicException">Thrown if the action is invalid (e.g., not the player's turn).</exception>
         // V2 Refactor (BUG-009 Fix): Signature changed to return tuple including IsNextPlayerAi and Events.
-        Task<(bool Success, bool IsNextPlayerAi, string? NextPlayerId)> EndTurnAsync(string gameId, string endingPlayerId, GameActionContext context);
+        // M8 Change: Return type changed to Task, parameter renamed
+        Task EndTurnAsync(string gameId, string playerId, GameActionContext context); // Renamed endingPlayerId to playerId
 
         /// <summary>
         /// Processes the "Submit Mulligan" action initiated by a player via the SignalR Hub.
@@ -94,14 +96,15 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="startingPlayerId">The ID of the player whose turn is starting.</param>
         /// <returns>A tuple containing the list of generated game events and a boolean flag indicating if the starting player is an AI.</returns>
         /// <exception cref="GameLogicException">Thrown if the game or player state is invalid.</exception>
-        Task<bool> StartPlayerTurnAsync(string gameId, string startingPlayerId, GameActionContext context); // Returns IsAiTurn
-        /// &lt;summary&gt;
+        // M8 Change: Removed context parameter, returns GameStateUpdateEventDto
+        Task<TurnStartedEventDto> StartPlayerTurnAsync(string gameId, string startingPlayerId);
+        /// <summary>
         /// Explicitly triggers the execution of an AI player's turn.
         /// This is typically called by the Hub after StartPlayerTurnAsync indicates it's an AI's turn.
-        /// &lt;/summary&gt;
-        /// &lt;param name="gameId"&gt;The ID of the game instance.&lt;/param&gt;
-        /// &lt;param name="aiPlayerId"&gt;The ID of the AI player whose turn should be executed.&lt;/param&gt;
-        /// &lt;returns&gt;A task representing the asynchronous operation.&lt;/returns&gt;
+        /// </summary>
+        /// <param name="gameId">The ID of the game instance.</param>
+        /// <param name="aiPlayerId">The ID of the AI player whose turn should be executed.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
         Task TriggerAiTurnAsync(string gameId, string aiPlayerId);
 
         // --- Optional / Future Methods ---

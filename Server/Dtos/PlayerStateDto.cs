@@ -8,7 +8,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     /// <summary>
     /// Data Transfer Object representing the state of a single player in the game.
     /// </summary>
-    public record PlayerStateDto : IBoardEntityState // Implement the interface
+    public record PlayerStateDto // Remove IBoardEntityState implementation
     {
         public string PlayerId { get; init; } = string.Empty;
         public bool IsAI { get; init; } // Flag to indicate if the player is AI controlled
@@ -22,16 +22,17 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public bool CanEvolve { get; set; } // Whether the player can use an evolution point this turn
 
         // Leader Info
-        public int LeaderHealth { get; set; }
-        public int MaxLeaderHealth { get; init; } // Usually constant, but init for flexibility
+        // public int LeaderHealth { get; set; } // Removed: Use LeaderCard.CurrentHealth
+        // public int MaxLeaderHealth { get; init; } // Removed: Use LeaderCard.MaxHealth
+        public CardInstanceDto? LeaderCard { get; set; } // Represents the leader card instance (Nullable)
 
         // Card Zones
         public int DeckCount { get; set; } // Only send count, not the full deck content
-        public List<CardDto> Hand { get; set; } = new(); // Full card info needed for the player's own hand
-        public List<CardDto> Deck { get; set; } = new(); // Stores the actual cards in the player's deck. Needed for drawing.
-        public List<UnitStateDto> Field { get; set; } = new(); // Units on the player's side of the field
+        public List<CardInstanceDto> Hand { get; set; } = new(); // Represents card instances in the player's hand
+        public List<CardInstanceDto> Deck { get; set; } = new(); // Represents card instances in the player's deck. Needed for drawing.
+        public List<CardInstanceDto> Field { get; set; } = new(); // Represents card instances (followers, amulets) on the player's field
 
-        public List<CardDto> Graveyard { get; set; } = new(); // Cards destroyed or spells/amulets resolved
+        public List<CardInstanceDto> Graveyard { get; set; } = new(); // Represents card instances in the graveyard
         // Turn State
         public int PlayedCardCountThisTurn { get; set; }
         public bool HasCompletedMulligan { get; set; } = false; // Flag indicating if the player has submitted their mulligan choice.
@@ -40,14 +41,6 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
 
         // Add Graveyard count, Banished count, etc., if needed by UI
         // public int GraveyardCount { get; set; }
-        // Explicit implementation for IBoardEntityState.Uid
-        string IBoardEntityState.Uid => this.PlayerId;
-
-        // Explicit implementation for IBoardEntityState.Health
-        int IBoardEntityState.Health
-        {
-            get => this.LeaderHealth;
-            set => this.LeaderHealth = value;
-        }
+        // Removed IBoardEntityState implementation
     }
 }

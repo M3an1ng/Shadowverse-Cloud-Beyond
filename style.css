@@ -341,3 +341,9 @@ body {
   font-weight: bold;
 }
 */
+/* --- Ward Indicator Style --- */
+.card.field-card.has-ward {
+  border: 3px solid cyan; /* Bright cyan border */
+  box-shadow: 0 0 12px cyan; /* Cyan glow */
+  /* You could also use ::before or ::after to add an icon */
+}

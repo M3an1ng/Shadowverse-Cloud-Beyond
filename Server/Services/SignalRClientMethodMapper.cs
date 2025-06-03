@@ -1,0 +1,126 @@
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Dtos.SignalR;
+using ShadowverseBeyond.Server.Hubs;
+using ShadowverseBeyond.Server.Services.Abstractions;
+using System;
+using System.Collections.Generic; // Keep for GroupExcept potentially needing list later if API changes
+using System.Threading.Tasks;
+
+namespace ShadowverseBeyond.Server.Services
+{
+    public class SignalRClientMethodMapper : IClientMethodMapper
+    {
+        private readonly IHubContext<GameHub, IGameClient> _hubContext;
+        private readonly ILogger<SignalRClientMethodMapper> _logger;
+
+        // Constructor without dictionary initialization
+        public SignalRClientMethodMapper(IHubContext<GameHub, IGameClient> hubContext, ILogger<SignalRClientMethodMapper> logger)
+        {
+            _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _logger.LogInformation("SignalRClientMethodMapper initialized (using switch expression for event mapping).");
+        }
+
+        // Private helper method containing the switch expression logic
+        private async Task ExecuteClientActionAsync(IGameClient clientProxy, GameEventDto eventDto, string targetDescription)
+        {
+            if (eventDto == null)
+            {
+                _logger.LogWarning("[Mapper] ExecuteClientActionAsync called with null eventDto for target {TargetDescription}.", targetDescription);
+                return; // Avoid null reference in switch
+            }
+
+            _logger.LogDebug("[Mapper] Executing action for {EventType} targeting {TargetDescription}.", eventDto.GetType().Name, targetDescription);
+            try
+            {
+                // Use switch expression for mapping
+                Task actionTask = eventDto switch
+                {
+                    // --- Specific Handlers ---
+                    TurnStartedEventDto e => clientProxy.TurnStarted(e), // Added handler for TurnStarted event
+                    PpUpdateEventDto e => clientProxy.PpUpdate(e),
+                    // Removed HandUpdateEventDto mapping as it's deprecated
+                    DeckUpdateEventDto e => clientProxy.DeckUpdate(e), // Restored case
+                    AttackDeclaredEventDto e => clientProxy.AttackDeclared(e),
+                    DamageDealtEventDto e => clientProxy.DamageDealt(e),
+                    UnitDestroyedEventDto e => clientProxy.UnitDestroyed(e),
+                    GameOverEventDto e => clientProxy.GameOver(e),
+                    TurnEndedEventDto e => clientProxy.TurnEnded(e),
+                    ErrorOccurredEventDto e => clientProxy.ReceiveError(e.ErrorMessage),
+                    // Removed: UnitPlayedEventDto e => clientProxy.UnitPlayed(e),
+                    // Removed: AmuletPlayedEventDto e => clientProxy.AmuletPlayed(e),
+                    // Removed: SpellPlayedEventDto e => clientProxy.SpellPlayed(e),
+                    CardPlayedEventDto e => clientProxy.CardPlayed(e),             // Added
+                    CardSummonedEventDto e => clientProxy.CardSummoned(e), // Added
+                    UnitEvolvedEventDto e => clientProxy.UnitEvolved(e),
+                    EpUpdateEventDto e => clientProxy.EpUpdate(e),
+                    GraveyardUpdateEventDto e => clientProxy.GraveyardUpdate(e),
+                    HealthChangedEventDto e => clientProxy.HealthChanged(e),
+                    StatChangeEventDto e => clientProxy.StatChange(e),
+                    PlayerMulliganCompletedEventDto e => clientProxy.PlayerMulliganCompleted(e),
+
+                    // --- Default Case for Unmapped Events (Fallback) ---
+                    // Includes CardDrawnEventDto, PlayerAttackedEventDto, UnitAttackedEventDto implicitly
+                    _ => clientProxy.ReceiveGameEvent(eventDto)
+                };
+
+                await actionTask;
+                _logger.LogDebug("[Mapper] Successfully executed action for {EventType} targeting {TargetDescription}.", eventDto.GetType().Name, targetDescription);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Mapper] Error executing action for event {EventType} targeting {TargetDescription}.", eventDto.GetType().Name, targetDescription);
+            }
+        }
+
+        // --- Implementation of IClientMethodMapper ---
+
+        public async Task BroadcastEventToClientAsync(string connectionId, GameEventDto eventDto)
+        {
+            if (string.IsNullOrEmpty(connectionId)) // Null check for eventDto is in helper
+            {
+                _logger.LogWarning("[Mapper] Invalid arguments for BroadcastEventToClientAsync (ConnectionId: {ConnIdIsNullOrEmpty}).", string.IsNullOrEmpty(connectionId));
+                return;
+            }
+            var clientProxy = _hubContext.Clients.Client(connectionId);
+            await ExecuteClientActionAsync(clientProxy, eventDto, $"Client: {connectionId}");
+        }
+
+        public async Task BroadcastEventToGroupAsync(string groupName, GameEventDto eventDto)
+        {
+            if (string.IsNullOrEmpty(groupName)) // Null check for eventDto is in helper
+            {
+                _logger.LogWarning("[Mapper] Invalid arguments for BroadcastEventToGroupAsync (GroupName: {GroupIsNullOrEmpty}).", string.IsNullOrEmpty(groupName));
+                return;
+            }
+            var groupProxy = _hubContext.Clients.Group(groupName);
+            await ExecuteClientActionAsync(groupProxy, eventDto, $"Group: {groupName}");
+        }
+
+        public async Task BroadcastEventToGroupAllAsync(string groupName, GameEventDto eventDto)
+        {
+            if (string.IsNullOrEmpty(groupName)) // Null check for eventDto is in helper
+            {
+                _logger.LogWarning("[Mapper] Invalid arguments for BroadcastEventToGroupAllAsync (GroupName: {GroupIsNullOrEmpty}).", string.IsNullOrEmpty(groupName));
+                return;
+            }
+            // Functionally same as BroadcastEventToGroupAsync in SignalR Core
+            var groupProxy = _hubContext.Clients.Group(groupName);
+            await ExecuteClientActionAsync(groupProxy, eventDto, $"Group (All): {groupName}");
+        }
+
+        public async Task BroadcastEventToGroupExceptAsync(string groupName, string connectionIdToExclude, GameEventDto eventDto)
+        {
+            if (string.IsNullOrEmpty(groupName) || string.IsNullOrEmpty(connectionIdToExclude)) // Null check for eventDto is in helper
+            {
+                _logger.LogWarning("[Mapper] Invalid arguments for BroadcastEventToGroupExceptAsync (GroupName: {GroupIsNullOrEmpty}, ExcludedId: {ExcludedIdIsNullOrEmpty}).", string.IsNullOrEmpty(groupName), string.IsNullOrEmpty(connectionIdToExclude));
+                return;
+            }
+            var groupProxy = _hubContext.Clients.GroupExcept(groupName, connectionIdToExclude);
+            await ExecuteClientActionAsync(groupProxy, eventDto, $"Group: {groupName} (Except: {connectionIdToExclude})");
+        }
+    }
+}

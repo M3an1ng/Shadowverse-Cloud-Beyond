@@ -1,4 +1,5 @@
 using System;
+using ShadowverseBeyond.Server.Dtos; // Added for CardInstanceDto
 using System.Collections.Generic;
 
 namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
@@ -22,7 +23,8 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// Useful for displaying the card entering the graveyard animation/log.
         /// Might need a simplified CardInfo DTO if CardDto is too heavy.
         /// </summary>
-        public CardDto? CardAdded { get; set; }
+        /// Might need a simplified CardInfo DTO if CardInstanceDto is too heavy.
+        public CardInstanceDto? CardAdded { get; set; }
 
         /// <summary>
         /// Optional: The UID of a card that was *removed* from the graveyard (e.g., due to a resurrection effect).
@@ -32,7 +34,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         // Consider adding the CardId of the removed card if needed for visual tracking.
 
         // Constructor to initialize properties and call base constructor
-        public GraveyardUpdateEventDto(string playerId, int graveyardCount, CardDto? cardAdded = null, string? cardRemovedUid = null)
+        public GraveyardUpdateEventDto(string playerId, int graveyardCount, CardInstanceDto? cardAdded = null, string? cardRemovedUid = null)
             : base(playerId, "GraveyardUpdate") // Set base PlayerId and Type
         {
             this.GraveyardCount = graveyardCount;

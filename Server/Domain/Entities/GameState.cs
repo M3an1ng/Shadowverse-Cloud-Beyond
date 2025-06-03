@@ -25,15 +25,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public PlayerState Player1 { get; set; } // Needs proper initialization
         public PlayerState Player2 { get; set; } // Needs proper initialization
 
-        // Represent leaders, units, and amulets separately
-        public LeaderState Player1Leader { get; set; } = null!; // Must be initialized externally (e.g., in GameService)
-        public LeaderState Player2Leader { get; set; } = null!; // Must be initialized externally
+        // Unified field representation using CardInstance
+        public CardInstance Player1Leader { get; set; } = null!; // Must be initialized externally (e.g., in GameService)
+        public CardInstance Player2Leader { get; set; } = null!; // Must be initialized externally
 
-        public List<UnitState> Player1Units { get; set; } = new List<UnitState>(); // Replaces Player1Board
-        public List<UnitState> Player2Units { get; set; } = new List<UnitState>(); // Replaces Player2Board
-
-        public List<AmuletState> Player1Amulets { get; set; } = new List<AmuletState>();
-        public List<AmuletState> Player2Amulets { get; set; } = new List<AmuletState>();
+        public List<CardInstance> Player1Field { get; set; } = new List<CardInstance>(); // All field entities (units + amulets)
+        public List<CardInstance> Player2Field { get; set; } = new List<CardInstance>(); // All field entities (units + amulets)
         // Constructor requiring GameId
         public GameState(string gameId)
         {
@@ -41,11 +38,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Initialize player states using the actual PlayerState constructor
             Player1 = new PlayerState($"{gameId}_Player1"); // Assuming PlayerState has a constructor taking PlayerId
             Player2 = new PlayerState($"{gameId}_Player2"); // Assuming PlayerState has a constructor taking PlayerId
-            // Initialize lists
-            Player1Units = new List<UnitState>();
-            Player2Units = new List<UnitState>();
-            Player1Amulets = new List<AmuletState>();
-            Player2Amulets = new List<AmuletState>();
+            // Initialize field lists
+            Player1Field = new List<CardInstance>();
+            Player2Field = new List<CardInstance>();
             // Note: Leader initialization (Player1Leader, Player2Leader) should happen
             // in the service layer (e.g., GameService) after creating the GameState,
             // as it likely involves fetching leader definitions based on player selection.
@@ -60,11 +55,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Use actual PlayerState constructor
             Player1 = new PlayerState("Default_P1"); // Needs parameterless constructor or null handling in PlayerState if this path is used
             Player2 = new PlayerState("Default_P2");
-            // Initialize lists
-            Player1Units = new List<UnitState>();
-            Player2Units = new List<UnitState>();
-            Player1Amulets = new List<AmuletState>();
-            Player2Amulets = new List<AmuletState>();
+            // Initialize field lists
+            Player1Field = new List<CardInstance>();
+            Player2Field = new List<CardInstance>();
             // Player1Leader/Player2Leader remain null! here, expecting external initialization if this constructor path is used.
         }
 
@@ -95,33 +88,22 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         /// <summary>
-        /// Finds a board entity (Leader, Unit, or Amulet) within the game state by its unique instance ID.
-        /// Requires LeaderState and AmuletState to have an InstanceId property (potentially via inheriting BoardEntityState).
+        /// Finds a card instance (Leader or Field entity) within the game state by its unique instance ID.
         /// </summary>
         /// <param name="uid">The unique instance ID of the entity to find.</param>
-        /// <returns>The BoardEntityState if found; otherwise, null.</returns>
-        public BoardEntityState? FindEntityByUid(string uid)
+        /// <returns>The CardInstance if found; otherwise, null.</returns>
+        public CardInstance? FindEntityByUid(string uid)
         {
-            // Check Leaders (Assuming LeaderState : BoardEntityState)
+            // Check Leaders
             if (Player1Leader?.InstanceId == uid) return Player1Leader;
             if (Player2Leader?.InstanceId == uid) return Player2Leader;
 
-            // Check Units (Assuming UnitState : BoardEntityState)
-            BoardEntityState? foundEntity = Player1Units.FirstOrDefault(u => u.InstanceId == uid); // Corrected lambda operator
+            // Check Field entities (both units and amulets)
+            CardInstance? foundEntity = Player1Field.FirstOrDefault(c => c.InstanceId == uid);
             if (foundEntity != null) return foundEntity;
 
-            foundEntity = Player2Units.FirstOrDefault(u => u.InstanceId == uid); // Corrected lambda operator
+            foundEntity = Player2Field.FirstOrDefault(c => c.InstanceId == uid);
             if (foundEntity != null) return foundEntity;
-
-            // Check Amulets (Assuming AmuletState : BoardEntityState)
-            foundEntity = Player1Amulets.FirstOrDefault(a => a.InstanceId == uid); // Corrected lambda operator
-            if (foundEntity != null) return foundEntity;
-
-            foundEntity = Player2Amulets.FirstOrDefault(a => a.InstanceId == uid); // Corrected lambda operator
-            if (foundEntity != null) return foundEntity;
-
-            // PlayerState itself usually doesn't inherit BoardEntityState and uses PlayerId, not InstanceId.
-            // So, direct player targeting logic should likely compare against Player1/Player2 directly if needed.
 
             return null; // Not found
         }

@@ -1,7 +1,7 @@
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 // File: ShadowverseBeyond.Server.Hubs.ClientInterfaces.IGameClient.cs
 using ShadowverseBeyond.Server.Dtos; // For GameStateDto etc.
 using ShadowverseBeyond.Server.Dtos.SignalR; // <<< ADDED: For base GameEventDto
-using ShadowverseBeyond.Server.Dtos.SignalR.Events; // <<< USE EVENTS NAMESPACE for GameEventDto and specific events
 using System.Threading.Tasks;
 
 namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
@@ -25,10 +25,14 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// <param name="errorMessage">The error message content.</param>
         Task ReceiveError(string errorMessage);
         /// <summary>
-        /// Notifies the client that a unit (follower) has been played onto the board.
+        /// Notifies the client that a card (Unit, Spell, Amulet) has been played from hand.
         /// </summary>
-        Task UnitPlayed(UnitPlayedEventDto eventDto);
+        Task CardPlayed(CardPlayedEventDto eventDto);
 
+        /// <summary>
+        /// Notifies the client that an entity (Unit or Amulet) has entered the play area.
+        /// </summary>
+        Task CardSummoned(CardSummonedEventDto eventDto);
         /// <summary>
         /// Notifies the client of an update to a player's Play Points (PP).
         /// </summary>
@@ -44,11 +48,12 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
                                                        // Task RequestTargetSelection(TargetSelectionRequestDto request); // Keep commented for now
                                                        // --- Methods added for BroadcastEventAsync helper ---
 
+        // TurnStarted method removed - Handled by ReceiveGameState
+
         /// <summary>
-        /// Notifies the client that a new turn has started.
+        /// Notifies the client that a turn has started.
         /// </summary>
         Task TurnStarted(TurnStartedEventDto eventDto);
-
         /// <summary>
         /// Notifies the client that a turn has ended.
         /// </summary>
@@ -62,26 +67,19 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// <summary>
         /// Notifies the client of an update to their hand (cards drawn, discarded, etc.).
         /// </summary>
-        Task HandUpdate(HandUpdateEventDto eventDto);
+        // Task HandUpdate(HandUpdateEventDto eventDto); // REMOVED - HandUpdate is deprecated
 
         /// <summary>
         /// Notifies the client of an update to their deck count.
         /// </summary>
-        Task DeckUpdate(DeckUpdateEventDto eventDto);
-        /// &lt;summary&gt;
-        /// Notifies the client that a card has been drawn.
-        /// &lt;/summary&gt;
-        Task CardDrawn(CardDrawnEventDto eventDto);
-
         /// <summary>
-        /// Notifies the client that a spell card has been played.
+        /// Notifies the client of an update to their deck count.
         /// </summary>
-        Task SpellPlayed(SpellPlayedEventDto eventDto);
-
-        /// <summary>
-        /// Notifies the client that an amulet card has been played.
-        /// </summary>
-        Task AmuletPlayed(AmuletPlayedEventDto eventDto);
+        Task DeckUpdate(DeckUpdateEventDto dto); // Restored method definition
+        // /// <summary>
+        // /// Notifies the client that a card has been drawn. (REMOVED as per design - HandUpdate/DeckUpdate handle UI)
+        // /// </summary>
+        // Task CardDrawn(CardDrawnEventDto eventDto); // REMOVED
 
         /// <summary>
         /// Notifies the client that a unit has evolved.

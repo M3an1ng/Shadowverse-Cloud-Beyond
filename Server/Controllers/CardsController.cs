@@ -26,9 +26,9 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
         }
 
         [HttpGet]
-        [ProducesResponseType(typeof(IEnumerable<CardDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(IEnumerable<CardDefinitionDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<IEnumerable<CardDto>>> GetAllCards()
+        public async Task<ActionResult<IEnumerable<CardDefinitionDto>>> GetAllCards()
         {
             try
             {
@@ -44,19 +44,23 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     return StatusCode(StatusCodes.Status500InternalServerError, "Failed to retrieve card definitions (service returned null).");
                 }
 
-                // Map CardDefinition to CardDto
-                var dtos = definitions.Select(def => new CardDto
+                // Map CardDefinition (Domain Entity) to CardDefinitionDto
+                var dtos = definitions.Select(def => new CardDefinitionDto
                 {
-                    // Uid = Guid.Empty; // Dto Uid likely represents an instance, not definition. Ignore for now.
-                    CardId = def.Id,
+                    CardId = def.Id, // string to string mapping
                     Name = def.Name,
                     Type = def.Type,
+                    // Class removed - not in entity
+                    // Rarity removed - not in entity
                     Cost = def.Cost,
-                    BaseAttack = def.Attack, // Nullable int? maps to nullable int?
-                    BaseHealth = def.Health, // Nullable int? maps to nullable int?
-                    Keywords = def.Keywords ?? new List<string>(), // Handle potential null Keywords list
-                    Description = def.Description
-                    // Effects = ... // Effects are not part of CardDto based on previous analysis
+                    Attack = def.Attack,
+                    Health = def.Health,
+                    Description = def.Description,
+                    // FlavorText removed - not in entity
+                    CanEvolve = def.EvolveId.HasValue, // Check if the int? has a value
+                    Keywords = def.Keywords ?? new List<string>(),
+                    // EffectDescriptions removed - not in entity
+                    // ImageUrl removed - not in entity
                 });
 
                 _logger.LogInformation($"Successfully retrieved {dtos.Count()} card definitions.");

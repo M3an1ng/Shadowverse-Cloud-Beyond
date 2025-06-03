@@ -116,28 +116,96 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     }
                     logger.LogInformation("Mapping {ValidCount} valid DTOs to CardDefinition entities...", validCount);
 
-                    var cardEntities = validCardDtos.Select(dto => new CardDefinition
+                    var cardEntities = validCardDtos.Select(dto =>
                     {
-                        Id = dto.Id, // Assuming Id is always present in valid DTO
-                        Name = dto.Name, // Safe because we filtered null/empty
-                        Cost = dto.Cost,
-                        Type = dto.Type ?? string.Empty, // Provide default if Type is null in DTO
-                        Attack = dto.Attack,
-                        Health = dto.Health,
-                        Description = dto.Description ?? string.Empty, // Provide default if Description is null
-                        Keywords = dto.Keywords, // Assign List<string>? directly
-                        // Map Effects: Convert List<EffectDto>? to List<CardEffect>? safely
-                        Effects = dto.Effects? // If dto.Effects is not null...
+                        // Parse the numeric string ID directly
+                        int entityId = 0; // Default value
+                        try
+                        {
+                            // Handle potential non-numeric IDs like LDR000 gracefully
+                            if (int.TryParse(dto.Id, out int parsedId))
+                            {
+                                entityId = parsedId;
+                            }
+                            else
+                            {
+                                logger.LogWarning("Could not parse dto.Id '{DtoId}' as int for card '{CardName}'. Using default ID 0.", dto.Id, dto.Name);
+                                // Decide how to handle non-parseable IDs, e.g., skip or use default. Let's use 0 for now.
+                            }
+                        }
+                        catch (ArgumentNullException ex) // Handle null dto.Id just in case
+                        {
+                            logger.LogError(ex, "dto.Id was null for card '{CardName}'. Using default ID 0.", dto.Name);
+                            entityId = 0;
+                        }
+
+
+                        // Parse the numeric string EvolveId directly if present
+                        int? evolveIntId = null;
+                        var evolveStringId = dto.EvolvesInto?.FirstOrDefault();
+                        if (!string.IsNullOrEmpty(evolveStringId))
+                        {
+                            // Add try-catch for robustness, although JSON IDs should be valid ints now
+                            try
+                            {
+                                if (int.TryParse(evolveStringId, out int parsedEvolveId))
+                                {
+                                    evolveIntId = parsedEvolveId;
+                                }
+                                else
+                                {
+                                    logger.LogWarning("Could not parse EvolveId string '{EvolveStringId}' as int for DTO Id '{DtoId}'. Setting EvolveId to null.", evolveStringId, dto.Id);
+                                    evolveIntId = null;
+                                }
+
+                            }
+                            catch (ArgumentNullException ex) // Handle null evolveStringId (shouldn't happen due to check, but defensive)
+                            {
+                                logger.LogError(ex, "EvolveId string was unexpectedly null after check for DTO Id '{DtoId}'. Setting EvolveId to null.", dto.Id);
+                                evolveIntId = null; // Keep it null if parsing fails
+                            }
+                            catch (FormatException ex) // Catch potential parsing errors
+                            {
+                                // Log error if parsing fails despite JSON changes
+                                logger.LogError(ex, "Failed to parse EvolveId string '{EvolveStringId}' to int for DTO Id '{DtoId}'. Setting EvolveId to null.", evolveStringId, dto.Id);
+                                evolveIntId = null; // Keep it null if parsing fails
+                            }
+                        }
+
+                        return new CardDefinition
+                        {
+                            Id = entityId, // Use directly parsed int ID
+                            Name = dto.Name, // Safe because we filtered null/empty
+                            Cost = dto.Cost,
+                            Type = dto.Type ?? string.Empty, // Provide default if Type is null in DTO
+                            Attack = dto.Attack,
+                            Health = dto.Health,
+                            Description = dto.Description ?? string.Empty, // Provide default if Description is null
+                            Keywords = dto.Keywords, // Assign List<string>? directly
+                                                     // Map Effects: Convert List<EffectDto>? to List<CardEffect>? safely
+                            Effects = dto.Effects? // If dto.Effects is not null...
                                    .Select(e => new CardEffect( // ...select each EffectDto...
                                        e.Trigger ?? "DefaultTrigger", // Provide default for CardEffect record non-nullable string
                                        e.Action ?? "DefaultAction",   // Provide default for CardEffect record non-nullable string
                                        e.Value ?? (object)0 // If e.Value is null, pass boxed 0 // Assign int? to object is okay
                                    )).ToList() // ...and convert to List<CardEffect>
                                                // If dto.Effects is null, assign null to entity.Effects
-                                   ?? null
-                        // Removed mapping for: KeywordsJson, EffectsJson, Art, IsEvolved, CanEvolve, EvolvesInto, IsEvolvedFormOf, RequiresTarget, ValidTargets
+                                   ?? null,
+                            // Added mappings for evolution properties based on CardDefinition entity and internal CardDataDto
+                            IsEvolved = dto.IsEvolved, // Map from internal DTO's IsEvolved
+                            EvolveId = evolveIntId, // Use directly parsed int? EvolveId
+                            // IsCollectible defaults to true in entity, no direct mapping from internal DTO shown
+                        };
                     }).ToList();
-                    logger.LogInformation("Mapping complete. {Count} entities created.", cardEntities.Count);
+                    // Note: Removed filtering logic that discarded entities with ID 0,
+                    // as 0 is now a valid ID for the Leader card.
+                    // int originalEntityCount = cardEntities.Count;
+                    // cardEntities = cardEntities.Where(e => e.Id != 0).ToList();
+                    // if (cardEntities.Count != originalEntityCount)
+                    // {
+                    //     logger.LogWarning("Removed {RemovedCount} entities due to ID parsing errors (ID became 0).", originalEntityCount - cardEntities.Count);
+                    // }
+                    logger.LogInformation("Mapping complete. {Count} valid entities created.", cardEntities.Count);
 
                     logger.LogInformation("Adding entities to the DbContext...");
                     await context.CardDefinitions.AddRangeAsync(cardEntities);
@@ -149,22 +217,22 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 }
                 catch (JsonException jsonEx)
                 {
-                    logger.LogError(jsonEx, "Error deserializing seed data from {FilePath}. Please check the JSON format.", jsonFilePath);
+                    logger.LogError("Error deserializing seed data from {FilePath}. Exception: {ExceptionMessage}. Please check the JSON format.", jsonFilePath, jsonEx.Message); // Simplified LogError call
                     // Optionally rethrow or handle to prevent app startup? For now, log and continue.
                 }
                 catch (DbUpdateException dbEx)
                 {
-                    logger.LogError(dbEx, "Error saving seed data to the database. Check database connection, schema, and permissions.");
+                    logger.LogError("Error saving seed data to the database. Exception: {ExceptionMessage}. Check database connection, schema, and permissions.", dbEx.Message); // Simplified LogError call
                     // Optionally rethrow or handle
                 }
                 catch (IOException ioEx)
                 {
-                    logger.LogError(ioEx, "Error reading seed data file from {FilePath}.", jsonFilePath);
+                    logger.LogError("Error reading seed data file from {FilePath}. Exception: {ExceptionMessage}.", jsonFilePath, ioEx.Message); // Simplified LogError call
                     // Optionally rethrow or handle
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "An unexpected error occurred during database seeding operation.");
+                    logger.LogError("An unexpected error occurred during database seeding operation. Exception: {ExceptionMessage}.", ex.Message); // Simplified LogError call
                     // Optionally rethrow or handle to prevent app startup
                 }
             }
