@@ -1,3 +1,9 @@
+//
+// 相关文档:
+// - 卡牌能力系统: 文档/05-游戏系统/01-卡牌能力系统.md
+// - 战斗系统: 文档/05-游戏系统/02-战斗系统.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+//
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using System.Collections.Generic;
@@ -16,7 +22,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             SourcePlayer = player;
             SourceCard = card;
-            Parameters["target"] = target;
+            if (target != null) Parameters["target"] = target; // Assign only if not null
         }
 
         public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
@@ -58,7 +64,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             SourcePlayer = player;
             SourceCard = card;
-            Parameters["position"] = position;
+            if (position != null) Parameters["position"] = position; // Assign only if not null
         }
 
         public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
@@ -177,12 +183,65 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 // Attacker deals damage to target
                 events.Add(new DamageEvent(target, SourceCard.CurrentAttack, SourceCard));
-                
+
                 // If target can deal damage back (unit combat)
                 if (target.CurrentAttack > 0)
                 {
                     events.Add(new DamageEvent(SourceCard, target.CurrentAttack, target));
                 }
+            }
+
+            return await Task.FromResult(events);
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when healing is applied to a target.
+    /// </summary>
+    public class HealEvent : GameEventBase
+    {
+        public HealEvent(CardInstance target, int healAmount, CardInstance? source = null)
+            : base("heal")
+        {
+            SourceCard = source;
+            Parameters["target"] = target;
+            Parameters["healAmount"] = healAmount;
+        }
+
+        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+        {
+            var events = new List<IGameEvent>();
+            var target = (CardInstance)Parameters["target"];
+            var healAmount = (int)Parameters["healAmount"];
+
+            // Apply healing logic would be handled by GameService
+            // This event represents the fact that healing occurred
+
+            return await Task.FromResult(events);
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when an amulet's countdown reaches zero.
+    /// </summary>
+    public class CountdownFinishedEvent : GameEventBase
+    {
+        public CountdownFinishedEvent(PlayerStateDto player, CardInstance amulet)
+            : base("countdown_finished")
+        {
+            SourcePlayer = player;
+            SourceCard = amulet;
+        }
+
+        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+        {
+            var events = new List<IGameEvent>();
+
+            // The actual countdown finish logic would be handled by GameService
+            // This typically triggers the amulet's effect and then destroys it
+            if (SourceCard != null && SourcePlayer != null)
+            {
+                events.Add(new CardDestroyedEvent(SourcePlayer, SourceCard));
             }
 
             return await Task.FromResult(events);

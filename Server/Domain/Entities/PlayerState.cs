@@ -1,5 +1,6 @@
 // File: Server/Domain/Entities/PlayerState.cs
 using System.Collections.Generic;
+using ShadowverseBeyond.Server.Dtos; // Added for DTO types
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
@@ -22,11 +23,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int CurrentEvolutionPoints { get; set; } = 0;
 
         // Card Zones (Using CardInstance instead of CardState)
+        public CardInstance Leader { get; set; } = null!; // Must be initialized externally (e.g., in GameService)
         public List<CardInstance> Hand { get; set; } = new List<CardInstance>();
         public List<CardInstance> Deck { get; set; } = new List<CardInstance>();
         public List<CardInstance> Field { get; set; } = new List<CardInstance>();
         public List<CardInstance> Graveyard { get; set; } = new List<CardInstance>();
-        public List<CardInstance> BanishZone { get; set; } = new List<CardInstance>();
+        public List<CardInstance> Extra { get; set; } = new List<CardInstance>();
 
         // Note: Field units are now managed separately in GameState as Player1Units/Player2Units
         // This removes the redundant Field property from PlayerState
@@ -52,7 +54,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Deck = new List<CardInstance>();
             Field = new List<CardInstance>();
             Graveyard = new List<CardInstance>();
-            BanishZone = new List<CardInstance>();
+            Extra = new List<CardInstance>();
         }
 
         // --- Potential methods for state manipulation ---
@@ -62,5 +64,41 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         // public void PlayCard(CardStatePlaceholder card) { /* Remove from Hand, deduct PP */ }
         // public void TakeDamage(int amount) { LeaderHealth -= amount; /* Check for loss */ }
         // ... and so on
+        /// <summary>
+        /// Converts this PlayerState domain entity to its corresponding Data Transfer Object (DTO).
+        /// </summary>
+        /// <returns>A PlayerStateDto representing the current player state.</returns>
+        public PlayerStateDto ToDto()
+        {
+            // Assume CardInstance has a ToDto() method
+            var handDto = Hand.Select(card => card.ToDto()).ToList();
+            var deckDto = Deck.Select(card => card.ToDto()).ToList(); // Consider if full deck DTO is needed
+            var fieldDto = Field.Select(card => card.ToDto()).ToList();
+            var graveyardDto = Graveyard.Select(card => card.ToDto()).ToList();
+
+            return new PlayerStateDto
+            {
+                PlayerId = this.PlayerId,
+                MaxPP = this.MaxPlayPoints,
+                CurrentPP = this.CurrentPlayPoints,
+                MaxEP = this.MaxEvolutionPoints,
+                CurrentEP = this.CurrentEvolutionPoints,
+                DeckCount = this.Deck.Count,
+                Hand = handDto,
+                Deck = deckDto, // Sending full deck DTO for now
+                Field = fieldDto,
+                Graveyard = graveyardDto,
+
+                // Properties not directly available in PlayerState entity:
+                IsAI = false, // Default or determine elsewhere
+                IsFirst = false, // Default or determine from GameState
+                CanEvolve = false, // Default or determine based on game rules/turn
+                LeaderCard = null, // Should be populated from GameState.PlayerXLeader.ToDto()
+                PlayedCardCountThisTurn = 0, // Default or track elsewhere
+                HasCompletedMulligan = false, // Default or track elsewhere
+                HasTakenFirstTurn = false, // Default or track elsewhere
+                TurnNumber = 0 // Default or track elsewhere (PlayerState doesn't track its own turn number)
+            };
+        }
     }
 }

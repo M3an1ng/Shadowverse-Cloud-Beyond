@@ -1,3 +1,9 @@
+//
+// 相关文档:
+// - 卡牌能力系统: 文档/05-游戏系统/01-卡牌能力系统.md
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
+//
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using System;
@@ -91,19 +97,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
         private CardInstance? FindCardInPlayer(PlayerStateDto player, string instanceId)
         {
             // Search in hand
-            var handCard = player.Hand.FirstOrDefault(c => c.InstanceId == instanceId);
+            var handCard = player.Hand.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
             if (handCard != null) return ConvertToCardInstance(handCard);
 
             // Search in field
-            var fieldCard = player.Field.FirstOrDefault(c => c.InstanceId == instanceId);
+            var fieldCard = player.Field.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
             if (fieldCard != null) return ConvertToCardInstance(fieldCard);
 
             // Search in deck
-            var deckCard = player.Deck.FirstOrDefault(c => c.InstanceId == instanceId);
+            var deckCard = player.Deck.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
             if (deckCard != null) return ConvertToCardInstance(deckCard);
 
             // Search in graveyard
-            var graveyardCard = player.Graveyard.FirstOrDefault(c => c.InstanceId == instanceId);
+            var graveyardCard = player.Graveyard.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
             if (graveyardCard != null) return ConvertToCardInstance(graveyardCard);
 
             return null;
@@ -111,7 +117,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private CardInstance ConvertToCardInstance(CardInstanceDto dto)
         {
-            return new CardInstance(dto.InstanceId, dto.CardId, dto.ControllerPlayerId)
+            return new CardInstance(dto.InstanceId.ToString(), dto.CardId, dto.ControllerPlayerId)
             {
                 CurrentZone = dto.Zone,
                 CardType = dto.Type,

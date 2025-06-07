@@ -1,4 +1,11 @@
 // Server/Services/AiService.cs
+//
+// 相关文档:
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - AI决策系统: 文档/05-游戏系统/05-AI决策系统.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+// - 战斗系统: 文档/05-游戏系统/02-战斗系统.md
+//
 using Microsoft.Extensions.DependencyInjection; // For IServiceScopeFactory
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Models; // For GameActionContext
@@ -207,7 +214,7 @@ namespace ShadowverseBeyond.Server.Services
                 .Where(u => u != null && u.CanAttack) // Ensure unit is not null and can attack
                 .Select(u => DeepCopy(u)) // Create deep copies to avoid modifying original state
                 .Where(u => u != null) // Filter out potential nulls from failed deep copy (defensive)
-                .Select(u => new { Unit = u, SortAttack = u.CurrentAttack }) // Project for sorting
+                .Select(u => new { Unit = u, SortAttack = u!.CurrentAttack }) // Project for sorting - Added null-forgiving operator
                 .OrderByDescending(x => x.SortAttack) // Prioritize higher attack units
                 .Select(x => x.Unit) // Select the copied unit
                 .ToList();
@@ -222,13 +229,13 @@ namespace ShadowverseBeyond.Server.Services
             // V1 Logic: Attack with all ready units. Prioritize targets: Ward > Highest Attack Follower > Opponent Leader
             foreach (var attacker in readyUnits)
             {
-                string? targetUid = SelectAttackTarget(attacker, opponentState); // Use helper
+                string? targetUid = SelectAttackTarget(attacker!, opponentState); // Use helper - Added null-forgiving operator
 
                 if (targetUid != null)
                 {
-                    attacks.Add(new AttackActionDto { AttackerUid = attacker.InstanceId.ToString(), TargetUid = targetUid }); // Fix: Use InstanceId // Convert Guid to string for DTO
+                    attacks.Add(new AttackActionDto { AttackerUid = attacker!.InstanceId.ToString(), TargetUid = targetUid }); // Fix: Use InstanceId // Convert Guid to string for DTO // Added !
                     _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided attack: Unit {AttackerUid} -> Target {TargetUid}.",
-                        gameId, aiPlayerId, attacker.InstanceId, targetUid); // Fix: Use InstanceId
+                        gameId, aiPlayerId, attacker!.InstanceId, targetUid); // Fix: Use InstanceId // Added !
 
                     // Basic simulation: Mark attacker as unable to attack again this turn
                     // (A more robust simulation would update game state based on attack outcome)
@@ -236,7 +243,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
                 else
                 {
-                    _logger.LogDebug("[AiService:{GameId}] No valid target found for AI attacker {AttackerUid}.", gameId, attacker.InstanceId); // Fix: Use InstanceId
+                    _logger.LogDebug("[AiService:{GameId}] No valid target found for AI attacker {AttackerUid}.", gameId, attacker!.InstanceId); // Fix: Use InstanceId // Added !
                 }
             }
 

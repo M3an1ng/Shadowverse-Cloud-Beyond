@@ -114,7 +114,7 @@ namespace ShadowverseBeyond.Server.Tests
             };
             // Fix: Setup mock with the string representation of the integer CardId (1)
             // Modify mock to return a new instance inline to isolate potential issues
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)) // Changed "1" to 1
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(1)) // Changed "1" to 1
                              .ReturnsAsync(() => new CardDefinition
                              {
                                  Id = 1, // Match the lookup key (Changed "1" to 1)
@@ -142,8 +142,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Graveyard = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
                 CurrentPP = 5, // Enough PP
                 MaxPP = 5,
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 2,
                 CanEvolve = false,
@@ -163,8 +176,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Graveyard = new List<CardInstanceDto>(), // Changed CardDto to CardInstanceDto
                 CurrentPP = 5,
                 MaxPP = 5,
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 3,
                 CanEvolve = false,
@@ -275,7 +301,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(followerCardId, foundCardSummonedEvent.SummonedCard.CardId); // Use followerCardId variable
 
             // 4. Verify Mock Interactions (Optional but good practice)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(1), Times.Once); // Verify with 1
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(1), Times.Once); // Verify with 1
         }
 
         // 实用测试：快速游戏设置
@@ -285,8 +311,8 @@ namespace ShadowverseBeyond.Server.Tests
             // Arrange
             var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
             string gameId = "quick-test-game";
-            string player1Id = "player1";
-            string player2Id = "player2";
+            // string player1Id = "player1"; // Placeholder - Removed unused variable
+            // string player2Id = "player2"; // Placeholder - Removed unused variable
 
             // Mock card definitions for a basic game
             var testCards = new List<CardDefinition>
@@ -296,19 +322,19 @@ namespace ShadowverseBeyond.Server.Tests
                 new CardDefinition { Id = 2, Name = "Test Spell", Cost = 1, Type = "Spell", IsCollectible = true }
             };
 
-            mockCardRepository.Setup(repo => repo.GetAllCardsAsync())
+            mockCardRepository.Setup(repo => repo.GetAllCardDefinitionsAsync())
                 .ReturnsAsync(testCards);
 
             // Act & Assert - 创建完整的可玩游戏
-            var gameState1 = await gameService.GetOrCreateGameStateAsync(gameId, player1Id);
+            var gameState1 = await gameService.GetOrCreateGameStateAsync(gameId);
             Assert.NotNull(gameState1);
 
-            var gameState2 = await gameService.GetOrCreateGameStateAsync(gameId, player2Id);
+            var gameState2 = await gameService.GetOrCreateGameStateAsync(gameId);
             Assert.NotNull(gameState2);
             Assert.Equal(2, gameState2.Players.Count);
 
             // 验证游戏状态
-            Assert.Equal("InProgress", gameState2.Status.ToString());
+            Assert.Equal("InProgress", gameState2.GameStatus.ToString());
             Assert.True(gameState2.Players.All(p => p.Hand.Count > 0)); // 玩家应该有手牌
             Assert.True(gameState2.Players.All(p => p.LeaderCard != null)); // 玩家应该有领袖
         }
@@ -327,7 +353,7 @@ namespace ShadowverseBeyond.Server.Tests
             // Mock Card Definition (Cost 1)
             var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() /* ... other needed props */ }; // Added Name
             // Fix: Setup mock with the integer CardId (1)
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State with Insufficient PP
             var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = 1, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props
@@ -369,7 +395,7 @@ namespace ShadowverseBeyond.Server.Tests
 
 
             // Verify Mock Interactions (Optional: verify card repo wasn't called again if check happens early)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_PlayFollower_FieldFull()
@@ -386,7 +412,7 @@ namespace ShadowverseBeyond.Server.Tests
             // Mock Card Definition (Cost 1)
             var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() };
             // Fix: Setup mock with the integer CardId (1)
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State with Full Field and Sufficient PP
             var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = 1, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props
@@ -417,8 +443,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
                 Graveyard = new List<CardInstanceDto>(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 2,
                 CanEvolve = false,
@@ -428,7 +467,40 @@ namespace ShadowverseBeyond.Server.Tests
                 HasTakenFirstTurn = true,
                 IsAI = false // Added minimal required properties
             };
-            var opponentState = new PlayerStateDto { PlayerId = opponentId, Hand = new(), Deck = new(), Field = new(), Graveyard = new(), DeckCount = 0, LeaderHealth = 20, MaxLeaderHealth = 20, CurrentPP = 5, MaxPP = 5, CurrentEP = 0, MaxEP = 3, CanEvolve = false, IsFirst = false, HasCompletedMulligan = true, PlayedCardCountThisTurn = 0, HasTakenFirstTurn = true, IsAI = true }; // Minimal opponent state
+            var opponentState = new PlayerStateDto
+            {
+                PlayerId = opponentId,
+                Hand = new(),
+                Deck = new(),
+                Field = new(),
+                Graveyard = new(),
+                DeckCount = 0,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
+                CurrentPP = 5,
+                MaxPP = 5,
+                CurrentEP = 0,
+                MaxEP = 3,
+                CanEvolve = false,
+                IsFirst = false,
+                HasCompletedMulligan = true,
+                PlayedCardCountThisTurn = 0,
+                HasTakenFirstTurn = true,
+                IsAI = true
+            }; // Minimal opponent state
             var initialGameState = new GameStateDto
             {
                 GameId = gameId,
@@ -463,7 +535,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(MaxFieldSize, playerState.Field.Count); // Field still full
 
             // Verify Mock Interactions
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(1), Times.Once); // Fetch happens before validation, explicitly check for 1
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(1), Times.Once); // Fetch happens before validation, explicitly check for 1
 
             // Body of FieldFull test is intentionally left empty for now
         } // Add closing brace for PlayCardAsync_PlayFollower_FieldFull method
@@ -481,7 +553,7 @@ namespace ShadowverseBeyond.Server.Tests
             // Mock Card Definition (Not strictly needed as check happens earlier, but good practice)
             var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() }; // Uses int followerCardId now
             // Fix: Setup mock with the integer CardId (1)
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State where it's the opponent's turn
             var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props, use int followerCardId
@@ -495,8 +567,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
                 Graveyard = new List<CardInstanceDto>(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 IsAI = false
             };
             var opponentState = new PlayerStateDto
@@ -509,8 +594,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new(),
                 DeckCount = 0,
                 Graveyard = new(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 IsAI = true
             };
             var initialGameState = new GameStateDto
@@ -548,7 +646,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);       // Field remains empty
 
             // Verify Mock Interactions (Should not fetch card if turn check fails first)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_PlayFollower_WrongPhase()
@@ -564,7 +662,7 @@ namespace ShadowverseBeyond.Server.Tests
             // Mock Card Definition (Not strictly needed as check happens earlier)
             var followerDefinition = new CardDefinition { Id = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString() }; // Uses int followerCardId now
             // Fix: Setup mock with the integer CardId (1)
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(1)).ReturnsAsync(followerDefinition); // Changed "1" to 1
 
             // Initial Game State in Mulligan Phase
             var initialHand = new List<CardInstanceDto> { new CardInstanceDto { InstanceId = Guid.Parse(followerCardUid), CardId = followerCardId, Name = "Goblin", Cost = 1, Type = CardType.Follower.ToString(), Attack = 1, Health = 2, CurrentAttack = 1, CurrentHealth = 2, MaxHealth = 2 } }; // Changed to CardInstanceDto, fixed ID/Props, use int followerCardId
@@ -578,8 +676,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
                 Graveyard = new List<CardInstanceDto>(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 IsAI = false
             };
             var opponentState = new PlayerStateDto
@@ -592,8 +703,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new(),
                 DeckCount = 0,
                 Graveyard = new(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 IsAI = true
             };
             var initialGameState = new GameStateDto
@@ -631,7 +755,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);
 
             // Verify Mock Interactions (Should not fetch card if phase check fails first)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(It.IsAny<int>()), Times.Once); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_CardNotFoundInHand()
@@ -654,8 +778,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
                 Graveyard = new List<CardInstanceDto>(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 IsAI = false
             };
             var opponentState = new PlayerStateDto
@@ -668,8 +805,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new(),
                 DeckCount = 0,
                 Graveyard = new(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 IsAI = true
             };
             var initialGameState = new GameStateDto
@@ -707,7 +857,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);
 
             // Verify Mock Interactions (如果卡牌不在手中，则不应调用卡牌存储库)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(It.IsAny<int>()), Times.Never); // Changed It.IsAny<string>() to It.IsAny<int>()
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(It.IsAny<int>()), Times.Never); // Changed It.IsAny<string>() to It.IsAny<int>()
         }
         [Fact]
         public async Task PlayCardAsync_CardDefinitionNotFound()
@@ -721,7 +871,7 @@ namespace ShadowverseBeyond.Server.Tests
             string cardUid = Guid.NewGuid().ToString(); // 手牌中卡牌实例的 UID
 
             // Mock 卡牌存储库，使其对这个 CardId 返回 null
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(cardId)) // Use int ID directly
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(cardId)) // Use int ID directly
                               .ReturnsAsync((CardDefinition?)null);
 
             // 初始游戏状态，手牌中有卡牌，但其定义在存储库中缺失
@@ -736,8 +886,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new List<CardInstanceDto>(),
                 DeckCount = 0,
                 Graveyard = new List<CardInstanceDto>(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 IsAI = false
             };
             var opponentState = new PlayerStateDto
@@ -750,8 +913,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Deck = new(),
                 DeckCount = 0,
                 Graveyard = new(),
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 IsAI = true
             };
             var initialGameState = new GameStateDto
@@ -788,7 +964,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(playerState.Field);
 
             // Verify Mock Interactions (存储库应该被调用了一次)
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(cardId), Times.Once); // Use int cardId directly for Verify
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(cardId), Times.Once); // Use int cardId directly for Verify
         }
         [Fact]
         public async Task PlayCardAsync_PlaySpell_Success()
@@ -813,7 +989,7 @@ namespace ShadowverseBeyond.Server.Tests
                 // Add TargetType, Effects etc. if GameService logic uses them for validation
             };
             // Fix: Setup mock with the integer CardId (1)
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(1)) // Changed "1" to 1
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(1)) // Changed "1" to 1
                              .ReturnsAsync(spellDefinition);
 
             // 2. Create Initial Game State
@@ -830,8 +1006,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Graveyard = new List<CardInstanceDto>(), // Graveyard is initially empty
                 CurrentPP = 5, // Enough PP
                 MaxPP = 5,
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 2,
                 CanEvolve = false,
@@ -851,8 +1040,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Graveyard = new List<CardInstanceDto>(),
                 CurrentPP = 5,
                 MaxPP = 5,
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 3,
                 CanEvolve = false,
@@ -936,7 +1138,7 @@ namespace ShadowverseBeyond.Server.Tests
             // Assert.Equal(spellCardUid, graveyardEvent.CardAdded?.Uid);
 
             // 3. Verify Mock Interactions
-            mockCardRepository.Verify(repo => repo.GetCardByIdAsync(1), Times.Once); // Verify with the correct int ID 1
+            mockCardRepository.Verify(repo => repo.GetCardDefinitionByIdAsync(1), Times.Once); // Verify with the correct int ID 1
         }
         [Fact]
         public async Task PlayCardAsync_PlaySpell_WithTarget()
@@ -964,7 +1166,7 @@ namespace ShadowverseBeyond.Server.Tests
                 // TargetType removed - Assuming not needed or defined elsewhere
             };
             // Fix: Setup mock with the integer CardId (2)
-            mockCardRepository.Setup(repo => repo.GetCardByIdAsync(2)) // Changed "2" to 2
+            mockCardRepository.Setup(repo => repo.GetCardDefinitionByIdAsync(2)) // Changed "2" to 2
                              .ReturnsAsync(spellDefinition);
 
             // 2. Create Initial Game State
@@ -996,8 +1198,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Graveyard = new(),
                 CurrentPP = 5,
                 MaxPP = 5,
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 2,
                 IsFirst = true,
@@ -1016,8 +1231,21 @@ namespace ShadowverseBeyond.Server.Tests
                 Graveyard = new(),
                 CurrentPP = 5,
                 MaxPP = 5,
-                LeaderHealth = 20,
-                MaxLeaderHealth = 20,
+                LeaderCard = new CardInstanceDto
+                {
+                    InstanceId = Guid.NewGuid(), // Generate a unique ID for the leader instance
+                    CardId = 0, // Placeholder ID for leader definition
+                    Name = "Leader",
+                    Type = "Leader", // Assuming "Leader" type exists or is appropriate
+                    Cost = 0,
+                    Attack = 0,
+                    Health = 20, // Base health
+                    CurrentAttack = 0,
+                    CurrentHealth = 20, // Current health
+                    MaxHealth = 20,     // Max health
+                    Zone = CardZone.Leader,
+                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                },
                 CurrentEP = 0,
                 MaxEP = 3,
                 IsFirst = false,

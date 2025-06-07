@@ -15,10 +15,9 @@ namespace ShadowverseBeyond.Server.Dtos
         Hand,
         Field,
         Graveyard,
-        Banished,
+        Extra,
         Leader,
-        Playing, // Temporary zone during card resolution
-        Evolved  // Used for evolved form definitions, not a typical zone
+        Playing // Temporary zone during card resolution
     }
 
     /// <summary>
@@ -26,7 +25,7 @@ namespace ShadowverseBeyond.Server.Dtos
     /// This DTO is used for communication between server and client (e.g., via SignalR).
     /// </summary>
     public record CardInstanceDto
-    : IBoardEntityState // Implement the interface
+    : ICard // Implement the interface
     {
         /// <summary>
         /// Unique identifier for this specific card instance.
@@ -145,6 +144,15 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Relevant primarily for followers on the field.
         /// </summary>
         public int MaxAttacksPerTurn { get; set; } = 1;
+        /// <summary>
+        /// The current play point cost of this card instance, potentially modified by effects.
+        /// </summary>
+        public int CurrentCost { get; set; }
+
+        /// <summary>
+        /// The position of the card on the field (0-4), if applicable. Null otherwise.
+        /// </summary>
+        public int? FieldPosition { get; set; }
 
         /// <summary>
         /// The Player ID of the player who currently controls this instance on the field.
@@ -199,13 +207,13 @@ namespace ShadowverseBeyond.Server.Dtos
         // Potential future additions:
         // public Dictionary<string, object> EffectsData { get; init; } = new Dictionary<string, object>();
         // public bool IsTargetable { get; set; }
-        // Explicit implementation for IBoardEntityState.Uid
-        // Note: IBoardEntityState expects string Uid. We map our Guid InstanceId.
-        string IBoardEntityState.Uid => this.InstanceId.ToString();
+        // Explicit implementation for ICard.Uid
+        // Note: ICard expects string Uid. We map our Guid InstanceId.
+        string ICard.Uid => this.InstanceId.ToString();
 
-        // Explicit implementation for IBoardEntityState.Health
+        // Explicit implementation for ICard.Health
         // The base Health property setter was changed from init to set to allow this.
-        int IBoardEntityState.Health
+        int ICard.Health
         {
             get => this.CurrentHealth; // Map to CurrentHealth for consistency in field state
             set => this.CurrentHealth = value; // Allow setting CurrentHealth via interface

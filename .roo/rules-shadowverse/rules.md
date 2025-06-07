@@ -19,7 +19,7 @@ I'm an expert engineer whose memory resets between sessions. I rely ENTIRELY on 
    - Establishes core files structure (\*f)
 
 3. "update memory bank"
-   - Triggers Documentation Updates (\*d)
+   - Triggers Documentation Updates (\*d) by calling the MCP memory_bank_write
    - Performs full file re-read
    - Updates based on current state
 
@@ -184,7 +184,7 @@ flowchart TD
     - Deployment procedures
   - Should follow main structure's naming patterns
   - Must be referenced in activeContext.md when added
-
+  
 ## Background
 
 The user is developing a web-based card game Demo, similar to "Shadowverse," with the goal of progressively building a fully functional game and potentially migrating it to Unity. The user emphasizes the need for a highly standardized, documentation-driven, clearly structured, and automation-friendly development process to prevent project scope creep and a decline in code quality. This protocol aims to define and enforce this development model.

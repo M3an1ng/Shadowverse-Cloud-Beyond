@@ -1,79 +1,27 @@
-# Nuget Packages
-*.nupkg
-*.snupkg
+# Ignore archived documentation
+文档/Archive/
 
-# NuGet cache/spec files
-*.csproj.nuget.dgspec.json
-project.nuget.cache
+# Ignore build artifacts
+[Oo]bj/
+[Bb]in/
 
-# User-specific files
+# Ignore user settings
+.vscode/
 *.suo
 *.user
-*.userosscache
-*.sln.docstates
 
-# Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
-x64/
-x86/
-[Ww][Ii][Nn]32/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
-bld/
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
+# Ignore database files (if not intended to be versioned)
+Server/Data/shadowverse.db
+Server/Data/shadowverse.db-shm
+Server/Data/shadowverse.db-wal
 
-# Visual Studio cache files
-.vs/
-*.VC.db
-*.VC.VC.opendb
-
-# Visual Studio symbol files
-*.pdb
-*.ipdb
-*.pgc
-*.pgd
-
-# Build Results of an ATL Project
-[Dd]ebugPS/
-[Rr]eleasePS/
-dlldata.c
-
-# DNX
-artifacts/
-
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-error.log*
-# package-lock.json # Usually committed, uncomment if you specifically want to ignore
-pnpm-lock.yaml
-*.env
-.env.*
-!.env.example
-
-# Vite
-dist/
-.vite/
-
-# SQLite temporary files
-*.db-shm
-*.db-wal
-
-# Rider specific files
+# Ignore Rider/ReSharper files
 .idea/
+*.sln.DotSettings.user
 
-# VS Code specific files
-.vscode/
+# Ignore log files
+*.log
 
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Other Assets/Resources (e.g., PDFs, large files)
-info/
+# Ignore temporary files
+*.tmp
+*~

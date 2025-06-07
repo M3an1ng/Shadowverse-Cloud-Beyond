@@ -1,4 +1,12 @@
 // File: Server/Hubs/GameHub.cs
+//
+// 相关文档:
+// - API集成: 文档/03-前端架构/03-API集成.md
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+// - 战斗系统: 文档/05-游戏系统/02-战斗系统.md
+// - 卡牌出牌系统: 文档/05-游戏系统/04-卡牌出牌系统.md
+//
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;

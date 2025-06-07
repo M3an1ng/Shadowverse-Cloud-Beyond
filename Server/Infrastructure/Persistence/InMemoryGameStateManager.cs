@@ -1,4 +1,10 @@
 // File: Server/Infrastructure/Persistence/InMemoryGameStateManager.cs
+//
+// 相关文档:
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
+// - 错误处理与日志系统: 文档/05-游戏系统/08-错误处理与日志系统.md
+//
 using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;

@@ -6,6 +6,11 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
     public enum CardType
     {
         /// <summary>
+        /// Represents a Leader card.
+        /// </summary>
+        Leader,
+
+        /// <summary>
         /// Represents a follower card that occupies the field.
         /// </summary>
         Follower,

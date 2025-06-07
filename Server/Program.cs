@@ -21,6 +21,8 @@ using ShadowverseBeyond.Server.Hubs;                    // Existing Correct (was
 using ShadowverseBeyond.Server.Services;
 using Microsoft.AspNetCore.SignalR;               // Added for IGameService (located in Services namespace for now)
 // Removed all incorrect 'using Server.*' statements
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing; // Added for AbilityDslParser
+using ShadowverseBeyond.Server.Domain.Query;               // Added for ICardQueryExecutor
 
 // REMOVED: Static Serilog configuration block (Lines 23-39)
 try // Wrap application startup in try-finally to ensure logs are flushed
@@ -47,6 +49,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
                                                                                                                                       // rollingInterval, fileSizeLimitBytes, retainedFileCountLimit removed as each run gets a new file
         )
     ); // End UseSerilog lambda
+    // Log.Warning("Serilog configuration (UseSerilog) is temporarily commented out for debugging."); // Removed Warning Log
     // --- End Serilog Integration ---
 
 
@@ -57,23 +60,36 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     // Explicitly specify the implementation namespace to resolve ambiguity
     // CRITICAL FIX: GameService holds shared game state (_gameStates), must be Singleton.
-    builder.Services.AddSingleton<IGameService, ShadowverseBeyond.Server.Services.GameService>(); // Changed from AddScoped to AddSingleton
+    // builder.Services.AddSingleton<IGameService, ShadowverseBeyond.Server.Services.GameService>(); // Moved inside conditional block
+    // Log.Information("Registered IGameService."); // Moved inside conditional block
 
     // Register Repository and Service for Card Data
     builder.Services.AddScoped<ICardRepository, EFCardRepository>(); // Keep as Scoped due to DbContext dependency
-                                                                     // Removed ICardService registration (Controller will use ICardRepository directly)
+    Log.Information("Registered ICardRepository."); // Added Log
+                                                    // Removed ICardService registration (Controller will use ICardRepository directly)
     builder.Services.AddSingleton<IGameStateManager, InMemoryGameStateManager>(); // Register InMemoryGameStateManager as singleton
+    Log.Information("Registered IGameStateManager."); // Added Log
     builder.Services.AddSingleton<IAiService, AiService>(); // Register AiService as Singleton
-    builder.Services.AddScoped<AiTurnExecutor>(); // Register the new AI turn executor
-                                                  // Register the custom Hub filter for global exception logging
-    builder.Services.AddScoped<HubExceptionLoggerFilter>(); // Register the custom Hub filter for global exception logging
+    Log.Information("Registered IAiService."); // Added Log
+                                               // builder.Services.AddScoped<AiTurnExecutor>(); // Moved inside conditional block
+                                               // Log.Information("Registered AiTurnExecutor."); // Moved inside conditional block
+                                               // Register the custom Hub filter for global exception logging
+                                               // builder.Services.AddScoped<HubExceptionLoggerFilter>(); // Moved inside conditional block
+                                               // Log.Information("Registered HubExceptionLoggerFilter."); // Moved inside conditional block
     builder.Services.AddMemoryCache(); // Add Memory Cache service for idempotency checks
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Register the client method mapper
+    Log.Information("Registered MemoryCache."); // Added Log
+    // builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Moved inside conditional block
+    // Log.Information("Registered IClientMethodMapper."); // Moved inside conditional block
     // Register ApplicationDbContext with SQLite
     // Reads connection string from configuration ("DefaultConnection") or defaults to Data/shadowverse.db
+    Log.Information("Attempting to register ApplicationDbContext..."); // Added Log
+    // Temporarily force using the hardcoded connection string to isolate configuration issues during design time.
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
-        options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db"));
+        options.UseSqlite("Data Source=Data/shadowverse.db"));
+    // options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db")); // Original line
+    Log.Information("Successfully registered ApplicationDbContext (using hardcoded path for debugging)."); // Added Log
     // Configure System.Text.Json serialization options globally to handle enums as strings
+    Log.Information("Attempting to configure JsonOptions..."); // Added Log
     builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
     {
         // Removed WriteIndented setting as 'app' is not available here. Set elsewhere if needed.
@@ -81,9 +97,16 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         // Add other global options if needed, e.g.:
         // options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     });
+    Log.Information("Successfully configured JsonOptions."); // Added Log
+
+    // --- SignalR and Dependent Services Registration ---
+    // With DesignTimeDbContextFactory in place, Program.cs should only contain runtime configuration.
+    // EF Core tools will use the factory and bypass this startup logic.
+    Log.Information("Registering SignalR and dependent services for runtime...");
 
     // Add SignalR services and explicitly configure its JSON protocol to use the string enum converter
     // (Applying both global Http.Json.JsonOptions and specific SignalR protocol config)
+    Log.Information("Attempting to configure SignalR..."); // Added Log
     builder.Services.AddSignalR(hubOptions => // Start AddSignalR
     { // Start lambda body
         hubOptions.EnableDetailedErrors = true; // Added detailed errors option
@@ -97,7 +120,72 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         options.PayloadSerializerOptions.PropertyNamingPolicy = null; // FIX: Preserve PascalCase from C# DTOs // Restore CamelCase naming policy
         // Note: hubOptions configuration is separate from AddJsonProtocol options
     }); // End AddJsonProtocol lambda body and add semicolon at the end of the statement
-    var app = builder.Build();
+    Log.Information("Successfully configured SignalR."); // Added Log
+
+    // Register services dependent on SignalR (IHubContext)
+    builder.Services.AddSingleton<IGameService, ShadowverseBeyond.Server.Services.GameService>(); // Changed from AddScoped to AddSingleton
+    Log.Information("Registered IGameService."); // Added Log
+    builder.Services.AddScoped<AiTurnExecutor>(); // Register the new AI turn executor
+    Log.Information("Registered AiTurnExecutor."); // Added Log
+    builder.Services.AddScoped<HubExceptionLoggerFilter>(); // Register the custom Hub filter for global exception logging
+    Log.Information("Registered HubExceptionLoggerFilter."); // Added Log
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Register the client method mapper
+    Log.Information("Registered IClientMethodMapper."); // Added Log
+
+    // Register Transaction Service
+    builder.Services.AddScoped<ITransactionService, TransactionService>(); // Register the transaction service
+    Log.Information("Registered ITransactionService."); // Added Log
+
+    // Register Economy Service
+    builder.Services.AddScoped<IEconomyService, EconomyService>(); // Register the economy service
+    Log.Information("Registered IEconomyService."); // Added Log
+                                                    // Register Ability DSL Parser
+    builder.Services.AddScoped<DslExpressionParser>(); // Register the DSL expression parser service
+    Log.Information("Registered DslExpressionParser."); // Added Log
+
+    // Register Card Query Executor
+    builder.Services.AddScoped<ICardQueryExecutor, CardQueryExecutor>(); // Register the new query executor
+    Log.Information("Registered ICardQueryExecutor."); // Added Log
+
+    // Register Ability Loader
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.AbilityLoader>(); // Register the ability loader
+    Log.Information("Registered AbilityLoader."); // Added Log
+
+    Log.Information("SignalR and dependent services registered.");
+    // --- End SignalR Registration ---
+
+
+    Log.Information("All services registered (or skipped). Attempting builder.Build()..."); // Modified Log
+    WebApplication? app = null; // Declare app variable outside try block and initialize to null, mark as nullable
+    try
+    {
+        Log.Information("Entering try block for builder.Build()..."); // Added Log
+        app = builder.Build();
+        Log.Information("builder.Build() completed successfully inside try block."); // Added Log
+    }
+    catch (HostAbortedException habEx) // Catch the specific exception first
+    {
+        // This exception is expected during EF tooling operations.
+        // Log it for information but DO NOT re-throw it, allowing the tool to continue.
+        Log.Warning(habEx, "HostAbortedException caught during builder.Build() - This is expected for EF tools and is being ignored.");
+        // Console.WriteLine($"[INFO] HostAbortedException during builder.Build() (ignored for EF tools): {habEx.Message}"); // Optional: Console log
+    }
+    catch (Exception buildEx) // Catch any other unexpected exceptions
+    {
+        Log.Error(buildEx, "Unexpected Exception occurred during builder.Build()"); // Log the specific exception
+        Console.WriteLine($"[FATAL] Unexpected Exception during builder.Build(): {buildEx.ToString()}"); // Also write directly to console
+        throw; // Re-throw unexpected exceptions
+    }
+    Log.Information("Exited try-catch block for builder.Build(). App instance obtained."); // Added Log
+
+
+    // --- Check if app was successfully built (might be null if HostAbortedException was caught) ---
+    if (app == null)
+    {
+        Log.Warning("WebApplication instance 'app' is null, likely due to HostAbortedException during EF tooling. Skipping HTTP pipeline configuration and application run.");
+        return; // Exit Program.Main gracefully for tooling scenarios
+    }
+    // --- End Check ---
 
     // Configure the HTTP request pipeline.
     if (app.Environment.IsDevelopment())
@@ -157,7 +245,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         {
             logger.LogInformation("API endpoint /api/cards called.");
             // Use the repository directly
-            var cards = await cardRepository.GetAllAsync(); // Assuming GetAllAsync is the correct method on ICardRepository
+            var cards = await cardRepository.GetAllCardDefinitionsAsync(); // Assuming GetAllAsync is the correct method on ICardRepository
             logger.LogInformation("Returning {CardCount} cards from /api/cards.", cards?.Count() ?? 0);
             return Results.Ok(cards ?? System.Linq.Enumerable.Empty<CardDefinition>()); // Handle potential null from repo
         }

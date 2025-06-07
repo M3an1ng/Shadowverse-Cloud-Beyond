@@ -1,6 +1,7 @@
+using ShadowverseBeyond.Server.Domain.Entities;
 // File: Server/Domain/Interfaces/IGameStateManager.cs
 using System.Threading.Tasks;
-using ShadowverseBeyond.Server.Domain.Entities; // Needed for GameState
+// Removed duplicate using ShadowverseBeyond.Server.Domain.Entities;
 
 namespace ShadowverseBeyond.Server.Domain.Interfaces
 {

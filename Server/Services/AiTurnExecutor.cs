@@ -1,4 +1,10 @@
 // Server/Services/AiTurnExecutor.cs
+//
+// 相关文档:
+// - AI决策系统: 文档/05-游戏系统/05-AI决策系统.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+//
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Exceptions;
 using ShadowverseBeyond.Server.Dtos;

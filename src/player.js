@@ -1,4 +1,10 @@
 // src/player.js - 玩家状态与行为
+//
+// 相关文档:
+// - 前端组件结构: 文档/03-前端架构/01-组件结构.md
+// - 状态管理: 文档/03-前端架构/02-状态管理.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+//
 
 // 导入依赖
 import { createCardInstance, getCardDefinition } from './cardManager.js'; // Import getCardDefinition

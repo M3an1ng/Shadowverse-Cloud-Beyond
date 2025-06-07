@@ -1,9 +1,17 @@
+//
+// 相关文档:
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
+// - 错误处理与日志系统: 文档/05-游戏系统/08-错误处理与日志系统.md
+//
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities; // Corrected prefix was already applied (Good!)
 using ShadowverseBeyond.Server.Domain.Interfaces; // Corrected prefix was already applied (Good!)
 using ShadowverseBeyond.Server.Infrastructure.Data; // Corrected prefix was already applied (Good!)
 using System.Collections.Generic;
+using System.Linq; // Added for Enumerable.Empty
 using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Dtos; // Add missing using
 
 namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefix was already applied (Good!)
 {
@@ -38,6 +46,24 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
             // FindAsync is suitable for querying by primary key and returns null if not found.
             // It works with int primary keys directly.
             return await _context.CardDefinitions.FindAsync(id);
+        }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<CardDefinition>> GetAllCardDefinitionsAsync() // Match interface return type
+        {
+            // TODO: Implement actual logic using _context to query CardDefinitions
+            // Example: return await _context.CardDefinitions.AsNoTracking().ToListAsync();
+            // For now, returning empty list as placeholder.
+            return Task.FromResult<IReadOnlyList<CardDefinition>>(new List<CardDefinition>()); // Match interface return type
+        }
+
+        /// <inheritdoc />
+        public Task<CardDefinition?> GetCardDefinitionByIdAsync(int id) // Match interface return type (parameter name differs, but type matches)
+        {
+            // TODO: Implement actual logic using _context to find CardDefinition by id
+            // Example: return await _context.CardDefinitions.FindAsync(id);
+            // For now, returning null as placeholder.
+            return Task.FromResult<CardDefinition?>(null); // Match interface return type
         }
     }
 }

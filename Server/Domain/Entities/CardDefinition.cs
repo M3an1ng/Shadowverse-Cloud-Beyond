@@ -1,3 +1,9 @@
+//
+// 相关文档:
+// - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
+// - 卡牌能力系统: 文档/05-游戏系统/01-卡牌能力系统.md
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+//
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Collections.Generic;
@@ -85,6 +91,11 @@ public class CardDefinition
     /// The ID of the card this card evolves into. Null if this card cannot evolve or is already evolved.
     /// </summary>
     public int? EvolveId { get; set; } // Changed type to int?
+    /// &lt;summary&gt;
+    /// The ID of the primary ability associated with this card. Null if the card has no inherent ability.
+    /// Changed from int? to long? to accommodate potentially larger ID space.
+    /// &lt;/summary&gt;
+    public long? AbilityId { get; set; } // Added AbilityId property
     /// <summary>
     /// Gets or sets the list of card effects. Handled in code, not directly mapped to DB.
     /// Populates EffectsJson property when set.

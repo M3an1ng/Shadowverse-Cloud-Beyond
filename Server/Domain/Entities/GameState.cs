@@ -1,4 +1,6 @@
 // File: Server/Domain/Entities/GameState.cs
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos; // Added for DTO types
 using ShadowverseBeyond.Server.Dtos.Enums; // For GameStatus, GamePhase
 using System.Collections.Generic;
 using System.Linq; // Added for FirstOrDefault
@@ -25,12 +27,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public PlayerState Player1 { get; set; } // Needs proper initialization
         public PlayerState Player2 { get; set; } // Needs proper initialization
 
-        // Unified field representation using CardInstance
-        public CardInstance Player1Leader { get; set; } = null!; // Must be initialized externally (e.g., in GameService)
-        public CardInstance Player2Leader { get; set; } = null!; // Must be initialized externally
-
-        public List<CardInstance> Player1Field { get; set; } = new List<CardInstance>(); // All field entities (units + amulets)
-        public List<CardInstance> Player2Field { get; set; } = new List<CardInstance>(); // All field entities (units + amulets)
         // Constructor requiring GameId
         public GameState(string gameId)
         {
@@ -38,9 +34,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Initialize player states using the actual PlayerState constructor
             Player1 = new PlayerState($"{gameId}_Player1"); // Assuming PlayerState has a constructor taking PlayerId
             Player2 = new PlayerState($"{gameId}_Player2"); // Assuming PlayerState has a constructor taking PlayerId
-            // Initialize field lists
-            Player1Field = new List<CardInstance>();
-            Player2Field = new List<CardInstance>();
             // Note: Leader initialization (Player1Leader, Player2Leader) should happen
             // in the service layer (e.g., GameService) after creating the GameState,
             // as it likely involves fetching leader definitions based on player selection.
@@ -55,9 +48,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Use actual PlayerState constructor
             Player1 = new PlayerState("Default_P1"); // Needs parameterless constructor or null handling in PlayerState if this path is used
             Player2 = new PlayerState("Default_P2");
-            // Initialize field lists
-            Player1Field = new List<CardInstance>();
-            Player2Field = new List<CardInstance>();
             // Player1Leader/Player2Leader remain null! here, expecting external initialization if this constructor path is used.
         }
 
@@ -88,24 +78,40 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         /// <summary>
-        /// Finds a card instance (Leader or Field entity) within the game state by its unique instance ID.
+        /// Converts this GameState domain entity to its corresponding Data Transfer Object (DTO).
         /// </summary>
-        /// <param name="uid">The unique instance ID of the entity to find.</param>
-        /// <returns>The CardInstance if found; otherwise, null.</returns>
-        public CardInstance? FindEntityByUid(string uid)
+        /// <returns>A GameStateDto representing the current game state.</returns>
+        public GameStateDto ToDto()
         {
-            // Check Leaders
-            if (Player1Leader?.InstanceId == uid) return Player1Leader;
-            if (Player2Leader?.InstanceId == uid) return Player2Leader;
+            // Assume PlayerState has a ToDto() method
+            var playerDtos = new List<PlayerStateDto>();
+            if (Player1 != null)
+            {
+                playerDtos.Add(Player1.ToDto()); // Assumes PlayerState.ToDto() exists
+            }
+            if (Player2 != null)
+            {
+                playerDtos.Add(Player2.ToDto()); // Assumes PlayerState.ToDto() exists
+            }
 
-            // Check Field entities (both units and amulets)
-            CardInstance? foundEntity = Player1Field.FirstOrDefault(c => c.InstanceId == uid);
-            if (foundEntity != null) return foundEntity;
+            // Use the correct GameStatus enum member
+            bool isGameOver = Status == GameStatus.Finished;
+            // Cannot determine winner solely from GameState entity currently.
+            // Winner determination logic likely resides in GameService or needs WinnerId added to GameState.
+            string? winnerId = null; // Set to null for now
 
-            foundEntity = Player2Field.FirstOrDefault(c => c.InstanceId == uid);
-            if (foundEntity != null) return foundEntity;
-
-            return null; // Not found
+            return new GameStateDto
+            {
+                GameId = this.GameId,
+                CurrentPlayerId = this.CurrentTurnPlayerId,
+                Phase = this.Phase,
+                // FirstPlayerId = ??? // Cannot determine from current GameState properties, leave empty for now
+                GameStatus = this.Status,
+                Players = playerDtos,
+                IsGameOver = isGameOver,
+                WinnerId = winnerId,
+                GameMessage = null // Or set based on Phase/Status if needed
+            };
         }
     } // End of GameState class
 } // End of namespace

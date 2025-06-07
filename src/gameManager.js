@@ -1,4 +1,12 @@
 // src/gameManager.js - 核心游戏状态与逻辑管理
+//
+// 相关文档:
+// - 前端组件结构: 文档/03-前端架构/01-组件结构.md
+// - 状态管理: 文档/03-前端架构/02-状态管理.md
+// - API集成: 文档/03-前端架构/03-API集成.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+// - 战斗系统: 文档/05-游戏系统/02-战斗系统.md
+//
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { getCardDefinition, createCardInstance } from "./cardManager.js"; // ADDED: createCardInstance for hydration

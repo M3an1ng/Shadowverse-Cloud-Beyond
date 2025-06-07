@@ -1,3 +1,9 @@
+//
+// 相关文档:
+// - API集成: 文档/03-前端架构/03-API集成.md
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 错误处理与日志系统: 文档/05-游戏系统/08-错误处理与日志系统.md
+//
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;

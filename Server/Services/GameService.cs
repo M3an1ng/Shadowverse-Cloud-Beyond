@@ -1,4 +1,11 @@
 // Server/Services/GameService.cs
+//
+// 相关文档:
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
+// - 战斗系统: 文档/05-游戏系统/02-战斗系统.md
+// - 卡牌出牌系统: 文档/05-游戏系统/04-卡牌出牌系统.md
+//
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Hubs; // GameHub
@@ -8,7 +15,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR;        // DTOs (Restored for GameEv
 using ShadowverseBeyond.Server.Dtos.Enums; // Add using for CardType enum
 // Removed duplicate: using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Exceptions; // GameLogicException
-using Shadowverse.Domain.Interfaces; // Corrected namespace for IBoardEntityState (and potentially others)
+using Shadowverse.Domain.Interfaces; // Corrected namespace for ICard (and potentially others)
 using ShadowverseBeyond.Server.Domain.Interfaces; // Added back for ICardRepository
 using ShadowverseBeyond.Server.Dtos;             // Add for GameStateDto etc.
 using ShadowverseBeyond.Server.Domain.Entities; // Corrected namespace for CardDefinition etc.
@@ -23,7 +30,13 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 using ShadowverseBeyond.Server.Models; // Added for GameActionContext
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Domain.Abilities; // Added for ability system
+using ShadowverseBeyond.Server.Domain.Abilities.Common; // Added for AbilityType enum
 using ShadowverseBeyond.Server.Domain.Events; // Added for event system
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // For ConditionConfig
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;    // For TargetConfig
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;    // For EffectConfig
+using ShadowverseBeyond.Server.Domain.Abilities.Triggers;   // For TriggerConfig
+
 namespace ShadowverseBeyond.Server.Services
 {
     public class GameService : IGameService
@@ -384,7 +397,9 @@ namespace ShadowverseBeyond.Server.Services
             try
             {
                 // Get or create ability manager for this game
-                var abilityManager = _abilityManagers.GetOrAdd(gameId, _ => new AbilityManager());
+                var loggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole());
+                var abilityManagerLogger = loggerFactory.CreateLogger<AbilityManager>();
+                var abilityManager = _abilityManagers.GetOrAdd(gameId, _ => new AbilityManager(abilityManagerLogger));
 
                 // Create a CardInstance for the ability system
                 var cardInstance = new CardInstance(cardInHand.InstanceId.ToString(), cardDefinition.Id, cardInHand.ControllerPlayerId)
@@ -398,15 +413,11 @@ namespace ShadowverseBeyond.Server.Services
                     OwnerPlayerId = cardInHand.ControllerPlayerId
                 };
 
-                // Create abilities for the card if it has any
-                var abilityData = ParseCardAbilities(cardDefinition);
-                if (abilityData.Count > 0)
+                // Parse card abilities from definition
+                var abilityConfigs = ParseCardAbilitiesToConfigs(cardDefinition);
+                if (abilityConfigs.Count > 0)
                 {
-                    var abilities = abilityManager.CreateAbilitiesForCard(cardInstance, abilityData);
-                    foreach (var ability in abilities)
-                    {
-                        abilityManager.RegisterAbility(ability);
-                    }
+                    var abilities = abilityManager.CreateAbilitiesForCard(cardInstance, abilityConfigs);
 
                     _logger.LogDebug("[GameService:{GameId}] Registered {AbilityCount} abilities for card {CardName}.",
                         gameId, abilities.Count, cardDefinition.Name);
@@ -425,17 +436,16 @@ namespace ShadowverseBeyond.Server.Services
                         var playCardEvent = new PlayCardEvent(playerState, cardInstance);
 
                         // Process the event through the ability system
-                        var generatedEvents = await abilityManager.ProcessEventAsync(playCardEvent, gameContext);
+                        var generatedEventDtos = await abilityManager.ProcessEventAsync(playCardEvent, gameContext);
 
-                        // Convert ability events to DTOs and add to context
-                        var abilityEventDtos = abilityManager.ConvertToEventDtos(generatedEvents);
-                        foreach (var dto in abilityEventDtos)
+                        // Add generated events to context
+                        foreach (var dto in generatedEventDtos)
                         {
                             context.AddEvent(dto);
                         }
 
                         _logger.LogDebug("[GameService:{GameId}] Processed card play abilities, generated {EventCount} events.",
-                            gameId, abilityEventDtos.Count);
+                            gameId, generatedEventDtos.Count);
                     }
                 }
             }
@@ -448,55 +458,218 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <summary>
-        /// Parses card definition to extract ability data for the ability system.
+        /// Parses card definition to extract ability configurations for the new ability system.
         /// </summary>
         /// <param name="cardDefinition">The card definition to parse.</param>
-        /// <returns>A dictionary of ability data.</returns>
-        private Dictionary<string, object> ParseCardAbilities(CardDefinition cardDefinition)
+        /// <returns>A list of ability configurations.</returns>
+        private List<AbilityConfig> ParseCardAbilitiesToConfigs(CardDefinition cardDefinition)
         {
-            var abilityData = new Dictionary<string, object>();
+            var abilities = new List<AbilityConfig>();
 
             // Parse keywords into abilities
             if (cardDefinition.Keywords != null)
             {
                 foreach (var keyword in cardDefinition.Keywords)
                 {
-                    var lowerKeyword = keyword.ToLowerInvariant();
-                    switch (lowerKeyword)
+                    var ability = CreateAbilityFromKeyword(cardDefinition, keyword);
+                    if (ability != null)
                     {
-                        case "rush":
-                        case "storm":
-                        case "ward":
-                        case "drain":
-                        case "bane":
-                            abilityData[lowerKeyword] = new Dictionary<string, object>();
-                            break;
+                        abilities.Add(ability);
                     }
                 }
             }
 
-            // Parse effect description for Fanfare, Last Words, etc.
+            // Parse description for additional abilities
             if (!string.IsNullOrEmpty(cardDefinition.Description))
             {
-                var effectDesc = cardDefinition.Description.ToLowerInvariant();
+                var descriptionAbilities = ParseDescriptionAbilities(cardDefinition);
+                abilities.AddRange(descriptionAbilities);
+            }
 
-                if (effectDesc.Contains("fanfare"))
-                {
-                    abilityData["fanfare"] = ParseEffectParameters(cardDefinition.Description, "fanfare");
-                }
+            return abilities;
+        }
 
-                if (effectDesc.Contains("last words"))
-                {
-                    abilityData["lastwords"] = ParseEffectParameters(cardDefinition.Description, "last words");
-                }
+        /// <summary>
+        /// Creates an ability configuration from a keyword.
+        /// </summary>
+        /// <param name="cardDefinition">The card definition.</param>
+        /// <param name="keyword">The keyword to parse.</param>
+        /// <returns>An ability configuration or null if not recognized.</returns>
+        private AbilityConfig? CreateAbilityFromKeyword(CardDefinition cardDefinition, string keyword)
+        {
+            switch (keyword.ToLowerInvariant())
+            {
+                case "rush":
+                    return new AbilityConfig
+                    {
+                        Id = $"rush_{cardDefinition.Id}",
+                        CardId = cardDefinition.Id,
+                        Name = "Rush",
+                        Description = "Can attack units immediately",
+                        AbilityTag = "Rush",
+                        Type = AbilityType.Keyword,
+                        Trigger = new TriggerConfig
+                        {
+                            EventTypes = new List<GameEventType> { GameEventType.CardSummoned },
+                        },
+                        Conditions = new List<ConditionConfig>(),
+                        Targets = new List<TargetConfig>(),
+                        Effects = new List<EffectConfig>
+                        {
+                            new EffectConfig
+                            {
+                                Type = "modify_property",
+                                Parameters = new Dictionary<string, ValueConfig>
+                                {
+                                    ["property"] = ValueConfig.Static("CanAttack"),
+                                    ["value"] = ValueConfig.Static(true)
+                                },
+                                ExecutionOrder = 1
+                            }
+                        },
+                    };
 
-                if (effectDesc.Contains("evolve effect"))
+                case "storm":
+                    return new AbilityConfig
+                    {
+                        Id = $"storm_{cardDefinition.Id}",
+                        CardId = cardDefinition.Id,
+                        Name = "Storm",
+                        Description = "Can attack anything immediately",
+                        AbilityTag = "Storm",
+                        Type = AbilityType.Keyword,
+                        Trigger = new TriggerConfig
+                        {
+                            EventTypes = new List<GameEventType> { GameEventType.CardSummoned },
+                        },
+                        Conditions = new List<ConditionConfig>(),
+                        Targets = new List<TargetConfig>(),
+                        Effects = new List<EffectConfig>
+                        {
+                            new EffectConfig
+                            {
+                                Type = "modify_property",
+                                Parameters = new Dictionary<string, ValueConfig>
+                                {
+                                    ["property"] = ValueConfig.Static("CanAttack"),
+                                    ["value"] = ValueConfig.Static(true)
+                                },
+                                ExecutionOrder = 1
+                            }
+                        },
+                    };
+
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Parses description text for additional abilities like Fanfare, Last Words, etc.
+        /// </summary>
+        /// <param name="cardDefinition">The card definition to parse.</param>
+        /// <returns>A list of abilities found in the description.</returns>
+        private List<AbilityConfig> ParseDescriptionAbilities(CardDefinition cardDefinition)
+        {
+            var abilities = new List<AbilityConfig>();
+            var description = cardDefinition.Description?.ToLowerInvariant() ?? string.Empty;
+
+            // Parse Fanfare abilities
+            if (description.Contains("fanfare"))
+            {
+                var fanfareAbility = new AbilityConfig
                 {
-                    abilityData["evolveeffect"] = ParseEffectParameters(cardDefinition.Description, "evolve effect");
+                    Id = $"fanfare_{cardDefinition.Id}",
+                    CardId = cardDefinition.Id,
+                    Name = "Fanfare",
+                    Description = "Triggered when played from hand",
+                    AbilityTag = "Fanfare",
+                    Type = AbilityType.Triggered,
+                    Trigger = new TriggerConfig
+                    {
+                        EventTypes = new List<GameEventType> { GameEventType.CardPlayed },
+                    },
+                    Conditions = new List<ConditionConfig>(),
+                    Targets = new List<TargetConfig>(),
+                    Effects = ParseEffectFromDescription(cardDefinition.Description ?? "", "fanfare"),
+                };
+                abilities.Add(fanfareAbility);
+            }
+
+            // Parse Last Words abilities
+            if (description.Contains("last words"))
+            {
+                var lastWordsAbility = new AbilityConfig
+                {
+                    Id = $"lastwords_{cardDefinition.Id}",
+                    CardId = cardDefinition.Id,
+                    Name = "Last Words",
+                    Description = "Triggered when destroyed",
+                    AbilityTag = "LastWords",
+                    Type = AbilityType.Triggered,
+                    Trigger = new TriggerConfig
+                    {
+                        EventTypes = new List<GameEventType> { GameEventType.CardDestroyed },
+                    },
+                    Conditions = new List<ConditionConfig>(),
+                    Targets = new List<TargetConfig>(),
+                    Effects = ParseEffectFromDescription(cardDefinition.Description ?? "", "lastwords")
+                };
+                abilities.Add(lastWordsAbility);
+            }
+
+            return abilities;
+        }
+
+        /// <summary>
+        /// Parses effects from description text.
+        /// </summary>
+        /// <param name="description">The description text.</param>
+        /// <param name="abilityType">The type of ability.</param>
+        /// <returns>A list of effect configurations.</returns>
+        private List<EffectConfig> ParseEffectFromDescription(string description, string abilityType) // Changed return type
+        {
+            var effects = new List<EffectConfig>(); // Changed list type
+            var lowerDesc = description.ToLowerInvariant();
+
+            // Parse damage effects
+            if (lowerDesc.Contains("deal") && lowerDesc.Contains("damage"))
+            {
+                var damageMatch = System.Text.RegularExpressions.Regex.Match(lowerDesc, @"deal (\d+) damage");
+                if (damageMatch.Success && int.TryParse(damageMatch.Groups[1].Value, out int damage))
+                {
+                    effects.Add(new EffectConfig // Changed to EffectConfig
+                    {
+                        Type = "damage",
+                        Parameters = new Dictionary<string, ValueConfig> // Corrected Dictionary type
+                        {
+                            ["damage"] = ValueConfig.Static(damage), // Use Static factory method
+                            ["target"] = ValueConfig.Static("enemy") // Use Static factory method
+                        },
+                        ExecutionOrder = 1
+                    });
                 }
             }
 
-            return abilityData;
+            // Parse draw effects
+            if (lowerDesc.Contains("draw") && lowerDesc.Contains("card"))
+            {
+                var drawMatch = System.Text.RegularExpressions.Regex.Match(lowerDesc, @"draw (\d+) card");
+                if (drawMatch.Success && int.TryParse(drawMatch.Groups[1].Value, out int count))
+                {
+                    effects.Add(new EffectConfig // Changed to EffectConfig
+                    {
+                        Type = "draw",
+                        Parameters = new Dictionary<string, ValueConfig> // Corrected Dictionary type
+                        {
+                            ["count"] = ValueConfig.Static(count) // Use Static factory method
+                        },
+                        ExecutionOrder = 1
+                    });
+                }
+            }
+
+            return effects;
         }
 
         /// <summary>
@@ -1250,7 +1423,7 @@ namespace ShadowverseBeyond.Server.Services
                     try
                     {
                         // Fetch ALL card definitions
-                        var allCardDefinitionsEnumerable = await cardRepository.GetAllAsync();
+                        var allCardDefinitionsEnumerable = await cardRepository.GetAllCardDefinitionsAsync();
                         // Load ALL card definitions (Removed IsCollectible filter)
                         allCardDefinitions = allCardDefinitionsEnumerable.ToList(); // Assign the full list
                         _logger.LogInformation("[GameService:{GameId}] Fetched {Count} total card definitions.", gameId, allCardDefinitions.Count);
@@ -1658,7 +1831,7 @@ namespace ShadowverseBeyond.Server.Services
                                                                       // { // BUG-018 Fix: Also comment out braces and else block
                                                                       // Explicit cast for attacker (UnitStateDto) to IBoardEntityState needed for ApplyDamage
                                                                       // Pass necessary context for counter-attack damage event
-                    ApplyDamage((IBoardEntityState)attacker, defenderAttack, context, opponentPlayer.PlayerId, currentPlayer.PlayerId, defendingUnit.InstanceId.ToString(), "Attack"); // M8 Change: Pass context | Changed Uid to InstanceId
+                    ApplyDamage((ICard)attacker, defenderAttack, context, opponentPlayer.PlayerId, currentPlayer.PlayerId, defendingUnit.InstanceId.ToString(), "Attack"); // M8 Change: Pass context | Changed Uid to InstanceId
                     // } // BUG-018 Fix: Also comment out braces and else block
                     // else // BUG-018 Fix: Also comment out braces and else block
                     // { // BUG-018 Fix: Also comment out braces and else block
@@ -1669,7 +1842,7 @@ namespace ShadowverseBeyond.Server.Services
                 // Phase 4: Death Timing
                 _logger.LogDebug("[GameService:{GameId}] Entering Death Phase.", gameId);
                 // Explicit cast for attacker (UnitStateDto) to IBoardEntityState needed for CheckAndHandleDeath
-                CheckAndHandleDeath((IBoardEntityState)attacker, currentPlayer, opponentPlayer, gameState, context); // CALL HELPER
+                CheckAndHandleDeath((ICard)attacker, currentPlayer, opponentPlayer, gameState, context); // CALL HELPER
                 if (!gameState.IsGameOver) // Check if game ended during attacker's death check
                 {
                     // Add null-forgiving operator (!) to satisfy non-nullable parameter type
@@ -1750,13 +1923,13 @@ namespace ShadowverseBeyond.Server.Services
 
                 // --- Fetch Card Definitions (Chunk 3 starts next) ---
                 // 5. Fetch Base and Evolved Card Definitions - Chunk 3/5
-                var baseCardDef = await cardRepository.GetCardByIdAsync(targetUnit.CardId); // Pass int CardId directly
+                var baseCardDef = await cardRepository.GetCardDefinitionByIdAsync(targetUnit.CardId); // Pass int CardId directly
                 if (baseCardDef == null) throw new GameLogicException($"Base card definition not found for CardId: {targetUnit.CardId}");
                 // Check if EvolveId (now int?) has a value
                 if (!baseCardDef.EvolveId.HasValue) throw new GameLogicException($"Card {baseCardDef.Name} ({baseCardDef.Id}) does not have an evolved form defined.");
 
                 // Pass the int value directly, safe due to the HasValue check above
-                var evolvedCardDef = await cardRepository.GetCardByIdAsync(baseCardDef.EvolveId.Value);
+                var evolvedCardDef = await cardRepository.GetCardDefinitionByIdAsync(baseCardDef.EvolveId.Value);
                 if (evolvedCardDef == null) throw new GameLogicException($"Evolved card definition not found for EvolvedCardId: {baseCardDef.EvolveId.Value}"); // Use .Value here too for logging
 
                 // --- Perform Evolution (Chunk 4 starts next) ---
@@ -2039,12 +2212,12 @@ namespace ShadowverseBeyond.Server.Services
         }
         // --- Helper Methods for Attack Logic ---
 
-        private IBoardEntityState? FindEntityByUid(GameStateDto gameState, string uid)
+        private ICard? FindEntityByUid(GameStateDto gameState, string uid)
         {
             if (!Guid.TryParse(uid, out Guid targetGuid)) // Try parse the target UID string to Guid
             {
                 // If the UID is not a valid Guid, it might be a PlayerId (for leader targeting via PlayerStateDto)
-                // Check PlayerId first, as PlayerStateDto also implements IBoardEntityState
+                // Check PlayerId first, as PlayerStateDto might represent the leader card which implements ICard indirectly
                 var targetPlayerById = gameState.Players.FirstOrDefault(p => p.PlayerId == uid);
                 if (targetPlayerById != null)
                 {
@@ -2071,7 +2244,7 @@ namespace ShadowverseBeyond.Server.Services
                 if (player.LeaderCard?.InstanceId == targetGuid)
                 {
                     _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by LeaderCard InstanceId: {InstanceId} for Player {PlayerId}", targetGuid, player.PlayerId);
-                    return player.LeaderCard; // Return the Leader CardInstanceDto
+                    return (ICard)player.LeaderCard; // Return the Leader CardInstanceDto, cast to ICard
                 }
 
                 // Check units on the player's field by InstanceId
@@ -2079,7 +2252,7 @@ namespace ShadowverseBeyond.Server.Services
                 if (unit != null)
                 {
                     _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Field Unit InstanceId: {InstanceId} for Player {PlayerId}", targetGuid, player.PlayerId);
-                    return unit; // Found unit
+                    return (ICard)unit; // Found unit, cast to ICard
                 }
             }
 
@@ -2088,7 +2261,7 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         // M8 Change: Signature updated to use GameActionContext
-        private void ApplyDamage(IBoardEntityState targetEntity, int damage, GameActionContext context, string sourcePlayerId, string targetPlayerId, string? sourceUid, string damageType)
+        private void ApplyDamage(ICard targetEntity, int damage, GameActionContext context, string sourcePlayerId, string targetPlayerId, string? sourceUid, string damageType)
         {
             // Check for null or non-positive damage first
             if (targetEntity == null || damage <= 0) return; // Corrected <=
@@ -2143,7 +2316,7 @@ namespace ShadowverseBeyond.Server.Services
                eventTargetUid, newHealth, changeAmount);
         }
 
-        private void CheckAndHandleDeath(IBoardEntityState entity, PlayerStateDto owner, PlayerStateDto opponent, GameStateDto gameState, GameActionContext context)
+        private void CheckAndHandleDeath(ICard entity, PlayerStateDto owner, PlayerStateDto opponent, GameStateDto gameState, GameActionContext context)
         {
             if (entity == null)
             {
@@ -2259,7 +2432,7 @@ namespace ShadowverseBeyond.Server.Services
             _logger.LogDebug("[GameService:{GameId}:FetchCardData] Need definition for CardId {CardIdToFetch}.", gameId, cardIdToFetch);
             using var scope = _serviceScopeFactory.CreateScope();
             var cardRepository = scope.ServiceProvider.GetRequiredService<ICardRepository>();
-            var cardDefinition = await cardRepository.GetCardByIdAsync(int.Parse(cardIdToFetch));
+            var cardDefinition = await cardRepository.GetCardDefinitionByIdAsync(int.Parse(cardIdToFetch));
             if (cardDefinition == null)
                 throw new GameLogicException($"Card definition not found for CardId: {cardIdToFetch}");
 
@@ -2443,7 +2616,7 @@ namespace ShadowverseBeyond.Server.Services
 
 
             // --- Target Finding and Validation ---
-            IBoardEntityState? targetEntity = null;
+            ICard? targetEntity = null;
             if (!string.IsNullOrEmpty(actionDto.TargetUid))
             {
                 _logger.LogDebug("[GameService:{GameId}:ExecuteSpell] Spell requires target. Finding entity with UID: {TargetUID}", gameState.GameId, actionDto.TargetUid);

@@ -1,3 +1,9 @@
+//
+// 相关文档:
+// - 卡牌能力系统: 文档/05-游戏系统/01-卡牌能力系统.md
+// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
+// - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
+//
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using System;

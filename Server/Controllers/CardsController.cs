@@ -1,3 +1,9 @@
+//
+// 相关文档:
+// - API文档: 文档/06-API文档/01-端点总览.md
+// - 卡牌出牌系统: 文档/05-游戏系统/04-卡牌出牌系统.md
+// - 数据库设计: 文档/04-数据库设计/01-实体关系图.md
+//
 using Microsoft.AspNetCore.Mvc;
 using ShadowverseBeyond.Server.Domain.Interfaces;    // Inject Repository Interface
 using ShadowverseBeyond.Server.Domain.Entities;      // Corrected namespace
@@ -34,7 +40,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             {
                 _logger.LogInformation("Attempting to get all card definitions.");
                 // Use the injected repository instead of the service
-                var definitions = await _cardRepository.GetAllAsync(); // Assuming GetAllAsync is the correct method
+                var definitions = await _cardRepository.GetAllCardDefinitionsAsync(); // Corrected method name
 
                 if (definitions == null)
                 {
@@ -50,8 +56,9 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     CardId = def.Id, // string to string mapping
                     Name = def.Name,
                     Type = def.Type,
+                    Rarity = "Unknown", // Added default value for required property
+                    CardSet = "Unknown", // Added default value for required property
                     // Class removed - not in entity
-                    // Rarity removed - not in entity
                     Cost = def.Cost,
                     Attack = def.Attack,
                     Health = def.Health,
