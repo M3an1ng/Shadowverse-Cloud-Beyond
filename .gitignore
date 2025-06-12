@@ -25,3 +25,8 @@ Server/Data/shadowverse.db-wal
 # Ignore temporary files
 *.tmp
 *~
+# Ignore AI tool specific files
+.kilocode/
+
+# Ignore temporary reference files
+info/reference1/

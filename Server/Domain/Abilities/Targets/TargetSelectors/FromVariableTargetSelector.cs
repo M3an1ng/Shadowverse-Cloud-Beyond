@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
 {
@@ -19,7 +21,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
         }
 
         // Match interface signature
-        public Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, AbilityContext context)
+        public Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, GameContext context)
         {
             // Use config passed in method, not the one stored in _config field for consistency
             if (string.IsNullOrEmpty(config.VariableName))
@@ -28,8 +30,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                 return Task.FromResult(new List<TargetId>());
             }
 
-            // Access Variables from AbilityContext
-            if (context.Variables == null || !context.Variables.TryGetValue(config.VariableName, out var variableValue))
+            // Access TemporaryVariables from AbilityContext
+            if (context.TemporaryVariables == null || !context.TemporaryVariables.TryGetValue(config.VariableName, out var variableValue))
             {
                 // Variable not found
                 return Task.FromResult(new List<TargetId>());

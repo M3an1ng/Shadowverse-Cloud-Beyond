@@ -11,7 +11,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     {
         // Constructor
         [SetsRequiredMembers]
-        public UnitEvolvedEventDto(string sourcePlayerId, CardInstanceDto evolvedUnitState)
+        public UnitEvolvedEventDto(Guid sourcePlayerId, CardInstanceDto evolvedUnitState)
             : base(sourcePlayerId, "UnitEvolved") // Call base constructor
         {
             // Initialize required properties

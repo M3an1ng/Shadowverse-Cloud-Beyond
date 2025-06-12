@@ -24,6 +24,13 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// </summary>
         /// <param name="errorMessage">The error message content.</param>
         Task ReceiveError(string errorMessage);
+
+        /// <summary>
+        /// Sends the result of a card playability check back to the client that requested it.
+        /// </summary>
+        /// <param name="result">A DTO containing the playability status and target information.</param>
+        Task ReceivePlayabilityResult(PlayabilityResultDto result);
+
         /// <summary>
         /// Notifies the client that a card (Unit, Spell, Amulet) has been played from hand.
         /// </summary>

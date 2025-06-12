@@ -3,40 +3,6 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 {
     /// <summary>
-    /// 目标选择器类型枚举
-    /// 根据M11目标选择系统设计文档实现
-    /// </summary>
-    public enum SelectorType
-    {
-        /// <summary>
-        /// 选择能力来源卡牌自身
-        /// </summary>
-        Self,
-
-        // Filtered, // Removed: Functionality now handled by the embedded CardQueryConfig in TargetConfig
-
-        /// <summary>
-        /// 从 AbilityVariables 中获取目标列表
-        /// </summary>
-        FromVariable,
-
-        /// <summary>
-        /// 从触发事件的数据中提取目标
-        /// </summary>
-        TriggeringEventData,
-
-        /// <summary>
-        /// 组合多个子选择器结果
-        /// </summary>
-        Composite,
-
-        /// <summary>
-        /// 明确要求玩家从指定的池中选择
-        /// </summary>
-        PlayerChoice
-    }
-
-    /// <summary>
     /// 目标池来源类型枚举
     /// 根据M11目标选择系统设计文档实现
     /// </summary>

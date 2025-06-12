@@ -13,7 +13,7 @@ namespace Shadowverse.Domain.Interfaces
         /// For Players, this might be their PlayerId or a specific Leader Uid.
         /// For Units, this is their assigned Uid.
         /// </summary>
-        string Uid { get; }
+        Guid Uid { get; }
 
         /// <summary>
         /// Current health of the entity.

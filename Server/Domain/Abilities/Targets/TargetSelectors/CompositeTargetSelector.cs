@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Query; // Add missing using
 using Microsoft.Extensions.Logging; // Add missing using
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
 {
@@ -39,14 +41,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
         }
 
         // Match interface signature
-        public async Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, AbilityContext context)
+        public async Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, GameContext context)
         {
             var allTargets = new List<TargetId>();
 
             // 执行所有子选择器并合并结果
             foreach (var (subConfig, selector) in _subSelectors) // Deconstruct tuple
             {
-                // Pass the specific subConfig and the received AbilityContext
+                // Pass the specific subConfig and the received GameContext
                 var targets = await selector.SelectTargetsAsync(subConfig, context);
                 if (targets != null) // Add null check for safety
                 {

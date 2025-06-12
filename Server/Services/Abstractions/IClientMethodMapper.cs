@@ -1,5 +1,5 @@
 // Path: Server/Services/Abstractions/IClientMethodMapper.cs
-using ShadowverseBeyond.Server.Dtos.SignalR; // 修正此 using 指令以识别 GameEventDto
+using ShadowverseBeyond.Server.Dtos.SignalR.Events; // 修正此 using 指令以识别 GameEventDto
 using ShadowverseBeyond.Server.Hubs;
 using System.Threading.Tasks;
 

@@ -11,7 +11,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// Initializes a new instance of the <see cref="PlayerMulliganCompletedEventDto"/> class.
         /// </summary>
         /// <param name="playerId">The ID of the player who completed the mulligan.</param>
-        public PlayerMulliganCompletedEventDto(string playerId)
+        public PlayerMulliganCompletedEventDto(Guid playerId)
             : base(playerId, "PlayerMulliganCompleted")
         {
             // No specific properties to initialize for this event beyond the base class.

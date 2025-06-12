@@ -33,6 +33,16 @@ function generateGuid() {
     });
 }
 
+// GUID validation function
+function isValidGuid(str) {
+    if (!str || typeof str !== 'string') {
+        return false;
+    }
+    // RFC4122 GUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return guidRegex.test(str);
+}
+
 let isInitializing = false;
 const HUB_URL = "/gamehub"; // Use relative URL, assumes same origin or proxy configured
 let connection = null; // Module-level variable for SignalR connection - Moved here
@@ -310,8 +320,19 @@ async function initializeApp() {
         // 2. Get Game and Player IDs (BEFORE starting async ops)
         console.log("MAIN: Getting Game/Player IDs...");
         const urlParams = new URLSearchParams(window.location.search);
+
+        // Generate or validate gameId
         const gameId = urlParams.get('gameId') || generateGuid(); // Generate GUID if not provided
-        const playerId = urlParams.get('playerId') || 'player1';
+
+        // Generate or validate playerId - ensure it's always a valid GUID
+        let playerId = urlParams.get('playerId');
+        if (!playerId || !isValidGuid(playerId)) {
+            playerId = generateGuid(); // Generate GUID if not provided or invalid
+            console.log(`MAIN: Generated new GUID for playerId: ${playerId}`);
+        } else {
+            console.log(`MAIN: Using provided GUID playerId: ${playerId}`);
+        }
+
         console.log(`MAIN: Using GameID=${gameId}, PlayerID=${playerId}`);
 
         // 3. Render initial empty/loading state (optional)

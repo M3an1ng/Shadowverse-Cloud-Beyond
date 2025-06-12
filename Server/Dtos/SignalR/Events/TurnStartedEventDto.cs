@@ -16,7 +16,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events // Keep this namespace
         public GameStateDto GameState { get; set; } // Keep this property
 
         // Constructor now accepts sourcePlayerId and calls the base constructor correctly
-        public TurnStartedEventDto(GameStateDto gameState, string sourcePlayerId)
+        public TurnStartedEventDto(GameStateDto gameState, Guid sourcePlayerId)
             : base(sourcePlayerId, "TurnStarted") // Call base constructor with sourcePlayerId and type "TurnStarted"
         {
             // Base constructor handles setting Type and TimestampUtc

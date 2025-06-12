@@ -1,6 +1,7 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Entities;
 using System;
 using System.Collections.Generic;
 
@@ -63,11 +64,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         }
 
         /// <summary>
-        /// 检查是否可以触发
+        /// 检查是否可以触发（不进行区域检查）
         /// </summary>
         /// <param name="gameEvent">游戏事件</param>
         /// <returns>是否可以触发</returns>
         public bool CanTrigger(IGameEvent gameEvent)
+        {
+            return CanTrigger(gameEvent, null);
+        }
+
+        /// <summary>
+        /// 检查是否可以触发（包含区域检查）
+        /// </summary>
+        /// <param name="gameEvent">游戏事件</param>
+        /// <param name="sourceCard">触发器所属的卡牌实例，用于区域检查</param>
+        /// <returns>是否可以触发</returns>
+        public bool CanTrigger(IGameEvent gameEvent, CardInstance? sourceCard)
         {
             if (!IsEnabled)
                 return false;
@@ -83,9 +95,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
                 !Config.EventTypes.Contains(eventTypeEnum))
                 return false;
 
-            // 检查时序匹配
-            // TODO: 实现时序检查逻辑
+            // 检查区域限制（性能优化）
+            if (sourceCard != null && !Config.IsValidZone(sourceCard.CurrentZone))
+            {
+                // 记录区域过滤的日志（仅在调试模式下）
+#if DEBUG
+                // Note: We don't have access to logger here, but this could be added if needed
+                // _logger?.LogTrace("[RuntimeTrigger] Trigger filtered out due to zone restriction. Card {CardId} in zone {Zone}, valid zones: {ValidZones}",
+                //     sourceCard.InstanceId, sourceCard.CurrentZone, string.Join(", ", Config.ValidZones));
+#endif
+                return false;
+            }
 
+            // 检查时序匹配
+            // 时序检查由事件处理器在适当的时机调用触发器
+            // 这里假设调用时机已经正确
             return true;
         }
 

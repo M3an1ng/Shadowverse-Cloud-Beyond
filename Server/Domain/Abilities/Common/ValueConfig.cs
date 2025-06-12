@@ -140,7 +140,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <param name="context">The query or ability context.</param>
         /// <param name="card">The specific card instance, if relevant for dynamic resolution.</param>
         /// <returns>The resolved value, or null if resolution fails.</returns>
-        public async Task<object?> ResolveAsync(Query.Operations.QueryContext context, Entities.CardInstance? card = null)
+        public async Task<object?> ResolveAsync(Events.GameContext context, Entities.CardInstance? card = null)
         {
             // TODO: Implement the actual resolution logic based on context
             // This requires access to game state, variable system, expression evaluator etc.
@@ -168,21 +168,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         }
 
         // Placeholder methods for complex resolution types
-        private Task<object?> ResolveDynamicValueAsync(Query.Operations.QueryContext context, Entities.CardInstance? card)
+        private Task<object?> ResolveDynamicValueAsync(Events.GameContext context, Entities.CardInstance? card)
         {
             // TODO: Implement logic to parse DynamicSource and fetch value from context/card
             Console.WriteLine($"Warning: Dynamic value resolution for '{DynamicSource}' not implemented.");
             return Task.FromResult<object?>(null); // Or throw NotImplementedException
         }
 
-        private Task<object?> ResolveFormulaValueAsync(Query.Operations.QueryContext context, Entities.CardInstance? card)
+        private Task<object?> ResolveFormulaValueAsync(Events.GameContext context, Entities.CardInstance? card)
         {
             // TODO: Implement logic to parse and evaluate Formula using an expression evaluator
             Console.WriteLine($"Warning: Formula value resolution for '{Formula}' not implemented.");
             return Task.FromResult<object?>(null); // Or throw NotImplementedException
         }
 
-        private Task<object?> ResolveVariableValueAsync(Query.Operations.QueryContext context)
+        private Task<object?> ResolveVariableValueAsync(Events.GameContext context)
         {
             // TODO: Implement logic to fetch value from AbilityVariables system via context
             Console.WriteLine($"Warning: Variable value resolution for '{VariableName}' not implemented.");

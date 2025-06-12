@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos; // For CardInstanceDto, CardDefinitionDto if needed directly
+using ShadowverseBeyond.Server.Domain.Abilities.Common; // Added for CardQueryConfig
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Query
 {
@@ -53,8 +55,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// 根据给定的查询配置和上下文异步执行卡牌查询。
         /// </summary>
         /// <param name="queryConfig">卡牌查询配置。</param>
-        /// <param name="context">查询执行的上下文。</param>
+        /// <param name="context">统一的游戏上下文。</param>
         /// <returns>包含查询结果的 Task。</returns>
-        Task<CardQueryResult> ExecuteQueryAsync(CardQueryConfig queryConfig, QueryContext context);
+        Task<CardQueryResult> ExecuteQueryAsync(CardQueryConfig queryConfig, GameContext context);
     }
 }

@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// The unique identifier of the entity whose health changed.
         /// </summary>
-        public string TargetUid { get; set; } // Removed default value for required property
+        public Guid TargetUid { get; set; } // Removed default value for required property
 
         /// <summary>
         /// The new health value of the entity after the change.
@@ -32,7 +32,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <param name="targetUid">The unique identifier of the entity whose health changed.</param>
         /// <param name="newHealth">The new health value of the entity.</param>
         /// <param name="changeAmount">The amount the health changed.</param>
-        public HealthChangedEventDto(string playerId, string targetUid, int newHealth, int changeAmount)
+        public HealthChangedEventDto(Guid playerId, Guid targetUid, int newHealth, int changeAmount)
             : base(playerId, "HealthChanged")
         {
             this.TargetUid = targetUid;

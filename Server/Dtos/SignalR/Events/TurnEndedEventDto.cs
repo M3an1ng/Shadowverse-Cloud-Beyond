@@ -8,7 +8,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public class TurnEndedEventDto : GameEventDto
     {
         // Constructor to initialize properties and call the base constructor (TurnNumber removed)
-        public TurnEndedEventDto(string sourcePlayerId, string nextPlayerId)
+        public TurnEndedEventDto(Guid sourcePlayerId, Guid nextPlayerId)
             : base(sourcePlayerId, "TurnEnded") // sourcePlayerId is the player whose turn just ended
         {
             NextPlayerId = nextPlayerId;
@@ -18,7 +18,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// The identifier of the player whose turn is now starting.
         /// (e.g., "Player1", "Player2", or a connection ID/user ID)
         /// </summary>
-        public string NextPlayerId { get; set; } = string.Empty;
+        public Guid NextPlayerId { get; set; } = Guid.Empty;
 
         // TurnNumber property removed as per refactoring requirement
 

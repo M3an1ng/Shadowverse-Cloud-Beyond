@@ -3,10 +3,12 @@ using System; // Added System for ArgumentNullException
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Domain.Entities; // Added for CardInstance
 using ShadowverseBeyond.Server.Domain.Abilities; // Correct namespace for AbilityContext
 using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.Events; // Added for IGameEvent
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 {
@@ -14,7 +16,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
     /// Encapsulates the runtime context required for evaluating DSL expressions.
     /// Provides access to game state, player states, the current item being processed,
     /// ability context, and necessary services like the card repository and function library.
+    ///
+    /// 注意：此类已被GameContext替代，仅作为向后兼容的桥接层保留。
     /// </summary>
+    [Obsolete("Use GameContext instead. This class will be removed in a future version.")]
     public class EvaluationContext
     {
         /// <summary>
@@ -40,38 +45,40 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         public object? CurrentItem { get; init; }
 
         /// <summary>
-        /// Context specific to the ability being executed, containing trigger info, selected targets, ability variables, etc.
-        /// Can be null if evaluation is not part of an ability execution.
+        /// Temporary variables for the current evaluation context.
+        /// Replaces AbilityContext.TemporaryVariables functionality.
         /// </summary>
-        public AbilityContext? AbilityContext { get; init; } // TODO: Verify AbilityContext namespace and definition
+        public Dictionary<string, object> TemporaryVariables { get; init; } = new();
 
         /// <summary>
         /// Repository to fetch card definitions. Required.
         /// </summary>
         public ICardRepository CardRepository { get; init; }
 
-        // TODO: Add Function Library/Registry instance or access mechanism
-        // public IFunctionRegistry FunctionRegistry { get; init; }
+        /// <summary>
+        /// Function registry for DSL function lookup. Required.
+        /// </summary>
+        public IFunctionRegistry FunctionRegistry { get; init; }
 
         /// <summary>
         /// Initializes a new instance of the EvaluationContext.
         /// </summary>
         public EvaluationContext(
             ICardRepository cardRepository,
+            IFunctionRegistry functionRegistry,
             GameStateDto? gameState = null,
             PlayerStateDto? player = null,
             PlayerStateDto? opponent = null,
             object? currentItem = null,
-            AbilityContext? abilityContext = null)
-        // IFunctionRegistry functionRegistry) // Add when function registry is ready
+            Dictionary<string, object>? temporaryVariables = null)
         {
             CardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository));
-            // FunctionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
+            FunctionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
             GameState = gameState;
             Player = player;
             Opponent = opponent;
             CurrentItem = currentItem;
-            AbilityContext = abilityContext;
+            TemporaryVariables = temporaryVariables ?? new Dictionary<string, object>();
         }
 
         /// <summary>
@@ -84,19 +91,43 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         {
             if (path == null || !path.Any()) return null;
 
-            // TODO: Implement robust identifier resolution logic as outlined in M14 design doc.
-            // 1. Check AbilityContext variables (if context exists and path has 1 segment)
-            if (AbilityContext?.Variables.TryGetValue(path.First(), out var variableValue) == true && path.Count == 1)
+            // 1. Check temporary variables (if path has 1 segment)
+            if (TemporaryVariables.TryGetValue(path.First(), out var tempVariableValue) && path.Count == 1)
             {
-                return variableValue; // Assuming variables are simple values for now
+                return tempVariableValue;
             }
-            if (AbilityContext?.Targets.TryGetValue(path.First(), out var targetValue) == true && path.Count == 1)
+
+            // 2. Target resolution is now handled by GameContext, not needed here
+
+            // 3. Check CardInstance persistent state (e.g., self.state.counter)
+            if (path.Count > 2 &&
+                (path[0].ToLowerInvariant() is "self" or "this" or "current") &&
+                path[1].ToLowerInvariant() == "state" &&
+                CurrentItem is CardInstance sourceCard)
             {
-                return targetValue; // Return the list of targets directly
+                string variableName = path[2]; // Assuming path is like ["self", "state", "variableName"]
+                if (sourceCard.AbilityState.TryGetValue(variableName, out var stateValue))
+                {
+                    // TODO: Handle further path segments if needed (e.g., self.state.complexObject.property)
+                    if (path.Count == 3)
+                    {
+                        return stateValue;
+                    }
+                    else
+                    {
+                        // Resolve remaining path segments against the state value
+                        return ResolvePathSegments(stateValue, path.Skip(3).ToList());
+                    }
+                }
+                else
+                {
+                    // Variable not found in AbilityState, continue to other resolution paths
+                    // Or return failure? Decide on behavior. For now, continue.
+                }
             }
 
 
-            // 2. Resolve root object (player, opponent, gamestate, self/this/current)
+            // 4. Resolve root object (player, opponent, gamestate, self/this/current)
             object? rootObject = path.First().ToLowerInvariant() switch
             {
                 "player" => Player,
@@ -116,16 +147,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
             else if (path.First().ToLowerInvariant() is "self" or "this" or "current" && CurrentItem != null)
             {
-                // If path starts with self/this/current but rootObject was null (e.g. path was just "self")
-                // Handle cases like "self" (return CurrentItem) or "self.property"
+                // Handle cases like "self" (return CurrentItem) or "self.property" (excluding self.state.* handled above)
                 if (!remainingPath.Any()) return CurrentItem; // Path is just "self"
-                return ResolvePathSegments(CurrentItem, remainingPath);
+
+                // Avoid re-resolving self.state.* here
+                if (remainingPath.Count > 0 && remainingPath[0].ToLowerInvariant() == "state")
+                {
+                    // Already handled or variable not found in state, fall through to not found
+                }
+                else
+                {
+                    return ResolvePathSegments(CurrentItem, remainingPath);
+                }
             }
 
 
-            // 3. Check global constants or other context elements? (Less common for identifiers)
+            // 5. Check global constants or other context elements? (Less common for identifiers)
 
-            // 4. Not found
+            // 6. Not found
             // Consider logging a warning here
             Console.WriteLine($"Warning: Identifier not found or path invalid: {string.Join(".", path)}"); // Temporary console log
             return null;
@@ -175,20 +214,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         /// <returns>The function definition, or null if not found.</returns>
         public IFunctionDefinition? FindFunction(string functionName)
         {
-            // TODO: Implement function lookup using the Function Registry/Library
-            Console.WriteLine($"Warning: Function lookup for '{functionName}' not implemented."); // Temporary log
-            // Example: return FunctionRegistry.GetFunction(functionName);
-            throw new NotImplementedException("Function lookup requires implementation of a function registry.");
+            if (string.IsNullOrWhiteSpace(functionName))
+            {
+                return null;
+            }
+
+            return FunctionRegistry.GetFunction(functionName);
         }
     }
-
-    // TODO: Define IFunctionDefinition properly, potentially in a separate file or namespace
-    public interface IFunctionDefinition
-    {
-        string Name { get; }
-        bool ValidateArguments(List<object?> args);
-        Task<object?> ExecuteAsync(List<object?> args, EvaluationContext context);
-    }
-
-    // Removed placeholder AbilityContext and IGameEvent definitions as they exist elsewhere.
 }

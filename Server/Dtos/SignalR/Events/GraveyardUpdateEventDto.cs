@@ -34,7 +34,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         // Consider adding the CardId of the removed card if needed for visual tracking.
 
         // Constructor to initialize properties and call base constructor
-        public GraveyardUpdateEventDto(string playerId, int graveyardCount, CardInstanceDto? cardAdded = null, string? cardRemovedUid = null)
+        public GraveyardUpdateEventDto(Guid playerId, int graveyardCount, CardInstanceDto? cardAdded = null, string? cardRemovedUid = null)
             : base(playerId, "GraveyardUpdate") // Set base PlayerId and Type
         {
             this.GraveyardCount = graveyardCount;

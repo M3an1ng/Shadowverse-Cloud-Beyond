@@ -49,21 +49,21 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
         }
 
         /// <inheritdoc />
-        public Task<IReadOnlyList<CardDefinition>> GetAllCardDefinitionsAsync() // Match interface return type
+        public async Task<IReadOnlyList<CardDefinition>> GetAllCardDefinitionsAsync() // Match interface return type
         {
-            // TODO: Implement actual logic using _context to query CardDefinitions
-            // Example: return await _context.CardDefinitions.AsNoTracking().ToListAsync();
-            // For now, returning empty list as placeholder.
-            return Task.FromResult<IReadOnlyList<CardDefinition>>(new List<CardDefinition>()); // Match interface return type
+            // Use AsNoTracking for read-only queries to improve performance
+            var cardDefinitions = await _context.CardDefinitions
+                .AsNoTracking()
+                .ToListAsync();
+
+            return cardDefinitions.AsReadOnly(); // Convert to IReadOnlyList
         }
 
         /// <inheritdoc />
-        public Task<CardDefinition?> GetCardDefinitionByIdAsync(int id) // Match interface return type (parameter name differs, but type matches)
+        public async Task<CardDefinition?> GetCardDefinitionByIdAsync(int id) // Match interface return type (parameter name differs, but type matches)
         {
-            // TODO: Implement actual logic using _context to find CardDefinition by id
-            // Example: return await _context.CardDefinitions.FindAsync(id);
-            // For now, returning null as placeholder.
-            return Task.FromResult<CardDefinition?>(null); // Match interface return type
+            // Use FindAsync for querying by primary key - it's optimized for single entity retrieval
+            return await _context.CardDefinitions.FindAsync(id);
         }
     }
 }

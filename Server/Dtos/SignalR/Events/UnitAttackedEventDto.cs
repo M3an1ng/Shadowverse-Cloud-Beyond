@@ -26,7 +26,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <param name="sourcePlayerId">The ID of the player initiating the attack.</param>
         /// <param name="attackerUid">The UID of the attacking unit.</param>
         /// <param name="targetUid">The UID of the target unit.</param>
-        public UnitAttackedEventDto(string sourcePlayerId, string attackerUid, string targetUid)
+        public UnitAttackedEventDto(Guid sourcePlayerId, string attackerUid, string targetUid)
             : base(sourcePlayerId, "UnitAttacked") // Call base constructor
         {
             AttackerUid = attackerUid;

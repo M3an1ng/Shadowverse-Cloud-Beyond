@@ -22,7 +22,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string DrawnCardId { get; set; } // CardDefinition ID is string (e.g., "F001")
 
         // Constructor - Calls the base constructor correctly
-        public CardDrawnEventDto(string sourcePlayerId, string drawnCardUid, string drawnCardId) // Changed type to string
+        public CardDrawnEventDto(Guid sourcePlayerId, string drawnCardUid, string drawnCardId) // Changed type to string
             : base(sourcePlayerId, "CardDrawn") // Pass sourcePlayerId and the event type string "CardDrawn"
         {
             // Base constructor handles setting SourcePlayerId and Type properties.

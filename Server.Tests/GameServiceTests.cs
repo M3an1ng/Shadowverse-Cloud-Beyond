@@ -10,6 +10,8 @@ using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethod
 using ShadowverseBeyond.Server.Exceptions; // Added for GameLogicException
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions; // Add FunctionRegistry namespace
+using ShadowverseBeyond.Server.Domain.Buffs; // Add Buffs namespace
 using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
@@ -32,10 +34,12 @@ namespace ShadowverseBeyond.Server.Tests
                  Mock<IHubContext<GameHub, IGameClient>> mockHubContext,
                  Mock<ILogger<GameService>> mockLogger,
                  Mock<IServiceScopeFactory> mockScopeFactory,
-                 Mock<ICardRepository> mockCardRepository, // Keep CardRepository mock for scope setup
+                 Mock<ICardRepository> mockCardRepository,
                  Mock<IAiService> mockAiService,
-                 Mock<IServiceProvider> mockServiceProvider, // Change AiTurnExecutor to IServiceProvider
-                 Mock<IClientMethodMapper> mockClientMethodMapper) // Add ClientMethodMapper mock
+                 Mock<IServiceProvider> mockServiceProvider,
+                 Mock<IClientMethodMapper> mockClientMethodMapper,
+                 Mock<IBuffManager> mockBuffManager, // Add BuffManager mock
+                 Mock<IFunctionRegistry> mockFunctionRegistry) // Add FunctionRegistry mock
                  SetupMocksAndService()
         {
             var mockHubContext = new Mock<IHubContext<GameHub, IGameClient>>();
@@ -48,7 +52,9 @@ namespace ShadowverseBeyond.Server.Tests
             var mockAiService = new Mock<IAiService>();
             // Change variable name and type - This line is removed as mockServiceProvider is already available from the helper method parameters/setup
             // var mockServiceProvider = new Mock<IServiceProvider>();
-            var mockClientMethodMapper = new Mock<IClientMethodMapper>(); // Add mock creation
+            var mockClientMethodMapper = new Mock<IClientMethodMapper>();
+            var mockBuffManager = new Mock<IBuffManager>(); // Create BuffManager mock
+            var mockFunctionRegistry = new Mock<IFunctionRegistry>(); // Create FunctionRegistry mock
 
             // Setup Scope Factory to return a scope that provides the mock Card Repository
             mockScopeFactory.Setup(f => f.CreateScope()).Returns(mockScope.Object);
@@ -63,15 +69,20 @@ namespace ShadowverseBeyond.Server.Tests
                 mockHubContext.Object,
                 mockLogger.Object,
                 mockScopeFactory.Object,
-                mockAiService.Object,     // Pass IAiService mock
-                mockServiceProvider.Object, // Pass IServiceProvider mock instead of AiTurnExecutor
-                mockClientMethodMapper.Object // Pass ClientMethodMapper mock
+                mockAiService.Object,
+                mockServiceProvider.Object,
+                mockClientMethodMapper.Object,
+                mockBuffManager.Object, // Pass BuffManager mock
+                mockCardRepository.Object, // Pass CardRepository mock (already existed)
+                mockFunctionRegistry.Object // Pass FunctionRegistry mock
     );
 
             // Update return tuple
             return (gameService, mockHubContext, mockLogger, mockScopeFactory, mockCardRepository,
-                    mockAiService, mockServiceProvider, // Return IServiceProvider mock
-                    mockClientMethodMapper); // Return ClientMethodMapper mock
+                    mockAiService, mockServiceProvider,
+                    mockClientMethodMapper,
+                    mockBuffManager, // Return BuffManager mock
+                    mockFunctionRegistry); // Return FunctionRegistry mock
         }
 
         // --- Helper to access internal game states (Use with caution!) ---
@@ -92,7 +103,8 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_Success()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            // Update tuple destructuring to include new mocks (even if unused in this specific test)
+            var (gameService, _, _, _, mockCardRepository, _, _, _, mockBuffManager, mockFunctionRegistry) = SetupMocksAndService();
             string gameId = "testGame1";
             string playerId = "player1";
             string opponentId = "player2";
@@ -155,7 +167,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 2,
@@ -189,7 +201,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 3,
@@ -309,7 +321,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task QuickGameSetup_ShouldCreatePlayableGame()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "quick-test-game";
             // string player1Id = "player1"; // Placeholder - Removed unused variable
             // string player2Id = "player2"; // Placeholder - Removed unused variable
@@ -343,7 +355,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_InsufficientPP()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameIPP";
             string playerId = "playerIPP";
             string opponentId = "opponentIPP";
@@ -401,7 +413,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_FieldFull()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameFieldFull";
             string playerId = "playerFieldFull";
             string opponentId = "opponentFieldFull";
@@ -456,7 +468,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 2,
@@ -488,7 +500,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 CurrentPP = 5,
                 MaxPP = 5,
@@ -543,7 +555,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_WrongTurn()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameWrongTurn";
             string playerId = "playerWrongTurn"; // Player attempting the action
             string opponentId = "opponentWhoseTurnItIs"; // Player whose turn it actually is
@@ -580,7 +592,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 IsAI = false
             };
@@ -607,7 +619,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 IsAI = true
             };
@@ -652,7 +664,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlayFollower_WrongPhase()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameWrongPhase";
             string playerId = "playerWrongPhase";
             string opponentId = "opponentWrongPhase";
@@ -689,7 +701,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 IsAI = false
             };
@@ -716,7 +728,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 IsAI = true
             };
@@ -761,7 +773,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_CardNotFoundInHand()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameCardNotFound";
             string playerId = "playerCardNotFound";
             string opponentId = "opponentCardNotFound";
@@ -791,7 +803,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 IsAI = false
             };
@@ -818,7 +830,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 IsAI = true
             };
@@ -863,7 +875,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_CardDefinitionNotFound()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameDefNotFound";
             string playerId = "playerDefNotFound";
             string opponentId = "opponentDefNotFound";
@@ -899,7 +911,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 IsAI = false
             };
@@ -926,7 +938,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 IsAI = true
             };
@@ -970,7 +982,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlaySpell_Success()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameSpellSuccess";
             string playerId = "playerSpellSuccess";
             string opponentId = "opponentSpellSuccess";
@@ -1019,7 +1031,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 2,
@@ -1053,7 +1065,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 3,
@@ -1144,7 +1156,7 @@ namespace ShadowverseBeyond.Server.Tests
         public async Task PlayCardAsync_PlaySpell_WithTarget()
         {
             // Arrange
-            var (gameService, _, _, _, mockCardRepository, _, _, _) = SetupMocksAndService();
+            var (gameService, _, _, _, mockCardRepository, _, _, _, _, _) = SetupMocksAndService(); // Update destructuring
             string gameId = "testGameSpellTarget";
             string playerId = "playerSpellTarget";
             string opponentId = "opponentSpellTarget";
@@ -1211,7 +1223,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = playerId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = playerId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 2,
@@ -1244,7 +1256,7 @@ namespace ShadowverseBeyond.Server.Tests
                     CurrentHealth = 20, // Current health
                     MaxHealth = 20,     // Max health
                     Zone = CardZone.Leader,
-                    ControllerPlayerId = opponentId // Set controller ID using the variable from the test scope
+                    OwnerPlayerId = opponentId // Set controller ID using the variable from the test scope
                 },
                 CurrentEP = 0,
                 MaxEP = 3,

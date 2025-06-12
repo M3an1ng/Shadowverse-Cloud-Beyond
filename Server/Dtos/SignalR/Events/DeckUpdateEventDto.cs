@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public class DeckUpdateEventDto : GameEventDto
     {
         // Constructor added to fix CS0506 and initialize properties
-        public DeckUpdateEventDto(string playerId, int deckCount)
+        public DeckUpdateEventDto(Guid playerId, int deckCount)
             : base(playerId, "DeckUpdate") // Call base constructor
         {
             DeckCount = deckCount;

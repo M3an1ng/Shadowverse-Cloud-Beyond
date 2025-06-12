@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging; // Assuming logging will be added
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser; // For TokenType
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 {
@@ -54,6 +55,58 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 _logger.LogError(ex, "Unhandled exception during DSL evaluation for node type {NodeType}.", astNode.GetType().Name);
                 return EvaluationResult.Failure($"Unhandled exception during evaluation: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Asynchronously evaluates the given AST node within the specified GameContext.
+        /// This method creates a temporary EvaluationContext from GameContext for compatibility.
+        /// </summary>
+        /// <param name="astNode">The root node of the AST to evaluate.</param>
+        /// <param name="context">The game context containing runtime data.</param>
+        /// <returns>An EvaluationResult containing the computed value or errors.</returns>
+        public async Task<EvaluationResult> EvaluateAsync(ExpressionNode astNode, GameContext context)
+        {
+            if (astNode == null)
+            {
+                _logger.LogWarning("Attempted to evaluate a null AST node.");
+                return EvaluationResult.Failure("Cannot evaluate a null expression.");
+            }
+            if (context == null)
+            {
+                _logger.LogError("GameContext cannot be null.");
+                return EvaluationResult.Failure("GameContext is required.");
+            }
+
+            _logger.LogTrace("Starting evaluation for AST node type: {NodeType} using GameContext", astNode.GetType().Name);
+
+            // Create temporary EvaluationContext from GameContext
+            var evaluationContext = CreateEvaluationContextFromGameContext(context);
+
+            // Delegate to the existing EvaluationContext method
+            return await EvaluateAsync(astNode, evaluationContext);
+        }
+
+        /// <summary>
+        /// Creates an EvaluationContext from a GameContext for compatibility with existing DSL evaluation logic.
+        /// </summary>
+        /// <param name="context">The GameContext to convert.</param>
+        /// <returns>An EvaluationContext with equivalent data.</returns>
+        private EvaluationContext CreateEvaluationContextFromGameContext(GameContext context)
+        {
+            // Create snapshot of game state
+            var gameStateDto = context.CreateSnapshot();
+            var requestingPlayerDto = gameStateDto.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
+            var opponentPlayerDto = gameStateDto.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
+
+            return new EvaluationContext(
+                cardRepository: context.CardRepository ?? throw new InvalidOperationException("CardRepository is required in GameContext for DSL evaluation"),
+                functionRegistry: context.FunctionRegistry ?? throw new InvalidOperationException("FunctionRegistry is required in GameContext for DSL evaluation"),
+                gameState: gameStateDto,
+                player: requestingPlayerDto,
+                opponent: opponentPlayerDto,
+                currentItem: context.CurrentItem,
+                temporaryVariables: new Dictionary<string, object>(context.TemporaryVariables)
+            );
         }
 
         /// <summary>

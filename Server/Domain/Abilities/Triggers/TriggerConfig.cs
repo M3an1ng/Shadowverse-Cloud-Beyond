@@ -1,7 +1,9 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using System.Collections.Generic;
+using System.Linq;
 using ShadowverseBeyond.Server.Domain.Events;
-using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // <-- Added using
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
+using ShadowverseBeyond.Server.Dtos; // <-- Added using
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
 {
@@ -33,26 +35,79 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         public TriggerTiming Timing { get; set; } = TriggerTiming.After;
 
-        // Removed IsOptional property (Consider moving to AbilityConfig or EffectConfig if needed)
 
-        // Removed RequiresTarget property (Should be handled by EffectConfig or AbilityConfig)
+        /// <summary>
+        /// 触发器生效的卡牌区域列表
+        /// 为空或null时代表不需要进行区域检测（所有区域都有效）
+        /// 用于性能优化，避免在非活跃区域处理不必要的触发器
+        /// </summary>
+        public List<CardZone> ValidZones { get; set; } = new() { CardZone.Field };
 
-        // Removed Tags property (Can be reintroduced if complex matching is needed later)
-
-        // Removed ConditionExpression property
-
-        // Removed Conditions property (Conditions are now held directly by AbilityConfig)
-
-        // Removed Limit property and TriggerLimitConfig (All limits should be handled by AbilityConfig.Conditions)
-
-        // Removed Delay property as delay logic will be handled at the effect level.
-
-        // Removed Priority property (Runtime system will handle order if needed, or reintroduce later)
+        /// <summary>
+        /// 向后兼容的单一区域属性
+        /// 设置时会清空ValidZones并添加单个区域
+        /// 获取时返回ValidZones的第一个区域，如果为空则返回Field
+        /// </summary>
+        [Obsolete("Use ValidZones property instead for multi-zone support")]
+        public CardZone CardZone
+        {
+            get => ValidZones?.FirstOrDefault() ?? CardZone.Field;
+            set
+            {
+                ValidZones = new List<CardZone> { value };
+            }
+        }
 
         /// <summary>
         /// 是否启用
         /// </summary>
         public bool IsEnabled { get; set; } = true;
+
+        /// <summary>
+        /// 检查指定区域是否在有效区域列表中
+        /// </summary>
+        /// <param name="zone">要检查的区域</param>
+        /// <returns>如果区域有效或不需要区域检测则返回true</returns>
+        public bool IsValidZone(CardZone zone)
+        {
+            // 如果ValidZones为空或null，表示不需要区域检测，所有区域都有效
+            if (ValidZones == null || ValidZones.Count == 0)
+                return true;
+
+            return ValidZones.Contains(zone);
+        }
+
+        /// <summary>
+        /// 设置单个有效区域
+        /// </summary>
+        /// <param name="zone">要设置的区域</param>
+        /// <returns>当前TriggerConfig实例，支持链式调用</returns>
+        public TriggerConfig WithZone(CardZone zone)
+        {
+            ValidZones = new List<CardZone> { zone };
+            return this;
+        }
+
+        /// <summary>
+        /// 设置多个有效区域
+        /// </summary>
+        /// <param name="zones">要设置的区域列表</param>
+        /// <returns>当前TriggerConfig实例，支持链式调用</returns>
+        public TriggerConfig WithZones(params CardZone[] zones)
+        {
+            ValidZones = zones?.ToList() ?? new List<CardZone>();
+            return this;
+        }
+
+        /// <summary>
+        /// 设置为所有区域都有效（不进行区域检测）
+        /// </summary>
+        /// <returns>当前TriggerConfig实例，支持链式调用</returns>
+        public TriggerConfig WithAllZones()
+        {
+            ValidZones = new List<CardZone>();
+            return this;
+        }
 
         // Removed Parameters property (Use specific properties or dedicated config objects if needed)
 
@@ -67,7 +122,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             {
                 EventTypes = new List<GameEventType> { eventType },
                 // Scope removed, handle via Conditions if needed
-                Timing = TriggerTiming.After
+                Timing = TriggerTiming.After,
+                ValidZones = new List<CardZone> { CardZone.Field } // Default to Field zone
             };
         }
 
@@ -82,7 +138,55 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             {
                 EventTypes = eventTypes,
                 // Scope removed, handle via Conditions if needed
-                Timing = TriggerTiming.After
+                Timing = TriggerTiming.After,
+                ValidZones = new List<CardZone> { CardZone.Field } // Default to Field zone
+            };
+        }
+
+        /// <summary>
+        /// 创建指定区域的事件触发器
+        /// </summary>
+        /// <param name="eventType">游戏事件类型</param>
+        /// <param name="zone">有效区域</param>
+        /// <returns>触发器配置</returns>
+        public static TriggerConfig OnEventInZone(GameEventType eventType, CardZone zone)
+        {
+            return new TriggerConfig
+            {
+                EventTypes = new List<GameEventType> { eventType },
+                Timing = TriggerTiming.After,
+                ValidZones = new List<CardZone> { zone }
+            };
+        }
+
+        /// <summary>
+        /// 创建多区域的事件触发器
+        /// </summary>
+        /// <param name="eventType">游戏事件类型</param>
+        /// <param name="zones">有效区域列表</param>
+        /// <returns>触发器配置</returns>
+        public static TriggerConfig OnEventInZones(GameEventType eventType, params CardZone[] zones)
+        {
+            return new TriggerConfig
+            {
+                EventTypes = new List<GameEventType> { eventType },
+                Timing = TriggerTiming.After,
+                ValidZones = zones?.ToList() ?? new List<CardZone>()
+            };
+        }
+
+        /// <summary>
+        /// 创建所有区域都有效的事件触发器（不进行区域检测）
+        /// </summary>
+        /// <param name="eventType">游戏事件类型</param>
+        /// <returns>触发器配置</returns>
+        public static TriggerConfig OnEventInAllZones(GameEventType eventType)
+        {
+            return new TriggerConfig
+            {
+                EventTypes = new List<GameEventType> { eventType },
+                Timing = TriggerTiming.After,
+                ValidZones = new List<CardZone>() // Empty list means all zones are valid
             };
         }
 

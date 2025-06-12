@@ -19,11 +19,11 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     public record GameStateDto
     {
         public string GameId { get; init; } = string.Empty; // Identifier for the game session
-        public string CurrentPlayerId { get; set; } = string.Empty; // Whose turn it is
+        public Guid CurrentPlayerId { get; set; } = Guid.Empty; // Whose turn it is
         // public int TurnNumber { get; set; } // Removed global turn number
         public GamePhase Phase { get; set; } = GamePhase.Initialization; // Changed type to GamePhase Enum and updated default
 
-        public string FirstPlayerId { get; set; } = string.Empty; // ID of the player who went first
+        public Guid FirstPlayerId { get; set; } = Guid.Empty; // ID of the player who went first
         public GameStatus GameStatus { get; set; } = GameStatus.Starting; // Current status of the game (e.g., Starting, InProgress, Finished)
         public List<PlayerStateDto> Players { get; set; } = new(); // State for both players
 
@@ -80,7 +80,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
 
         private CardInstance ConvertToCardInstance(CardInstanceDto dto)
         {
-            return new CardInstance(dto.InstanceId.ToString(), dto.CardId, dto.ControllerPlayerId)
+            return new CardInstance(dto.InstanceId, dto.CardId, dto.OwnerPlayerId)
             {
                 CurrentZone = dto.Zone,
                 CardType = dto.Type,
@@ -89,9 +89,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
                 CurrentHealth = dto.CurrentHealth,
                 MaxHealth = dto.MaxHealth,
                 CanAttack = dto.CanAttack,
-                CanEvolve = dto.CanEvolve,
+                // Removed CanEvolve - evolution eligibility is determined by game rules
                 IsEvolved = dto.IsEvolved,
-                AttacksThisTurn = dto.AttacksMadeThisTurn,
+                AttacksThisTurn = dto.AttacksThisTurn,
                 Countdown = dto.CurrentCountdown,
                 FieldPosition = dto.FieldPosition
             };
@@ -102,7 +102,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         /// </summary>
         /// <param name="playerId">The player ID to search for.</param>
         /// <returns>The player state if found, null otherwise.</returns>
-        public PlayerStateDto? GetPlayerState(string playerId)
+        public PlayerStateDto? GetPlayerState(Guid playerId)
         {
             return Players.FirstOrDefault(p => p.PlayerId == playerId);
         }

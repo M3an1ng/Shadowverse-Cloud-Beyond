@@ -3,7 +3,7 @@
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
 // - API集成: 文档/03-前端架构/03-API集成.md
-// - 卡牌出牌系统: 文档/05-游戏系统/04-卡牌出牌系统.md
+// - 游戏事件系统: 文档/05-游戏系统/04-游戏事件系统.md
 //
 
 console.log("cardManager.js loaded");
@@ -33,10 +33,30 @@ export async function loadCards() {
             console.error("loadCards: Loaded data is not an array!"); // ADDED Log before throw
             throw new Error("Loaded card data is not an array.");
         }
-        console.log("loadCards: Data format OK (Array). Assigning to cardDatabase.");// ADDED
-        cardDatabase = loadedData;
+        console.log("loadCards: Data format OK (Array). Converting API format to frontend format...");// ADDED
+
+        // Convert API format to frontend format
+        // API returns: {cardId: 0, name: "主战者", ...}
+        // Frontend expects: {id: 0, name: "主战者", ...}
+        cardDatabase = loadedData.map(apiCard => ({
+            id: apiCard.cardId,           // Convert cardId to id
+            name: apiCard.name,
+            cost: apiCard.cost,
+            type: apiCard.type,
+            attack: apiCard.attack,
+            health: apiCard.health,
+            description: apiCard.description,
+            keywords: apiCard.keywords || [],
+            rarity: apiCard.rarity,
+            cardSet: apiCard.cardSet,
+            canEvolve: apiCard.canEvolve,
+            // Add any other properties that might be needed
+            effects: [] // Initialize empty effects array for compatibility
+        }));
+
         uidCounter = 0; // 重置 UID 计数器
         console.log(`Card data loaded successfully. ${cardDatabase.length} cards found.`);
+        console.log("First few converted cards:", cardDatabase.slice(0, 3).map(c => ({id: c.id, name: c.name})));
         // 可以添加数据验证逻辑
     } catch (error) {
         console.error("loadCards: CATCH BLOCK triggered!"); // ADDED

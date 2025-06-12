@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <param name="playerId">Identifier of the player primarily associated with the error (e.g., who caused it, or empty/null for global errors).</param>
         /// <param name="errorMessage">The user-friendly error message.</param>
         /// <param name="errorCode">Optional error code for client-side handling.</param>
-        public ErrorOccurredEventDto(string playerId, string errorMessage, string? errorCode = null)
+        public ErrorOccurredEventDto(Guid playerId, string errorMessage, string? errorCode = null)
             : base(playerId, "ErrorOccurred") // Set base PlayerId and Type
         {
             this.ErrorMessage = errorMessage;

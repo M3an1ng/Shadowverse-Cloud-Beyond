@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// The instance ID of the card that triggered the ability.
         /// </summary>
-        public string SourceCardUid { get; set; } = string.Empty;
+        public Guid SourceCardUid { get; set; } = Guid.Empty;
 
         /// <summary>
         /// The tag/type of the ability that was triggered (e.g., "Fanfare", "LastWords", "EvolveEffect").
@@ -39,14 +39,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <param name="triggerEventType">The type of event that triggered this ability.</param>
         /// <param name="abilityParameters">Additional parameters related to the ability trigger.</param>
         public AbilityTriggeredEventDto(
-            string sourcePlayerId,
-            string sourceCardUid,
+            Guid sourcePlayerId,
+            Guid sourceCardUid,
             string abilityTag,
             string triggerEventType,
             Dictionary<string, object>? abilityParameters = null)
             : base(sourcePlayerId, "AbilityTriggered")
         {
-            SourceCardUid = sourceCardUid ?? throw new ArgumentNullException(nameof(sourceCardUid));
+            SourceCardUid = sourceCardUid;
             AbilityTag = abilityTag ?? throw new ArgumentNullException(nameof(abilityTag));
             TriggerEventType = triggerEventType ?? throw new ArgumentNullException(nameof(triggerEventType));
             AbilityParameters = abilityParameters ?? new Dictionary<string, object>();

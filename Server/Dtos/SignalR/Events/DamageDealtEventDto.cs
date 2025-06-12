@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// The unique identifier (UID) of the entity that received the damage (unit or leader identifier).
         /// </summary>
-        public string TargetUid { get; set; } = string.Empty;
+        public Guid TargetUid { get; set; } = Guid.Empty;
 
         /// <summary>
         /// The amount of damage dealt.
@@ -21,14 +21,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// The identifier of the player whose entity received damage.
         /// Needed for client-side logic (e.g., showing damage animation on correct side).
         /// </summary>
-        public string TargetPlayerId { get; set; } = string.Empty;
+        public Guid TargetPlayerId { get; set; } = Guid.Empty;
 
 
         /// <summary>
         /// Optional: The unique identifier (UID) of the source of the damage (e.g., attacking unit UID, spell card UID).
         /// Can be null if the source is ambiguous or not relevant (e.g., end-of-turn effect).
         /// </summary>
-        public string? SourceUid { get; set; }
+        public Guid? SourceUid { get; set; }
 
         /// <summary>
         /// Optional: Describes the type of damage (e.g., "Attack", "Spell", "Effect").
@@ -37,7 +37,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string DamageType { get; set; } = "Generic"; // Default to Generic
 
         // Constructor
-        public DamageDealtEventDto(string sourcePlayerId, string targetUid, int damageAmount, string targetPlayerId, string? sourceUid, string damageType)
+        public DamageDealtEventDto(Guid sourcePlayerId, Guid targetUid, int damageAmount, Guid targetPlayerId, Guid? sourceUid, string damageType)
             : base(sourcePlayerId, "DamageDealt") // Call base constructor
         {
             TargetUid = targetUid;

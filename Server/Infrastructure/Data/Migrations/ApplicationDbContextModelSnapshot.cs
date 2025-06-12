@@ -17,7 +17,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.0");
 
-            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardAbility", b =>
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.AbilityDefinition", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -87,20 +87,26 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<long?>("AbilityId")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("AbilityIds")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<int?>("Attack")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("CardSet")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Class")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("Cost")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Description")
                         .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("EffectsJson")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("EvolveId")
@@ -112,14 +118,18 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
                     b.Property<bool>("IsCollectible")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsEvolved")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("Keywords")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Rarity")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tribe")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Type")
@@ -629,7 +639,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data.Migrations
                     b.ToTable("UserRankings", (string)null);
                 });
 
-            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardAbility", b =>
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.AbilityDefinition", b =>
                 {
                     b.HasOne("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", "CardDefinition")
                         .WithMany()

@@ -22,7 +22,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string TargetPlayerId { get; set; } = string.Empty; // Use PlayerId for the leader
 
         // Added constructor according to standard fix pattern
-        public PlayerAttackedEventDto(string playerId, string attackerUid, string targetPlayerId)
+        public PlayerAttackedEventDto(Guid playerId, string attackerUid, string targetPlayerId)
             : base(playerId, "PlayerAttacked") // Use attacker's owner ID for base playerId
         {
             AttackerUid = attackerUid;

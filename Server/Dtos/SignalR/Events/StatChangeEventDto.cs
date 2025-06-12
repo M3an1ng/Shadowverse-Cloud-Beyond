@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     {
         // Constructor to initialize properties and call the base constructor
         [SetsRequiredMembers] // Add attribute here
-        public StatChangeEventDto(string sourcePlayerId, string targetEntityUid, int? newAttack, int? newCurrentHealth, int? newMaxHealth)
+        public StatChangeEventDto(Guid sourcePlayerId, Guid targetEntityUid, int? newAttack, int? newCurrentHealth, int? newMaxHealth)
             : base(sourcePlayerId, "StatChange")
         {
             TargetEntityUid = targetEntityUid;
@@ -21,7 +21,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// The unique identifier of the entity (Unit or Player Leader) whose stats changed.
         /// </summary>
-        public required string TargetEntityUid { get; set; }
+        public required Guid TargetEntityUid { get; set; }
 
         /// <summary>
         /// The new attack value. Null if attack didn't change.

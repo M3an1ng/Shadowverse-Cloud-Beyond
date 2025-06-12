@@ -14,7 +14,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// <summary>
         /// 选择器类型
         /// </summary>
-        public Common.SelectorType SelectorType { get; set; } = Common.SelectorType.Self; // Default might change
+        public SelectorType SelectorType { get; set; } = SelectorType.Self; // Default might change
 
         /// <summary>
         /// 选择器描述
@@ -78,6 +78,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// <summary>
         /// 如果只有一个目标是否自动选择
         /// </summary>
-        public bool AutoSelectSingleIfPossible { get; set; } = true;
+        public bool AutoSelect { get; set; } = true;
+
+        /// <summary>
+        /// 玩家选择的最小数量限制
+        /// </summary>
+        public int MinCount { get; set; } = 1;
+
+        /// <summary>
+        /// 玩家选择的最大数量限制
+        /// 如果为null，则使用Query.SelectionOperation中的CountSource作为上限
+        /// </summary>
+        public int? MaxCount { get; set; } = null;
     }
 }

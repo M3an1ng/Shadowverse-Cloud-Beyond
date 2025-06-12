@@ -35,6 +35,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public string AbilityTag { get; set; } = string.Empty;
         public AbilityType Type { get; set; }
         public TriggerConfig Trigger { get; set; } = new();
+        /// <summary>
+        /// 卡牌打出前的预判断条件。
+        /// 只有满足这些条件（以及基础条件如费用、场地），卡牌才能被打出。
+        /// </summary>
+        public List<ConditionConfig> PreConditions { get; set; } = new();
         public List<ConditionConfig> Conditions { get; set; } = new();
         public List<TargetConfig> Targets { get; set; } = new();
         public List<EffectConfig> Effects { get; set; } = new();
@@ -253,7 +258,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private static TargetConfig MapTargetNode(DSL.AST.TargetNode node)
         {
             // Use the correct namespace for the interface
-            var queryOperations = new List<ShadowverseBeyond.Server.Domain.Query.IQueryOperation>();
+            var queryOperations = new List<Query.IQueryOperation>();
 
             // Map Filters
             // Add null check for node.Filters
@@ -264,7 +269,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 // Use the correct FilterOperation from Query namespace
                 if (filterConfigs.Any()) // Only add if there are valid filters
                 {
-                    queryOperations.Add(new ShadowverseBeyond.Server.Domain.Query.FilterOperation(filterConfigs));
+                    queryOperations.Add(new Query.FilterOperation(filterConfigs));
                 }
             }
 
@@ -277,7 +282,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             ValueConfig? countSource = limitValue.HasValue ? ValueConfig.Static(limitValue.Value) : null;
             // Only add SelectionOperation if there's a limit or a non-default selection strategy
             // Compare selectionMethod (Query.SelectionStrategy) with the corresponding default value in its own enum
-            if (countSource != null || selectionMethod != ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.First) // Check against the default we mapped 'all' to
+            if (countSource != null || selectionMethod != Query.SelectionStrategy.First) // Check against the default we mapped 'all' to
             {
                 // Use the correct SelectionOperation from Query namespace
                 queryOperations.Add(new ShadowverseBeyond.Server.Domain.Query.SelectionOperation(
@@ -317,7 +322,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             if (node.RequiresPlayerChoice)
             {
                 targetConfig.SelectorType = Common.SelectorType.PlayerChoice;
-                targetConfig.PlayerChoiceOptions = new PlayerChoiceConfig { IsRequired = true /* Add other options if needed */ };
+                targetConfig.PlayerChoiceOptions = new PlayerChoiceConfig
+                {
+                    IsRequired = true,
+                    // Set Count limits based on the DSL Count value
+                    MinCount = limitValue ?? 1, // Use DSL count as minimum, default to 1
+                    MaxCount = limitValue, // Use DSL count as maximum, null means no limit
+                    AutoSelect = limitValue == 1, // Auto-select if only one target needed
+                    CanCancel = false, // Default to non-cancelable for required choices
+                    Prompt = $"Choose {(limitValue.HasValue ? limitValue.Value.ToString() : "target(s)")} from available options"
+                };
             }
             else
             {
@@ -600,12 +614,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 "random" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.Random,
                 "first" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.First,
                 "last" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.Last,
-                "lowest_attack" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.LowestAttack,
-                "highest_attack" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.HighestAttack,
-                "lowest_health" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.LowestHealth,
-                "highest_health" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.HighestHealth,
-                "lowest_cost" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.LowestCost,
-                "highest_cost" => ShadowverseBeyond.Server.Domain.Query.SelectionStrategy.HighestCost,
                 // "all" is not a strategy in Query.SelectionStrategy, it implies no specific selection beyond filters/limit.
                 // We handle the absence of a specific strategy in MapTargetNode.
                 // Map "all" or null/empty to a default that signifies no specific selection needed by SelectionOperation itself.

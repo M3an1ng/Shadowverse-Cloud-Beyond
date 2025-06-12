@@ -1,0 +1,101 @@
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Common; // For StatType, ModifierLayer etc. if defined there
+using ShadowverseBeyond.Server.Domain.Entities; // For CardInstance etc.
+
+namespace ShadowverseBeyond.Server.Domain.Buffs
+{
+    /// <summary>
+    /// Represents a specific type of modification or effect contained within a Buff.
+    /// This interface allows Buffs to compose various effects (stats, keywords, abilities)
+    /// without becoming a "fat class".
+    /// </summary>
+    public interface IBuffEffect
+    {
+        // Marker interface for now.
+        // Specific implementations will hold the actual data.
+    }
+
+    // --- Example Concrete Implementations (can be in separate files later) ---
+
+    /// <summary>
+    /// Represents modifications to a card's stats within a Buff.
+    /// </summary>
+    public class StatBuffEffect : IBuffEffect
+    {
+        public List<StatModification> Modifications { get; init; } = new();
+
+        public StatBuffEffect(List<StatModification> modifications)
+        {
+            Modifications = modifications ?? throw new ArgumentNullException(nameof(modifications));
+        }
+    }
+
+    /// <summary>
+    /// Represents keywords granted or removed by a Buff.
+    /// </summary>
+    public class KeywordBuffEffect : IBuffEffect
+    {
+        public List<string> GrantedKeywords { get; init; } = new();
+        // public List<string> RemovedKeywords { get; init; } = new(); // Optional: If buffs can remove keywords
+
+        public KeywordBuffEffect(List<string> grantedKeywords)
+        {
+            GrantedKeywords = grantedKeywords ?? throw new ArgumentNullException(nameof(grantedKeywords));
+        }
+    }
+
+    /// <summary>
+    /// Represents abilities granted by a Buff.
+    /// </summary>
+    public class AbilityBuffEffect : IBuffEffect
+    {
+        /// <summary>
+        /// List of Ability configurations granted by this buff effect.
+        /// The AbilityManager will need to instantiate these at runtime when the buff is active.
+        /// </summary>
+        public List<AbilityConfig> GrantedAbilityConfigs { get; init; } = new();
+
+        public AbilityBuffEffect(List<AbilityConfig> grantedAbilityConfigs)
+        {
+            GrantedAbilityConfigs = grantedAbilityConfigs ?? throw new ArgumentNullException(nameof(grantedAbilityConfigs));
+        }
+    }
+
+    // --- Supporting Records/Enums (can be moved to a common file) ---
+
+    /// <summary>
+    /// Defines a single modification to a specific stat.
+    /// </summary>
+    /// <param name="Stat">The type of stat being modified (e.g., Attack, Defense, Cost).</param>
+    /// <param name="Value">The value of the modification (can be positive or negative).</param>
+    /// <param name="Layer">The layer in which this modification applies (determines calculation order).</param>
+    public record StatModification(StatType Stat, int Value, ModifierLayer Layer);
+
+    /// <summary>
+    /// Defines the layers for applying stat modifications to ensure correct calculation order.
+    /// Example: Base -> Additive -> Multiplicative -> Set
+    /// </summary>
+    public enum ModifierLayer
+    {
+        /// <summary> Modifies the base value (rarely used by buffs). </summary>
+        Base,
+        /// <summary> Additive bonuses (+X). </summary>
+        Additive,
+        /// <summary> Multiplicative bonuses (*X). </summary>
+        Multiplicative,
+        /// <summary> Sets the value directly (=X), usually applied last. </summary>
+        Set
+    }
+
+    /// <summary>
+    /// Represents the type of stat being targeted by an effect or condition.
+    /// Needs to be defined or imported. Assuming it exists in Common/Enums.cs
+    /// </summary>
+    public enum StatType
+    {
+        Attack,
+        Defense,
+        Cost
+        // Add other relevant stats (MaxEP, etc.)
+    }
+}

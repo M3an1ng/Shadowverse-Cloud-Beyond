@@ -27,7 +27,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <param name="sourcePlayerId">The ID of the player who caused the card to be summoned.</param>
         /// <param name="summonedCard">The card instance that was summoned.</param>
         /// <param name="source">Indicates how the card was summoned (e.g., "Played", "Summoned").</param>
-        public CardSummonedEventDto(string sourcePlayerId, CardInstanceDto summonedCard, string source)
+        public CardSummonedEventDto(Guid sourcePlayerId, CardInstanceDto summonedCard, string source)
             : base(sourcePlayerId, nameof(CardSummonedEventDto))
         {
             SummonedCard = summonedCard ?? throw new ArgumentNullException(nameof(summonedCard));

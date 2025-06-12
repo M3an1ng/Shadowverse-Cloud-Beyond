@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization; // Add for JsonPropertyName
 
 using Shadowverse.Domain.Interfaces; // Correct namespace
+using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
 
 namespace ShadowverseBeyond.Server.Dtos
 {
@@ -89,6 +90,7 @@ namespace ShadowverseBeyond.Server.Dtos
 
         /// <summary>
         /// Indicates if the card has an evolution form.
+        /// TODO: 移除该属性，所有从者卡默认都可以进化
         /// </summary>
         public bool CanEvolve { get; init; }
 
@@ -109,7 +111,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Number of attacks made by this follower instance this turn.
         /// Relevant primarily for followers on the field.
         /// </summary>
-        public int AttacksMadeThisTurn { get; set; }
+        public int AttacksThisTurn { get; set; }
 
         /// <summary>
         /// Maximum attack of the instance (including buffs).
@@ -123,9 +125,10 @@ namespace ShadowverseBeyond.Server.Dtos
         public CardZone Zone { get; set; }
 
         /// <summary>
-        /// List of keyword identifiers associated with the card (e.g., "Ward", "Rush").
+        /// List of keyword identifiers associated with the card (e.g., Ward, Rush).
+        /// Updated to use CardKeyword enum for type safety
         /// </summary>
-        public List<string> Keywords { get; set; } = new List<string>(); // Changed init to set for field state modification
+        public List<CardKeyword> Keywords { get; set; } = new List<CardKeyword>(); // Changed init to set for field state modification
 
         /// <summary>
         /// List of effect descriptions for display purposes.
@@ -157,7 +160,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// <summary>
         /// The Player ID of the player who currently controls this instance on the field.
         /// </summary>
-        public string ControllerPlayerId { get; set; } = string.Empty;
+        public Guid OwnerPlayerId { get; set; } = Guid.Empty;
 
         // --- Added Constructor ---
         /// <summary>
@@ -171,7 +174,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// <param name="instanceId">The unique ID for this instance.</param>
         /// <param name="initialZone">The initial zone for this instance.</param>
         /// <param name="controllerPlayerId">The ID of the player controlling this instance.</param>
-        public CardInstanceDto(CardDefinitionDto definition, Guid instanceId, CardZone initialZone, string controllerPlayerId)
+        public CardInstanceDto(CardDefinitionDto definition, Guid instanceId, CardZone initialZone, Guid ownerPlayerId)
         {
             // --- Base Property Mapping ---
             InstanceId = instanceId;
@@ -186,7 +189,18 @@ namespace ShadowverseBeyond.Server.Dtos
             Description = definition.Description ?? string.Empty;
             CanEvolve = definition.CanEvolve ?? false;
             // EffectDescriptions does not exist in CardDefinitionDto, rely on CardInstanceDto's default initializer
-            Keywords = new List<string>(definition.Keywords ?? new List<string>()); // Create copy
+            // Convert string keywords to CardKeyword enum
+            Keywords = new List<CardKeyword>();
+            if (definition.Keywords != null)
+            {
+                foreach (var keywordStr in definition.Keywords)
+                {
+                    if (Enum.TryParse<CardKeyword>(keywordStr, true, out var keywordEnum) && keywordEnum != CardKeyword.None)
+                    {
+                        Keywords.Add(keywordEnum);
+                    }
+                }
+            }
 
             // --- Instance State Initialization ---
             // Handle nullable types from definition using ??
@@ -195,11 +209,11 @@ namespace ShadowverseBeyond.Server.Dtos
             MaxHealth = definition.Health ?? 0;     // Initial max health = base health
             IsEvolved = false;
             CanAttack = false; // Usually false initially (unless Rush etc.)
-            AttacksMadeThisTurn = 0;
+            AttacksThisTurn = 0;
             // MaxAttacksPerTurn does not exist in CardDefinitionDto, rely on CardInstanceDto's default initializer (= 1)
             // CurrentCountdown does not exist in CardDefinitionDto, rely on CardInstanceDto's default (null)
             Zone = initialZone;
-            ControllerPlayerId = controllerPlayerId;
+            OwnerPlayerId = ownerPlayerId;
             MaxAttack = definition.Attack ?? 0; // Initial max attack = base attack
         }
         // --- End Added Constructor ---
@@ -208,8 +222,8 @@ namespace ShadowverseBeyond.Server.Dtos
         // public Dictionary<string, object> EffectsData { get; init; } = new Dictionary<string, object>();
         // public bool IsTargetable { get; set; }
         // Explicit implementation for ICard.Uid
-        // Note: ICard expects string Uid. We map our Guid InstanceId.
-        string ICard.Uid => this.InstanceId.ToString();
+        // Note: ICard expects Guid Uid. We map our Guid InstanceId.
+        Guid ICard.Uid => InstanceId;
 
         // Explicit implementation for ICard.Health
         // The base Health property setter was changed from init to set to allow this.

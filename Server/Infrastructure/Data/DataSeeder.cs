@@ -77,9 +77,10 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 try
                 {
                     logger.LogInformation("Checking if database seeding is required...");
-                    if (await context.CardDefinitions.AnyAsync())
+                    var existingCardCount = await context.CardDefinitions.CountAsync();
+                    if (existingCardCount > 0)
                     {
-                        logger.LogInformation("Database already contains data. Skipping data seeding.");
+                        logger.LogInformation("Database already contains {Count} card definitions. Skipping data seeding.", existingCardCount);
                         return;
                     }
 
@@ -178,22 +179,17 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                             Name = dto.Name, // Safe because we filtered null/empty
                             Cost = dto.Cost,
                             Type = dto.Type ?? string.Empty, // Provide default if Type is null in DTO
+                            Rarity = "Common", // Default value since CardDataDto doesn't have Rarity
+                            CardSet = "Basic", // Default value since CardDataDto doesn't have CardSet
                             Attack = dto.Attack,
                             Health = dto.Health,
                             Description = dto.Description ?? string.Empty, // Provide default if Description is null
                             Keywords = dto.Keywords, // Assign List<string>? directly
-                                                     // Map Effects: Convert List<EffectDto>? to List<CardEffect>? safely
-                            Effects = dto.Effects? // If dto.Effects is not null...
-                                   .Select(e => new CardEffect( // ...select each EffectDto...
-                                       e.Trigger ?? "DefaultTrigger", // Provide default for CardEffect record non-nullable string
-                                       e.Action ?? "DefaultAction",   // Provide default for CardEffect record non-nullable string
-                                       e.Value ?? (object)0 // If e.Value is null, pass boxed 0 // Assign int? to object is okay
-                                   )).ToList() // ...and convert to List<CardEffect>
-                                               // If dto.Effects is null, assign null to entity.Effects
-                                   ?? null,
-                            // Added mappings for evolution properties based on CardDefinition entity and internal CardDataDto
-                            IsEvolved = dto.IsEvolved, // Map from internal DTO's IsEvolved
+                            // Removed Effects property - effects are now managed through the ability system
+                            // Removed IsEvolved property - evolution is handled through the evolution system
                             EvolveId = evolveIntId, // Use directly parsed int? EvolveId
+                            // Initialize AbilityIds as empty list - abilities will be configured separately
+                            AbilityIds = new List<long>()
                             // IsCollectible defaults to true in entity, no direct mapping from internal DTO shown
                         };
                     }).ToList();
@@ -217,22 +213,22 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 }
                 catch (JsonException jsonEx)
                 {
-                    logger.LogError("Error deserializing seed data from {FilePath}. Exception: {ExceptionMessage}. Please check the JSON format.", jsonFilePath, jsonEx.Message); // Simplified LogError call
+                    logger.LogError(jsonEx, "Error deserializing seed data from {FilePath}. Please check the JSON format.", jsonFilePath);
                     // Optionally rethrow or handle to prevent app startup? For now, log and continue.
                 }
                 catch (DbUpdateException dbEx)
                 {
-                    logger.LogError("Error saving seed data to the database. Exception: {ExceptionMessage}. Check database connection, schema, and permissions.", dbEx.Message); // Simplified LogError call
+                    logger.LogError(dbEx, "Error saving seed data to the database. Check database connection, schema, and permissions.");
                     // Optionally rethrow or handle
                 }
                 catch (IOException ioEx)
                 {
-                    logger.LogError("Error reading seed data file from {FilePath}. Exception: {ExceptionMessage}.", jsonFilePath, ioEx.Message); // Simplified LogError call
+                    logger.LogError(ioEx, "Error reading seed data file from {FilePath}.", jsonFilePath);
                     // Optionally rethrow or handle
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError("An unexpected error occurred during database seeding operation. Exception: {ExceptionMessage}.", ex.Message); // Simplified LogError call
+                    logger.LogError(ex, "An unexpected error occurred during database seeding operation.");
                     // Optionally rethrow or handle to prevent app startup
                 }
             }

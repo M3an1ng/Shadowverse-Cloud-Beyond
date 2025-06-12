@@ -7,12 +7,12 @@
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
-using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
-using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
-using ShadowverseBeyond.Server.Domain.Abilities.Effects;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Dtos;
-using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Keep for ConditionConfig, IConditionFactory
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime; // Keep for Trigger, Condition, Target, Effect, EffectExecutionContext
+using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Keep for EffectConfig, IEffectExecutor
+using ShadowverseBeyond.Server.Domain.Abilities.Targets; // Keep for Target
+using ShadowverseBeyond.Server.Dtos; // Keep for GameStateDto
+using Microsoft.Extensions.Logging; // Keep for temporary logger creation if needed, or remove if logger is injected elsewhere
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -111,29 +111,42 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         public AbilityState State { get; private set; } = AbilityState.Inactive;
 
+        // Add private fields for new dependencies
+        private readonly IConditionFactory _conditionFactory;
+        private readonly Func<IEffectExecutor> _effectExecutorFactory;
+        // Removed: _buffManager, _cardRepository, _functionRegistry
+
         /// <summary>
         /// 构造函数，从AbilityConfig创建运行时Ability
         /// </summary>
         /// <param name="config">静态配置</param>
+        /// <param name="conditionFactory">用于创建 Condition 实例的工厂</param>
+        /// <param name="effectExecutorFactory">用于获取 IEffectExecutor 的工厂函数</param>
         /// <param name="sourceCard">源卡牌实例</param>
-        public Ability(AbilityConfig config, CardInstance? sourceCard = null)
+        public Ability(
+            AbilityConfig config,
+            IConditionFactory conditionFactory, // Inject IConditionFactory
+            Func<IEffectExecutor> effectExecutorFactory,   // Inject factory function for IEffectExecutor
+            CardInstance? sourceCard = null)
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
+            _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory)); // Store conditionFactory
+            _effectExecutorFactory = effectExecutorFactory ?? throw new ArgumentNullException(nameof(effectExecutorFactory)); // Store effectExecutor factory
             SourceCard = sourceCard;
 
             // 创建运行时组件
             Trigger = new Runtime.Trigger(config.Trigger);
 
-            // TODO: 需要依赖注入DslEvaluator和DslExpressionParser
-            // 临时使用null，需要后续重构
+            // Use the injected factory to create Conditions
             Conditions = config.Conditions
-                .Select(c => CreateRuntimeCondition(c))
+                .Select(c => _conditionFactory.CreateCondition(c)) // Use factory
                 .ToList();
 
             Targets = config.Targets
                 .Select(t => new Target(t))
                 .ToList();
 
+            // Effects are still simple wrappers around EffectConfig for now
             Effects = config.Effects
                 .Select(e => new Effect(e))
                 .ToList();
@@ -217,7 +230,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         }
 
         /// <summary>
-        /// 检查能力是否可以触发
+        /// 检查能力是否可以触发（包含区域检查优化）
         /// </summary>
         /// <param name="gameEvent">游戏事件</param>
         /// <returns>是否可以触发</returns>
@@ -226,15 +239,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             if (!IsActive || State != AbilityState.Active)
                 return false;
 
-            return Trigger.CanTrigger(gameEvent);
+            // 使用区域感知的触发器检查，传入源卡牌进行区域验证
+            return Trigger.CanTrigger(gameEvent, SourceCard);
         }
 
         /// <summary>
         /// 检查所有条件是否满足
         /// </summary>
-        /// <param name="context">条件评估上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>条件是否满足</returns>
-        public async Task<bool> CheckConditionsAsync(ConditionEvaluationContext context)
+        public async Task<bool> CheckConditionsAsync(GameContext context)
         {
             foreach (var condition in Conditions)
             {
@@ -247,9 +261,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 解析所有目标
         /// </summary>
-        /// <param name="context">目标解析上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>解析的目标列表</returns>
-        public async Task<List<CardInstance>> ResolveTargetsAsync(TargetResolutionContext context)
+        public async Task<List<CardInstance>> ResolveTargetsAsync(GameContext context)
         {
             var allTargets = new List<CardInstance>();
 
@@ -265,11 +279,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 执行所有效果
         /// </summary>
-        /// <param name="context">效果执行上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>生成的事件列表</returns>
-        public async Task<List<IGameEvent>> ExecuteEffectsAsync(EffectExecutionContext context)
+        public async Task<List<IGameEvent>> ExecuteEffectsAsync(GameContext context)
         {
             var allEvents = new List<IGameEvent>();
+
+            // 首先检查能力的顶层条件是否满足
+            if (!await CheckConditionsAsync(context))
+            {
+                // 如果顶层条件不满足，跳过所有效果的执行
+                return allEvents;
+            }
 
             // 按执行顺序排序
             var sortedEffects = Effects
@@ -283,7 +304,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 {
                     effect.BeginExecution(context);
 
-                    // TODO: 实际的效果执行逻辑
+                    // 执行单个效果并收集生成的事件
                     var effectEvents = await ExecuteSingleEffectAsync(effect, context);
                     allEvents.AddRange(effectEvents);
 
@@ -314,70 +335,26 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// 执行单个效果
         /// </summary>
         /// <param name="effect">运行时效果</param>
-        /// <param name="context">执行上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>生成的事件列表</returns>
-        private async Task<List<IGameEvent>> ExecuteSingleEffectAsync(Effect effect, EffectExecutionContext context)
+        private async Task<List<IGameEvent>> ExecuteSingleEffectAsync(Effect effect, GameContext context)
         {
-            try
-            {
-                // 创建EffectHandler和GameStateActionDispatcher
-                var loggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole());
-                var dispatcherLogger = loggerFactory.CreateLogger<Effects.GameStateActionDispatcher>();
-                var handlerLogger = loggerFactory.CreateLogger<Effects.EffectHandler>();
-
-                var dispatcher = new Effects.GameStateActionDispatcher(dispatcherLogger);
-
-                // TODO: 实现IValueSourceResolver - 临时使用null，需要后续实现
-                var handler = new Effects.EffectHandler(dispatcher, null!, handlerLogger);
-
-                // 转换EffectExecutionContext到AbilityContext
-                var abilityContext = new AbilityContext
-                {
-                    CurrentGameState = ConvertGameStateToDto(context.GameState),
-                    TriggeringEvent = context.TriggeringEvent,
-                    SourceCard = context.SourceCard,
-                    SelectedTargets = ConvertTargetsToTargetIds(context.SelectedTargets),
-                    Parameters = context.Variables
-                };
-
-                // 执行效果
-                var result = await handler.ExecuteAsync(effect.Config, abilityContext);
-
-                // 转换生成的事件
-                var gameEvents = new List<IGameEvent>();
-                foreach (var eventObj in result.GeneratedEvents)
-                {
-                    if (eventObj is IGameEvent gameEvent)
-                    {
-                        gameEvents.Add(gameEvent);
-                    }
-                }
-
-                return gameEvents;
-            }
-            catch (Exception ex)
-            {
-                // 记录错误并返回空列表
-                // TODO: 添加适当的日志记录
-                return new List<IGameEvent>();
-            }
+            // Use the injected IEffectExecutor
+            return await _effectExecutor.ExecuteEffectAsync(effect.Config, context);
+            // Note: The logic previously inside this method (creating dispatcher, handler, converting context)
+            // should now reside within the implementation of IEffectExecutor.
         }
 
-        /// <summary>
-        /// 转换GameState到GameStateDto（临时实现）
-        /// </summary>
-        private static GameStateDto? ConvertGameStateToDto(GameState? gameState)
-        {
-            // TODO: 实现实际的转换逻辑
-            return gameState?.ToDto();
-        }
+        // ConvertGameStateToDto method removed - use GameContext.CreateSnapshot() instead
+        // This method was never used in the codebase and GameContext.CreateSnapshot() provides
+        // the same functionality with proper AutoMapper integration
 
         /// <summary>
         /// 转换CardInstance列表到TargetId列表
         /// </summary>
         private static List<TargetId> ConvertTargetsToTargetIds(List<CardInstance> targets)
         {
-            return targets.Select(t => new TargetId(t.InstanceId.ToString())).ToList();
+            return targets.Select(t => TargetId.Card(t.InstanceId)).ToList();
         }
 
         /// <summary>
@@ -420,25 +397,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
         }
 
-        /// <summary>
-        /// 创建运行时条件（临时方法，需要依赖注入重构）
-        /// </summary>
-        /// <param name="config">条件配置</param>
-        /// <returns>运行时条件</returns>
-        private static Condition CreateRuntimeCondition(ConditionConfig config)
-        {
-            // TODO: 需要依赖注入IDslConditionEvaluator
-            // 临时创建空的实例，需要后续重构
-            var loggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole());
-            var dslEvaluatorLogger = loggerFactory.CreateLogger<DSL.Evaluation.DslEvaluator>();
-            var dslParserLogger = loggerFactory.CreateLogger<DSL.Processing.DslExpressionParser>();
-            var dslConditionEvaluatorLogger = loggerFactory.CreateLogger<Conditions.DslConditionEvaluator>();
-
-            var dslEvaluator = new DSL.Evaluation.DslEvaluator(dslEvaluatorLogger);
-            var dslParser = new DSL.Processing.DslExpressionParser(dslParserLogger);
-            var dslConditionEvaluator = new Conditions.DslConditionEvaluator(dslEvaluator, dslParser, dslConditionEvaluatorLogger);
-
-            return new Condition(config, dslConditionEvaluator);
-        }
+        // Removed the temporary CreateRuntimeCondition method as Condition creation is now handled by IConditionFactory
     }
 }

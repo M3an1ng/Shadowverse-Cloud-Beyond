@@ -12,7 +12,7 @@ import { createPlayer } from "./player.js"; // 正确导入
 import { getCardDefinition, createCardInstance } from "./cardManager.js"; // ADDED: createCardInstance for hydration
 // import { getCardDefinition } from './cardManager.js'; // initGame 不需要
 // import { renderGame } from './ui.js'; // 渲染调用在 main.js
-import { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+import { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, updateSingleCardHighlight } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus + updateSingleCardHighlight
 //import { startTurn } from "./turnManager.js"; // Import startTurn to begin the first turn
 //import { performAIMulligan } from "./ai.js"; // Placeholder for AI mulligan logic
 // Note: Player's performMulligan is a method, called via playerState.performMulligan
@@ -44,6 +44,7 @@ export let gameState = {
     player2MulliganComplete: false, // Player 2 mulligan status
     // 稍后可能添加: eventLog, effectQueue 等
     lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
+    playabilityCache: {}, // NEW: Cache for card playability check results { cardUid: PlayabilityResultDto }
 };
 // 初始化游戏 (已实现版本)
 /**
@@ -52,8 +53,47 @@ export let gameState = {
  */
 export function setSignalRConnection(connection) {
     // ADDED export
-    // console.log("GAME MANAGER: Setting SignalR connection.");
+    console.log("GAME MANAGER: Setting SignalR connection and registering handlers."); // Updated log
     signalRConnection = connection;
+
+    // --- Register SignalR Event Handlers ---
+    // Ensure handlers are registered only once per connection setup.
+    // Remove existing handlers first to prevent duplicates if this function is called again.
+    connection.off("ReceiveGameState");
+    connection.off("ReceiveGameEvent");
+    connection.off("ReceiveError");
+    connection.off("ReceivePlayabilityResult"); // Remove previous handler if any
+
+    connection.on("ReceiveGameState", (gameStateDto) => {
+        console.log("GM: Received full GameState DTO:", gameStateDto);
+        updateFullGameState(gameStateDto); // Use the hydration function
+        // Initial render after receiving state
+        console.log("%c[UI_TRIGGER] Triggering initial renderGame from ReceiveGameState", 'color: blue; font-weight: bold;');
+        renderGame(gameState); // Use the imported renderGame function
+    });
+
+    connection.on("ReceiveGameEvent", (gameEventDto) => {
+        console.log("GM: Received GameEvent DTO:", gameEventDto);
+        processGameEvent(gameEventDto); // Process the event to update local state
+        // Note: processGameEvent or its sub-handlers should now trigger renderGame
+    });
+
+    connection.on("ReceiveError", (errorMessage) => {
+        console.error("GM: Received error from server:", errorMessage);
+        alert(`服务器错误: ${errorMessage}`);
+        // Potentially trigger UI state change (e.g., show error panel)
+    });
+
+    // NEW: Handler for Playability Check Results
+    connection.on("ReceivePlayabilityResult", (resultDto) => {
+        handlePlayabilityResult(resultDto); // Call the dedicated handler function
+    });
+
+    // Add more handlers as needed for other server-to-client messages
+    // e.g., connection.on("PlayerJoined", (playerInfo) => { ... });
+
+    console.log("GM: SignalR event handlers registered (including ReceivePlayabilityResult).");
+    // --- End Register SignalR Event Handlers ---
 }
 export function initializeGame(idOfGame, idOfPlayer) {
     // ADDED export
@@ -997,6 +1037,84 @@ export async function sendGameAction(actionData) {
         // Optionally clear selection state if applicable based on actionType (e.g., clear selected attacker on attack fail)
         // if(actionData.actionType === 'Attack') { gameState.selectedAttackerUid = null; renderGame(gameState); }
     }
+} // Closing brace for sendGameAction function
+/**
+ * Requests the server to check the playability of a specific card in hand.
+ * @param {string} cardUid - The unique identifier of the card instance in hand.
+ */
+export async function requestPlayabilityCheck(cardUid) {
+    if (!cardUid) {
+        console.warn("GM: requestPlayabilityCheck called with no cardUid.");
+        return;
+    }
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: requestPlayabilityCheck failed - SignalR connection not available.");
+        // Optionally alert the user or handle reconnection
+        return;
+    }
+    // Only request if it's the local player's turn and in the Main phase (basic client check)
+    // Also, avoid redundant checks if the result is already cached for this turn/phase state
+    // (We might need a more robust cache invalidation strategy later)
+    if (gameState.localPlayerId !== gameState.currentPlayerId || gameState.phase !== "Main") {
+        // console.log("GM: Skipping playability check (not local player's turn or not Main phase).");
+        // Clear any stale cache for this card if the turn/phase changed
+        if (gameState.playabilityCache[cardUid]) {
+            delete gameState.playabilityCache[cardUid];
+            // TODO: Trigger a UI update if necessary to remove old highlights
+        }
+        return;
+    }
+    // Optional: Check cache before sending request?
+    // if (gameState.playabilityCache[cardUid]) {
+    //     console.log(`GM: Playability check for ${cardUid} already cached. Skipping request.`);
+    //     // Ensure UI reflects cached state if needed
+    //     return;
+    // }
+
+    console.log(`GM: Invoking SignalR Hub method 'CheckCardPlayability'. CardUID: ${cardUid}`);
+    try {
+        // Server expects the card instance UID as a string argument
+        await signalRConnection.invoke("CheckCardPlayability", cardUid);
+        // No need to do anything here, wait for ReceivePlayabilityResult event
+        console.log(`GM: 'CheckCardPlayability' for ${cardUid} invoked successfully.`);
+    } catch (err) {
+        console.error(`GM: SignalR 'CheckCardPlayability' invocation for ${cardUid} failed:`, err);
+        // Optionally clear cache entry on error?
+        delete gameState.playabilityCache[cardUid];
+        // Optionally alert the user
+        // alert(`无法检查卡牌 ${cardUid} 的可玩性：服务器错误`);
+    }
+}
+/**
+ * Handles the playability check result received from the server.
+ * Stores the result in the cache and potentially triggers a UI update.
+ * @param {object} result - The PlayabilityResultDto object from the server.
+ *                          Expected properties: CardUid, IsPlayable, RequiresTargetSelection,
+ *                                               HasValidTargets, CanPlayWithoutTarget, FailureReason, ValidTargetIds
+ */
+export function handlePlayabilityResult(result) {
+    if (!result || !result.cardUid) {
+        console.warn("GM: Received invalid playability result:", result);
+        return;
+    }
+
+    // console.log(`GM: Received playability result for CardUID ${result.cardUid}:`, result); // Less verbose log
+
+    // Store the result in the cache, keyed by card UID
+    gameState.playabilityCache[result.cardUid] = result;
+
+    // --- Trigger Specific UI Update ---
+    // Call the dedicated function in ui.js to update only the affected card's highlight.
+    // Ensure updateSingleCardHighlight is imported at the top of gameManager.js
+    try {
+        // console.log(`%c[UI_TRIGGER] Calling updateSingleCardHighlight for card ${result.cardUid}`, 'color: blue; font-weight: bold;');
+        updateSingleCardHighlight(result.cardUid, result); // Call the specific UI update function
+    } catch (error) {
+        console.error(`GM: Error calling updateSingleCardHighlight for card ${result.cardUid}:`, error);
+        // Fallback to full render if specific update fails? Or just log?
+        // console.log("%c[UI_TRIGGER] Fallback: Triggering renderGame due to updateSingleCardHighlight error.", 'color: red; font-weight: bold;');
+        // renderGame(gameState);
+    }
 }
 
 // Export the necessary functions/variables
@@ -1330,11 +1448,20 @@ export function updateFullGameState(serverState) {
 // --- NEW Specific Event Handlers ---
 
 export function handleTurnStarted(eventData) {
-    console.log('%c[EVENT RECEIVED] handleTurnStarted (now calling updateFullGameState):', 'background: #28a745; color: #ffffff; font-weight: bold;', eventData); // Green background
+    console.log('%c[EVENT RECEIVED] handleTurnStarted:', 'background: #28a745; color: #ffffff; font-weight: bold;', eventData); // Green background
 
     // --- ROO DEBUG: Log raw event data received by handleTurnStarted ---
-    console.log(`%c[DEBUG_TURN_START_EVENT] handleTurnStarted received raw eventData:`, 'color: purple; font-weight: bold;', JSON.parse(JSON.stringify(eventData))); // Log deep copy
+    // console.log(`%c[DEBUG_TURN_START_EVENT] handleTurnStarted received raw eventData:`, 'color: purple; font-weight: bold;', JSON.parse(JSON.stringify(eventData))); // Log deep copy
     // --- END ROO DEBUG ---
+
+    // --- Clear Playability Cache for Local Player's Turn Start ---
+    // Check if the event contains the necessary state and if it's the local player's turn
+    if (eventData?.GameState?.CurrentPlayerId && eventData.GameState.CurrentPlayerId === gameState.localPlayerId) {
+        console.log(`%c[CACHE_INVALIDATION] Clearing playabilityCache for local player's turn start (Player: ${gameState.localPlayerId}).`, 'color: orange; font-weight: bold;');
+        gameState.playabilityCache = {}; // Clear the cache object
+    }
+    // --- End Cache Clearing ---
+
 
     // The "TurnStarted" event now carries the full GameStateDto nested within GameState property.
     // Delegate the processing to the function designed for full state updates, passing the nested object.

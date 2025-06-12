@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks; // Added for Task
-using ShadowverseBeyond.Server.Domain.Abilities; // Added for AbilityContext
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 {
@@ -15,8 +15,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// Asynchronously selects targets based on the provided configuration and context.
         /// </summary>
         /// <param name="config">The static configuration defining the target selection rules.</param>
-        /// <param name="context">The runtime context containing game state, triggering event, source card, etc.</param>
+        /// <param name="context">The unified game context containing game state, triggering event, source card, etc.</param>
         /// <returns>A list of selected target identifiers (TargetId). Returns an empty list if no targets are selected or valid.</returns>
-        Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, AbilityContext context);
+        Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, GameContext context);
     }
 }

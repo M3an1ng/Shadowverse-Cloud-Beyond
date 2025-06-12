@@ -2,61 +2,78 @@ using System;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 {
+    // Add the TargetType enum (can be in this file or a separate one)
+    public enum TargetIdType
+    {
+        Undefined, // Default or error state
+        Player,
+        CardInstance, // Generic card instance
+        // Add other specific types if needed
+    }
+
     /// <summary>
-    /// 表示一个可被能力选定的目标的唯一标识符，即卡牌实例的 ID。
-    /// 使用 struct 以提高性能并减少内存分配。
-    /// 根据M11目标选择系统设计文档实现
+    /// Represents a unique identifier for a target that an ability can select.
+    /// Can represent a Player or a specific CardInstance.
     /// </summary>
     public readonly struct TargetId : IEquatable<TargetId>
     {
         /// <summary>
-        /// 目标的具体 ID，对应 CardInstance.InstanceId。
+        /// The type of the target (Player, CardInstance, etc.).
         /// </summary>
-        public string Id { get; }
+        public TargetIdType Type { get; } // <<< ADDED
 
-        public TargetId(string instanceId)
+        /// <summary>
+        /// The specific Guid ID of the target.
+        /// If Type is Player, this is the Player's Guid ID.
+        /// If Type is CardInstance (or Leader, Unit, Amulet), this is the CardInstance.InstanceId.
+        /// </summary>
+        public Guid Id { get; }
+
+        // Modified Constructor
+        public TargetId(TargetIdType type, Guid id)
         {
-            Id = instanceId ?? string.Empty;
+            Type = type;
+            Id = id;
         }
 
-        // 实现 IEquatable<TargetId> 和重写 Equals, GetHashCode
-        public bool Equals(TargetId other) => Id == other.Id;
+        // --- Existing IEquatable and operator overloads ---
+        public bool Equals(TargetId other) => Type == other.Type && Id == other.Id; // Update Equals
         public override bool Equals(object? obj) => obj is TargetId other && Equals(other);
-        public override int GetHashCode() => Id.GetHashCode();
+        public override int GetHashCode() => HashCode.Combine(Type, Id); // Update GetHashCode
 
         public static bool operator ==(TargetId left, TargetId right) => left.Equals(right);
         public static bool operator !=(TargetId left, TargetId right) => !left.Equals(right);
 
-        public override string ToString() => $"CardInstance:{Id}";
+        // Update ToString for clarity
+        public override string ToString() => $"{Type}:{Id}";
 
-        // --- 静态工厂方法 ---
+        // --- Updated Static Factory Methods ---
         /// <summary>
-        /// 创建一个指向特定卡牌实例的目标 ID。
+        /// Creates a TargetId representing a specific card instance.
         /// </summary>
-        public static TargetId Card(string instanceId)
+        public static TargetId Card(Guid instanceId)
         {
-            return new TargetId(instanceId);
+            // Assuming default card target is generic CardInstance
+            return new TargetId(TargetIdType.CardInstance, instanceId);
         }
 
         /// <summary>
-        /// 创建一个指向特定玩家的目标 ID。
+        /// Creates a TargetId representing a specific player.
         /// </summary>
-        /// <param name="playerId">玩家的 ID (string)。</param>
-        public static TargetId Player(string playerId)
+        /// <param name="playerId">The player's Guid ID.</param>
+        public static TargetId Player(Guid playerId) // Takes Guid now
         {
-            // Use a prefix to distinguish player IDs from card instance IDs
-            // Ensure playerId is not null or empty? Or allow it? For now, allow.
-            return new TargetId($"Player:{playerId ?? string.Empty}");
+            return new TargetId(TargetIdType.Player, playerId);
         }
 
         /// <summary>
-        /// 空目标ID
+        /// Represents an empty or undefined target.
         /// </summary>
-        public static TargetId Empty => new TargetId(string.Empty);
+        public static TargetId Empty => new TargetId(TargetIdType.Undefined, Guid.Empty);
 
         /// <summary>
-        /// 检查是否为空目标ID
+        /// Checks if this represents an empty or undefined target.
         /// </summary>
-        public bool IsEmpty => string.IsNullOrEmpty(Id);
+        public bool IsEmpty => Type == TargetIdType.Undefined || Id == Guid.Empty; // Update IsEmpty check
     }
 }

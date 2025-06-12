@@ -23,12 +23,12 @@ namespace ShadowverseBeyond.Server.Domain.Query
         PlayerBoard,      // 指定玩家的战场
         PlayerDeck,       // 指定玩家的牌库
         PlayerGraveyard,  // 指定玩家的墓地
-        PlayerBanish,     // 指定玩家的放逐区 (如果需要)
+        PlayerExtra,     // 指定玩家的放逐区 (如果需要)
         OpponentHand,     // 对手的手牌 (通常不可见，但某些效果可能需要)
         OpponentBoard,    // 对手的战场
         OpponentDeck,     // 对手的牌库
         OpponentGraveyard,// 对手的墓地
-        OpponentBanish,   // 对手的放逐区
+        OpponentExtra,   // 对手的放逐区
         BothBoards,       // 双方战场
         CurrentAbilityTargets, // 当前能力已经选择的目标 (用于效果链)
         TriggeringCard,   // 触发当前能力的卡牌实例
@@ -110,11 +110,5 @@ namespace ShadowverseBeyond.Server.Domain.Query
         First,          // 选择列表开头的指定数量
         Last,           // 选择列表末尾的指定数量
         Random,         // 随机选择指定数量
-        LowestAttack,   // 选择攻击力最低的
-        HighestAttack,  // 选择攻击力最高的
-        LowestHealth,   // 选择生命值最低的
-        HighestHealth,  // 选择生命值最高的
-        LowestCost,     // 选择费用最低的
-        HighestCost     // 选择费用最高的
     }
 }

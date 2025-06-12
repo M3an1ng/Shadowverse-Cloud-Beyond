@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging; // Added for logging
 using ShadowverseBeyond.Server.Domain.Query; // Added for ICardQueryExecutor, QueryContext, CardQueryResult
 using ShadowverseBeyond.Server.Dtos; // Added for CardInstanceDto
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
 {
@@ -31,9 +32,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
         /// Asynchronously selects targets by executing the CardQueryConfig defined in the TargetConfig.
         /// </summary>
         /// <param name="config">The target configuration containing the query.</param>
-        /// <param name="context">The runtime ability context.</param>
+        /// <param name="context">The unified game context.</param>
         /// <returns>A list of selected TargetIds.</returns>
-        public async Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, AbilityContext context)
+        public async Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, GameContext context)
         {
             if (config == null)
             {
@@ -42,33 +43,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
             }
             if (context == null)
             {
-                _logger.LogError("AbilityContext cannot be null.");
+                _logger.LogError("GameContext cannot be null.");
                 return new List<TargetId>();
             }
             if (context.CurrentGameState == null)
             {
-                _logger.LogError("AbilityContext.CurrentGameState cannot be null for FilteredTargetSelector.");
+                _logger.LogError("GameContext.CurrentGameState cannot be null for FilteredTargetSelector.");
                 // Or handle based on config.OnFailure? For now, return empty.
                 return new List<TargetId>();
             }
 
 
-            // 1. Create QueryContext from AbilityContext
-            var queryContext = new QueryContext
-            {
-                RequestingPlayerId = context.RequestingPlayerId.ToString(), // Assuming RequestingPlayerId in AbilityContext is int, convert if needed
-                CurrentGameState = context.CurrentGameState, // Pass the GameStateDto
-                TriggeringEvent = context.TriggeringEvent
-                // Add TriggeringCardInstanceId if QueryContext supports it and it's available in AbilityContext
-                // TriggeringCardInstanceId = context.SourceCard?.InstanceId
-            };
-
-            // 2. Execute the query using ICardQueryExecutor
+            // 1. Execute the query using ICardQueryExecutor with GameContext directly
             CardQueryResult queryResult;
             try
             {
                 _logger.LogDebug("Executing card query for target selection. SourcePool: {SourcePool}", config.Query?.SourcePoolExpression);
-                queryResult = await _queryExecutor.ExecuteQueryAsync(config.Query, queryContext);
+                queryResult = await _queryExecutor.ExecuteQueryAsync(config.Query, context);
             }
             catch (Exception ex)
             {
@@ -85,23 +76,51 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                 return new List<TargetId>();
             }
 
-            // Assuming the query returns CardInstanceDto objects when targeting instances
-            // Adjust the type parameter if the query can return CardDefinitionDto
-            var selectedInstances = queryResult.GetResultsAs<CardInstanceDto>();
-
-            if (!selectedInstances.Any())
+            // 4. Process results and map to TargetId list based on actual type
+            var targetIds = new List<TargetId>();
+            if (queryResult.Results == null || !queryResult.Results.Any())
             {
-                _logger.LogDebug("Query returned no matching targets.");
-                // Handle based on config.OnFailure?
-                return new List<TargetId>();
+                _logger.LogDebug("Query returned no matching targets or results list was null.");
+                // Handle based on config.OnFailure? (Consider logging or specific actions)
+                // For now, return empty list as before.
+            }
+            else
+            {
+                _logger.LogDebug("Processing {ResultCount} items from query result.", queryResult.Results.Count);
+                foreach (var item in queryResult.Results)
+                {
+                    if (item is PlayerStateDto player)
+                    {
+                        var targetId = TargetId.Player(player.PlayerId); // Create Player TargetId
+                        targetIds.Add(targetId);
+                        _logger.LogTrace("Mapped PlayerStateDto (PlayerId: {PlayerId}) to TargetId: {TargetId}", player.PlayerId, targetId);
+                    }
+                    else if (item is CardInstanceDto instance)
+                    {
+                        var targetId = TargetId.Card(instance.InstanceId); // Create Card TargetId
+                        targetIds.Add(targetId);
+                        _logger.LogTrace("Mapped CardInstanceDto (InstanceId: {InstanceId}) to TargetId: {TargetId}", instance.InstanceId, targetId);
+                    }
+                    // Add handling for CardDefinitionDto if necessary for target selection, though less common.
+                    // else if (item is CardDefinitionDto definition) { ... }
+                    else
+                    {
+                        _logger.LogWarning("Query result item of unexpected type '{ItemType}' encountered and ignored during target ID mapping.", item?.GetType().Name ?? "null");
+                    }
+                }
+                _logger.LogDebug("Finished processing query results. Generated {Count} TargetIds.", targetIds.Count);
             }
 
-            // 4. Map results to TargetId list
-            var targetIds = selectedInstances
-                .Select(instance => TargetId.Card(instance.InstanceId.ToString())) // Use static factory method
-                .ToList();
 
-            _logger.LogDebug("Selected {Count} targets.", targetIds.Count);
+            // Check if any targets were actually generated after processing
+            if (!targetIds.Any())
+            {
+                _logger.LogDebug("No valid targets generated after processing query results.");
+                // Handle based on config.OnFailure?
+                return new List<TargetId>(); // Return empty list if no valid targets were mapped
+            }
+
+            _logger.LogDebug("Selected {Count} targets in total.", targetIds.Count);
 
             // TODO: Implement PlayerChoice logic if config.SelectorType is PlayerChoice
             // This selector might be reused by PlayerChoiceTargetSelector, or PlayerChoice logic

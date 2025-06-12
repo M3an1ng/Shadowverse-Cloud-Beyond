@@ -26,7 +26,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// </summary>
         /// <param name="sourcePlayerId">The ID of the player who initiated the event (played the card).</param>
         /// <param name="playedCardInstance">Instance data for the card that was played from hand. Can be null if the instance data is somehow lost, though this indicates an error state.</param>
-        public CardPlayedEventDto(string sourcePlayerId, CardInstanceDto? playedCardInstance) // Make parameter nullable
+        public CardPlayedEventDto(Guid sourcePlayerId, CardInstanceDto? playedCardInstance) // Make parameter nullable
             : base(sourcePlayerId, nameof(CardPlayedEventDto))
         {
             // Null check remains valid

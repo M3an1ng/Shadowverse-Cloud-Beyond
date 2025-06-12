@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
 {
@@ -26,9 +27,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// 评估条件组
         /// </summary>
         /// <param name="conditionGroup">条件组配置</param>
-        /// <param name="context">能力上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateConditionGroupAsync(ConditionGroupConfig conditionGroup, AbilityContext context)
+        public async Task<bool> EvaluateConditionGroupAsync(ConditionGroupConfig conditionGroup, GameContext context)
         {
             if (conditionGroup == null)
                 throw new ArgumentNullException(nameof(conditionGroup));
@@ -82,9 +83,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// 评估多个条件组
         /// </summary>
         /// <param name="conditionGroups">条件组列表</param>
-        /// <param name="context">能力上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateConditionGroupsAsync(List<ConditionGroupConfig> conditionGroups, AbilityContext context)
+        public async Task<bool> EvaluateConditionGroupsAsync(List<ConditionGroupConfig> conditionGroups, GameContext context)
         {
             if (conditionGroups == null || !conditionGroups.Any())
             {
@@ -136,10 +137,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// 评估条件列表
         /// </summary>
         /// <param name="conditions">条件列表</param>
-        /// <param name="context">能力上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <param name="logic">逻辑操作符</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateConditionsAsync(List<ConditionConfig> conditions, AbilityContext context, LogicOperator logic = LogicOperator.And)
+        public async Task<bool> EvaluateConditionsAsync(List<ConditionConfig> conditions, GameContext context, LogicOperator logic = LogicOperator.And)
         {
             if (conditions == null || !conditions.Any())
             {

@@ -5,22 +5,9 @@
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 //
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 using System.Collections.Generic;
-using System.Linq; // Required for .Any()
-using System.Text.Json; // Keep for CardEffect record
-using System.Text.Json.Serialization; // Keep for CardEffect record
 
-namespace ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
-
-// Represents the structure of an effect as stored in JSON
-// Consider moving to a shared DTOs location if reused extensively.
-public record CardEffect(
-    [property: JsonPropertyName("trigger")] string Trigger,
-    [property: JsonPropertyName("action")] string Action,
-    // Using object for Value to match JSON flexibility, handle type casting carefully upon use.
-    [property: JsonPropertyName("value")] object Value
-);
+namespace ShadowverseBeyond.Server.Domain.Entities;
 
 /// <summary>
 /// Represents a card definition in the game, mapped to the database.
@@ -42,6 +29,16 @@ public class CardDefinition
     /// Type of the card (e.g., "Follower", "Spell", "Amulet").
     /// </summary>
     public string Type { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 卡牌稀有度
+    /// </summary>
+    public string Rarity { get; set; } = "Common"; // Default to Common
+
+    /// <summary>
+    /// 卡牌所属卡包
+    /// </summary>
+    public string CardSet { get; set; } = "Basic"; // Default to Basic
 
     /// <summary>
     /// Play point cost of the card.
@@ -70,10 +67,7 @@ public class CardDefinition
     /// </summary>
     public string Description { get; set; } = string.Empty;
 
-    /// <summary>
-    /// JSON string representation of the card's effects, stored in the database.
-    /// </summary>
-    public string? EffectsJson { get; set; }
+    // Removed EffectsJson property - effects should be managed through the ability system
 
     /// <summary>
     /// Indicates if this card definition represents a base, collectible form (true)
@@ -81,42 +75,30 @@ public class CardDefinition
     /// </summary>
     public bool IsCollectible { get; set; } = true; // Default to true
 
-    /// <summary>
-    /// Indicates if this card definition represents the evolved form of a follower (true).
-    /// Base forms and non-follower cards should have this as false.
-    /// </summary>
-    public bool IsEvolved { get; set; } = false; // Default to false
+    // Removed IsEvolved property - evolution is handled through the evolution system
 
     /// <summary>
     /// The ID of the card this card evolves into. Null if this card cannot evolve or is already evolved.
     /// </summary>
     public int? EvolveId { get; set; } // Changed type to int?
-    /// &lt;summary&gt;
-    /// The ID of the primary ability associated with this card. Null if the card has no inherent ability.
-    /// Changed from int? to long? to accommodate potentially larger ID space.
-    /// &lt;/summary&gt;
-    public long? AbilityId { get; set; } // Added AbilityId property
-    /// <summary>
-    /// Gets or sets the list of card effects. Handled in code, not directly mapped to DB.
-    /// Populates EffectsJson property when set.
-    /// </summary>
-    [NotMapped]
-    public List<CardEffect>? Effects
-    {
-        get => string.IsNullOrEmpty(EffectsJson)
-                ? null
-                : JsonSerializer.Deserialize<List<CardEffect>>(EffectsJson, _jsonOptions);
-        set => EffectsJson = value == null || !value.Any() // Requires System.Linq
-                ? null
-                : JsonSerializer.Serialize(value, _jsonOptions);
-    }
 
-    // Static options for consistent serialization/deserialization settings.
-    private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
-    {
-        PropertyNameCaseInsensitive = true // Handles JSON property names like "value" vs C# "Value"
-        // Add other required options like converters if 'object' proves problematic.
-    };
+    /// <summary>
+    /// List of ability IDs associated with this card.
+    /// A card can have multiple abilities.
+    /// </summary>
+    public List<long> AbilityIds { get; set; } = new List<long>();
+
+    /// <summary>
+    /// 
+    /// </summary>
+    public List<string>? Tribe { get; set; }
+
+    /// <summary>
+    /// 卡牌职业
+    /// </summary>
+    public string Class { get; set; } = "Neutral"; // Default to Neutral
+
+    // Removed Effects property - effects are now managed through the ability system
 
     /// <summary>
     /// Parameterless constructor required by EF Core.

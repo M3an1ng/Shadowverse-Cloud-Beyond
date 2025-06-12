@@ -96,8 +96,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             {
                 var sourcePoolStartPosition = CurrentToken?.Position ?? new TokenPosition(0, 0, 0); // Capture start position specifically for source pool
 
-                // TODO: Implement parsing logic for source_pool, where, order by, take clauses
-                // 1. Parse Source Pool
+                // 1. 解析源池表达式 (source_pool)
                 var sourcePoolExpr = ParseExpression();
 
                 // --- Type Check for Source Pool ---
@@ -219,16 +218,40 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     // TODO: Update end location
                 }
 
-                // TODO: Implement parsing for TRIGGER, CONDITION, TARGET, EFFECT, PROPERTY blocks
-                // Example placeholder for TRIGGER:
-                if (Match(TokenType.TriggerKeyword))
+                // 解析能力的各个块：TRIGGER, CONDITION, TARGET, EFFECT, PROPERTY
+                while (!Check(TokenType.EndAbilityKeyword) && !IsAtEnd)
                 {
-                    abilityNode.Trigger = ParseTriggerBlock(); // Need to implement ParseTriggerBlock
-                    Expect(TokenType.EndTriggerKeyword);
-                    // TODO: Update end location
+                    if (Match(TokenType.TriggerKeyword))
+                    {
+                        abilityNode.Trigger = ParseTriggerBlock();
+                        Expect(TokenType.EndTriggerKeyword);
+                    }
+                    else if (Match(TokenType.ConditionKeyword))
+                    {
+                        abilityNode.Conditions.Add(ParseConditionBlock());
+                        Expect(TokenType.EndConditionKeyword);
+                    }
+                    else if (Match(TokenType.TargetKeyword))
+                    {
+                        abilityNode.Targets.Add(ParseTargetBlock());
+                        Expect(TokenType.EndTargetKeyword);
+                    }
+                    else if (Match(TokenType.EffectKeyword))
+                    {
+                        abilityNode.Effects.Add(ParseEffectBlock());
+                        Expect(TokenType.EndEffectKeyword);
+                    }
+                    else if (Match(TokenType.PropertyKeyword))
+                    {
+                        abilityNode.Properties.Add(ParsePropertyBlock());
+                        Expect(TokenType.EndPropertyKeyword);
+                    }
+                    else
+                    {
+                        AddError($"Unexpected token '{CurrentToken.Type}' in ability definition. Expected TRIGGER, CONDITION, TARGET, EFFECT, PROPERTY, or END_ABILITY.", CurrentToken.Position);
+                        Advance(); // Skip unexpected token to avoid infinite loop
+                    }
                 }
-
-                // Add similar placeholders or implementations for other blocks...
 
                 Expect(TokenType.EndAbilityKeyword); // Expect END_ABILITY keyword
                 // TODO: Update final end location accurately
@@ -257,17 +280,189 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             }
         }
 
-        // TODO: Implement helper methods like ParseTriggerBlock, ParseConditionBlock, etc.
+        /// <summary>
+        /// 解析条件块的内容
+        /// 语法: expression [AND|OR expression]*
+        /// </summary>
+        private ConditionNode ParseConditionBlock()
+        {
+            var conditionNode = new ConditionNode();
+
+            // 解析主要条件表达式
+            conditionNode.Expression = ParseExpression();
+
+            // 检查是否有逻辑操作符
+            if (Check(TokenType.And) || Check(TokenType.Or))
+            {
+                var logicOp = Advance();
+                conditionNode.LogicOperator = logicOp.Type == TokenType.And ? "and" : "or";
+            }
+
+            return conditionNode;
+        }
+
+        /// <summary>
+        /// 解析目标块的内容
+        /// 语法: TYPE type [SCOPE scope] [SELECTION selection] [COUNT count] [FILTER filter]*
+        /// </summary>
+        private TargetNode ParseTargetBlock()
+        {
+            var targetNode = new TargetNode();
+
+            // 解析目标类型
+            if (Match(TokenType.Identifier))
+            {
+                targetNode.Type = Previous().Value;
+            }
+
+            // 解析可选的范围、选择方法等
+            while (!Check(TokenType.EndTargetKeyword) && !IsAtEnd)
+            {
+                if (Match(TokenType.Identifier))
+                {
+                    var keyword = Previous().Value.ToLowerInvariant();
+                    switch (keyword)
+                    {
+                        case "scope":
+                            if (Match(TokenType.Identifier))
+                                targetNode.Scope = Previous().Value;
+                            break;
+                        case "selection":
+                            if (Match(TokenType.Identifier))
+                                targetNode.Selection = Previous().Value;
+                            break;
+                        case "count":
+                            targetNode.Count = ParseExpression();
+                            break;
+                        default:
+                            AddError($"Unknown target keyword: {keyword}", Previous().Position);
+                            break;
+                    }
+                }
+                else
+                {
+                    break; // 退出循环，让外层处理
+                }
+            }
+
+            return targetNode;
+        }
+
+        /// <summary>
+        /// 解析效果块的内容
+        /// 语法: TYPE type [TARGET target] [AMOUNT amount] [PARAMETER param]*
+        /// </summary>
+        private EffectNode ParseEffectBlock()
+        {
+            var effectNode = new EffectNode();
+
+            // 解析效果类型
+            if (Match(TokenType.Identifier))
+            {
+                effectNode.Type = Previous().Value;
+            }
+
+            // 解析可选的目标、数量等
+            while (!Check(TokenType.EndEffectKeyword) && !IsAtEnd)
+            {
+                if (Match(TokenType.Identifier))
+                {
+                    var keyword = Previous().Value.ToLowerInvariant();
+                    switch (keyword)
+                    {
+                        case "target":
+                            // 这里可以解析内联目标或引用
+                            break;
+                        case "amount":
+                            effectNode.Amount = ParseExpression();
+                            break;
+                        default:
+                            AddError($"Unknown effect keyword: {keyword}", Previous().Position);
+                            break;
+                    }
+                }
+                else
+                {
+                    break; // 退出循环，让外层处理
+                }
+            }
+
+            return effectNode;
+        }
+
+        /// <summary>
+        /// 解析属性块的内容
+        /// 语法: NAME name VALUE value
+        /// </summary>
+        private PropertyNode ParsePropertyBlock()
+        {
+            var propertyNode = new PropertyNode();
+
+            // 解析属性名
+            if (Match(TokenType.Identifier))
+            {
+                propertyNode.Name = Previous().Value;
+            }
+
+            // 解析属性值
+            if (Match(TokenType.Identifier) && Previous().Value.ToLowerInvariant() == "value")
+            {
+                propertyNode.Value = ParseExpression();
+            }
+
+            return propertyNode;
+        }
+
+        /// <summary>
+        /// 解析触发器块的内容
+        /// 语法: EVENT event_type [SCOPE scope] [TIMING timing] [IF condition] [OPTIONAL]
+        /// </summary>
         private TriggerNode ParseTriggerBlock()
         {
-            // Placeholder implementation
             var triggerNode = new TriggerNode();
-            // TODO: Parse EVENT, SCOPE, TIMING, IF, OPTIONAL inside the block
+
+            // 解析事件类型
             if (Match(TokenType.EventKeyword))
             {
-                // Parse event types...
+                if (Match(TokenType.Identifier))
+                {
+                    triggerNode.EventTypes.Add(Previous().Value);
+                }
             }
-            // ... other trigger properties
+
+            // 解析可选的范围、时序等
+            while (!Check(TokenType.EndTriggerKeyword) && !IsAtEnd)
+            {
+                if (Match(TokenType.Identifier))
+                {
+                    var keyword = Previous().Value.ToLowerInvariant();
+                    switch (keyword)
+                    {
+                        case "scope":
+                            if (Match(TokenType.Identifier))
+                                triggerNode.Scope = Previous().Value;
+                            break;
+                        case "timing":
+                            if (Match(TokenType.Identifier))
+                                triggerNode.Timing = Previous().Value;
+                            break;
+                        case "if":
+                            triggerNode.Condition = ParseExpression();
+                            break;
+                        case "optional":
+                            triggerNode.IsOptional = true;
+                            break;
+                        default:
+                            AddError($"Unknown trigger keyword: {keyword}", Previous().Position);
+                            break;
+                    }
+                }
+                else
+                {
+                    break; // 退出循环，让外层处理
+                }
+            }
+
             return triggerNode;
         }
         // --- Clause Parsing Helpers (New for Target Expressions) ---
@@ -279,8 +474,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         private List<OrderingTerm> ParseOrderingClause()
         {
             var orderings = new List<OrderingTerm>();
-            // TODO: Implement parsing logic for ordering terms
-            // do { ... } while (Match(TokenType.Comma));
+
+            // 解析排序项，支持逗号分隔的多个排序条件
             do
             {
                 var startPosition = CurrentToken?.Position ?? new TokenPosition(0, 0, 0);

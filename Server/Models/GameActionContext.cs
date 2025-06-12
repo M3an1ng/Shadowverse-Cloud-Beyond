@@ -1,4 +1,5 @@
-using ShadowverseBeyond.Server.Dtos.SignalR; // Correct namespace for GameEventDto
+using ShadowverseBeyond.Server.Dtos.SignalR.Events; // Use the Events namespace for GameEventDto and specific events
+using ShadowverseBeyond.Server.Domain.Events; // Added for IGameEvent
 using System.Collections.Generic;
 using System.Linq;
 
@@ -8,6 +9,7 @@ namespace ShadowverseBeyond.Server.Models // Define a namespace
     {
         public List<GameEventDto> Events { get; } = new List<GameEventDto>();
 
+        public List<IGameEvent> DomainEvents { get; } = new List<IGameEvent>(); // Added for internal domain event tracking
         // Optional: Can add other context-specific data if needed later
         // public Guid GameId { get; init; }
         // public string PlayerId { get; init; }

@@ -25,7 +25,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <param name="playerId">The identifier of the player whose EP was updated.</param>
         /// <param name="currentEp">The player's current EP amount after the update.</param>
         /// <param name="maxEp">The player's maximum EP amount after the update.</param>
-        public EpUpdateEventDto(string playerId, int currentEp, int maxEp)
+        public EpUpdateEventDto(Guid playerId, int currentEp, int maxEp)
             : base(playerId, "EpUpdate") // Set base PlayerId and Type
         {
             this.CurrentEp = currentEp;

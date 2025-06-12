@@ -9,6 +9,8 @@ using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Exceptions;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
+using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState
+using AutoMapper; // Added for IMapper
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,24 +24,27 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IGameService _gameService; // To interact with game state and execute actions
         private readonly IAiService _aiService;     // To get AI decisions
         private readonly ILogger<AiTurnExecutor> _logger;
+        private readonly IMapper _mapper; // Added for Entity to DTO mapping
         // private readonly IServiceScopeFactory _serviceScopeFactory; // Add if IAiService needs scoped deps
 
         // Constructor injection
         public AiTurnExecutor(
             IGameService gameService,
             IAiService aiService,
-            ILogger<AiTurnExecutor> logger)
+            ILogger<AiTurnExecutor> logger,
+            IMapper mapper) // Added mapper parameter
         // IServiceScopeFactory serviceScopeFactory)
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
             // _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
 
         // The core AI turn logic, moved from GameService
         // M8 Change: Reverted - Context should be created internally per action
-        public async Task ExecuteTurnAsync(string gameId, string aiPlayerId, GameActionContext context) // Re-added context parameter for M8 sequence
+        public async Task ExecuteTurnAsync(string gameId, Guid aiPlayerId, GameActionContext context) // Re-added context parameter for M8 sequence
         {
             _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI turn execution started.", gameId, aiPlayerId);
             bool actionTaken = false;
@@ -58,7 +63,8 @@ namespace ShadowverseBeyond.Server.Services
 
                     // Fetch the game state at the start of each iteration
                     _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] Fetching current game state for iteration.", gameId, aiPlayerId);
-                    currentGameState = await _gameService.GetGameStateAsync(gameId);
+                    var currentGameStateEntity = await _gameService.GetGameStateAsync(gameId);
+                    currentGameState = currentGameStateEntity != null ? _mapper.Map<GameStateDto>(currentGameStateEntity) : null;
                     if (currentGameState == null)
                     {
                         _logger.LogError("[AI_EXECUTOR:{GameId}:{PlayerId}] Failed to retrieve game state in loop. Breaking AI turn.", gameId, aiPlayerId);
@@ -107,21 +113,28 @@ namespace ShadowverseBeyond.Server.Services
                     // 1. Decide Play Card
                     var playCardAction = await _aiService.DecidePlayCardAsync(currentGameState, aiPlayerId);
                     // --- Roo Debug Log: Decide Play Card End ---
-                    _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] _aiService.DecidePlayCardAsync result: {Decision}", gameId, aiPlayerId, playCardAction == null ? "null" : $"Card={playCardAction.CardUid}, Target={playCardAction.TargetUid ?? "None"}");
+                    _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] _aiService.DecidePlayCardAsync result: {Decision}", gameId, aiPlayerId.ToString(), playCardAction == null ? "null" : $"Card={playCardAction.CardUid}, Target={playCardAction.TargetUid?.ToString() ?? "None"}");
                     // --- End Roo Debug Log ---
                     if (playCardAction != null)
                     {
                         _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to play card: CardUID={CardUid}, Target={TargetUid}",
-                            gameId, aiPlayerId, playCardAction.CardUid, playCardAction.TargetUid ?? "None");
+                            gameId, aiPlayerId.ToString(), playCardAction.CardUid, playCardAction.TargetUid?.ToString() ?? "None");
                         try
                         {
                             // AI performs the action by calling the GameService method
                             // --- Roo Debug Log: Execute Play Card Start ---
-                            _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Calling _gameService.PlayCardAsync: Card={CardUid}, Target={TargetUid}", gameId, aiPlayerId, playCardAction.CardUid, playCardAction.TargetUid ?? "None");
+                            _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Calling _gameService.PlayCardAsync: Card={CardUid}, Target={TargetUid}", gameId, aiPlayerId.ToString(), playCardAction.CardUid, playCardAction.TargetUid?.ToString() ?? "None");
                             // --- End Roo Debug Log ---
                             // M8 Change: Create context, pass it, then broadcast events
                             // Pass the received context down
-                            await _gameService.PlayCardAsync(gameId, aiPlayerId, playCardAction, context);
+                            // Use the new queue-based approach
+                            var actionWrapper = new PlayerActionWrapper
+                            {
+                                PlayerId = aiPlayerId,
+                                ActionType = "PlayCard",
+                                ActionData = playCardAction
+                            };
+                            await _gameService.EnqueuePlayerActionAsync(gameId, actionWrapper);
                             // Broadcasting is handled within PlayCardAsync
                             _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] PlayCardAsync and BroadcastEventsAsync completed.", gameId, aiPlayerId);
                             actionTaken = true;
@@ -166,7 +179,14 @@ namespace ShadowverseBeyond.Server.Services
                             // --- End Roo Debug Log ---
                             // M8 Change: Create context, pass it, then broadcast events
                             // Pass the received context down
-                            await _gameService.EvolveAsync(gameId, aiPlayerId, evolveAction, context);
+                            // Use the new queue-based approach
+                            var evolveWrapper = new PlayerActionWrapper
+                            {
+                                PlayerId = aiPlayerId,
+                                ActionType = "PerformEvolve",
+                                ActionData = evolveAction
+                            };
+                            await _gameService.EnqueuePlayerActionAsync(gameId, evolveWrapper);
                             // Broadcasting is handled within EvolveAsync
                             _logger.LogDebug("[AI_EXECUTOR:{GameId}:{PlayerId}] EvolveAsync and BroadcastEventsAsync completed.", gameId, aiPlayerId);
                             actionTaken = true;
@@ -231,7 +251,14 @@ namespace ShadowverseBeyond.Server.Services
                                 // --- End Roo Debug Log ---
                                 // M8 Change: Create context, pass it, then broadcast events
                                 // Pass the received context down
-                                await _gameService.AttackAsync(gameId, aiPlayerId, attackAction, context);
+                                // Use the new queue-based approach
+                                var attackWrapper = new PlayerActionWrapper
+                                {
+                                    PlayerId = aiPlayerId,
+                                    ActionType = "PerformAttack",
+                                    ActionData = attackAction
+                                };
+                                await _gameService.EnqueuePlayerActionAsync(gameId, attackWrapper);
                                 // --- BUG-017 DIAGNOSTIC LOG START ---
                                 _logger.LogWarning("[BUG-017_DIAG:{GameId}:{PlayerId}] Attempting attack: Attacker={AttackerUid}, Target={TargetUid}", gameId, aiPlayerId, attackAction.AttackerUid, attackAction.TargetUid);
                                 // --- BUG-017 DIAGNOSTIC LOG END ---
@@ -309,7 +336,14 @@ namespace ShadowverseBeyond.Server.Services
                     // Call EndTurnAsync and discard the result tuple, as it's handled elsewhere.
                     // M8 Change: Create context, pass it, then broadcast events
                     // Pass the received context down
-                    await _gameService.EndTurnAsync(gameId, aiPlayerId, context);
+                    // Use the new queue-based approach
+                    var endTurnWrapper = new PlayerActionWrapper
+                    {
+                        PlayerId = aiPlayerId,
+                        ActionType = "EndTurn",
+                        ActionData = null // EndTurn doesn't need additional data
+                    };
+                    await _gameService.EnqueuePlayerActionAsync(gameId, endTurnWrapper);
                     // Broadcasting is handled within EndTurnAsync
                     // --- Roo Debug Log: Final End Turn Call End ---
                     _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] _gameService.EndTurnAsync and BroadcastEventsAsync completed normally.", gameId, aiPlayerId);
@@ -356,7 +390,14 @@ namespace ShadowverseBeyond.Server.Services
                         // Call emergency EndTurnAsync, ignore the returned string (nextPlayerId)
                         // M8 Change: Create context, pass it, then broadcast events
                         // Pass the received context down
-                        await _gameService.EndTurnAsync(gameId, aiPlayerId, context); // RESTORED emergency call
+                        // Use the new queue-based approach for emergency EndTurn
+                        var emergencyEndTurnWrapper = new PlayerActionWrapper
+                        {
+                            PlayerId = aiPlayerId,
+                            ActionType = "EndTurn",
+                            ActionData = null // EndTurn doesn't need additional data
+                        };
+                        await _gameService.EnqueuePlayerActionAsync(gameId, emergencyEndTurnWrapper);
                         // Broadcasting is handled within EndTurnAsync
                         // --- Roo Debug Log: Emergency End Turn End ---
                         _logger.LogWarning("[AI_EXEC_DEBUG:{GameId}:{PlayerId}] Emergency EndTurn and BroadcastEventsAsync completed.", gameId, aiPlayerId);

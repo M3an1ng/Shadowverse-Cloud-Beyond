@@ -4,6 +4,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Entities;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
@@ -55,10 +56,28 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         }
 
         /// <summary>
-        /// 检查是否可以执行
+        /// 检查是否可以执行（使用GameContext）
         /// </summary>
-        /// <param name="context">执行上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>是否可以执行</returns>
+        public bool CanExecute(GameContext context)
+        {
+            if (!IsEnabled || !Config.IsEnabled)
+                return false;
+
+            if (IsExecuting)
+                return false;
+
+            // 执行条件检查由能力级别的条件系统处理
+            return true;
+        }
+
+        /// <summary>
+        /// 检查是否可以执行（向后兼容的重载方法）
+        /// </summary>
+        /// <param name="context">效果执行上下文</param>
+        /// <returns>是否可以执行</returns>
+        [Obsolete("Use CanExecute(GameContext) instead")]
         public bool CanExecute(EffectExecutionContext context)
         {
             if (!IsEnabled || !Config.IsEnabled)
@@ -67,20 +86,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             if (IsExecuting)
                 return false;
 
-            // TODO: 检查执行条件
-            // foreach (var condition in Config.ExecutionConditions)
-            // {
-            //     if (!condition.Evaluate(context))
-            //         return false;
-            // }
-
+            // 执行条件检查由能力级别的条件系统处理
             return true;
         }
 
         /// <summary>
-        /// 开始执行
+        /// 开始执行（使用GameContext）
         /// </summary>
-        /// <param name="context">执行上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
+        public void BeginExecution(GameContext context)
+        {
+            if (IsExecuting)
+                throw new InvalidOperationException("Effect is already executing");
+
+            IsExecuting = true;
+            // 创建临时的EffectExecutionContext以保持兼容性
+            CurrentContext = CreateEffectExecutionContextFromGameContext(context);
+            LastExecutionTime = DateTime.UtcNow;
+        }
+
+        /// <summary>
+        /// 开始执行（向后兼容的重载方法）
+        /// </summary>
+        /// <param name="context">效果执行上下文</param>
+        [Obsolete("Use BeginExecution(GameContext) instead")]
         public void BeginExecution(EffectExecutionContext context)
         {
             if (IsExecuting)
@@ -89,6 +118,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             IsExecuting = true;
             CurrentContext = context;
             LastExecutionTime = DateTime.UtcNow;
+        }
+
+        /// <summary>
+        /// 从GameContext创建EffectExecutionContext的桥接方法
+        /// </summary>
+        /// <param name="context">统一的游戏上下文</param>
+        /// <returns>效果执行上下文</returns>
+        private EffectExecutionContext CreateEffectExecutionContextFromGameContext(GameContext context)
+        {
+            return new EffectExecutionContext
+            {
+                SourceCard = context.SourceCard,
+                TriggeringEvent = context.TriggeringEvent,
+                SelectedTargets = context.SelectedTargets.Select(t => context.FindCardInstance(t.Id)).Where(c => c != null).Cast<CardInstance>().ToList(),
+                Variables = context.TemporaryVariables.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+                GameState = context.CurrentGameState,
+                Timestamp = DateTime.UtcNow
+            };
         }
 
         /// <summary>
@@ -128,7 +175,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
 
     /// <summary>
     /// 效果执行上下文
+    /// 注意：此类已被GameContext替代，仅作为向后兼容的桥接层保留。
     /// </summary>
+    [Obsolete("Use GameContext instead. This class will be removed in a future version.")]
     public class EffectExecutionContext
     {
         /// <summary>

@@ -9,7 +9,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public class PpUpdateEventDto : GameEventDto
     {
         // Constructor to initialize properties and call the base constructor
-        public PpUpdateEventDto(string playerId, int currentPp, int maxPp) : base(playerId, "PpUpdate")
+        public PpUpdateEventDto(Guid playerId, int currentPp, int maxPp) : base(playerId, "PpUpdate")
         {
             CurrentPp = currentPp;
             MaxPp = maxPp;

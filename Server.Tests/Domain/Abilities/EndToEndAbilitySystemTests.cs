@@ -3,14 +3,18 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Xunit;
+using Moq; // Add Moq namespace
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions; // Add FunctionRegistry namespace
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Buffs; // Add Buffs namespace
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Interfaces; // Add Interfaces namespace
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
@@ -24,11 +28,17 @@ namespace ShadowverseBeyond.Server.Tests.Domain.Abilities
     public class EndToEndAbilitySystemTests
     {
         private readonly ILogger<EndToEndAbilitySystemTests> _logger;
+        private readonly Mock<IBuffManager> _mockBuffManager;
+        private readonly Mock<ICardRepository> _mockCardRepository;
+        private readonly Mock<IFunctionRegistry> _mockFunctionRegistry;
 
         public EndToEndAbilitySystemTests()
         {
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
             _logger = loggerFactory.CreateLogger<EndToEndAbilitySystemTests>();
+            _mockBuffManager = new Mock<IBuffManager>();
+            _mockCardRepository = new Mock<ICardRepository>();
+            _mockFunctionRegistry = new Mock<IFunctionRegistry>();
         }
 
         [Fact]
@@ -81,7 +91,8 @@ namespace ShadowverseBeyond.Server.Tests.Domain.Abilities
             var cardInstance = CreateTestCardInstance();
 
             // Act
-            var ability = new Ability(config, cardInstance);
+            // Pass mock objects to the Ability constructor
+            var ability = new Ability(config, _mockBuffManager.Object, _mockCardRepository.Object, _mockFunctionRegistry.Object, cardInstance);
 
             // Assert
             Assert.NotNull(ability);
@@ -100,7 +111,8 @@ namespace ShadowverseBeyond.Server.Tests.Domain.Abilities
             // Arrange
             var config = CreateTestAbilityConfig();
             var cardInstance = CreateTestCardInstance();
-            var ability = new Ability(config, cardInstance);
+            // Pass mock objects to the Ability constructor
+            var ability = new Ability(config, _mockBuffManager.Object, _mockCardRepository.Object, _mockFunctionRegistry.Object, cardInstance);
 
             // Act
             ability.Activate();
@@ -117,7 +129,8 @@ namespace ShadowverseBeyond.Server.Tests.Domain.Abilities
             // Arrange
             var config = CreateTestAbilityConfig();
             var cardInstance = CreateTestCardInstance();
-            var ability = new Ability(config, cardInstance);
+            // Pass mock objects to the Ability constructor
+            var ability = new Ability(config, _mockBuffManager.Object, _mockCardRepository.Object, _mockFunctionRegistry.Object, cardInstance);
             ability.Activate();
 
             var gameEvent = new SummonEvent(
@@ -138,7 +151,8 @@ namespace ShadowverseBeyond.Server.Tests.Domain.Abilities
             // Arrange
             var config = CreateTestAbilityConfig();
             var cardInstance = CreateTestCardInstance();
-            var ability = new Ability(config, cardInstance);
+            // Pass mock objects to the Ability constructor
+            var ability = new Ability(config, _mockBuffManager.Object, _mockCardRepository.Object, _mockFunctionRegistry.Object, cardInstance);
             ability.Activate();
 
             var context = new EffectExecutionContext

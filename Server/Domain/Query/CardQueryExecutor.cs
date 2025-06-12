@@ -18,8 +18,10 @@ using CommonAbilities = ShadowverseBeyond.Server.Domain.Abilities.Common; // Ali
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser; // Added for Lexer and Parser
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST; // Added for AstNode and IdentifierNode
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation; // Added for DslEvaluator and EvaluationContext
-                                                                // Removed incorrect using: using ShadowverseBeyond.Server.Domain.Query.Operations;
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
+                                              // Removed incorrect using: using ShadowverseBeyond.Server.Domain.Query.Operations;
 using ShadowverseBeyond.Server.Domain.Query; // Added for IQueryOperation and implementations
+using AutoMapper; // Added for IMapper
 
 namespace ShadowverseBeyond.Server.Domain.Query
 {
@@ -32,16 +34,25 @@ namespace ShadowverseBeyond.Server.Domain.Query
         // 假设有一个仓库用于获取卡牌定义数据
         private readonly ICardRepository _cardRepository;
         private readonly DslEvaluator _dslEvaluator; // Inject DslEvaluator
+        private readonly Abilities.DSL.Functions.IFunctionRegistry _functionRegistry; // Inject Function Registry
+        private readonly IMapper _mapper; // Added IMapper field
 
-        public CardQueryExecutor(ILogger<CardQueryExecutor> logger, ICardRepository cardRepository, DslEvaluator dslEvaluator) // Add DslEvaluator to constructor
+        public CardQueryExecutor(
+            ILogger<CardQueryExecutor> logger,
+            ICardRepository cardRepository,
+            DslEvaluator dslEvaluator,
+            Abilities.DSL.Functions.IFunctionRegistry functionRegistry, // Add IFunctionRegistry to constructor
+            IMapper mapper) // Inject IMapper
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository));
             _dslEvaluator = dslEvaluator ?? throw new ArgumentNullException(nameof(dslEvaluator)); // Store injected evaluator
+            _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry)); // Store injected registry
+            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
         }
 
         /// <inheritdoc />
-        public async Task<CardQueryResult> ExecuteQueryAsync(CardQueryConfig queryConfig, QueryContext context)
+        public async Task<CardQueryResult> ExecuteQueryAsync(CardQueryConfig queryConfig, GameContext context)
         {
             _logger.LogDebug("Executing card query pipeline. TargetType: {TargetType}, Source DSL: {SourcePoolExpression}, Operations: {OperationCount}",
                 queryConfig.TargetType, queryConfig.SourcePoolExpression, queryConfig.Operations?.Count ?? 0);
@@ -124,9 +135,9 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// This is the entry point for the new pipeline model's source definition.
         /// </summary>
         /// <param name="dsl">The Domain Specific Language string defining the source.</param>
-        /// <param name="context">The query context.</param>
+        /// <param name="context">The unified game context.</param>
         /// <returns>A list of objects representing the initial card pool.</returns>
-        private async Task<List<object>> ExecuteSourceDslAsync(string dsl, QueryContext context)
+        private async Task<List<object>> ExecuteSourceDslAsync(string dsl, GameContext context)
         {
             _logger.LogDebug("Executing Source DSL: {Dsl}", dsl);
 
@@ -136,106 +147,63 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 return new List<object>();
             }
 
-            // 1. Parse DSL
-            var lexer = new Lexer(dsl);
-            var tokens = lexer.Tokenize();
-            if (lexer.Errors.Any())
+            // 使用公共DSL解析方法
+            var (success, result) = await ExecuteDslParsingAsync(dsl, context, "Source DSL");
+            if (!success)
             {
-                _logger.LogError("Lexer errors encountered while tokenizing Source DSL: {Dsl}. Errors: {Errors}",
-                   dsl, string.Join("; ", lexer.Errors.Select(e => e.ToString())));
-                // Consider throwing an exception or returning a specific error result
-                return new List<object>(); // Return empty on lexer error
+                return new List<object>(); // 返回空列表
             }
-
-            var parser = new Parser(tokens);
-            var astNode = parser.ParseSingleExpression(); // Use ParseSingleExpression for source DSL
-
-            if (parser.Errors.Any() || astNode == null)
-            {
-                _logger.LogError("Parser errors encountered while parsing Source DSL: {Dsl}. Errors: {Errors}",
-                   dsl, string.Join("; ", parser.Errors.Select(e => e.ToString())));
-                // Consider throwing an exception or returning a specific error result
-                return new List<object>(); // Return empty on parser error or null AST
-            }
-
-            // 2. Create EvaluationContext
-            // Resolve player states from the GameStateDto in the QueryContext
-            PlayerStateDto? requestingPlayer = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
-            PlayerStateDto? opponentPlayer = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
-
-            // Note: currentItem and abilityContext are typically null when evaluating the source pool DSL
-            var evalContext = new EvaluationContext(
-                _cardRepository,
-                context.CurrentGameState,
-                requestingPlayer,
-                opponentPlayer,
-                null, // No specific 'self' item when resolving the initial pool
-                null  // No ability context when resolving the initial pool
-            );
-
-            // 3. Evaluate AST
-            _logger.LogTrace("Evaluating parsed Source DSL AST.");
-            EvaluationResult evalResult = await _dslEvaluator.EvaluateAsync(astNode, evalContext);
 
             // 4. Process Result
-            if (evalResult.IsSuccess)
-            {
-                _logger.LogDebug("Source DSL evaluation successful. Result type: {ResultType}", evalResult.Value?.GetType().Name ?? "null");
+            _logger.LogDebug("Source DSL evaluation successful. Result type: {ResultType}", result?.GetType().Name ?? "null");
 
-                // Check if the result is already the desired type
-                if (evalResult.Value is List<object> objectList)
+            // Check if the result is already the desired type
+            if (result is List<object> objectList)
+            {
+                _logger.LogDebug("DSL result is already List<object>. Count: {Count}", objectList.Count);
+                return objectList;
+            }
+            // Check if it's IEnumerable<object> and convert
+            else if (result is IEnumerable<object> objectEnumerable)
+            {
+                var list = objectEnumerable.ToList();
+                _logger.LogDebug("Converted IEnumerable<object> DSL result to List<object>. Count: {Count}", list.Count);
+                return list;
+            }
+            // Check if it's a non-string IEnumerable and attempt conversion
+            else if (result is System.Collections.IEnumerable enumerable && !(result is string))
+            {
+                try
                 {
-                    _logger.LogDebug("DSL result is already List<object>. Count: {Count}", objectList.Count);
-                    return objectList;
-                }
-                // Check if it's IEnumerable<object> and convert
-                else if (evalResult.Value is IEnumerable<object> objectEnumerable)
-                {
-                    var list = objectEnumerable.ToList();
-                    _logger.LogDebug("Converted IEnumerable<object> DSL result to List<object>. Count: {Count}", list.Count);
+                    var list = enumerable.Cast<object>().ToList();
+                    _logger.LogDebug("Successfully casted non-generic IEnumerable DSL result (Type: {ResultType}) to List<object>. Count: {Count}", result?.GetType().Name, list.Count);
                     return list;
                 }
-                // Check if it's a non-string IEnumerable and attempt conversion
-                else if (evalResult.Value is System.Collections.IEnumerable enumerable && !(evalResult.Value is string))
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        var list = enumerable.Cast<object>().ToList();
-                        _logger.LogDebug("Successfully casted non-generic IEnumerable DSL result (Type: {ResultType}) to List<object>. Count: {Count}", evalResult.Value?.GetType().Name, list.Count);
-                        return list;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to cast non-generic IEnumerable DSL evaluation result (Type: {ResultType}) to List<object>.", evalResult.Value?.GetType().Name);
-                        // Decide if this should be an error or just return empty
-                        return new List<object>();
-                    }
-                }
-                else if (evalResult.Value != null)
-                {
-                    // Result is a single item, not a collection. This is unexpected for a source DSL.
-                    _logger.LogWarning("Source DSL evaluation resulted in a single item (Type: {ResultType}) instead of a collection. DSL: {Dsl}. Returning empty list.", evalResult.Value.GetType().Name, dsl);
-                    // Return empty list as it didn't resolve to a valid pool source.
-                    return new List<object>();
-                }
-                else // Result value is null
-                {
-                    _logger.LogDebug("Source DSL evaluation resulted in null. Returning empty list.");
+                    _logger.LogWarning(ex, "Failed to cast non-generic IEnumerable DSL evaluation result (Type: {ResultType}) to List<object>.", result?.GetType().Name);
+                    // Decide if this should be an error or just return empty
                     return new List<object>();
                 }
             }
-            else
+            else if (result != null)
             {
-                _logger.LogError("Source DSL evaluation failed. DSL: {Dsl}. Error: {Error}", dsl, string.Join("; ", evalResult.Errors));
-                // Consider throwing an exception or returning a specific error result
-                return new List<object>(); // Return empty list on evaluation failure
+                // Result is a single item, not a collection. This is unexpected for a source DSL.
+                _logger.LogWarning("Source DSL evaluation resulted in a single item (Type: {ResultType}) instead of a collection. DSL: {Dsl}. Returning empty list.", result.GetType().Name, dsl);
+                // Return empty list as it didn't resolve to a valid pool source.
+                return new List<object>();
+            }
+            else // Result value is null
+            {
+                _logger.LogDebug("Source DSL evaluation resulted in null. Returning empty list.");
+                return new List<object>();
             }
         }
 
 
         // --- Private Helper Methods ---
 
-        private async Task<List<object>> ApplyFilterOperationAsync(List<object> pool, FilterOperation filterOp, QueryContext context)
+        private async Task<List<object>> ApplyFilterOperationAsync(List<object> pool, FilterOperation filterOp, GameContext context)
         {
             _logger.LogTrace("Applying filter operation with {FilterCount} filters.", filterOp.Filters?.Count ?? 0);
 
@@ -278,10 +246,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         } // End ApplyFilterOperationAsync method
 
         // --- Helper to resolve ValueConfig ---
-        private async Task<object?> ResolveValueSource(ValueConfig? sourceConfig, QueryContext context, object? currentItem = null) // Added async Task<>
-                                                                                                                                    // TODO: Implement the actual filtering logic based on FilterOperation.Filters
-                                                                                                                                    // This method should iterate through filterOp.Filters and apply them.
-                                                                                                                                    // The old ApplySingleFilter logic (commented out above) can be adapted.
+        private async Task<object?> ResolveValueSource(ValueConfig? sourceConfig, GameContext context, object? currentItem = null) // Added async Task<>
         {
             if (sourceConfig == null) return null;
 
@@ -301,12 +266,10 @@ namespace ShadowverseBeyond.Server.Domain.Query
                         _logger.LogWarning("DynamicSource path is empty.");
                         return null;
                     }
-                    resolvedValue = ResolveDynamicPath(sourceConfig.DynamicSource, context, currentItem);
+                    resolvedValue = await ResolveDynamicPath(sourceConfig.DynamicSource, context, currentItem);
                     break;
 
                 case CommonAbilities.ValueType.Formula: // Use alias
-                    _logger.LogWarning("ValueType.Formula evaluation requires DSL Evaluator implementation.");
-                    // TODO: Implement formula evaluation
                     // 1. Parse the formula string into an AST
                     var formulaLexer = new Lexer(sourceConfig.Formula);
                     var formulaTokens = formulaLexer.Tokenize();
@@ -328,20 +291,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
                     // 2. Evaluate the AST using the injected DslEvaluator
                     _logger.LogDebug("Evaluating DSL Formula AST for: {Formula}", sourceConfig.Formula);
 
-                    // 2a. Create EvaluationContext from QueryContext
-                    var requestingPlayer = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
-                    var opponentPlayer = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
-
-                    // Note: QueryContext doesn't have AbilityContext, so pass null for now.
-                    // Formulas evaluated in queries won't have access to ability-specific variables.
-                    var evalContext = new EvaluationContext(
-                        _cardRepository,
-                        context.CurrentGameState,
-                        requestingPlayer,
-                        opponentPlayer,
-                        currentItem, // Pass the current item being evaluated (e.g., the card in a filter)
-                        null // No AbilityContext available in QueryContext
-                    );
+                    // 2a. Create EvaluationContext from GameContext
+                    var evalContext = CreateEvaluationContextFromGameContext(context, currentItem);
 
                     // 2b. Evaluate the AST
                     var evalResult = await _dslEvaluator.EvaluateAsync(formulaAst, evalContext);
@@ -360,33 +311,16 @@ namespace ShadowverseBeyond.Server.Domain.Query
                     break;
 
                 case CommonAbilities.ValueType.Variable: // Use alias
-                    _logger.LogWarning("ValueType.Variable retrieval not yet implemented in ResolveValueSource.");
-                    // TODO: Implement variable retrieval from context or ability system
-                    // Example placeholder:
-                    // if (context.AbilityContext?.Variables.TryGetValue(sourceConfig.VariableName, out var variableValue) ?? false)
-                    // {
-                    //     resolvedValue = variableValue;
-                    //     _logger.LogTrace("Retrieved variable '{VariableName}' with value: {Value}", sourceConfig.VariableName, resolvedValue);
-                    // }
-                    // else
-                    // {
-                    //     _logger.LogWarning("Variable '{VariableName}' not found in context.", sourceConfig.VariableName);
-                    // }
-                    resolvedValue = null; // Placeholder
+                    resolvedValue = ResolveVariableValue(sourceConfig, context);
+                    _logger.LogTrace("Resolved variable '{VariableName}' with value: {Value}",
+                        sourceConfig.VariableName, resolvedValue ?? "null");
                     break;
 
                 case CommonAbilities.ValueType.Random: // Use alias
-                                                       //_logger.LogWarning("ValueType.Random not yet implemented in ResolveValueSource."); // Removed warning as it's now implemented
-                                                       // TODO: Implement random value generation based on RandomConfig
                     if (sourceConfig.RandomConfig != null)
                     {
-                        // TODO: Consider using a shared Random instance or one seeded from game state for determinism if needed.
-                        var random = sourceConfig.RandomConfig.Seed.HasValue
-                            ? new Random(sourceConfig.RandomConfig.Seed.Value)
-                            : new Random();
-                        // TODO: Add support for Candidates and Weights if needed
-                        resolvedValue = random.Next(sourceConfig.RandomConfig.MinValue, sourceConfig.RandomConfig.MaxValue + 1); // .Next max is exclusive
-                        _logger.LogTrace("Generated random value {Value} between {Min} and {Max}", resolvedValue, sourceConfig.RandomConfig.MinValue, sourceConfig.RandomConfig.MaxValue);
+                        resolvedValue = GenerateRandomValue(sourceConfig.RandomConfig, context);
+                        _logger.LogTrace("Generated random value {Value} using RandomConfig", resolvedValue);
                     }
                     else
                     {
@@ -409,79 +343,156 @@ namespace ShadowverseBeyond.Server.Domain.Query
             return resolvedValue;
         }
 
+        /// <summary>
+        /// 生成随机值，支持候选值列表、权重和种子
+        /// </summary>
+        /// <param name="randomConfig">随机配置</param>
+        /// <param name="context">游戏上下文（用于确定性种子）</param>
+        /// <returns>生成的随机值</returns>
+        private object GenerateRandomValue(RandomConfig randomConfig, GameContext context)
+        {
+            // 使用游戏状态的回合数作为种子的一部分，确保游戏的确定性
+            var seed = randomConfig.Seed ?? (context.CurrentGameState.TurnNumber * 31 + context.RequestingPlayerId.GetHashCode());
+            var random = new Random(seed);
+
+            // 如果有候选值列表，从中随机选择
+            if (randomConfig.Candidates != null && randomConfig.Candidates.Count > 0)
+            {
+                if (randomConfig.Weights != null && randomConfig.Weights.Count == randomConfig.Candidates.Count)
+                {
+                    // 加权随机选择
+                    return SelectWeightedRandom(randomConfig.Candidates, randomConfig.Weights, random);
+                }
+                else
+                {
+                    // 均匀随机选择
+                    var index = random.Next(randomConfig.Candidates.Count);
+                    return randomConfig.Candidates[index];
+                }
+            }
+
+            // 否则在MinValue和MaxValue之间生成随机整数
+            return random.Next(randomConfig.MinValue, randomConfig.MaxValue + 1); // +1 because Random.Next max is exclusive
+        }
+
+        /// <summary>
+        /// 根据权重进行加权随机选择
+        /// </summary>
+        /// <param name="candidates">候选值列表</param>
+        /// <param name="weights">权重列表</param>
+        /// <param name="random">随机数生成器</param>
+        /// <returns>选中的候选值</returns>
+        private object SelectWeightedRandom(List<object> candidates, List<int> weights, Random random)
+        {
+            var totalWeight = weights.Sum();
+            if (totalWeight <= 0)
+            {
+                // 如果权重总和为0或负数，回退到均匀选择
+                _logger.LogWarning("Total weight is {TotalWeight}, falling back to uniform selection", totalWeight);
+                return candidates[random.Next(candidates.Count)];
+            }
+
+            var randomValue = random.Next(totalWeight);
+            var currentWeight = 0;
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                currentWeight += weights[i];
+                if (randomValue < currentWeight)
+                {
+                    return candidates[i];
+                }
+            }
+
+            // 理论上不应该到达这里，但作为安全措施
+            return candidates[^1]; // 返回最后一个候选值
+        }
+
+        /// <summary>
+        /// 解析变量值，支持临时变量和持久变量
+        /// </summary>
+        /// <param name="sourceConfig">值配置</param>
+        /// <param name="context">游戏上下文</param>
+        /// <returns>变量值，如果未找到则返回null</returns>
+        private object? ResolveVariableValue(ValueConfig sourceConfig, GameContext context)
+        {
+            var variableName = sourceConfig.VariableName;
+
+            if (string.IsNullOrEmpty(variableName))
+            {
+                _logger.LogWarning("Variable name is null or empty in ValueConfig");
+                return null;
+            }
+
+            // 1. 首先检查临时变量（优先级更高）
+            if (context.TemporaryVariables.TryGetValue(variableName, out var tempValue))
+            {
+                _logger.LogTrace("Found temporary variable '{VariableName}' with value: {Value}",
+                    variableName, tempValue);
+                return tempValue;
+            }
+
+            // 2. 检查源卡牌的持久变量（如果有源卡牌）
+            if (context.SourceCard != null)
+            {
+                if (context.SourceCard.AbilityState.TryGetValue(variableName, out var persistentValue))
+                {
+                    _logger.LogTrace("Found persistent variable '{VariableName}' on source card with value: {Value}",
+                        variableName, persistentValue);
+                    return persistentValue;
+                }
+            }
+
+            // 3. 检查当前处理项的变量（如果当前项是CardInstance）
+            if (context.CurrentItem is CardInstance currentCard)
+            {
+                if (currentCard.AbilityState.TryGetValue(variableName, out var currentItemValue))
+                {
+                    _logger.LogTrace("Found variable '{VariableName}' on current item card with value: {Value}",
+                        variableName, currentItemValue);
+                    return currentItemValue;
+                }
+            }
+
+            // 4. 检查已解析参数（可能包含变量值）
+            if (context.ResolvedParameters.TryGetValue(variableName, out var paramValue))
+            {
+                _logger.LogTrace("Found variable '{VariableName}' in resolved parameters with value: {Value}",
+                    variableName, paramValue);
+                return paramValue;
+            }
+
+            _logger.LogDebug("Variable '{VariableName}' not found in any context", variableName);
+            return null;
+        }
+
         // --- Helper to resolve dynamic paths ---
-        private object? ResolveDynamicPath(string path, QueryContext context, object? currentItem)
+        private async Task<object?> ResolveDynamicPath(string path, GameContext context, object? currentItem)
         {
             var parts = path.Split('.');
             if (parts.Length == 0) return null;
 
-            object? currentTarget = null;
-            string propertyName = string.Empty;
-
-            // Determine the root object based on the first part of the path
-            switch (parts[0].ToLowerInvariant())
-            {
-                case "player":
-                    currentTarget = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
-                    break;
-                case "opponent":
-                    currentTarget = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
-                    break;
-                case "self": // Refers to the card currently being evaluated in the filter
-                    currentTarget = currentItem;
-                    break;
-                case "gamestate":
-                    currentTarget = context.CurrentGameState;
-                    break;
-                case "triggeringevent": // Placeholder - needs event structure
-                    currentTarget = context.TriggeringEvent;
-                    _logger.LogWarning("Resolving 'triggeringEvent' path is not fully implemented.");
-                    break;
-                case "triggeringcard": // Placeholder - needs event structure
-                                       // Example: Assuming event has SourceCardInstance property
-                                       // currentTarget = (context.TriggeringEvent as dynamic)?.SourceCardInstance; // Unsafe, needs proper event types
-                    _logger.LogWarning("Resolving 'triggeringCard' path is not fully implemented.");
-                    break;
-                // Add more root objects as needed (e.g., specific targets from context)
-                default:
-                    _logger.LogWarning("Unknown root object in dynamic path: {RootObject}", parts[0]);
-                    return null;
-            }
+            // 解析根对象
+            var currentTarget = parts[0].ToLowerInvariant() == "self"
+                ? currentItem
+                : await ResolveRootObjectAsync(parts[0], context, path);
 
             if (currentTarget == null)
             {
-                _logger.LogWarning("Root object '{RootObject}' resolved to null for path: {Path}", parts[0], path);
                 return null;
             }
 
-            // Traverse the remaining parts of the path
+            // 遍历路径的其余部分
             for (int i = 1; i < parts.Length; i++)
             {
-                propertyName = parts[i];
+                currentTarget = GetPropertyValueSafely(currentTarget, parts[i], path);
                 if (currentTarget == null)
                 {
-                    _logger.LogWarning("Intermediate object is null when resolving property '{PropertyName}' in path: {Path}", propertyName, path);
                     return null;
                 }
-
-                var propertyInfo = currentTarget.GetType().GetProperty(propertyName, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-
-                if (propertyInfo == null)
-                {
-                    // Handle special cases like List.Count
-                    if (propertyName.Equals("Count", StringComparison.OrdinalIgnoreCase) && currentTarget is System.Collections.ICollection collection)
-                    {
-                        currentTarget = collection.Count;
-                        continue; // Move to next part or finish if this is the last part
-                    }
-
-                    _logger.LogWarning("Property '{PropertyName}' not found on type '{TypeName}' for path: {Path}", propertyName, currentTarget.GetType().Name, path);
-                    return null;
-                }
-                currentTarget = propertyInfo.GetValue(currentTarget);
             }
 
-            return currentTarget; // The final value after traversing the path
+            return currentTarget; // 遍历路径后的最终值
         }
         // Helper for numeric comparisons
         private bool CompareValues(int cardValue, int targetValue, ComparisonOperator op)
@@ -499,8 +510,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             };
         }
 
-        // TODO: Rename ApplySortOperation to ApplySortOperation (singular) - Renaming deferred for now to minimize diff complexity
-        private async Task<List<object>> ApplySortOperation(List<object> pool, SortOperation sortOp, QueryContext context) // Changed signature to async Task
+        private async Task<List<object>> ApplySortOperation(List<object> pool, SortOperation sortOp, GameContext context) // Changed signature to async Task
         {
             _logger.LogTrace("Applying sort operation with {OrderingCount} criteria.", sortOp.Ordering?.Count ?? 0);
 
@@ -553,7 +563,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         }
 
         // Renamed to ApplySelectionOperationAsync and made async
-        private async Task<List<object>> ApplySelectionOperationAsync(List<object> pool, SelectionOperation selectionOp, QueryContext context)
+        private async Task<List<object>> ApplySelectionOperationAsync(List<object> pool, SelectionOperation selectionOp, GameContext context)
         {
             _logger.LogTrace("Applying selection operation: {Strategy}. CountSource provided: {HasCountSource}",
                 selectionOp.Strategy, selectionOp.CountSource != null); // Removed direct Count access
@@ -617,7 +627,6 @@ namespace ShadowverseBeyond.Server.Domain.Query
             }
         }
 
-        // TODO: Rename ApplyLimitOperation to ApplyLimitOperationOperation (singular) - Renaming deferred
         // ApplyLimitOperation method removed as its functionality is merged into ApplySelectionOperation with SelectionStrategy.Take
 
         /// <summary>
@@ -627,7 +636,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <param name="path">The list of strings representing the path segments.</param>
         /// <param name="context">The query context containing game state.</param>
         /// <returns>An enumerable collection of objects found at the specified path, or null if not found or invalid.</returns>
-        private async Task<IEnumerable<object>?> ResolveSourcePathAsync(List<string> path, QueryContext context)
+        private async Task<IEnumerable<object>?> ResolveSourcePathAsync(List<string> path, GameContext context)
         {
             _logger.LogTrace("Resolving source path: {Path}", string.Join(".", path));
 
@@ -640,48 +649,13 @@ namespace ShadowverseBeyond.Server.Domain.Query
             object? currentTarget = null;
             string rootSegment = path[0].ToLowerInvariant();
 
-            // --- Determine Root Object ---
-            switch (rootSegment)
+            // --- 使用公共方法解析根对象 ---
+            currentTarget = await ResolveRootObjectAsync(rootSegment, context, string.Join(".", path));
+
+            // 特殊处理allcards的单独路径情况
+            if (rootSegment.ToLowerInvariant() == "allcards" && path.Count == 1)
             {
-                case "player": // Refers to the requesting player by default
-                    currentTarget = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
-                    if (currentTarget == null) _logger.LogWarning("Requesting player state not found for path starting with 'player'.");
-                    break;
-                case "opponent":
-                    currentTarget = context.CurrentGameState?.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
-                    if (currentTarget == null) _logger.LogWarning("Opponent player state not found for path starting with 'opponent'.");
-                    break;
-                case "gamestate":
-                    currentTarget = context.CurrentGameState;
-                    if (currentTarget == null) _logger.LogWarning("CurrentGameState is null in QueryContext.");
-                    break;
-                case "allcards": // Special case: Access repository for all definitions
-                    try
-                    {
-                        var definitions = await _cardRepository.GetAllCardDefinitionsAsync();
-                        // If path is just "allcards", return the definitions
-                        if (path.Count == 1)
-                        {
-                            _logger.LogDebug("Resolved path 'allcards' to all card definitions ({Count}).", definitions.Count());
-                            return definitions.Cast<object>();
-                        }
-                        else
-                        {
-                            // Allow further path segments if needed (e.g., "allcards.where(type=follower)") - Requires more complex handling later
-                            _logger.LogWarning("Path segments after 'allcards' are not yet supported. Path: {Path}", string.Join(".", path));
-                            return null;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error retrieving all card definitions from repository.");
-                        return null;
-                    }
-                // Add cases for specific player IDs if needed, e.g., "player[id]" syntax or similar
-                // Add cases for "triggeringevent", "triggeringcard" if context supports them
-                default:
-                    _logger.LogWarning("Unknown root segment in source path: {RootSegment}", rootSegment);
-                    return null;
+                return currentTarget as IEnumerable<object>;
             }
 
             if (currentTarget == null)
@@ -690,34 +664,12 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 return null;
             }
 
-            // --- Traverse Remaining Path Segments ---
+            // --- 使用公共方法遍历剩余路径段 ---
             for (int i = 1; i < path.Count; i++)
             {
-                string propertyName = path[i];
-                if (currentTarget == null) // Should not happen if initial check passed, but safety first
+                currentTarget = GetPropertyValueSafely(currentTarget, path[i], string.Join(".", path));
+                if (currentTarget == null)
                 {
-                    _logger.LogWarning("Intermediate target became null before resolving segment '{Segment}' in path: {Path}", propertyName, string.Join(".", path));
-                    return null;
-                }
-
-                // Use reflection to get the property value
-                var propertyInfo = currentTarget.GetType().GetProperty(propertyName, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-
-                if (propertyInfo == null)
-                {
-                    _logger.LogWarning("Property '{PropertyName}' not found on type '{TypeName}' for path segment {SegmentIndex} in path: {Path}",
-                        propertyName, currentTarget.GetType().Name, i, string.Join(".", path));
-                    return null;
-                }
-
-                try
-                {
-                    currentTarget = propertyInfo.GetValue(currentTarget);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error getting value for property '{PropertyName}' on type '{TypeName}' for path: {Path}",
-                        propertyName, currentTarget.GetType().Name, string.Join(".", path));
                     return null;
                 }
             }
@@ -745,7 +697,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <summary>
         /// Applies post-processing operations to the pool.
         /// </summary>
-        private async Task<List<object>> ApplyPostProcessingOperationAsync(List<object> pool, PostProcessingOperation postProcessingOp, QueryContext context)
+        private async Task<List<object>> ApplyPostProcessingOperationAsync(List<object> pool, PostProcessingOperation postProcessingOp, GameContext context)
         {
             _logger.LogTrace("Applying Post Processing Operation: {Type}", postProcessingOp.Type);
 
@@ -811,7 +763,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "Error retrieving card definition for ID: {CardId} from repository, originating from {SourceDescription}.", cardId.Value, sourceDescription);
-                                // Decide whether to skip or add a placeholder/null
+                                // Skip this item on error
                             }
                         }
                         else
@@ -831,8 +783,9 @@ namespace ShadowverseBeyond.Server.Domain.Query
                         }
                         else if (item is CardInstance instance)
                         {
-                            resultPool.Add(MapToCardInstanceDto(instance)); // Use updated mapping method
-                            _logger.LogTrace("Converted CardInstance (InstanceId: {InstanceId}) to CardInstanceDto.", instance.InstanceId);
+                            // Use AutoMapper directly
+                            resultPool.Add(_mapper.Map<CardInstanceDto>(instance));
+                            _logger.LogTrace("Converted CardInstance (InstanceId: {InstanceId}) to CardInstanceDto using AutoMapper.", instance.InstanceId);
                         }
                         else
                         {
@@ -925,8 +878,12 @@ namespace ShadowverseBeyond.Server.Domain.Query
             return false;
         }
 
-        // --- Placeholder Mapping Helpers ---
-        // TODO: Replace these with actual mapping logic (e.g., AutoMapper or dedicated mapping methods)
+        // --- Mapping Helpers ---
+        /// <summary>
+        /// 将CardDefinition实体映射为CardDefinitionDto
+        /// </summary>
+        /// <param name="definition">卡牌定义实体</param>
+        /// <returns>卡牌定义DTO</returns>
         private CardDefinitionDto MapToCardDefinitionDto(CardDefinition definition)
         {
             // Basic manual mapping - expand as needed
@@ -941,66 +898,200 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 Description = definition.Description,
                 CanEvolve = definition.EvolveId.HasValue, // Derive CanEvolve from EvolveId
                 Keywords = definition.Keywords ?? new List<string>(), // Handle null Keywords
-                // Required properties missing in CardDefinition entity - providing placeholders
-                // TODO: Add Rarity and CardSet to CardDefinition entity or handle mapping differently
-                Rarity = "Unknown", // Placeholder
-                CardSet = "Unknown" // Placeholder
+                Rarity = definition.Rarity, // Use actual property from entity
+                CardSet = definition.CardSet // Use actual property from entity
             };
         }
 
-        private CardInstanceDto MapToCardInstanceDto(CardInstance instance)
+        // Removed MapToCardInstanceDto method as mapping is now handled by AutoMapper (CardInstanceProfile)
+
+        /// <summary>
+        /// Creates an EvaluationContext from a GameContext for DSL evaluation.
+        /// This is a helper method to bridge GameContext to EvaluationContext.
+        /// </summary>
+        /// <param name="context">The GameContext containing game state.</param>
+        /// <param name="currentItem">The current item being evaluated (optional).</param>
+        /// <returns>An EvaluationContext for DSL evaluation.</returns>
+        private EvaluationContext CreateEvaluationContextFromGameContext(GameContext context, object? currentItem = null)
         {
-            // Use the existing ToDto method in CardInstance for basic mapping
-            // and then potentially add more details if needed.
-            var dto = instance.ToDto();
+            // Create a GameStateDto snapshot from the GameContext
+            var gameStateDto = context.CreateSnapshot();
 
-            // Example: If CardInstanceDto needs properties not set by ToDto(), set them here.
-            // dto.SomeOtherProperty = instance.SomeOtherSourceProperty;
+            // Resolve player states from the GameStateDto
+            var requestingPlayer = gameStateDto?.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
+            var opponentPlayer = gameStateDto?.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
 
-            // Note: The ToDto method already handles InstanceId (string to Guid) and
-            // maps DefinitionId to CardId. It also maps basic stats and state.
-            // We rely on ToDto() to perform the core conversion.
-
-            return dto;
-
-            /* // Old manual mapping - replaced by using instance.ToDto()
-            Guid.TryParse(instance.InstanceId, out Guid instanceGuid); // Handle string to Guid conversion
-
-            return new CardInstanceDto
-            {
-                InstanceId = instanceGuid,
-                CardId = instance.DefinitionId, // Correct property name
-                // Map other properties from CardInstanceDto based on CardInstance
-                // Need to fetch CardDefinition for Name, base Cost, base Attack/Health, Type etc.
-                // This mapping is incomplete without CardDefinition lookup.
-                // Using instance.ToDto() is generally better if it provides enough info.
-
-                // Instance State:
-                CurrentAttack = instance.CurrentAttack,
-                CurrentHealth = instance.CurrentHealth,
-                MaxHealth = instance.MaxHealth, // Added MaxHealth
-                IsEvolved = instance.IsEvolved,
-                CanAttack = instance.CanAttack,
-                CanEvolve = instance.CanEvolve, // Assuming CanEvolve state exists in CardInstance
-                AttacksMadeThisTurn = instance.AttacksThisTurn, // Added AttacksMadeThisTurn
-                Zone = instance.CurrentZone, // Correct property name and type
-                ControllerPlayerId = instance.OwnerPlayerId, // Map OwnerPlayerId
-                CurrentCountdown = instance.Countdown, // Added Countdown
-
-                // Definition-based properties (Requires lookup - not ideal here)
-                // Name = ???,
-                // Cost = ???, // instance.CurrentCost might differ
-                // Type = instance.CardType,
-                // Attack = ???,
-                // Health = ???,
-                // Description = ???,
-                // Keywords = ???,
-                // EffectDescriptions = ???,
-                // MaxAttacksPerTurn = ???,
-                // MaxAttack = ???,
-            };
-            */
+            return new EvaluationContext(
+                cardRepository: _cardRepository,
+                functionRegistry: _functionRegistry,
+                gameState: gameStateDto,
+                player: requestingPlayer,
+                opponent: opponentPlayer,
+                currentItem: currentItem,
+                temporaryVariables: new Dictionary<string, object>(context.TemporaryVariables)
+            );
         }
+
+        // --- Common Helper Methods ---
+
+        /// <summary>
+        /// 执行DSL解析的通用方法，包含错误处理
+        /// </summary>
+        /// <param name="dsl">DSL表达式</param>
+        /// <param name="context">游戏上下文</param>
+        /// <param name="operationName">操作名称（用于日志）</param>
+        /// <returns>解析和评估结果</returns>
+        private async Task<(bool Success, object? Result)> ExecuteDslParsingAsync(string dsl, GameContext context, string operationName)
+        {
+            try
+            {
+                // 1. 词法分析
+                var lexer = new Lexer(dsl);
+                var tokens = lexer.Tokenize();
+                if (lexer.Errors.Any())
+                {
+                    _logger.LogError("Lexer errors in {OperationName} DSL: {Dsl}. Errors: {Errors}",
+                        operationName, dsl, string.Join("; ", lexer.Errors.Select(e => e.ToString())));
+                    return (false, null);
+                }
+
+                // 2. 语法分析
+                var parser = new Parser(tokens);
+                var astNode = parser.ParseSingleExpression();
+                if (parser.Errors.Any() || astNode == null)
+                {
+                    _logger.LogError("Parser errors in {OperationName} DSL: {Dsl}. Errors: {Errors}",
+                        operationName, dsl, string.Join("; ", parser.Errors.Select(e => e.ToString())));
+                    return (false, null);
+                }
+
+                // 3. 创建评估上下文
+                var evalContext = CreateEvaluationContextFromGameContext(context);
+
+                // 4. 评估AST
+                var evalResult = await _dslEvaluator.EvaluateAsync(astNode, evalContext);
+                if (!evalResult.IsSuccess)
+                {
+                    _logger.LogError("{OperationName} DSL evaluation failed: {Dsl}. Errors: {Errors}",
+                        operationName, dsl, string.Join("; ", evalResult.Errors));
+                    return (false, null);
+                }
+
+                return (true, evalResult.Value);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Exception during {OperationName} DSL parsing: {Dsl}", operationName, dsl);
+                return (false, null);
+            }
+        }
+
+        /// <summary>
+        /// 安全地获取对象属性值，包含错误处理
+        /// </summary>
+        /// <param name="target">目标对象</param>
+        /// <param name="propertyName">属性名称</param>
+        /// <param name="contextPath">上下文路径（用于日志）</param>
+        /// <returns>属性值，失败时返回null</returns>
+        private object? GetPropertyValueSafely(object target, string propertyName, string contextPath)
+        {
+            if (target == null)
+            {
+                _logger.LogWarning("Target object is null when accessing property '{PropertyName}' in path: {Path}",
+                    propertyName, contextPath);
+                return null;
+            }
+
+            var propertyInfo = target.GetType().GetProperty(propertyName,
+                System.Reflection.BindingFlags.IgnoreCase |
+                System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.Instance);
+
+            if (propertyInfo == null)
+            {
+                // 处理特殊情况如List.Count
+                if (propertyName.Equals("Count", StringComparison.OrdinalIgnoreCase) &&
+                    target is System.Collections.ICollection collection)
+                {
+                    return collection.Count;
+                }
+
+                _logger.LogWarning("Property '{PropertyName}' not found on type '{TypeName}' for path: {Path}",
+                    propertyName, target.GetType().Name, contextPath);
+                return null;
+            }
+
+            try
+            {
+                return propertyInfo.GetValue(target);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting value for property '{PropertyName}' on type '{TypeName}' for path: {Path}",
+                    propertyName, target.GetType().Name, contextPath);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 解析根对象的通用方法
+        /// </summary>
+        /// <param name="rootSegment">根段名称</param>
+        /// <param name="context">游戏上下文</param>
+        /// <param name="path">完整路径（用于日志）</param>
+        /// <returns>解析的根对象</returns>
+        private async Task<object?> ResolveRootObjectAsync(string rootSegment, GameContext context, string path)
+        {
+            switch (rootSegment.ToLowerInvariant())
+            {
+                case "player":
+                    var playerState = context.CurrentGameState.GetPlayerState(context.RequestingPlayerId);
+                    var playerDto = playerState != null ? _mapper.Map<PlayerStateDto>(playerState) : null;
+                    if (playerDto == null)
+                        _logger.LogWarning("Requesting player state not found for path starting with 'player': {Path}", path);
+                    return playerDto;
+
+                case "opponent":
+                    var opponentState = context.CurrentGameState.GetOpponentPlayerState(context.RequestingPlayerId);
+                    var opponentDto = opponentState != null ? _mapper.Map<PlayerStateDto>(opponentState) : null;
+                    if (opponentDto == null)
+                        _logger.LogWarning("Opponent player state not found for path starting with 'opponent': {Path}", path);
+                    return opponentDto;
+
+                case "gamestate":
+                    var gameStateDto = context.CreateSnapshot();
+                    if (gameStateDto == null)
+                        _logger.LogWarning("CurrentGameState is null in GameContext for path: {Path}", path);
+                    return gameStateDto;
+
+                case "allcards":
+                    try
+                    {
+                        var definitions = await _cardRepository.GetAllCardDefinitionsAsync();
+                        _logger.LogDebug("Resolved path 'allcards' to all card definitions ({Count}) for path: {Path}",
+                            definitions.Count(), path);
+                        return definitions.Cast<object>();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error retrieving all card definitions from repository for path: {Path}", path);
+                        return null;
+                    }
+
+                case "triggeringevent":
+                    _logger.LogWarning("Resolving 'triggeringEvent' path is not fully implemented: {Path}", path);
+                    return context.TriggeringEvent;
+
+                case "triggeringcard":
+                    _logger.LogWarning("Resolving 'triggeringCard' path is not fully implemented: {Path}", path);
+                    return null;
+
+                default:
+                    _logger.LogWarning("Unknown root segment in path: {RootSegment} for path: {Path}", rootSegment, path);
+                    return null;
+            }
+        }
+
         // --- End of Helper Methods ---
 
     } // Close class CardQueryExecutor

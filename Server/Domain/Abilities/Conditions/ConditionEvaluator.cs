@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
 {
@@ -24,9 +25,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// 异步评估条件是否满足
         /// </summary>
         /// <param name="config">条件的静态配置</param>
-        /// <param name="context">当前的动态能力上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>如果条件满足，则返回 true；否则返回 false</returns>
-        public async Task<bool> EvaluateAsync(ConditionConfig config, AbilityContext context)
+        public async Task<bool> EvaluateAsync(ConditionConfig config, GameContext context)
         {
             if (config == null)
                 throw new ArgumentNullException(nameof(config));
@@ -43,11 +44,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
                     return false;
                 }
 
-                // 创建条件评估上下文
-                var conditionContext = CreateConditionEvaluationContext(config, context);
-
+                // 直接使用统一的GameContext，不再需要创建单独的条件评估上下文
                 // 使用DSL条件评估器评估表达式
-                var result = await _dslConditionEvaluator.EvaluateDslExpressionAsync(config.Expression, conditionContext);
+                var result = await _dslConditionEvaluator.EvaluateDslExpressionAsync(config.Expression, context);
 
                 _logger.LogDebug("Condition {ConditionId} evaluated to {Result}", config.Id, result);
                 return result;
@@ -60,22 +59,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
             }
         }
 
-        /// <summary>
-        /// 从AbilityContext创建ConditionEvaluationContext
-        /// </summary>
-        /// <param name="config">条件配置</param>
-        /// <param name="context">能力上下文</param>
-        /// <returns>条件评估上下文</returns>
-        private ConditionEvaluationContext CreateConditionEvaluationContext(ConditionConfig config, AbilityContext context)
-        {
-            return new ConditionEvaluationContext
-            {
-                ConditionId = config.Id,
-                RequestingPlayerId = context.RequestingPlayerId,
-                GameState = null, // TODO: 需要从AbilityContext获取GameState实体
-                SourceCard = context.SourceCard
-            };
-        }
+        // CreateConditionEvaluationContext方法已删除，因为现在直接使用统一的GameContext
 
 
     }

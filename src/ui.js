@@ -24,7 +24,8 @@ import {
     // handleMulligan, // Removed import - Now uses submitMulligan
     isValidSpellTarget,
     submitMulligan, // Added import for SignalR mulligan submission
-    endTurnRequest  // Added import for SignalR end turn request
+    endTurnRequest,  // Added import for SignalR end turn request
+    requestPlayabilityCheck // Added import for playability check function
 } from './gameManager.js';
 import { getCardDefinition } from './cardManager.js'; // Import card data helper
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
@@ -585,17 +586,22 @@ function renderGame(currentGameState) { // Remove second parameter
         return;
     }
 
-    // 假设 gameManager.gameState.players 存储了 player 对象
-    const player1 = currentGameState.players.find(p => p && p.id === 'player1'); // FIX: Use p.id
-    const player2 = currentGameState.players.find(p => p && p.id === 'player2'); // FIX: Use p.id
+    // Use dynamic player IDs instead of hardcoded 'player1' and 'player2'
+    // Get the current player (activePlayer) and opponent player (opponentPlayer)
+    const currentPlayer = currentGameState.activePlayer;
+    const opponentPlayer = currentGameState.opponentPlayer;
 
-    if (!player1 || !player2) {
+    if (!currentPlayer || !opponentPlayer) {
         // --- ROO DEBUG: Log early return ---
-        console.error(`%c[DEBUG_RENDER_GAME_CHECKS] renderGame returning early: Could not find player1 or player2 object. Found P1: ${!!player1}, Found P2: ${!!player2}`, 'color: red; font-weight: bold;');
+        console.error(`%c[DEBUG_RENDER_GAME_CHECKS] renderGame returning early: Could not find activePlayer or opponentPlayer object. Found activePlayer: ${!!currentPlayer}, Found opponentPlayer: ${!!opponentPlayer}`, 'color: red; font-weight: bold;');
+        console.log(`%c[DEBUG_RENDER_GAME_CHECKS] Available players:`, 'color: orange;', currentGameState.players?.map(p => ({id: p?.id, isAI: p?.isAI})));
         // --- END ROO DEBUG ---
-        // console.error("UI: Could not find player objects in gameState for rendering.");
         return;
     }
+
+    // For UI consistency, treat currentPlayer as player1 (bottom) and opponentPlayer as player2 (top)
+    const player1 = currentPlayer;   // Current player (bottom of screen)
+    const player2 = opponentPlayer;  // Opponent player (top of screen)
 
     // Call helper functions to render specific parts of the UI using game state and cached elements
 
@@ -874,6 +880,22 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         }
     }
     // --- END Evolve Button ---
+
+    // --- Add Mouse Enter Listener for Playability Check (Hand Context Only) ---
+    if (context === 'hand') {
+        cardDiv.addEventListener('mouseenter', () => {
+            // Only check for the local player's cards
+            const ownerPlayer = getPlayerState(cardInstance.ownerId);
+            if (ownerPlayer && ownerPlayer.id === gameState.localPlayerId) {
+                 // console.log(`UI: Mouse entered card ${cardInstance.uid}. Requesting playability check.`); // Debug log
+                 requestPlayabilityCheck(cardInstance.uid); // Call the function from gameManager
+            }
+        });
+        // Optional: Add mouseleave listener to clear highlights or cache?
+        // cardDiv.addEventListener('mouseleave', () => { ... });
+    }
+    // --- END Mouse Enter Listener ---
+
     return cardDiv;
 }
 
@@ -967,37 +989,104 @@ function renderSpellTargetHighlights(currentGameState) {
     });
 }
 
-// Helper 3: Render Playable Card Highlights (in hand) - ONLY for local player
+// Helper 3: Render Playable Card Highlights (in hand) using Playability Cache - ONLY for local player
 function renderPlayableCardHighlights(currentGameState) {
     const currentPlayerId = getCurrentPlayerId();
-    // <<< FIX: Only highlight if it's the LOCAL player's turn >>>
-    // Use gameState.localPlayerId which should be set during initialization
-    if (currentPlayerId !== gameState.localPlayerId) {
-        // console.log("UI Highlights: Skipping playable card highlights (not local player's turn)."); // Optional debug
-        return; // Do nothing if it's not the local player's turn
-    }
-    // <<< END FIX >>>
 
-    const playerState = getPlayerState(currentPlayerId); // Now guaranteed to be local player
-    // <<< FIX: Check local player's hand element (player1HandEl assumed to be correct) >>>
-    // Ensure the correct hand element and player state are available
+    // Only highlight if it's the LOCAL player's turn and in Main phase
+    if (currentPlayerId !== gameState.localPlayerId || currentGameState.phase !== 'Main') {
+        // console.log("UI Highlights: Skipping playable card highlights (not local player's turn or not Main phase).");
+        return;
+    }
+
+    const playerState = getPlayerState(currentPlayerId);
     if (!playerState || !player1HandEl) {
         console.warn("UI Highlights Error: Missing local player state or hand element for highlights.");
         return;
     }
-    // <<< END FIX >>>
+
+    // console.log("UI Highlights: Applying playable card highlights based on cache..."); // Debug log
 
     playerState.hand.forEach(cardInstance => {
-        if (!cardInstance) return; // Skip if null
-        // Check if the card is playable (based on PP cost AND Game Phase) // MODIFIED comment
-        if (currentGameState.phase === 'Main' && cardInstance.cost <= playerState.pp) { // MODIFIED condition
-            const cardElement = player1HandEl.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
-            if (cardElement) {
+        if (!cardInstance) return;
+
+        const cardElement = player1HandEl.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
+        if (!cardElement) return; // Skip if element not found
+
+        const playabilityInfo = gameState.playabilityCache[cardInstance.uid];
+
+        // Remove previous highlights first
+        cardElement.classList.remove('playable', 'requires-target', 'no-valid-targets', 'can-play-without-target');
+
+        if (playabilityInfo) {
+            // console.log(`UI Highlights: Cache found for ${cardInstance.uid}:`, playabilityInfo); // Debug log
+            if (playabilityInfo.isPlayable) {
                 cardElement.classList.add('playable');
-                // console.log(`UI Highlights: Marked ${cardInstance.name} as playable.`); // Optional debug
+                // console.log(`UI Highlights: Marked ${cardInstance.name} as playable.`);
+
+                if (playabilityInfo.requiresTargetSelection) {
+                    cardElement.classList.add('requires-target');
+                    // console.log(`UI Highlights: Marked ${cardInstance.name} as requires-target.`);
+                    if (!playabilityInfo.hasValidTargets) {
+                        cardElement.classList.add('no-valid-targets');
+                        // console.log(`UI Highlights: Marked ${cardInstance.name} as no-valid-targets.`);
+                        // Optionally add class if it can be played without target anyway
+                        if (playabilityInfo.canPlayWithoutTarget) {
+                             cardElement.classList.add('can-play-without-target');
+                             // console.log(`UI Highlights: Marked ${cardInstance.name} as can-play-without-target.`);
+                        }
+                    }
+                }
+            } else {
+                 // Optionally add a 'not-playable' class or title attribute with FailureReason
+                 cardElement.title = playabilityInfo.failureReason || "不可用"; // Show reason on hover
+                 // console.log(`UI Highlights: Marked ${cardInstance.name} as not playable (Reason: ${playabilityInfo.failureReason}).`);
             }
+        } else {
+            // console.log(`UI Highlights: No cache entry for ${cardInstance.uid}. No highlight applied.`); // Debug log
+            // No highlight if not checked or cache cleared
+            cardElement.title = ''; // Clear any previous failure reason tooltip
         }
     });
+}
+// Helper 4: Update Highlight for a Single Card based on Cache Result
+// Exported function to be called by gameManager when a result arrives.
+export function updateSingleCardHighlight(cardUid, playabilityInfo) {
+    if (!cardUid || !playabilityInfo) {
+        console.warn("UI Update Error: updateSingleCardHighlight called with invalid arguments.", cardUid, playabilityInfo);
+        return;
+    }
+
+    // Find the card element in the player's hand (assuming player 1 is local)
+    const cardElement = player1HandEl?.querySelector(`.card[data-uid="${cardUid}"]`);
+    if (!cardElement) {
+        // console.log(`UI Update: Card element ${cardUid} not found in hand for highlight update.`);
+        return; // Card might not be in hand anymore, or element not rendered yet
+    }
+
+    // console.log(`UI Update: Updating highlights for single card ${cardUid} based on:`, playabilityInfo); // Debug log
+
+    // Remove previous highlights first
+    cardElement.classList.remove('playable', 'requires-target', 'no-valid-targets', 'can-play-without-target');
+    cardElement.title = ''; // Clear tooltip
+
+    // Apply new highlights based on the provided info
+    if (playabilityInfo.isPlayable) {
+        cardElement.classList.add('playable');
+        if (playabilityInfo.requiresTargetSelection) {
+            cardElement.classList.add('requires-target');
+            if (!playabilityInfo.hasValidTargets) {
+                cardElement.classList.add('no-valid-targets');
+                if (playabilityInfo.canPlayWithoutTarget) {
+                    cardElement.classList.add('can-play-without-target');
+                }
+            }
+        }
+    } else {
+        // Not playable, set tooltip
+        cardElement.title = playabilityInfo.failureReason || "不可用";
+    }
+     // console.log(`UI Update: Final classes for ${cardUid}:`, cardElement.classList); // Debug log
 }
 
 // Helper 4: Render Attack Selection & Target Highlights
@@ -1435,47 +1524,64 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
 
     // Check if the card is owned by the current player and is in their hand
     if (cardInstance.ownerId === currentPlayerId && cardInstance.location === 'hand') {
-        // Conditional logging for phase/pp check remains inside if needed later, but primary log moved out.
-        // console.log(`UI_HAND_CLICK_DBG: Phase Check: gameState.phase (${gameState.phase}) === 'Main' -> ${gameState.phase === 'Main'}`);
-        // console.log(`UI_HAND_CLICK_DBG: PP Check: playerState.pp (${playerState?.pp}) >= cardInstance.cost (${cardInstance.cost}) -> ${playerState && playerState.pp >= cardInstance.cost}`);
+        console.log(`UI: Clicked on hand card ${cardInstance.uid}. Checking playability cache.`);
+        const playabilityInfo = gameState.playabilityCache[cardInstance.uid];
 
-        // console.log(`UI: Attempting to interact with hand card ${cardInstance.name} (Cost: ${cardInstance.cost}, Player PP: ${playerState?.pp})`);
-
-        // Get card definition to check if it requires target
-        // Use cardInstance.cardId (linking to CardDefinition) instead of cardInstance.id (which might be undefined)
-        const cardData = getCardDefinition(cardInstance.id); // FIX: Use lowercase 'id' property
-        if (!cardData) {
-            // Updated error log to show the correct property we tried to use
-            // console.error(`UI: Cannot find card data using cardId: ${cardInstance.cardId} (from cardInstance UID: ${cardInstance.uid}) in handleCardClick`);
-            alert(`错误：找不到卡牌定义 (ID: ${cardInstance.cardId})！`); // Show the attempted ID in the alert
-            return; // Stop if card data is missing
+        if (!playabilityInfo || !playabilityInfo.isPlayable) {
+            console.warn(`UI: Card ${cardInstance.name} (${cardInstance.uid}) is not playable according to cache or cache miss. Reason: ${playabilityInfo?.failureReason}`);
+            alert(playabilityInfo?.failureReason || "该卡牌现在无法使用。"); // Show reason from cache or generic message
+            return; // Stop processing if not playable
         }
 
-        // Check PP cost
-        // Check PP cost AND Phase // MODIFIED Condition
-        if (gameState.phase === 'Main' && playerState && playerState.pp >= cardInstance.cost) { // ADDED phase check
-            // Check if the card requires a target
-            if (cardData.requiresTarget) {
-                // --- Initiate Spell Targeting ---
-                startSpellTargeting(cardInstance.uid); // Use helper function
-                // console.log(`UI: Initiating targeting mode for spell: ${cardInstance.name} (UID: ${targetingSpellUid})`); // Log still uses module var for confirmation
-                renderGame(gameState); // Re-render immediately to show targeting UI (highlights etc.)
+        // Card is playable, check if it requires a target
+        if (playabilityInfo.requiresTargetSelection) {
+            if (playabilityInfo.hasValidTargets) {
+                console.log(`UI: Card ${cardInstance.name} requires target. Entering targeting mode.`);
+                startSpellTargeting(cardInstance.uid); // Enter targeting mode (reuse spell targeting flag/logic)
+                // Highlight the source card and potential targets based on ValidTargetIds from cache
+                clearSelectionHighlights();
+                // --- Highlight Source Card ---
+                const sourceCardElement = player1HandEl?.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
+                if (sourceCardElement) sourceCardElement.classList.add('targeting-spell'); // Reuse class
+                // --- Highlight Valid Targets ---
+                playabilityInfo.validTargetIds?.forEach(targetUid => {
+                    // Find target element (could be field card or leader avatar)
+                    let targetElement = document.querySelector(`.card[data-uid="${targetUid}"]`); // Try finding card first
+                    if (!targetElement) {
+                         // If not found as card, check if it's a leader UID
+                         const player1LeaderUid = getPlayerState('player1')?.leaderCard?.uid;
+                         const player2LeaderUid = getPlayerState('player2')?.leaderCard?.uid;
+                         if (targetUid === player1LeaderUid) {
+                             targetElement = document.getElementById('player1-avatar');
+                         } else if (targetUid === player2LeaderUid) {
+                             targetElement = document.getElementById('player2-avatar');
+                         }
+                    }
+
+                    if (targetElement) {
+                        targetElement.classList.add('targetable-spell'); // Reuse class
+                    } else {
+                         console.warn(`UI Highlights: Could not find element for target UID ${targetUid} during targeting initiation.`);
+                    }
+                });
+                gameContainerEl?.classList.add('targeting-active'); // Add global indicator
                 // IMPORTANT: Do NOT call playCard here yet! Wait for target selection click.
             } else {
-                // --- Play Non-Targeted Card ---
-                // console.log(`UI: Playing non-targeted card ${cardInstance.name} (UID: ${cardInstance.uid})`);
-                playCard(cardInstance.uid); // Pass only card UID for non-targeted play
-                // UI update will be triggered by gameManager after state changes
+                 // Requires target, but none available
+                 if (playabilityInfo.canPlayWithoutTarget) {
+                     console.log(`UI: Card ${cardInstance.name} requires target, none available, but can play without target. Playing directly.`);
+                     playCard(cardInstance.uid, null); // Play without target UID
+                 } else {
+                     console.warn(`UI: Card ${cardInstance.name} requires target, but no valid targets available and cannot play without target.`);
+                     alert("该卡牌需要目标，但当前没有可用的目标。");
+                 }
             }
-        } else if (gameState.phase !== 'Main') { // ADDED Else If block for feedback
-            console.log("UI: Card click rejected - Not in Main phase.");
-            alert("只能在你的回合主阶段出牌！"); // Provide feedback if clicked outside Main phase
         } else {
-            // Original 'else' for insufficient PP
-            // console.log("UI: Not enough PP to play card.");
-            alert("PP 不足，无法使用此卡牌！"); // User feedback
+            // Card is playable and does not require a target, play directly
+            console.log(`UI: Card ${cardInstance.name} is playable and does not require target. Playing directly.`);
+            playCard(cardInstance.uid); // Call gameManager function without target
         }
-    } // Closes if block starting on line 743 (hand card check)
+    } // Closes if block for hand card check
     // Handle click on own field card
     else if (cardInstance.ownerId === currentPlayerId && cardInstance.location === 'field') {
         // Initiate Attack with Own Field Card (ONLY if not currently targeting a spell AND unit can attack)

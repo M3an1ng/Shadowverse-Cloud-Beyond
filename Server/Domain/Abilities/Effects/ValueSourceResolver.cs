@@ -2,6 +2,12 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Linq; // Added for LINQ operations
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing;
+using ShadowverseBeyond.Server.Domain.Interfaces;
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 {
@@ -12,16 +18,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
     public class ValueSourceResolver : IValueSourceResolver
     {
         private readonly ILogger<ValueSourceResolver> _logger;
+        private readonly DslEvaluator _dslEvaluator;
+        private readonly DslExpressionParser _dslParser;
+        private readonly IFunctionRegistry _functionRegistry;
+        private readonly ICardRepository _cardRepository;
 
-        public ValueSourceResolver(ILogger<ValueSourceResolver> logger)
+        public ValueSourceResolver(
+            ILogger<ValueSourceResolver> logger,
+            DslEvaluator dslEvaluator,
+            DslExpressionParser dslParser,
+            IFunctionRegistry functionRegistry,
+            ICardRepository cardRepository)
         {
             _logger = logger;
+            _dslEvaluator = dslEvaluator;
+            _dslParser = dslParser;
+            _functionRegistry = functionRegistry;
+            _cardRepository = cardRepository;
         }
 
         /// <summary>
         /// 解析值源
         /// </summary>
-        public async Task<object> ResolveAsync(ValueConfig valueConfig, ValueResolutionContext context)
+        public async Task<object> ResolveAsync(ValueConfig valueConfig, GameContext context)
         {
             try
             {
@@ -44,7 +63,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 解析为整数
         /// </summary>
-        public async Task<int> ResolveAsIntAsync(ValueConfig valueConfig, ValueResolutionContext context)
+        public async Task<int> ResolveAsIntAsync(ValueConfig valueConfig, GameContext context)
         {
             var value = await ResolveAsync(valueConfig, context);
             return ConvertToInt(value);
@@ -53,7 +72,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 解析为字符串
         /// </summary>
-        public async Task<string> ResolveAsStringAsync(ValueConfig valueConfig, ValueResolutionContext context)
+        public async Task<string> ResolveAsStringAsync(ValueConfig valueConfig, GameContext context)
         {
             var value = await ResolveAsync(valueConfig, context);
             return value?.ToString() ?? string.Empty;
@@ -62,7 +81,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 解析为布尔值
         /// </summary>
-        public async Task<bool> ResolveAsBoolAsync(ValueConfig valueConfig, ValueResolutionContext context)
+        public async Task<bool> ResolveAsBoolAsync(ValueConfig valueConfig, GameContext context)
         {
             var value = await ResolveAsync(valueConfig, context);
             return ConvertToBool(value);
@@ -79,7 +98,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 解析动态值
         /// </summary>
-        private async Task<object> ResolveDynamicValue(ValueConfig valueConfig, ValueResolutionContext context)
+        private async Task<object> ResolveDynamicValue(ValueConfig valueConfig, GameContext context)
         {
             var source = valueConfig.DynamicSource;
 
@@ -97,7 +116,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             return objectType switch
             {
                 "source" => GetCardProperty(context.SourceCard, property),
-                "target" => GetCardProperty(context.TargetCard, property),
+                /// TODO: Target应该是列表，不能直接使用GetCardProperty
+                "target" => GetCardProperty(context.CurrentItem as CardInstance, property), // Use CurrentItem as target
                 "player" => await GetPlayerProperty(context, property),
                 "game" => await GetGameProperty(context, property),
                 "event" => GetEventProperty(context.TriggeringEvent, property),
@@ -106,49 +126,64 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         }
 
         /// <summary>
-        /// 解析公式值
+        /// 解析公式值 - 使用DSL求值器
         /// </summary>
-        private async Task<object> ResolveFormulaValue(ValueConfig valueConfig, ValueResolutionContext context)
+        private async Task<object> ResolveFormulaValue(ValueConfig valueConfig, GameContext context)
         {
-            // TODO: 实现公式解析器
-            // 这里可以使用表达式解析库或自定义解析器
             var formula = valueConfig.Formula;
 
             if (string.IsNullOrEmpty(formula))
             {
-                await Task.CompletedTask; // Suppress CS1998
                 return 0;
             }
 
-            // 简单的公式解析示例
-            // 实际实现应该更复杂，支持各种数学运算和函数
-            if (formula.Contains("source.attack"))
+            try
             {
-                var sourceAttack = GetCardProperty(context.SourceCard, "attack");
-                var formulaValue = formula.Replace("source.attack", sourceAttack.ToString());
+                // 解析DSL表达式
+                var expressionAst = _dslParser.ParseExpression(formula);
+                if (expressionAst == null)
+                {
+                    _logger.LogWarning("Failed to parse DSL formula: {Formula}", formula);
+                    return 0;
+                }
 
-                // 这里应该使用真正的表达式求值器
-                // 暂时返回简单的值
-                await Task.CompletedTask; // Suppress CS1998
-                return ConvertToInt(sourceAttack);
+                // 直接使用DslEvaluator的GameContext重载方法
+                var result = await _dslEvaluator.EvaluateAsync(expressionAst, context);
+
+                if (result.IsSuccess)
+                {
+                    _logger.LogDebug("DSL formula '{Formula}' evaluated successfully to: {Result}",
+                        formula, result.Value);
+                    return result.Value ?? 0;
+                }
+                else
+                {
+                    _logger.LogWarning("DSL formula evaluation failed: {Formula}, Errors: {Errors}",
+                        formula, string.Join("; ", result.Errors));
+                    return 0;
+                }
             }
-
-            await Task.CompletedTask; // Suppress CS1998
-            return 0;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error evaluating DSL formula: {Formula}", formula);
+                return 0;
+            }
         }
+
+
 
         /// <summary>
         /// 解析变量值
         /// </summary>
-        private object ResolveVariableValue(ValueConfig valueConfig, ValueResolutionContext context)
+        private object ResolveVariableValue(ValueConfig valueConfig, GameContext context)
         {
             var variableName = valueConfig.DynamicSource;
 
             if (string.IsNullOrEmpty(variableName))
                 return 0;
 
-            // Use TryGetValue for dictionary access
-            return context.Variables.TryGetValue(variableName, out var value) ? value : 0;
+            // Use TryGetValue for dictionary access from TemporaryVariables
+            return context.TemporaryVariables.TryGetValue(variableName, out var value) ? value : 0;
         }
 
         /// <summary>
@@ -175,9 +210,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 获取玩家属性
         /// </summary>
-        private async Task<object> GetPlayerProperty(ValueResolutionContext context, string property)
+        private async Task<object> GetPlayerProperty(GameContext context, string property)
         {
-            var player = context.SourcePlayerId == context.CurrentGameState.Player1.PlayerId
+            var player = context.RequestingPlayerId == context.CurrentGameState.Player1.PlayerId
                 ? context.CurrentGameState.Player1
                 : context.CurrentGameState.Player2;
 
@@ -198,12 +233,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 获取游戏属性
         /// </summary>
-        private async Task<object> GetGameProperty(ValueResolutionContext context, string property)
+        private async Task<object> GetGameProperty(GameContext context, string property)
         {
             return property.ToLower() switch
             {
                 "turn" => context.CurrentGameState.TurnNumber,
-                "currentplayerid" => context.CurrentGameState.CurrentTurnPlayerId,
+                "currentplayerid" => context.CurrentGameState.CurrentPlayerId,
                 "phase" => context.CurrentGameState.Phase.ToString(),
                 "status" => context.CurrentGameState.Status.ToString(),
                 _ => await Task.FromResult(0)
@@ -219,6 +254,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 return 0;
 
             // TODO: 根据事件类型解析属性
+            // 根据路径名解析Effect中的参数即可，效果参数放置在GameContext中的ResolvedParameters字典下
             // 这里需要根据具体的事件类型来实现
             return 0;
         }

@@ -9,7 +9,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public class AttackDeclaredEventDto : GameEventDto
     {
         // Constructor added to fix CS0506 and initialize properties
-        public AttackDeclaredEventDto(string playerId, string attackerUid, string targetUid)
+        public AttackDeclaredEventDto(Guid playerId, string attackerUid, string targetUid)
             : base(playerId, "AttackDeclared") // Call base constructor
         {
             AttackerUid = attackerUid;

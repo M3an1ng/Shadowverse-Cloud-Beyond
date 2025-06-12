@@ -1,5 +1,6 @@
 // File: Server/Domain/Entities/GameState.cs
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos; // Added for DTO types
 using ShadowverseBeyond.Server.Dtos.Enums; // For GameStatus, GamePhase
 using System.Collections.Generic;
@@ -17,48 +18,60 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     /// </summary>
     public class GameState
     {
-        public string GameId { get; set; } = string.Empty;
-        public GameStatus Status { get; set; } = GameStatus.Starting; // Use Starting as initial status
+        public string GameId { get; set; }
+        public GameStatus Status { get; set; } = GameStatus.Starting;
         public GamePhase Phase { get; set; } = GamePhase.Mulligan;
-        public int TurnNumber { get; set; } = 0;
-        public string CurrentTurnPlayerId { get; set; } = string.Empty; // ID of the player whose turn it is
 
-        // Use actual PlayerState class
-        public PlayerState Player1 { get; set; } // Needs proper initialization
-        public PlayerState Player2 { get; set; } // Needs proper initialization
+        // TODO: 移除全局回合数，使用PlayerState.TurnNumber
+        public int TurnNumber { get; set; } = 0; // Global turn counter (consider if needed vs player-specific turns)
+        public Guid? CurrentPlayerId { get; set; } // Changed from string? to Guid?
+        public Guid? FirstPlayerId { get; set; } // Changed from string? to Guid?
+        public Guid? WinnerId { get; set; } // Changed from string? to Guid?
+        public string? GameMessage { get; set; } // Added
 
-        // Constructor requiring GameId
-        public GameState(string gameId)
+        // Keep direct references to players for easier access in game logic
+        public PlayerState Player1 { get; set; }
+        public PlayerState Player2 { get; set; }
+
+        // Derived property for convenience, especially for DTO mapping
+        public bool IsGameOver => Status == GameStatus.Finished;
+
+        /// <summary>
+        /// Constructor requiring essential game setup information.
+        /// </summary>
+        public GameState(string gameId, PlayerState player1, PlayerState player2, Guid firstPlayerId) // Changed firstPlayerId type to Guid
         {
             GameId = gameId;
-            // Initialize player states using the actual PlayerState constructor
-            Player1 = new PlayerState($"{gameId}_Player1"); // Assuming PlayerState has a constructor taking PlayerId
-            Player2 = new PlayerState($"{gameId}_Player2"); // Assuming PlayerState has a constructor taking PlayerId
-            // Note: Leader initialization (Player1Leader, Player2Leader) should happen
-            // in the service layer (e.g., GameService) after creating the GameState,
-            // as it likely involves fetching leader definitions based on player selection.
+            Player1 = player1 ?? throw new ArgumentNullException(nameof(player1));
+            Player2 = player2 ?? throw new ArgumentNullException(nameof(player2));
+            FirstPlayerId = firstPlayerId; // Assign Guid directly
+            CurrentPlayerId = firstPlayerId; // Assign Guid directly
+            Status = GameStatus.Starting; // Initial status
+            Phase = GamePhase.Mulligan;   // Initial phase
+            TurnNumber = 0;               // Initial turn
         }
 
-        // Parameterless constructor often needed for ORMs or deserialization
+        // Parameterless constructor might be needed for ORMs or specific deserialization scenarios.
+        // Ensure it initializes properties appropriately or mark required properties.
         private GameState()
         {
-            // Ensure non-nullable properties are initialized if using parameterless constructor
             GameId = string.Empty;
-            CurrentTurnPlayerId = string.Empty;
-            // Use actual PlayerState constructor
-            Player1 = new PlayerState("Default_P1"); // Needs parameterless constructor or null handling in PlayerState if this path is used
-            Player2 = new PlayerState("Default_P2");
-            // Player1Leader/Player2Leader remain null! here, expecting external initialization if this constructor path is used.
+            // Initialize Player1 and Player2 to avoid null reference issues if this constructor is used.
+            // Consider if a default/empty PlayerState is appropriate or if this constructor should be avoided.
+            // Use the public constructor with new Guids for default initialization.
+            Player1 = new PlayerState(Guid.NewGuid()); // Use Guid constructor
+            Player2 = new PlayerState(Guid.NewGuid()); // Use Guid constructor
         }
 
-        // Helper Methods Added
+
+        // Helper Methods
 
         /// <summary>
         /// Gets the PlayerState object for the specified player ID.
         /// </summary>
         /// <param name="playerId">The ID of the player.</param>
         /// <returns>The PlayerState if found; otherwise, null.</returns>
-        public PlayerState? GetPlayerState(string playerId)
+        public PlayerState? GetPlayerState(Guid playerId)
         {
             if (Player1?.PlayerId == playerId) return Player1;
             if (Player2?.PlayerId == playerId) return Player2;
@@ -70,7 +83,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         /// <param name="playerId">The ID of the player whose opponent is requested.</param>
         /// <returns>The opponent's PlayerState if found; otherwise, null.</returns>
-        public PlayerState? GetOpponentPlayerState(string playerId)
+        public PlayerState? GetOpponentPlayerState(Guid playerId)
         {
             if (Player1?.PlayerId == playerId) return Player2;
             if (Player2?.PlayerId == playerId) return Player1;
@@ -78,40 +91,84 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         /// <summary>
-        /// Converts this GameState domain entity to its corresponding Data Transfer Object (DTO).
+        /// 执行回合结束操作
         /// </summary>
-        /// <returns>A GameStateDto representing the current game state.</returns>
-        public GameStateDto ToDto()
+        /// <param name="endingPlayerId">结束回合的玩家ID</param>
+        /// <returns>生成的事件列表</returns>
+        public List<IGameEvent> EndTurn(Guid endingPlayerId)
         {
-            // Assume PlayerState has a ToDto() method
-            var playerDtos = new List<PlayerStateDto>();
-            if (Player1 != null)
+            var events = new List<IGameEvent>();
+
+            // 1. 获取当前玩家
+            var currentPlayer = GetPlayerState(endingPlayerId);
+            if (currentPlayer == null)
             {
-                playerDtos.Add(Player1.ToDto()); // Assumes PlayerState.ToDto() exists
-            }
-            if (Player2 != null)
-            {
-                playerDtos.Add(Player2.ToDto()); // Assumes PlayerState.ToDto() exists
+                throw new ArgumentException($"Player not found: {endingPlayerId}");
             }
 
-            // Use the correct GameStatus enum member
-            bool isGameOver = Status == GameStatus.Finished;
-            // Cannot determine winner solely from GameState entity currently.
-            // Winner determination logic likely resides in GameService or needs WinnerId added to GameState.
-            string? winnerId = null; // Set to null for now
+            // 2. 执行当前玩家的回合结束操作
+            var playerEndTurnEvents = currentPlayer.EndTurn();
+            events.AddRange(playerEndTurnEvents);
 
-            return new GameStateDto
+            // 3. 切换到下一个玩家
+            var nextPlayer = GetOpponentPlayerState(endingPlayerId);
+            if (nextPlayer != null)
             {
-                GameId = this.GameId,
-                CurrentPlayerId = this.CurrentTurnPlayerId,
-                Phase = this.Phase,
-                // FirstPlayerId = ??? // Cannot determine from current GameState properties, leave empty for now
-                GameStatus = this.Status,
-                Players = playerDtos,
-                IsGameOver = isGameOver,
-                WinnerId = winnerId,
-                GameMessage = null // Or set based on Phase/Status if needed
-            };
+                CurrentPlayerId = nextPlayer.PlayerId;
+
+                // 4. 增加回合数
+                TurnNumber++;
+
+                // 5. 执行下一个玩家的回合开始操作
+                var nextPlayerStartTurnEvents = StartTurn(nextPlayer);
+                events.AddRange(nextPlayerStartTurnEvents);
+            }
+
+            return events;
         }
+
+        /// <summary>
+        /// 执行回合开始操作
+        /// </summary>
+        /// <param name="startingPlayer">开始回合的玩家</param>
+        /// <returns>生成的事件列表</returns>
+        private List<IGameEvent> StartTurn(PlayerState startingPlayer)
+        {
+            var events = new List<IGameEvent>();
+
+            // 使用PlayerState的领域方法执行回合开始
+            var turnStartEvents = startingPlayer.StartTurn(TurnNumber);
+            events.AddRange(turnStartEvents);
+
+            return events;
+        }
+
+        /// <summary>
+        /// 执行指定玩家的回合开始操作（公共方法）
+        /// </summary>
+        /// <param name="startingPlayerId">开始回合的玩家ID</param>
+        /// <returns>生成的事件列表</returns>
+        public List<IGameEvent> StartPlayerTurn(Guid startingPlayerId)
+        {
+            var events = new List<IGameEvent>();
+
+            // 获取开始回合的玩家
+            var startingPlayer = GetPlayerState(startingPlayerId);
+            if (startingPlayer == null)
+            {
+                throw new ArgumentException($"Player not found: {startingPlayerId}");
+            }
+
+            // 设置当前玩家
+            CurrentPlayerId = startingPlayerId;
+
+            // 执行回合开始操作
+            var turnStartEvents = StartTurn(startingPlayer);
+            events.AddRange(turnStartEvents);
+
+            return events;
+        }
+
+        // Removed ToDto() method as mapping is now handled by AutoMapper (GameStateProfile)
     } // End of GameState class
 } // End of namespace

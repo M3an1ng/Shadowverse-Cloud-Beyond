@@ -1,7 +1,7 @@
 // File: ShadowverseBeyond.Server.Dtos.SignalR.GameEventDto.cs
 using System;
 
-namespace ShadowverseBeyond.Server.Dtos.SignalR
+namespace ShadowverseBeyond.Server.Dtos.SignalR.Events // Corrected namespace
 {
     /// <summary>
     /// Base class for all game events sent from server to client via SignalR.
@@ -18,14 +18,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR
         /// <summary>
         /// The PlayerId of the player who initiated the action causing this event.
         /// </summary>
-        public string SourcePlayerId { get; protected set; }
+        public Guid SourcePlayerId { get; protected set; }
 
         /// <summary>
         /// Timestamp when the event occurred on the server (UTC).
         /// </summary>
         public DateTime TimestampUtc { get; protected set; }
 
-        protected GameEventDto(string sourcePlayerId, string type) // Added sourcePlayerId parameter
+        protected GameEventDto(Guid sourcePlayerId, string type) // Added sourcePlayerId parameter
         {
             SourcePlayerId = sourcePlayerId; // Set the new property
             Type = type;

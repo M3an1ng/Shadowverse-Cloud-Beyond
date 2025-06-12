@@ -11,14 +11,14 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
         /// The unique identifier (UID) of the card instance being played from the hand.
         /// Using string for flexibility, but could be Guid if UIDs are Guids.
         /// </summary>
-        public string CardUid { get; set; } = string.Empty;
+        public Guid CardUid { get; set; } = Guid.Empty;
 
         /// <summary>
         /// The unique identifier (UID) of the target, if the card requires one (e.g., targeted spell or Fanfare effect).
         /// Can be a unit UID or a player/leader identifier (e.g., "Player1Leader", "Player2Leader").
         /// Null or empty if no target is required or selected.
         /// </summary>
-        public string? TargetUid { get; set; }
+        public Guid? TargetUid { get; set; }
 
         // Potential future additions:
         // public int? SelectedOption { get; set; } // For cards with choices

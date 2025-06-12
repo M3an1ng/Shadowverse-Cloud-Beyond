@@ -10,7 +10,6 @@
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging;
 using System.Text.Json; // Added for JSON Serialization in logging
 using ShadowverseBeyond.Server.Models; // Add using for GameActionContext
 using ShadowverseBeyond.Server.Dtos.SignalR; // Added for base GameEventDto
@@ -20,11 +19,12 @@ using ShadowverseBeyond.Server.Dtos;            // GameStateDto etc.
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Specific Action DTOs
 using ShadowverseBeyond.Server.Exceptions; // GameLogicException
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
+using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState
+using AutoMapper; // Added for IMapper
 using System;
 using System.Collections.Generic; // List<> for events
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory; // Added for Idempotency Check
-using System.Collections.Generic; // List<> - Although not directly used here, might be needed for other methods
 
 // Corrected Namespace
 namespace ShadowverseBeyond.Server.Hubs
@@ -39,6 +39,7 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly ILogger<GameHub> _logger;
         private readonly IMemoryCache _memoryCache; // Added for Idempotency Check
         private readonly IClientMethodMapper _clientMethodMapper; // ADDED
+        private readonly IMapper _mapper; // Added for Entity to DTO mapping
 
         /// <summary>
         /// Initializes a new instance of the GameHub class.
@@ -47,12 +48,14 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <param name="logger">The logger instance.</param>
         /// <param name="memoryCache">The memory cache instance for idempotency checks.</param> // Added param doc
         /// <param name="clientMethodMapper">The service to map event types to client method names.</param> // ADDED
-        public GameHub(IGameService gameService, ILogger<GameHub> logger, IMemoryCache memoryCache, IClientMethodMapper clientMethodMapper) // REMOVED IAiService param, ADDED clientMethodMapper
+        /// <param name="mapper">The AutoMapper instance for Entity to DTO conversion.</param> // Added param doc
+        public GameHub(IGameService gameService, ILogger<GameHub> logger, IMemoryCache memoryCache, IClientMethodMapper clientMethodMapper, IMapper mapper) // Added mapper parameter
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache)); // Added assignment
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // ADDED assignment
+            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
             _logger.LogInformation("<<<<< GameHub INSTANCE CREATED >>>>>"); // Existing log
         }
 
@@ -81,25 +84,25 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.CardUid);
                 // Removed extraneous braces {} that previously wrapped lines 63-80
 
-                // Create context, delegate to core game logic service, and broadcast collected events
-                var context = new GameActionContext();
-                await _gameService.PlayCardAsync(gameId.ToString(), playerId, actionDto, context); // Pass context
-
-                // Log message below already correctly used CardUid
-                _logger.LogInformation("Player {PlayerId} successfully executed PlayCard {CardUid} in Game {GameId}. Broadcasting {EventCount} events.",
-                    playerId, gameId, actionDto.CardUid, context.Events.Count); // Use context.Events.Count
-
-                // Broadcast events collected by the service
-                if (context.Events.Count > 0)
+                // Create PlayerActionWrapper and enqueue the action
+                var wrapper = new PlayerActionWrapper
                 {
-                    string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in context.Events) // Use context.Events
-                    {
-                        // **FIXED: Use specific client methods based on event type**
-                        await BroadcastEventToGroupAsync(groupName, gameEvent); // Use helper
-                    }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after PlayCard.", context.Events.Count, groupName); // Use context.Events.Count
-                }
+                    ActionType = "PlayCard", // Identifier for the action type
+                    PlayerId = Guid.Parse(playerId), // Parse string playerId to Guid
+                    ActionData = actionDto // Pass the original DTO as data
+                    // RequestId and Timestamp default in PlayerActionWrapper constructor
+                };
+
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing PlayCard action for Card {CardUid}.",
+                    playerId, gameId, actionDto.CardUid);
+
+                // Call the new GameService method to enqueue the action
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+
+                _logger.LogInformation("Player {PlayerId} successfully enqueued PlayCard action for Card {CardUid} in Game {GameId}.",
+                    playerId, gameId, actionDto.CardUid);
+
+                // Event broadcasting is now handled by the GameService processing loop.
             } // End of try block
             // Catch block now correctly follows the main try logic
             catch (GameLogicException ex)
@@ -160,116 +163,26 @@ namespace ShadowverseBeyond.Server.Hubs
             try
             {
                 _logger.LogInformation("Player {PlayerId} ending turn in Game {GameId}", playerId, gameId);
-                var endTurnContext = new GameActionContext(); // Create context for EndTurn events
-
-                // Delegate EndTurn to core game logic service
-                _logger.LogInformation("[GameHub:{GameId}] >>>>> PRE-CALL: Attempting to call _gameService.EndTurnAsync for Player {PlayerId}...", gameId, playerId);
-                // Call EndTurnAsync, passing the endTurnContext
-                // M8 Change: Call EndTurnAsync without assignment as it now returns Task (void)
-                await _gameService.EndTurnAsync(gameId.ToString(), playerId, endTurnContext);
-                // M8 Change: Removed logging of EndTurnAsync result tuple as it no longer returns one.
-                _logger.LogInformation("[GameHub:{GameId}] <<<<< POST-CALL: Completed _gameService.EndTurnAsync for Player {PlayerId}. EndTurn Context Events: {EventCount}",
-                   gameId, playerId, endTurnContext.Events.Count); // Log endTurnContext event count
-
-                // --- BUG-014 FIX: Trigger next turn from Hub ---
-                _logger.LogInformation("[GameHub:{GameId}] Determining next player and triggering next turn...", gameId);
-                GameStateDto? currentState = await _gameService.GetGameStateAsync(gameId.ToString()); // Get current state AFTER EndTurnAsync
-                if (currentState == null)
+                // Create PlayerActionWrapper and enqueue the action
+                var wrapper = new PlayerActionWrapper
                 {
-                    _logger.LogError("[GameHub:{GameId}] CRITICAL: Could not retrieve game state after EndTurnAsync for Player {PlayerId}. Cannot proceed with turn transition.", gameId, playerId);
-                    await Clients.Caller.ReceiveError("Critical server error: Failed to retrieve game state after ending turn.");
-                    // Maybe throw an exception or handle more gracefully? For now, log and return.
-                    return;
-                }
+                    ActionType = "EndTurn",
+                    PlayerId = Guid.Parse(playerId), // Parse string playerId to Guid
+                    ActionData = new { RequestId = requestId } // Pass requestId for potential tracking/idempotency in service
+                };
 
-                // Determine the next player ID - Use CurrentPlayerId from the *updated* state after EndTurnAsync
-                string nextPlayerId = currentState.Players.FirstOrDefault(p => p.PlayerId != currentState.CurrentPlayerId)?.PlayerId ?? string.Empty;
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing EndTurn action (RequestId: {RequestId}).",
+                    playerId, gameId, requestId);
 
-                if (string.IsNullOrEmpty(nextPlayerId))
-                {
-                    _logger.LogError("[GameHub:{GameId}] CRITICAL: Could not determine next player ID after Player {CallingPlayerId} ended turn. CurrentPlayerId in State: {CurrentPlayerIdInState}", gameId, playerId, currentState.CurrentPlayerId);
-                    await Clients.Caller.ReceiveError("Critical server error: Could not determine the next player.");
-                    return;
-                }
+                // Call the new GameService method to enqueue the action
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
-                _logger.LogInformation("[GameHub:{GameId}] Next player determined: {NextPlayerId}. Calling StartPlayerTurnAsync...", gameId, nextPlayerId);
+                _logger.LogInformation("Player {PlayerId} successfully enqueued EndTurn action (RequestId: {RequestId}) in Game {GameId}.",
+                    playerId, gameId, requestId);
 
-                // Call StartPlayerTurnAsync to get the full game state DTO for the start of the next turn
-                // M7 V1.1 Change: Remove context argument, capture returned DTO
-                TurnStartedEventDto startTurnEvent = await _gameService.StartPlayerTurnAsync(gameId.ToString(), nextPlayerId);
-                _logger.LogInformation("[GameHub:{GameId}] StartPlayerTurnAsync completed for Player {NextPlayerId}. Received GameStateUpdateEventDto.",
-                                       gameId, nextPlayerId); // Updated log
-
-                // If the next player is AI, trigger their turn execution
-                // M7 V1.1 Change: Check AI status from the returned DTO
-                bool isNextPlayerAi = startTurnEvent?.GameState?.Players.FirstOrDefault(p => p.PlayerId == startTurnEvent.GameState.CurrentPlayerId)?.IsAI ?? false;
-                if (isNextPlayerAi)
-                {
-                    _logger.LogInformation("[GameHub:{GameId}] Next player {NextPlayerId} is AI (determined from DTO). Calling TriggerAiTurnAsync...", gameId, nextPlayerId);
-                    // Trigger AI turn asynchronously (fire and forget for the Hub)
-                    // GameService will handle AI execution and subsequent turn end/start internally
-                    // IMPORTANT: Do NOT await this. The Hub's job is done after triggering.
-                    _ = Task.Run(() => _gameService.TriggerAiTurnAsync(gameId.ToString(), nextPlayerId));
-                    _logger.LogInformation("[GameHub:{GameId}] TriggerAiTurnAsync called for AI Player {NextPlayerId}.", gameId, nextPlayerId);
-                }
-                // --- END BUG-014 FIX ---
-
-                // Broadcast events collected ONLY during EndTurnAsync
-                string groupName = $"Game_{gameId}"; // Define groupName once
-                if (endTurnContext.Events.Count > 0) // Use endTurnContext.Events
-                {
-                    _logger.LogInformation("[GameHub:{GameId}] Broadcasting {EventCount} collected events from EndTurn to group {GroupName}.", gameId, endTurnContext.Events.Count, groupName); // Update log message
-                    int eventIndex = 0;
-                    foreach (var gameEvent in endTurnContext.Events) // Use endTurnContext.Events
-                    {
-                        eventIndex++;
-                        try
-                        {
-                            if (gameEvent == null)
-                            {
-                                _logger.LogWarning("[GameHub:{GameId}] Skipping broadcast for null event at index {Index} from context.", gameId, eventIndex);
-                                continue;
-                            }
-                            string eventType = gameEvent.GetType().Name;
-                            _logger.LogDebug("[GameHub:{GameId}] Broadcasting Context Event #{Index} ({EventType}) to group {GroupName}...", gameId, eventIndex, eventType, groupName);
-                            await BroadcastEventToGroupAsync(groupName, gameEvent);
-                            _logger.LogDebug("[GameHub:{GameId}] Successfully broadcasted Context Event #{Index} ({EventType}) to group {GroupName}.", gameId, eventIndex, eventType, groupName);
-                        }
-                        catch (Exception ex)
-                        {
-                            string eventTypeInfo = gameEvent?.GetType()?.Name ?? "Unknown (event was null)";
-                            _logger.LogError(ex, "[GameHub:{GameId}] --- FAILED to broadcast Context Event #{Index} ({EventTypeInfo}) to group {GroupName} ---", gameId, eventIndex, eventTypeInfo, groupName);
-                        }
-                    }
-                    _logger.LogInformation("[GameHub:{GameId}] Finished broadcasting loop for {EventCount} collected events from EndTurn to group {GroupName}.", gameId, endTurnContext.Events.Count, groupName); // Updated log message
-
-                    // M7 V1.1 Change: Broadcast the GameStateUpdateEventDto received from StartPlayerTurnAsync
-                    if (startTurnEvent != null)
-                    {
-                        _logger.LogInformation("[GameHub:{GameId}] Broadcasting GameStateUpdateEventDto for start of turn {NextPlayerId} to group {GroupName}.", gameId, nextPlayerId, groupName);
-                        await BroadcastEventToGroupAsync(groupName, startTurnEvent);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("[GameHub:{GameId}] StartPlayerTurnAsync returned a null DTO for Player {NextPlayerId}. Cannot broadcast turn start state.", gameId, nextPlayerId);
-                    }
-                }
-                else // No events from EndTurn
-                {
-                    // M7 V1.1 Change: Still broadcast StartTurnEvent even if EndTurn had no events
-                    if (startTurnEvent != null)
-                    {
-                        _logger.LogInformation("[GameHub:{GameId}] Broadcasting GameStateUpdateEventDto for start of turn {NextPlayerId} to group {GroupName} (no EndTurn events).", gameId, nextPlayerId, groupName);
-                        await BroadcastEventToGroupAsync(groupName, startTurnEvent);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("[GameHub:{GameId}] StartPlayerTurnAsync returned a null DTO for Player {NextPlayerId} (no EndTurn events). Cannot broadcast turn start state.", gameId, nextPlayerId);
-                    }
-                }
-
-                // Updated final log message
-                _logger.LogInformation("[GameHub:{GameId}] EndTurn processing completed for Player {PlayerId}. Broadcasted EndTurn events and StartTurn DTO.", gameId, playerId);
+                // Turn transition logic (determining next player, starting their turn, triggering AI)
+                // and event broadcasting are now handled by the GameService processing loop.
+                // Remove all related logic from the Hub method.
 
 
             } // Closing brace for the main try block started at L145
@@ -305,24 +218,24 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting attack: {Attacker} -> {Target}",
                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
 
-                // Create context, delegate to core game logic service, and broadcast collected events
-                var context = new GameActionContext();
-                await _gameService.AttackAsync(gameId.ToString(), playerId, actionDto, context); // Pass context
-
-                _logger.LogInformation("Player {PlayerId} successfully executed Attack in Game {GameId}. Broadcasting {EventCount} events.",
-                                      playerId, gameId, context.Events.Count); // Use context.Events.Count
-
-                // Broadcast events collected by the service
-                if (context.Events.Count > 0)
+                // Create PlayerActionWrapper and enqueue the action
+                var wrapper = new PlayerActionWrapper
                 {
-                    string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in context.Events) // Use context.Events
-                    {
-                        // **FIXED: Use specific client methods based on event type**
-                        await BroadcastEventToGroupAsync(groupName, gameEvent); // Use helper
-                    }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after Attack.", context.Events.Count, groupName); // Use context.Events.Count
-                }
+                    ActionType = "PerformAttack",
+                    PlayerId = Guid.Parse(playerId), // Parse string playerId to Guid
+                    ActionData = actionDto
+                };
+
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing Attack action: {Attacker} -> {Target}.",
+                    playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
+
+                // Call the new GameService method to enqueue the action
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+
+                _logger.LogInformation("Player {PlayerId} successfully enqueued Attack action in Game {GameId}.",
+                    playerId, gameId);
+
+                // Event broadcasting is now handled by the GameService processing loop.
             }
             catch (GameLogicException ex)
             {
@@ -358,24 +271,24 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting to evolve unit {UnitUid}",
                     playerId, gameId, actionDto.UnitUid);
 
-                // Create context, delegate to core game logic service, and broadcast collected events
-                var context = new GameActionContext();
-                await _gameService.EvolveAsync(gameId.ToString(), playerId, actionDto, context); // Pass context
-
-                _logger.LogInformation("Player {PlayerId} successfully executed Evolve on {UnitUid} in Game {GameId}. Broadcasting {EventCount} events.",
-                                       playerId, gameId, actionDto.UnitUid, context.Events.Count); // Use context.Events.Count
-
-                // Broadcast events collected by the service
-                if (context.Events.Count > 0)
+                // Create PlayerActionWrapper and enqueue the action
+                var wrapper = new PlayerActionWrapper
                 {
-                    string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in context.Events) // Use context.Events
-                    {
-                        // **FIXED: Use specific client methods based on event type**
-                        await BroadcastEventToGroupAsync(groupName, gameEvent); // Use helper
-                    }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after Evolve.", context.Events.Count, groupName); // Use context.Events.Count
-                }
+                    ActionType = "PerformEvolve",
+                    PlayerId = Guid.Parse(playerId), // Parse string playerId to Guid
+                    ActionData = actionDto
+                };
+
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing Evolve action for unit {UnitUid}.",
+                    playerId, gameId, actionDto.UnitUid);
+
+                // Call the new GameService method to enqueue the action
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+
+                _logger.LogInformation("Player {PlayerId} successfully enqueued Evolve action for unit {UnitUid} in Game {GameId}.",
+                   playerId, gameId, actionDto.UnitUid);
+
+                // Event broadcasting is now handled by the GameService processing loop.
             }
             catch (GameLogicException ex)
             {
@@ -421,12 +334,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} submitting mulligan in Game {GameId}. Replacing {Count} cards.",
                     playerId, gameId, cardUidsToReplace.Count);
 
-                var context = new GameActionContext(); // Create context
-
-                // Delegate to core game logic service
-                // Note: Ensure IGameService has a corresponding SubmitMulliganAsync method
-                _logger.LogDebug("Attempting to call _gameService.SubmitMulliganAsync for Game {GameId}, Player {PlayerId}", gameId, playerId);
-                // Convert List<string> to List<Guid>, handling potential parse errors
+                // Convert List<string> to List<Guid> first, as this is needed for the ActionData
                 List<Guid> parsedUids = cardUidsToReplace
                     .Select(uidStr => Guid.TryParse(uidStr, out Guid parsedGuid) ? parsedGuid : Guid.Empty) // TryParse, return Guid.Empty on failure
                     .Where(g => g != Guid.Empty) // Filter out Guid.Empty results from failed parses
@@ -439,23 +347,24 @@ namespace ShadowverseBeyond.Server.Hubs
                     _logger.LogWarning("[GameHub:{GameId}] Player {PlayerId} submitted {FailedCount} invalid GUID format(s) during mulligan. Proceeding with valid ones only.", gameId, playerId, failedParses);
                 }
 
-                _logger.LogDebug("Attempting to call _gameService.SubmitMulliganAsync for Game {GameId}, Player {PlayerId} with {GuidCount} parsed GUIDs.", gameId, playerId, parsedUids.Count); // Adjusted log before call
-                await _gameService.SubmitMulliganAsync(gameId.ToString(), playerId, parsedUids, context); // Pass context
-
-                // Broadcast events collected by the service
-                _logger.LogInformation("Player {PlayerId} successfully submitted mulligan in Game {GameId}. Broadcasting {EventCount} events.",
-                                       playerId, gameId, context.Events.Count); // Log context event count
-
-                if (context.Events.Count > 0)
+                // Create PlayerActionWrapper and enqueue the action
+                var wrapper = new PlayerActionWrapper
                 {
-                    string groupName = $"Game_{gameId}";
-                    foreach (var gameEvent in context.Events)
-                    {
-                        await BroadcastEventToGroupAsync(groupName, gameEvent);
-                    }
-                    _logger.LogDebug("Broadcasted {EventCount} events to group {GroupName} after SubmitMulligan.", context.Events.Count, groupName);
-                }
-                // --- AI Trigger logic removed previously, still handled by GameService ---
+                    ActionType = "SubmitMulligan",
+                    PlayerId = Guid.Parse(playerId), // Parse string playerId to Guid
+                    ActionData = new { CardUidsToReplace = parsedUids } // Pass the parsed GUID list
+                };
+
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing SubmitMulligan action with {Count} cards to replace.",
+                    playerId, gameId, parsedUids.Count);
+
+                // Call the new GameService method to enqueue the action
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+
+                _logger.LogInformation("Player {PlayerId} successfully enqueued SubmitMulligan action in Game {GameId}.",
+                    playerId, gameId);
+
+                // Event broadcasting is now handled by the GameService processing loop.
             }
             catch (GameLogicException ex)
             {
@@ -471,6 +380,16 @@ namespace ShadowverseBeyond.Server.Hubs
                 await Clients.Caller.ReceiveError("An unexpected server error occurred during mulligan.");
             }
         }
+        // --- New Method for Playability Check ---
+
+        /// <summary>
+        /// Client invokes this method to check if a specific card in their hand is currently playable.
+        /// Returns the playability status and target information directly to the caller.
+        /// </summary>
+        /// <param name="cardInstanceId">The InstanceId of the card in hand to check.</param>
+        // Removed CheckCardPlayability method (Lines 392-445) as playability is now pushed proactively by the server.
+
+        // --- Connection Management ---
 
         // --- Connection Management ---
 
@@ -493,7 +412,10 @@ namespace ShadowverseBeyond.Server.Hubs
                 // Optional: Request initial state from GameService and send to caller
                 try
                 {
-                    GameStateDto? currentState = await _gameService.GetOrCreateGameStateAsync(gameId.ToString()); // Use the new method, remove playerId arg
+                    // Parse playerId to Guid and pass it to GetOrCreateGameStateAsync
+                    Guid playerGuid = Guid.Parse(playerId);
+                    GameState? currentStateEntity = await _gameService.GetOrCreateGameStateAsync(gameId.ToString(), playerGuid); // Pass playerId
+                    GameStateDto? currentState = currentStateEntity != null ? _mapper.Map<GameStateDto>(currentStateEntity) : null;
                     if (currentState != null)
                     {
                         _logger.LogInformation("Sending initial game state to Player {PlayerId} in Game {GameId}", playerId, gameId);
@@ -603,6 +525,8 @@ namespace ShadowverseBeyond.Server.Hubs
             await _clientMethodMapper.BroadcastEventToGroupAsync(groupName, gameEvent);
             // The mapper's implementation should handle its own logging and error handling.
         }
+
+
 
         /// <summary>
         /// Extracts GameId and PlayerId from the current Hub connection context.

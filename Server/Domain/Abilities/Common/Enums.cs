@@ -6,11 +6,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     public enum AbilityType
     {
         /// <summary>
-        /// 关键字能力（如Rush, Storm, Ward等）
-        /// </summary>
-        Keyword,
-
-        /// <summary>
         /// 触发型能力（如Fanfare, LastWords等）
         /// </summary>
         Triggered,
@@ -23,7 +18,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary>
         /// 激活型能力
         /// </summary>
-        Activated
+        Activated,
+
+        /// <summary>
+        /// 关键字能力（如Rush, Taunt, Ward等）
+        /// </summary>
+        Keyword
     }
 
     /// <summary>
@@ -256,42 +256,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     }
 
     /// <summary>
-    /// 目标范围枚举
-    /// </summary>
-    public enum TargetZone
-    {
-        /// <summary>
-        /// 场上
-        /// </summary>
-        Field,
-
-        /// <summary>
-        /// 手牌
-        /// </summary>
-        Hand,
-
-        /// <summary>
-        /// 牌库
-        /// </summary>
-        Deck,
-
-        /// <summary>
-        /// 墓地
-        /// </summary>
-        Graveyard,
-
-        /// <summary>
-        /// 主战者
-        /// </summary>
-        Leader,
-
-        /// <summary>
-        /// 不需要区域
-        /// </summary>
-        None
-    }
-
-    /// <summary>
     /// 选择方法枚举
     /// </summary>
     public enum SelectionMethod
@@ -349,67 +313,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     }
 
     /// <summary>
-    /// 效果分类枚举
-    /// </summary>
-    public enum EffectCategory
-    {
-        /// <summary>
-        /// 立即效果
-        /// </summary>
-        Immediate,
-
-        /// <summary>
-        /// 持续效果
-        /// </summary>
-        Continuous,
-
-        /// <summary>
-        /// 延迟效果
-        /// </summary>
-        Delayed,
-
-        /// <summary>
-        /// 条件效果
-        /// </summary>
-        Conditional,
-
-        /// <summary>
-        /// 触发效果
-        /// </summary>
-        Triggered
-    }
-
-    /// <summary>
-    /// 持续类型枚举
-    /// </summary>
-    public enum DurationType
-    {
-        /// <summary>
-        /// 永久
-        /// </summary>
-        Permanent,
-
-        /// <summary>
-        /// 指定回合数
-        /// </summary>
-        Turns,
-
-        /// <summary>
-        /// 直到条件满足
-        /// </summary>
-        UntilCondition,
-
-        /// <summary>
-        /// 直到游戏结束
-        /// </summary>
-        UntilGameEnd,
-
-        /// <summary>
-        /// 直到离开场地
-        /// </summary>
-        UntilLeaveField
-    }
-    /// <summary>
     /// 排序方向枚举
     /// </summary>
     public enum SortDirection
@@ -423,5 +326,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// 降序
         /// </summary>
         Descending
+    }
+
+    /// <summary>
+    /// Defines how long a buff lasts or how it is removed.
+    /// </summary>
+    public enum DurationType
+    {
+        /// <summary> Lasts indefinitely until explicitly removed or silenced. </summary>
+        Permanent,
+        /// <summary> Removed at the end of the current turn (or specified player's turn). </summary>
+        EndOfTurn,
+        /// <summary> Removed at the start of the next turn (or specified player's turn). </summary>
+        StartOfNextTurn,
+        /// <summary> Removed when a specific game event occurs (e.g., "OnAttack"). Parameter holds event details. </summary>
+        SpecificEvent,
+        /// <summary> Lasts for a specific number of turns. Parameter holds the number. </summary>
+        LimitedTurns,
+        /// <summary> Removed based on a TriggerConfig and optional ConditionConfig. </summary>
+        ConditionalRemoval
     }
 }

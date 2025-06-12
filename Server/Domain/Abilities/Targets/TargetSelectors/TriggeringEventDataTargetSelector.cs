@@ -24,9 +24,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
         /// 从触发事件中提取目标
         /// </summary>
         /// <param name="config">目标配置</param>
-        /// <param name="context">能力上下文</param>
+        /// <param name="context">统一游戏上下文</param>
         /// <returns>目标ID列表</returns>
-        public Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, AbilityContext context)
+        public Task<List<TargetId>> SelectTargetsAsync(TargetConfig config, GameContext context)
         {
             if (context.TriggeringEvent == null)
             {
@@ -52,13 +52,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                     // 从卡牌打出事件中提取被打出的卡牌
                     if (cardPlayedEvent.PlayedCardInstance?.InstanceId != Guid.Empty)
                     {
-                        targets.Add(TargetId.Card(cardPlayedEvent.PlayedCardInstance!.InstanceId.ToString()));
+                        targets.Add(TargetId.Card(cardPlayedEvent.PlayedCardInstance!.InstanceId));
                     }
                     break;
 
                 case DamageDealtEventDto damageEvent:
                     // 从伤害事件中提取受伤害的目标
-                    if (!string.IsNullOrEmpty(damageEvent.TargetUid))
+                    if (damageEvent.TargetUid != Guid.Empty)
                     {
                         targets.Add(TargetId.Card(damageEvent.TargetUid));
                     }
@@ -66,7 +66,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
 
                 case UnitDestroyedEventDto destroyedEvent:
                     // 从单位被破坏事件中提取被破坏的单位
-                    if (!string.IsNullOrEmpty(destroyedEvent.UnitUid))
+                    if (destroyedEvent.UnitUid != Guid.Empty)
                     {
                         targets.Add(TargetId.Card(destroyedEvent.UnitUid));
                     }
@@ -76,19 +76,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                     // 从进化事件中提取进化的卡牌
                     if (evolutionEvent.EvolvedUnitState?.InstanceId != Guid.Empty)
                     {
-                        targets.Add(TargetId.Card(evolutionEvent.EvolvedUnitState!.InstanceId.ToString()));
+                        targets.Add(TargetId.Card(evolutionEvent.EvolvedUnitState!.InstanceId));
                     }
                     break;
 
                 case AttackDeclaredEventDto attackEvent:
                     // 从攻击事件中提取攻击者和被攻击者
-                    if (!string.IsNullOrEmpty(attackEvent.AttackerUid))
+                    if (!string.IsNullOrEmpty(attackEvent.AttackerUid) && Guid.TryParse(attackEvent.AttackerUid, out var attackerId))
                     {
-                        targets.Add(TargetId.Card(attackEvent.AttackerUid));
+                        targets.Add(TargetId.Card(attackerId));
                     }
-                    if (!string.IsNullOrEmpty(attackEvent.TargetUid))
+                    if (!string.IsNullOrEmpty(attackEvent.TargetUid) && Guid.TryParse(attackEvent.TargetUid, out var targetId))
                     {
-                        targets.Add(TargetId.Card(attackEvent.TargetUid));
+                        targets.Add(TargetId.Card(targetId));
                     }
                     break;
 
@@ -96,15 +96,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                     // 从召唤事件中提取被召唤的卡牌
                     if (summonEvent.SummonedCard?.InstanceId != Guid.Empty)
                     {
-                        targets.Add(TargetId.Card(summonEvent.SummonedCard!.InstanceId.ToString()));
+                        targets.Add(TargetId.Card(summonEvent.SummonedCard!.InstanceId));
                     }
                     break;
 
                 case CardDrawnEventDto drawnEvent:
                     // 从抽牌事件中提取被抽取的卡牌
-                    if (!string.IsNullOrEmpty(drawnEvent.DrawnCardUid))
+                    if (!string.IsNullOrEmpty(drawnEvent.DrawnCardUid) && Guid.TryParse(drawnEvent.DrawnCardUid, out var drawnCardId))
                     {
-                        targets.Add(TargetId.Card(drawnEvent.DrawnCardUid));
+                        targets.Add(TargetId.Card(drawnCardId));
                     }
                     break;
 
@@ -139,7 +139,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                     var value = property.GetValue(gameEvent);
                     if (value is Guid guidValue && guidValue != Guid.Empty)
                     {
-                        targets.Add(TargetId.Card(guidValue.ToString()));
+                        targets.Add(TargetId.Card(guidValue));
                     }
                 }
                 // 查找名称包含"InstanceId"或"TargetId"的Guid?属性
@@ -149,7 +149,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                     var value = property.GetValue(gameEvent);
                     if (value is Guid guidValue && guidValue != Guid.Empty)
                     {
-                        targets.Add(TargetId.Card(guidValue.ToString()));
+                        targets.Add(TargetId.Card(guidValue));
                     }
                 }
             }

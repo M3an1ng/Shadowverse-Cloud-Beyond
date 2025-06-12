@@ -8,7 +8,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public class UnitDestroyedEventDto : GameEventDto
     {
         // Constructor
-        public UnitDestroyedEventDto(string sourcePlayerId, string unitUid, string playerId, string reason = "Unknown")
+        public UnitDestroyedEventDto(Guid sourcePlayerId, Guid unitUid, Guid playerId, string reason = "Unknown")
             : base(sourcePlayerId, "UnitDestroyed") // Call base constructor
         {
             UnitUid = unitUid;
@@ -19,12 +19,12 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// <summary>
         /// The unique identifier (UID) of the unit that was destroyed.
         /// </summary>
-        public string UnitUid { get; set; } = string.Empty;
+        public Guid UnitUid { get; set; } = Guid.Empty;
 
         /// <summary>
         /// The identifier of the player who owned the destroyed unit.
         /// </summary>
-        public string PlayerId { get; set; } = string.Empty;
+        public Guid PlayerId { get; set; } = Guid.Empty;
 
         /// <summary>
         /// Optional: Indicates the reason for destruction (e.g., "Combat", "Effect", "Spell").

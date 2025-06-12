@@ -1,3 +1,4 @@
+using ShadowverseBeyond.Server.Dtos; // Added for GameStateDto
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -5,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using AutoMapper; // Added for IMapper
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
 {
@@ -20,14 +22,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         public ConditionConfig Config { get; }
 
         /// <summary>
-        /// DSL条件评估器
+        /// 条件评估器 (使用通用接口)
         /// </summary>
-        private readonly IDslConditionEvaluator _dslConditionEvaluator;
+        private readonly IConditionEvaluator _conditionEvaluator; // Changed type to general interface
 
         /// <summary>
         /// 日志记录器
         /// </summary>
         private readonly ILogger<Condition>? _logger;
+        private readonly IMapper _mapper; // Added IMapper field
 
         /// <summary>
         /// 评估次数
@@ -64,19 +67,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// </summary>
         public List<ConditionEvaluationResult> EvaluationHistory { get; } = new();
 
-        public Condition(ConditionConfig config, IDslConditionEvaluator dslConditionEvaluator, ILogger<Condition>? logger = null)
+        // Constructor now accepts the general IConditionEvaluator and IMapper
+        public Condition(ConditionConfig config, IConditionEvaluator conditionEvaluator, IMapper mapper, ILogger<Condition>? logger = null) // Inject IMapper
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
-            _dslConditionEvaluator = dslConditionEvaluator ?? throw new ArgumentNullException(nameof(dslConditionEvaluator));
+            _conditionEvaluator = conditionEvaluator ?? throw new ArgumentNullException(nameof(conditionEvaluator)); // Store the general evaluator
+            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
             _logger = logger;
         }
 
         /// <summary>
         /// 评估条件
         /// </summary>
-        /// <param name="context">评估上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateAsync(ConditionEvaluationContext context)
+        public async Task<bool> EvaluateAsync(GameContext context)
         {
             if (!IsEnabled)
                 return false;
@@ -96,8 +101,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
 
             try
             {
-                // TODO: 实现实际的条件评估逻辑
-                // 这里应该根据Config.Expression或其他配置来评估条件
+                // 使用IConditionEvaluator进行实际的条件评估
                 result = await EvaluateConditionLogic(context);
             }
             catch (Exception ex)
@@ -134,14 +138,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// <summary>
         /// 实际的条件评估逻辑
         /// </summary>
-        /// <param name="context">评估上下文</param>
+        /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        private async Task<bool> EvaluateConditionLogic(ConditionEvaluationContext context)
+        private async Task<bool> EvaluateConditionLogic(GameContext context)
         {
             try
             {
-                // 使用DSL条件评估器评估表达式
-                var result = await _dslConditionEvaluator.EvaluateDslExpressionAsync(Config.Expression, context);
+                // 直接使用GameContext，IConditionEvaluator已经更新为使用GameContext
+                var result = await _conditionEvaluator.EvaluateAsync(Config, context);
 
                 _logger?.LogDebug("Condition {ConditionId} evaluated to {Result}", Config.Id, result);
                 return result;
@@ -194,46 +198,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
 
     }
 
-    /// <summary>
-    /// 条件评估上下文
-    /// </summary>
-    public class ConditionEvaluationContext
-    {
-        /// <summary>
-        /// 条件ID
-        /// </summary>
-        public string ConditionId { get; set; } = string.Empty;
 
-        /// <summary>
-        /// 请求玩家ID
-        /// </summary>
-        public int RequestingPlayerId { get; set; }
-
-        /// <summary>
-        /// 源卡牌
-        /// </summary>
-        public CardInstance? SourceCard { get; set; }
-
-        /// <summary>
-        /// 触发事件
-        /// </summary>
-        public IGameEvent? TriggeringEvent { get; set; }
-
-        /// <summary>
-        /// 游戏状态
-        /// </summary>
-        public GameState? GameState { get; set; }
-
-        /// <summary>
-        /// 动态变量
-        /// </summary>
-        public Dictionary<string, object> Variables { get; set; } = new();
-
-        /// <summary>
-        /// 评估时间戳
-        /// </summary>
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-    }
 
     /// <summary>
     /// 条件评估结果

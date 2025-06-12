@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     /// </summary>
     public record PlayerStateDto // Remove IBoardEntityState implementation
     {
-        public string PlayerId { get; init; } = string.Empty;
+        public Guid PlayerId { get; init; } = Guid.Empty;
         public bool IsAI { get; init; } // Flag to indicate if the player is AI controlled
         public bool IsFirst { get; set; } // Indicates if this player goes first
 

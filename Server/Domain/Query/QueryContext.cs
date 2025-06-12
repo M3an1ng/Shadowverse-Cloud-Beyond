@@ -6,7 +6,9 @@ namespace ShadowverseBeyond.Server.Domain.Query
 {
     /// <summary>
     /// 为卡牌查询执行提供必要的上下文信息。
+    /// 注意：此类已被GameContext替代，仅作为向后兼容的桥接层保留。
     /// </summary>
+    [Obsolete("Use GameContext instead. This class will be removed in a future version.")]
     public record QueryContext
     {
         /// <summary>

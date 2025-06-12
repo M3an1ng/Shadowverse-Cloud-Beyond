@@ -32,7 +32,7 @@ public class ApplicationDbContext : DbContext
   /// <summary>
   /// Gets or sets the DbSet for CardAbility entities. Represents the CardAbilities table.
   /// </summary>
-  public DbSet<CardAbility> CardAbilities { get; set; } = null!;
+  public DbSet<AbilityDefinition> CardAbilities { get; set; } = null!;
 
   // 用户管理相关实体
   /// <summary>
@@ -122,9 +122,35 @@ public class ApplicationDbContext : DbContext
   /// </summary>
   private void ConfigureCardDefinition(ModelBuilder modelBuilder)
   {
-    modelBuilder.Entity<CardDefinition>().ToTable("CardDefinitions");
+    modelBuilder.Entity<CardDefinition>(entity =>
+    {
+      entity.ToTable("CardDefinitions");
 
-    // Potential future configurations for CardDefinition...
+      // 配置主键不使用自动递增，使用我们提供的 ID 值
+      entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).ValueGeneratedNever();
+
+      // 配置 AbilityIds 属性 - 将 List<long> 转换为 JSON 字符串存储
+      entity.Property(e => e.AbilityIds)
+        .HasConversion(
+          v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+          v => System.Text.Json.JsonSerializer.Deserialize<List<long>>(v, (System.Text.Json.JsonSerializerOptions?)null) ?? new List<long>()
+        );
+
+      // 配置 Keywords 属性 - 将 List<string> 转换为 JSON 字符串存储
+      entity.Property(e => e.Keywords)
+        .HasConversion(
+          v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+          v => v == null ? null : System.Text.Json.JsonSerializer.Deserialize<List<string>>(v, (System.Text.Json.JsonSerializerOptions?)null)
+        );
+
+      // 配置 Tribe 属性 - 将 List<string> 转换为 JSON 字符串存储
+      entity.Property(e => e.Tribe)
+        .HasConversion(
+          v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+          v => v == null ? null : System.Text.Json.JsonSerializer.Deserialize<List<string>>(v, (System.Text.Json.JsonSerializerOptions?)null)
+        );
+    });
   }
 
   /// <summary>
@@ -187,7 +213,7 @@ public class ApplicationDbContext : DbContext
   /// </summary>
   private void ConfigureCardAbility(ModelBuilder modelBuilder)
   {
-    modelBuilder.Entity<CardAbility>(entity =>
+    modelBuilder.Entity<AbilityDefinition>(entity =>
     {
       entity.ToTable("CardAbilities");
       entity.HasKey(e => e.Id);
