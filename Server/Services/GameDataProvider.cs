@@ -285,10 +285,8 @@ namespace ShadowverseBeyond.Server.Services
                         (key, existing) => { existing.Add(ability); return existing; });
 
                     // 按能力ID索引 - 修复类型转换问题
-                    if (long.TryParse(ability.Id, out var abilityIdLong))
-                    {
-                        _abilityConfigsById[abilityIdLong] = ability;
-                    }
+                    // ability.Id is already a long, no need to parse.
+                    _abilityConfigsById[ability.Id] = ability;
                 }
 
                 _logger.LogInformation("加载了 {Count} 个能力配置", allAbilities.Count);

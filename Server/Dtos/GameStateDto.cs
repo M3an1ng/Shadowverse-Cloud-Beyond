@@ -20,7 +20,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     {
         public string GameId { get; init; } = string.Empty; // Identifier for the game session
         public Guid CurrentPlayerId { get; set; } = Guid.Empty; // Whose turn it is
-        // public int TurnNumber { get; set; } // Removed global turn number
+        // 【架构重构】删除全局TurnNumber，前端应从当前玩家的PlayerStateDto.TurnNumber获取回合数
         public GamePhase Phase { get; set; } = GamePhase.Initialization; // Changed type to GamePhase Enum and updated default
 
         public Guid FirstPlayerId { get; set; } = Guid.Empty; // ID of the player who went first
@@ -37,8 +37,8 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         /// Finds a card instance by its instance ID across all zones and players.
         /// </summary>
         /// <param name="instanceId">The instance ID to search for.</param>
-        /// <returns>The card instance if found, null otherwise.</returns>
-        public CardInstance? FindCardInstanceById(string instanceId)
+        /// <returns>The card instance DTO if found, null otherwise.</returns>
+        public CardInstanceDto? FindCardInstanceById(string instanceId)
         {
             if (string.IsNullOrEmpty(instanceId))
                 return null;
@@ -46,56 +46,41 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
             // Search in all players' zones
             foreach (var player in Players)
             {
-                var card = FindCardInPlayer(player, instanceId);
-                if (card != null) return card;
+                var cardDto = FindCardDtoInPlayer(player, instanceId);
+                if (cardDto != null) return cardDto;
             }
 
             return null;
         }
 
-        private CardInstance? FindCardInPlayer(PlayerStateDto player, string instanceId)
+        private CardInstanceDto? FindCardDtoInPlayer(PlayerStateDto player, string instanceId)
         {
             // Search in hand
-            var handCard = player.Hand.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
-            if (handCard != null) return ConvertToCardInstance(handCard);
+            var handCardDto = player.Hand.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
+            if (handCardDto != null) return handCardDto;
 
             // Search in field
-            var fieldCard = player.Field.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
-            if (fieldCard != null) return ConvertToCardInstance(fieldCard);
+            var fieldCardDto = player.Field.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
+            if (fieldCardDto != null) return fieldCardDto;
 
             // Search in deck
-            var deckCard = player.Deck.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
-            if (deckCard != null) return ConvertToCardInstance(deckCard);
+            var deckCardDto = player.Deck.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
+            if (deckCardDto != null) return deckCardDto;
 
             // Search in graveyard
-            var graveyardCard = player.Graveyard.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
-            if (graveyardCard != null) return ConvertToCardInstance(graveyardCard);
+            var graveyardCardDto = player.Graveyard.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
+            if (graveyardCardDto != null) return graveyardCardDto;
 
             // Search leader card
             if (player.LeaderCard?.InstanceId.ToString() == instanceId)
-                return ConvertToCardInstance(player.LeaderCard);
+                return player.LeaderCard;
 
             return null;
         }
 
-        private CardInstance ConvertToCardInstance(CardInstanceDto dto)
-        {
-            return new CardInstance(dto.InstanceId, dto.CardId, dto.OwnerPlayerId)
-            {
-                CurrentZone = dto.Zone,
-                CardType = dto.Type,
-                CurrentCost = dto.Cost,
-                CurrentAttack = dto.Attack,
-                CurrentHealth = dto.CurrentHealth,
-                MaxHealth = dto.MaxHealth,
-                CanAttack = dto.CanAttack,
-                // Removed CanEvolve - evolution eligibility is determined by game rules
-                IsEvolved = dto.IsEvolved,
-                AttacksThisTurn = dto.AttacksThisTurn,
-                Countdown = dto.CurrentCountdown,
-                FieldPosition = dto.FieldPosition
-            };
-        }
+        // Removed ConvertToCardInstance method as DTOs should not create domain entities.
+        // If conversion is needed, it should happen in a service layer or via AutoMapper profiles
+        // that have access to the necessary context (like GameState or ICardFactory).
 
         /// <summary>
         /// Gets a player state by player ID.

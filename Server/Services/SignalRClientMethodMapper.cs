@@ -48,7 +48,7 @@ namespace ShadowverseBeyond.Server.Services
                     // --- Specific Handlers ---
                     TurnStartedEventDto e => clientProxy.TurnStarted(e), // Added handler for TurnStarted event
                     PpUpdateEventDto e => clientProxy.PpUpdate(e),
-                    // Removed HandUpdateEventDto mapping as it's deprecated
+                    HandUpdatedEventDto e => clientProxy.HandUpdated(e), // Restored for mulligan functionality
                     DeckUpdateEventDto e => clientProxy.DeckUpdate(e), // Restored case
                     AttackDeclaredEventDto e => clientProxy.AttackDeclared(e),
                     DamageDealtEventDto e => clientProxy.DamageDealt(e),
@@ -66,7 +66,8 @@ namespace ShadowverseBeyond.Server.Services
                     GraveyardUpdateEventDto e => clientProxy.GraveyardUpdate(e),
                     HealthChangedEventDto e => clientProxy.HealthChanged(e),
                     StatChangeEventDto e => clientProxy.StatChange(e),
-                    PlayerMulliganCompletedEventDto e => clientProxy.PlayerMulliganCompleted(e),
+                    MulliganCompletedEventDto e => clientProxy.PlayerMulliganCompleted(e),
+                    AttackStateUpdatedEventDto e => clientProxy.AttackStateUpdated(e), // 【BUG修复】添加缺失的事件映射
 
                     // --- Default Case for Unmapped Events (Fallback) ---
                     // Includes CardDrawnEventDto, PlayerAttackedEventDto, UnitAttackedEventDto implicitly

@@ -1,5 +1,5 @@
 using System; // Added for ArgumentNullException
-using ShadowverseBeyond.Server.Dtos; // For CardInstanceDto, GameEventDto base, CardZone
+using ShadowverseBeyond.Server.Dtos.Enums; // For CardInstanceDto, GameEventDto base, CardZone
 
 namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
 {

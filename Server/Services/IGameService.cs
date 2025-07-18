@@ -27,7 +27,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <param name="requestingPlayerId">The ID of the player requesting the game state (used for game creation).</param>
         /// <returns>The GameStateDto for the game, or null if creation failed unexpectedly.</returns>
-        Task<GameState?> GetOrCreateGameStateAsync(string gameId, Guid? requestingPlayerId = null); // Return Domain Entity
+        GameState? GetOrCreateGameState(string gameId, Guid? requestingPlayerId = null); // Return Domain Entity
 
         /// <summary>
         /// Retrieves the current game state for the specified game ID.
@@ -35,7 +35,7 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <returns>The GameStateDto if found, otherwise null.</returns>
-        Task<GameState?> GetGameStateAsync(string gameId); // Return Domain Entity
+        GameState? GetGameState(string gameId); // Return Domain Entity
 
         // BroadcastEventsAsync removed - Broadcasting responsibility moved to Hub after context processing.
 
@@ -55,6 +55,15 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The ID of the game instance.</param>
         /// <param name="action">The wrapper object containing action details.</param>
         /// <returns>A task representing the asynchronous operation of enqueuing.</returns>
-        Task EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper action);
+        void EnqueuePlayerAction(string gameId, PlayerActionWrapper action);
+
+        /// <summary>
+        /// 【BUG-019修复】广播事件列表给前端，确保AI和人类玩家使用相同的事件广播机制
+        /// Broadcasts a list of events to all clients in the game group.
+        /// </summary>
+        /// <param name="gameId">The game ID.</param>
+        /// <param name="events">The list of events to broadcast.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        Task BroadcastEventsAsync(string gameId, List<GameEventDto> events);
     }
 }

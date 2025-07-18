@@ -9,18 +9,18 @@ using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // 【修复BUG-017】添加AttackTargetType
 using ShadowverseBeyond.Server.Domain.Buffs; // Added for Buff effects
+using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using AutoMapper; // Added for IMapper
+using ShadowverseBeyond.Server.Extensions; // 【修复】添加扩展方法命名空间
+using ShadowverseBeyond.Server.Services.Abstractions; // 【修复】添加IGameDataProvider
+using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -31,18 +31,25 @@ namespace ShadowverseBeyond.Server.Domain.Events
     public class EventProcessor : IEventProcessor // Implement the interface
     {
         private readonly Queue<IGameEvent> _eventQueue = new();
-        private readonly List<Ability> _activeAbilities = new(); // Use runtime Ability objects
         private readonly ILogger<EventProcessor> _logger;
         private readonly IAbilityTriggerService _abilityTriggerService;
+        private readonly AbilityManager _abilityManager;
         private readonly IMapper _mapper; // Added IMapper field
         private readonly IEffectExecutor _effectExecutor; // Added IEffectExecutor field
+        private readonly IGameDataProvider _gameDataProvider; // 【修复】添加IGameDataProvider依赖
+        private readonly IEventHistoryService _eventHistoryService; // Added for event history
+        private readonly IServiceProvider _serviceProvider; // Added for service location
 
-        public EventProcessor(ILogger<EventProcessor> logger, IAbilityTriggerService abilityTriggerService, IMapper mapper, IEffectExecutor effectExecutor) // Inject IEffectExecutor
+        public EventProcessor(ILogger<EventProcessor> logger, IAbilityTriggerService abilityTriggerService, AbilityManager abilityManager, IMapper mapper, IEffectExecutor effectExecutor, IGameDataProvider gameDataProvider, IEventHistoryService eventHistoryService, IServiceProvider serviceProvider) // Inject IServiceProvider
         {
             _logger = logger;
             _abilityTriggerService = abilityTriggerService;
+            _abilityManager = abilityManager;
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
             _effectExecutor = effectExecutor ?? throw new ArgumentNullException(nameof(effectExecutor)); // Store IEffectExecutor
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider)); // Store IGameDataProvider
+            _eventHistoryService = eventHistoryService ?? throw new ArgumentNullException(nameof(eventHistoryService)); // Store IEventHistoryService
+            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider)); // Store IServiceProvider
         }
 
         /// <summary>
@@ -51,354 +58,377 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         /// <param name="initialEvent">The initial game event to process.</param>
         /// <param name="context">The current game context.</param>
-        /// <returns>A tuple containing a list of new domain events generated and a list of DTOs for broadcasting.</returns>
-        public async Task<(List<IGameEvent> NewDomainEvents, List<GameEventDto> ResultingDtos)> ProcessEventAsync(IGameEvent initialEvent, GameContext context)
+        /// <returns>A tuple containing a list of new domain events generated, a list of DTOs for broadcasting, and a list of effect requests to be queued.</returns>
+        public async Task<(List<IGameEvent> NewDomainEvents, List<GameEventDto> ResultingDtos, List<GameFlow.EffectQueue.Effect> EffectRequests)> ProcessEventAsync(IGameEvent initialEvent, GameContext context)
         {
-            var resultingDtos = new List<GameEventDto>(); // Renamed from processedEvents
-            var allNewDomainEvents = new List<IGameEvent>(); // New list to collect domain events
-            var internalProcessingQueue = new Queue<IGameEvent>(); // Use a local queue for this processing chain
+            var resultingDtos = new List<GameEventDto>();
+            var newDomainEvents = new List<IGameEvent>();
+            var effectRequests = new List<GameFlow.EffectQueue.Effect>();
 
-            internalProcessingQueue.Enqueue(initialEvent);
-            // Do NOT add initialEvent to allNewDomainEvents here, it's the input, not an output of this process.
-
-            _logger.LogDebug("[EventProcessor] Starting event processing chain with initial event: {EventType}", initialEvent.EventType);
-
-            while (internalProcessingQueue.Count > 0)
-            {
-                var currentEvent = internalProcessingQueue.Dequeue();
-
-                try
-                {
-                    _logger.LogDebug("[EventProcessor] Processing event: {EventType} (ID: {EventId})", currentEvent.EventType, currentEvent.EventId);
-
-                    // 1. Execute the event itself
-                    var eventsFromExecution = await currentEvent.ExecuteAsync(context);
-                    if (eventsFromExecution != null && eventsFromExecution.Any())
-                    {
-                        allNewDomainEvents.AddRange(eventsFromExecution); // Collect generated domain events
-                        foreach (var ev in eventsFromExecution) internalProcessingQueue.Enqueue(ev); // Enqueue for further processing in this chain
-                        _logger.LogTrace("[EventProcessor] Event {EventType} generated {Count} subsequent events.", currentEvent.EventType, eventsFromExecution.Count);
-                    }
-
-                    // 2. Special handling for system events that need to call EffectHandlers
-                    var systemEvents = await ProcessSystemEventsAsync(currentEvent, context);
-                    if (systemEvents != null && systemEvents.Any())
-                    {
-                        allNewDomainEvents.AddRange(systemEvents); // Collect generated domain events
-                        foreach (var ev in systemEvents) internalProcessingQueue.Enqueue(ev); // Enqueue for further processing
-                        _logger.LogTrace("[EventProcessor] System event processing for {EventType} generated {Count} events.", currentEvent.EventType, systemEvents.Count);
-                    }
-
-                    // 2. Convert the *current* event to DTO and record it for broadcast
-                    var eventDto = ConvertEventToDto(currentEvent);
-                    if (eventDto != null)
-                    {
-                        resultingDtos.Add(eventDto);
-                        _logger.LogTrace("[EventProcessor] Event {EventType} converted to DTO: {DtoType}", currentEvent.EventType, eventDto.Type);
-                    }
-
-                    // 3. Check for triggered abilities based on the *current* event using IAbilityTriggerService
-                    var triggeredAbilities = await _abilityTriggerService.GetTriggeredAbilitiesAsync(currentEvent, context);
-                    if (triggeredAbilities.Any())
-                    {
-                        _logger.LogDebug("[EventProcessor] Found {Count} triggered abilities for event {EventType}", triggeredAbilities.Count, currentEvent.EventType);
-
-                        // 4. Execute triggered abilities and collect generated events
-                        foreach (var ability in triggeredAbilities)
-                        {
-                            try
-                            {
-                                var eventsFromAbility = await ProcessAbilityAsync(ability, currentEvent, context);
-                                if (eventsFromAbility != null && eventsFromAbility.Any())
-                                {
-                                    allNewDomainEvents.AddRange(eventsFromAbility); // Collect generated domain events
-                                    foreach (var ev in eventsFromAbility) internalProcessingQueue.Enqueue(ev); // Enqueue for further processing
-                                    _logger.LogTrace("[EventProcessor] Ability {AbilityTag} generated {Count} events.", ability.AbilityTag, eventsFromAbility.Count);
-                                }
-
-                                // Generate and enqueue the AbilityTriggeredEvent itself
-                                var abilityTriggeredDomainEvent = new AbilityTriggeredEvent(ability, currentEvent);
-                                allNewDomainEvents.Add(abilityTriggeredDomainEvent); // Collect this event
-                                internalProcessingQueue.Enqueue(abilityTriggeredDomainEvent); // Enqueue for processing (e.g., logging, potential triggers)
-                                _logger.LogTrace("[EventProcessor] Enqueued AbilityTriggeredEvent for {AbilityTag}.", ability.AbilityTag);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "[EventProcessor] Error processing ability {AbilityTag} triggered by event {EventType}", ability.AbilityTag, currentEvent.EventType);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[EventProcessor] Error processing event {EventType} (ID: {EventId}) in chain.", currentEvent.EventType, currentEvent.EventId);
-                    // Decide if the entire chain should fail or just log and continue
-                }
-            }
-
-            _logger.LogDebug("[EventProcessor] Event processing chain completed. Generated {DomainEventCount} new domain events and {DtoCount} DTOs.",
-                allNewDomainEvents.Count, resultingDtos.Count);
-
-            // Return both collected lists
-            return (allNewDomainEvents, resultingDtos);
-        }
-
-        /// <summary>
-        /// 注册激活的能力
-        /// </summary>
-        /// <param name="ability">要注册的能力</param>
-        public void RegisterAbility(Ability ability)
-        {
-            // Runtime Ability objects don't have IsActive property, they are active by being registered
-            if (!_activeAbilities.Contains(ability))
-            {
-                _activeAbilities.Add(ability);
-                _logger.LogDebug("[EventProcessor] Registered ability: {AbilityTag} for card {CardId}",
-                    ability.AbilityTag, ability.CardId);
-            }
-        }
-
-        /// <summary>
-        /// 注销能力
-        /// </summary>
-        /// <param name="ability">要注销的能力</param>
-        public void UnregisterAbility(Ability ability)
-        {
-            if (_activeAbilities.Remove(ability))
-            {
-                _logger.LogDebug("[EventProcessor] Unregistered ability: {AbilityTag} for card {CardId}",
-                    ability.AbilityTag, ability.CardId);
-            }
-        }
-
-        /// <summary>
-        /// 清除所有注册的能力
-        /// </summary>
-        public void ClearAbilities()
-        {
-            var count = _activeAbilities.Count;
-            _activeAbilities.Clear();
-            _logger.LogDebug("[EventProcessor] Cleared {Count} abilities", count);
-        }
-
-        // Removed GetTriggeredAbilitiesAsync method - now delegated to AbilityManager
-
-        // Removed ShouldTriggerAbilityAsync method - now handled by AbilityManager
-
-        /// <summary>
-        /// 处理系统事件，调用相应的 EffectHandler
-        /// </summary>
-        private async Task<List<IGameEvent>> ProcessSystemEventsAsync(IGameEvent gameEvent, GameContext context)
-        {
-            var events = new List<IGameEvent>();
+            _logger.LogDebug("[EventProcessor] Processing single event: {EventType} (ID: {EventId})", initialEvent.EventType, initialEvent.EventId);
 
             try
             {
-                // 处理 MulliganSubmittedEvent
-                if (gameEvent is Events.ActionRequests.MulliganSubmittedEvent mulliganEvent)
+                // 【BUG修复】创建一个新的、包含正确触发事件的GameContext实例。
+                // 这是为了遵循GameContext的不可变性设计，同时确保下游服务能获取到正确的触发事件。
+                var processingContext = new GameContext(
+                    context.CurrentGameState,
+                    context.RequestingPlayerId,
+                    _mapper,
+                    _serviceProvider,
+                    triggeringEvent: initialEvent,
+                    sourceCard: context.SourceCard,
+                    currentAbility: context.CurrentAbility
+                );
+
+                // 1. Generate DTO for the initial event
+                var initialEventDto = ConvertEventToDto(initialEvent, processingContext);
+                if (initialEventDto != null)
                 {
-                    _logger.LogDebug("[EventProcessor] Processing MulliganSubmittedEvent for Player {PlayerId}", mulliganEvent.PlayerId);
+                    resultingDtos.Add(initialEventDto);
+                    _logger.LogTrace("[EventProcessor] Added DTO for initial event {EventType}", initialEvent.EventType);
+                }
 
-                    // 创建 Mulligan 效果配置
-                    var effectConfig = new EffectConfig
+                // 2. Check for triggered abilities based on the initialEvent
+                var triggeredAbilities = await _abilityTriggerService.GetTriggeredAbilitiesAsync(initialEvent, processingContext);
+                if (triggeredAbilities.Any())
+                {
+                    _logger.LogDebug("[EventProcessor] Found {Count} triggered abilities for event {EventType}", triggeredAbilities.Count, initialEvent.EventType);
+
+                    foreach (var ability in triggeredAbilities)
                     {
-                        Type = "mulligan",
-                        Parameters = new Dictionary<string, ValueConfig>
+                        try
                         {
-                            { "playerId", ValueConfig.Static(mulliganEvent.PlayerId) },
-                            { "cardUidsToReplace", ValueConfig.Static(mulliganEvent.CardUidsToReplace) },
-                            { "forceMulligan", ValueConfig.Static(false) },
-                            { "mulliganReason", ValueConfig.Static("PlayerChoice") }
+                            // Create AbilityTriggeredEvent
+                            var abilityTriggeredDomainEvent = new AbilityTriggeredEvent(ability, initialEvent);
+                            newDomainEvents.Add(abilityTriggeredDomainEvent);
+                            _logger.LogTrace("[EventProcessor] Created AbilityTriggeredEvent for {AbilityTag} (RuntimeId: {RuntimeId}, DefinitionId: {DefinitionId}).",
+                                ability.AbilityTag, ability.RuntimeId, ability.DefinitionId);
+
+                            // Generate DTO for AbilityTriggeredEvent
+                            var abilityTriggeredDto = ConvertEventToDto(abilityTriggeredDomainEvent, processingContext);
+                            if (abilityTriggeredDto != null)
+                            {
+                                resultingDtos.Add(abilityTriggeredDto);
+                                _logger.LogTrace("[EventProcessor] Added DTO for AbilityTriggeredEvent from {AbilityTag}", ability.AbilityTag);
+                            }
+
+                            // Process the ability to get its effects
+                            // Note: ProcessAbilityAsync internally calls ability.CreateEffectsAsync
+                            var effectsFromAbility = await ProcessAbilityAsync(ability, initialEvent, processingContext);
+                            if (effectsFromAbility != null && effectsFromAbility.Any())
+                            {
+                                effectRequests.AddRange(effectsFromAbility);
+                                _logger.LogTrace("[EventProcessor] Ability {AbilityTag} created {Count} effect requests.", ability.AbilityTag, effectsFromAbility.Count);
+                            }
                         }
-                    };
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "[EventProcessor] Error processing ability {AbilityTag} (RuntimeId: {RuntimeId}) triggered by event {EventType}",
+                                ability.AbilityTag, ability.RuntimeId, initialEvent.EventType);
+                        }
+                    }
+                }
 
-                    // 执行换牌效果
-                    var resultEvents = await _effectExecutor.ExecuteEffectAsync(effectConfig, context);
-                    events.AddRange(resultEvents);
-
-                    _logger.LogInformation("[EventProcessor] MulliganSubmittedEvent processed successfully for Player {PlayerId}. Generated {EventCount} events.",
-                        mulliganEvent.PlayerId, resultEvents.Count);
+                // 3. Store the initial event to history
+                if (processingContext.CurrentGameState != null) // Ensure GameState exists
+                {
+                    await _eventHistoryService.StoreEventAsync(processingContext.CurrentGameState.GameId, initialEvent);
+                    _logger.LogDebug("[EventProcessor] Stored event {EventType} (ID: {EventId}) to history for game {GameId}",
+                        initialEvent.EventType, initialEvent.EventId, processingContext.CurrentGameState.GameId);
+                }
+                else
+                {
+                    _logger.LogWarning("[EventProcessor] Could not store event {EventType} (ID: {EventId}) to history: CurrentGameState is null.",
+                        initialEvent.EventType, initialEvent.EventId);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[EventProcessor] Error processing system event {EventType}", gameEvent.EventType);
+                _logger.LogError(ex, "[EventProcessor] Error processing event {EventType} (ID: {EventId}).", initialEvent.EventType, initialEvent.EventId);
+                // Optionally, add an ErrorOccurredEventDto to resultingDtos
+                resultingDtos.Add(new ErrorOccurredEventDto(context.RequestingPlayerId, $"Error processing event {initialEvent.EventType}: {ex.Message}"));
             }
 
-            return events;
+            _logger.LogDebug("[EventProcessor] Event processing completed. Generated {DomainEventCount} new domain events, {DtoCount} DTOs, and {EffectRequestCount} effect requests.",
+                newDomainEvents.Count, resultingDtos.Count, effectRequests.Count);
+
+            return (newDomainEvents, resultingDtos, effectRequests);
         }
 
+        // Removed _activeAbilities field and its management methods (RegisterAbility, UnregisterAbility, ClearAbilities)
+        // EventProcessor now relies on IAbilityTriggerService for all ability retrieval.
 
+        // Removed ProcessSystemEventsAsync method.
+        // PlayerActionRequestEvents (MulliganSubmitted, EndTurnRequested, PlayCardRequested, AttackRequested, EvolveRequested)
+        // will now be handled by corresponding system abilities registered in AbilityManager
+        // and retrieved via _abilityTriggerService.GetTriggeredAbilitiesAsync.
 
         /// <summary>
-        /// 处理能力触发
+        /// 确定攻击目标类型
         /// </summary>
-        private async Task<List<IGameEvent>> ProcessAbilityAsync(Ability ability, IGameEvent triggerEvent, GameContext context)
+        /// <param name="targetUid">目标UID</param>
+        /// <param name="gameState">游戏状态</param>
+        /// <returns>攻击目标类型</returns>
+        private AttackTargetType DetermineAttackTargetType(Guid targetUid, GameState gameState)
+        {
+            // 检查是否为玩家ID
+            if (gameState.Player1.PlayerId == targetUid || gameState.Player2.PlayerId == targetUid)
+            {
+                return AttackTargetType.Player;
+            }
+
+            // 检查是否为卡牌实例ID（在任一玩家的场上）
+            var allFieldCards = gameState.Player1.Field.Concat(gameState.Player2.Field);
+            if (allFieldCards.Any(card => card.InstanceId == targetUid))
+            {
+                return AttackTargetType.Unit;
+            }
+
+            // 默认为单位攻击（如果无法确定，通常是单位）
+            _logger.LogWarning("[EventProcessor] Cannot determine attack target type for UID {TargetUid}, defaulting to Unit", targetUid);
+            return AttackTargetType.Unit;
+        }
+
+        /// <summary>
+        /// Processes a single runtime ability, creating its effects.
+        /// </summary>
+        /// <param name="ability">The runtime ability to process (can be card or system ability).</param>
+        /// <param name="triggerEvent">The event that triggered this ability.</param>
+        /// <param name="context">The current game context.</param>
+        /// <returns>A list of effects generated by the ability.</returns>
+        private async Task<List<Effect>> ProcessAbilityAsync(IAbility ability, IGameEvent triggerEvent, GameContext context)
         {
             try
             {
-                // 记录触发
-                ability.RecordTrigger();
+                // Record that the ability instance was triggered
+                ability.RecordTrigger(context);
 
-                // 解析目标 - 直接使用GameContext
-                var targets = await ability.ResolveTargetsAsync(context);
+                // Delegate the entire execution process to the centralized service
+                var generatedEffects = await _abilityTriggerService.ProcessSingleAbilityAsync(ability, context);
 
-                // 设置选定的目标到GameContext
-                foreach (var target in targets)
-                {
-                    // Use the factory method for CardInstance targets
-                    context.AddSelectedTarget(TargetId.Card(target.InstanceId));
-                }
+                _logger.LogDebug("[EventProcessor] Ability {AbilityTag} (RuntimeId: {RuntimeId}) processed via service, created {Count} effect(s) in response to event {TriggerEventType}",
+                    ability.AbilityTag, ability.RuntimeId, generatedEffects.Count, triggerEvent.EventType);
 
-                // 执行效果 - 直接使用GameContext
-                var generatedEvents = await ability.ExecuteEffectsAsync(context);
-
-                _logger.LogDebug("[EventProcessor] Ability {AbilityTag} generated {Count} events",
-                    ability.AbilityTag, generatedEvents.Count);
-
-                return generatedEvents;
+                return generatedEffects;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[EventProcessor] Error processing ability {AbilityTag}", ability.AbilityTag);
-                return new List<IGameEvent>();
+                _logger.LogError(ex, "[EventProcessor] Error processing ability {AbilityTag} (RuntimeId: {RuntimeId}) via service",
+                    ability.AbilityTag, ability.RuntimeId);
+                return new List<Effect>(); // Return an empty list if processing fails
             }
         }
-
-
 
         /// <summary>
         /// 将Event转换为DTO
         /// </summary>
-        private GameEventDto? ConvertEventToDto(IGameEvent gameEvent)
+        private GameEventDto? ConvertEventToDto(IGameEvent gameEvent, GameContext context)
         {
             try
             {
                 return gameEvent.EventType switch
                 {
-                    "play_card" => ConvertPlayCardEvent(gameEvent),
-                    "summon" => ConvertSummonEvent(gameEvent),
-                    "damage" => ConvertDamageEvent(gameEvent),
-                    "card_destroyed" => ConvertCardDestroyedEvent(gameEvent),
-                    "evolve" => ConvertEvolveEvent(gameEvent),
-                    "draw" => ConvertDrawEvent(gameEvent),
-                    "turn_start" => ConvertTurnStartEvent(gameEvent),
-                    "turn_end" => ConvertTurnEndEvent(gameEvent),
-                    "ability_triggered" => ConvertAbilityTriggeredEvent(gameEvent),
-                    "buff_applied" => ConvertBuffAppliedEvent(gameEvent),
-                    "buff_removed" => ConvertBuffRemovedEvent(gameEvent),
-                    "silence_applied" => ConvertSilenceAppliedEvent(gameEvent),
-                    "silence_removed" => ConvertSilenceRemovedEvent(gameEvent),
+                    EventType.PlayCard => ConvertPlayCardEvent(gameEvent),
+                    EventType.Summon => ConvertSummonEvent(gameEvent),
+                    EventType.Damage => ConvertDamageEvent(gameEvent),
+                    EventType.Destroy => ConvertCardDestroyedEvent(gameEvent),
+                    EventType.Evolve => ConvertEvolveEvent(gameEvent),
+                    EventType.Draw => ConvertDrawEvent(gameEvent, context),
+                    EventType.TurnStart => ConvertTurnStartEvent(gameEvent, context),
+                    EventType.TurnEnd => ConvertTurnEndEvent(gameEvent, context),
+                    EventType.AbilityTriggered => ConvertAbilityTriggeredEvent(gameEvent),
+                    EventType.BuffApplied => ConvertBuffAppliedEvent(gameEvent),
+                    EventType.BuffRemoved => ConvertBuffRemovedEvent(gameEvent),
+                    EventType.SilenceApplied => ConvertSilenceAppliedEvent(gameEvent),
+                    EventType.SilenceRemoved => ConvertSilenceRemovedEvent(gameEvent),
+                    EventType.MulliganCompleted => ConvertMulliganCompletedEvent(gameEvent),
+                    EventType.HandUpdated => ConvertHandUpdatedEvent(gameEvent),
+                    EventType.PpUpdated => ConvertPpUpdateEvent(gameEvent),
+                    EventType.GraveyardUpdated => ConvertGraveyardUpdatedEvent(gameEvent),
+                    // 【重复伤害修复】Action Request Events - 不转换为DTO，避免重复广播
+                    // 这些事件只是请求事件，不应该直接转换为DTO
+                    // 它们会生成真正的领域事件（如HandUpdatedEvent、SummonEvent等），这些领域事件才应该转换为DTO
+                    EventType.MulliganSubmitted => null,
+                    EventType.AttackRequested => null,
+                    EventType.EndTurnRequested => null,
+                    EventType.EvolveRequested => null,
+                    EventType.PlayCardRequested => null,
+                    // Keyword Events - 关键字事件转换
+                    EventType.KeywordApplied => ConvertKeywordAddedEvent(gameEvent),
+                    EventType.KeywordRemoved => ConvertKeywordRemovedEvent(gameEvent),
+                    EventType.HealthChanged => ConvertHealthChangedEvent(gameEvent),
+                    EventType.AttackStateUpdated => ConvertAttackStateUpdatedEvent(gameEvent),
                     _ => null
                 };
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[EventProcessor] Error converting event {EventType} to DTO", gameEvent.EventType);
-                return null;
+                // 【BUG修复】返回准确的错误信息，而不是硬编码的误导性信息。
+                // 【修复】使用context中的请求玩家ID作为回退
+                return new ErrorOccurredEventDto(context.RequestingPlayerId, $"Cannot convert {gameEvent.EventType} to DTO: {ex.Message}");
             }
         }
 
         // DTO转换方法（简化实现）
-        private GameEventDto ConvertPlayCardEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertPlayCardEvent(IGameEvent gameEvent)
         {
-            // Use AutoMapper, handle null SourceCard
-            var sourceCardDto = gameEvent.SourceCard == null ? null : _mapper.Map<CardInstanceDto>(gameEvent.SourceCard);
-            return new CardPlayedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                sourceCardDto // Pass mapped DTO or null
-            );
+            if (gameEvent is not PlayCardEvent e || e.Source?.Player == null) return null;
+            var cardDto = e.Card.ToCompleteDto(_gameDataProvider, _mapper);
+
+            // The CardPlayedEventDto constructor only accepts the player and the card.
+            // The target information is not part of this DTO.
+            return new CardPlayedEventDto(e.Source.Player.PlayerId, cardDto);
         }
 
-        private GameEventDto ConvertSummonEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertSummonEvent(IGameEvent gameEvent)
         {
-            // Use AutoMapper, handle null SourceCard
-            var sourceCardDto = gameEvent.SourceCard == null ? null : _mapper.Map<CardInstanceDto>(gameEvent.SourceCard);
+            if (gameEvent is not SummonEvent e || e.Source?.Player == null) return null;
+            var cardDto = e.Card.ToCompleteDto(_gameDataProvider, _mapper);
+
+            if (cardDto == null)
+            {
+                _logger.LogWarning("Cannot convert SummonEvent to DTO: Card could not be mapped.");
+                return new ErrorOccurredEventDto(e.Source.Player.PlayerId, "Cannot convert SummonEvent to DTO: Card could not be mapped.");
+            }
+
             return new CardSummonedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                sourceCardDto, // Pass mapped DTO or null
-                "Played"
+                e.Source.Player.PlayerId,
+                cardDto,
+                "Played" // TODO: The source of summon (e.g., "Played", "Effect") should come from the event.
             );
         }
 
-        private GameEventDto ConvertDamageEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertDamageEvent(IGameEvent gameEvent)
         {
-            var target = gameEvent.Parameters.GetValueOrDefault("target") as CardInstance;
-            var damage = (int)(gameEvent.Parameters.GetValueOrDefault("damage") ?? 0);
+            if (gameEvent is not DamageEvent e) return null;
+            var sourcePlayerId = e.Source?.Player?.PlayerId ?? e.Target.OwnerPlayerId;
 
             return new DamageDealtEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                target?.InstanceId ?? Guid.Empty,
-                damage,
-                target?.OwnerPlayerId ?? Guid.Empty, // Convert Guid to string
-                gameEvent.SourceCard?.InstanceId,
-                "Effect"
+                sourcePlayerId,
+                e.Target.InstanceId,
+                e.Damage,
+                e.Target.OwnerPlayerId,
+                e.Source?.Card?.InstanceId,
+                "Effect" // TODO: The source of damage (e.g., "Attack", "Effect") should come from the event.
             );
         }
 
-        private GameEventDto ConvertCardDestroyedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertCardDestroyedEvent(IGameEvent gameEvent)
         {
+            if (gameEvent is not CardDestroyedEvent e) return null;
             return new UnitDestroyedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                gameEvent.SourceCard?.InstanceId ?? Guid.Empty,
-                gameEvent.SourceCard?.OwnerPlayerId ?? Guid.Empty, // Convert Guid to string
-                "Destroyed"
+                e.Target.OwnerPlayerId, // The owner of the card that was destroyed
+                e.Target.InstanceId,
+                e.Target.OwnerPlayerId,
+                e.Reason ?? "Destroyed"
             );
         }
 
-        private GameEventDto ConvertEvolveEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertEvolveEvent(IGameEvent gameEvent)
         {
-            // Use AutoMapper, handle null SourceCard
-            var sourceCardDto = gameEvent.SourceCard == null ? null : _mapper.Map<CardInstanceDto>(gameEvent.SourceCard);
+            if (gameEvent is not EvolveEvent e) return null;
+            if (e.Source?.Card == null) return null;
+            var cardDto = e.Source.Card.ToCompleteDto(_gameDataProvider, _mapper);
+            if (cardDto == null)
+            {
+                return new ErrorOccurredEventDto(e.Source.Card.OwnerPlayerId, "Cannot convert EvolveEvent to DTO: EvolvedCard could not be mapped.");
+            }
             return new UnitEvolvedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                sourceCardDto // Pass mapped DTO or null
+                e.Source.Card.OwnerPlayerId,
+                cardDto
             );
         }
 
-        private GameEventDto ConvertDrawEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertDrawEvent(IGameEvent gameEvent, GameContext context)
         {
+            if (gameEvent is not DrawEvent e) return null;
+            // This is a temporary solution. A single DrawEvent can represent multiple cards,
+            // but the current DTO infrastructure only supports broadcasting one card draw at a time.
+            // This should be refactored to have a `CardsDrawnEventDto` that takes a list.
+            // For now, we are forced to send multiple events or just one. We will send one for the first card.
+            var firstCardId = e.DrawnCardInstanceIds.FirstOrDefault();
+            if (firstCardId == Guid.Empty)
+            {
+                _logger.LogWarning("DrawEvent has no drawn card instance IDs.");
+                return null;
+            }
+
+            var cardInstance = context.CurrentGameState.FindCardInstanceById(firstCardId);
+            if (cardInstance == null)
+            {
+                _logger.LogWarning("Could not find drawn card with instance ID {CardId} in game state.", firstCardId);
+                return null;
+            }
+
             return new CardDrawnEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                gameEvent.SourceCard?.InstanceId.ToString() ?? string.Empty,
-                gameEvent.SourceCard?.DefinitionId.ToString() ?? "0" // Convert int to string
+                e.Source.Player.PlayerId,
+                firstCardId.ToString(),
+                cardInstance.DefinitionId.ToString()
             );
         }
 
-        private GameEventDto ConvertTurnStartEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertTurnStartEvent(IGameEvent gameEvent, GameContext context)
         {
-            var gameState = gameEvent.Parameters.GetValueOrDefault("game_state") as GameStateDto;
-            // Swap argument order: GameStateDto first, then PlayerId string
+            if (gameEvent is not TurnStartEvent turnStartEvent)
+            {
+                _logger.LogError("ConvertTurnStartEvent called with incorrect event type: {EventType}", gameEvent.EventType);
+                return new ErrorOccurredEventDto(context.RequestingPlayerId, "Internal server error: Invalid event type for TurnStart conversion.");
+            }
+
+            // The most reliable source for the game state is the context, which holds the state
+            // at the point of event processing.
+            var gameStateSnapshot = context.CreateSnapshot();
+
             return new TurnStartedEventDto(
-                gameState ?? new GameStateDto(),
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty
+                gameStateSnapshot,
+                turnStartEvent.Source.Player.PlayerId
             );
         }
 
-        private GameEventDto ConvertTurnEndEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertTurnEndEvent(IGameEvent gameEvent, GameContext context)
         {
-            var nextPlayerId = (Guid)(gameEvent.Parameters.GetValueOrDefault("next_player_id") ?? Guid.Empty);
+            if (gameEvent is not TurnEndEvent turnEndEvent)
+            {
+                _logger.LogError("ConvertTurnEndEvent called with incorrect event type: {EventType}", gameEvent.EventType);
+                return null; // Or an error DTO
+            }
+
+            if (turnEndEvent.Source?.Player == null) return null;
+            var nextPlayer = context.CurrentGameState.GetOpponentPlayerState(turnEndEvent.Source.Player.PlayerId);
+
             return new TurnEndedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                nextPlayerId
+                turnEndEvent.Source.Player.PlayerId,
+                nextPlayer?.PlayerId ?? Guid.Empty
             );
         }
 
-        private GameEventDto ConvertAbilityTriggeredEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertAbilityTriggeredEvent(IGameEvent gameEvent)
         {
-            var abilityTag = (string)(gameEvent.Parameters.GetValueOrDefault("ability_tag") ?? string.Empty);
-            var triggerEventType = (string)(gameEvent.Parameters.GetValueOrDefault("trigger_event_type") ?? string.Empty);
+            if (gameEvent is not AbilityTriggeredEvent e) return null;
+
+            var sourceCard = e.TriggeredAbility.SourceCard;
+            var sourcePlayerId = sourceCard?.OwnerPlayerId ?? Guid.Empty;
+
+            // The DTO requires a parameters dictionary. We reconstruct the essential parts
+            // from the strongly-typed event properties for client-side use.
+            var parameters = new Dictionary<string, object>
+            {
+                { "ability_definition_id", e.TriggeredAbility.DefinitionId },
+                { "ability_runtime_id", e.TriggeredAbility.RuntimeId }
+            };
 
             return new AbilityTriggeredEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                gameEvent.SourceCard?.InstanceId ?? Guid.Empty,
-                abilityTag,
-                triggerEventType,
-                gameEvent.Parameters
+                sourcePlayerId,
+                sourceCard?.InstanceId ?? Guid.Empty,
+                e.AbilityTag,
+                e.TriggeringEvent.EventType.ToString(),
+                parameters
             );
         }
 
-        private GameEventDto ConvertBuffAppliedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertBuffAppliedEvent(IGameEvent gameEvent)
         {
             if (gameEvent is Events.BuffAppliedEvent buffAppliedEvent)
             {
@@ -419,19 +449,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 );
             }
 
-            // Fallback for generic event
-            var buffId = (Guid)(gameEvent.Parameters.GetValueOrDefault("buffId") ?? Guid.Empty);
-            var targetCardInstanceId = (Guid)(gameEvent.Parameters.GetValueOrDefault("targetCardInstanceId") ?? Guid.Empty);
-
-            return new BuffAppliedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                buffId,
-                targetCardInstanceId,
-                gameEvent.SourceCard?.InstanceId
-            );
+            // Fallback logic removed as it relied on obsolete base properties.
+            // If the event is not a strongly-typed BuffAppliedEvent, we cannot correctly convert it.
+            _logger.LogWarning("Attempted to convert a generic event to BuffAppliedEventDto. This is not supported.");
+            return null;
         }
 
-        private GameEventDto ConvertBuffRemovedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertBuffRemovedEvent(IGameEvent gameEvent)
         {
             if (gameEvent is Events.BuffRemovedEvent buffRemovedEvent)
             {
@@ -451,18 +475,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 );
             }
 
-            // Fallback for generic event
-            var buffId = (Guid)(gameEvent.Parameters.GetValueOrDefault("buffId") ?? Guid.Empty);
-            var targetCardInstanceId = (Guid)(gameEvent.Parameters.GetValueOrDefault("targetCardInstanceId") ?? Guid.Empty);
-            var removalReason = (string)(gameEvent.Parameters.GetValueOrDefault("removalReason") ?? "unknown");
-
-            return new BuffRemovedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                buffId,
-                targetCardInstanceId,
-                removalReason,
-                gameEvent.SourceCard?.InstanceId
-            );
+            // Fallback logic removed as it relied on obsolete base properties.
+            _logger.LogWarning("Attempted to convert a generic event to BuffRemovedEventDto. This is not supported.");
+            return null;
         }
 
         /// <summary>
@@ -470,7 +485,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         /// <param name="buff">要分析的Buff实例</param>
         /// <returns>Buff类型字符串</returns>
-        private static string ExtractBuffType(Buff buff)
+        private static string ExtractBuffType(BuffConfig buff)
         {
             if (buff.Effects == null || buff.Effects.Count == 0)
                 return "Unknown";
@@ -506,37 +521,28 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return "Unknown";
         }
 
-        private static GameEventDto ConvertSilenceAppliedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertSilenceAppliedEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is Events.SilenceAppliedEvent silenceAppliedEvent)
+            if (gameEvent is SilenceAppliedEvent silenceAppliedEvent)
             {
                 var target = silenceAppliedEvent.Target;
-                // Convert Guid? to string? then use ??
-                var sourcePlayerId = silenceAppliedEvent.SourceCard?.OwnerPlayerId ?? Guid.Empty;
+                var sourceCard = silenceAppliedEvent.SourceAbility?.SourceCard;
+                var sourcePlayerId = sourceCard?.OwnerPlayerId ?? target.OwnerPlayerId; // Fallback to target's owner if source is unknown
 
                 return new SilenceAppliedEventDto(
                     sourcePlayerId,
                     target.InstanceId,
-                    silenceAppliedEvent.SourceCard?.InstanceId,
-                    silenceAppliedEvent.SourceAbility?.AbilityId,
+                    sourceCard?.InstanceId,
+                    silenceAppliedEvent.SourceAbility?.DefinitionId,
                     0 // TODO: Extract removed buff count from event parameters
                 );
             }
-
-            // Fallback for generic event
-            var targetCardInstanceId = (Guid)(gameEvent.Parameters.GetValueOrDefault("targetCardInstanceId") ?? Guid.Empty);
-            var sourceCardInstanceId = (Guid?)gameEvent.Parameters.GetValueOrDefault("sourceCardInstanceId");
-            var sourceAbilityId = gameEvent.Parameters.GetValueOrDefault("sourceAbilityId") as long?;
-
-            return new SilenceAppliedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                targetCardInstanceId,
-                sourceCardInstanceId,
-                sourceAbilityId
-            );
+            // Fallback logic removed as it's unreliable and uses obsolete properties.
+            _logger.LogWarning("Attempted to convert a generic event to SilenceAppliedEventDto. This is not supported.");
+            return null;
         }
 
-        private static GameEventDto ConvertSilenceRemovedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertSilenceRemovedEvent(IGameEvent gameEvent)
         {
             if (gameEvent is Events.SilenceRemovedEvent silenceRemovedEvent)
             {
@@ -549,12 +555,111 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 );
             }
 
-            // Fallback for generic event
-            var targetCardInstanceId = (Guid)(gameEvent.Parameters.GetValueOrDefault("targetCardInstanceId") ?? Guid.Empty);
+            // Fallback logic removed.
+            _logger.LogWarning("Attempted to convert a generic event to SilenceRemovedEventDto. This is not supported.");
+            return null;
+        }
 
-            return new SilenceRemovedEventDto(
-                gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                targetCardInstanceId
+        private static GameEventDto? ConvertMulliganCompletedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not MulliganCompletedEvent e) return null;
+            if (e.Source?.Player == null) return null;
+            return new MulliganCompletedEventDto(e.Source.Player.PlayerId);
+        }
+
+        private GameEventDto? ConvertHandUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is Events.HandUpdatedEvent handUpdatedEvent)
+            {
+                if (handUpdatedEvent.Source?.Player == null) return null;
+                var playerId = handUpdatedEvent.Source.Player.PlayerId;
+                var updatedHand = handUpdatedEvent.UpdatedHand;
+
+                // 【修复】Convert CardInstance list to CardInstanceDto list using complete mapping
+                var handDtos = updatedHand.Select(card => card.ToCompleteDto(_gameDataProvider, _mapper)).ToList();
+
+                return new HandUpdatedEventDto(playerId, handDtos);
+            }
+
+            // Fallback for generic event
+            var playerIdFromParams = (Guid)(gameEvent.Parameters.GetValueOrDefault("playerId") ?? Guid.Empty);
+
+            return new HandUpdatedEventDto(playerIdFromParams, new List<CardInstanceDto>());
+        }
+
+        private GameEventDto? ConvertPpUpdateEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not PpUpdateEvent e) return null;
+            if (e.Source?.Player == null) return null;
+            return new PpUpdateEventDto(
+                e.Source.Player.PlayerId,
+                e.Source.Player.CurrentPlayPoints,
+                e.Source.Player.MaxPlayPoints
+            );
+        }
+
+        private GameEventDto? ConvertKeywordAddedEvent(IGameEvent gameEvent)
+        {
+            // TODO: The KeywordAddedEvent is missing the target card instance.
+            // This needs to be added to the event definition for this to be properly converted.
+            _logger.LogWarning("KeywordAddedEvent cannot be converted to a DTO because it lacks a target card context.");
+            return null;
+        }
+
+        private GameEventDto? ConvertKeywordRemovedEvent(IGameEvent gameEvent)
+        {
+            // TODO: The KeywordRemovedEvent is missing the target card instance.
+            // This needs to be added to the event definition for this to be properly converted.
+            _logger.LogWarning("KeywordRemovedEvent cannot be converted to a DTO because it lacks a target card context.");
+            return null;
+        }
+
+        private GameEventDto? ConvertHealthChangedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not HealthChangedEvent e) return null;
+
+            if (e.Source?.Card == null)
+            {
+                _logger.LogWarning("[EventProcessor] HealthChangedEvent is missing a source card. Cannot determine source player ID.");
+                return null;
+            }
+            var sourcePlayerId = e.Source.Card.OwnerPlayerId;
+
+            // DamageTaken should be a positive value representing damage.
+            // ChangeAmount is negative for damage, positive for heal.
+            var damageTaken = e.ChangeAmount < 0 ? -e.ChangeAmount : 0;
+
+            return new Dtos.SignalR.Events.HealthChangedEventDto(
+                sourcePlayerId,
+                e.Target.InstanceId,
+                e.NewHealth,
+                damageTaken
+            );
+        }
+
+        private GameEventDto? ConvertGraveyardUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not GraveyardUpdatedEvent e) return null;
+            if (e.Source?.Player == null) return null;
+
+            // The GraveyardUpdateEventDto does not require the destroyed card info,
+            // only the player ID and the new count.
+            return new GraveyardUpdateEventDto(
+                e.Source.Player.PlayerId, // This is the player whose graveyard was updated
+                e.NewGraveyardCount,
+                null // destroyedCardDto is optional and can be null
+            );
+        }
+
+        private GameEventDto? ConvertAttackStateUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not AttackStateUpdatedEvent e) return null;
+            if (e.Source?.Card == null) return null;
+
+            return new AttackStateUpdatedEventDto(
+                e.Source.Card.OwnerPlayerId,
+                e.Source.Card.InstanceId,
+                e.CanAttack
             );
         }
     }

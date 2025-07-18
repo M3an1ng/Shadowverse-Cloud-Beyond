@@ -1,5 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Entities;
-using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Domain.Events;
 using System;
 using System.Collections.Generic;
@@ -122,7 +122,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             {
                 Id = config.Id,
                 Name = config.Name + "_ActiveZoneOptimized",
-                EventTypes = new List<GameEventType>(config.EventTypes),
+                EventTypes = new List<EventType>(config.EventTypes),
                 Timing = config.Timing,
                 IsEnabled = config.IsEnabled
             };

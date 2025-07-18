@@ -15,22 +15,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
     public class ConditionFactory : IConditionFactory
     {
         private readonly ILoggerFactory _loggerFactory;
-        private readonly ICardRepository _cardRepository;
-        private readonly IFunctionRegistry _functionRegistry;
         private readonly IMapper _mapper;
+        private readonly IFunctionRegistry _functionRegistry;
         // Consider injecting IDslEvaluator and IDslExpressionParser if they are registered as services
         // For now, creating them internally for simplicity, assuming they don't have complex dependencies.
 
         public ConditionFactory(
             ILoggerFactory loggerFactory,
-            ICardRepository cardRepository,
-            IFunctionRegistry functionRegistry,
-            IMapper mapper)
+            IMapper mapper,
+            IFunctionRegistry functionRegistry)
         {
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
-            _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository));
-            _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
+            _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
         }
 
         /// <inheritdoc />
@@ -51,7 +48,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
                 var dslConditionEvaluatorLogger = _loggerFactory.CreateLogger<DslConditionEvaluator>();
 
                 // TODO: Consider injecting these if they become complex or are registered services
-                var dslEvaluator = new DslEvaluator(dslEvaluatorLogger);
+                var dslEvaluator = new DslEvaluator(dslEvaluatorLogger, _functionRegistry);
                 var dslParser = new DslExpressionParser(dslParserLogger);
 
                 evaluator = new DslConditionEvaluator(

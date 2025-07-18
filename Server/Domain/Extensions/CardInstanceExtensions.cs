@@ -10,6 +10,7 @@ using System.Linq;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Extensions
 {
@@ -199,6 +200,40 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
                 if (justSummoned && attacker.HasRush() && !attacker.HasStorm())
                     return false;
             }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 【BUG-017修复】检查是否可以执行攻击（包括攻击次数限制）
+        /// 这是DTO级别的攻击前置条件检查，用于AI决策
+        /// </summary>
+        /// <param name="attacker">攻击者DTO</param>
+        /// <param name="currentPlayerId">当前回合玩家ID</param>
+        /// <param name="isCurrentPlayerTurn">是否是攻击者的回合</param>
+        /// <returns>如果可以执行攻击则返回true</returns>
+        public static bool CanPerformAttackDto(this CardInstanceDto attacker, Guid currentPlayerId, bool isCurrentPlayerTurn = true)
+        {
+            // 基础检查：单位必须能够攻击
+            if (!attacker.CanAttack)
+                return false;
+
+            // 回合检查：必须是攻击者的回合
+            if (!isCurrentPlayerTurn || attacker.OwnerPlayerId != currentPlayerId)
+                return false;
+
+            // 攻击力检查：攻击力必须大于0
+            if (attacker.CurrentAttack <= 0)
+                return false;
+
+            // 区域检查：必须在场上
+            if (attacker.Zone != CardZone.Field)
+                return false;
+
+            // 【关键修复】攻击次数检查：检查是否已达到本回合最大攻击次数
+            var maxAttacksPerTurn = attacker.MaxAttacksPerTurn > 0 ? attacker.MaxAttacksPerTurn : 1; // 默认每回合最多攻击1次
+            if (attacker.AttacksThisTurn >= maxAttacksPerTurn)
+                return false;
 
             return true;
         }

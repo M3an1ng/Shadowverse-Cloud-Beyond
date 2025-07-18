@@ -7,39 +7,36 @@
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
-using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Keep for ConditionConfig, IConditionFactory
-using ShadowverseBeyond.Server.Domain.Abilities.Runtime; // Keep for Trigger, Condition, Target, Effect, EffectExecutionContext
-using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Keep for EffectConfig, IEffectExecutor
-using ShadowverseBeyond.Server.Domain.Abilities.Targets; // Keep for Target
-using ShadowverseBeyond.Server.Dtos; // Keep for GameStateDto
-using Microsoft.Extensions.Logging; // Keep for temporary logger creation if needed, or remove if logger is injected elsewhere
+using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using System;
 using System.Collections.Generic;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
     /// <summary>
-    /// 运行时卡牌能力表示
-    /// 从AbilityConfig创建，包含运行时状态和行为
+    /// 运行时卡牌能力表示。
+    /// 【架构最终版】职责：作为效果链（Effect Chain）的模板和工厂。
     /// </summary>
-    public class Ability
+    public class Ability : IAbility // Implement IAbility
     {
         /// <summary>
         /// 静态配置引用
         /// </summary>
         public AbilityConfig Config { get; }
 
-        /// <summary>
-        /// 能力的唯一标识符
-        /// </summary>
-        public long AbilityId => Config.Id.GetHashCode();
+        // RuntimeId is part of IAbility
+        public Guid RuntimeId { get; } // Already exists, ensure it's initialized (done in constructor)
 
         /// <summary>
-        /// 关联的卡牌ID
+        /// Gets the definition ID of the ability, linking to its static configuration.
         /// </summary>
-        public int CardId => Config.CardId;
+        public long DefinitionId => Config.Id; // Implement DefinitionId
 
         /// <summary>
         /// 能力名称
@@ -62,6 +59,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public AbilityType Type => Config.Type;
 
         /// <summary>
+        /// Gets the configuration for how this ability is triggered.
+        /// This now directly implements the IAbility interface member.
+        /// </summary>
+        public TriggerConfig TriggerConfig => Trigger.Config; // Already matches IAbility
+
+        /// <summary>
         /// 运行时触发器
         /// </summary>
         public Trigger Trigger { get; }
@@ -77,24 +80,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public List<Target> Targets { get; }
 
         /// <summary>
-        /// 运行时效果列表
+        /// 【废弃】不再使用运行时的Effect包装类。
+        /// public List<Effect> Effects { get; }
         /// </summary>
-        public List<Effect> Effects { get; }
 
         /// <summary>
-        /// 源卡牌实例（运行时设置）
+        /// Gets or sets the card instance that is the source of this ability, if applicable.
+        /// Null if the ability is not sourced from a specific card (e.g., system abilities).
+        /// This now directly implements the IAbility interface member.
         /// </summary>
-        public CardInstance? SourceCard { get; set; }
+        public CardInstance? SourceCard { get; set; } // Already matches IAbility
 
-        /// <summary>
-        /// 是否激活
-        /// </summary>
-        public bool IsActive { get; set; } = true;
-
-        /// <summary>
-        /// 激活时间
-        /// </summary>
-        public DateTime? ActivationTime { get; private set; }
 
         /// <summary>
         /// 总触发次数
@@ -106,148 +102,56 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         public DateTime? LastTriggerTime { get; private set; }
 
-        /// <summary>
-        /// 能力状态
-        /// </summary>
-        public AbilityState State { get; private set; } = AbilityState.Inactive;
-
-        // Add private fields for new dependencies
         private readonly IConditionFactory _conditionFactory;
-        private readonly Func<IEffectExecutor> _effectExecutorFactory;
-        // Removed: _buffManager, _cardRepository, _functionRegistry
 
         /// <summary>
         /// 构造函数，从AbilityConfig创建运行时Ability
         /// </summary>
         /// <param name="config">静态配置</param>
         /// <param name="conditionFactory">用于创建 Condition 实例的工厂</param>
-        /// <param name="effectExecutorFactory">用于获取 IEffectExecutor 的工厂函数</param>
         /// <param name="sourceCard">源卡牌实例</param>
         public Ability(
             AbilityConfig config,
-            IConditionFactory conditionFactory, // Inject IConditionFactory
-            Func<IEffectExecutor> effectExecutorFactory,   // Inject factory function for IEffectExecutor
+            IConditionFactory conditionFactory,
             CardInstance? sourceCard = null)
         {
+            RuntimeId = Guid.NewGuid(); // Initialize RuntimeId here as it's part of the interface
             Config = config ?? throw new ArgumentNullException(nameof(config));
-            _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory)); // Store conditionFactory
-            _effectExecutorFactory = effectExecutorFactory ?? throw new ArgumentNullException(nameof(effectExecutorFactory)); // Store effectExecutor factory
+            _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory));
             SourceCard = sourceCard;
+            // State is initialized by its property declaration.
 
             // 创建运行时组件
             Trigger = new Runtime.Trigger(config.Trigger);
 
-            // Use the injected factory to create Conditions
             Conditions = config.Conditions
-                .Select(c => _conditionFactory.CreateCondition(c)) // Use factory
+                .Select(c => _conditionFactory.CreateCondition(c))
                 .ToList();
 
             Targets = config.Targets
                 .Select(t => new Target(t))
                 .ToList();
-
-            // Effects are still simple wrappers around EffectConfig for now
-            Effects = config.Effects
-                .Select(e => new Effect(e))
-                .ToList();
-        }
-
-        /// <summary>
-        /// 激活能力
-        /// </summary>
-        public void Activate()
-        {
-            if (State == AbilityState.Destroyed)
-                throw new InvalidOperationException("Cannot activate a destroyed ability");
-
-            State = AbilityState.Active;
-            IsActive = true;
-            ActivationTime = DateTime.UtcNow;
-        }
-
-        /// <summary>
-        /// 停用能力
-        /// </summary>
-        public void Deactivate()
-        {
-            State = AbilityState.Inactive;
-            IsActive = false;
-        }
-
-        /// <summary>
-        /// 暂停能力
-        /// </summary>
-        public void Suspend()
-        {
-            if (State == AbilityState.Active)
-            {
-                State = AbilityState.Suspended;
-                IsActive = false;
-            }
-        }
-
-        /// <summary>
-        /// 恢复能力
-        /// </summary>
-        public void Resume()
-        {
-            if (State == AbilityState.Suspended)
-            {
-                State = AbilityState.Active;
-                IsActive = true;
-            }
-        }
-
-        /// <summary>
-        /// 禁用能力
-        /// </summary>
-        public void Disable()
-        {
-            State = AbilityState.Disabled;
-            IsActive = false;
-        }
-
-        /// <summary>
-        /// 销毁能力
-        /// </summary>
-        public void Destroy()
-        {
-            State = AbilityState.Destroyed;
-            IsActive = false;
-
-            // 重置所有运行时组件
-            foreach (var condition in Conditions)
-                condition.Reset();
-
-            foreach (var target in Targets)
-                target.Reset();
-
-            foreach (var effect in Effects)
-                effect.Reset();
-
-            Trigger.ResetTurnCounters();
-            Trigger.ResetEventFlags();
         }
 
         /// <summary>
         /// 检查能力是否可以触发（包含区域检查优化）
         /// </summary>
-        /// <param name="gameEvent">游戏事件</param>
-        /// <returns>是否可以触发</returns>
-        public bool CanTrigger(IGameEvent gameEvent)
+        public Task<bool> CanTrigger(IGameEvent gameEvent, GameContext context)
         {
-            if (!IsActive || State != AbilityState.Active)
-                return false;
-
-            // 使用区域感知的触发器检查，传入源卡牌进行区域验证
-            return Trigger.CanTrigger(gameEvent, SourceCard);
+            // 移除 IsActive 和 State 检查
+            // 激活状态由 AbilityManager 根据游戏上下文（如卡牌区域、沉默状态等）判断
+            // 此处主要依赖 TriggerConfig 进行事件类型和区域匹配
+            // 以及其他必要的上下文检查（例如，SourceCard 是否被沉默等，如果这些检查适合放在 CanTrigger）
+            if (SourceCard != null && SourceCard.IsSilenced)
+            {
+                return Task.FromResult(false); // 被沉默的卡牌能力不能触发
+            }
+            return Task.FromResult(Trigger.CanTrigger(gameEvent, SourceCard));
         }
 
         /// <summary>
         /// 检查所有条件是否满足
         /// </summary>
-        /// <param name="context">统一的游戏上下文</param>
-        /// <returns>条件是否满足</returns>
         public async Task<bool> CheckConditionsAsync(GameContext context)
         {
             foreach (var condition in Conditions)
@@ -259,95 +163,81 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         }
 
         /// <summary>
-        /// 解析所有目标
+        /// 解析所有目标，遵循IAbility接口的新契约。
+        /// 此方法现在负责收集并返回所有解析到的目标。
         /// </summary>
-        /// <param name="context">统一的游戏上下文</param>
-        /// <returns>解析的目标列表</returns>
-        public async Task<List<CardInstance>> ResolveTargetsAsync(GameContext context)
+        public async Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
         {
-            var allTargets = new List<CardInstance>();
-
+            var allResolvedTargets = new List<TargetInfo>();
             foreach (var target in Targets)
             {
-                var resolvedTargets = await target.ResolveTargetsAsync(context);
-                allTargets.AddRange(resolvedTargets);
+                // 调用每个运行时Target的解析方法，它会更新自己的ResolvedTargets属性并返回它们
+                var resolvedTargetsForCurrentSelector = await target.ResolveTargetsAsync(context);
+                if (resolvedTargetsForCurrentSelector != null)
+                {
+                    allResolvedTargets.AddRange(resolvedTargetsForCurrentSelector);
+                }
             }
-
-            return allTargets;
+            return allResolvedTargets;
         }
 
         /// <summary>
-        /// 执行所有效果
+        /// 【架构最终版】根据预先解析好的目标创建效果列表。
+        /// 此方法现在是纯粹的“效果工厂”，不再包含条件检查或目标解析逻辑。
         /// </summary>
         /// <param name="context">统一的游戏上下文</param>
-        /// <returns>生成的事件列表</returns>
-        public async Task<List<IGameEvent>> ExecuteEffectsAsync(GameContext context)
+        /// <param name="resolvedTargets">由外部调用者（如EventProcessor）传入的、已经解析完毕的目标列表</param>
+        /// <returns>一个包含所有待执行效果的列表</returns>
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
         {
-            var allEvents = new List<IGameEvent>();
+            var resultingEffects = new List<Effect>();
 
-            // 首先检查能力的顶层条件是否满足
-            if (!await CheckConditionsAsync(context))
-            {
-                // 如果顶层条件不满足，跳过所有效果的执行
-                return allEvents;
-            }
-
-            // 按执行顺序排序
-            var sortedEffects = Effects
-                .Where(e => e.CanExecute(context))
-                .OrderBy(e => e.Config.ExecutionOrder)
+            // 根据配置，为每个EffectConfig创建一个独立的Effect请求
+            var sortedEffectConfigs = Config.Effects
+                .OrderBy(e => e.ExecutionOrder)
                 .ToList();
 
-            foreach (var effect in sortedEffects)
+            // 从上下文中获取AbilityManager，用于创建连锁能力
+            var abilityManager = context.ServiceProvider.GetRequiredService<AbilityManager>();
+
+            foreach (var effectConfig in sortedEffectConfigs)
             {
-                try
+                var effectRequest = new Effect(
+                    effectConfig,
+                    context.RequestingPlayerId,
+                    resolvedTargets, // 使用传入的已解析目标
+                    this.RuntimeId, // parentAbilityId
+                    context.TriggeringEvent?.EventId ?? Guid.Empty, // triggeredEventId
+                    this.SourceCard?.InstanceId // sourceCardId
+                );
+
+                // --- 核心修改：生成时填充能力链 ---
+                if (effectConfig.ChainedAbilities.Any())
                 {
-                    effect.BeginExecution(context);
-
-                    // 执行单个效果并收集生成的事件
-                    var effectEvents = await ExecuteSingleEffectAsync(effect, context);
-                    allEvents.AddRange(effectEvents);
-
-                    effect.EndExecution(new Runtime.EffectExecutionResult
+                    foreach (var chainedConfig in effectConfig.ChainedAbilities)
                     {
-                        Success = true,
-                        GeneratedEvents = effectEvents
-                    });
+                        if (this.SourceCard != null)
+                        {
+                            // 使用从上下文中获取的AbilityManager
+                            var chainedAbility = abilityManager.CreateAbilityFromConfig(chainedConfig, this.SourceCard);
+                            if (chainedAbility != null)
+                            {
+                                // 将父Effect的完成事件作为触发事件
+                                // 注意：这部分逻辑根据设计文档应在GameService中处理，
+                                // 此处仅负责创建和附加能力实例。
+                                // chainedAbility.TriggeredEvent = new EffectCompletedEvent(effectRequest.Id);
+                                effectRequest.ChainedAbilities.Add(chainedAbility);
+                            }
+                        }
+                    }
                 }
-                catch (Exception ex)
-                {
-                    effect.EndExecution(new Runtime.EffectExecutionResult
-                    {
-                        Success = false,
-                        ErrorMessage = ex.Message
-                    });
+                // --- 修改结束 ---
 
-                    // 根据失败策略处理
-                    if (effect.Config.OnFailure == FailureStrategy.Stop)
-                        break;
-                }
+                resultingEffects.Add(effectRequest);
             }
 
-            return allEvents;
+            return Task.FromResult(resultingEffects);
         }
-
-        /// <summary>
-        /// 执行单个效果
-        /// </summary>
-        /// <param name="effect">运行时效果</param>
-        /// <param name="context">统一的游戏上下文</param>
-        /// <returns>生成的事件列表</returns>
-        private async Task<List<IGameEvent>> ExecuteSingleEffectAsync(Effect effect, GameContext context)
-        {
-            // Use the injected IEffectExecutor
-            return await _effectExecutor.ExecuteEffectAsync(effect.Config, context);
-            // Note: The logic previously inside this method (creating dispatcher, handler, converting context)
-            // should now reside within the implementation of IEffectExecutor.
-        }
-
-        // ConvertGameStateToDto method removed - use GameContext.CreateSnapshot() instead
-        // This method was never used in the codebase and GameContext.CreateSnapshot() provides
-        // the same functionality with proper AutoMapper integration
 
         /// <summary>
         /// 转换CardInstance列表到TargetId列表
@@ -360,7 +250,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 记录触发
         /// </summary>
-        public void RecordTrigger()
+        public void RecordTrigger(GameContext context)
         {
             TotalTriggerCount++;
             LastTriggerTime = DateTime.UtcNow;
@@ -370,7 +260,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 重置回合状态
         /// </summary>
-        public void ResetTurnState()
+        public void ResetTurnState(GameContext context)
         {
             Trigger.ResetTurnCounters();
             Trigger.ResetEventFlags();
@@ -385,18 +275,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 更新运行时状态
         /// </summary>
-        public void UpdateRuntimeState()
+        public void UpdateRuntimeState(GameContext context)
         {
-            Trigger.UpdateCooldownStatus();
-
-            // 检查目标有效性
             foreach (var target in Targets)
             {
-                if (!target.AreTargetsValid())
+                if (!target.AreTargetsValid(context))
                     target.MarkForResolution();
             }
         }
 
-        // Removed the temporary CreateRuntimeCondition method as Condition creation is now handled by IConditionFactory
+        // Implement missing interface methods for trigger counts
+        /// <summary>
+        /// Gets the number of times this ability has been triggered during the current turn.
+        /// </summary>
+        public int GetTriggerCountThisTurn(GameContext context)
+        {
+            return Trigger.CurrentTurnTriggerCount;
+        }
+
+        /// <summary>
+        /// Gets the total number of times this ability has been triggered during the current game.
+        /// </summary>
+        public int GetTriggerCountThisGame(GameContext context)
+        {
+            return TotalTriggerCount;
+        }
     }
 }

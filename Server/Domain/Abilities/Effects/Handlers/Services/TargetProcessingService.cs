@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId, TargetIdType
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For GameStateActionResult, IndividualActionResult
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
 {
@@ -24,107 +25,78 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
         /// <summary>
         /// Applies an effect action to a list of targets, enforcing the expected target type.
         /// </summary>
-        public async Task<GameStateActionResult> ProcessTargetsAsync(
+        public GameStateActionResult ProcessTargets(
             GameContext context,
-            TargetIdType expectedTargetType,
-            Func<PlayerState, GameContext, Task<IndividualActionResult>>? playerAction,
-            Func<CardInstance, GameContext, Task<IndividualActionResult>>? cardAction,
+            Func<PlayerState, GameContext, DomainOperationResult>? playerAction,
+            Func<CardInstance, GameContext, DomainOperationResult>? cardAction,
             string effectName)
         {
-            // --- This is the core logic moved from the temporary internal helper ---
-            if (context.CurrentGameState == null || context.SelectedTargets == null)
+            if (context.SelectedTargets == null)
             {
-                _logger.LogWarning("{EffectName}: Missing required context information (CurrentGameState or SelectedTargets).", effectName);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Missing required context." };
+                _logger.LogWarning("{EffectName}: SelectedTargets is null in the current context.", effectName);
+                return new GameStateActionResult { Success = false, ErrorMessage = "No targets selected." };
             }
 
-            var gameState = context.CurrentGameState;
-            var allResults = new List<IndividualActionResult>();
-            var allGeneratedEvents = new List<IGameEvent>(); // Changed type to List<IGameEvent>
+            var allResults = new List<DomainOperationResult>();
+            var allGeneratedEvents = new List<IGameEvent>();
             bool overallSuccess = true;
             string? firstErrorMessage = null;
 
-            foreach (var target in context.SelectedTargets)
+            foreach (var targetInfo in context.SelectedTargets)
             {
-                _logger.LogTrace("{EffectName}: Processing target: Type={ActualType}, Expected={ExpectedType}, ID={TargetId}",
-                                 effectName, target.Type, expectedTargetType, target.Id);
-                IndividualActionResult individualResult;
-
-                if (target.Type != expectedTargetType)
-                {
-                    _logger.LogWarning("{EffectName}: Received target of type {ActualType} but expected {ExpectedType}. Target ID: {TargetId}",
-                                       effectName, target.Type, expectedTargetType, target.Id);
-                    individualResult = new IndividualActionResult { TargetId = target, Success = false, Message = $"Effect expected target type {expectedTargetType} but received {target.Type}." };
-                    overallSuccess = false;
-                    if (firstErrorMessage == null) firstErrorMessage = individualResult.Message;
-                    allResults.Add(individualResult);
-                    continue;
-                }
+                _logger.LogTrace("{EffectName}: Processing target: Type={TargetType}, ID={TargetId}",
+                                 effectName, targetInfo.Type, targetInfo.Id);
+                DomainOperationResult domainResult;
 
                 try
                 {
-                    if (expectedTargetType == TargetIdType.Player)
+                    if (targetInfo.Type == Common.TargetType.Player && playerAction != null)
                     {
-                        if (playerAction != null)
+                        if (targetInfo.Player != null)
                         {
-                            // Use the existing GetPlayerState method
-                            PlayerState? targetPlayer = gameState.GetPlayerState(target.Id); // Corrected method name
-                            if (targetPlayer != null)
-                            {
-                                individualResult = await playerAction(targetPlayer, context);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("{EffectName}: Target Player with ID {PlayerId} not found.", effectName, target.Id);
-                                individualResult = new IndividualActionResult { TargetId = target, Success = false, Message = "Target player not found." };
-                            }
+                            domainResult = playerAction(targetInfo.Player, context);
                         }
                         else
                         {
-                            _logger.LogError("{EffectName}: Expected Player target type but no playerAction was provided.", effectName);
-                            individualResult = new IndividualActionResult { TargetId = target, Success = false, Message = "Internal error: Player action not implemented." };
+                            _logger.LogWarning("{EffectName}: TargetInfo of type Player has a null Player object. ID: {PlayerId}", effectName, targetInfo.Id);
+                            domainResult = new DomainOperationResult { Success = false, ErrorMessage = "Target player data is missing." };
                         }
                     }
-                    else // ExpectedType is CardInstance
+                    else if (targetInfo.Type == Common.TargetType.Card && cardAction != null)
                     {
-                        if (cardAction != null)
+                        if (targetInfo.Card != null)
                         {
-                            // Assuming GameContext has FindCardInstance
-                            var targetInstance = context.FindCardInstance(target.Id);
-                            if (targetInstance != null)
-                            {
-                                individualResult = await cardAction(targetInstance, context);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("{EffectName}: Target CardInstance with ID {InstanceId} not found.", effectName, target.Id);
-                                individualResult = new IndividualActionResult { TargetId = target, Success = false, Message = "Target card instance not found." };
-                            }
+                            domainResult = cardAction(targetInfo.Card, context);
                         }
                         else
                         {
-                            _logger.LogError("{EffectName}: Expected CardInstance target type but no cardAction was provided.", effectName);
-                            individualResult = new IndividualActionResult { TargetId = target, Success = false, Message = "Internal error: Card action not implemented." };
+                            _logger.LogWarning("{EffectName}: TargetInfo of type Card has a null Card object. ID: {CardId}", effectName, targetInfo.Id);
+                            domainResult = new DomainOperationResult { Success = false, ErrorMessage = "Target card data is missing." };
                         }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("{EffectName}: No appropriate action provided for target type {TargetType} or action was null.", effectName, targetInfo.Type);
+                        domainResult = new DomainOperationResult { Success = true };
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "{EffectName}: Exception occurred while processing target {TargetId} ({TargetType}).", effectName, target.Id, target.Type);
-                    individualResult = new IndividualActionResult { TargetId = target, Success = false, Message = $"Exception: {ex.Message}" };
+                    _logger.LogError(ex, "{EffectName}: Exception occurred while processing target {TargetId} ({TargetType}).", effectName, targetInfo.Id, targetInfo.Type);
+                    domainResult = new DomainOperationResult { Success = false, ErrorMessage = $"Exception: {ex.Message}" };
                 }
 
-                allResults.Add(individualResult);
-                if (!individualResult.Success)
+                allResults.Add(domainResult);
+                if (!domainResult.Success)
                 {
                     overallSuccess = false;
-                    if (firstErrorMessage == null) firstErrorMessage = individualResult.Message ?? "An error occurred.";
+                    if (firstErrorMessage == null) firstErrorMessage = domainResult.ErrorMessage ?? "An error occurred.";
                 }
-                // TODO: Aggregate events if IndividualActionResult contains them.
-                // If IndividualActionResult.GeneratedEvents is List<IGameEvent>, this would work:
-                // if (individualResult.GeneratedEvents != null) allGeneratedEvents.AddRange(individualResult.GeneratedEvents);
-                // If IndividualActionResult.GeneratedEvents is List<object>, we'd need:
-                // if (individualResult.GeneratedEvents != null) allGeneratedEvents.AddRange(individualResult.GeneratedEvents.OfType<IGameEvent>());
+
+                if (domainResult.GeneratedEvents != null && domainResult.GeneratedEvents.Any())
+                {
+                    allGeneratedEvents.AddRange(domainResult.GeneratedEvents);
+                }
             }
 
             _logger.LogInformation("{EffectName} completed processing {TargetCount} targets. Overall Success: {Success}",
@@ -137,7 +109,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
                 Results = allResults,
                 GeneratedEvents = allGeneratedEvents
             };
-            // --- End of moved logic ---
         }
     }
 }

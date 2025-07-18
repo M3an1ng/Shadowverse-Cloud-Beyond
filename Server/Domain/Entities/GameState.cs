@@ -5,6 +5,10 @@ using ShadowverseBeyond.Server.Dtos; // Added for DTO types
 using ShadowverseBeyond.Server.Dtos.Enums; // For GameStatus, GamePhase
 using System.Collections.Generic;
 using System.Linq; // Added for FirstOrDefault
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For DomainOperationResult
+
+using System.Collections.Concurrent; // Added for ConcurrentDictionary
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
@@ -18,12 +22,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     /// </summary>
     public class GameState
     {
+        private readonly ConcurrentDictionary<Guid, CardInstance> _allCardInstancesById = new();
+
         public string GameId { get; set; }
         public GameStatus Status { get; set; } = GameStatus.Starting;
         public GamePhase Phase { get; set; } = GamePhase.Mulligan;
 
-        // TODO: 移除全局回合数，使用PlayerState.TurnNumber
-        public int TurnNumber { get; set; } = 0; // Global turn counter (consider if needed vs player-specific turns)
+        // 【架构重构】已删除全局TurnNumber，使用PlayerState.TurnNumber管理每个玩家的回合数
         public Guid? CurrentPlayerId { get; set; } // Changed from string? to Guid?
         public Guid? FirstPlayerId { get; set; } // Changed from string? to Guid?
         public Guid? WinnerId { get; set; } // Changed from string? to Guid?
@@ -48,7 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             CurrentPlayerId = firstPlayerId; // Assign Guid directly
             Status = GameStatus.Starting; // Initial status
             Phase = GamePhase.Mulligan;   // Initial phase
-            TurnNumber = 0;               // Initial turn
+            // 【架构重构】不再初始化全局TurnNumber，使用PlayerState.TurnNumber
         }
 
         // Parameterless constructor might be needed for ORMs or specific deserialization scenarios.
@@ -89,15 +94,86 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (Player2?.PlayerId == playerId) return Player1;
             return null; // Or throw if playerId doesn't match either player
         }
+        /// &lt;summary&gt;
+        /// Finds a card instance by its ID within a specific zone or across player leaders.
+        /// &lt;/summary&gt;
+        /// &lt;param name="cardId"&gt;The instance ID of the card to find.&lt;/param&gt;
+        /// &lt;param name="zone"&gt;The zone to search in. Defaults to CardZone.Field.&lt;/param&gt;
+        /// &lt;returns&gt;The found CardInstance, or null if not found.&lt;/returns&gt;
+        public CardInstance? FindCardInstance(Guid cardId, CardZone zone = CardZone.Field)
+        {
+            if (cardId == Guid.Empty) return null;
 
+            if (zone == CardZone.Leader)
+            {
+                if (Player1?.Leader?.InstanceId == cardId) return Player1.Leader;
+                if (Player2?.Leader?.InstanceId == cardId) return Player2.Leader;
+                return null;
+            }
+
+            // Search in Player 1's specified zone
+            var p1ZoneCards = Player1?.GetCardsInZone(zone);
+            var card = p1ZoneCards?.Find(c => c.InstanceId == cardId);
+            if (card != null) return card;
+
+            // Search in Player 2's specified zone
+            var p2ZoneCards = Player2?.GetCardsInZone(zone);
+            card = p2ZoneCards?.Find(c => c.InstanceId == cardId);
+            if (card != null) return card;
+
+            // If specifically searching field and not found yet, also check leaders (as per original logic if zone was just field)
+            // However, the user's request was to make it zone-specific. If they want a "field or leader" search,
+            // the caller should make two calls or we need a different method/parameter.
+            // For now, strictly adhering to the specified zone. If zone is Field, it won't check leaders unless explicitly asked.
+
+            return null; // Card not found in the specified zone for either player
+        }
+
+        /// <summary>
+        /// 根据实例ID高效查找游戏中的任意卡牌实例。
+        /// </summary>
+        public CardInstance? FindCardInstanceById(Guid instanceId)
+        {
+            _allCardInstancesById.TryGetValue(instanceId, out var card);
+            return card;
+        }
+
+        /// <summary>
+        /// 注册一个新的卡牌实例到全局查找字典中。
+        /// 应在卡牌实例被创建并加入游戏（任何区域）时调用。
+        /// </summary>
+        public void RegisterCardInstance(CardInstance card)
+        {
+            if (card != null)
+            {
+                _allCardInstancesById[card.InstanceId] = card;
+            }
+        }
+
+        /// <summary>
+        /// 从全局查找字典中注销一个卡牌实例。
+        /// 应在卡牌实例彻底离开游戏（例如，被放逐且无法返回，或游戏结束清理时）调用。
+        /// 注意：仅仅移动到墓地的卡牌通常不应立即注销，因为它们可能仍是某些效果的目标或触发源。
+        /// </summary>
+        public void UnregisterCardInstance(Guid instanceId)
+        {
+            _allCardInstancesById.TryRemove(instanceId, out _);
+        }
+
+        public void UnregisterCardInstance(CardInstance card)
+        {
+            if (card != null) UnregisterCardInstance(card.InstanceId);
+        }
+
+        /// 应该移动到PlayerState中
         /// <summary>
         /// 执行回合结束操作
         /// </summary>
         /// <param name="endingPlayerId">结束回合的玩家ID</param>
         /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> EndTurn(Guid endingPlayerId)
+        public DomainOperationResult EndTurn(Guid endingPlayerId)
         {
-            var events = new List<IGameEvent>();
+            var result = new DomainOperationResult();
 
             // 1. 获取当前玩家
             var currentPlayer = GetPlayerState(endingPlayerId);
@@ -107,66 +183,69 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             // 2. 执行当前玩家的回合结束操作
-            var playerEndTurnEvents = currentPlayer.EndTurn();
-            events.AddRange(playerEndTurnEvents);
+            var playerEndTurnResult = currentPlayer.EndTurn();
+            result.GeneratedEvents.AddRange(playerEndTurnResult.GeneratedEvents);
 
             // 3. 切换到下一个玩家
             var nextPlayer = GetOpponentPlayerState(endingPlayerId);
             if (nextPlayer != null)
             {
                 CurrentPlayerId = nextPlayer.PlayerId;
-
-                // 4. 增加回合数
-                TurnNumber++;
-
-                // 5. 执行下一个玩家的回合开始操作
-                var nextPlayerStartTurnEvents = StartTurn(nextPlayer);
-                events.AddRange(nextPlayerStartTurnEvents);
+                nextPlayer.TurnNumber++;
             }
 
-            return events;
+            return result;
+        }
+
+
+        /// <summary>
+        /// 检查双方Mulligan是否都已完成
+        /// </summary>
+        /// <returns>如果双方都完成Mulligan返回true，否则返回false</returns>
+        public bool AreBothMulligansCompleted()
+        {
+            return Phase == GamePhase.Mulligan &&
+                   Player1 != null && Player1.HasCompletedMulligan &&
+                   Player2 != null && Player2.HasCompletedMulligan;
         }
 
         /// <summary>
-        /// 执行回合开始操作
+        /// 执行从Mulligan阶段到Main阶段的转换
+        /// 【架构修正】领域实体只负责状态转换，不直接创建事件或效果请求
+        /// 效果请求的创建应该由调用方（如PlayerState.PerformMulligan）处理
         /// </summary>
-        /// <param name="startingPlayer">开始回合的玩家</param>
-        /// <returns>生成的事件列表</returns>
-        private List<IGameEvent> StartTurn(PlayerState startingPlayer)
+        /// <returns>空的事件列表，状态转换完成的标识</returns>
+        public List<IGameEvent> TransitionFromMulliganToMain()
         {
             var events = new List<IGameEvent>();
 
-            // 使用PlayerState的领域方法执行回合开始
-            var turnStartEvents = startingPlayer.StartTurn(TurnNumber);
-            events.AddRange(turnStartEvents);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 执行指定玩家的回合开始操作（公共方法）
-        /// </summary>
-        /// <param name="startingPlayerId">开始回合的玩家ID</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> StartPlayerTurn(Guid startingPlayerId)
-        {
-            var events = new List<IGameEvent>();
-
-            // 获取开始回合的玩家
-            var startingPlayer = GetPlayerState(startingPlayerId);
-            if (startingPlayer == null)
+            if (!AreBothMulligansCompleted())
             {
-                throw new ArgumentException($"Player not found: {startingPlayerId}");
+                throw new InvalidOperationException("Cannot transition to Main phase: not all players have completed mulligan");
             }
 
-            // 设置当前玩家
-            CurrentPlayerId = startingPlayerId;
+            if (!FirstPlayerId.HasValue)
+            {
+                throw new InvalidOperationException("Cannot transition to Main phase: FirstPlayerId is null");
+            }
 
-            // 执行回合开始操作
-            var turnStartEvents = StartTurn(startingPlayer);
-            events.AddRange(turnStartEvents);
+            // 【架构修正】只负责状态转换，不创建事件或效果请求
+            Phase = GamePhase.Main;
+            CurrentPlayerId = FirstPlayerId.Value;
+
+            // 【架构修正】不在这里创建TurnStartEvent或TurnStartEffectRequest
+            // 这些应该由调用方（PlayerState.PerformMulligan）根据需要创建并入队
 
             return events;
+        }
+
+        /// <summary>
+        /// Clears all registered card instances from the global lookup dictionary.
+        /// Should be called when the game ends and state is being cleaned up.
+        /// </summary>
+        public void ClearAllRegisteredCards()
+        {
+            _allCardInstancesById.Clear();
         }
 
         // Removed ToDto() method as mapping is now handled by AutoMapper (GameStateProfile)

@@ -18,26 +18,13 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         public Guid PlayerId { get; }
         public AttackActionDto ActionDto { get; }
 
-        // Properties required by IGameEvent
-        public new PlayerStateDto? SourcePlayer { get; init; } = null;
-        public new CardInstance? SourceCard { get; init; } = null; // Could be the attacking unit
-        public new Dictionary<string, object> Parameters { get; init; } = new();
-
         public AttackRequestedEvent(Guid playerId, AttackActionDto actionDto)
-            : base(nameof(AttackRequestedEvent))
+            : base(EventType.AttackRequested)
         {
             PlayerId = playerId;
             ActionDto = actionDto;
-            // Potentially set SourceCard based on ActionDto.AttackerUid if needed immediately
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // Placeholder: The actual logic is handled by the EventProcessor reacting to this event type.
-            _logger.LogDebug("Executing AttackRequestedEvent for Player {PlayerId}, AttackerUID {AttackerUid}, TargetUID {TargetUid}",
-                PlayerId, ActionDto.AttackerUid, ActionDto.TargetUid);
-            return Task.FromResult(new List<IGameEvent>()); // Return empty list
-        }
 
         public GameEventDto? ToDto(IMapper mapper)
         {

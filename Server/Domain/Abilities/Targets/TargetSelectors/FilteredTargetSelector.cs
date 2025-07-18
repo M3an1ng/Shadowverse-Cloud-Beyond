@@ -59,6 +59,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
             try
             {
                 _logger.LogDebug("Executing card query for target selection. SourcePool: {SourcePool}", config.Query?.SourcePoolExpression);
+                if (config.Query == null)
+                {
+                    _logger.LogError("TargetConfig.Query cannot be null for FilteredTargetSelector.");
+                    return new List<TargetId>();
+                }
                 queryResult = await _queryExecutor.ExecuteQueryAsync(config.Query, context);
             }
             catch (Exception ex)

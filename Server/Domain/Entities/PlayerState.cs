@@ -1,78 +1,49 @@
 // File: Server/Domain/Entities/PlayerState.cs
-using System; // Added for Guid
+using AutoMapper;
+using System;
 using System.Collections.Generic;
-using System.Linq; // Added for FirstOrDefault
-using ShadowverseBeyond.Server.Dtos; // Added for DTO types
-using ShadowverseBeyond.Server.Dtos.Enums; // Added for CardType enum
-using ShadowverseBeyond.Server.Domain.Events; // Added for IGameEvent
+using System.Linq;
+using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Interfaces;
+using ShadowverseBeyond.Server.Services.Abstractions;
+using ShadowverseBeyond.Server.Exceptions;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
-    // Note: CardInstance is now defined in CardInstance.cs
-    // This class has been updated to use CardInstance instead of CardState
-    // Leader health management has been moved to LeaderState in GameState
-
-    /// <summary>
-    /// Represents the state of a single player within a game.
-    /// Leader health is now managed through the associated LeaderState in GameState.
-    /// </summary>
     public class PlayerState
     {
-        public Guid PlayerId { get; set; } // Changed from string to Guid
-
-        // Core Stats (Leader health removed - now managed via LeaderState)
-        public int MaxPlayPoints { get; set; } = 0; // Starts at 0, increases per turn
+        public Guid PlayerId { get; set; }
+        public int MaxPlayPoints { get; set; } = 0;
         public int CurrentPlayPoints { get; set; } = 0;
-        public int MaxEvolutionPoints { get; set; } = 0; // Determined by going first/second
+        public int MaxEvolutionPoints { get; set; } = 0;
         public int CurrentEvolutionPoints { get; set; } = 0;
-
-        // Player Status & Turn Info
         public bool IsAI { get; set; } = false;
         public bool IsFirst { get; set; } = false;
         public bool HasCompletedMulligan { get; set; } = false;
-        // Removed CanEvolve - evolution eligibility is determined by game rules and EP availability
-        public int TurnNumber { get; set; } = 0; // Player's individual turn count
+        public int TurnNumber { get; set; } = 0;
         public int PlayedCardCountThisTurn { get; set; } = 0;
-        public bool HasTakenFirstTurn { get; set; } = false; // Added based on GameService logic
-
-        /// <summary>
-        /// Current health of the player's leader.
-        /// Gets the value from the Leader CardInstance.
-        /// </summary>
+        public bool HasTakenFirstTurn { get; set; } = false;
         public int CurrentHealth => Leader?.CurrentHealth ?? 0;
-
-        /// <summary>
-        /// Maximum health of the player's leader.
-        /// Gets the value from the Leader CardInstance.
-        /// </summary>
         public int MaxHealth => Leader?.MaxHealth ?? 0;
-
-        // Card Zones (Using CardInstance instead of CardState)
-        public CardInstance Leader { get; set; } = null!; // Must be initialized externally (e.g., in GameService)
+        public CardInstance Leader { get; set; } = null!;
         public List<CardInstance> Hand { get; set; } = new List<CardInstance>();
         public List<CardInstance> Deck { get; set; } = new List<CardInstance>();
         public List<CardInstance> Field { get; set; } = new List<CardInstance>();
         public List<CardInstance> Graveyard { get; set; } = new List<CardInstance>();
         public List<CardInstance> Extra { get; set; } = new List<CardInstance>();
-
-        // Calculated property for Deck Count
         public int DeckCount => Deck?.Count ?? 0;
+        public bool CanEvolve { get; set; } = false;
 
-        // Note: Field units are now managed separately in GameState as Player1Units/Player2Units
-        // This removes the redundant Field property from PlayerState
-
-        // Player Statuses/Effects (Consider a dedicated class/struct later)
-        // public List<string> ActiveEffects { get; set; } = new List<string>();
-
-        // Note: IsVengeanceActive calculation moved to service layer since it depends on LeaderState
-
-        // Constructor
-        public PlayerState(Guid playerId) // Changed parameter type to Guid
+        public PlayerState(Guid playerId)
         {
             PlayerId = playerId;
-            // Initialization logic (e.g., loading deck, setting initial PP/EP based on turn order)
-            // would typically happen elsewhere, perhaps in GameState creation or IGameStateManager.
-            // Initialize lists to prevent null reference issues.
             Hand = new List<CardInstance>();
             Deck = new List<CardInstance>();
             Field = new List<CardInstance>();
@@ -80,10 +51,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Extra = new List<CardInstance>();
         }
 
-        // Parameterless constructor often needed for ORMs or deserialization
         private PlayerState()
         {
-            PlayerId = Guid.Empty; // Use Guid.Empty for default
+            PlayerId = Guid.Empty;
             Hand = new List<CardInstance>();
             Deck = new List<CardInstance>();
             Field = new List<CardInstance>();
@@ -91,326 +61,306 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Extra = new List<CardInstance>();
         }
 
-        // --- State Manipulation Methods ---
-
-        /// <summary>
-        /// 修改玩家的当前PP值
-        /// </summary>
-        /// <param name="amount">修改量（可以为负数）</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> ModifyPlayPoints(int amount)
+        public DomainOperationResult ModifyPlayPoints(int amount)
         {
-            var events = new List<IGameEvent>();
-            int originalPP = CurrentPlayPoints;
-
-            // 限制PP在0到最大值之间
-            CurrentPlayPoints = Math.Max(0, Math.Min(CurrentPlayPoints + amount, MaxPlayPoints));
-
-            // TODO: 生成PP更新事件
-            // var ppUpdateEvent = new PpUpdateEvent(PlayerId, CurrentPlayPoints, MaxPlayPoints);
-            // events.Add(ppUpdateEvent);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 从手牌中移除指定卡牌
-        /// </summary>
-        /// <param name="card">要移除的卡牌</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> RemoveCardFromHand(CardInstance card)
-        {
-            var events = new List<IGameEvent>();
-
-            if (Hand.Remove(card))
+            var result = new DomainOperationResult();
+            int originalPP = this.CurrentPlayPoints;
+            int newPP = Math.Max(0, Math.Min(originalPP + amount, this.MaxPlayPoints));
+            if (originalPP != newPP)
             {
-                // TODO: 生成手牌移除事件
-                // var cardRemovedEvent = new CardRemovedFromHandEvent(PlayerId, card);
-                // events.Add(cardRemovedEvent);
+                this.CurrentPlayPoints = newPP;
+                result.GeneratedEvents.Add(new PpUpdateEvent(this, this.CurrentPlayPoints, this.MaxPlayPoints));
             }
-
-            return events;
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 将卡牌召唤到场地
-        /// </summary>
-        /// <param name="card">要召唤的卡牌</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> SummonCardToField(CardInstance card)
+        public DomainOperationResult ModifyMaxPlayPoints(int amount)
         {
-            var events = new List<IGameEvent>();
-
-            // 设置卡牌区域和位置
-            card.CurrentZone = CardZone.Field;
-            card.FieldPosition = Field.Count;
-
-            // 添加到场地
-            Field.Add(card);
-
-            // TODO: 生成召唤事件
-            // var summonEvent = new CardSummonedEvent(PlayerId, card);
-            // events.Add(summonEvent);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 将卡牌移动到墓地
-        /// </summary>
-        /// <param name="card">要移动的卡牌</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> MoveCardToGraveyard(CardInstance card)
-        {
-            var events = new List<IGameEvent>();
-
-            // 从当前区域移除
-            RemoveCardFromCurrentZone(card);
-
-            // 设置新区域并添加到墓地
-            card.CurrentZone = CardZone.Graveyard;
-            Graveyard.Add(card);
-
-            // TODO: 生成墓地移动事件
-            // var graveyardEvent = new CardMovedToGraveyardEvent(PlayerId, card);
-            // events.Add(graveyardEvent);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 执行出牌操作的完整流程
-        /// </summary>
-        /// <param name="cardInHand">手牌中的卡牌</param>
-        /// <param name="cardDefinition">卡牌定义</param>
-        /// <param name="cardType">卡牌类型</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> PlayCard(CardInstance cardInHand, CardDefinition cardDefinition, CardType cardType)
-        {
-            var events = new List<IGameEvent>();
-
-            // 1. 扣除费用
-            var ppEvents = ModifyPlayPoints(-cardDefinition.Cost);
-            events.AddRange(ppEvents);
-
-            // 2. 从手牌移除
-            var removeEvents = RemoveCardFromHand(cardInHand);
-            events.AddRange(removeEvents);
-
-            // 3. 根据卡牌类型处理
-            switch (cardType)
+            var result = new DomainOperationResult();
+            int originalMaxPP = this.MaxPlayPoints;
+            int newMaxPP = Math.Max(0, Math.Min(originalMaxPP + amount, GameConstants.PlayPoints.MaxPlayPoints));
+            if (originalMaxPP != newMaxPP)
             {
-                case CardType.Follower:
-                case CardType.Amulet:
-                    // 创建场地卡牌并召唤
-                    var fieldCard = CreateFieldCardInstance(cardInHand, cardDefinition);
-                    var summonEvents = SummonCardToField(fieldCard);
-                    events.AddRange(summonEvents);
-                    break;
-
-                case CardType.Spell:
-                    // 法术直接进入墓地
-                    var spellEvents = MoveCardToGraveyard(cardInHand);
-                    events.AddRange(spellEvents);
-                    break;
+                this.MaxPlayPoints = newMaxPP;
+                result.GeneratedEvents.Add(new PpUpdateEvent(this, this.CurrentPlayPoints, this.MaxPlayPoints));
             }
-
-            return events;
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 创建场地上的卡牌实例
-        /// </summary>
-        /// <param name="handCard">手牌中的卡牌</param>
-        /// <param name="cardDefinition">卡牌定义</param>
-        /// <returns>场地卡牌实例</returns>
-        private CardInstance CreateFieldCardInstance(CardInstance handCard, CardDefinition cardDefinition)
+        private List<CardInstance>? GetZoneList(CardZone zone)
         {
-            return new CardInstance(handCard.InstanceId, cardDefinition.Id, PlayerId)
+            return zone switch
             {
-                CurrentZone = CardZone.Field,
-                CardType = cardDefinition.Type ?? string.Empty,
-                BaseAttack = cardDefinition.Attack ?? 0,
-                CurrentAttack = cardDefinition.Attack ?? 0,
-                BaseHealth = cardDefinition.Health ?? 0,
-                CurrentHealth = cardDefinition.Health ?? 0,
-                MaxHealth = cardDefinition.Health ?? 0,
-                BaseCost = cardDefinition.Cost,
-                CurrentCost = cardDefinition.Cost,
-                IsEvolved = false,
-                CanAttack = false, // 新召唤的单位通常不能立即攻击
-                AttacksThisTurn = 0,
-                FieldPosition = null // 将在添加到场地时设置
+                CardZone.Hand => this.Hand,
+                CardZone.Deck => this.Deck,
+                CardZone.Field => this.Field,
+                CardZone.Graveyard => this.Graveyard,
+                CardZone.Extra => this.Extra,
+                _ => null,
             };
         }
 
-        /// <summary>
-        /// 消耗进化点数
-        /// </summary>
-        /// <param name="amount">消耗的EP数量</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> ConsumeEvolutionPoints(int amount)
+        private void UpdateZoneIndices(CardZone zone)
         {
-            var events = new List<IGameEvent>();
+            var zoneList = GetZoneList(zone);
+            if (zoneList == null) return;
 
-            CurrentEvolutionPoints = Math.Max(0, CurrentEvolutionPoints - amount);
-
-            // TODO: 生成EP更新事件
-            // var epUpdateEvent = new EpUpdateEvent(PlayerId, CurrentEvolutionPoints, MaxEvolutionPoints);
-            // events.Add(epUpdateEvent);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 执行卡牌进化操作
-        /// </summary>
-        /// <param name="cardToEvolve">要进化的卡牌</param>
-        /// <param name="evolvedDefinition">进化后的卡牌定义</param>
-        /// <param name="evolutionPointCost">进化消耗的EP</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> EvolveCard(CardInstance cardToEvolve, CardDefinition evolvedDefinition, int evolutionPointCost)
-        {
-            var events = new List<IGameEvent>();
-
-            // 1. 消耗进化点数
-            var epEvents = ConsumeEvolutionPoints(evolutionPointCost);
-            events.AddRange(epEvents);
-
-            // 2. 执行卡牌进化
-            var evolveEvents = cardToEvolve.Evolve(evolvedDefinition);
-            events.AddRange(evolveEvents);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 执行回合结束操作
-        /// </summary>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> EndTurn()
-        {
-            var events = new List<IGameEvent>();
-
-            // 1. 重置单位攻击次数和攻击能力
-            var fieldResetEvents = ResetFieldUnitsForTurnEnd();
-            events.AddRange(fieldResetEvents);
-
-            // 2. 处理回合结束时的状态更新
-            var statusEvents = ProcessTurnEndStatusUpdates();
-            events.AddRange(statusEvents);
-
-            // TODO: 生成回合结束事件
-            // var turnEndEvent = new TurnEndEvent(PlayerId);
-            // events.Add(turnEndEvent);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 重置场地单位的回合结束状态
-        /// </summary>
-        /// <returns>生成的事件列表</returns>
-        private List<IGameEvent> ResetFieldUnitsForTurnEnd()
-        {
-            var events = new List<IGameEvent>();
-
-            foreach (var unit in Field)
+            for (int i = 0; i < zoneList.Count; i++)
             {
-                // 重置攻击次数
-                unit.AttacksThisTurn = 0;
+                zoneList[i].ZoneIndex = i;
+            }
+        }
 
-                // 如果单位本回合无法攻击，下回合可以攻击
-                if (!unit.CanAttack)
+        private bool RemoveCardFromCurrentZone(CardInstance card)
+        {
+            var zoneList = GetZoneList(card.CurrentZone);
+            if (zoneList != null && zoneList.Remove(card))
+            {
+                UpdateZoneIndices(card.CurrentZone);
+                return true;
+            }
+            return false;
+        }
+
+        private DomainOperationResult MoveCard(CardInstance card, CardZone destination, int? index = null)
+        {
+            var result = new DomainOperationResult();
+            var sourceZone = card.CurrentZone;
+
+            if (sourceZone == destination)
+            {
+                result.Success = true;
+                return result;
+            }
+
+            if (!RemoveCardFromCurrentZone(card))
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Card {card.InstanceId} not found in its declared source zone '{sourceZone}'.";
+                return result;
+            }
+
+            var destinationList = GetZoneList(destination);
+            if (destinationList == null && destination != CardZone.Extra && destination != CardZone.None)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Cannot add card to an invalid or unsupported target zone: {destination}";
+                // Attempt to return the card to its original zone to prevent card loss
+                GetZoneList(sourceZone)?.Add(card);
+                UpdateZoneIndices(sourceZone);
+                return result;
+            }
+
+            card.CurrentZone = destination;
+
+            if (destinationList != null)
+            {
+                if (index.HasValue && index.Value >= 0 && index.Value <= destinationList.Count)
                 {
-                    unit.CanAttack = true;
+                    destinationList.Insert(index.Value, card);
                 }
-
-                // TODO: 处理其他回合结束时的单位状态重置
-                // 例如：某些临时效果的清除等
-            }
-
-            return events;
-        }
-
-        /// <summary>
-        /// 处理回合结束时的状态更新
-        /// </summary>
-        /// <returns>生成的事件列表</returns>
-        private List<IGameEvent> ProcessTurnEndStatusUpdates()
-        {
-            var events = new List<IGameEvent>();
-
-            // TODO: 处理回合结束时的各种状态更新
-            // 例如：
-            // - Buff持续时间减少
-            // - 临时效果清除
-            // - 特殊状态处理等
-
-            return events;
-        }
-
-        /// <summary>
-        /// 执行换牌操作
-        /// </summary>
-        /// <param name="cardUidsToReplace">要替换的卡牌UID列表</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> PerformMulligan(List<Guid> cardUidsToReplace)
-        {
-            var events = new List<IGameEvent>();
-
-            if (HasCompletedMulligan)
-            {
-                throw new InvalidOperationException($"Player {PlayerId} has already completed mulligan.");
-            }
-
-            // 1. 找到要替换的卡牌
-            var cardsToReplace = new List<CardInstance>();
-            foreach (var cardUid in cardUidsToReplace)
-            {
-                var cardToReplace = Hand.FirstOrDefault(c => c.InstanceId == cardUid);
-                if (cardToReplace != null)
+                else
                 {
-                    cardsToReplace.Add(cardToReplace);
+                    destinationList.Add(card);
                 }
+                UpdateZoneIndices(destination);
             }
 
-            // 2. 将要替换的卡牌放回牌库
+            result.GeneratedEvents.Add(new CardMovedEvent(card, sourceZone, destination));
+            if (destination == CardZone.Hand || sourceZone == CardZone.Hand)
+            {
+                result.GeneratedEvents.Add(new HandUpdatedEvent(this, this.Hand.ToList()));
+            }
+            if (destination == CardZone.Deck || sourceZone == CardZone.Deck)
+            {
+                result.GeneratedEvents.Add(new DeckCountChangedEvent(this, this.Deck.Count));
+            }
+
+            result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult SummonCardToField(CardInstance card, int? index = null)
+        {
+            if (Field.Count >= GameConstants.Field.MaxFieldSize)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "Field is full." };
+            }
+            var result = MoveCard(card, CardZone.Field, index);
+            if (result.Success)
+            {
+                result.GeneratedEvents.Add(new SummonEvent(this, card, index));
+            }
+            return result;
+        }
+
+        public DomainOperationResult MoveCardToGraveyard(CardInstance card)
+        {
+            var result = MoveCard(card, CardZone.Graveyard, null);
+            if (result.Success)
+            {
+                // 【BUG修复】当卡牌成功移动到墓地时，生成GraveyardUpdatedEvent
+                result.GeneratedEvents.Add(new GraveyardUpdatedEvent(this, this.Graveyard.Count));
+            }
+            return result;
+        }
+
+        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance? cause, string reason = "Effect")
+        {
+            var moveResult = MoveCardToGraveyard(cardToDestroy);
+            if (moveResult.Success)
+            {
+                // The 'cause' is the source of the destruction, 'cardToDestroy' is the target.
+                // This now correctly aligns with the CardDestroyedEvent constructor.
+                moveResult.GeneratedEvents.Add(new CardDestroyedEvent(cause, cardToDestroy, reason));
+            }
+            return moveResult;
+        }
+
+        public DomainOperationResult PlayCard(CardInstance cardInHand, List<Guid> targetIds)
+        {
+            var result = new DomainOperationResult();
+            var ppResult = ModifyPlayPoints(-cardInHand.CurrentCost);
+            result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
+            this.PlayedCardCountThisTurn++;
+            return result;
+        }
+
+        public DomainOperationResult ConsumeEvolutionPoints(int amount)
+        {
+            if (amount <= 0)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+            return ModifyEvolutionPoints(-amount);
+        }
+
+        public DomainOperationResult ModifyEvolutionPoints(int amount)
+        {
+            var result = new DomainOperationResult();
+            int originalEP = this.CurrentEvolutionPoints;
+            int newEP = Math.Max(0, Math.Min(originalEP + amount, this.MaxEvolutionPoints));
+            if (originalEP != newEP)
+            {
+                this.CurrentEvolutionPoints = newEP;
+                result.GeneratedEvents.Add(new EpUpdateEvent(this, this.CurrentEvolutionPoints, this.MaxEvolutionPoints));
+            }
+            result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult EvolveCard(CardInstance cardToEvolve, CardDefinition evolvedDefinition)
+        {
+            var result = new DomainOperationResult();
+
+            // Preconditions (EP, CanEvolve flag, etc.) are now expected to be validated by the calling service/handler.
+            // This method now only executes the state change.
+
+            // 1. Consume Evolution Point
+            var epResult = ConsumeEvolutionPoints(GameConstants.Evolution.EvolutionPointCost);
+            if (!epResult.Success)
+            {
+                // This check is a safeguard; the caller should have already verified EP.
+                return epResult;
+            }
+            result.GeneratedEvents.AddRange(epResult.GeneratedEvents);
+
+            // 2. Apply the transformation by calling the method on the card instance
+            var evolveResult = cardToEvolve.ApplyEvolution(evolvedDefinition);
+            result.GeneratedEvents.AddRange(evolveResult.GeneratedEvents);
+
+            // 3. Finalize player state
+            this.CanEvolve = false; // Consume the turn's evolution right
+
+            result.Success = true;
+            return result;
+        }
+
+        private DomainOperationResult CheckAndUnlockEvolutionPoints()
+        {
+            var result = new DomainOperationResult();
+
+            // Don't do anything if EP is already unlocked.
+            if (this.MaxEvolutionPoints > 0)
+            {
+                result.Success = true;
+                return result;
+            }
+
+            bool isEligibleForUnlock =
+                (this.IsFirst && this.TurnNumber == GameConstants.Evolution.FirstPlayerEvolutionStartTurn) ||
+                (!this.IsFirst && this.TurnNumber == GameConstants.Evolution.SecondPlayerEvolutionStartTurn);
+
+            if (isEligibleForUnlock)
+            {
+                int newEp = this.IsFirst
+                    ? GameConstants.Evolution.FirstPlayerEvolutionPoints
+                    : GameConstants.Evolution.SecondPlayerEvolutionPoints;
+
+                this.MaxEvolutionPoints = newEp;
+                this.CurrentEvolutionPoints = newEp;
+                this.CanEvolve = true; // Grant evolution right for the turn
+                result.GeneratedEvents.Add(new EpUpdateEvent(this, this.CurrentEvolutionPoints, this.MaxEvolutionPoints));
+            }
+
+            result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult EndTurn()
+        {
+            var result = new DomainOperationResult();
+            result.GeneratedEvents.Add(new TurnEndEvent(this));
+            this.PlayedCardCountThisTurn = 0;
+            result.Success = true;
+            return result;
+        }
+
+        public MulliganResult PerformMulligan(List<Guid> cardUidsToReplace, GameState gameState)
+        {
+            if (gameState.Phase != GamePhase.Mulligan)
+                throw new GameLogicException("Mulligan can only be performed during mulligan phase.");
+            if (this.HasCompletedMulligan)
+                throw new GameLogicException($"Player {this.PlayerId} has already completed mulligan.");
+            if (cardUidsToReplace.Count > this.Hand.Count)
+                throw new GameLogicException("Cannot replace more cards than in hand.");
+
+            var result = new MulliganResult();
+            var cardsToReplace = this.Hand.Where(c => cardUidsToReplace.Contains(c.InstanceId)).ToList();
+
             foreach (var card in cardsToReplace)
             {
-                Hand.Remove(card);
-                card.CurrentZone = CardZone.Deck;
-                Deck.Add(card);
+                MoveCard(card, CardZone.Deck, null);
             }
 
-            // 3. 洗牌
             ShuffleDeck();
 
-            // 4. 抽取新卡牌
-            var drawnCards = new List<CardInstance>();
             int cardsToDrawCount = cardsToReplace.Count;
             for (int i = 0; i < cardsToDrawCount && Deck.Count > 0; i++)
             {
+                if (Hand.Count >= GameConstants.Hand.MaxHandSize) break;
                 var drawnCard = Deck[0];
-                Deck.RemoveAt(0);
-                drawnCard.CurrentZone = CardZone.Hand;
-                Hand.Add(drawnCard);
-                drawnCards.Add(drawnCard);
+                MoveCard(drawnCard, CardZone.Hand, null);
             }
 
-            // 5. 标记换牌完成
             HasCompletedMulligan = true;
+            result.GeneratedEvents.Add(new HandUpdatedEvent(this, Hand.ToList()));
 
-            // TODO: 生成换牌相关事件
-            // var mulliganEvent = new MulliganCompletedEvent(PlayerId, cardsToReplace, drawnCards);
-            // events.Add(mulliganEvent);
+            if (gameState.AreBothMulligansCompleted())
+            {
+                var transitionEvents = gameState.TransitionFromMulliganToMain();
+                result.GeneratedEvents.AddRange(transitionEvents);
+                result.PhaseTransitionTriggered = true;
+                result.FirstTurnPlayerId = gameState.FirstPlayerId;
+            }
 
-            return events;
+            result.GeneratedEvents.Add(new MulliganCompletedEvent(this, cardUidsToReplace));
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 洗牌操作
-        /// </summary>
         private void ShuffleDeck()
         {
             var random = new Random();
@@ -421,206 +371,247 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
         }
 
-        /// <summary>
-        /// 执行回合开始操作
-        /// </summary>
-        /// <param name="turnNumber">当前回合数</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> StartTurn(int turnNumber)
+        public DomainOperationResult StartTurn(GameState gameState)
         {
-            var events = new List<IGameEvent>();
+            if (gameState.IsGameOver)
+                throw new GameLogicException("Game is already over.");
+            if (gameState.Phase == GamePhase.Mulligan)
+                throw new GameLogicException("Cannot start turn during mulligan phase.");
 
-            // 1. 恢复PP（Play Point）
-            var ppRestoreEvents = RestorePlayPoints(turnNumber);
-            events.AddRange(ppRestoreEvents);
+            var result = new DomainOperationResult();
+            this.CanEvolve = this.CurrentEvolutionPoints > 0;
+            TurnNumber += 1;
+            this.HasTakenFirstTurn = true;
+            gameState.CurrentPlayerId = this.PlayerId;
 
-            // 2. 抽卡
-            var drawEvents = DrawCardForTurnStart();
-            events.AddRange(drawEvents);
+            var epResult = CheckAndUnlockEvolutionPoints();
+            result.GeneratedEvents.AddRange(epResult.GeneratedEvents);
 
-            // 3. 重置单位状态
-            var unitResetEvents = ResetUnitsForTurnStart();
-            events.AddRange(unitResetEvents);
+            var ppResult = RestorePlayPoints();
+            result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
 
-            // 4. 处理回合开始时的状态更新
-            var statusEvents = ProcessTurnStartStatusUpdates();
-            events.AddRange(statusEvents);
+            int cardsToDraw = (this.TurnNumber == 1 && !this.IsFirst) ? 2 : 1;
+            var drawResult = DrawCards(cardsToDraw);
+            result.GeneratedEvents.AddRange(drawResult.GeneratedEvents);
 
-            // TODO: 生成回合开始事件
-            // var turnStartEvent = new TurnStartEvent(PlayerId, turnNumber);
-            // events.Add(turnStartEvent);
+            var unitResetResult = ResetUnitsForTurnStart();
+            result.GeneratedEvents.AddRange(unitResetResult.GeneratedEvents);
 
-            return events;
+            result.GeneratedEvents.Add(new TurnStartEvent(this));
+
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 恢复PP（Play Point）
-        /// </summary>
-        /// <param name="turnNumber">当前回合数</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> RestorePlayPoints(int turnNumber)
+        public DomainOperationResult RestorePlayPoints()
         {
-            var events = new List<IGameEvent>();
-
-            // 根据回合数增加最大PP（最多10点）
-            if (turnNumber <= 10)
-            {
-                MaxPlayPoints = Math.Min(10, turnNumber);
-            }
-
-            // 恢复当前PP到最大值
+            var result = new DomainOperationResult();
+            int originalPP = CurrentPlayPoints;
+            int originalMaxPP = MaxPlayPoints;
+            MaxPlayPoints = Math.Min(10, MaxPlayPoints + 1);
             CurrentPlayPoints = MaxPlayPoints;
-
-            // TODO: 生成PP更新事件
-            // var ppUpdateEvent = new PlayPointUpdateEvent(PlayerId, CurrentPlayPoints, MaxPlayPoints);
-            // events.Add(ppUpdateEvent);
-
-            return events;
-        }
-
-        /// <summary>
-        /// 回合开始时抽卡
-        /// </summary>
-        /// <returns>生成的事件列表</returns>
-        private List<IGameEvent> DrawCardForTurnStart()
-        {
-            var events = new List<IGameEvent>();
-
-            // 抽一张卡
-            if (Deck.Count > 0)
+            if (originalPP != CurrentPlayPoints || originalMaxPP != MaxPlayPoints)
             {
-                var drawnCard = Deck[0];
-                Deck.RemoveAt(0);
-                drawnCard.CurrentZone = CardZone.Hand;
-                Hand.Add(drawnCard);
-
-                // TODO: 生成抽卡事件
-                // var drawEvent = new CardDrawnEvent(PlayerId, drawnCard);
-                // events.Add(drawEvent);
+                result.GeneratedEvents.Add(new PpUpdateEvent(this, CurrentPlayPoints, MaxPlayPoints));
             }
-
-            return events;
+            return result;
         }
 
-        /// <summary>
-        /// 抽取指定数量的卡牌
-        /// </summary>
-        /// <param name="drawCount">要抽取的卡牌数量</param>
-        /// <returns>抽到的卡牌列表</returns>
-        public List<CardInstance> DrawCards(int drawCount)
+        public DomainOperationResult DrawCards(int drawCount)
         {
-            var drawnCards = new List<CardInstance>();
+            var result = new DomainOperationResult();
+            var drawnCardIds = new List<Guid>();
 
             for (int i = 0; i < drawCount; i++)
             {
-                if (Deck.Count > 0)
+                if (this.Deck.Count == 0)
                 {
-                    var drawnCard = Deck[0];
-                    Deck.RemoveAt(0);
-                    drawnCard.CurrentZone = CardZone.Hand;
-                    Hand.Add(drawnCard);
-                    drawnCards.Add(drawnCard);
-
-                    // TODO: 生成抽卡事件
-                    // var drawEvent = new CardDrawnEvent(PlayerId, drawnCard);
-                    // events.Add(drawEvent);
+                    result.GeneratedEvents.Add(new DeckEmptyOnDrawEvent(this));
+                    break;
+                }
+                var drawnCard = this.Deck[0];
+                if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
+                {
+                    var burnOpResult = MoveCard(drawnCard, CardZone.Graveyard, null);
+                    result.GeneratedEvents.AddRange(burnOpResult.GeneratedEvents);
+                    if (burnOpResult.Success)
+                    {
+                        result.GeneratedEvents.Add(new CardBurnedEvent(drawnCard, "HandFull"));
+                    }
                 }
                 else
                 {
-                    // 牌库为空，无法继续抽卡
-                    break;
+                    var addOpResult = MoveCard(drawnCard, CardZone.Hand, null);
+                    if (addOpResult.Success)
+                    {
+                        drawnCardIds.Add(drawnCard.InstanceId);
+                    }
+                    result.GeneratedEvents.AddRange(addOpResult.GeneratedEvents);
                 }
             }
 
-            return drawnCards;
+            if (drawnCardIds.Any())
+            {
+                result.GeneratedEvents.Add(new DrawEvent(this, drawnCardIds));
+            }
+
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 将卡牌添加到场上
-        /// </summary>
-        /// <param name="cardInstance">要添加的卡牌实例</param>
-        /// <returns>生成的事件列表</returns>
-        public List<IGameEvent> AddCardToField(CardInstance cardInstance)
+        public DomainOperationResult AddCardsToHand(List<CardInstance> cardInstancesToAdd)
         {
-            var events = new List<IGameEvent>();
-
-            // 添加随从到场上末尾并分配场上位置
-            Field.Add(cardInstance);
-            cardInstance.FieldPosition = Field.Count - 1;
-            cardInstance.CurrentZone = CardZone.Field;
-
-            // TODO: 生成场上单位进入事件
-            // var enterFieldEvent = new CardEnteredFieldEvent(PlayerId, cardInstance);
-            // events.Add(enterFieldEvent);
-
-            return events;
+            var result = new DomainOperationResult();
+            if (cardInstancesToAdd == null)
+            {
+                result.Success = false;
+                result.ErrorMessage = "cardInstancesToAdd cannot be null.";
+                return result;
+            }
+            foreach (var cardInstance in cardInstancesToAdd)
+            {
+                if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
+                {
+                    break;
+                }
+                var addResult = MoveCard(cardInstance, CardZone.Hand, null);
+                result.GeneratedEvents.AddRange(addResult.GeneratedEvents);
+            }
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 重置单位的回合开始状态
-        /// </summary>
-        /// <returns>生成的事件列表</returns>
-        private List<IGameEvent> ResetUnitsForTurnStart()
+        private DomainOperationResult ResetUnitsForTurnStart()
         {
-            var events = new List<IGameEvent>();
-
+            var result = new DomainOperationResult();
+            // The responsibility of cleaning up dead units is now with the handlers
+            // that cause the damage/destruction (AttackEffectHandler, DamageEffectHandler, etc.).
+            // This method should only reset turn-based states.
             foreach (var unit in Field)
             {
-                // 重置攻击次数
                 unit.AttacksThisTurn = 0;
-
-                // 如果单位上回合无法攻击，本回合可以攻击
                 if (!unit.CanAttack)
                 {
                     unit.CanAttack = true;
                 }
-
-                // TODO: 处理其他回合开始时的单位状态重置
             }
-
-            return events;
+            result.Success = true;
+            return result;
         }
 
-        /// <summary>
-        /// 处理回合开始时的状态更新
-        /// </summary>
-        /// <returns>生成的事件列表</returns>
-        private List<IGameEvent> ProcessTurnStartStatusUpdates()
+        public DomainOperationResult ExecutePlayCard(CardInstance cardInHand)
         {
-            var events = new List<IGameEvent>();
-
-            // TODO: 处理回合开始时的各种状态更新
-            // 例如：
-            // - Buff持续时间处理
-            // - 特殊效果触发等
-
-            return events;
-        }
-
-        /// <summary>
-        /// 从当前区域移除卡牌的辅助方法
-        /// </summary>
-        /// <param name="card">要移除的卡牌</param>
-        private void RemoveCardFromCurrentZone(CardInstance card)
-        {
-            switch (card.CurrentZone)
+            var result = new DomainOperationResult();
+            if (!this.Hand.Contains(cardInHand))
             {
-                case CardZone.Hand:
-                    Hand.Remove(card);
-                    break;
-                case CardZone.Field:
-                    Field.Remove(card);
-                    break;
-                case CardZone.Deck:
-                    Deck.Remove(card);
-                    break;
-                case CardZone.Graveyard:
-                    Graveyard.Remove(card);
-                    break;
-                case CardZone.Extra:
-                    Extra.Remove(card);
-                    break;
+                result.Success = false;
+                result.ErrorMessage = $"Card {cardInHand.InstanceId} not found in hand.";
+                return result;
             }
+            if (this.CurrentPlayPoints < cardInHand.CurrentCost)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Not enough PP. Required: {cardInHand.CurrentCost}, Available: {this.CurrentPlayPoints}";
+                return result;
+            }
+
+            var ppResult = ModifyPlayPoints(-cardInHand.CurrentCost);
+            result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
+            this.PlayedCardCountThisTurn++;
+
+            switch (cardInHand.CardType)
+            {
+                case CardType.Follower:
+                case CardType.Amulet:
+                    cardInHand.CanAttack = cardInHand.HasKeyword(CardKeyword.Rush) || cardInHand.HasKeyword(CardKeyword.Storm);
+                    cardInHand.AttacksThisTurn = 0;
+                    var summonResult = SummonCardToField(cardInHand);
+                    result.GeneratedEvents.AddRange(summonResult.GeneratedEvents);
+                    break;
+                case CardType.Spell:
+                    var graveyardResult = MoveCardToGraveyard(cardInHand);
+                    result.GeneratedEvents.AddRange(graveyardResult.GeneratedEvents);
+                    break;
+                default:
+                    result.Success = false;
+                    result.ErrorMessage = $"Unknown card type: {cardInHand.CardType}";
+                    return result;
+            }
+            result.Success = true;
+            return result;
         }
+
+        public DomainOperationResult DiscardCard(CardInstance cardToDiscard, string reason)
+        {
+            if (!this.Hand.Contains(cardToDiscard))
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Card {cardToDiscard.InstanceId} not found in hand." };
+            }
+            var result = MoveCardToGraveyard(cardToDiscard);
+            if (result.Success)
+            {
+                result.GeneratedEvents.Add(new CardDiscardedEvent(this, cardToDiscard.InstanceId, reason));
+            }
+            return result;
+        }
+
+        public DomainOperationResult ReturnCardToHand(CardInstance cardToReturn)
+        {
+            if (cardToReturn.CurrentZone != CardZone.Field)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Card {cardToReturn.InstanceId} is not on the field." };
+            }
+            if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
+            {
+                var graveyardResult = MoveCardToGraveyard(cardToReturn);
+                graveyardResult.ErrorMessage = "Hand is full, card was moved to graveyard instead.";
+                return graveyardResult;
+            }
+            var result = MoveCard(cardToReturn, CardZone.Hand, null);
+            if (result.Success)
+            {
+                result.GeneratedEvents.Add(new CardReturnedToHandEvent(cardToReturn));
+            }
+            return result;
+        }
+
+        public DomainOperationResult SummonTokens(List<CardInstance> tokenInstancesToSummon)
+        {
+            var result = new DomainOperationResult { Success = true };
+            if (tokenInstancesToSummon == null)
+            {
+                result.Success = false;
+                result.ErrorMessage = "tokenInstancesToSummon cannot be null.";
+                return result;
+            }
+            foreach (var tokenInstance in tokenInstancesToSummon)
+            {
+                if (this.Field.Count >= GameConstants.Field.MaxFieldSize)
+                {
+                    break;
+                }
+                var summonResult = SummonCardToField(tokenInstance);
+                result.GeneratedEvents.AddRange(summonResult.GeneratedEvents);
+            }
+            return result;
+        }
+
+        public DomainOperationResult VanishCard(CardInstance cardToVanish)
+        {
+            var originalZone = cardToVanish.CurrentZone;
+            var result = MoveCard(cardToVanish, CardZone.Extra, null);
+            if (result.Success)
+            {
+                result.GeneratedEvents.Add(new CardVanishedEvent(cardToVanish, originalZone));
+            }
+            return result;
+        }
+
+        public List<CardInstance> GetCardsInZone(CardZone zone)
+        {
+            var zoneList = GetZoneList(zone);
+            return zoneList != null ? new List<CardInstance>(zoneList) : new List<CardInstance>();
+        }
+
     }
 }

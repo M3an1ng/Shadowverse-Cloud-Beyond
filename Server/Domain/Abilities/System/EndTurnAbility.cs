@@ -1,0 +1,189 @@
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Events.ActionRequests;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // Corrected: For Effect
+using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Added for EffectConfig
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId
+
+// Removed Placeholder Event Definitions as we will use existing ones from CoreGameEvents.cs
+
+namespace ShadowverseBeyond.Server.Domain.Abilities.System
+{
+    public class EndTurnAbility : IAbility
+    {
+        private static readonly Guid _runtimeId = Guid.NewGuid();
+        private readonly ILogger<EndTurnAbility> _logger;
+
+        public Guid RuntimeId => _runtimeId;
+        public long DefinitionId => GameConstants.SystemAbilityIds.EndTurnAbilityId;
+        public string Name => "End Turn";
+        public string AbilityTag => "System";
+        public AbilityType Type => AbilityType.Triggered;
+
+        public TriggerConfig TriggerConfig
+        {
+            get
+            {
+                return new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { EventType.EndTurnRequested },
+                };
+            }
+        }
+
+        public CardInstance? SourceCard { get; set; }
+
+        public EndTurnAbility(ILogger<EndTurnAbility> logger)
+        {
+            _logger = logger;
+        }
+
+        // Default constructor might be problematic if IMapper is strictly required.
+        // Consider removing or ensuring IMapper can be resolved if this is used (e.g. service locator anti-pattern, or make it nullable and handle)
+        public EndTurnAbility()
+        {
+            // This will likely fail if IMapper is not available through other means.
+            // For robust design, prefer constructor injection.
+            _logger = null!; // Or some default logger
+        }
+
+        public Task<bool> CanTrigger(IGameEvent gameEvent, GameContext context)
+        {
+            // AbilityManager filters by EventType based on this.TriggerConfig.
+            // So, if this method is reached, gameEvent.EventType is EndTurnRequested.
+            // No further event-specific checks needed here for this system ability.
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> CheckConditionsAsync(GameContext context)
+        {
+            if (context.TriggeringEvent is not EndTurnRequestedEvent requestEvent)
+            {
+                _logger?.LogWarning("{AbilityName}: Triggering event is not EndTurnRequestedEvent. Event: {Event}", Name, context.TriggeringEvent?.GetType().Name);
+                return Task.FromResult(false);
+            }
+
+            if (requestEvent.PlayerId != context.CurrentGameState.CurrentPlayerId)
+            {
+                _logger?.LogWarning("{AbilityName}: Player {RequestingPlayerId} attempted to end turn, but active player is {ActivePlayerId}.",
+                    Name, requestEvent.PlayerId, context.CurrentGameState.CurrentPlayerId);
+                return Task.FromResult(false);
+            }
+
+            if (context.CurrentGameState.IsGameOver)
+            {
+                _logger?.LogInformation("{AbilityName}: Game is already over. Cannot end turn.", Name);
+                return Task.FromResult(false);
+            }
+
+            _logger?.LogInformation("{AbilityName}: Conditions met for player {PlayerId} to end turn.", Name, requestEvent.PlayerId);
+            return Task.FromResult(true);
+        }
+
+        public Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
+        {
+            _logger?.LogInformation("{AbilityName}: System ability, typically no card targets.", Name);
+            return Task.FromResult(new List<TargetInfo>());
+        }
+
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
+        {
+            var effects = new List<Effect>();
+            var currentPlayerGuid = context.CurrentGameState.CurrentPlayerId;
+
+            if (!currentPlayerGuid.HasValue)
+            {
+                _logger?.LogError("{AbilityName}: CurrentPlayerId is null, cannot create effects.", Name);
+                return Task.FromResult(effects);
+            }
+
+            var currentPlayerState = context.CurrentGameState.GetPlayerState(currentPlayerGuid.Value);
+            if (currentPlayerState == null)
+            {
+                _logger?.LogError("{AbilityName}: Could not find current player state for PlayerId {PlayerId}.", Name, currentPlayerGuid.Value);
+                return Task.FromResult(effects);
+            }
+
+            PlayerState? nextPlayerState = context.CurrentGameState.GetOpponentPlayerState(currentPlayerGuid.Value);
+
+            if (nextPlayerState == null)
+            {
+                _logger?.LogError("{AbilityName}: Could not determine the next player. CurrentPlayerId: {PlayerId}", Name, currentPlayerGuid.Value);
+                return Task.FromResult(effects);
+            }
+            var nextPlayerId = nextPlayerState.PlayerId;
+
+            _logger?.LogInformation("{AbilityName}: Creating effects for end of turn. Current: {CurrentPlayerId}, Next: {NextPlayerId}", Name, currentPlayerGuid.Value, nextPlayerId);
+
+            // Effect 1: End current player's turn
+            var effectConfig1 = new EffectConfig
+            {
+                Type = "turnend", // Corrected EffectConfig.Type
+                Parameters = new Dictionary<string, ValueConfig>
+                {
+                    { "EndingPlayerId", ValueConfig.Static(currentPlayerGuid.Value) },
+                    { "EndTurnReason", ValueConfig.Static("PlayerAction") }
+                }
+            };
+            effects.Add(new Effect(
+                effectConfig1,
+                currentPlayerGuid.Value,
+                new List<TargetInfo> { TargetInfo.ForPlayer(currentPlayerState) },
+                this.RuntimeId,
+                context.TriggeringEvent?.EventId ?? Guid.Empty,
+                this.SourceCard?.InstanceId
+            ));
+            _logger?.LogInformation("{AbilityName}: Added 'turnend' effect for player {PlayerId}.", Name, currentPlayerGuid.Value);
+
+            // Effect 2: Start next player's turn
+            var effectConfig2 = new EffectConfig
+            {
+                Type = "turnstart", // Corrected EffectConfig.Type
+                Parameters = new Dictionary<string, ValueConfig>
+                {
+                    { "StartingPlayerId", ValueConfig.Static(nextPlayerId) },
+                    { "StartTurnReason", ValueConfig.Static("TurnTransition") }
+                }
+            };
+            effects.Add(new Effect(
+                effectConfig2,
+                currentPlayerGuid.Value,
+                new List<TargetInfo> { TargetInfo.ForPlayer(nextPlayerState) },
+                this.RuntimeId,
+                context.TriggeringEvent?.EventId ?? Guid.Empty,
+                this.SourceCard?.InstanceId
+            ));
+            _logger?.LogInformation("{AbilityName}: Added 'turnstart' effect for player {PlayerId}.", Name, nextPlayerId);
+
+            return Task.FromResult(effects);
+        }
+
+        public void RecordTrigger(GameContext context)
+        {
+            _logger?.LogDebug("{AbilityName} triggered.", Name);
+        }
+
+        public int GetTriggerCountThisTurn(GameContext context)
+        {
+            return 0;
+        }
+
+        public int GetTriggerCountThisGame(GameContext context)
+        {
+            return 0;
+        }
+
+        public void ResetTurnState(GameContext context)
+        {
+            _logger?.LogDebug("{AbilityName} turn state reset.", Name);
+        }
+    }
+}

@@ -130,6 +130,10 @@ public class ApplicationDbContext : DbContext
       entity.HasKey(e => e.Id);
       entity.Property(e => e.Id).ValueGeneratedNever();
 
+      // 配置 Type 属性 - 将 CardType 枚举转换为字符串存储
+      entity.Property(e => e.Type)
+        .HasConversion<string>();
+
       // 配置 AbilityIds 属性 - 将 List<long> 转换为 JSON 字符串存储
       entity.Property(e => e.AbilityIds)
         .HasConversion(

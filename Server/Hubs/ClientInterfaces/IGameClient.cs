@@ -49,7 +49,7 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Notifies the client that a player has finished their mulligan phase.
         /// </summary>
         /// <param name="eventData">Contains the ID of the player who completed.</param>
-        Task PlayerMulliganCompleted(PlayerMulliganCompletedEventDto eventData);
+        Task PlayerMulliganCompleted(MulliganCompletedEventDto eventData);
         // --- Methods requiring DTOs not yet created (Commented out for now) ---
         Task ReceiveGameState(GameStateDto gameState); // Sends the full initial or updated game state
                                                        // Task RequestTargetSelection(TargetSelectionRequestDto request); // Keep commented for now
@@ -74,7 +74,7 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// <summary>
         /// Notifies the client of an update to their hand (cards drawn, discarded, etc.).
         /// </summary>
-        // Task HandUpdate(HandUpdateEventDto eventDto); // REMOVED - HandUpdate is deprecated
+        Task HandUpdated(HandUpdatedEventDto eventDto); // Restored for mulligan functionality
 
         /// <summary>
         /// Notifies the client of an update to their deck count.
@@ -122,6 +122,19 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Notifies the client of an update to their graveyard count or contents.
         /// </summary>
         Task GraveyardUpdate(GraveyardUpdateEventDto eventDto);
+
+        /// <summary>
+        /// Sends hand playability update to the client after player actions complete.
+        /// Contains playability status for all cards in the player's hand.
+        /// </summary>
+        /// <param name="updateDto">The hand playability update DTO containing playability results.</param>
+        Task ReceiveHandPlayabilityUpdate(HandPlayabilityUpdateDto updateDto);
+
+        /// <summary>
+        /// Notifies the client that a unit's attack state has been updated.
+        /// </summary>
+        /// <param name="eventDto">The attack state update DTO.</param>
+        Task AttackStateUpdated(AttackStateUpdatedEventDto eventDto);
 
         /// <summary>
         /// Notifies the client that the game has ended.

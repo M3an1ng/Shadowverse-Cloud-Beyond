@@ -17,6 +17,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // Added for IAbility
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -26,9 +28,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     /// </summary>
     public class AbilityManager : IAbilityTriggerService
     {
-        private readonly ConcurrentDictionary<string, List<Ability>> _abilitiesByEventType = new();
-        private readonly ConcurrentDictionary<Guid, List<Ability>> _abilitiesByCardId = new();
-        private readonly List<Ability> _allAbilities = new();
+        private readonly ConcurrentDictionary<string, List<IAbility>> _abilitiesByEventType = new();
+        private readonly ConcurrentDictionary<Guid, List<IAbility>> _abilitiesByCardId = new();
+        private readonly List<IAbility> _allAbilities = new();
+        private readonly ConcurrentDictionary<Guid, IAbility> _abilitiesByRuntimeId = new(); // 新增：按RuntimeId索引能力
         private readonly ILogger<AbilityManager>? _logger;
         private readonly IConditionFactory _conditionFactory; // Inject Condition Factory
         private readonly IServiceScopeFactory _serviceScopeFactory; // Use IServiceScopeFactory to get scoped IEffectExecutor
@@ -37,14 +40,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
         public AbilityManager(
             ILogger<AbilityManager>? logger,
-            IConditionFactory conditionFactory, // Add IConditionFactory
-            IServiceScopeFactory serviceScopeFactory) // Use IServiceScopeFactory instead of direct IEffectExecutor
-                                                      // Removed: IEventProcessor eventProcessor to break circular dependency
+            IConditionFactory conditionFactory,
+            IServiceScopeFactory serviceScopeFactory,
+            IEnumerable<IAbility> systemAbilities) // Added systemAbilities
         {
-            _logger = logger; // Nullable logger is allowed
-            _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory)); // Store factory
-            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory)); // Store scope factory
-            // Removed: _eventProcessor assignment to break circular dependency
+            _logger = logger;
+            _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory));
+            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+
+            if (systemAbilities != null)
+            {
+                foreach (var systemAbility in systemAbilities)
+                {
+                    RegisterAbility(systemAbility);
+                }
+                _logger?.LogInformation("[AbilityManager] Registered {Count} system abilities.", systemAbilities.Count());
+            }
         }
 
         /// <summary>
@@ -83,19 +94,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         {
             try
             {
-                // Create a scope to get IEffectExecutor
-                using var scope = _serviceScopeFactory.CreateScope();
-                var effectExecutor = scope.ServiceProvider.GetRequiredService<IEffectExecutor>();
+                // Create a factory function that creates a scope and gets IEffectExecutor
+                Func<IEffectExecutor> effectExecutorFactory = () =>
+                {
+                    var scope = _serviceScopeFactory.CreateScope();
+                    return scope.ServiceProvider.GetRequiredService<IEffectExecutor>();
+                };
 
                 // Pass all required dependencies to the Ability constructor
                 var ability = new Ability(
                     config,
                     _conditionFactory, // Pass injected factory
-                    effectExecutor,    // Pass scoped executor
                     cardInstance);
 
-                // 激活能力
-                ability.Activate();
+                // ability.Activate(); // Activate() 方法已移除
 
                 return ability;
             }
@@ -111,82 +123,114 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// 注册能力到管理器
         /// </summary>
         /// <param name="ability">要注册的能力</param>
-        public void RegisterAbility(Ability ability)
+        public void RegisterAbility(IAbility ability)
         {
-            if (ability?.SourceCard == null) return;
+            if (ability == null) return;
+            // If it's a card ability (i.e., an instance of Ability class), it must have a SourceCard.
+            // System abilities (other IAbility implementers) can have SourceCard == null.
+            if (ability is Ability && ability.SourceCard == null)
+            {
+                _logger?.LogWarning("[AbilityManager] Attempted to register a card ability (Type: Ability) without a SourceCard. AbilityTag: {AbilityTag}. Registration skipped.", ability.AbilityTag);
+                return;
+            }
+
 
             _allAbilities.Add(ability);
 
             // 按事件类型索引能力
-            foreach (var eventType in ability.Trigger.EventTypes)
+            // Ensure TriggerConfig is used for event types
+            if (ability.TriggerConfig != null && ability.TriggerConfig.EventTypes != null)
             {
-                var eventTypeString = eventType.ToString();
-                _abilitiesByEventType.AddOrUpdate(
-                    eventTypeString,
-                    new List<Ability> { ability },
+                foreach (var eventType in ability.TriggerConfig.EventTypes)
+                {
+                    var eventTypeString = eventType.ToString();
+                    _abilitiesByEventType.AddOrUpdate(
+                        eventTypeString,
+                        new List<IAbility> { ability },
+                        (key, existingList) =>
+                        {
+                            existingList.Add(ability);
+                            return existingList;
+                        });
+                }
+            }
+
+
+            // 按卡片ID索引能力 (Only if SourceCard is not null)
+            if (ability.SourceCard != null)
+            {
+                _abilitiesByCardId.AddOrUpdate(
+                    ability.SourceCard.InstanceId,
+                    new List<IAbility> { ability },
                     (key, existingList) =>
                     {
                         existingList.Add(ability);
                         return existingList;
                     });
+
+                // 新增：更新CardInstance的能力列表（双向绑定）
+                UpdateCardInstanceAbilities(ability.SourceCard);
             }
 
-            // 按卡片ID索引能力
-            _abilitiesByCardId.AddOrUpdate(
-                ability.SourceCard.InstanceId,
-                new List<Ability> { ability },
-                (key, existingList) =>
-                {
-                    existingList.Add(ability);
-                    return existingList;
-                });
+            // 新增：填充 _abilitiesByRuntimeId 字典
+            // IAbility 保证了 RuntimeId 的存在 (Ability.cs 中初始化)
+            _abilitiesByRuntimeId.TryAdd(ability.RuntimeId, ability);
 
-            // 新增：更新CardInstance的能力列表（双向绑定）
-            UpdateCardInstanceAbilities(ability.SourceCard);
 
-            _logger?.LogDebug("[AbilityManager] Registered ability: {AbilityTag} for card {CardId}",
-                ability.AbilityTag, ability.SourceCard.InstanceId);
+            _logger?.LogDebug("[AbilityManager] Registered ability: {AbilityTag} (Type: {AbilityType}, RuntimeId: {RuntimeId}) for card {CardId}",
+                ability.AbilityTag, ability.Type, ability.RuntimeId, ability.SourceCard?.InstanceId);
         }
 
         /// <summary>
         /// 注销能力
         /// </summary>
         /// <param name="ability">要注销的能力</param>
-        public void UnregisterAbility(Ability ability)
+        public void UnregisterAbility(IAbility ability)
         {
-            if (ability?.SourceCard == null) return;
+            if (ability == null) return;
+            // Allow system abilities without SourceCard to be unregistered from _allAbilities
+            // but SourceCard specific logic should only run if SourceCard exists.
 
             _allAbilities.Remove(ability);
 
             // 从事件类型索引中移除
-            foreach (var eventType in ability.Trigger.EventTypes)
+            // Ensure TriggerConfig is used for event types
+            if (ability.TriggerConfig != null && ability.TriggerConfig.EventTypes != null)
             {
-                var eventTypeString = eventType.ToString();
-                if (_abilitiesByEventType.TryGetValue(eventTypeString, out var abilities))
+                foreach (var eventType in ability.TriggerConfig.EventTypes)
                 {
-                    abilities.Remove(ability);
-                    if (abilities.Count == 0)
+                    var eventTypeString = eventType.ToString();
+                    if (_abilitiesByEventType.TryGetValue(eventTypeString, out var abilities))
                     {
-                        _abilitiesByEventType.TryRemove(eventTypeString, out _);
+                        abilities.Remove(ability);
+                        if (abilities.Count == 0)
+                        {
+                            _abilitiesByEventType.TryRemove(eventTypeString, out _);
+                        }
                     }
                 }
             }
 
-            // 从卡片ID索引中移除
-            if (_abilitiesByCardId.TryGetValue(ability.SourceCard.InstanceId, out var cardAbilities))
+            // 从卡片ID索引中移除 (Only if SourceCard is not null)
+            if (ability.SourceCard != null)
             {
-                cardAbilities.Remove(ability);
-                if (cardAbilities.Count == 0)
+                if (_abilitiesByCardId.TryGetValue(ability.SourceCard.InstanceId, out var cardAbilities))
                 {
-                    _abilitiesByCardId.TryRemove(ability.SourceCard.InstanceId, out _);
+                    cardAbilities.Remove(ability);
+                    if (cardAbilities.Count == 0)
+                    {
+                        _abilitiesByCardId.TryRemove(ability.SourceCard.InstanceId, out _);
+                    }
                 }
+                // 新增：更新CardInstance的能力列表（双向绑定）
+                UpdateCardInstanceAbilities(ability.SourceCard);
             }
 
-            // 新增：更新CardInstance的能力列表（双向绑定）
-            UpdateCardInstanceAbilities(ability.SourceCard);
+            // 新增：从 _abilitiesByRuntimeId 字典中移除
+            _abilitiesByRuntimeId.TryRemove(ability.RuntimeId, out _);
 
-            _logger?.LogDebug("[AbilityManager] Unregistered ability: {AbilityTag} for card {CardId}",
-                ability.AbilityTag, ability.SourceCard.InstanceId);
+            _logger?.LogDebug("[AbilityManager] Unregistered ability: {AbilityTag} (Type: {AbilityType}, RuntimeId: {RuntimeId}) for card {CardId}",
+                ability.AbilityTag, ability.Type, ability.RuntimeId, ability.SourceCard?.InstanceId);
         }
 
         /// <summary>
@@ -236,9 +280,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <param name="gameEvent">触发的游戏事件</param>
         /// <param name="context">游戏上下文</param>
         /// <returns>触发的能力列表</returns>
-        public async Task<List<Ability>> GetTriggeredAbilitiesAsync(IGameEvent gameEvent, GameContext context)
+        public async Task<List<IAbility>> GetTriggeredAbilitiesAsync(IGameEvent gameEvent, GameContext context)
         {
-            var triggeredAbilities = new List<Ability>();
+            var triggeredAbilities = new List<IAbility>();
             var eventTypeString = gameEvent.EventType.ToString();
 
             // 获取监听此事件类型的能力
@@ -248,22 +292,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             {
                 try
                 {
-                    // 检查能力是否可以触发（基本检查）
-                    if (ability.CanTrigger(gameEvent))
+                    // Use the CanTrigger method from IAbility
+                    // IsActive 检查已移除，激活状态由外部管理
+                    if (await ability.CanTrigger(gameEvent, context)) // 传递 context
                     {
                         // 检查条件是否满足
                         if (await ability.CheckConditionsAsync(context))
                         {
                             triggeredAbilities.Add(ability);
-                            _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} triggered by event {EventType}",
-                                ability.AbilityTag, gameEvent.EventType);
+                            _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} (Type: {AbilityType}) triggered by event {EventType}",
+                                ability.AbilityTag, ability.Type, gameEvent.EventType);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "[AbilityManager] Error checking trigger for ability {AbilityTag}",
-                        ability.AbilityTag);
+                    _logger?.LogError(ex, "[AbilityManager] Error checking trigger for ability {AbilityTag} (Type: {AbilityType})",
+                        ability.AbilityTag, ability.Type);
                 }
             }
 
@@ -275,11 +320,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         /// <param name="eventType">事件类型</param>
         /// <returns>相关能力列表</returns>
-        public List<Ability> GetAbilitiesForEvent(string eventType)
+        public List<IAbility> GetAbilitiesForEvent(string eventType)
         {
             return _abilitiesByEventType.TryGetValue(eventType, out var abilities)
-                ? abilities.ToList()
-                : new List<Ability>();
+                ? abilities.ToList() // ToList creates a copy, which is good practice here
+                : new List<IAbility>();
         }
 
         /// <summary>
@@ -287,20 +332,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         /// <param name="cardInstanceId">卡片实例ID</param>
         /// <returns>卡片能力列表</returns>
-        public List<Ability> GetAbilitiesForCard(Guid cardInstanceId)
+        public List<IAbility> GetAbilitiesForCard(Guid cardInstanceId)
         {
             return _abilitiesByCardId.TryGetValue(cardInstanceId, out var abilities)
-                ? abilities.ToList()
-                : new List<Ability>();
+                ? abilities.ToList() // ToList creates a copy
+                : new List<IAbility>();
         }
 
         /// <summary>
         /// 获取所有激活的能力
         /// </summary>
         /// <returns>激活能力列表</returns>
-        public List<Ability> GetActiveAbilities()
+        public List<IAbility> GetActiveAbilities()
         {
-            return _allAbilities.ToList(); // Removed .Where(a => a.IsActive)
+            // IsActive 属性已移除，此方法现在返回所有能力
+            // 如果需要过滤激活的能力，调用者需要自行实现
+            return _allAbilities.ToList();
         }
 
         /// <summary>
@@ -312,8 +359,46 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             _allAbilities.Clear();
             _abilitiesByEventType.Clear();
             _abilitiesByCardId.Clear();
+            _abilitiesByRuntimeId.Clear(); // 新增：清空RuntimeId字典
 
-            _logger?.LogDebug("[AbilityManager] Cleared {Count} abilities", count);
+            _logger?.LogDebug("[AbilityManager] Cleared {Count} abilities from all collections.", count);
+        }
+
+        /// <summary>
+        /// 根据运行时ID获取能力实例。
+        /// </summary>
+        /// <param name="runtimeId">能力的运行时唯一ID。</param>
+        /// <returns>找到的IAbility实例，如果未找到则返回null。</returns>
+        public IAbility? GetAbilityByRuntimeId(Guid runtimeId)
+        {
+            if (runtimeId == Guid.Empty)
+            {
+                _logger?.LogWarning("[AbilityManager] Attempted to get ability with empty RuntimeId.");
+                return null;
+            }
+            _abilitiesByRuntimeId.TryGetValue(runtimeId, out var ability);
+            if (ability == null)
+            {
+                // 使用Structured Logging记录未找到的情况，更利于查询
+                _logger?.LogDebug("Ability with RuntimeId {AbilityRuntimeId} not found in _abilitiesByRuntimeId dictionary.", runtimeId);
+            }
+            return ability;
+        }
+
+        /// <summary>
+        /// Gets a registered system ability instance by its type.
+        /// </summary>
+        /// <typeparam name="T">The type of the system ability to get.</typeparam>
+        /// <returns>The singleton instance of the system ability, or null if not found.</returns>
+        public T? GetSystemAbility<T>() where T : class, IAbility
+        {
+            // System abilities are registered as singletons. We can find them in the _allAbilities list.
+            var ability = _allAbilities.OfType<T>().FirstOrDefault();
+            if (ability == null)
+            {
+                _logger?.LogWarning("[AbilityManager] System ability of type {AbilityType} not found.", typeof(T).Name);
+            }
+            return ability;
         }
 
         /// <summary>
@@ -324,11 +409,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         {
             if (cardInstance == null) return;
 
-            var abilities = GetAbilitiesForCard(cardInstance.InstanceId);
-            cardInstance.SetAbilities(abilities.AsReadOnly());
+            var abilitiesForCard = GetAbilitiesForCard(cardInstance.InstanceId);
+            // CardInstance.SetAbilities expects IReadOnlyList<Ability>.
+            // We need to filter only Ability instances and cast them.
+            // This assumes that system abilities (not of type Ability) should not be set on CardInstance.Abilities.
+            var cardSpecificAbilities = abilitiesForCard.OfType<Ability>().ToList();
+            cardInstance.SetAbilities(cardSpecificAbilities.AsReadOnly());
 
             _logger?.LogDebug("[AbilityManager] Updated abilities for card {CardId}: {Count} abilities",
-                cardInstance.InstanceId, abilities.Count);
+                cardInstance.InstanceId, cardSpecificAbilities.Count);
         }
 
         /// <summary>
@@ -379,15 +468,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         {
             return gameEvent.EventType switch
             {
-                "ability_triggered" => new AbilityTriggeredEventDto(
-                    gameEvent.SourcePlayer?.PlayerId ?? Guid.Empty,
-                    gameEvent.SourceCard?.InstanceId ?? Guid.Empty,
+                EventType.AbilityTriggered => new AbilityTriggeredEventDto(
+                    gameEvent.Source?.Player?.PlayerId ?? Guid.Empty,
+                    gameEvent.Source?.Card?.InstanceId ?? Guid.Empty,
                     (string)(gameEvent.Parameters.GetValueOrDefault("ability_tag") ?? string.Empty),
                     (string)(gameEvent.Parameters.GetValueOrDefault("trigger_event_type") ?? string.Empty),
                     gameEvent.Parameters
                 ),
                 _ => null
             };
+        }
+
+        /// <summary>
+        /// Implements the new interface method to process a single ability.
+        /// This centralizes the logic for checking conditions, resolving targets, and creating effects.
+        /// </summary>
+        public async Task<List<Effect>> ProcessSingleAbilityAsync(IAbility ability, GameContext context)
+        {
+            if (!await ability.CheckConditionsAsync(context))
+            {
+                _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} (RuntimeId: {RuntimeId}) conditions not met. Skipping effect creation.",
+                    ability.AbilityTag, ability.RuntimeId);
+                return new List<Effect>(); // Return empty list if conditions fail
+            }
+
+            var resolvedTargets = await ability.ResolveTargetsAsync(context);
+            var effects = await ability.CreateEffectsAsync(context, resolvedTargets);
+
+            _logger?.LogDebug("[AbilityManager] Processed ability {AbilityTag} (RuntimeId: {RuntimeId}) and created {EffectCount} effects.",
+                ability.AbilityTag, ability.RuntimeId, effects.Count);
+
+            return effects;
         }
     }
 } // Closing brace for namespace ShadowverseBeyond.Server.Domain.Abilities

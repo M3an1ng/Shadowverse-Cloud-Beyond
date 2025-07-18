@@ -4,22 +4,10 @@ using System.Text.Json.Serialization; // Add for JsonPropertyName
 
 using Shadowverse.Domain.Interfaces; // Correct namespace
 using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Dtos
 {
-    /// <summary>
-    /// Represents the zone a card instance currently resides in.
-    /// </summary>
-    public enum CardZone
-    {
-        Deck,
-        Hand,
-        Field,
-        Graveyard,
-        Extra,
-        Leader,
-        Playing // Temporary zone during card resolution
-    }
 
     /// <summary>
     /// Data Transfer Object representing a specific instance of a card in the game.
@@ -53,7 +41,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Type of the card (e.g., "Follower", "Spell", "Amulet").
         /// Consider using an enum in the future if types become fixed.
         /// </summary>
-        public string Type { get; init; } = string.Empty;
+        public CardType Type { get; init; }
 
         /// <summary>
         /// Base attack value (from CardDefinition).
@@ -161,6 +149,12 @@ namespace ShadowverseBeyond.Server.Dtos
         /// The Player ID of the player who currently controls this instance on the field.
         /// </summary>
         public Guid OwnerPlayerId { get; set; } = Guid.Empty;
+
+        /// <summary>
+        /// Holds the full card definition of the evolved state, if this card can evolve.
+        /// Null if the card cannot evolve.
+        /// </summary>
+        public CardDefinitionDto? EvolvedState { get; set; }
 
         // --- Added Constructor ---
         /// <summary>

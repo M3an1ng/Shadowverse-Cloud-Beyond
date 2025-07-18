@@ -17,7 +17,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary>
         /// 静态值
         /// </summary>
-        public object StaticValue { get; set; } = 0;
+        public object? StaticValue { get; set; } = 0;
 
         /// <summary>
         /// 动态值源路径（如 "self.attack", "target.health"）
@@ -68,7 +68,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// </summary>
         /// <param name="value">静态值</param>
         /// <returns>值配置</returns>
-        public static ValueConfig Static(object value)
+        public static ValueConfig Static(object? value)
         {
             return new ValueConfig
             {

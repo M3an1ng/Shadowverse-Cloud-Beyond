@@ -1,0 +1,109 @@
+using System;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using System.Collections.Generic;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Abilities.Common; // Required for EventType
+
+namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
+{
+    /// <summary>
+    /// 【架构重构】效果请求的基类，用于封装所有类型的效果执行请求
+    /// 直接使用EffectConfig而不是参数字典，与现有EffectHandler系统集成
+    /// </summary>
+    public class Effect
+    {
+        /// <summary>
+        /// 效果的唯一标识符
+        /// </summary>
+        public Guid Id { get; set; } = Guid.NewGuid();
+
+        /// <summary>
+        /// 发起请求的玩家ID
+        /// </summary>
+        public Guid RequestingPlayerId { get; set; }
+
+        /// <summary>
+        /// 【架构重构】效果配置，直接使用现有的EffectConfig
+        /// </summary>
+        public EffectConfig EffectConfig { get; set; }
+
+        /// <summary>
+        /// 【架构改进】效果请求携带的目标ID列表。
+        /// 在效果出队时，此列表将被用于填充GameContext.SelectedTargets。
+        /// </summary>
+        public List<TargetInfo> SelectedTargets { get; set; } = new List<TargetInfo>();
+
+
+
+        /// <summary>
+        /// 父请求的ID
+        /// </summary>
+        public Guid? ParentAbilityId { get; set; }
+
+        /// <summary>
+        /// 最初触发了父Ability的那个原始 IGameEvent 的 EventId。
+        /// </summary>
+        public Guid TriggeredEventId { get; set; }
+
+        /// <summary>
+        /// 携带着父Ability的源卡牌 InstanceId。
+        /// </summary>
+        public Guid? SourceCardId { get; set; }
+
+        /// <summary>
+        /// 在运行时转换后的链式能力实例列表。
+        /// </summary>
+        public List<IAbility> ChainedAbilities { get; set; } = new();
+
+        // Removed ChainedEffects, CompletionEvents, and PendingEffectsCount as they are obsolete
+        // with the new EffectExecutor and ChainedAbilities in EffectConfig.
+
+        /// <summary>
+        /// 请求创建时间
+        /// </summary>
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// 请求优先级（数值越小优先级越高）
+        /// </summary>
+        public int Priority { get; set; } = 0;
+
+        /// <summary>
+        /// 是否强制执行（跳过某些验证）
+        /// </summary>
+        public bool ForceExecution { get; set; } = false;
+
+        public Effect(
+            EffectConfig effectConfig,
+            Guid requestingPlayerId,
+            List<TargetInfo>? selectedTargets,
+            Guid? parentAbilityId,
+            Guid triggeredEventId,
+            Guid? sourceCardId
+        )
+        {
+            EffectConfig = effectConfig ?? throw new ArgumentNullException(nameof(effectConfig));
+            RequestingPlayerId = requestingPlayerId;
+            if (selectedTargets != null)
+            {
+                SelectedTargets = selectedTargets;
+            }
+            ParentAbilityId = parentAbilityId;
+            TriggeredEventId = triggeredEventId;
+            SourceCardId = sourceCardId;
+        }
+
+        /// <summary>
+        /// 创建一个不带具体配置的“容器”效果，用于承载效果链。
+        /// </summary>
+        /// <param name="requestingPlayerId">发起请求的玩家ID</param>
+        public Effect(Guid requestingPlayerId)
+        {
+            RequestingPlayerId = requestingPlayerId;
+            EffectConfig = new EffectConfig(); // 使用默认的空配置
+        }
+    }
+
+
+}

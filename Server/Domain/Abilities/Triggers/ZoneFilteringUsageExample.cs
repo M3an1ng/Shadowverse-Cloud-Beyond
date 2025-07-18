@@ -1,6 +1,6 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Events;
-using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using System;
 using System.Collections.Generic;
@@ -20,7 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         public static TriggerConfig CreateFieldOnlyAttackTrigger()
         {
-            return TriggerConfig.OnEventInZone(GameEventType.CardPlayed, CardZone.Field)
+            return TriggerConfig.OnEventInZone(EventType.PlayCard, CardZone.Field)
                 .WithZone(CardZone.Field); // 链式调用设置区域
         }
 
@@ -30,7 +30,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         public static TriggerConfig CreateMultiZoneDrawTrigger()
         {
-            return TriggerConfig.OnEventInZones(GameEventType.CardDrawn, CardZone.Hand, CardZone.Field);
+            return TriggerConfig.OnEventInZones(EventType.Draw, CardZone.Hand, CardZone.Field);
         }
 
         /// <summary>
@@ -39,7 +39,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         public static TriggerConfig CreateGlobalTurnStartTrigger()
         {
-            return TriggerConfig.OnEventInAllZones(GameEventType.TurnStart);
+            return TriggerConfig.OnEventInAllZones(EventType.TurnStart);
         }
 
         /// <summary>
@@ -66,27 +66,27 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             var performanceInfo = config.GetPerformanceInfo();
 
             // 输出性能分析结果
-            System.Console.WriteLine($"触发器性能分析:");
-            System.Console.WriteLine($"- 是否已优化: {performanceInfo.IsOptimized}");
-            System.Console.WriteLine($"- 性能评分: {performanceInfo.GetPerformanceScore()}/100");
-            System.Console.WriteLine($"- 有效区域数量: {performanceInfo.ZoneCount}");
-            System.Console.WriteLine($"- 主要区域: {performanceInfo.PrimaryZone}");
-            System.Console.WriteLine($"- 包含非活跃区域: {performanceInfo.IncludesInactiveZones}");
+            Console.WriteLine($"触发器性能分析:");
+            Console.WriteLine($"- 是否已优化: {performanceInfo.IsOptimized}");
+            Console.WriteLine($"- 性能评分: {performanceInfo.GetPerformanceScore()}/100");
+            Console.WriteLine($"- 有效区域数量: {performanceInfo.ZoneCount}");
+            Console.WriteLine($"- 主要区域: {performanceInfo.PrimaryZone}");
+            Console.WriteLine($"- 包含非活跃区域: {performanceInfo.IncludesInactiveZones}");
 
             if (performanceInfo.SuggestedZones.Count > 0)
             {
-                System.Console.WriteLine($"- 建议区域: {string.Join(", ", performanceInfo.SuggestedZones)}");
+                Console.WriteLine($"- 建议区域: {string.Join(", ", performanceInfo.SuggestedZones)}");
             }
         }
 
         /// <summary>
         /// 示例6: 根据卡牌类型创建最优触发器
         /// </summary>
-        public static TriggerConfig CreateOptimalTriggerForCardType(string cardType, GameEventType eventType)
+        public static TriggerConfig CreateOptimalTriggerForCardType(string cardType, EventType eventType)
         {
             var config = new TriggerConfig
             {
-                EventTypes = new List<GameEventType> { eventType },
+                EventTypes = new List<EventType> { eventType },
                 Timing = TriggerTiming.After
             };
 
@@ -147,7 +147,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// 示例8: 创建基于事件类型的智能触发器
         /// 自动根据事件类型选择最合适的区域配置
         /// </summary>
-        public static TriggerConfig CreateSmartTrigger(GameEventType eventType)
+        public static TriggerConfig CreateSmartTrigger(EventType eventType)
         {
             var config = TriggerConfig.OnEvent(eventType);
 
@@ -196,15 +196,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             }
 
             // 输出统计结果
-            System.Console.WriteLine($"区域过滤效果统计:");
-            System.Console.WriteLine($"- 总触发器数量: {totalConfigs}");
-            System.Console.WriteLine($"- 已优化触发器: {optimizedConfigs} ({(double)optimizedConfigs / totalConfigs * 100:F1}%)");
-            System.Console.WriteLine($"- 仅活跃区域触发器: {activeZoneOnlyConfigs} ({(double)activeZoneOnlyConfigs / totalConfigs * 100:F1}%)");
+            Console.WriteLine($"区域过滤效果统计:");
+            Console.WriteLine($"- 总触发器数量: {totalConfigs}");
+            Console.WriteLine($"- 已优化触发器: {optimizedConfigs} ({(double)optimizedConfigs / totalConfigs * 100:F1}%)");
+            Console.WriteLine($"- 仅活跃区域触发器: {activeZoneOnlyConfigs} ({(double)activeZoneOnlyConfigs / totalConfigs * 100:F1}%)");
 
-            System.Console.WriteLine("- 区域使用统计:");
+            Console.WriteLine("- 区域使用统计:");
             foreach (var kvp in zoneUsageStats.OrderByDescending(x => x.Value))
             {
-                System.Console.WriteLine($"  {kvp.Key}: {kvp.Value} 次使用");
+                Console.WriteLine($"  {kvp.Key}: {kvp.Value} 次使用");
             }
         }
     }

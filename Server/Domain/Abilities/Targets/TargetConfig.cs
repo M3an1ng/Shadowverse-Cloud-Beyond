@@ -76,7 +76,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public bool CanCancel { get; set; } = false;
 
         /// <summary>
-        /// 如果只有一个目标是否自动选择
+        /// 是否自动选择
         /// </summary>
         public bool AutoSelect { get; set; } = true;
 

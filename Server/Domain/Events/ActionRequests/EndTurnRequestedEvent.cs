@@ -16,23 +16,12 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
     {
         public Guid PlayerId { get; }
 
-        // Properties required by IGameEvent
-        public new PlayerStateDto? SourcePlayer { get; init; } = null;
-        public new CardInstance? SourceCard { get; init; } = null;
-        public new Dictionary<string, object> Parameters { get; init; } = new();
-
         public EndTurnRequestedEvent(Guid playerId)
-            : base(nameof(EndTurnRequestedEvent))
+            : base(EventType.EndTurnRequested)
         {
             PlayerId = playerId;
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // Placeholder: The actual logic is handled by the EventProcessor reacting to this event type.
-            _logger.LogDebug("Executing EndTurnRequestedEvent for Player {PlayerId}", PlayerId);
-            return Task.FromResult(new List<IGameEvent>()); // Return empty list
-        }
 
         public GameEventDto? ToDto(IMapper mapper)
         {

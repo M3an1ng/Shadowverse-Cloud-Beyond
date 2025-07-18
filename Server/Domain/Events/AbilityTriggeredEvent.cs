@@ -1,5 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Abilities;
-using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Dtos;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -12,34 +12,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class AbilityTriggeredEvent : GameEventBase
     {
-        public AbilityTriggeredEvent(Ability ability, IGameEvent triggerEvent) : base("ability_triggered")
-        {
-            SourceCard = ability.SourceCard;
-            SourcePlayer = ability.SourceCard?.OwnerPlayerId != null ?
-                new PlayerStateDto { PlayerId = ability.SourceCard.OwnerPlayerId } : null;
-            Parameters["ability_tag"] = ability.AbilityTag;
-            Parameters["trigger_event"] = triggerEvent;
-            Parameters["trigger_event_type"] = triggerEvent.EventType;
-            Parameters["ability_id"] = ability.AbilityId;
-        }
+        public IAbility TriggeredAbility { get; }
+        public IGameEvent TriggeringEvent { get; }
+        public string AbilityTag { get; }
 
-        public AbilityTriggeredEvent(AbilityConfig abilityConfig, IGameEvent triggerEvent) : base("ability_triggered")
+        public AbilityTriggeredEvent(IAbility triggeredAbility, IGameEvent triggeringEvent)
+            : base(EventType.AbilityTriggered)
         {
-            SourceCard = abilityConfig.SourceCard;
-            SourcePlayer = abilityConfig.SourceCard?.OwnerPlayerId != null ?
-                new PlayerStateDto { PlayerId = abilityConfig.SourceCard.OwnerPlayerId } : null;
-            Parameters["ability_tag"] = abilityConfig.AbilityTag;
-            Parameters["trigger_event"] = triggerEvent;
-            Parameters["trigger_event_type"] = triggerEvent.EventType;
-            Parameters["ability_id"] = abilityConfig.Id;
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // 这个Event本身不执行逻辑，只是用于播报
-            // 其他能力可以监听这个Event来响应特定标签的能力触发
-            await Task.CompletedTask;
-            return new List<IGameEvent>();
+            TriggeredAbility = triggeredAbility;
+            TriggeringEvent = triggeringEvent;
+            AbilityTag = triggeredAbility.AbilityTag; // Preserve the ability tag
         }
     }
 }

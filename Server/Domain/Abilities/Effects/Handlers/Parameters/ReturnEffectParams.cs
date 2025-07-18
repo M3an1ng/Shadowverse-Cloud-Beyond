@@ -1,5 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Constants;
-using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {

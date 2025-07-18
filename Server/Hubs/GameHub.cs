@@ -97,7 +97,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.CardUid);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued PlayCard action for Card {CardUid} in Game {GameId}.",
                     playerId, gameId, actionDto.CardUid);
@@ -175,7 +175,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, requestId);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued EndTurn action (RequestId: {RequestId}) in Game {GameId}.",
                     playerId, gameId, requestId);
@@ -230,7 +230,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued Attack action in Game {GameId}.",
                     playerId, gameId);
@@ -283,7 +283,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.UnitUid);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued Evolve action for unit {UnitUid} in Game {GameId}.",
                    playerId, gameId, actionDto.UnitUid);
@@ -359,7 +359,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, parsedUids.Count);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued SubmitMulligan action in Game {GameId}.",
                     playerId, gameId);
@@ -414,7 +414,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 {
                     // Parse playerId to Guid and pass it to GetOrCreateGameStateAsync
                     Guid playerGuid = Guid.Parse(playerId);
-                    GameState? currentStateEntity = await _gameService.GetOrCreateGameStateAsync(gameId.ToString(), playerGuid); // Pass playerId
+                    GameState? currentStateEntity = _gameService.GetOrCreateGameState(gameId.ToString(), playerGuid); // Pass playerId
                     GameStateDto? currentState = currentStateEntity != null ? _mapper.Map<GameStateDto>(currentStateEntity) : null;
                     if (currentState != null)
                     {

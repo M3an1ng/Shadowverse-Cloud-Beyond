@@ -22,7 +22,7 @@ namespace ShadowverseBeyond.Server.Mappings
             // Properties with matching names and types are mapped automatically:
             // GameId, CurrentPlayerId, Phase, FirstPlayerId, IsGameOver, WinnerId, GameMessage
 
-            // GameState.TurnNumber is ignored as it doesn't exist in GameStateDto.
+            // 【架构重构】GameState不再有TurnNumber属性，回合数由PlayerState.TurnNumber管理
         }
     }
 }

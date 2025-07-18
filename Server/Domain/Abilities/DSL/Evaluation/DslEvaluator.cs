@@ -1,69 +1,31 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging; // Assuming logging will be added
+using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ValueType = System.ValueType;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser; // For TokenType
-using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 {
-    /// <summary>
-    /// Evaluates a DSL Abstract Syntax Tree (AST) within a given context.
-    /// Traverses the AST and computes the expression's value based on runtime data
-    /// provided by the EvaluationContext.
-    /// </summary>
     public class DslEvaluator
     {
         private readonly ILogger<DslEvaluator> _logger;
+        private readonly IFunctionRegistry _functionRegistry;
 
-        // Consider injecting dependencies like FunctionRegistry if needed
-        public DslEvaluator(ILogger<DslEvaluator> logger)
+        public DslEvaluator(ILogger<DslEvaluator> logger, IFunctionRegistry functionRegistry)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
         }
 
-        /// <summary>
-        /// Asynchronously evaluates the given AST node within the specified context.
-        /// </summary>
-        /// <param name="astNode">The root node of the AST to evaluate.</param>
-        /// <param name="context">The evaluation context containing runtime data.</param>
-        /// <returns>An EvaluationResult containing the computed value or errors.</returns>
-        public async Task<EvaluationResult> EvaluateAsync(ExpressionNode astNode, EvaluationContext context)
-        {
-            if (astNode == null)
-            {
-                _logger.LogWarning("Attempted to evaluate a null AST node.");
-                return EvaluationResult.Failure("Cannot evaluate a null expression.");
-            }
-            if (context == null)
-            {
-                _logger.LogError("EvaluationContext cannot be null.");
-                return EvaluationResult.Failure("EvaluationContext is required.");
-            }
-
-
-            _logger.LogTrace("Starting evaluation for AST node type: {NodeType}", astNode.GetType().Name);
-            try
-            {
-                // Use a dispatcher method based on node type
-                return await VisitNodeAsync(astNode, context);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unhandled exception during DSL evaluation for node type {NodeType}.", astNode.GetType().Name);
-                return EvaluationResult.Failure($"Unhandled exception during evaluation: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Asynchronously evaluates the given AST node within the specified GameContext.
-        /// This method creates a temporary EvaluationContext from GameContext for compatibility.
-        /// </summary>
-        /// <param name="astNode">The root node of the AST to evaluate.</param>
-        /// <param name="context">The game context containing runtime data.</param>
-        /// <returns>An EvaluationResult containing the computed value or errors.</returns>
         public async Task<EvaluationResult> EvaluateAsync(ExpressionNode astNode, GameContext context)
         {
             if (astNode == null)
@@ -77,104 +39,63 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 return EvaluationResult.Failure("GameContext is required.");
             }
 
-            _logger.LogTrace("Starting evaluation for AST node type: {NodeType} using GameContext", astNode.GetType().Name);
-
-            // Create temporary EvaluationContext from GameContext
-            var evaluationContext = CreateEvaluationContextFromGameContext(context);
-
-            // Delegate to the existing EvaluationContext method
-            return await EvaluateAsync(astNode, evaluationContext);
+            _logger.LogTrace("Starting evaluation for AST node type: {NodeType}", astNode.GetType().Name);
+            try
+            {
+                return await VisitNodeAsync(astNode, context);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled exception during DSL evaluation for node type {NodeType}.", astNode.GetType().Name);
+                return EvaluationResult.Failure($"Unhandled exception during evaluation: {ex.Message}");
+            }
         }
 
-        /// <summary>
-        /// Creates an EvaluationContext from a GameContext for compatibility with existing DSL evaluation logic.
-        /// </summary>
-        /// <param name="context">The GameContext to convert.</param>
-        /// <returns>An EvaluationContext with equivalent data.</returns>
-        private EvaluationContext CreateEvaluationContextFromGameContext(GameContext context)
+        private async Task<EvaluationResult> VisitNodeAsync(ExpressionNode node, GameContext context)
         {
-            // Create snapshot of game state
-            var gameStateDto = context.CreateSnapshot();
-            var requestingPlayerDto = gameStateDto.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
-            var opponentPlayerDto = gameStateDto.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
-
-            return new EvaluationContext(
-                cardRepository: context.CardRepository ?? throw new InvalidOperationException("CardRepository is required in GameContext for DSL evaluation"),
-                functionRegistry: context.FunctionRegistry ?? throw new InvalidOperationException("FunctionRegistry is required in GameContext for DSL evaluation"),
-                gameState: gameStateDto,
-                player: requestingPlayerDto,
-                opponent: opponentPlayerDto,
-                currentItem: context.CurrentItem,
-                temporaryVariables: new Dictionary<string, object>(context.TemporaryVariables)
-            );
-        }
-
-        /// <summary>
-        /// Dispatches evaluation to the appropriate Visit method based on the node type.
-        /// </summary>
-        private async Task<EvaluationResult> VisitNodeAsync(ExpressionNode node, EvaluationContext context)
-        {
-            // Using a switch expression for type-based dispatching
             return node switch
             {
                 LiteralNode literal => VisitLiteral(literal, context),
                 IdentifierNode identifier => await VisitIdentifierAsync(identifier, context),
-                BinaryOperationNode binaryOp => await VisitBinaryOperatorAsync(binaryOp, context), // Corrected name
-                UnaryOperationNode unaryOp => await VisitUnaryOperatorAsync(unaryOp, context), // Corrected name
+                BinaryOperationNode binaryOp => await VisitBinaryOperatorAsync(binaryOp, context),
+                UnaryOperationNode unaryOp => await VisitUnaryOperatorAsync(unaryOp, context),
                 FunctionCallNode funcCall => await VisitFunctionCallAsync(funcCall, context),
-                // Add cases for other node types (e.g., TargetExpressionNode if evaluated here)
                 _ => HandleUnsupportedNode(node)
             };
         }
 
-        /// <summary>
-        /// Handles literal values (numbers, strings, booleans, null).
-        /// </summary>
-        private EvaluationResult VisitLiteral(LiteralNode node, EvaluationContext context)
+        private EvaluationResult VisitLiteral(LiteralNode node, GameContext context)
         {
             _logger.LogTrace("Visiting LiteralNode. Value: {Value}, Type: {Type}", node.Value ?? "null", node.Value?.GetType().Name ?? "null");
-            // Literals directly return their value.
             return EvaluationResult.Success(node.Value);
         }
 
-        /// <summary>
-        /// Handles identifiers (variable names, property paths).
-        /// </summary>
-        private async Task<EvaluationResult> VisitIdentifierAsync(IdentifierNode node, EvaluationContext context)
+        private Task<EvaluationResult> VisitIdentifierAsync(IdentifierNode node, GameContext context)
         {
             _logger.LogTrace("Visiting IdentifierNode. Path: {Path}", string.Join(".", node.Path));
-            // Delegate resolution to the context
-            object? resolvedValue = await context.ResolveIdentifierAsync(node.Path);
+            object? resolvedValue = ResolveIdentifier(node.Path, context);
 
-            if (resolvedValue != null) // TODO: Refine success condition if null is a valid resolved value in some cases
+            if (resolvedValue != null)
             {
                 _logger.LogTrace("Identifier '{Path}' resolved successfully. Value: {Value}", string.Join(".", node.Path), resolvedValue);
-                return EvaluationResult.Success(resolvedValue);
+                return Task.FromResult(EvaluationResult.Success(resolvedValue));
             }
             else
             {
                 _logger.LogWarning("Identifier not found or path invalid: {Path}", string.Join(".", node.Path));
-                return EvaluationResult.Failure($"Identifier not found or path invalid: {string.Join(".", node.Path)}");
+                return Task.FromResult(EvaluationResult.Failure($"Identifier not found or path invalid: {string.Join(".", node.Path)}"));
             }
         }
 
-
-        /// <summary>
-        /// Handles binary operations (+, -, *, /, ==, !=, <, >, etc.).
-        /// </summary>
-        private async Task<EvaluationResult> VisitBinaryOperatorAsync(BinaryOperationNode node, EvaluationContext context) // Corrected type
+        private async Task<EvaluationResult> VisitBinaryOperatorAsync(BinaryOperationNode node, GameContext context)
         {
-            _logger.LogTrace("Visiting BinaryOperationNode. Operator: {Operator}", node.Operator); // Corrected log message type
-            // TODO: Implement binary operation logic
-            // 1. Evaluate left operand
+            _logger.LogTrace("Visiting BinaryOperationNode. Operator: {Operator}", node.Operator);
             var leftResult = await VisitNodeAsync(node.Left, context);
             if (!leftResult.IsSuccess) return leftResult;
 
-            // 2. Evaluate right operand
             var rightResult = await VisitNodeAsync(node.Right, context);
             if (!rightResult.IsSuccess) return rightResult;
 
-            // 3. Perform operation (implement PerformBinaryOperation helper)
             try
             {
                 object? resultValue = PerformBinaryOperation(leftResult.Value, rightResult.Value, node.Operator);
@@ -188,16 +109,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     rightResult.Value ?? "null", rightResult.Value?.GetType().Name ?? "null", ex.Message);
                 return EvaluationResult.Failure($"Binary operation failed: {ex.Message}");
             }
-            // Let other unexpected exceptions propagate to the main handler
         }
 
-        /// <summary>
-        /// Handles unary operations (-, !).
-        /// </summary>
-        private async Task<EvaluationResult> VisitUnaryOperatorAsync(UnaryOperationNode node, EvaluationContext context) // Corrected type
+        private async Task<EvaluationResult> VisitUnaryOperatorAsync(UnaryOperationNode node, GameContext context)
         {
-            _logger.LogTrace("Visiting UnaryOperationNode. Operator: {Operator}", node.Operator); // Corrected log message type
-            // TODO: Implement unary operation logic
+            _logger.LogTrace("Visiting UnaryOperationNode. Operator: {Operator}", node.Operator);
             var operandResult = await VisitNodeAsync(node.Operand, context);
             if (!operandResult.IsSuccess) return operandResult;
 
@@ -213,25 +129,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     node.Operator, operandResult.Value ?? "null", operandResult.Value?.GetType().Name ?? "null", ex.Message);
                 return EvaluationResult.Failure($"Unary operation failed: {ex.Message}");
             }
-            // Let other unexpected exceptions propagate
         }
 
-        /// <summary>
-        /// Handles function calls.
-        /// </summary>
-        private async Task<EvaluationResult> VisitFunctionCallAsync(FunctionCallNode node, EvaluationContext context)
+        private async Task<EvaluationResult> VisitFunctionCallAsync(FunctionCallNode node, GameContext context)
         {
             _logger.LogTrace("Visiting FunctionCallNode. Function: {FunctionName}, Args: {ArgCount}", node.FunctionName, node.Arguments.Count);
-            // TODO: Implement function call logic
-            // 1. Find function
-            var function = context.FindFunction(node.FunctionName);
+            var function = FindFunction(node.FunctionName, context);
             if (function == null)
             {
                 _logger.LogWarning("Function not found: {FunctionName}", node.FunctionName);
                 return EvaluationResult.Failure($"Function not found: {node.FunctionName}");
             }
 
-            // 2. Evaluate arguments
             var evaluatedArgs = new List<object?>();
             foreach (var argNode in node.Arguments)
             {
@@ -239,23 +148,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 if (!argResult.IsSuccess)
                 {
                     _logger.LogWarning("Argument evaluation failed for function '{FunctionName}'. Error: {Error}", node.FunctionName, string.Join("; ", argResult.Errors));
-                    // Return the argument evaluation error
                     return EvaluationResult.Failure($"Argument evaluation failed for function '{node.FunctionName}': {string.Join("; ", argResult.Errors)}");
                 }
                 evaluatedArgs.Add(argResult.Value);
             }
             _logger.LogTrace("Arguments evaluated for function '{FunctionName}'. Count: {Count}", node.FunctionName, evaluatedArgs.Count);
 
-
-            // 3. Validate arguments (using function definition)
             if (!function.ValidateArguments(evaluatedArgs))
             {
                 _logger.LogWarning("Invalid arguments provided for function: {FunctionName}", node.FunctionName);
-                // TODO: Get more specific error message from ValidateArguments if possible
                 return EvaluationResult.Failure($"Invalid arguments for function: {node.FunctionName}");
             }
 
-            // 4. Execute function
             try
             {
                 object? resultValue = await function.ExecuteAsync(evaluatedArgs, context);
@@ -269,9 +173,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
         }
 
-        /// <summary>
-        /// Handles unsupported AST node types.
-        /// </summary>
         private EvaluationResult HandleUnsupportedNode(ExpressionNode node)
         {
             string errorMsg = $"Unsupported AST node type encountered during evaluation: {node.GetType().Name}";
@@ -279,75 +180,201 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             return EvaluationResult.Failure(errorMsg);
         }
 
-        // --- Private Helper Methods for Operations ---
-
-        /// <summary>
-        /// Performs the actual binary operation logic, including type checking and coercion.
-        /// </summary>
         private object? PerformBinaryOperation(object? left, object? right, TokenType operatorType)
         {
             _logger.LogTrace("Performing binary operation {Operator} on '{Left}' ({LeftType}) and '{Right}' ({RightType})",
                 operatorType, left ?? "null", left?.GetType().Name ?? "null", right ?? "null", right?.GetType().Name ?? "null");
 
-            // TODO: Implement detailed logic for each operator (+, -, *, /, %, ==, !=, <, >, <=, >=, &&, ||)
-            // This needs careful handling of nulls, type compatibility, and potential conversions.
-            // Example structure:
             switch (operatorType)
             {
                 case TokenType.Plus:
                     return DynamicOperations.Add(left, right);
                 case TokenType.Minus:
                     return DynamicOperations.Subtract(left, right);
-                case TokenType.Multiply: // Corrected from Asterisk
+                case TokenType.Multiply:
                     return DynamicOperations.Multiply(left, right);
-                case TokenType.Divide: // Corrected from Slash
+                case TokenType.Divide:
                     return DynamicOperations.Divide(left, right);
-                case TokenType.Modulo: // Corrected from Percent
+                case TokenType.Modulo:
                     return DynamicOperations.Modulo(left, right);
-                case TokenType.Equal: // Corrected from EqualEqual
+                case TokenType.Equal:
                     return DynamicOperations.AreEqual(left, right);
-                case TokenType.NotEqual: // Corrected from BangEqual
+                case TokenType.NotEqual:
                     return !DynamicOperations.AreEqual(left, right);
-                case TokenType.GreaterThan: // Corrected from Greater
+                case TokenType.GreaterThan:
                     return DynamicOperations.IsGreaterThan(left, right);
                 case TokenType.GreaterEqual:
                     return DynamicOperations.IsGreaterThanOrEqual(left, right);
-                case TokenType.LessThan: // Corrected from Less
+                case TokenType.LessThan:
                     return DynamicOperations.IsLessThan(left, right);
                 case TokenType.LessEqual:
                     return DynamicOperations.IsLessThanOrEqual(left, right);
-                case TokenType.And: // Corrected from AmpersandAmpersand/Keyword_and
+                case TokenType.And:
                     return DynamicOperations.LogicalAnd(left, right);
-                case TokenType.Or: // Corrected from PipePipe/Keyword_or
+                case TokenType.Or:
                     return DynamicOperations.LogicalOr(left, right);
-                // TODO: Add other operators if needed (e.g., Power)
                 default:
                     throw new InvalidOperationException($"Unsupported binary operator: {operatorType}");
             }
         }
 
-        /// <summary>
-        /// Performs the actual unary operation logic.
-        /// </summary>
         private object? PerformUnaryOperation(object? operand, TokenType operatorType)
         {
             _logger.LogTrace("Performing unary operation {Operator} on '{Operand}' ({OperandType})",
                 operatorType, operand ?? "null", operand?.GetType().Name ?? "null");
 
-            // TODO: Implement logic for unary operators (-, !)
             switch (operatorType)
             {
-                case TokenType.Minus: // Negation - Stays Minus
+                case TokenType.Minus:
                     return DynamicOperations.Negate(operand);
-                case TokenType.Not: // Corrected from Bang/Keyword_not
+                case TokenType.Not:
                     return DynamicOperations.LogicalNot(operand);
                 default:
                     throw new InvalidOperationException($"Unsupported unary operator: {operatorType}");
             }
         }
+
+        private object? ResolveIdentifier(List<string> path, GameContext context)
+        {
+            if (path == null || !path.Any())
+            {
+                _logger.LogWarning("ResolveIdentifier called with null or empty path.");
+                return null;
+            }
+
+            string firstSegment = path.First();
+            string firstSegmentLower = firstSegment.ToLowerInvariant();
+            object? baseObjectForPathResolution = null;
+            List<string> pathSegmentsToResolve;
+
+            // Priority 1: Explicit top-level keywords
+            switch (firstSegmentLower)
+            {
+                case "player":
+                    baseObjectForPathResolution = context.RequestingPlayer;
+                    pathSegmentsToResolve = path.Skip(1).ToList();
+                    _logger.LogTrace("Resolved '{Segment}' to RequestingPlayer.", firstSegment);
+                    break;
+                case "opponent":
+                    baseObjectForPathResolution = context.OpponentPlayer;
+                    pathSegmentsToResolve = path.Skip(1).ToList();
+                    _logger.LogTrace("Resolved '{Segment}' to OpponentPlayer.", firstSegment);
+                    break;
+                case "gamestate":
+                    baseObjectForPathResolution = context.CurrentGameState;
+                    pathSegmentsToResolve = path.Skip(1).ToList();
+                    _logger.LogTrace("Resolved '{Segment}' to CurrentGameState.", firstSegment);
+                    break;
+                case "self":
+                case "this":
+                case "current":
+                    baseObjectForPathResolution = context.CurrentItem;
+                    pathSegmentsToResolve = path.Skip(1).ToList();
+                    _logger.LogTrace("Resolved '{Segment}' to CurrentItem.", firstSegment);
+                    if (!pathSegmentsToResolve.Any() && path.Count == 1) // If path is just "self", "this", or "current"
+                    {
+                        return baseObjectForPathResolution;
+                    }
+                    break;
+                default:
+                    // Path does not start with a known top-level keyword
+                    // Priority 2: Temporary variables (if path is a single segment)
+                    if (path.Count == 1 && context.TemporaryVariables.TryGetValue(firstSegment, out var tempValue))
+                    {
+                        _logger.LogTrace("Resolved '{Segment}' from TemporaryVariables.", firstSegment);
+                        return tempValue;
+                    }
+
+                    // Priority 3: Assume the path starts with a property of GameContext itself (implicit root)
+                    // For example, "TriggeringEvent.SourceCard" or "GeneratedEvents.Count"
+                    baseObjectForPathResolution = context;
+                    pathSegmentsToResolve = path; // The entire path will be resolved on GameContext
+                    _logger.LogTrace("Identifier '{Segment}' not a known keyword or temp var; attempting to resolve full path on GameContext.", firstSegment);
+                    break;
+            }
+
+            if (baseObjectForPathResolution != null)
+            {
+                return ResolvePathSegments(baseObjectForPathResolution, pathSegmentsToResolve);
+            }
+
+            // Fallback for "self.state.variable" if CurrentItem is CardInstance and path starts with "self", "this", or "current"
+            // This specific structure was handled separately in the original code.
+            if ((firstSegmentLower is "self" or "this" or "current") &&
+                path.Count > 2 && path[1].ToLowerInvariant() == "state" &&
+                context.CurrentItem is CardInstance sourceCard)
+            {
+                string variableName = path[2];
+                if (sourceCard.AbilityState.TryGetValue(variableName, out var stateValue))
+                {
+                    _logger.LogTrace("Resolved '{Path}' from CardInstance.AbilityState.", string.Join(".", path));
+                    if (path.Count == 3) return stateValue;
+                    return ResolvePathSegments(stateValue, path.Skip(3).ToList());
+                }
+            }
+
+            _logger.LogWarning("Identifier could not be resolved: {Path}", string.Join(".", path));
+            return null;
+        }
+
+        private object? ResolvePathSegments(object? target, List<string> segments)
+        {
+            object? currentTarget = target;
+            foreach (var segment in segments)
+            {
+                if (currentTarget == null)
+                {
+                    _logger.LogDebug("ResolvePathSegments: currentTarget is null, cannot resolve segment '{Segment}'.", segment);
+                    return null;
+                }
+
+                // Handle special collection properties like Count, IsEmpty first
+                if (segment.Equals("Count", StringComparison.OrdinalIgnoreCase) && currentTarget is ICollection collection)
+                {
+                    currentTarget = collection.Count;
+                    _logger.LogTrace("Resolved segment '{Segment}' to collection Count: {Count}", segment, currentTarget);
+                    continue;
+                }
+                if (segment.Equals("IsEmpty", StringComparison.OrdinalIgnoreCase) && currentTarget is ICollection collectionIsEmpty)
+                {
+                    currentTarget = collectionIsEmpty.Count == 0;
+                    _logger.LogTrace("Resolved segment '{Segment}' to collection IsEmpty: {IsEmpty}", segment, currentTarget);
+                    continue;
+                }
+
+                // Handle IReadOnlyDictionary<string, object?> access (e.g., for IGameEvent.Parameters)
+                if (currentTarget is IReadOnlyDictionary<string, object?> dictionary && dictionary.TryGetValue(segment, out var dictValue))
+                {
+                    currentTarget = dictValue;
+                    _logger.LogTrace("Resolved segment '{Segment}' from dictionary. Value: {Value}", segment, currentTarget ?? "null");
+                    continue;
+                }
+
+                // Fallback to property reflection
+                var propertyInfo = currentTarget.GetType().GetProperty(segment, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+
+                if (propertyInfo == null)
+                {
+                    _logger.LogWarning("Property '{Segment}' not found on type '{TargetType}'. Path segment resolution failed.", segment, currentTarget.GetType().Name);
+                    return null;
+                }
+                currentTarget = propertyInfo.GetValue(currentTarget);
+                _logger.LogTrace("Resolved segment '{Segment}' to property value: {Value}", segment, currentTarget ?? "null");
+            }
+            return currentTarget;
+        }
+
+        private IFunctionDefinition? FindFunction(string functionName, GameContext context)
+        {
+            if (string.IsNullOrWhiteSpace(functionName))
+            {
+                return null;
+            }
+
+            return _functionRegistry.GetFunction(functionName);
+        }
     }
 
-    // Helper class for dynamic operations (Consider moving to a separate utility file)
     internal static class DynamicOperations
     {
         public static object? Add(object? left, object? right)
@@ -355,15 +382,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             if (left is string || right is string)
                 return (left?.ToString() ?? "") + (right?.ToString() ?? "");
             if (left is decimal || right is decimal)
-                return Convert.ToDecimal(left ?? 0m) + Convert.ToDecimal(right ?? 0m); // Assume 0 for null
+                return Convert.ToDecimal(left ?? 0m) + Convert.ToDecimal(right ?? 0m);
             if (left is double || right is double || left is float || right is float)
-                return Convert.ToDouble(left ?? 0.0) + Convert.ToDouble(right ?? 0.0); // Assume 0.0 for null
+                return Convert.ToDouble(left ?? 0.0) + Convert.ToDouble(right ?? 0.0);
             if (left is long || right is long)
-                return Convert.ToInt64(left ?? 0L) + Convert.ToInt64(right ?? 0L); // Assume 0L for null
+                return Convert.ToInt64(left ?? 0L) + Convert.ToInt64(right ?? 0L);
             if (left is int || right is int)
-                return Convert.ToInt32(left ?? 0) + Convert.ToInt32(right ?? 0); // Assume 0 for null
+                return Convert.ToInt32(left ?? 0) + Convert.ToInt32(right ?? 0);
 
-            // Add other numeric types if necessary
             throw new InvalidOperationException($"Cannot add types {left?.GetType().Name ?? "null"} and {right?.GetType().Name ?? "null"}");
         }
 
@@ -395,13 +421,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         public static object? Divide(object? left, object? right)
         {
-            // Handle division by zero explicitly
             if (TypeConverter.IsZero(right)) throw new DivideByZeroException();
 
-            // Prefer decimal for division to maintain precision
             if (left is decimal || right is decimal || left is double || right is double || left is float || right is float)
-                // Use decimal for division to avoid potential precision issues with double
-                return Convert.ToDecimal(left ?? 0m) / Convert.ToDecimal(right ?? 1m); // Avoid div by zero conceptually here, handled above
+                return Convert.ToDecimal(left ?? 0m) / Convert.ToDecimal(right ?? 1m);
             if (left is long || right is long)
                 return Convert.ToInt64(left ?? 0L) / Convert.ToInt64(right ?? 1L);
             if (left is int || right is int)
@@ -424,12 +447,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             throw new InvalidOperationException($"Cannot perform modulo on types {left?.GetType().Name ?? "null"} and {right?.GetType().Name ?? "null"}");
         }
 
-
         public static bool AreEqual(object? left, object? right)
         {
-            // Standard equality check, handles nulls correctly
-            // Consider numeric type coercion for equality? E.g., 1 == 1.0m
-            if (left is System.ValueType && right is System.ValueType && left.GetType() != right.GetType())
+            if (left is ValueType && right is ValueType && left.GetType() != right.GetType())
             {
                 try { return Convert.ToDecimal(left).Equals(Convert.ToDecimal(right)); } catch { /* Fall through */ }
             }
@@ -438,14 +458,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         public static bool IsGreaterThan(object? left, object? right)
         {
-            if (left == null || right == null) return false; // Cannot compare nulls
+            if (left == null || right == null) return false;
             if (TryCompare(left, right, out int result)) return result > 0;
             throw new InvalidOperationException($"Cannot compare '>' on types {left.GetType().Name} and {right.GetType().Name}");
         }
 
         public static bool IsGreaterThanOrEqual(object? left, object? right)
         {
-            if (left == null && right == null) return true; // null == null
+            if (left == null && right == null) return true;
             if (left == null || right == null) return false;
             if (TryCompare(left, right, out int result)) return result >= 0;
             throw new InvalidOperationException($"Cannot compare '>=' on types {left.GetType().Name} and {right.GetType().Name}");
@@ -468,9 +488,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         public static bool LogicalAnd(object? left, object? right)
         {
-            // Standard C# truthiness: null is false, non-zero numbers are true? No, stick to bool.
             bool leftBool = TypeConverter.ConvertToBool(left);
-            // Short-circuit evaluation
             if (!leftBool) return false;
             return TypeConverter.ConvertToBool(right);
         }
@@ -478,7 +496,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         public static bool LogicalOr(object? left, object? right)
         {
             bool leftBool = TypeConverter.ConvertToBool(left);
-            // Short-circuit evaluation
             if (leftBool) return true;
             return TypeConverter.ConvertToBool(right);
         }
@@ -490,7 +507,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             if (operand is float f) return -f;
             if (operand is long l) return -l;
             if (operand is int i) return -i;
-            // Add short, byte etc. if needed
             throw new InvalidOperationException($"Cannot negate type {operand?.GetType().Name ?? "null"}");
         }
 
@@ -499,46 +515,33 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             return !TypeConverter.ConvertToBool(operand);
         }
 
-
-        // --- Private Helpers for DynamicOperations ---
-
-
-
         private static bool TryCompare(object left, object right, out int comparisonResult)
         {
             comparisonResult = 0;
             try
             {
-                // Promote to common types for comparison (decimal for best precision)
                 if (IsNumericType(left) && IsNumericType(right))
                 {
                     comparisonResult = Convert.ToDecimal(left).CompareTo(Convert.ToDecimal(right));
                     return true;
                 }
-                // Add string comparison if needed:
                 if (left is string sLeft && right is string sRight)
                 {
-                    comparisonResult = string.Compare(sLeft, sRight, StringComparison.Ordinal); // Or other comparison type
+                    comparisonResult = string.Compare(sLeft, sRight, StringComparison.Ordinal);
                     return true;
                 }
-
-                // If types are not directly comparable numerically or as strings
                 if (left is IComparable compLeft)
                 {
-                    // This might throw ArgumentException if types are incompatible (e.g., int.CompareTo(string))
                     comparisonResult = compLeft.CompareTo(right);
                     return true;
                 }
             }
             catch (Exception ex) when (ex is InvalidCastException || ex is FormatException || ex is ArgumentException || ex is OverflowException)
             {
-                // Comparison failed due to type incompatibility or conversion error
                 return false;
             }
-            return false; // Could not compare
+            return false;
         }
-
-
 
         private static bool IsNumericType(object? obj)
         {

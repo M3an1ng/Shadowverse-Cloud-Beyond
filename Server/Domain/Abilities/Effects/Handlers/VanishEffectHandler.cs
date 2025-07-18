@@ -18,13 +18,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// </summary>
     public class VanishEffectHandler : EffectHandlerBase<VanishEffectParams>
     {
-        private readonly IMapper _mapper;
         private readonly ITargetProcessingService _targetProcessingService;
 
-        public VanishEffectHandler(ILogger logger, IMapper mapper, ITargetProcessingService targetProcessingService)
+        public VanishEffectHandler(ILogger<VanishEffectHandler> logger, ITargetProcessingService targetProcessingService)
             : base(logger)
         {
-            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
@@ -33,80 +31,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             const string effectName = "VanishEffect";
             Logger.LogDebug("{EffectName}: Starting with VanishReason={Reason}.", effectName, parameters.VanishReason);
 
-            // Define the action for vanishing a CardInstance
-            Func<CardInstance, GameContext, Task<IndividualActionResult>> cardVanishAction =
+            Func<CardInstance, GameContext, Task<DomainOperationResult>> cardVanishAction =
                 async (card, ctx) =>
                 {
-                    Logger.LogDebug("{EffectName}: Attempting to vanish target {InstanceId} (DefId: {DefId}) owned by {OwnerId}. Reason: {Reason}",
-                                   effectName, card.InstanceId, card.DefinitionId, card.OwnerPlayerId, parameters.VanishReason);
-
-                    // 1. Check for Vanish Immunity/Resistance
-                    // TODO: Implement check for VanishResist keyword and potential buff-based immunity
-                    // For now, assume no resistance. Example check:
-                    // if (card.HasKeyword(CardKeyword.VanishResist) && !parameters.IgnoreVanishResist)
-                    // {
-                    //     Logger.LogInformation("{EffectName}: Target {InstanceId} has VanishResist and effect does not ignore it. Skipping vanish.", effectName, card.InstanceId);
-                    //     return new IndividualActionResult { TargetId = TargetId.Card(card.InstanceId), Success = true, Message = "Target has VanishResist.", GeneratedEvents = new List<IGameEvent>() };
-                    // }
-
-                    // 2. Check if already vanished or not on field
-                    if (card.CurrentZone != CardZone.Field || card.CurrentHealth <= 0)
+                    var ownerPlayer = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
+                    if (ownerPlayer == null)
                     {
-                        Logger.LogWarning("{EffectName}: Target {InstanceId} is not on field or already destroyed. Skipping.", effectName, card.InstanceId);
-
-                        await Task.CompletedTask;
-                        return new IndividualActionResult
-                        {
-                            TargetId = TargetId.Card(card.InstanceId),
-                            Success = true,
-                            Message = "Target not on field or already destroyed.",
-                            GeneratedEvents = new List<IGameEvent>()
-                        };
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found." };
                     }
 
-                    // 3. Generate CardVanishedEvent (different from CardDestroyedEvent)
-                    var ownerPlayerState = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
-                    if (ownerPlayerState == null)
-                    {
-                        Logger.LogError("{EffectName}: Could not find owner PlayerState (ID: {OwnerId}) for target {InstanceId}. Cannot generate CardVanishedEvent.",
-                                       effectName, card.OwnerPlayerId, card.InstanceId);
-
-                        await Task.CompletedTask;
-                        return new IndividualActionResult
-                        {
-                            TargetId = TargetId.Card(card.InstanceId),
-                            Success = false,
-                            Message = "Could not find owner PlayerState.",
-                            GeneratedEvents = new List<IGameEvent>()
-                        };
-                    }
-
-                    // TODO: Create CardVanishedEvent when event is defined
-                    // For now, use CardDestroyedEvent but with a flag indicating it's a vanish
-                    var ownerPlayerDto = _mapper.Map<PlayerStateDto>(ownerPlayerState);
-                    var vanishEvent = new CardDestroyedEvent(ownerPlayerDto, card); // TODO: Replace with CardVanishedEvent
-                    var individualEvents = new List<IGameEvent> { vanishEvent };
-
-                    Logger.LogInformation("{EffectName}: Successfully generated vanish event for target {InstanceId}.", effectName, card.InstanceId);
-
-                    await Task.CompletedTask; // Vanish event generation is synchronous
-
-                    return new IndividualActionResult
-                    {
-                        TargetId = TargetId.Card(card.InstanceId),
-                        Success = true,
-                        Message = $"Generated vanish event (Reason: {parameters.VanishReason}).",
-                        GeneratedEvents = individualEvents
-                    };
+                    // Delegate the core logic to the domain entity
+                    var operationResult = ownerPlayer.VanishCard(card);
+                    await Task.CompletedTask;
+                    return operationResult;
                 };
-
-            // Vanish effect only targets CardInstances
-            Logger.LogDebug("{EffectName}: Processing targets assuming CardInstance type.", effectName);
 
             return await _targetProcessingService.ProcessTargetsAsync(
                 context,
-                TargetIdType.CardInstance, // Expect only CardInstance targets
-                null, // No PlayerState action needed
+                null,
                 cardVanishAction,
                 effectName);
         }

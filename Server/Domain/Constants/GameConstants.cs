@@ -207,6 +207,25 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// </summary>
             public const int TestDeckSize = 20;
         }
+
+        /// <summary>
+        /// System Ability ID constants
+        /// </summary>
+        public static class SystemAbilityIds
+        {
+            // General System Abilities
+            public const long PlayCardAbilityId = -1L;
+            public const long AttackAbilityId = -2L;
+            public const long EvolveAbilityId = -3L;
+            public const long EndTurnAbilityId = -4L;
+            public const long MulliganAbilityId = -5L;
+            public const long CheckMulliganCompletionAbilityId = -7L;
+            public const long StartTurnAbilityId = -6L; // Example for a common system ability
+
+            // Add more system ability IDs as needed, ensuring they are unique.
+            // Consider a scheme for ID generation or assignment if many system abilities are anticipated.
+            // For example, negative numbers for core system abilities, specific ranges for others.
+        }
     }
 }
 

@@ -246,6 +246,13 @@ body {
     outline-offset: -3px;
     box-shadow: 0 0 15px red;
 }
+/* 【BUG-017修复】受限攻击目标（有Ward时的非Ward目标） */
+.targetable-restricted {
+    outline: 3px solid orange;
+    outline-offset: -3px;
+    box-shadow: 0 0 15px orange;
+    opacity: 0.8; /* 稍微透明表示受限 */
+}
 .selected-attacker { /* Style for selected attacker */
      outline: 3px solid blue;
      outline-offset: -3px;

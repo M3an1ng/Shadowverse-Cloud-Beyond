@@ -13,6 +13,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Interfaces; // Added for ICardRepository
 using ShadowverseBeyond.Server.Exceptions; // Added for GameLogicException
+using ShadowverseBeyond.Server.Domain.Abilities; // For AbilityManager and AbilityConfig
+using ShadowverseBeyond.Server.Services.Abstractions; // For IGameDataProvider
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -21,14 +24,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// </summary>
     public class TransformEffectHandler : EffectHandlerBase<TransformEffectParams>
     {
-        private readonly ICardRepository _cardRepository;
         private readonly ITargetProcessingService _targetProcessingService;
+        private readonly AbilityManager _abilityManager;
+        private readonly IGameDataProvider _gameDataProvider;
 
-        public TransformEffectHandler(ILogger logger, ICardRepository cardRepository, ITargetProcessingService targetProcessingService)
+        public TransformEffectHandler(
+            ILogger<TransformEffectHandler> logger,
+            ITargetProcessingService targetProcessingService,
+            AbilityManager abilityManager,
+            IGameDataProvider gameDataProvider)
             : base(logger)
         {
-            _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository));
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
+            _abilityManager = abilityManager ?? throw new ArgumentNullException(nameof(abilityManager));
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
         }
 
         public override async Task<GameStateActionResult> ApplyAsync(GameContext context, TransformEffectParams parameters)
@@ -37,8 +46,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             Logger.LogDebug("{EffectName}: Starting with TargetCardDefinitionId={TargetDefId}.",
                            effectName, parameters.TargetCardDefinitionId);
 
-            // Validate target card definition first
-            var targetDefinition = await _cardRepository.GetCardDefinitionByIdAsync(parameters.TargetCardDefinitionId);
+            var targetDefinition = _gameDataProvider.GetCardDefinition(parameters.TargetCardDefinitionId);
             if (targetDefinition == null)
             {
                 Logger.LogError("{EffectName}: Target CardDefinition with ID {TargetDefId} not found.",
@@ -46,57 +54,46 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 return new GameStateActionResult { Success = false, ErrorMessage = $"Target CardDefinition ID {parameters.TargetCardDefinitionId} not found." };
             }
 
-            // Define the action for transforming a CardInstance
-            Func<CardInstance, GameContext, Task<IndividualActionResult>> cardTransformAction =
-                async (card, ctx) =>
+            Func<CardInstance, GameContext, Task<DomainOperationResult>> cardTransformAction =
+                (card, ctx) =>
                 {
-                    Logger.LogDebug("{EffectName}: Transforming card {InstanceId} (DefId: {OldDefId}) into DefId: {NewDefId}.",
-                                   effectName, card.InstanceId, card.DefinitionId, targetDefinition.Id);
-
-                    // Update the existing instance with the new definition's properties
-                    // Keep the same InstanceId and OwnerPlayerId
-                    card.DefinitionId = targetDefinition.Id;
-                    card.BaseAttack = targetDefinition.Attack ?? 0;
-                    card.BaseHealth = targetDefinition.Health ?? 0;
-                    card.CurrentAttack = targetDefinition.Attack ?? 0; // Reset current stats to new base
-                    card.CurrentHealth = targetDefinition.Health ?? 0;
-                    card.MaxHealth = targetDefinition.Health ?? 0;
-                    card.CardType = targetDefinition.Type; // Update card type
-                    card.BaseCost = targetDefinition.Cost;
-                    card.CurrentCost = targetDefinition.Cost; // Reset cost
-                    card.IsEvolved = false; // Transformed units are typically not evolved initially
-                    card.Countdown = targetDefinition.Type.Equals("Amulet", StringComparison.OrdinalIgnoreCase) ? targetDefinition.Health : null;
-
-                    // Update keywords and abilities
-                    card.SetBaseKeywords(targetDefinition.Keywords?.Select(k => Enum.TryParse<CardKeyword>(k, true, out var kw) ? kw : CardKeyword.None).Where(k => k != CardKeyword.None) ?? Enumerable.Empty<CardKeyword>());
-                    card.ClearTemporaryKeywords(); // Clear keywords from previous form
-                    // TODO: Integrate with AbilityManager to correctly update/replace abilities on transform.
-
-                    // TODO: Generate TransformEvent when event is defined
-                    // var transformEvent = new TransformEvent(card.InstanceId, targetDefinition.Id);
-                    var individualEvents = new List<IGameEvent>(); // { transformEvent };
-
-                    Logger.LogInformation("{EffectName}: Transformed card {InstanceId} into DefId {NewDefId}.",
-                                         effectName, card.InstanceId, targetDefinition.Id);
-
-                    await Task.CompletedTask; // Transformation is synchronous
-
-                    return new IndividualActionResult
+                    // 1. Perform the basic transformation on the card instance (stats, definitionId, etc.)
+                    var transformOperationResult = card.Transform(targetDefinition);
+                    if (!transformOperationResult.Success)
                     {
-                        TargetId = TargetId.Card(card.InstanceId),
-                        Success = true,
-                        Message = $"Transformed card into DefId {targetDefinition.Id}.",
-                        GeneratedEvents = individualEvents
-                    };
-                };
+                        // If basic transform fails, bubble up the error.
+                        return Task.FromResult(transformOperationResult);
+                    }
 
-            // Transform effect only targets CardInstances
-            Logger.LogDebug("{EffectName}: Processing targets assuming CardInstance type.", effectName);
+                    // 2. Unregister all old abilities associated with this card instance.
+                    _abilityManager.UnregisterCardAbilities(card.InstanceId);
+                    Logger.LogDebug("{EffectName}: Unregistered old abilities for card {CardId} (InstanceId: {InstanceId}) after transform.",
+                                   effectName, targetDefinition.Name, card.InstanceId);
+
+                    // 3. Get ability configurations for the new card definition.
+                    var newAbilityConfigs = _gameDataProvider.GetAbilityConfigs(targetDefinition.Id);
+                    if (newAbilityConfigs != null && newAbilityConfigs.Any())
+                    {
+                        // 4. Create and register new abilities for the transformed card.
+                        _abilityManager.CreateAbilitiesForCard(card, newAbilityConfigs);
+                        Logger.LogDebug("{EffectName}: Created and registered {Count} new abilities for transformed card {CardName} (InstanceId: {InstanceId}).",
+                                       effectName, newAbilityConfigs.Count, targetDefinition.Name, card.InstanceId);
+                    }
+                    else
+                    {
+                        Logger.LogDebug("{EffectName}: Transformed card {CardName} (InstanceId: {InstanceId}) has no new abilities to register.",
+                                       effectName, targetDefinition.Name, card.InstanceId);
+                    }
+
+                    // The original transformOperationResult already contains the CardTransformedEvent.
+                    // We are augmenting the process here by handling ability updates.
+                    // The overall success depends on the initial transform.
+                    return Task.FromResult(transformOperationResult);
+                };
 
             return await _targetProcessingService.ProcessTargetsAsync(
                 context,
-                TargetIdType.CardInstance, // Expect only CardInstance targets
-                null, // No PlayerState action needed
+                null,
                 cardTransformAction,
                 effectName);
         }

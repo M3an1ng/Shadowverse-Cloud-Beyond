@@ -81,5 +81,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// 是否启用
         /// </summary>
         public bool IsEnabled { get; set; } = true;
+
+        /// <summary>
+        /// 定义当此效果成功执行后，如何构建 EffectCompletedEvent.ExecutionResults 的内容。
+        /// 键 (string): 将作为 ExecutionResults 中的参数名。
+        /// 值 (string): 一个DSL表达式，用于从效果的执行上下文中计算或提取该参数的值。
+        /// </summary>
+        public Dictionary<string, string>? Outputs { get; set; }
+
+        /// <summary>
+        /// 定义在此效果成功执行后，需要接续触发的能力链。
+        /// 详见设计文档: 04-04-能力链与系统能力重构设计.md
+        /// </summary>
+        public List<AbilityConfig> ChainedAbilities { get; set; } = new();
     }
 }

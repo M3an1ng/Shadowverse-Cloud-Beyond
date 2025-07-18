@@ -161,12 +161,12 @@
             <div class="panel">
                 <h3>🃏 卡牌测试</h3>
                 <div class="input-group">
-                    <label>卡牌ID:</label>
-                    <input type="number" id="cardId" value="1">
+                    <label>卡牌UID:</label>
+                    <input type="text" id="cardId" placeholder="卡牌实例的GUID">
                 </div>
                 <div class="input-group">
                     <label>目标UID:</label>
-                    <input type="text" id="targetUid" placeholder="可选">
+                    <input type="text" id="targetUid" placeholder="目标的GUID (可选)">
                 </div>
                 <button class="btn" onclick="playCard()">出牌</button>
                 <button class="btn" onclick="addCardToHand()">添加到手牌</button>
@@ -177,11 +177,15 @@
                 <h3>⚔️ 战斗测试</h3>
                 <div class="input-group">
                     <label>攻击者UID:</label>
-                    <input type="text" id="attackerUid">
+                    <input type="text" id="attackerUid" placeholder="攻击单位的GUID">
                 </div>
                 <div class="input-group">
-                    <label>目标UID:</label>
-                    <input type="text" id="attackTargetUid">
+                    <label>攻击目标UID:</label>
+                    <input type="text" id="attackTargetUid" placeholder="目标单位或玩家的GUID">
+                </div>
+                <div class="input-group">
+                    <label>进化单位UID:</label>
+                    <input type="text" id="unitUid" placeholder="要进化单位的GUID">
                 </div>
                 <button class="btn" onclick="attack()">攻击</button>
                 <button class="btn" onclick="evolve()">进化</button>
@@ -231,29 +235,71 @@
 
         async function connectToServer() {
             const serverUrl = document.getElementById('serverUrl').value;
-            
+            const gameId = document.getElementById('gameId').value || 'dev-test-game';
+            const playerId = document.getElementById('playerId').value || 'dev-player-1';
+
             try {
+                // Use correct hub URL with connection parameters
+                const hubUrlWithParams = `${serverUrl}/gamehub?gameId=${encodeURIComponent(gameId)}&playerId=${encodeURIComponent(playerId)}`;
+
                 connection = new signalR.HubConnectionBuilder()
-                    .withUrl(`${serverUrl}/gameHub`)
+                    .withUrl(hubUrlWithParams)
+                    .withAutomaticReconnect()
+                    .configureLogging(signalR.LogLevel.Information)
                     .build();
 
-                // 注册事件监听器
-                connection.on("GameStateUpdated", (gameState) => {
+                // Register current event handlers from IGameClient interface
+                connection.on("ReceiveGameState", (gameState) => {
                     log(`游戏状态更新: ${JSON.stringify(gameState, null, 2)}`, 'info');
                 });
 
-                connection.on("GameEventOccurred", (events) => {
-                    log(`游戏事件: ${JSON.stringify(events, null, 2)}`, 'success');
-                });
-
-                connection.on("ErrorOccurred", (error) => {
+                connection.on("ReceiveError", (error) => {
                     log(`错误: ${error}`, 'error');
                 });
 
+                // Register specific event handlers for current event types
+                connection.on("CardPlayed", (eventDto) => {
+                    log(`卡牌出牌事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("CardSummoned", (eventDto) => {
+                    log(`卡牌召唤事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("TurnStarted", (eventDto) => {
+                    log(`回合开始事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("TurnEnded", (eventDto) => {
+                    log(`回合结束事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("AttackDeclared", (eventDto) => {
+                    log(`攻击声明事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("DamageDealt", (eventDto) => {
+                    log(`伤害造成事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("UnitDestroyed", (eventDto) => {
+                    log(`单位摧毁事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("UnitEvolved", (eventDto) => {
+                    log(`单位进化事件: ${JSON.stringify(eventDto, null, 2)}`, 'success');
+                });
+
+                connection.on("GameOver", (eventDto) => {
+                    log(`游戏结束事件: ${JSON.stringify(eventDto, null, 2)}`, 'warning');
+                });
+
                 await connection.start();
+                currentGameId = gameId;
+                currentPlayerId = playerId;
                 document.getElementById('connectionStatus').textContent = '已连接';
                 document.getElementById('connectionStatus').className = 'status connected';
-                log('成功连接到服务器', 'success');
+                log(`成功连接到服务器 - 游戏ID: ${gameId}, 玩家ID: ${playerId}`, 'success');
             } catch (error) {
                 log(`连接失败: ${error}`, 'error');
             }
@@ -274,17 +320,9 @@
                 return;
             }
 
-            const gameId = document.getElementById('gameId').value;
-            const playerId = document.getElementById('playerId').value;
-
-            try {
-                await connection.invoke("CreateGame", gameId, playerId);
-                currentGameId = gameId;
-                currentPlayerId = playerId;
-                log(`创建游戏成功: ${gameId}`, 'success');
-            } catch (error) {
-                log(`创建游戏失败: ${error}`, 'error');
-            }
+            // Game creation is now handled automatically by connection
+            // The backend creates/joins game based on connection parameters
+            log(`游戏会话已通过连接建立 - 游戏ID: ${currentGameId}, 玩家ID: ${currentPlayerId}`, 'success');
         }
 
         async function joinGame() {
@@ -293,17 +331,9 @@
                 return;
             }
 
-            const gameId = document.getElementById('gameId').value;
-            const playerId = document.getElementById('playerId').value;
-
-            try {
-                await connection.invoke("JoinGame", gameId, playerId);
-                currentGameId = gameId;
-                currentPlayerId = playerId;
-                log(`加入游戏成功: ${gameId}`, 'success');
-            } catch (error) {
-                log(`加入游戏失败: ${error}`, 'error');
-            }
+            // Game joining is now handled automatically by connection
+            // The backend creates/joins game based on connection parameters
+            log(`游戏会话已通过连接建立 - 游戏ID: ${currentGameId}, 玩家ID: ${currentPlayerId}`, 'success');
         }
 
         async function playCard() {
@@ -312,12 +342,24 @@
                 return;
             }
 
-            const cardId = document.getElementById('cardId').value;
+            const cardUid = document.getElementById('cardId').value;
             const targetUid = document.getElementById('targetUid').value || null;
 
+            // Validate GUID format
+            if (!isValidGuid(cardUid)) {
+                log(`无效的卡牌UID格式: ${cardUid}`, 'error');
+                return;
+            }
+
             try {
-                await connection.invoke("PlayCard", currentGameId, currentPlayerId, cardId, targetUid);
-                log(`出牌: 卡牌ID ${cardId}`, 'success');
+                // Use current PlayCardActionDto structure
+                const actionDto = {
+                    CardUid: cardUid,
+                    TargetUid: targetUid ? targetUid : null
+                };
+
+                await connection.invoke("PlayCard", actionDto);
+                log(`出牌: 卡牌UID ${cardUid}`, 'success');
             } catch (error) {
                 log(`出牌失败: ${error}`, 'error');
             }
@@ -332,8 +374,20 @@
             const attackerUid = document.getElementById('attackerUid').value;
             const targetUid = document.getElementById('attackTargetUid').value;
 
+            // Validate GUID formats
+            if (!isValidGuid(attackerUid) || !isValidGuid(targetUid)) {
+                log(`无效的UID格式 - 攻击者: ${attackerUid}, 目标: ${targetUid}`, 'error');
+                return;
+            }
+
             try {
-                await connection.invoke("Attack", currentGameId, currentPlayerId, attackerUid, targetUid);
+                // Use current AttackActionDto structure
+                const actionDto = {
+                    AttackerUid: attackerUid,
+                    TargetUid: targetUid
+                };
+
+                await connection.invoke("PerformAttack", actionDto);
                 log(`攻击: ${attackerUid} -> ${targetUid}`, 'success');
             } catch (error) {
                 log(`攻击失败: ${error}`, 'error');
@@ -347,15 +401,58 @@
             }
 
             try {
-                await connection.invoke("EndTurn", currentGameId, currentPlayerId);
-                log('结束回合', 'success');
+                // Generate unique request ID for idempotency
+                const requestId = generateRequestId();
+                await connection.invoke("EndTurn", requestId);
+                log(`结束回合 (请求ID: ${requestId})`, 'success');
             } catch (error) {
                 log(`结束回合失败: ${error}`, 'error');
             }
         }
 
+        // Add evolve function
+        async function evolve() {
+            if (!connection || !currentGameId || !currentPlayerId) {
+                log('请先创建或加入游戏', 'error');
+                return;
+            }
+
+            const unitUid = document.getElementById('unitUid').value;
+
+            if (!unitUid) {
+                log('请输入单位UID', 'error');
+                return;
+            }
+
+            try {
+                // Use current EvolveActionDto structure
+                const actionDto = {
+                    UnitUid: unitUid
+                };
+
+                await connection.invoke("PerformEvolve", actionDto);
+                log(`进化: 单位UID ${unitUid}`, 'success');
+            } catch (error) {
+                log(`进化失败: ${error}`, 'error');
+            }
+        }
+
+        // Helper functions
+        function isValidGuid(str) {
+            if (!str || typeof str !== 'string') {
+                return false;
+            }
+            const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            return guidRegex.test(str);
+        }
+
+        function generateRequestId() {
+            return 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
         function quickSetup() {
-            document.getElementById('gameId').value = 'dev-test-' + Date.now();
+            const timestamp = Date.now();
+            document.getElementById('gameId').value = 'dev-test-' + timestamp;
             document.getElementById('playerId').value = 'dev-player-' + Math.floor(Math.random() * 1000);
             log('快速设置完成', 'success');
         }
@@ -364,9 +461,38 @@
             document.getElementById('logContent').innerHTML = '';
         }
 
+        // Add test functions for common scenarios
+        function addTestCards() {
+            log('添加测试卡牌功能暂未实现 - 需要后端支持', 'warning');
+        }
+
+        function addCardToHand() {
+            log('添加卡牌到手牌功能暂未实现 - 需要后端支持', 'warning');
+        }
+
+        function setMaxResources() {
+            log('设置最大资源功能暂未实现 - 需要后端支持', 'warning');
+        }
+
+        function skipToTurn(turnNumber) {
+            log(`跳转到第${turnNumber}回合功能暂未实现 - 需要后端支持`, 'warning');
+        }
+
+        function resetGame() {
+            log('重置游戏功能暂未实现 - 需要后端支持', 'warning');
+        }
+
+        function exportGameState() {
+            if (connection && connection.state === 'Connected') {
+                log('游戏状态导出功能暂未实现 - 可通过ReceiveGameState事件查看状态', 'warning');
+            } else {
+                log('请先连接服务器', 'error');
+            }
+        }
+
         // 页面加载时自动连接
         window.addEventListener('load', () => {
-            log('开发者工具已加载', 'info');
+            log('开发者工具已加载 - 请设置游戏ID和玩家ID后连接服务器', 'info');
         });
     </script>
 </body>

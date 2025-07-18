@@ -20,7 +20,8 @@
   },
   "homepage": "https://github.com/q9q9qq92007/Shadowverse-Cloud-Beyond#readme",
   "dependencies": {
-    "@microsoft/signalr": "^8.0.7"
+    "@microsoft/signalr": "^8.0.7",
+    "playwright": "^1.53.0"
   },
   "devDependencies": {
     "vite": "^6.3.5"

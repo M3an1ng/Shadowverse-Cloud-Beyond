@@ -59,6 +59,6 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">游戏 ID。</param>
         /// <param name="aiPlayerId">轮到其行动的 AI 玩家 ID。</param>
         /// <returns>表示异步操作启动的任务。</returns>
-        Task RequestAiActionAsync(string gameId, Guid aiPlayerId, GameActionContext context);
+        Task RequestAiActionAsync(string gameId, Guid aiPlayerId);
     }
 }

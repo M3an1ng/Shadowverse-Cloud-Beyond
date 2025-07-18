@@ -6,14 +6,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// 换牌效果参数
     /// 包含执行换牌操作所需的所有参数
+    /// 目标玩家通过 GameContext.SelectedTargets 传递，遵循统一的 EffectHandler 架构模式
     /// </summary>
     public class MulliganEffectParams : BaseEffectParams
     {
-        /// <summary>
-        /// 执行换牌的玩家ID
-        /// </summary>
-        public Guid PlayerId { get; set; } = Guid.Empty;
-
         /// <summary>
         /// 要替换的卡牌UID列表
         /// </summary>

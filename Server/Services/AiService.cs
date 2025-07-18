@@ -1,4 +1,6 @@
+using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Constants; // Add missing using for CardKeyword
+using ShadowverseBeyond.Server.Domain.Extensions; // 【BUG-017修复】添加扩展方法的using指令
 // Server/Services/AiService.cs
 //
 // 相关文档:
@@ -28,15 +30,17 @@ namespace ShadowverseBeyond.Server.Services
     {
         private readonly ILogger<AiService> _logger;
         private readonly IServiceScopeFactory _serviceScopeFactory; // To resolve IGameService if needed, avoiding circular dependency
+        private readonly IGameDataProvider _gameDataProvider;
 
         // Define constants (like MAX_FIELD_SIZE from ai.js)
         // TODO: use GameConstants instead
         private const int MaxFieldSize = 5;
 
-        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory)
+        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, IGameDataProvider gameDataProvider)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
         }
 
         /// <inheritdoc />
@@ -90,7 +94,7 @@ namespace ShadowverseBeyond.Server.Services
 
             // V1 Logic: Prioritize playing the highest-cost follower if possible
             var playableFollowers = playableCards
-                .Where(c => Enum.TryParse<CardType>(c.Type, true, out var type) && type == CardType.Follower)
+                .Where(c => c.Type == CardType.Follower)
                 .OrderByDescending(c => c.Cost)
                 .ToList();
 
@@ -106,7 +110,7 @@ namespace ShadowverseBeyond.Server.Services
 
             // If no follower can be played, try playing the highest-cost spell
             var playableSpells = playableCards
-                 .Where(c => Enum.TryParse<CardType>(c.Type, true, out var type) && type == CardType.Spell)
+                 .Where(c => c.Type == CardType.Spell)
                  .OrderByDescending(c => c.Cost)
                  .ToList();
 
@@ -160,41 +164,43 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogError("[AiService:{GameId}] Could not get player states for AI {PlayerId} in DecideEvolveAsync.", gameId, aiPlayerId);
                 return Task.FromResult<EvolveActionDto?>(null);
             }
-            var (aiState, _) = states.Value; // Don't need opponent state here
+            var (aiState, _) = states.Value;
 
-            // Check if AI has evolution points
-            // Check if AI has evolution points (Corrected property name)
-            if (aiState.CurrentEP <= 0)
+            // 1. Check if AI can evolve this turn
+            if (aiState.CurrentEP <= 0 || !aiState.CanEvolve)
             {
-                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no evolution points.", gameId, aiPlayerId);
                 return Task.FromResult<EvolveActionDto?>(null);
             }
 
-            // Find evolvable units on the field that haven't evolved yet
-            var evolvableUnits = aiState.Field
-                // Corrected Evolve Check: Player must be able to evolve this turn AND unit must not be evolved yet.
-                .Where(u => aiState.CanEvolve && !u.IsEvolved)
-                // Use Select projection to handle nullable before OrderByDescending
-                // Removed redundant null check on non-nullable int CurrentAttack
-                .Select(u => new { Unit = u, SortAttack = u.CurrentAttack })
-                .OrderByDescending(x => x.SortAttack)
-                .Select(x => x.Unit) // Prioritize highest attack
-                .ToList();
+            // 2. Find all followers on the field that can be evolved based on their definition
+            var evolvableUnits = new List<CardInstanceDto>();
+            foreach (var unit in aiState.Field)
+            {
+                if (unit != null && unit.Type == CardType.Follower && !unit.IsEvolved)
+                {
+                    // Correctly call the synchronous GetCardDefinition method with the correct property CardId
+                    var definition = _gameDataProvider.GetCardDefinition(unit.CardId);
+                    if (definition?.EvolveId != null)
+                    {
+                        evolvableUnits.Add(unit);
+                    }
+                }
+            }
 
             if (!evolvableUnits.Any())
             {
-                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no evolvable units on the field.", gameId, aiPlayerId);
+                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no units with a valid EvolveId on the field.", gameId, aiPlayerId);
                 return Task.FromResult<EvolveActionDto?>(null);
             }
 
-            // V1 Logic: Evolve the highest attack evolvable unit
-            var unitToEvolve = evolvableUnits.First();
-            _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to evolve Unit: {UnitName} ({UnitUid}), Attack: {Attack}.",
-                gameId, aiPlayerId, unitToEvolve.Name, unitToEvolve.InstanceId, unitToEvolve.CurrentAttack); // Fix: Use InstanceId
+            // 3. Simple V2 Logic: Evolve the highest attack evolvable unit
+            var unitToEvolve = evolvableUnits.OrderByDescending(u => u.CurrentAttack).First();
 
-            // Evolution typically doesn't require a target, but the action might allow one for specific effects.
-            // Simple V1 evolves without target.
-            return Task.FromResult<EvolveActionDto?>(new EvolveActionDto { UnitUid = unitToEvolve.InstanceId.ToString() }); // Fix: Use InstanceId // Convert Guid to string for DTO
+            _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to evolve Unit: {UnitName} ({UnitUid}), Attack: {Attack}.",
+                gameId, aiPlayerId, unitToEvolve.Name, unitToEvolve.InstanceId, unitToEvolve.CurrentAttack);
+
+            var action = new EvolveActionDto { UnitUid = unitToEvolve.InstanceId.ToString() };
+            return Task.FromResult<EvolveActionDto?>(action);
         }
 
         /// <inheritdoc />
@@ -211,15 +217,18 @@ namespace ShadowverseBeyond.Server.Services
             }
             var (aiState, opponentState) = states.Value;
 
-            // Find AI units that can attack and create deep copies for simulation
+            // 【BUG-017修复】使用完整的攻击前置条件检查，包括AttacksThisTurn计数
             var readyUnits = aiState.Field
-                .Where(u => u != null && u.CanAttack) // Ensure unit is not null and can attack
+                .Where(u => u != null && u.CanAttack && u.CanPerformAttackDto(aiState.PlayerId, gameState.CurrentPlayerId == aiState.PlayerId))
                 .Select(u => DeepCopy(u)) // Create deep copies to avoid modifying original state
                 .Where(u => u != null) // Filter out potential nulls from failed deep copy (defensive)
                 .Select(u => new { Unit = u, SortAttack = u!.CurrentAttack }) // Project for sorting - Added null-forgiving operator
                 .OrderByDescending(x => x.SortAttack) // Prioritize higher attack units
                 .Select(x => x.Unit) // Select the copied unit
                 .ToList();
+
+            _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} found {ReadyUnitsCount} units that can perform attacks after full precondition check.",
+                gameId, aiPlayerId, readyUnits.Count);
 
 
             if (!readyUnits.Any())
@@ -374,8 +383,15 @@ namespace ShadowverseBeyond.Server.Services
             // V1 assumes any unit can attack leader if field is empty.
             if (!opponentField.Any())
             {
-                _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} targeting opponent leader {TargetUid}", attacker?.InstanceId.ToString() ?? "Unknown", opponentState.PlayerId); // Fix: Use InstanceId
-                return opponentState.PlayerId; // Target opponent leader by PlayerId
+                if (opponentState.LeaderCard != null)
+                {
+                    _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} targeting opponent leader {TargetUid}", attacker?.InstanceId.ToString() ?? "Unknown", opponentState.LeaderCard.InstanceId);
+                    return opponentState.LeaderCard.InstanceId;
+                }
+
+                // Fallback with a warning if LeaderCard is null, to prevent crash and highlight the mapping issue.
+                _logger.LogWarning("[AiService:Helper] Opponent LeaderCard DTO is null. Falling back to PlayerId. This indicates a mapping issue. Attacker: {AttackerUid}", attacker?.InstanceId.ToString() ?? "Unknown");
+                return opponentState.PlayerId;
             }
 
             // Should not happen if opponent has a state, but defensively return null
@@ -388,15 +404,17 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public Task<bool> IsAiPlayer(Guid playerId)
         {
-            // Simple V1 implementation: Assumes the AI player always has the ID "player2".
-            // TODO: Implement a more robust mechanism if player IDs can change or be configured.
-            bool isAi = playerId.ToString() == "player2";
-            _logger.LogDebug("IsAiPlayer check for '{PlayerId}': Result={IsAi}", playerId, isAi);
+            // 简化的实现：在当前架构中，我们假设所有非空的GUID都可能是AI玩家
+            // 实际的AI检查将在GameService中通过PlayerState.IsAI属性进行
+            // 这里我们返回true让GameService进行进一步的验证
+            bool isAi = playerId != Guid.Empty;
+
+            _logger.LogDebug("IsAiPlayer check for '{PlayerId}': Result={IsAi} (simplified check)", playerId, isAi);
             return Task.FromResult(isAi);
         }
 
         /// <inheritdoc />
-        public async Task RequestAiActionAsync(string gameId, Guid aiPlayerId, GameActionContext context)
+        public async Task RequestAiActionAsync(string gameId, Guid aiPlayerId)
         {
             _logger.LogInformation("[AiService:{GameId}] Received request to execute AI action for player {PlayerId}.", gameId, aiPlayerId);
 
@@ -409,8 +427,7 @@ namespace ShadowverseBeyond.Server.Services
                     _logger.LogDebug("[AiService:{GameId}] Resolved AiTurnExecutor within scope for player {PlayerId}.", gameId, aiPlayerId);
 
                     // 异步执行 AI 的回合逻辑
-                    // Pass the context down
-                    await aiTurnExecutor.ExecuteTurnAsync(gameId, aiPlayerId, context);
+                    await aiTurnExecutor.ExecuteTurnAsync(gameId, aiPlayerId);
 
                     _logger.LogInformation("[AiService:{GameId}] AiTurnExecutor completed action for player {PlayerId}.", gameId, aiPlayerId);
                 }

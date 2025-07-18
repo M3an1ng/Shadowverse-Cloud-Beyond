@@ -9,11 +9,8 @@
 // 导入依赖
 import { createCardInstance, getCardDefinition } from './cardManager.js'; // Import getCardDefinition
 
-console.log("player.js loaded");
-
 // 使用工厂函数创建玩家对象，更灵活简单
 export function createPlayer(id, isAI = false) {
-    console.log(`Creating player object for ID: ${id}, isAI: ${isAI}`);
     // --- REMOVED: Leader instance creation is now handled by gameManager hydration ---
     // const leaderId = 0;
     // const leaderDefinition = getCardDefinition(leaderId);
@@ -62,28 +59,22 @@ export function createPlayer(id, isAI = false) {
         initializeDeck(deckList) {
             // deckList 是一个卡牌 ID 数组
             this.deck = [...deckList]; // 直接用 ID
-            console.log(`Player ${this.id}: Deck initialized with ${this.deck.length} card IDs.`);
             this.shuffleDeck(); // Initialize and immediately shuffle
         },
 
         // 洗牌
         shuffleDeck() {
-            console.log(`Player ${this.id} attempting to shuffle deck...`);
             // 标准 Fisher-Yates 洗牌算法
             for (let i = this.deck.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
             }
-            console.log(`Player ${this.id}: Deck shuffled.`);
         },
 
         // 抽牌
         drawCard(count = 1) {
-            console.log(`Player ${this.id} drawing ${count} card(s)...`);
             const drawnCards = [];
-            console.log(`PLAYER_DRAW_LOOP [${this.id}]: Starting draw loop. Count = ${count}`); // Log loop start
             for (let i = 0; i < count; i++) {
-                console.log(`PLAYER_DRAW_LOOP [${this.id}]: Iteration ${i+1}/${count}`); // Log each iteration
                 if (this.deck.length === 0) {
                     console.warn(`Player ${this.id}: Deck is empty! Cannot draw. Triggering game over.`);
                     // Trigger game over immediately with 'deck_out' reason
@@ -110,19 +101,16 @@ export function createPlayer(id, isAI = false) {
                 const cardInstance = createCardInstance(cardDefinition);
 
                 if (cardInstance) {
-                    cardInstance.location = 'hand'; // <-- Set location
+                    cardInstance.zone = 'hand'; // <-- Set zone
                     cardInstance.ownerId = this.id; // <-- Set owner ID
 
                     this.hand.push(cardInstance);
                     drawnCards.push(cardInstance);
-                    console.log(`PLAYER_DRAW_LOOP [${this.id}]: Successfully drew card ${cardInstance.name} (UID: ${cardInstance.uid}) in iteration ${i+1}.`); // Log success within loop
-                    // console.log(`Player ${this.id}: Drew card -> ${cardInstance.name} (ID: ${cardId}, UID: ${cardInstance.uid}, Loc: ${cardInstance.location}, Owner: ${cardInstance.ownerId})`); // Reduced log noise
                 } else {
                     console.error(`Player ${this.id}: Failed to create instance for card ID: ${cardId}. Card might be missing from database.`);
                     // Put the ID back? Or handle differently? For now, it's lost.
                 }
             }
-            console.log(`Player ${this.id}: Finished drawing. Hand size: ${this.hand.length}`);
             return drawnCards; // Return array of card instances drawn
         },
 
@@ -130,7 +118,6 @@ export function createPlayer(id, isAI = false) {
         spendEP(amount = 1) {
             if (this.ep >= amount) {
                 this.ep -= amount;
-                console.log(`PLAYER [${this.id}]: Spent ${amount} EP. Remaining: ${this.ep}`);
                 return true; // Success
             } else {
                 console.warn(`PLAYER [${this.id}]: Not enough EP to spend ${amount}. Have: ${this.ep}`);
@@ -139,24 +126,17 @@ export function createPlayer(id, isAI = false) {
         },
         // ADDED: Gain Evolution Points (up to max)
         gainEP(amount = 1) { // ADDED MORE LOGS
-            console.log(`PLAYER_DBG [${this.id}]: gainEP called. Amount: ${amount}, Current EP: ${this.ep}, Current maxEP: ${this.maxEP}`);
             const potentialEP = this.ep + amount;
             const newEP = Math.min(potentialEP, this.maxEP); // Use the current maxEP as the cap
-            console.log(`PLAYER_DBG [${this.id}]: Potential EP: ${potentialEP}, Capped New EP: ${newEP}`);
             // Only update if the value actually changes to avoid unnecessary updates
             if (newEP !== this.ep) {
                  this.ep = newEP;
-                 console.log(`PLAYER [${this.id}]: EP after gain: ${this.ep}/${this.maxEP}`);
-            } else {
-                 console.log(`PLAYER_DBG [${this.id}]: EP unchanged (${this.ep}/${this.maxEP}).`);
             }
             return this.ep; // Return the current EP after potential gain
         },
 
         // ADDED: Perform Mulligan
         performMulligan(cardUidsToReplace = []) {
-            console.log(`PLAYER [${this.id}]: Performing mulligan. Replacing UIDs:`, cardUidsToReplace);
-
             if (!Array.isArray(cardUidsToReplace)) {
                 console.error(`PLAYER [${this.id}]: performMulligan failed - cardUidsToReplace must be an array.`);
                 return; // Or throw error
@@ -168,7 +148,6 @@ export function createPlayer(id, isAI = false) {
                 return; // Or throw error
             }
              if (numToReplace === 0) {
-                console.log(`PLAYER [${this.id}]: No cards selected for mulligan. Hand remains unchanged.`);
                 return; // Nothing to do
             }
 
@@ -192,23 +171,19 @@ export function createPlayer(id, isAI = false) {
 
             // Update hand with cards kept
             this.hand = cardsToKeep;
-            console.log(`PLAYER [${this.id}]: Hand updated after keeping cards. Size: ${this.hand.length}`);
 
             // Return selected cards to deck
             cardsToReturn.forEach(card => {
-                card.location = 'deck'; // Update location before returning
+                card.zone = 'deck'; // Update zone before returning
                 this.deck.push(card.id); // Return card ID to deck
-                console.log(`PLAYER_DBG [${this.id}]: Returning ${card.name} (ID: ${card.id}) to deck.`);
             });
-            console.log(`PLAYER [${this.id}]: Returned ${cardsToReturn.length} card(s) to deck. Deck size: ${this.deck.length}`);
 
 
             // Shuffle the deck
             this.shuffleDeck();
 
             // Draw replacements
-            const drawnReplacements = this.drawCard(cardsToReturn.length); // Draw the same number we returned
-             console.log(`PLAYER [${this.id}]: Drew ${drawnReplacements.length} replacement card(s). Final hand size: ${this.hand.length}`);
+            this.drawCard(cardsToReturn.length); // Draw the same number we returned
 
         },
 

@@ -173,12 +173,15 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                             }
                         }
 
+                        // Parse card type from string to enum
+                        Enum.TryParse<Dtos.Enums.CardType>(dto.Type, true, out var cardType);
+
                         return new CardDefinition
                         {
                             Id = entityId, // Use directly parsed int ID
                             Name = dto.Name, // Safe because we filtered null/empty
                             Cost = dto.Cost,
-                            Type = dto.Type ?? string.Empty, // Provide default if Type is null in DTO
+                            Type = cardType, // Assign the parsed enum
                             Rarity = "Common", // Default value since CardDataDto doesn't have Rarity
                             CardSet = "Basic", // Default value since CardDataDto doesn't have CardSet
                             Attack = dto.Attack,

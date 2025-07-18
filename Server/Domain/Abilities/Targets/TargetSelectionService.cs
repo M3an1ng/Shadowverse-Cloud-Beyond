@@ -73,7 +73,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         // Updated signature to use GameContext
         public bool IsValidTarget(TargetId targetId, GameContext context)
         {
-            if (targetId.IsEmpty)
+            if (!targetId.IsSpecified)
                 return false;
 
             // 在游戏状态中查找目标实体 (Use AutoMapper)
@@ -100,17 +100,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         {
             // Check for null GameStateDto early
             // Check for null GameStateDto early
-            if (targetId.IsEmpty || gameStateDto?.Players == null)
+            if (!targetId.IsSpecified || gameStateDto?.Players == null)
             {
                 // Log if the targetId wasn't empty but gameStateDto or Players was null
-                if (!targetId.IsEmpty) _logger.LogTrace("FindTargetEntityById called with valid TargetId but null GameStateDto or Players list."); // Use _logger
+                if (targetId.IsSpecified) _logger.LogTrace("FindTargetEntityById called with valid TargetId but null GameStateDto or Players list."); // Use _logger
                 return null;
             }
 
             var targetGuid = targetId.Id;
 
             // 根据 TargetId.Type 决定查找逻辑
-            if (targetId.Type == TargetIdType.Player)
+            if (targetId.Type == Common.TargetType.Player)
             {
                 _logger.LogTrace("Attempting to find Player target with ID: {PlayerId}", targetGuid); // Use _logger
                 // 查找玩家状态 DTO
@@ -120,7 +120,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 else _logger.LogTrace("Player target with ID {PlayerId} not found.", targetGuid); // Use _logger
                 return player;
             }
-            else if (targetId.Type == TargetIdType.CardInstance)
+            else if (targetId.Type == Common.TargetType.Card)
             {
                 _logger.LogTrace("Attempting to find CardInstance target with ID: {InstanceId}", targetGuid); // Use _logger
                 // 查找卡牌实例 DTO (原有逻辑)

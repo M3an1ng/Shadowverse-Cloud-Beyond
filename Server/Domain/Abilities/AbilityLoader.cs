@@ -138,7 +138,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     // 从缓存中查找能力配置
                     var allConfigs = _gameDataProvider.GetAllAbilityConfigs();
                     var config = allConfigs.Values.SelectMany(configs => configs)
-                        .FirstOrDefault(c => c.Id == abilityId.ToString());
+                        .FirstOrDefault(c => c.Id == abilityId);
 
                     if (config == null)
                     {
@@ -286,8 +286,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 }
 
                 // 确保数据库中的基本信息优先
-                config.Id = cardAbility.Id.ToString();
-                config.CardId = cardAbility.CardId;
+                config.Id = cardAbility.Id;
+                config.CardId = cardAbility.CardId; // Populate CardId
                 config.Name = cardAbility.Name;
                 config.Description = cardAbility.Description;
                 config.AbilityTag = cardAbility.AbilityTag;

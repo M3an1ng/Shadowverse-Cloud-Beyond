@@ -35,13 +35,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="currentTurn">当前回合</param>
         /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
-        Buff CreateStatBuff(
+        BuffConfig CreateStatBuff(
             CardInstance target,
             CardInstance? sourceCard,
             Ability sourceAbility,
-            StatType statType,
-            int modificationValue,
-            ModifierLayer modifierLayer,
+            List<StatModification> statModifications,
             DurationType durationType,
             object? durationParameter,
             int currentTurn,
@@ -59,7 +57,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="currentTurn">当前回合</param>
         /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
-        Buff CreateKeywordBuff(
+        BuffConfig CreateKeywordBuff(
             CardInstance target,
             CardInstance? sourceCard,
             Ability sourceAbility,
@@ -81,7 +79,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="currentTurn">当前回合</param>
         /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
-        Buff CreateCompositeBuff(
+        BuffConfig CreateCompositeBuff(
             CardInstance target,
             CardInstance? sourceCard,
             Ability sourceAbility,
@@ -101,7 +99,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="currentTurn">当前回合</param>
         /// <param name="customParameters">自定义参数（可选）</param>
         /// <returns>创建的Buff实例，如果失败则返回null</returns>
-        Buff? CreateBuffFromDefinition(
+        BuffConfig? CreateBuffFromDefinition(
             string buffDefinitionId,
             CardInstance target,
             CardInstance? sourceCard,
@@ -131,13 +129,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         }
 
         /// <inheritdoc />
-        public Buff CreateStatBuff(
+        public BuffConfig CreateStatBuff(
             CardInstance target,
             CardInstance? sourceCard,
             Ability sourceAbility,
-            StatType statType,
-            int modificationValue,
-            ModifierLayer modifierLayer,
+            List<StatModification> statModifications,
             DurationType durationType,
             object? durationParameter,
             int currentTurn,
@@ -145,13 +141,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
+            if (statModifications == null || !statModifications.Any()) throw new ArgumentException("Stat modifications cannot be null or empty", nameof(statModifications));
 
-            var statModification = new StatModification(statType, modificationValue, modifierLayer);
-
-            var statEffect = new StatBuffEffect(new List<StatModification> { statModification });
+            var statEffect = new StatBuffEffect(statModifications);
             var effects = new List<IBuffEffect> { statEffect };
 
-            var buff = new Buff(
+            var buff = new BuffConfig(
                 sourceAbility: sourceAbility,
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
@@ -161,14 +156,14 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 isNonStackable: isNonStackable
             );
 
-            _logger.LogDebug("Created stat buff {BuffId} for {StatType} modification {Value} on target {TargetId}",
-                buff.Id, statType, modificationValue, target.InstanceId);
+            _logger.LogDebug("Created stat buff {BuffId} with {Count} modifications on target {TargetId}",
+                buff.Id, statModifications.Count, target.InstanceId);
 
             return buff;
         }
 
         /// <inheritdoc />
-        public Buff CreateKeywordBuff(
+        public BuffConfig CreateKeywordBuff(
             CardInstance target,
             CardInstance? sourceCard,
             Ability sourceAbility,
@@ -185,7 +180,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             var keywordEffect = new KeywordBuffEffect(keywords);
             var effects = new List<IBuffEffect> { keywordEffect };
 
-            var buff = new Buff(
+            var buff = new BuffConfig(
                 sourceAbility: sourceAbility,
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
@@ -202,7 +197,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         }
 
         /// <inheritdoc />
-        public Buff CreateCompositeBuff(
+        public BuffConfig CreateCompositeBuff(
             CardInstance target,
             CardInstance? sourceCard,
             Ability sourceAbility,
@@ -216,7 +211,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
             if (effects == null || !effects.Any()) throw new ArgumentException("Effects cannot be null or empty", nameof(effects));
 
-            var buff = new Buff(
+            var buff = new BuffConfig(
                 sourceAbility: sourceAbility,
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
@@ -233,7 +228,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         }
 
         /// <inheritdoc />
-        public Buff? CreateBuffFromDefinition(
+        public BuffConfig? CreateBuffFromDefinition(
             string buffDefinitionId,
             CardInstance target,
             CardInstance? sourceCard,
@@ -304,7 +299,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary>
         /// 根据配置创建Buff实例
         /// </summary>
-        private Buff? CreateBuffFromConfig(
+        private BuffConfig? CreateBuffFromConfig(
             BuffDefinition buffDefinition,
             BuffDefinitionConfig config,
             CardInstance target,
@@ -328,7 +323,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 }
 
                 // 创建Buff实例
-                var buff = new Buff(
+                var buff = new BuffConfig(
                     sourceAbility: sourceAbility,
                     targetCardInstanceId: target.InstanceId,
                     currentTurn: currentTurn,
@@ -511,6 +506,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 // 尝试转换类型
                 try
                 {
+                    if (customValue == null) return default;
                     return (T)Convert.ChangeType(customValue, typeof(T));
                 }
                 catch
@@ -530,6 +526,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 // 尝试转换类型
                 try
                 {
+                    if (configValue == null) return default;
                     return (T)Convert.ChangeType(configValue, typeof(T));
                 }
                 catch

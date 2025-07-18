@@ -1,5 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Entities;
-using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Domain.Events;
 using System.Collections.Generic;
 using System.Linq;
@@ -154,14 +154,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             {
                 switch (eventType)
                 {
-                    case GameEventType.CardSummoned:
-                    case GameEventType.AttackDeclared:
+                    case EventType.Summon:
+                    case EventType.Attack:
                         // 这些事件主要在场上发生
                         suggestedZones.Add(CardZone.Field);
                         break;
 
-                    case GameEventType.TurnStart:
-                    case GameEventType.TurnEnd:
+                    case EventType.TurnStart:
+                    case EventType.TurnEnd:
                         // 回合事件可能影响场上和手牌
                         suggestedZones.AddRange(new[] { CardZone.Field, CardZone.Hand });
                         break;

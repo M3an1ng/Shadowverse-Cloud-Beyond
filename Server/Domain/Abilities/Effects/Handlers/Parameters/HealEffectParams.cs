@@ -4,7 +4,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Parameters for the Heal effect.
     /// </summary>
-    public class HealEffectParams : BaseTargetEffectParams // Target can be CardInstance or PlayerState
+    public class HealEffectParams : BaseEffectParams // Target can be CardInstance or PlayerState
     {
         /// <summary>
         /// The amount of health to restore.

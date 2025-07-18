@@ -128,7 +128,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     Microsoft.Extensions.Logging.Abstractions.NullLogger<SelfTargetSelector>.Instance),
                 // Pass dependencies to FilteredTargetSelector constructor
                 Common.SelectorType.Filtered => new FilteredTargetSelector(queryExecutor, logger),
-                Common.SelectorType.FromVariable => new FromVariableTargetSelector(config), // Assuming these don't need dependencies yet
                 Common.SelectorType.TriggeringEventData => new TriggeringEventDataTargetSelector(config), // Assuming these don't need dependencies yet
                 // Pass dependencies to CompositeTargetSelector constructor
                 Common.SelectorType.Composite => new CompositeTargetSelector(config, queryExecutor, logger),
@@ -373,13 +372,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             // 验证特定选择器类型的配置
             switch (config.SelectorType)
             {
-                case Common.SelectorType.FromVariable:
-                    if (string.IsNullOrEmpty(config.VariableName))
-                    {
-                        throw new ArgumentException("VariableName is required for FromVariable selector type", nameof(config));
-                    }
-                    break;
-
                 case Common.SelectorType.PlayerChoice:
                     if (config.PlayerChoiceOptions == null)
                     {
@@ -496,7 +488,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             {
                 Common.SelectorType.Self => true,           // 无状态，可缓存
                 Common.SelectorType.Filtered => true,       // 查询逻辑无状态，可缓存
-                Common.SelectorType.FromVariable => false,  // 依赖变量状态，不可缓存
                 Common.SelectorType.TriggeringEventData => false, // 依赖事件数据，不可缓存
                 Common.SelectorType.Composite => false,     // 复合选择器可能有状态，不可缓存
                 Common.SelectorType.PlayerChoice => false,  // 涉及用户交互，不可缓存

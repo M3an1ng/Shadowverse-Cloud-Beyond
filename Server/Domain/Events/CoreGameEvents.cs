@@ -6,14 +6,22 @@ using AutoMapper; // Added for IMapper
 // - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
 //
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events.ActionRequests;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums; // Add using for GamePhase
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Added for action DTOs
+using ShadowverseBeyond.Server.Models; // Add using for GameActionContext
+using ShadowverseBeyond.Server.Services; // Add using for IAiService
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Linq; // Added for FirstOrDefault
 using ShadowverseBeyond.Server.Domain.Buffs; // Add using for Buff
 using ShadowverseBeyond.Server.Domain.Abilities; // Add using for Ability
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // Add using for AttackTargetType
 using System; // Add using for ArgumentNullException
+using Microsoft.Extensions.DependencyInjection;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets; // Add using for GetService
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -23,39 +31,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class PlayCardEvent : GameEventBase
     {
-        public PlayCardEvent(PlayerStateDto player, CardInstance card, CardInstance? target = null)
-            : base("play_card")
+        public CardInstance Card { get; }
+
+        public PlayCardEvent(PlayerState player, CardInstance card)
+            : base(EventType.PlayCard)
         {
-            SourcePlayer = player;
-            SourceCard = card;
-            if (target != null) Parameters["target"] = target; // Assign only if not null
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-
-            // Execute the card play logic based on card type
-            if (SourceCard != null)
-            {
-                switch (SourceCard.CardType.ToLowerInvariant())
-                {
-                    case "follower":
-                        // Follower cards: summon to battlefield
-                        events.Add(new SummonEvent(SourcePlayer!, SourceCard));
-                        break;
-                    case "spell":
-                        // Spell cards: execute effects then go to graveyard
-                        events.Add(new CardDestroyedEvent(SourcePlayer!, SourceCard));
-                        break;
-                    case "amulet":
-                        // Amulet cards: place on battlefield
-                        events.Add(new SummonEvent(SourcePlayer!, SourceCard));
-                        break;
-                }
-            }
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForPlayer(player);
+            Card = card;
         }
     }
 
@@ -65,23 +47,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class SummonEvent : GameEventBase
     {
-        public SummonEvent(PlayerStateDto player, CardInstance card, int? position = null)
-            : base("summon")
+        public CardInstance Card { get; }
+        public int? Position { get; }
+
+        public SummonEvent(PlayerState player, CardInstance card, int? position = null)
+            : base(EventType.Summon)
         {
-            SourcePlayer = player;
-            SourceCard = card;
-            if (position != null) Parameters["position"] = position; // Assign only if not null
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-
-            // The actual summoning logic would be handled by GameService
-            // This event just represents the fact that summoning occurred
-            // Fanfare abilities will naturally listen to this event
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForPlayer(player);
+            Card = card;
+            Position = position;
         }
     }
 
@@ -90,34 +64,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class DamageEvent : GameEventBase
     {
-        public DamageEvent(CardInstance target, int damage, CardInstance? source = null)
-            : base("damage")
+        public CardInstance Target { get; }
+        public int Damage { get; }
+
+        public DamageEvent(CardInstance target, int damage, CardInstance source)
+            : base(EventType.Damage)
         {
-            SourceCard = source;
-            Parameters["target"] = target;
-            Parameters["damage"] = damage;
-        }
+            Target = target;
+            Damage = damage;
+            Source = TargetInfo.ForCard(source);
 
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-            var target = (CardInstance)Parameters["target"];
-            var damage = (int)Parameters["damage"];
-
-            // Apply damage logic would be handled by GameService
-            // If target dies, generate death event
-            if (target.CurrentHealth - damage <= 0)
-            {
-                // 使用GameContext的CreateSnapshot获取玩家信息
-                var gameStateDto = context.CreateSnapshot();
-                var targetPlayer = gameStateDto.Players?.FirstOrDefault(p => p.PlayerId == target.OwnerPlayerId);
-                if (targetPlayer != null)
-                {
-                    events.Add(new CardDestroyedEvent(targetPlayer, target));
-                }
-            }
-
-            return await Task.FromResult(events);
         }
     }
 
@@ -127,79 +83,48 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class CardDestroyedEvent : GameEventBase
     {
-        public CardDestroyedEvent(PlayerStateDto player, CardInstance card)
-            : base("card_destroyed")
+
+        public CardInstance Target;
+
+        public string? Reason;
+
+        public CardDestroyedEvent(CardInstance source, CardInstance target, string reason = "Effect")
+            : base(EventType.Destroy)
         {
-            SourcePlayer = player;
-            SourceCard = card;
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-
-            // The actual destruction logic would be handled by GameService
-            // Last Words abilities will naturally listen to this event
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForCard(source);
+            Target = target;
+            Reason = reason;
         }
     }
 
+
     /// <summary>
+    /// 进化事件
     /// Event triggered when a card evolves.
     /// This is the natural trigger point for Evolve Effect abilities.
     /// </summary>
     public class EvolveEvent : GameEventBase
     {
-        public EvolveEvent(PlayerStateDto player, CardInstance card)
-            : base("evolve")
+        public EvolveEvent(CardInstance evolvedCard)
+            : base(EventType.Evolve)
         {
-            SourcePlayer = player;
-            SourceCard = card;
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-
-            // The actual evolution logic would be handled by GameService
-            // Evolve Effect abilities will naturally listen to this event
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForCard(evolvedCard);
         }
     }
 
     /// <summary>
+    /// 攻击事件
     /// Event triggered when an attack is declared.
     /// </summary>
     public class AttackEvent : GameEventBase
     {
-        public AttackEvent(CardInstance attacker, CardInstance target)
-            : base("attack")
+        public TargetInfo Target { get; }
+
+        public AttackEvent(CardInstance attacker, TargetInfo target)
+            : base(EventType.Attack)
         {
-            SourceCard = attacker;
-            Parameters["target"] = target;
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-            var target = (CardInstance)Parameters["target"];
-
-            // Calculate damage and generate damage events
-            if (SourceCard != null)
-            {
-                // Attacker deals damage to target
-                events.Add(new DamageEvent(target, SourceCard.CurrentAttack, SourceCard));
-
-                // If target can deal damage back (unit combat)
-                if (target.CurrentAttack > 0)
-                {
-                    events.Add(new DamageEvent(SourceCard, target.CurrentAttack, target));
-                }
-            }
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForCard(attacker);
+            Target = target;
         }
     }
 
@@ -209,24 +134,34 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class ClashEvent : GameEventBase
     {
+        public CardInstance Defender { get; }
+
         public ClashEvent(CardInstance attacker, CardInstance defender)
-            : base("clash")
+            : base(EventType.Clash)
         {
-            SourceCard = attacker;
-            Parameters["attacker"] = attacker;
-            Parameters["defender"] = defender;
-            Parameters["clash_type"] = "unit_combat";
+            Source = TargetInfo.ForCard(attacker);
+            Defender = defender;
         }
+    }
+    /// <summary>
+    /// Event triggered when a card instance's health changes.
+    /// </summary>
+    public class HealthChangedEvent : GameEventBase
+    {
+        public CardInstance Target { get; }
+        public int OldHealth { get; }
+        public int NewHealth { get; }
+        public int ChangeAmount { get; } // Positive for heal, negative for damage (absolute value of damage)
 
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+        public HealthChangedEvent(CardInstance target, int oldHealth, int newHealth, int maxHealth, int changeAmount, CardInstance sourceCard)
+            : base(EventType.HealthChanged)
         {
-            var events = new List<IGameEvent>();
+            Target = target;
+            OldHealth = oldHealth;
+            NewHealth = newHealth;
+            ChangeAmount = changeAmount;
 
-            // Clash event itself doesn't generate additional events
-            // It serves as a trigger point for abilities that respond to combat
-            // The actual damage will be handled by subsequent AttackEvent
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForCard(sourceCard);
         }
     }
 
@@ -235,24 +170,47 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class HealEvent : GameEventBase
     {
-        public HealEvent(CardInstance target, int healAmount, CardInstance? source = null)
-            : base("heal")
+        public CardInstance Target { get; }
+        public int HealAmount { get; }
+
+        public HealEvent(CardInstance target, int healAmount, CardInstance source)
+            : base(EventType.Heal)
         {
-            SourceCard = source;
-            Parameters["target"] = target;
-            Parameters["healAmount"] = healAmount;
+            Target = target;
+            HealAmount = healAmount;
+            Source = TargetInfo.ForCard(source);
         }
+    }
 
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+    /// <summary>
+    /// 换牌完成事件
+    /// Event triggered when a player completes the mulligan phase.
+    /// </summary>
+    public class MulliganCompletedEvent : GameEventBase
+    {
+        public List<Guid> ReplacedCardUids { get; }
+
+        public MulliganCompletedEvent(PlayerState player, List<Guid> replacedCardUids)
+            : base(EventType.MulliganCompleted)
         {
-            var events = new List<IGameEvent>();
-            var target = (CardInstance)Parameters["target"];
-            var healAmount = (int)Parameters["healAmount"];
+            Source = TargetInfo.ForPlayer(player);
+            ReplacedCardUids = replacedCardUids;
+        }
+    }
 
-            // Apply healing logic would be handled by GameService
-            // This event represents the fact that healing occurred
+    /// <summary>
+    /// Event triggered when a player's hand is updated (e.g., after mulligan, drawing cards, etc.).
+    /// This event notifies the frontend about changes to the hand state.
+    /// </summary>
+    public class HandUpdatedEvent : GameEventBase
+    {
+        public List<CardInstance> UpdatedHand { get; }
 
-            return await Task.FromResult(events);
+        public HandUpdatedEvent(PlayerState player, List<CardInstance> updatedHand)
+            : base(EventType.HandUpdated)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            UpdatedHand = updatedHand;
         }
     }
 
@@ -261,83 +219,93 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class CountdownFinishedEvent : GameEventBase
     {
-        public CountdownFinishedEvent(PlayerStateDto player, CardInstance amulet)
-            : base("countdown_finished")
+        public CardInstance Amulet { get; }
+
+        public CountdownFinishedEvent(PlayerState player, CardInstance amulet)
+            : base(EventType.CountdownFinished)
         {
-            SourcePlayer = player;
-            SourceCard = amulet;
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-
-            // The actual countdown finish logic would be handled by GameService
-            // This typically triggers the amulet's effect and then destroys it
-            if (SourceCard != null && SourcePlayer != null)
-            {
-                events.Add(new CardDestroyedEvent(SourcePlayer, SourceCard));
-            }
-
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForPlayer(player);
+            Amulet = amulet;
         }
     }
 
     /// <summary>
     /// Event triggered when a player draws a card.
     /// </summary>
+    /// <summary>
+    /// Event triggered when a player draws one or more cards.
+    /// This event contains the specific instances of the cards that were drawn.
+    /// </summary>
     public class DrawEvent : GameEventBase
     {
-        public DrawEvent(PlayerStateDto player, int count = 1)
-            : base("draw")
-        {
-            SourcePlayer = player;
-            Parameters["count"] = count;
-        }
+        public List<Guid> DrawnCardInstanceIds { get; }
 
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+        public DrawEvent(PlayerState player, List<Guid> drawnCardInstanceIds)
+            : base(EventType.Draw)
         {
-            var events = new List<IGameEvent>();
-            // The actual draw logic would be handled by GameService
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForPlayer(player);
+            DrawnCardInstanceIds = drawnCardInstanceIds ?? new List<Guid>();
         }
     }
 
     /// <summary>
-    /// Event triggered at the start of a player's turn.
+    /// 回合开始通知事件
+    /// 【架构修正】Events只做通知，不包含效果逻辑
+    /// Event triggered to notify that a player's turn has started.
     /// </summary>
     public class TurnStartEvent : GameEventBase
     {
-        public TurnStartEvent(PlayerStateDto player)
-            : base("turn_start")
+        public TurnStartEvent(PlayerState startingPlayer)
+            : base(EventType.TurnStart)
         {
-            SourcePlayer = player;
-        }
-
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            var events = new List<IGameEvent>();
-            // Turn start logic would be handled by GameService
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForPlayer(startingPlayer);
         }
     }
 
     /// <summary>
-    /// Event triggered at the end of a player's turn.
+    /// 阶段转换完成事件
+    /// 【架构修正】用于通知阶段转换完成，触发后续效果请求入队
+    /// Event triggered when a game phase transition is completed.
+    /// </summary>
+    public class PhaseTransitionCompletedEvent : GameEventBase
+    {
+        public GamePhase FromPhase { get; }
+        public GamePhase ToPhase { get; }
+
+        public PhaseTransitionCompletedEvent(PlayerState transitionPlayer, GamePhase fromPhase, GamePhase toPhase)
+            : base(EventType.PhaseTransition)
+        {
+            Source = TargetInfo.ForPlayer(transitionPlayer);
+            FromPhase = fromPhase;
+            ToPhase = toPhase;
+        }
+    }
+
+    /// <summary>
+    /// 回合结束通知事件
+    /// 【架构修正】Events只做通知，不包含效果逻辑
+    /// Event triggered to notify that a player's turn has ended.
     /// </summary>
     public class TurnEndEvent : GameEventBase
     {
-        public TurnEndEvent(PlayerStateDto player)
-            : base("turn_end")
+        public TurnEndEvent(PlayerState endingPlayer)
+            : base(EventType.TurnEnd)
         {
-            SourcePlayer = player;
+            Source = TargetInfo.ForPlayer(endingPlayer);
         }
+    }
 
-        public override async Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+    /// <summary>
+    /// 回合开始通知事件
+    /// Event triggered to notify that a player's turn has started.
+    /// 【架构修正】Events只做通知，不包含效果逻辑
+    /// </summary>
+    public class TurnStartedEvent : GameEventBase
+    {
+        public TurnStartedEvent(PlayerState startingPlayer)
+            : base(EventType.TurnStart)
         {
-            var events = new List<IGameEvent>();
-            // Turn end logic would be handled by GameService
-            return await Task.FromResult(events);
+            Source = TargetInfo.ForPlayer(startingPlayer);
         }
     }
 
@@ -350,26 +318,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// The Buff instance that was applied.
         /// Contains details about the source, target, duration, and effects.
         /// </summary>
-        public Buff AppliedBuff { get; }
+        public BuffConfig AppliedBuff { get; }
 
-        public BuffAppliedEvent(Buff appliedBuff)
-            : base("buff_applied") // Define a unique event type string
+        public BuffAppliedEvent(BuffConfig appliedBuff, CardInstance source)
+            : base(EventType.BuffApplied)
         {
             AppliedBuff = appliedBuff ?? throw new ArgumentNullException(nameof(appliedBuff));
-            // Populate base properties if needed (SourcePlayer, SourceCard might come from the buff's source ability)
-            SourceCard = appliedBuff.SourceAbility?.SourceCard;
-            // Finding the SourcePlayer might require looking up the SourceCard's controller in the GameState
-            // Parameters can hold the BuffId or other relevant info
-            Parameters["buffId"] = appliedBuff.Id;
-            Parameters["targetCardInstanceId"] = appliedBuff.TargetCardInstanceId;
+            Source = TargetInfo.ForCard(source);
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context) // Corrected angle brackets
-        {
-            // This event typically doesn't execute further logic itself,
-            // it serves as a notification for other systems (like UI or state calculators).
-            return Task.FromResult(new List<IGameEvent>()); // Corrected angle brackets
-        }
     }
 
     /// <summary>
@@ -380,32 +337,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <summary>
         /// The Buff instance that was removed.
         /// </summary>
-        public Buff RemovedBuff { get; }
+        public BuffConfig RemovedBuff { get; }
 
         /// <summary>
         /// The reason for buff removal (e.g., "expired", "silenced", "replaced", "manual").
         /// </summary>
         public string RemovalReason { get; }
 
-        public BuffRemovedEvent(Buff removedBuff, string removalReason = "manual")
-            : base("buff_removed")
+        public BuffRemovedEvent(BuffConfig removedBuff, CardInstance source, string removalReason = "manual")
+            : base(EventType.BuffRemoved)
         {
             RemovedBuff = removedBuff ?? throw new ArgumentNullException(nameof(removedBuff));
             RemovalReason = removalReason ?? "unknown";
-
-            // Populate base properties
-            SourceCard = removedBuff.SourceAbility?.SourceCard;
-            Parameters["buffId"] = removedBuff.Id;
-            Parameters["targetCardInstanceId"] = removedBuff.TargetCardInstanceId;
-            Parameters["removalReason"] = removalReason;
+            Source = TargetInfo.ForCard(source);
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself,
-            // it serves as a notification for other systems (like UI or state calculators).
-            return Task.FromResult(new List<IGameEvent>());
-        }
     }
 
     /// <summary>
@@ -424,24 +370,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public Ability? SourceAbility { get; }
 
         public SilenceAppliedEvent(CardInstance target, CardInstance? sourceCard = null, Ability? sourceAbility = null)
-            : base("silence_applied")
+            : base(EventType.SilenceApplied)
         {
             Target = target ?? throw new ArgumentNullException(nameof(target));
-            SourceCard = sourceCard; // Use inherited property
             SourceAbility = sourceAbility;
-
-            // Populate base properties
-            Parameters["targetCardInstanceId"] = target.InstanceId;
-            Parameters["sourceCardInstanceId"] = sourceCard?.InstanceId;
-            Parameters["sourceAbilityId"] = sourceAbility?.AbilityId;
+            if (sourceCard != null)
+            {
+                Source = TargetInfo.ForCard(sourceCard);
+            }
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself,
-            // it serves as a notification for other systems (like UI or state calculators).
-            return Task.FromResult(new List<IGameEvent>());
-        }
     }
 
     /// <summary>
@@ -455,21 +393,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         public CardInstance Target { get; }
 
-        public SilenceRemovedEvent(CardInstance target)
-            : base("silence_removed")
+        public SilenceRemovedEvent(CardInstance target, CardInstance source)
+            : base(EventType.SilenceRemoved)
         {
             Target = target ?? throw new ArgumentNullException(nameof(target));
-
-            // Populate base properties
-            Parameters["targetCardInstanceId"] = target.InstanceId;
+            Source = TargetInfo.ForCard(source);
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself,
-            // it serves as a notification for other systems (like UI or state calculators).
-            return Task.FromResult(new List<IGameEvent>());
-        }
     }
     /// <summary>
     /// Represents the reason why a card was discarded.
@@ -487,78 +417,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
     }
 
     /// <summary>
-    /// Event triggered when a single, specific card is drawn by a player.
-    /// Contrasts with DrawEvent which signifies the intent to draw N cards.
-    /// </summary>
-    public class SingleCardDrawnEvent : GameEventBase
-    {
-        /// <summary>
-        /// The specific card instance that was drawn.
-        /// </summary>
-        public CardInstance DrawnCard { get; }
-
-        // Constructor needs IMapper to convert PlayerState to PlayerStateDto for base class
-        // IMPORTANT: Ensure 'using AutoMapper;' exists at the top of CoreGameEvents.cs
-        public SingleCardDrawnEvent(PlayerState player, CardInstance drawnCard, IMapper mapper)
-            : base("single_card_drawn")
-        {
-            if (player == null) throw new ArgumentNullException(nameof(player));
-            if (mapper == null) throw new ArgumentNullException(nameof(mapper));
-
-            // Use base.SourcePlayer (PlayerStateDto)
-            SourcePlayer = mapper.Map<PlayerStateDto>(player);
-            DrawnCard = drawnCard ?? throw new ArgumentNullException(nameof(drawnCard));
-            SourceCard = drawnCard; // The drawn card is the "source" of this specific event context
-            Parameters["drawnCardInstanceId"] = drawnCard.InstanceId;
-            Parameters["drawnCardDefinitionId"] = drawnCard.DefinitionId;
-        }
-
-        // Corrected ExecuteAsync signature and implementation
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself.
-            return Task.FromResult(new List<IGameEvent>());
-        }
-    }
-
-    /// <summary>
     /// Event triggered when a specific card is discarded from a player's hand.
     /// </summary>
     public class CardDiscardedEvent : GameEventBase
     {
-        /// <summary>
-        /// The specific card instance that was discarded.
-        /// </summary>
-        public CardInstance DiscardedCard { get; }
+        public Guid CardInstanceId { get; }
+        public string Reason { get; }
 
-        /// <summary>
-        /// The reason the card was discarded.
-        /// </summary>
-        public DiscardReason Reason { get; }
-
-        // Constructor needs IMapper to convert PlayerState to PlayerStateDto for base class
-        // IMPORTANT: Ensure 'using AutoMapper;' exists at the top of CoreGameEvents.cs
-        public CardDiscardedEvent(PlayerState player, CardInstance discardedCard, DiscardReason reason, IMapper mapper)
-            : base("card_discarded")
+        public CardDiscardedEvent(PlayerState player, Guid cardInstanceId, string reason)
+            : base(EventType.Discard)
         {
-            if (player == null) throw new ArgumentNullException(nameof(player));
-            if (mapper == null) throw new ArgumentNullException(nameof(mapper));
-
-            // Use base.SourcePlayer (PlayerStateDto)
-            SourcePlayer = mapper.Map<PlayerStateDto>(player);
-            DiscardedCard = discardedCard ?? throw new ArgumentNullException(nameof(discardedCard));
+            Source = TargetInfo.ForPlayer(player);
+            CardInstanceId = cardInstanceId;
             Reason = reason;
-            SourceCard = discardedCard; // The discarded card is the "source" of this specific event context
-            Parameters["discardedCardInstanceId"] = discardedCard.InstanceId;
-            Parameters["discardedCardDefinitionId"] = discardedCard.DefinitionId;
-            Parameters["reason"] = reason.ToString();
-        }
-
-        // Corrected ExecuteAsync signature and implementation
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself.
-            return Task.FromResult(new List<IGameEvent>());
         }
     }
 
@@ -569,128 +440,282 @@ namespace ShadowverseBeyond.Server.Domain.Events
     {
         public Guid TargetCardInstanceId { get; }
         public int NewAttack { get; }
-        public int NewHealth { get; }
-        public int NewMaxHealth { get; }
+        public int NewMaxHealth { get; } // Changed from NewHealth, represents MaxHealth
+        public int NewCost { get; }
 
-        // Constructor needs IMapper if SourcePlayer is required by base or logic
-        // For now, let's assume the source is implicitly the ability/effect source
-        public StatChangedEvent(Guid sourcePlayerId, Guid targetCardInstanceId, int newAttack, int newHealth, int newMaxHealth)
-            : base("stat_changed") // EventType string
+        public StatChangedEvent(PlayerState sourcePlayer, Guid targetCardInstanceId, int newAttack, int newMaxHealth, int newCost)
+            : base(EventType.StatChanged)
         {
-            // If GameEventBase requires PlayerStateDto SourcePlayer:
-            // SourcePlayer = mapper.Map<PlayerStateDto>(sourcePlayerState); 
-            // Or maybe just store the ID if the full DTO isn't needed by subscribers?
-            // For simplicity now, let's assume base doesn't strictly require SourcePlayer DTO for this event type
-            // or it's handled differently. We might need to revisit GameEventBase.
-
-            // Store relevant IDs and values in Parameters for generic subscribers
-            Parameters["sourcePlayerId"] = sourcePlayerId; // ID of the player whose action caused the change
-            Parameters["targetCardInstanceId"] = targetCardInstanceId;
-            Parameters["newAttack"] = newAttack;
-            Parameters["newHealth"] = newHealth;
-            Parameters["newMaxHealth"] = newMaxHealth;
-
-            // Also store strongly-typed properties for specific subscribers
+            Source = TargetInfo.ForPlayer(sourcePlayer);
             TargetCardInstanceId = targetCardInstanceId;
             NewAttack = newAttack;
-            NewHealth = newHealth;
             NewMaxHealth = newMaxHealth;
-
-            // Set TargetCard if applicable (the card whose stats changed)
-            // This might require fetching the CardInstance from context if not readily available
-            // TargetCard = targetCardInstance; // Assuming targetCardInstance is available
-        }
-
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself.
-            return Task.FromResult(new List<IGameEvent>());
+            NewCost = newCost;
         }
     }
     /// <summary>
-    /// Event triggered when a specific card instance is summoned to a zone (typically the field).
-    /// </summary>
-    public class CardSummonedEvent : GameEventBase
-    {
-        /// <summary>
-        /// The specific card instance that was summoned.
-        /// </summary>
-        public CardInstance SummonedCard { get; }
-
-        /// <summary>
-        /// The zone the card was summoned to.
-        /// </summary>
-        public CardZone TargetZone { get; }
-
-        /// <summary>
-        /// The player who owns the summoned card.
-        /// </summary>
-        public Guid OwnerPlayerId { get; }
-
-        /// <summary>
-        /// The player whose action caused the summon (might be different from the owner).
-        /// </summary>
-        public Guid SourcePlayerId { get; }
-
-        // Constructor might need IMapper if base class requires PlayerStateDto
-        public CardSummonedEvent(Guid sourcePlayerId, CardInstance summonedCard, CardZone targetZone)
-            : base("card_summoned") // Define event type string
-        {
-            SummonedCard = summonedCard ?? throw new ArgumentNullException(nameof(summonedCard));
-            TargetZone = targetZone;
-            OwnerPlayerId = summonedCard.OwnerPlayerId;
-            SourcePlayerId = sourcePlayerId;
-
-            // Populate base properties if needed
-            SourceCard = summonedCard; // The summoned card is the context
-            // SourcePlayer might need mapping if base requires DTO
-
-            // Populate Parameters dictionary
-            Parameters["sourcePlayerId"] = sourcePlayerId;
-            Parameters["summonedCardInstanceId"] = summonedCard.InstanceId;
-            Parameters["summonedCardDefinitionId"] = summonedCard.DefinitionId;
-            Parameters["ownerPlayerId"] = summonedCard.OwnerPlayerId;
-            Parameters["targetZone"] = targetZone.ToString();
-        }
-
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // This event typically doesn't execute further logic itself.
-            return Task.FromResult(new List<IGameEvent>());
-        }
-    }
-    /// &lt;summary&gt;
     /// Event triggered when a player's Evolution Points (EP) change.
-    /// &lt;/summary&gt;
+    /// </summary>
     public class EpUpdateEvent : GameEventBase
     {
-        public Guid PlayerId { get; }
         public int CurrentEp { get; }
         public int MaxEp { get; }
 
-        // Constructor might need IMapper if base class requires PlayerStateDto
-        public EpUpdateEvent(Guid playerId, int currentEp, int maxEp)
-            : base("ep_update") // Define event type string
+        public EpUpdateEvent(PlayerState player, int currentEp, int maxEp)
+            : base(EventType.EpUpdated)
         {
-            PlayerId = playerId;
+            Source = TargetInfo.ForPlayer(player);
             CurrentEp = currentEp;
             MaxEp = maxEp;
+        }
+    }
+    /// <summary>
+    /// Represents an event where a keyword is added to a card instance.
+    /// </summary>
+    public class KeywordAddedEvent : GameEventBase // Inherit from GameEventBase
+    {
+        /// <summary>
+        /// The keyword that was added.
+        /// </summary>
+        public CardKeyword KeywordAdded { get; }
 
-            // Populate Parameters dictionary
-            Parameters["playerId"] = playerId;
-            Parameters["currentEp"] = currentEp;
-            Parameters["maxEp"] = maxEp;
-
-            // If GameEventBase requires SourcePlayer DTO, we might need to fetch and map it here
-            // For now, assume it's not strictly required or handled differently for this event type.
+        /// <summary>
+        /// Initializes a new instance of the <see cref="KeywordAddedEvent"/> class.
+        /// </summary>
+        /// <param name="keywordAdded">The keyword that was added.</param>
+        public KeywordAddedEvent(CardKeyword keywordAdded, CardInstance source)
+            : base(EventType.KeywordApplied)
+        {
+            KeywordAdded = keywordAdded;
+            Source = TargetInfo.ForCard(source);
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
+        /// <summary>
+        /// This event typically doesn't execute further logic itself.
+        /// </summary>
+
+        // Removed ToDto method, conversion should happen elsewhere or via AutoMapper profiles
+    }
+    /// <summary>
+    /// Event triggered when a player's Play Points (PP) change.
+    /// </summary>
+    public class PpUpdateEvent : GameEventBase
+    {
+        public int CurrentPp { get; }
+        public int MaxPp { get; }
+
+        public PpUpdateEvent(PlayerState player, int currentPp, int maxPp)
+            : base(EventType.PpUpdated)
         {
-            // This event typically doesn't execute further logic itself.
-            return Task.FromResult(new List<IGameEvent>());
+            Source = TargetInfo.ForPlayer(player);
+            CurrentPp = currentPp;
+            MaxPp = maxPp;
         }
     }
 
+    /// <summary>
+    /// Event triggered when a keyword is removed from a card.
+    /// </summary>
+    public class KeywordRemovedEvent : GameEventBase
+    {
+        public CardKeyword Keyword { get; }
 
-} // Move closing brace of namespace after the SilenceRemovedEvent class
+        public KeywordRemovedEvent(CardKeyword keyword, CardInstance source)
+            : base(EventType.KeywordRemoved)
+        {
+            Keyword = keyword;
+            Source = TargetInfo.ForCard(source);
+        }
+
+    }
+    /// <summary>
+    /// Event triggered when a card is transformed into another.
+    /// </summary>
+    public class TransformEvent : GameEventBase
+    {
+        public int NewCardDefinitionId { get; }
+
+        public TransformEvent(CardInstance transformedCard)
+            : base(EventType.Transform)
+        {
+            if (transformedCard == null) throw new ArgumentNullException(nameof(transformedCard));
+            Source = TargetInfo.ForCard(transformedCard);
+            NewCardDefinitionId = transformedCard.DefinitionId;
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when a card is vanished from the game.
+    /// </summary>
+    public class CardVanishedEvent : GameEventBase
+    {
+        public CardZone OriginalZone { get; }
+        public string VanishReason { get; }
+
+        public CardVanishedEvent(CardInstance card, CardZone originalZone, string vanishReason = "Effect")
+            : base(EventType.Vanish)
+        {
+            Source = TargetInfo.ForCard(card);
+            OriginalZone = originalZone;
+            VanishReason = vanishReason;
+        }
+    }
+    /// <summary>
+    /// Event triggered when a card is returned to a player's hand from the field.
+    /// </summary>
+    public class CardReturnedToHandEvent : GameEventBase
+    {
+        public CardReturnedToHandEvent(CardInstance returnedCard)
+            : base(EventType.Return)
+        {
+            if (returnedCard == null) throw new ArgumentNullException(nameof(returnedCard));
+            Source = TargetInfo.ForCard(returnedCard);
+        }
+    }
+    /// <summary>
+    /// 原子事实事件：当一张卡牌在不同区域之间移动时触发。
+    /// </summary>
+    public class CardMovedEvent : GameEventBase
+    {
+        public CardZone FromZone { get; }
+        public CardZone ToZone { get; }
+
+        public CardMovedEvent(CardInstance card, CardZone fromZone, CardZone toZone)
+            : base(EventType.CardMoved)
+        {
+            FromZone = fromZone;
+            ToZone = toZone;
+            Source = TargetInfo.ForCard(card);
+        }
+    }
+
+    /// <summary>
+    /// 原子事实事件：当玩家牌库数量发生变化时触发。
+    /// </summary>
+    public class DeckCountChangedEvent : GameEventBase
+    {
+        public int NewDeckCount { get; }
+
+        public DeckCountChangedEvent(PlayerState player, int newDeckCount)
+            : base(EventType.DeckUpdated)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            NewDeckCount = newDeckCount;
+        }
+    }
+
+    /// <summary>
+    /// 原子事实事件：当卡牌因手牌已满而被爆牌时触发。
+    /// </summary>
+    public class CardBurnedEvent : GameEventBase
+    {
+        public string Reason { get; } // e.g., "HandFull"
+
+        public CardBurnedEvent(CardInstance card, string reason = "HandFull")
+            : base(EventType.CardBurned)
+        {
+            Source = TargetInfo.ForCard(card);
+            Reason = reason;
+        }
+    }
+
+    /// <summary>
+    /// 原子事实事件：当玩家试图抽牌但牌库为空时触发。
+    /// </summary>
+    public class DeckEmptyOnDrawEvent : GameEventBase
+    {
+        public DeckEmptyOnDrawEvent(PlayerState player)
+            : base(EventType.DeckEmptyOnDraw)
+        {
+            Source = TargetInfo.ForPlayer(player);
+        }
+    }
+
+    /// <summary>
+    /// 效果处理器聚合事实事件：当任何效果处理器完成其主要操作后触发。
+    /// </summary>
+    public class EffectCompletedEvent : GameEventBase
+    {
+        /// <summary>
+        /// 原始效果的类型字符串 (来自 EffectConfig.Type)。
+        /// </summary>
+        public string OriginalEffectType { get; }
+
+        /// <summary>
+        /// 原始效果的输入参数 (经过DSL初步解析和类型转换后的值)。
+        /// </summary>
+        public IReadOnlyDictionary<string, object> OriginalEffectInputParams { get; }
+
+        /// <summary>
+        /// 效果执行前解析出的最终目标列表。
+        /// </summary>
+        public IReadOnlyList<TargetInfo> ResolvedTargets { get; }
+
+        /// <summary>
+        /// 根据 EffectConfig.Outputs 配置和DSL表达式计算得出的输出参数。
+        /// </summary>
+        public IReadOnlyDictionary<string, object?> Outputs { get; }
+
+        /// <summary>
+        /// 发起此效果的玩家ID。
+        /// </summary>
+        public Guid EffectSourcePlayerId { get; }
+
+        // SourceCard (来自 GameEventBase): 产生此效果的源卡牌实例。
+
+        /// <summary>
+        /// 可选：如果需要引用具体的 Ability 运行时实例ID。
+        /// </summary>
+        public Guid? SourceAbilityInstanceId { get; }
+
+
+        public EffectCompletedEvent(
+            string originalEffectType,
+            IReadOnlyDictionary<string, object> originalEffectInputParams,
+            IReadOnlyList<TargetInfo> resolvedTargets,
+            IReadOnlyDictionary<string, object?> outputs,
+                        Guid effectSourcePlayerId,
+            CardInstance? sourceCard,
+            Guid? sourceAbilityInstanceId = null
+        ) : base(EventType.EffectCompleted)
+        {
+            OriginalEffectType = originalEffectType ?? string.Empty;
+            OriginalEffectInputParams = originalEffectInputParams ?? new Dictionary<string, object>();
+            ResolvedTargets = resolvedTargets ?? new List<TargetInfo>();
+            Outputs = outputs ?? new Dictionary<string, object?>();
+            EffectSourcePlayerId = effectSourcePlayerId;
+            SourceAbilityInstanceId = sourceAbilityInstanceId;
+
+        }
+
+    }
+    /// <summary>
+    /// 原子事实事件：当玩家墓地数量发生变化时触发。
+    /// </summary>
+    public class GraveyardUpdatedEvent : GameEventBase
+    {
+        public int NewGraveyardCount { get; }
+
+        public GraveyardUpdatedEvent(PlayerState player, int newGraveyardCount)
+            : base(EventType.GraveyardUpdated)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            NewGraveyardCount = newGraveyardCount;
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when a unit's attack state (CanAttack) changes.
+    /// </summary>
+    public class AttackStateUpdatedEvent : GameEventBase
+    {
+        public bool CanAttack { get; }
+
+        public AttackStateUpdatedEvent(CardInstance sourceCard, bool canAttack)
+            : base(EventType.AttackStateUpdated)
+        {
+            Source = TargetInfo.ForCard(sourceCard);
+            CanAttack = canAttack;
+        }
+    }
+} // This closing brace should match the namespace ShadowverseBeyond.Server.Domain.Events

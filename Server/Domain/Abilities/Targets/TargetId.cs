@@ -1,16 +1,8 @@
 using System;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 {
-    // Add the TargetType enum (can be in this file or a separate one)
-    public enum TargetIdType
-    {
-        Undefined, // Default or error state
-        Player,
-        CardInstance, // Generic card instance
-        // Add other specific types if needed
-    }
-
     /// <summary>
     /// Represents a unique identifier for a target that an ability can select.
     /// Can represent a Player or a specific CardInstance.
@@ -20,7 +12,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// <summary>
         /// The type of the target (Player, CardInstance, etc.).
         /// </summary>
-        public TargetIdType Type { get; } // <<< ADDED
+        public TargetType Type { get; } // <<< ADDED
 
         /// <summary>
         /// The specific Guid ID of the target.
@@ -30,7 +22,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public Guid Id { get; }
 
         // Modified Constructor
-        public TargetId(TargetIdType type, Guid id)
+        public TargetId(TargetType type, Guid id)
         {
             Type = type;
             Id = id;
@@ -54,7 +46,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public static TargetId Card(Guid instanceId)
         {
             // Assuming default card target is generic CardInstance
-            return new TargetId(TargetIdType.CardInstance, instanceId);
+            return new TargetId(TargetType.Card, instanceId);
         }
 
         /// <summary>
@@ -63,17 +55,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// <param name="playerId">The player's Guid ID.</param>
         public static TargetId Player(Guid playerId) // Takes Guid now
         {
-            return new TargetId(TargetIdType.Player, playerId);
+            return new TargetId(TargetType.Player, playerId);
         }
 
         /// <summary>
         /// Represents an empty or undefined target.
         /// </summary>
-        public static TargetId Empty => new TargetId(TargetIdType.Undefined, Guid.Empty);
+        public static TargetId Undefined => new TargetId(TargetType.Undefined, Guid.Empty);
 
         /// <summary>
-        /// Checks if this represents an empty or undefined target.
+        /// Represents a system-level or non-specific source, distinct from an undefined/error state.
         /// </summary>
-        public bool IsEmpty => Type == TargetIdType.Undefined || Id == Guid.Empty; // Update IsEmpty check
+        public static TargetId None => new TargetId(TargetType.None, Guid.Empty);
+
+        /// <summary>
+        /// Checks if this represents a specifically defined target (neither Undefined nor None).
+        /// </summary>
+        public bool IsSpecified => Type != TargetType.Undefined && Type != TargetType.None;
     }
 }

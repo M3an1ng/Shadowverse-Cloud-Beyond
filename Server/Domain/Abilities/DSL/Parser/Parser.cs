@@ -18,7 +18,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         /// <summary>
         /// 当前词法单元
         /// </summary>
-        private Token CurrentToken => _current < _tokens.Count ? _tokens[_current] : _tokens.Last();
+        private Token? CurrentToken => _current < _tokens.Count ? _tokens[_current] : null;
 
         /// <summary>
         /// 下一个词法单元
@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         /// <summary>
         /// 是否到达末尾
         /// </summary>
-        private bool IsAtEnd => CurrentToken.Type == TokenType.EOF;
+        private bool IsAtEnd => CurrentToken == null || CurrentToken.Type == TokenType.EOF;
 
 
         public Parser(List<Token> tokens)
@@ -60,7 +60,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 // 检查解析后是否还有未处理的非EOF Token，这表示输入不仅仅是一个表达式
                 if (!IsAtEnd)
                 {
-                    AddError($"Unexpected token '{CurrentToken.Type}' after expression. Expected EOF.", CurrentToken.Position);
+                    AddError($"Unexpected token '{CurrentToken!.Type}' after expression. Expected EOF.", CurrentToken!.Position);
                 }
 
                 if (Errors.Any())
@@ -72,7 +72,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             }
             catch (ParseException ex)
             {
-                AddError(ex.Message, CurrentToken.Position);
+                AddError(ex.Message, CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
                 return null; // 返回 null 表示解析失败
             }
             catch (Exception ex) // Catch unexpected errors during parsing
@@ -135,9 +135,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 }
 
                 // Ensure the entire input was consumed
-                if (!IsAtEnd && CurrentToken.Type != TokenType.EOF)
+                if (!IsAtEnd && CurrentToken?.Type != TokenType.EOF)
                 {
-                    AddError($"Unexpected token '{CurrentToken.Type}' after target expression. Expected end of input.", CurrentToken.Position);
+                    AddError($"Unexpected token '{CurrentToken?.Type}' after target expression. Expected end of input.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
                 }
 
                 if (Errors.Any())
@@ -248,7 +248,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     }
                     else
                     {
-                        AddError($"Unexpected token '{CurrentToken.Type}' in ability definition. Expected TRIGGER, CONDITION, TARGET, EFFECT, PROPERTY, or END_ABILITY.", CurrentToken.Position);
+                        AddError($"Unexpected token '{CurrentToken!.Type}' in ability definition. Expected TRIGGER, CONDITION, TARGET, EFFECT, PROPERTY, or END_ABILITY.", CurrentToken!.Position);
                         Advance(); // Skip unexpected token to avoid infinite loop
                     }
                 }
@@ -258,7 +258,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
 
                 if (!IsAtEnd)
                 {
-                    AddError($"Unexpected token '{CurrentToken.Type}' after END_ABILITY.", CurrentToken.Position);
+                    AddError($"Unexpected token '{CurrentToken!.Type}' after END_ABILITY.", CurrentToken!.Position);
                 }
 
                 if (Errors.Any()) return null;
@@ -563,14 +563,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     {
                         // If parsing fails immediately, the token is likely unexpected anyway. Reset position.
                         _current = currentPosBeforeAttempt; // Backtrack
-                        AddError($"Unexpected token '{CurrentToken.Type}' after 'take all'. 'all' does not take a count.", CurrentToken?.Position ?? startPosition);
+                        AddError($"Unexpected token '{CurrentToken?.Type}' after 'take all'. 'all' does not take a count.", CurrentToken?.Position ?? startPosition);
                     }
                 }
             }
             else
             {
                 // If 'take' was matched but no valid strategy keyword follows
-                AddError($"Expected selection strategy (first, last, random, all) after 'take', but got '{CurrentToken.Type}'.", CurrentToken?.Position ?? startPosition);
+                AddError($"Expected selection strategy (first, last, random, all) after 'take', but got '{CurrentToken?.Type}'.", CurrentToken?.Position ?? startPosition);
                 // Create a default 'all' node to allow parsing to potentially continue, but with errors reported
                 strategy = SelectionStrategy.All;
                 // Use a default literal 1 for count in case of error, though it won't be used for 'all'
@@ -918,7 +918,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 return expr;
             }
 
-            throw new ParseException($"Unexpected token: {CurrentToken.Type}");
+            throw new ParseException($"Unexpected token: {CurrentToken?.Type.ToString() ?? "EOF"}");
         }
 
         // 辅助方法
@@ -938,7 +938,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         private bool Check(params TokenType[] types)
         {
             if (IsAtEnd) return false;
-            return types.Contains(CurrentToken.Type);
+            return types.Contains(CurrentToken!.Type);
         }
 
         private Token Advance()
@@ -959,7 +959,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 return Advance();
             }
 
-            throw new ParseException($"Expected {type}, but got {CurrentToken.Type}");
+            throw new ParseException($"Expected {type}, but got {CurrentToken?.Type.ToString() ?? "EOF"}");
         }
 
         private Token ExpectIdentifier(string message)

@@ -18,26 +18,13 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         public Guid PlayerId { get; }
         public EvolveActionDto ActionDto { get; }
 
-        // Properties required by IGameEvent
-        public new PlayerStateDto? SourcePlayer { get; init; } = null;
-        public new CardInstance? SourceCard { get; init; } = null; // Could be the unit being evolved
-        public new Dictionary<string, object> Parameters { get; init; } = new();
-
         public EvolveRequestedEvent(Guid playerId, EvolveActionDto actionDto)
-            : base(nameof(EvolveRequestedEvent))
+            : base(EventType.EvolveRequested)
         {
             PlayerId = playerId;
             ActionDto = actionDto;
-            // Potentially set SourceCard based on ActionDto.UnitUid if needed immediately
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // Placeholder: The actual logic is handled by the EventProcessor reacting to this event type.
-            _logger.LogDebug("Executing EvolveRequestedEvent for Player {PlayerId}, UnitUID {UnitUid}",
-                PlayerId, ActionDto.UnitUid);
-            return Task.FromResult(new List<IGameEvent>()); // Return empty list
-        }
 
         public GameEventDto? ToDto(IMapper mapper)
         {

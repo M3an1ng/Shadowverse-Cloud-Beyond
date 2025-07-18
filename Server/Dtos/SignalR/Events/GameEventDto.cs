@@ -32,4 +32,17 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events // Corrected namespace
             TimestampUtc = DateTime.UtcNow;
         }
     }
+
+    public class AttackStateUpdatedEventDto : GameEventDto
+    {
+        public Guid TargetCardInstanceId { get; set; }
+        public bool CanAttack { get; set; }
+
+        public AttackStateUpdatedEventDto(Guid sourcePlayerId, Guid targetCardInstanceId, bool canAttack)
+            : base(sourcePlayerId, "AttackStateUpdated")
+        {
+            TargetCardInstanceId = targetCardInstanceId;
+            CanAttack = canAttack;
+        }
+    }
 }

@@ -2,8 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Events;
-using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
-using ShadowverseBeyond.Server.Dtos; // <-- Added using
+using ShadowverseBeyond.Server.Dtos.Enums; // <-- Added using
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
 {
@@ -26,7 +25,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// <summary>
         /// 监听的游戏事件类型列表
         /// </summary>
-        public List<GameEventType> EventTypes { get; set; } = new();
+        public List<EventType> EventTypes { get; set; } = new();
 
         // Removed Scope property (Scope checks should be handled by ConditionConfig)
 
@@ -116,11 +115,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         /// <param name="eventType">游戏事件类型</param>
         /// <returns>触发器配置</returns>
-        public static TriggerConfig OnEvent(GameEventType eventType) // <-- Removed scope parameter
+        public static TriggerConfig OnEvent(EventType eventType) // <-- Removed scope parameter
         {
             return new TriggerConfig
             {
-                EventTypes = new List<GameEventType> { eventType },
+                EventTypes = new List<EventType> { eventType },
                 // Scope removed, handle via Conditions if needed
                 Timing = TriggerTiming.After,
                 ValidZones = new List<CardZone> { CardZone.Field } // Default to Field zone
@@ -132,7 +131,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         /// <param name="eventTypes">游戏事件类型列表</param>
         /// <returns>触发器配置</returns>
-        public static TriggerConfig OnEvents(List<GameEventType> eventTypes) // <-- Removed scope parameter
+        public static TriggerConfig OnEvents(List<EventType> eventTypes) // <-- Removed scope parameter
         {
             return new TriggerConfig
             {
@@ -149,11 +148,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// <param name="eventType">游戏事件类型</param>
         /// <param name="zone">有效区域</param>
         /// <returns>触发器配置</returns>
-        public static TriggerConfig OnEventInZone(GameEventType eventType, CardZone zone)
+        public static TriggerConfig OnEventInZone(EventType eventType, CardZone zone)
         {
             return new TriggerConfig
             {
-                EventTypes = new List<GameEventType> { eventType },
+                EventTypes = new List<EventType> { eventType },
                 Timing = TriggerTiming.After,
                 ValidZones = new List<CardZone> { zone }
             };
@@ -165,11 +164,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// <param name="eventType">游戏事件类型</param>
         /// <param name="zones">有效区域列表</param>
         /// <returns>触发器配置</returns>
-        public static TriggerConfig OnEventInZones(GameEventType eventType, params CardZone[] zones)
+        public static TriggerConfig OnEventInZones(EventType eventType, params CardZone[] zones)
         {
             return new TriggerConfig
             {
-                EventTypes = new List<GameEventType> { eventType },
+                EventTypes = new List<EventType> { eventType },
                 Timing = TriggerTiming.After,
                 ValidZones = zones?.ToList() ?? new List<CardZone>()
             };
@@ -180,11 +179,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// </summary>
         /// <param name="eventType">游戏事件类型</param>
         /// <returns>触发器配置</returns>
-        public static TriggerConfig OnEventInAllZones(GameEventType eventType)
+        public static TriggerConfig OnEventInAllZones(EventType eventType)
         {
             return new TriggerConfig
             {
-                EventTypes = new List<GameEventType> { eventType },
+                EventTypes = new List<EventType> { eventType },
                 Timing = TriggerTiming.After,
                 ValidZones = new List<CardZone>() // Empty list means all zones are valid
             };

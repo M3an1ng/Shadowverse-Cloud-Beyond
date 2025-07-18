@@ -4,10 +4,14 @@
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 //
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
+
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 {
@@ -34,7 +38,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// <param name="args">参数列表</param>
         /// <param name="context">评估上下文</param>
         /// <returns>函数执行结果</returns>
-        Task<object?> ExecuteAsync(List<object?> args, EvaluationContext context);
+        Task<object?> ExecuteAsync(List<object?> args, GameContext context);
     }
 
     /// <summary>
@@ -73,7 +77,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// <summary>
         /// 执行函数
         /// </summary>
-        public abstract Task<object?> ExecuteAsync(List<object?> args, EvaluationContext context);
+        public abstract Task<object?> ExecuteAsync(List<object?> args, GameContext context);
 
         /// <summary>
         /// 获取期望的参数数量（如果固定）
@@ -157,7 +161,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// </summary>
         protected static bool IsCollection(object? value)
         {
-            return value is System.Collections.IEnumerable && !(value is string);
+            return value is IEnumerable && !(value is string);
         }
 
         /// <summary>
@@ -167,7 +171,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         {
             return value switch
             {
-                System.Collections.IEnumerable enumerable when !(value is string) =>
+                IEnumerable enumerable when !(value is string) =>
                     enumerable.Cast<object?>(),
                 null => Enumerable.Empty<object?>(),
                 _ => new[] { value }
@@ -186,9 +190,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 
             var type = obj.GetType();
             var property = type.GetProperty(propertyName,
-                System.Reflection.BindingFlags.Public |
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.IgnoreCase);
+                BindingFlags.Public |
+                BindingFlags.Instance |
+                BindingFlags.IgnoreCase);
 
             return property?.GetValue(obj);
         }

@@ -5,13 +5,13 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     /// DTO for the event indicating a player has completed their mulligan.
     /// Inherits from GameEventDto.
     /// </summary>
-    public class PlayerMulliganCompletedEventDto : GameEventDto // Inherit from GameEventDto
+    public class MulliganCompletedEventDto : GameEventDto // Inherit from GameEventDto
     {
         /// <summary>
-        /// Initializes a new instance of the <see cref="PlayerMulliganCompletedEventDto"/> class.
+        /// Initializes a new instance of the <see cref="MulliganCompletedEventDto"/> class.
         /// </summary>
         /// <param name="playerId">The ID of the player who completed the mulligan.</param>
-        public PlayerMulliganCompletedEventDto(Guid playerId)
+        public MulliganCompletedEventDto(Guid playerId)
             : base(playerId, "PlayerMulliganCompleted")
         {
             // No specific properties to initialize for this event beyond the base class.

@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 {
@@ -43,8 +44,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             {
                 var firstArg = args[0];
                 var secondArg = args[1];
-                
-                return (firstArg == null || IsCollection(firstArg)) && 
+
+                return (firstArg == null || IsCollection(firstArg)) &&
                        (secondArg == null || secondArg is string);
             }
 
@@ -52,7 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return args.All(arg => arg == null || IsNumeric(arg));
         }
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, EvaluationContext context)
+        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
         {
             await Task.CompletedTask; // 标记为异步但实际上是同步操作
 

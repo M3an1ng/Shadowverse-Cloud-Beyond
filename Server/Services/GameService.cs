@@ -17,11 +17,10 @@ using ShadowverseBeyond.Server.Dtos.SignalR;        // DTOs (Restored for GameEv
 using ShadowverseBeyond.Server.Dtos.Enums; // Add using for CardType enum
 using ShadowverseBeyond.Server.Domain.Events.ActionRequests; // Added for request events
 using ShadowverseBeyond.Server.Models; // Added for PlayerActionWrapper, ActionType enum
-using System.Text.Json; // Added for JsonElement, JsonException
+using System.Text.Json;
 // Removed duplicate: using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Exceptions; // GameLogicException
 using Shadowverse.Domain.Interfaces; // Corrected namespace for ICard (and potentially others)
-using ShadowverseBeyond.Server.Domain.Interfaces; // Added back for ICardRepository
 using ShadowverseBeyond.Server.Dtos;             // Add for GameStateDto etc.
 using ShadowverseBeyond.Server.Domain.Entities; // Corrected namespace for CardDefinition etc.
 using System;
@@ -34,21 +33,16 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 // Updated Namespace
 // using ShadowverseBeyond.Server.Models; // Already included above
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
-using ShadowverseBeyond.Server.Domain.Abilities; // Added for ability system
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Added for IConditionFactory
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Added for IEffectExecutor
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // Added for effect parameters
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // Added for ValueConfig
 using ShadowverseBeyond.Server.Domain.Events; // Added for IEventProcessor and PlayCardEvent
+using ShadowverseBeyond.Server.Domain.Factories; // Added for ICardFactory
 
-using ShadowverseBeyond.Server.Domain.Extensions; // Added for keyword extensions
-using ShadowverseBeyond.Server.Domain.Constants; // Added for keyword constants
+using ShadowverseBeyond.Server.Domain.Abilities; // Added for AbilityManager
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Events.Services; // Added for keyword constants
 
-using ShadowverseBeyond.Server.Infrastructure.Data;         // For ApplicationDbContext
-using Microsoft.Extensions.DependencyInjection;             // For GetRequiredService
-
-using System.Threading;
-using Microsoft.EntityFrameworkCore.Storage; // Added for CancellationTokenSource
 namespace ShadowverseBeyond.Server.Services
 {
     public class GameService : IGameService
@@ -61,27 +55,24 @@ namespace ShadowverseBeyond.Server.Services
 
         // Removed EventBroadcastHandler delegate and _eventHandlers dictionary
 
-        // Remove Scoped ICardRepository injection from Singleton GameService constructor
-        // private readonly ICardRepository _cardRepository;
-        private readonly IServiceScopeFactory _serviceScopeFactory; // Inject IServiceScopeFactory instead
         private readonly IAiService _aiService; // Added for AI logic
-        private readonly IServiceProvider _serviceProvider; // Inject IServiceProvider to resolve Scoped dependencies
-        private readonly Domain.Buffs.IBuffManager _buffManager; // Inject BuffManager
-        // Removed _cardRepository field - use IServiceScopeFactory instead
-        private readonly Domain.Abilities.DSL.Functions.IFunctionRegistry _functionRegistry; // Inject Function Registry
-        private readonly IEventProcessor _eventProcessor; // Added for event processing
         private readonly Abstractions.IGameDataProvider _gameDataProvider; // Inject GameDataProvider for cached data access
+        private readonly Abstractions.IEffectQueueService _effectQueueService; // 【架构重构】注入效果队列服务
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
         // Lock objects per game to prevent concurrent modification of a single game's state
-        private readonly ConcurrentDictionary<string, object> _gameLocks = new();
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _gameCreationSemaphores = new();
         // --- Queue and Processing Loop Management ---
         private readonly ConcurrentDictionary<string, ConcurrentQueue<PlayerActionWrapper>> _playerActionQueues = new();
-        private readonly ConcurrentDictionary<string, ConcurrentQueue<IGameEvent>> _eventQueues = new();
+        // 【架构重构】移除传统事件队列，改为立即事件广播
+        // private readonly ConcurrentDictionary<string, ConcurrentQueue<IGameEvent>> _eventQueues = new();
         private readonly ConcurrentDictionary<string, string?> _currentlyProcessingPlayerActionId = new(); // Tracks the PlayerId whose action chain is being processed
         private readonly ConcurrentDictionary<string, Task> _gameProcessingLoops = new(); // Stores the running Task for each game's loop
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _gameLoopCancellationTokens = new(); // Stores cancellation tokens for each loop
+
+        // Dictionary to track pending AI requests to prevent flooding
+        private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, DateTime>> _pendingAiRequests = new();
         // Flag to prevent re-entrant EndTurn processing for the same game - REMOVED by Roo
         // private readonly ConcurrentDictionary<string, bool> _isProcessingEndTurn = new();
 
@@ -94,15 +85,46 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         /// <param name="gameId">The ID of the game.</param>
         /// <param name="actionWrapper">The player action to enqueue.</param>
-        public Task EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper actionWrapper)
+        public void EnqueuePlayerAction(string gameId, PlayerActionWrapper actionWrapper)
         {
             if (string.IsNullOrEmpty(gameId) || actionWrapper == null)
             {
                 _logger.LogWarning("[EnqueuePlayerActionAsync] Invalid arguments: gameId or actionWrapper is null/empty.");
-                return Task.CompletedTask; // Or throw ArgumentNullException
+                return; // Or throw ArgumentNullException
             }
 
             _logger.LogDebug("[EnqueuePlayerActionAsync:{GameId}] Received action {ActionType} from Player {PlayerId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
+
+            if (actionWrapper.ActionType == "PlayCard")
+            {
+                _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: Received PlayCard action for Player {PlayerId}", actionWrapper.PlayerId);
+
+                // Check if this is an AI player and if there are already pending requests
+                var gameState = GetGameState(gameId);
+                if (gameState != null && gameState.Player2.IsAI && actionWrapper.PlayerId == gameState.Player2.PlayerId)
+                {
+                    var pendingRequests = _pendingAiRequests.GetOrAdd(gameId, _ => new ConcurrentDictionary<Guid, DateTime>());
+                    var currentTime = DateTime.UtcNow;
+
+                    // Clean up old pending requests (older than 5 seconds)
+                    var expiredRequests = pendingRequests.Where(kvp => currentTime - kvp.Value > TimeSpan.FromSeconds(5)).ToList();
+                    foreach (var expired in expiredRequests)
+                    {
+                        pendingRequests.TryRemove(expired.Key, out _);
+                    }
+
+                    // Check if there's already a pending request for this AI player
+                    if (pendingRequests.ContainsKey(actionWrapper.PlayerId))
+                    {
+                        _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: AI Player {PlayerId} already has a pending PlayCard request. Rejecting duplicate.", actionWrapper.PlayerId);
+                        return; // Reject the duplicate request
+                    }
+
+                    // Add this request to pending
+                    pendingRequests.TryAdd(actionWrapper.PlayerId, currentTime);
+                    _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: Added AI Player {PlayerId} to pending requests", actionWrapper.PlayerId);
+                }
+            }
 
             // 1. Get or add the action queue for the game
             var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
@@ -111,11 +133,21 @@ namespace ShadowverseBeyond.Server.Services
             actionQueue.Enqueue(actionWrapper);
             _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Action {ActionType} enqueued. Queue size: {QueueSize}", gameId, actionWrapper.ActionType, actionQueue.Count);
 
+            if (actionWrapper.ActionType == "PlayCard")
+            {
+                _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: PlayCard action enqueued successfully for Player {PlayerId}, Queue size: {QueueSize}", actionWrapper.PlayerId, actionQueue.Count);
+            }
+
 
             // 3. Ensure the processing loop is running for this game
             // Check if a loop task exists and if it's still active
             if (!_gameProcessingLoops.TryGetValue(gameId, out var existingLoop) || existingLoop.IsCompleted || existingLoop.IsFaulted || existingLoop.IsCanceled)
             {
+                if (actionWrapper.ActionType == "PlayCard")
+                {
+                    _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: Starting/restarting processing loop for game {GameId}", gameId);
+                }
+
                 // Attempt to start a new loop if none is active
                 // Use a lock specific to loop creation to prevent race conditions starting multiple loops
                 object loopLock = _gameLoopCreationLocks.GetOrAdd(gameId, _ => new object());
@@ -149,11 +181,13 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Processing loop is already active.", gameId);
             }
 
-            return Task.CompletedTask; // Enqueuing itself is fast, loop runs in background
+            // Enqueuing itself is fast, loop runs in background
         }
 
         // Need a lock object dictionary for loop creation synchronization
         private readonly ConcurrentDictionary<string, object> _gameLoopCreationLocks = new();
+        // Lock objects per game for general game state operations
+        private readonly ConcurrentDictionary<string, object> _gameLocks = new();
         // Define the fixed 20-card test deck list
         // Updated to use integer IDs
         private static readonly List<int> _fixedTestDeckCardIds = new List<int>
@@ -175,133 +209,52 @@ namespace ShadowverseBeyond.Server.Services
         // Removed the duplicate field declaration added previously.
         // The original field declaration should exist elsewhere in the class.
 
+        private readonly IEventProcessor _eventProcessor;
+        private readonly IEffectExecutor _effectExecutor;
+        private readonly IAbilityTriggerService _abilityTriggerService;
+        private readonly ICardFactory _cardFactory;
+        private readonly AbilityManager _abilityManager;
+        private readonly IEventHistoryService _eventHistoryService;
+        private readonly IConditionEvaluator _conditionEvaluator;
+        private readonly TargetSelectionService _targetSelectionService;
+        private readonly IServiceProvider _serviceProvider;
+
         public GameService(
-            IHubContext<GameHub> hubContext, // Type already changed, ensuring consistency
+            IHubContext<GameHub> hubContext,
             ILogger<GameService> logger,
-            IMapper mapper, // Inject IMapper
-            IServiceScopeFactory serviceScopeFactory,
+            IMapper mapper,
             IAiService aiService,
-            IServiceProvider serviceProvider,
             IClientMethodMapper clientMethodMapper,
-            Domain.Buffs.IBuffManager buffManager, // Add IBuffManager
-                                                   // Removed ICardRepository - use IServiceScopeFactory instead
-            Domain.Abilities.DSL.Functions.IFunctionRegistry functionRegistry, // Add IFunctionRegistry
-            Abstractions.IGameDataProvider gameDataProvider, // Add IGameDataProvider
-            IEventProcessor eventProcessor) // Add IEventProcessor
+            Abstractions.IGameDataProvider gameDataProvider,
+            Abstractions.IEffectQueueService effectQueueService,
+            IEventProcessor eventProcessor,
+            IEffectExecutor effectExecutor,
+            IAbilityTriggerService abilityTriggerService,
+            ICardFactory cardFactory,
+            AbilityManager abilityManager,
+            Domain.Events.Services.IEventHistoryService eventHistoryService,
+            IConditionEvaluator conditionEvaluator,
+            TargetSelectionService targetSelectionService,
+            IServiceProvider serviceProvider)
         {
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
-            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
+            _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper));
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
+            _effectQueueService = effectQueueService ?? throw new ArgumentNullException(nameof(effectQueueService));
+            _eventProcessor = eventProcessor ?? throw new ArgumentNullException(nameof(eventProcessor));
+            _effectExecutor = effectExecutor ?? throw new ArgumentNullException(nameof(effectExecutor));
+            _abilityTriggerService = abilityTriggerService ?? throw new ArgumentNullException(nameof(abilityTriggerService));
+            _cardFactory = cardFactory ?? throw new ArgumentNullException(nameof(cardFactory));
+            _abilityManager = abilityManager ?? throw new ArgumentNullException(nameof(abilityManager));
+            _eventHistoryService = eventHistoryService ?? throw new ArgumentNullException(nameof(eventHistoryService));
+            _conditionEvaluator = conditionEvaluator ?? throw new ArgumentNullException(nameof(conditionEvaluator));
+            _targetSelectionService = targetSelectionService ?? throw new ArgumentNullException(nameof(targetSelectionService));
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-            _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // Assign clientMethodMapper
-            _buffManager = buffManager ?? throw new ArgumentNullException(nameof(buffManager)); // Store BuffManager
-            // Removed _cardRepository assignment - use IServiceScopeFactory instead
-            _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry)); // Store registry
-            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider)); // Store GameDataProvider
-            _eventProcessor = eventProcessor ?? throw new ArgumentNullException(nameof(eventProcessor)); // Store IEventProcessor
-
-            // Removed _eventHandlers dictionary initialization
         }
 
-        /// <summary>
-        /// 创建通用的EffectHandler执行辅助方法，减少重复代码
-        /// </summary>
-        private async Task<List<IGameEvent>> ExecuteEffectHandlerAsync(
-            string gameId,
-            Guid playerId,
-            string effectType,
-            Dictionary<string, ValueConfig> parameters,
-            GameActionContext context)
-        {
-            // 1. 基础验证和数据获取
-            if (!_gameStates.TryGetValue(gameId, out var gameState))
-            {
-                throw new GameLogicException($"Game not found: {gameId}");
-            }
-
-            var playerState = gameState.GetPlayerState(playerId);
-            if (playerState == null)
-            {
-                throw new GameLogicException($"Player state not found for {playerId} in game {gameId}");
-            }
-
-            // 2. 创建GameContext和EffectExecutor
-            using var scope = _serviceScopeFactory.CreateScope();
-            var cardRepository = scope.ServiceProvider.GetRequiredService<Domain.Interfaces.ICardRepository>();
-            var functionRegistry = scope.ServiceProvider.GetRequiredService<Domain.Abilities.DSL.Functions.IFunctionRegistry>();
-
-            var gameContext = new GameContext(
-                gameState,
-                playerId,
-                _mapper,
-                triggeringEvent: null,
-                sourceCard: null,
-                cardRepository: cardRepository,
-                functionRegistry: functionRegistry
-            );
-
-            var effectExecutor = scope.ServiceProvider.GetRequiredService<IEffectExecutor>();
-            var effectConfig = new EffectConfig
-            {
-                Type = effectType,
-                Parameters = parameters
-            };
-
-            var events = await effectExecutor.ExecuteEffectAsync(effectConfig, gameContext);
-
-            // 3. 将生成的事件添加到上下文
-            foreach (var gameEvent in events)
-            {
-                context.DomainEvents.Add(gameEvent);
-            }
-
-            return events;
-        }
-
-        /// <summary>
-        /// 重构后的出牌方法 - 使用PlayCardEffectHandler
-        /// 保持GameService只负责验证、调度和队列管理职责
-        /// </summary>
-        private async Task<bool> PlayCardAsync(string gameId, Guid playerId, PlayCardActionDto actionDto, GameActionContext context)
-        {
-            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting PlayCard: CardUID={CardUID}, TargetUID={TargetUID}.",
-                gameId, playerId, actionDto.CardUid, actionDto.TargetUid.ToString() ?? "None");
-
-            try
-            {
-                var parameters = new Dictionary<string, ValueConfig>
-                {
-                    { "cardInstanceId", ValueConfig.Static(actionDto.CardUid) },
-                    { "targetId", ValueConfig.Static(actionDto.TargetUid) },
-                    { "forcePlay", ValueConfig.Static(false) },
-                    { "playReason", ValueConfig.Static("PlayerAction") }
-                };
-
-                var events = await ExecuteEffectHandlerAsync(gameId, playerId, "playcard", parameters, context);
-
-                _logger.LogInformation("[GameService:{GameId}] PlayCard completed successfully for Player {PlayerId}. Generated {EventCount} events.",
-                    gameId, playerId, events.Count);
-
-                return true;
-            }
-            catch (GameLogicException ex)
-            {
-                _logger.LogWarning(ex, "[GameService:{GameId}] Game logic error during PlayCard for Player {PlayerId}, Card {CardUID}.",
-                    gameId, playerId, actionDto.CardUid);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during PlayCard for Player {PlayerId}, Card {CardUID}.",
-                    gameId, playerId, actionDto.CardUid);
-                throw new GameLogicException("An unexpected error occurred while playing the card.", ex);
-            }
-        }
-
-
-        // Removed duplicate EnqueuePlayerActionAsync method definition.
 
         /// <summary>
         /// Ensures that the processing loop for the specified game is running.
@@ -386,12 +339,13 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        // Placeholder for the actual loop implementation
+        // 【架构重构】游戏处理循环 - 使用效果队列架构
         private async Task GameProcessingLoopAsync(string gameId, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop started.", gameId);
+            _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop started with effect queue architecture.", gameId);
             var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
-            var eventQueue = _eventQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<IGameEvent>());
+            // 【架构重构】移除传统事件队列，改为立即事件处理
+            // var eventQueue = _eventQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<IGameEvent>());
 
             try
             {
@@ -399,160 +353,78 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     bool processedItem = false; // Flag to check if any work was done in this iteration
 
-                    // --- 1. Prioritize Event Queue ---
-                    while (eventQueue.TryDequeue(out var currentDomainEvent))
+                    // --- 0. 【架构重构】优先处理效果队列 ---
+                    if (_effectQueueService.HasPendingEffects(gameId))
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        _logger.LogDebug("[GameProcessingLoop:{GameId}] Dequeued Domain Event: {EventType}", gameId, currentDomainEvent.GetType().Name);
-
                         try
                         {
-                            // TODO: Replace placeholder with actual IEventProcessor call
-                            // The IEventProcessor needs access to GameState, AbilityManager, etc.
-                            // This might involve resolving it within the loop or passing a context.
-                            // ProcessEventAsync should return the DTO for broadcasting and any new domain events.
-                            // var (eventDto, newDomainEvents) = await _eventProcessor.ProcessEventAsync(currentDomainEvent, gameId /* or context */);
+                            _logger.LogDebug("[GameProcessingLoop:{GameId}] Processing effect queue with {EffectCount} pending effects",
+                                gameId, _effectQueueService.GetPendingEffectCount(gameId));
 
-                            GameState? gameState = null;
-                            object gameLock = _gameLocks.GetOrAdd(gameId, _ => new object());
-                            List<GameEventDto> resultingEventDtos = new List<GameEventDto>(); // Initialize outside lock
-                            List<IGameEvent> newDomainEvents = new List<IGameEvent>(); // Initialize outside lock (Placeholder for now)
-
-                            // Create a scope to resolve scoped services like IEventProcessor
-                            using (var scope = _serviceScopeFactory.CreateScope())
-                            {
-                                var eventProcessor = scope.ServiceProvider.GetRequiredService<IEventProcessor>();
-                                var cardRepository = scope.ServiceProvider.GetRequiredService<Domain.Interfaces.ICardRepository>(); // Needed for GameContext
-                                var functionRegistry = scope.ServiceProvider.GetRequiredService<Domain.Abilities.DSL.Functions.IFunctionRegistry>(); // Needed for GameContext
-
-                                GameContext? gameContext = null; // Declare context outside lock
-                                lock (gameLock) // Lock before accessing GameState
-                                {
-                                    if (!_gameStates.TryGetValue(gameId, out gameState) || gameState == null)
-                                    {
-                                        _logger.LogError("[GameProcessingLoop:{GameId}] GameState not found for event processing. Skipping event {EventType}.", gameId, currentDomainEvent.GetType().Name);
-                                        continue; // Skip this event if state is missing
-                                    }
-
-                                    // Determine requestingPlayerId (Needs refinement)
-                                    Guid? requestingPlayerId = currentDomainEvent.SourcePlayer?.PlayerId;
-                                    if (requestingPlayerId == null || requestingPlayerId == Guid.Empty)
-                                    {
-                                        requestingPlayerId = gameState.CurrentPlayerId;
-                                        _logger.LogTrace("[GameProcessingLoop:{GameId}] Could not determine RequestingPlayerId from event {EventType}. Using CurrentPlayerId ({PlayerId}) as fallback.",
-                                            gameId, currentDomainEvent.GetType().Name, requestingPlayerId);
-                                    }
-                                    if (requestingPlayerId == null || requestingPlayerId == Guid.Empty)
-                                    {
-                                        _logger.LogError("[GameProcessingLoop:{GameId}] Critical: Could not determine RequestingPlayerId for event {EventType} even after fallback. Skipping event.", gameId, currentDomainEvent.GetType().Name);
-                                        continue;
-                                    }
-
-                                    // Create GameContext
-                                    gameContext = new GameContext(
-                                        gameState,
-                                        requestingPlayerId ?? Guid.Empty,
-                                        _mapper,
-                                        triggeringEvent: currentDomainEvent,
-                                        sourceCard: (currentDomainEvent as dynamic)?.SourceCard,
-                                        cardRepository: cardRepository,
-                                        functionRegistry: functionRegistry
-                                    );
-
-                                    // GameContext is created inside the lock
-                                    _logger.LogDebug("[GameProcessingLoop:{GameId}] GameContext created for event {EventType}.", gameId, currentDomainEvent.GetType().Name);
-                                    // IMPORTANT: Assign context to a variable declared outside the lock scope
-                                    // so we can use it after releasing the lock.
-                                    // We'll rename the outer variable later if needed for clarity.
-
-                                } // Release game lock HERE before awaiting
-
-                                // Check if context was successfully created before proceeding outside the lock
-                                if (gameContext != null)
-                                {
-                                    // Call the processor OUTSIDE the lock
-                                    _logger.LogDebug("[GameProcessingLoop:{GameId}] Calling IEventProcessor.ProcessEventAsync for {EventType} (outside lock)...", gameId, currentDomainEvent.GetType().Name);
-                                    var processorResult = await eventProcessor.ProcessEventAsync(currentDomainEvent, gameContext);
-                                    newDomainEvents = processorResult.NewDomainEvents; // Assign to loop-scoped variable
-                                    resultingEventDtos = processorResult.ResultingDtos; // Assign to loop-scoped variable
-                                    _logger.LogDebug("[GameProcessingLoop:{GameId}] IEventProcessor.ProcessEventAsync completed for {EventType}. Returned {EventCount} new domain events and {DtoCount} DTOs.",
-                                        gameId, currentDomainEvent.GetType().Name, newDomainEvents?.Count ?? 0, resultingEventDtos?.Count ?? 0);
-                                }
-                                else
-                                {
-                                    // Log error if context couldn't be created (e.g., GameState missing inside lock)
-                                    _logger.LogError("[GameProcessingLoop:{GameId}] Failed to create GameContext for event {EventType}. Skipping processing.", gameId, currentDomainEvent.GetType().Name);
-                                    // Ensure lists are empty if processing is skipped
-                                    newDomainEvents = new List<IGameEvent>();
-                                    resultingEventDtos = new List<GameEventDto>();
-                                }
-                            } // Scope disposed here
-
-                            // --- Broadcast and Enqueue New Events (Outside Lock) ---
-
-                            // 1. Broadcast the resulting DTOs from the event processing
-                            if (resultingEventDtos != null && resultingEventDtos.Any())
-                            {
-                                _logger.LogDebug("[GameProcessingLoop:{GameId}] Broadcasting {DtoCount} DTOs resulting from event {EventType}.", gameId, resultingEventDtos.Count, currentDomainEvent.GetType().Name);
-                                await BroadcastEventsAsync(gameId, resultingEventDtos);
-                            }
-                            else
-                            {
-                                _logger.LogTrace("[GameProcessingLoop:{GameId}] No DTOs returned by processor for event {EventType}, skipping broadcast.", gameId, currentDomainEvent.GetType().Name);
-                            }
-
-                            // 2. Enqueue any NEW domain events returned by the processor
-                            if (newDomainEvents != null && newDomainEvents.Any())
-                            {
-                                _logger.LogDebug("[GameProcessingLoop:{GameId}] Enqueuing {EventCount} new domain events resulting from event {EventType}.", gameId, newDomainEvents.Count, currentDomainEvent.GetType().Name);
-                                foreach (var newEvent in newDomainEvents)
-                                {
-                                    eventQueue.Enqueue(newEvent);
-                                    _logger.LogTrace("[GameProcessingLoop:{GameId}] Enqueued new Domain Event: {NewEventType}", gameId, newEvent.GetType().Name);
-                                }
-                            }
-
-                            processedItem = true; // Mark item as processed successfully
-
+                            // 【架构重构】实际处理效果队列中的请求
+                            await ProcessEffectQueueForGameAsync(gameId);
+                            processedItem = true;
                         }
-                        catch (OperationCanceledException) { throw; } // Re-throw cancellation
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error processing domain event {EventType}.", gameId, currentDomainEvent?.GetType().Name ?? "Unknown");
-                            // Consider strategy for event processing errors (e.g., skip, retry, halt loop?)
+                            _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error processing effect queue", gameId);
                         }
-                    } // End of event queue processing loop
+                    }
 
-                    // --- 2. Process Action Queue if Event Queue is Empty ---
-                    if (eventQueue.IsEmpty && actionQueue.TryDequeue(out var actionWrapper))
+                    // 【架构重构】移除传统事件队列处理，改为立即事件处理
+                    // 事件现在在效果执行时立即处理，不再需要单独的事件队列循环
+
+                    // --- 2. Process Action Queue (简化处理) ---
+                    // 【架构重构】移除事件队列依赖，直接处理动作队列
+                    if (actionQueue.TryDequeue(out var actionWrapper))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         _logger.LogDebug("[GameProcessingLoop:{GameId}] Dequeued Player Action: {ActionType} for Player {PlayerId}", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
 
+                        if (actionWrapper.ActionType == "PlayCard")
+                        {
+                            _logger.LogWarning("🔥 [PLAYCARD_DEBUG] GameProcessingLoop: Dequeued PlayCard action for Player {PlayerId}", actionWrapper.PlayerId);
+                        }
+
                         try
                         {
-                            // Execute the initial step of the player action
-                            var actionContext = new GameActionContext(); // Create context for this action
-                            await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper, actionContext); // Call the implemented method
+                            // Execute the initial step of the player action and get the resulting event
+                            var initialEvent = await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper);
 
-                            // Enqueue the initial domain events generated by the action
-                            if (actionContext.DomainEvents.Any())
+                            // 【架构重构】立即处理生成的初始事件，而不是排队
+                            if (initialEvent != null)
                             {
-                                foreach (var initialEvent in actionContext.DomainEvents)
-                                {
-                                    eventQueue.Enqueue(initialEvent);
-                                    _logger.LogDebug("[GameProcessingLoop:{GameId}] Enqueued initial Domain Event: {EventType} from Action {ActionType}", gameId, initialEvent.GetType().Name, actionWrapper.ActionType);
-                                }
-                                // Set the currently processing player ID *after* successfully enqueuing initial events
-                                // Use AddOrUpdate for thread safety, ensuring we don't overwrite if already processing another action (shouldn't happen with this logic, but safer)
+                                _logger.LogDebug("[GameProcessingLoop:{GameId}] Processing initial event {EventType} from Action {ActionType} immediately",
+                                    gameId, initialEvent.GetType().Name, actionWrapper.ActionType);
+
+                                // 设置当前处理的玩家ID
                                 _currentlyProcessingPlayerActionId.AddOrUpdate(gameId, actionWrapper.PlayerId.ToString(), (_, existingPlayerId) => actionWrapper.PlayerId.ToString());
                                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Started processing action chain for Player {PlayerId}.", gameId, actionWrapper.PlayerId);
+
+                                // 创建GameContext用于事件处理
+                                GameState? gameState = null;
+                                // No lock needed here for read, ConcurrentDictionary is safe
+                                _gameStates.TryGetValue(gameId, out gameState);
+
+                                if (gameState != null)
+                                {
+                                    var gameContext = new GameContext(
+                                        gameState,
+                                        actionWrapper.PlayerId,
+                                        _mapper,
+                                        _serviceProvider, // IServiceProvider is now available in GameContext constructor
+                                        triggeringEvent: null,
+                                        sourceCard: null
+                                    );
+
+                                    // 立即处理所有初始事件
+                                    await ProcessGeneratedEventsImmediatelyAsync(gameId, new List<IGameEvent> { initialEvent }, gameContext);
+                                }
                             }
                             else
                             {
                                 _logger.LogWarning("[GameProcessingLoop:{GameId}] Action {ActionType} for Player {PlayerId} did not generate any initial domain events.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
-                                // If no events, the action effectively completes immediately. Clear the processing ID if it was somehow set.
-                                // Check if the value is the one we might have just set before removing.
+                                // 如果没有事件，动作立即完成
                                 _currentlyProcessingPlayerActionId.TryRemove(new KeyValuePair<string, string?>(gameId, actionWrapper.PlayerId.ToString()));
                             }
                             processedItem = true;
@@ -573,18 +445,44 @@ namespace ShadowverseBeyond.Server.Services
                     } // End of action queue processing
 
                     // --- 3. Handle Action Completion (Hand Playability Update) ---
-                    // Check if event queue is empty, action queue is empty, AND we were processing an action chain
-                    if (eventQueue.IsEmpty && actionQueue.IsEmpty && _currentlyProcessingPlayerActionId.TryGetValue(gameId, out var completedPlayerId) && completedPlayerId != null)
+                    // 【架构重构】简化动作完成检测：只检查动作队列是否为空
+                    if (actionQueue.IsEmpty && _currentlyProcessingPlayerActionId.TryGetValue(gameId, out var completedPlayerId) && completedPlayerId != null)
                     {
-                        _logger.LogInformation("[GameProcessingLoop:{GameId}] Action chain for Player {PlayerId} completed (Event & Action queues empty).", gameId, completedPlayerId);
+                        _logger.LogInformation("[GameProcessingLoop:{GameId}] Action chain for Player {PlayerId} completed (Action queue empty).", gameId, completedPlayerId);
                         // Clear the processing flag *before* starting the update
                         // Use TryUpdate with comparison for atomicity
                         if (_currentlyProcessingPlayerActionId.TryUpdate(gameId, null, completedPlayerId))
                         {
                             try
                             {
-                                // Call the actual method to update and broadcast hand playability
+                                // Clear pending AI request if this was an AI action
+                                if (_pendingAiRequests.TryGetValue(gameId, out var pendingRequests))
+                                {
+                                    if (Guid.TryParse(completedPlayerId, out var playerGuid))
+                                    {
+                                        if (pendingRequests.TryRemove(playerGuid, out _))
+                                        {
+                                            _logger.LogWarning("🔥 [PLAYCARD_DEBUG] Action completion: Cleared pending AI request for Player {PlayerId}", completedPlayerId);
+                                        }
+                                    }
+                                }
+
+                                // 【修复】直接调用可玩性更新，作为系统维护操作
+                                // 这是客户端同步操作，不是游戏逻辑效果，应该直接集成到处理流程中
                                 await UpdateAndBroadcastHandPlayabilityAsync(gameId, Guid.Parse(completedPlayerId));
+
+                                // 【新增】同时为当前回合玩家更新可玩性（如果不同的话）
+                                // 确保回合开始时玩家也有最新的可玩性信息
+                                if (_gameStates.TryGetValue(gameId, out var gameState) && gameState != null)
+                                {
+                                    var currentPlayerId = gameState.CurrentPlayerId;
+                                    if (currentPlayerId.HasValue && currentPlayerId.Value != Guid.Parse(completedPlayerId))
+                                    {
+                                        _logger.LogDebug("[GameProcessingLoop:{GameId}] Also updating hand playability for current turn player {CurrentPlayerId}.", gameId, currentPlayerId.Value);
+                                        await UpdateAndBroadcastHandPlayabilityAsync(gameId, currentPlayerId.Value);
+                                    }
+                                }
+
                                 processedItem = true;
                             }
                             catch (OperationCanceledException) { throw; } // Re-throw cancellation
@@ -642,18 +540,311 @@ namespace ShadowverseBeyond.Server.Services
                 }
                 // Clear the currently processing player ID on exit
                 _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);
-                // Consider cleanup for action/event queues if needed (e.g., log remaining items)
+                // 【架构重构】只检查动作队列的清理
                 if (actionQueue != null && !actionQueue.IsEmpty)
                 {
                     _logger.LogWarning("[GameProcessingLoop:{GameId}] Loop terminated with {Count} items remaining in action queue.", gameId, actionQueue.Count);
                 }
-                if (eventQueue != null && !eventQueue.IsEmpty)
+                // 事件队列已移除，不再需要检查
+
+                // Clear registered cards for the game state
+                if (_gameStates.TryGetValue(gameId, out var gameStateToClear) && gameStateToClear != null)
                 {
-                    _logger.LogWarning("[GameProcessingLoop:{GameId}] Loop terminated with {Count} items remaining in event queue.", gameId, eventQueue.Count);
+                    gameStateToClear.ClearAllRegisteredCards();
+                    _logger.LogInformation("[GameProcessingLoop:{GameId}] Cleared all registered card instances for game.", gameId);
                 }
             }
         } // End of GameProcessingLoopAsync
-          // Removed incorrectly inserted code block from previous apply_diff attempt.
+
+        /// <summary>
+        /// 【架构重构】处理指定游戏的效果队列
+        /// 从效果队列中取出请求并通过IEffectExecutor执行
+        /// </summary>
+        private async Task ProcessEffectQueueForGameAsync(string gameId)
+        {
+            _logger.LogDebug("🔧 [效果队列架构] Processing effect queue for game {GameId}", gameId);
+
+            // 获取游戏状态和锁
+            GameState? gameState = null;
+            if (!_gameStates.TryGetValue(gameId, out gameState) || gameState == null)
+            {
+                _logger.LogError("🔧 [效果队列架构] GameState not found for game {GameId}, cannot process effect queue", gameId);
+                return;
+            }
+
+            var eventHistoryService = _eventHistoryService;
+
+            // 处理效果队列中的所有待处理效果
+            while (_effectQueueService.HasPendingEffects(gameId))
+            {
+                try
+                {
+                    // 获取下一个效果请求
+                    var effectRequest = _effectQueueService.GetNextEffectRequest(gameId);
+                    if (effectRequest == null)
+                    {
+                        _logger.LogDebug("🔧 [效果队列架构] No more effect requests in queue for game {GameId}", gameId);
+                        break;
+                    }
+
+                    _logger.LogInformation("🔧 [效果队列架构] Processing effect request: {EffectType} for player {PlayerId} in game {GameId}",
+                        effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.RequestingPlayerId, gameId);
+
+                    // 【BUG-019调试】特别记录destroy类型的效果处理
+                    if (effectRequest.EffectConfig?.Type?.ToLower() == "destroy")
+                    {
+                        _logger.LogWarning("🔧 [BUG-019_DEBUG] Processing DESTROY effect request for player {PlayerId} with {TargetCount} targets",
+                            effectRequest.RequestingPlayerId, effectRequest.SelectedTargets?.Count ?? 0);
+                    }
+
+                    // 获取 TriggeringEvent
+                    IGameEvent? triggeringEvent = null;
+                    if (effectRequest.TriggeredEventId != Guid.Empty)
+                    {
+                        triggeringEvent = await _eventHistoryService.GetEventByIdAsync(gameId, effectRequest.TriggeredEventId);
+                        if (triggeringEvent == null)
+                        {
+                            _logger.LogWarning("🔧 [ProcessEffectQueue] TriggeringEvent with ID {TriggeredEventId} not found for game {GameId}.",
+                                effectRequest.TriggeredEventId, gameId);
+                        }
+                    }
+
+                    // 获取 CurrentAbility (父能力)
+                    IAbility? currentAbility = null;
+                    if (effectRequest.ParentAbilityId.HasValue && effectRequest.ParentAbilityId.Value != Guid.Empty)
+                    {
+                        currentAbility = _abilityManager.GetAbilityByRuntimeId(effectRequest.ParentAbilityId.Value);
+                        if (currentAbility == null)
+                        {
+                            _logger.LogWarning("🔧 [ProcessEffectQueue] CurrentAbility (ParentAbility) with ID {ParentAbilityId} not found.",
+                                effectRequest.ParentAbilityId.Value);
+                        }
+                    }
+
+                    // 获取 SourceCard (能力的源卡牌)
+                    CardInstance? sourceCardOfAbility = null;
+                    if (currentAbility?.SourceCard != null && currentAbility.SourceCard.InstanceId != Guid.Empty)
+                    {
+                        sourceCardOfAbility = gameState.FindCardInstanceById(currentAbility.SourceCard.InstanceId);
+                    }
+                    else if (effectRequest.SourceCardId.HasValue && effectRequest.SourceCardId.Value != Guid.Empty)
+                    {
+                        sourceCardOfAbility = gameState.FindCardInstanceById(effectRequest.SourceCardId.Value);
+                        if (sourceCardOfAbility == null) // Log if explicitly provided SourceCardId from effectRequest is not found
+                        {
+                            _logger.LogWarning("🔧 [ProcessEffectQueue] SourceCard with ID {SourceCardId} from effectRequest not found.", effectRequest.SourceCardId.Value);
+                        }
+                    }
+
+                    if (sourceCardOfAbility == null)
+                    {
+                        string debugMsg = "🔧 [ProcessEffectQueue] Could not determine SourceCard. ";
+                        if (currentAbility != null)
+                        {
+                            debugMsg += $"Ability: {currentAbility.AbilityTag} (RuntimeId: {currentAbility.RuntimeId}), AbilitySourceCardId: {currentAbility.SourceCard?.InstanceId}. ";
+                        }
+                        else
+                        {
+                            debugMsg += "No currentAbility. ";
+                        }
+                        if (effectRequest.SourceCardId.HasValue)
+                        {
+                            debugMsg += $"EffectRequestSourceCardId: {effectRequest.SourceCardId.Value}.";
+                        }
+                        else
+                        {
+                            debugMsg += "No SourceCardId in effectRequest.";
+                        }
+                        _logger.LogWarning(debugMsg);
+                    }
+                    // 【架构重构】直接使用EffectRequest中的EffectConfig
+                    // 这个EffectConfig已经配置为使用现有的EffectHandler（turnstart, turnend, mulligan等）
+                    var effectConfig = effectRequest.EffectConfig;
+
+                    // 创建GameContext
+
+                    var gameContext = new GameContext(
+                        gameState,
+                        effectRequest.RequestingPlayerId,
+                        _mapper,
+                        _serviceProvider, // IServiceProvider
+                        triggeringEvent,
+                        sourceCard: sourceCardOfAbility,
+                        currentAbility: currentAbility as Ability
+                    );
+
+                    // 【架构改进】将请求中携带的目标更新到GameContext
+                    if (effectRequest.SelectedTargets != null && effectRequest.SelectedTargets.Any())
+                    {
+                        gameContext.ClearTemporaryState();
+                        foreach (var target in effectRequest.SelectedTargets)
+                        {
+                            gameContext.AddSelectedTarget(target);
+                        }
+                        _logger.LogDebug("🔧 [效果队列架构] Updated GameContext with {TargetCount} targets from EffectRequest.", effectRequest.SelectedTargets.Count);
+                    }
+
+                    // 【架构重构】执行效果并获取完整结果，包括EffectRequests
+                    if (effectConfig == null)
+                    {
+                        _logger.LogWarning("EffectConfig is null, cannot execute effect.");
+                        continue;
+                    }
+                    var effectResult = await _effectExecutor.ExecuteEffectAsync(effectConfig, gameContext);
+
+                    _logger.LogInformation("🔧 [效果队列架构] Effect execution completed for {EffectType}, generated {EventCount} events.",
+                        effectRequest.EffectConfig?.Type ?? "unknown", effectResult.GeneratedEvents?.Count ?? 0);
+
+                    // --- 核心修改：处理 ChainedAbilities ---
+                    if (effectRequest.ChainedAbilities.Any())
+                    {
+                        _logger.LogInformation("🔧 [能力链] Effect {EffectType} completed and has {Count} chained abilities. Processing them...",
+                                               effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.ChainedAbilities.Count);
+
+                        foreach (var chainedAbility in effectRequest.ChainedAbilities)
+                        {
+                            // The context passed here is the one from *after* the parent effect has executed,
+                            // ensuring the chained ability operates on the most up-to-date game state.
+
+                            // Delegate the entire execution process to the centralized service
+                            var newEffects = await _abilityTriggerService.ProcessSingleAbilityAsync(chainedAbility, gameContext);
+
+                            if (newEffects.Any())
+                            {
+                                _logger.LogDebug("🔧 [能力链] Enqueuing {Count} effects from chained ability {AbilityName}", newEffects.Count, chainedAbility.Name);
+                                foreach (var newEffect in newEffects)
+                                {
+                                    await _effectQueueService.EnqueueEffectRequestAsync(gameId, newEffect);
+                                }
+                            }
+                        }
+                    }
+                    // --- 修改结束 ---
+
+                    // 【架构重构】立即处理生成的事件，而不是排队
+                    if (effectResult.GeneratedEvents != null && effectResult.GeneratedEvents.Any())
+                    {
+                        await ProcessGeneratedEventsImmediatelyAsync(gameId, effectResult.GeneratedEvents, gameContext);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "🔧 [效果队列架构] Error processing effect from queue for game {GameId}", gameId);
+                    break; // 避免无限循环
+                }
+            }
+        }
+
+
+
+        /// <summary>
+        /// 【架构重构】立即处理生成的事件，支持事件驱动的效果链
+        /// 替代传统的事件队列，实现立即事件广播和能力触发
+        /// </summary>
+        private async Task ProcessGeneratedEventsImmediatelyAsync(string gameId, List<IGameEvent> generatedEvents, GameContext gameContext)
+        {
+            _logger.LogDebug("🔧 [立即事件处理] Processing {EventCount} generated events immediately for game {GameId}",
+                generatedEvents.Count, gameId);
+
+            var eventProcessor = _eventProcessor;
+
+            foreach (var gameEvent in generatedEvents)
+            {
+                try
+                {
+                    _logger.LogWarning("🔧 [攻击调试] Processing event: {EventType} (ID: {EventId})",
+                        gameEvent.GetType().Name, gameEvent.EventId);
+
+                    // 立即处理事件，包括能力触发和DTO转换
+                    var processorResult = await eventProcessor.ProcessEventAsync(gameEvent, gameContext);
+
+                    _logger.LogWarning("🔧 [攻击调试] EventProcessor result: ResultingDtos={DtoCount}, NewDomainEvents={NewEventCount}",
+                        processorResult.ResultingDtos?.Count ?? 0, processorResult.NewDomainEvents?.Count ?? 0);
+
+                    // 立即广播生成的DTO
+                    if (processorResult.ResultingDtos != null && processorResult.ResultingDtos.Any())
+                    {
+                        _logger.LogWarning("🔧 [攻击调试] Broadcasting {DtoCount} DTOs for event {EventType}: {DtoTypes}",
+                            processorResult.ResultingDtos.Count, gameEvent.GetType().Name,
+                            string.Join(", ", processorResult.ResultingDtos.Select(d => d.Type)));
+
+                        // 【伤害事件调试】特别记录DamageDealt事件的广播
+                        var damageEvents = processorResult.ResultingDtos.Where(dto => dto.Type == "DamageDealt").ToList();
+                        if (damageEvents.Any())
+                        {
+                            _logger.LogWarning("🔧 [伤害事件调试] Found {DamageEventCount} DamageDealt events to broadcast for {EventType}",
+                                damageEvents.Count, gameEvent.GetType().Name);
+                        }
+
+                        await BroadcastEventsAsync(gameId, processorResult.ResultingDtos);
+
+                        // 【修复】在TurnStartEvent广播后立即推送手牌可玩性信息
+                        if (gameEvent.EventType == EventType.TurnStart)
+                        {
+                            var startingPlayerId = (gameEvent.Source?.Type == TargetType.Player) ? gameEvent.Source?.Id : null;
+                            if (startingPlayerId.HasValue)
+                            {
+                                _logger.LogInformation("🎯 [TURN_START_PLAYABILITY] Pushing hand playability for Player {PlayerId} after turn start", startingPlayerId.Value);
+                                try
+                                {
+                                    await UpdateAndBroadcastHandPlayabilityAsync(gameId, startingPlayerId.Value);
+
+                                    // 【AI TURN TRIGGER】 Check if the player whose turn is starting is an AI
+                                    var playerState = gameContext.CurrentGameState.GetPlayerState(startingPlayerId.Value);
+                                    if (playerState != null && playerState.IsAI)
+                                    {
+                                        _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", startingPlayerId.Value);
+                                        // Do not await this. The AI will enqueue its own actions in the background.
+                                        _ = _aiService.RequestAiActionAsync(gameId, startingPlayerId.Value);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "🎯 [TURN_START_PLAYABILITY] Error updating hand playability or triggering AI for Player {PlayerId} after turn start", startingPlayerId.Value);
+                                }
+                            }
+                        }
+                    }
+
+                    // 【架构重构】处理生成的EffectRequests - 将它们入队到效果队列
+                    if (processorResult.EffectRequests != null && processorResult.EffectRequests.Any())
+                    {
+                        _logger.LogInformation("🔧 [立即事件处理] Event {EventType} generated {EffectRequestCount} effect requests, enqueuing them",
+                            gameEvent.GetType().Name, processorResult.EffectRequests.Count);
+
+                        foreach (var effectRequest in processorResult.EffectRequests)
+                        {
+                            await _effectQueueService.EnqueueEffectRequestAsync(gameId, effectRequest);
+                            _logger.LogDebug("🔧 [立即事件处理] Enqueued EffectRequest: {EffectType} for player {PlayerId}",
+                                effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.RequestingPlayerId);
+                        }
+
+                        // 【BUG-019修复】移除立即处理调用，避免重复事件处理和广播
+                        // 效果请求将在主游戏循环中被正常处理，确保正确的事件流
+                        _logger.LogInformation("🔧 [BUG-019修复] Enqueued {EffectRequestCount} effect requests for processing in main game loop",
+                            processorResult.EffectRequests.Count);
+                        // await ProcessEffectQueueForGameAsync(gameId); // 移除此调用以避免重复处理
+                    }
+
+                    // 递归处理新生成的事件（支持事件驱动的效果链）
+                    if (processorResult.NewDomainEvents != null && processorResult.NewDomainEvents.Any())
+                    {
+                        _logger.LogDebug("🔧 [立即事件处理] Event {EventType} generated {NewEventCount} additional events, processing recursively",
+                            gameEvent.GetType().Name, processorResult.NewDomainEvents.Count);
+
+                        // 递归处理新事件，支持事件链
+                        await ProcessGeneratedEventsImmediatelyAsync(gameId, processorResult.NewDomainEvents, gameContext);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "🔧 [立即事件处理] Error processing event {EventType} for game {GameId}",
+                        gameEvent.GetType().Name, gameId);
+                }
+            }
+
+            _logger.LogDebug("🔧 [立即事件处理] Completed immediate processing of all events for game {GameId}", gameId);
+        }
 
         /// <summary>
         /// Executes the initial validation and event generation step for a player action dequeued from the action queue.
@@ -664,50 +855,47 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="actionWrapper">The player action wrapper.</param>
         /// <param name="context">The game action context to add generated domain events to.</param>
         /// <exception cref="GameLogicException">Thrown if the action is invalid based on initial checks.</exception>
-        private async Task ExecutePlayerActionInitialStepAsync(string gameId, PlayerActionWrapper actionWrapper, GameActionContext context)
+        private async Task<IGameEvent?> ExecutePlayerActionInitialStepAsync(string gameId, PlayerActionWrapper actionWrapper)
         {
             // --- 1. Basic Validation (Requires reading GameState) ---
             GameState? gameState = null;
             PlayerState? playerState = null;
-            bool isValid = false;
 
-            object gameLock = _gameLocks.GetOrAdd(gameId, _ => new object());
-            lock (gameLock) // Lock needed to safely read current player and phase
+            if (!_gameStates.TryGetValue(gameId, out gameState))
             {
-                if (!_gameStates.TryGetValue(gameId, out gameState))
-                {
-                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game not found: {gameId}");
-                }
-                playerState = gameState.GetPlayerState(actionWrapper.PlayerId);
-                if (playerState == null)
-                {
-                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Player state not found for {actionWrapper.PlayerId} in game {gameId}.");
-                }
+                throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game not found: {gameId}");
+            }
+            playerState = gameState.GetPlayerState(actionWrapper.PlayerId);
+            if (playerState == null)
+            {
+                throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Player state not found for {actionWrapper.PlayerId} in game {gameId}.");
+            }
 
-                // Common validations: Is it the player's turn? Is the game in the right phase?
+            // Phase-specific validations
+            if (actionWrapper.ActionType == "SubmitMulligan")
+            {
+                // Mulligan validation: Only check phase, not turn (mulligan is simultaneous for both players)
+                if (gameState.Phase != GamePhase.Mulligan)
+                {
+                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Mulligan only allowed during Mulligan phase (Current: {gameState.Phase}).");
+                }
+                // No turn validation for mulligan - both players can submit simultaneously
+                _logger.LogDebug("[InitialStep:{ActionType}] Mulligan validation passed for Player {PlayerId} during Mulligan phase.",
+                    actionWrapper.ActionType, actionWrapper.PlayerId);
+            }
+            else
+            {
+                // Non-mulligan actions: Check both turn and phase
                 if (gameState.CurrentPlayerId != actionWrapper.PlayerId)
                 {
                     throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] It's not player {actionWrapper.PlayerId}'s turn (Current: {gameState.CurrentPlayerId}).");
                 }
-                // Allow Mulligan submission only during Mulligan phase
-                // Corrected: Compare ActionType string with string literal
-                if (actionWrapper.ActionType == "SubmitMulligan" && gameState.Phase != GamePhase.Mulligan)
-                {
-                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during Mulligan phase (Current: {gameState.Phase}).");
-                }
                 // Allow other actions only during Main phase
-                // Corrected: Compare ActionType string with string literal
-                if (actionWrapper.ActionType != "SubmitMulligan" && gameState.Phase != GamePhase.Main)
+                if (gameState.Phase != GamePhase.Main)
                 {
                     throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during Main phase (Current: {gameState.Phase}).");
                 }
-
-                // TODO: Add more specific initial validations if needed (e.g., basic PP check for PlayCard?)
-
-                isValid = true; // If no exception thrown
-            } // Release lock
-
-            if (!isValid) return; // Should have thrown if invalid
+            }
 
             // --- 2. Create Initial Domain Event ---
             IGameEvent initialEvent;
@@ -715,11 +903,19 @@ namespace ShadowverseBeyond.Server.Services
             {
                 // Corrected: Use string literals for case comparison
                 case "PlayCard":
+                    _logger.LogWarning("🔥 [PLAYCARD_DEBUG] ExecutePlayerActionInitialStepAsync: Processing PlayCard action for Player {PlayerId}", actionWrapper.PlayerId);
                     if (actionWrapper.ActionData is PlayCardActionDto playDto)
                     {
+                        _logger.LogWarning("🔥 [PLAYCARD_DEBUG] ExecutePlayerActionInitialStepAsync: Creating PlayCardRequestedEvent - Card: {CardUid}, Target: {TargetUid}",
+                            playDto.CardUid, playDto.TargetUid);
                         initialEvent = new PlayCardRequestedEvent(actionWrapper.PlayerId, playDto);
                     }
-                    else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
+                    else
+                    {
+                        _logger.LogError("🔥 [PLAYCARD_DEBUG] ExecutePlayerActionInitialStepAsync: Invalid ActionData type for PlayCard: {ActualType}",
+                            actionWrapper.ActionData?.GetType().Name ?? "null");
+                        throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
+                    }
                     break;
 
                 case "PerformAttack":
@@ -743,6 +939,21 @@ namespace ShadowverseBeyond.Server.Services
                     break;
 
                 case "SubmitMulligan":
+                    // --- Mulligan Debug Logging ---
+                    var actionDataTypeName = actionWrapper.ActionData?.GetType().FullName ?? "null";
+                    var actionDataJson = "N/A";
+                    try
+                    {
+                        if (actionWrapper.ActionData != null)
+                        {
+                            actionDataJson = JsonSerializer.Serialize(actionWrapper.ActionData);
+                        }
+                    }
+                    catch { actionDataJson = "Serialization failed."; }
+                    _logger.LogWarning("[MULLIGAN_DEBUG] Received SubmitMulligan action. PlayerId: {PlayerId}, ActionData Type: {DataType}, ActionData JSON: {DataJson}",
+                        actionWrapper.PlayerId, actionDataTypeName, actionDataJson);
+                    // --- End Debug Logging ---
+
                     // Handle different ActionData formats for SubmitMulligan
                     if (actionWrapper.ActionData is List<Guid> cardUids)
                     {
@@ -789,349 +1000,12 @@ namespace ShadowverseBeyond.Server.Services
                     throw new NotSupportedException($"Action type '{actionWrapper.ActionType}' is not supported.");
             }
 
-            // --- 3. Add Event to Context ---
-            if (initialEvent != null) // Should always be non-null if no exception
-            {
-                context.DomainEvents.Add(initialEvent);
-                _logger.LogDebug("[ExecutePlayerActionInitialStepAsync:{GameId}] Added initial domain event {EventType} for Action {ActionType}",
-                    gameId, initialEvent.GetType().Name, actionWrapper.ActionType);
-            }
+            // --- 3. Return the Event ---
+            _logger.LogDebug("[ExecutePlayerActionInitialStepAsync:{GameId}] Created initial domain event {EventType} for Action {ActionType}",
+                gameId, initialEvent.GetType().Name, actionWrapper.ActionType);
 
-            // Add await Task.CompletedTask; if the method doesn't have any other awaits
             await Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// 重构后的结束回合方法 - 使用TurnEndEffectHandler
-        /// 保持GameService只负责验证、调度和队列管理职责
-        /// </summary>
-        private async Task EndTurnAsync(string gameId, Guid playerId, GameActionContext context)
-        {
-            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting EndTurn.", gameId, playerId);
-
-            try
-            {
-                // 获取玩家回合数用于参数
-                int turnNumber = 1;
-                if (_gameStates.TryGetValue(gameId, out var gameState))
-                {
-                    var playerState = gameState.GetPlayerState(playerId);
-                    if (playerState != null)
-                    {
-                        turnNumber = playerState.TurnNumber;
-                    }
-                }
-
-                var parameters = new Dictionary<string, ValueConfig>
-                {
-                    { "endingPlayerId", ValueConfig.Static(playerId) },
-                    { "turnNumber", ValueConfig.Static(turnNumber) },
-                    { "forceEndTurn", ValueConfig.Static(false) },
-                    { "endTurnReason", ValueConfig.Static("PlayerAction") }
-                };
-
-                var events = await ExecuteEffectHandlerAsync(gameId, playerId, "turnend", parameters, context);
-
-                _logger.LogInformation("[GameService:{GameId}] EndTurn completed successfully for Player {PlayerId}. Generated {EventCount} events.",
-                    gameId, playerId, events.Count);
-
-                await Task.CompletedTask;
-            }
-            catch (GameLogicException ex)
-            {
-                _logger.LogWarning(ex, "[GameService:{GameId}] Game Logic Error during EndTurn for Player {PlayerId}", gameId, playerId);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during EndTurn for Player {PlayerId}", gameId, playerId);
-                throw new GameLogicException("An unexpected error occurred during turn end.", ex);
-            }
-        }
-
-
-
-
-
-
-
-        /// <summary>
-        /// Processes the start-of-turn logic for the specified player.
-        /// This includes incrementing turn count, updating PP/EP, drawing cards,
-        /// resetting unit states, and generating necessary start-of-turn events.
-        /// This method is called after mulligan completion for the first player,
-        /// and by EndTurnAsync (for human players) or AiTurnExecutor (for AI players)
-        /// for subsequent turns.
-        /// </summary>
-        /// <param name="gameId">The ID of the game instance.</param>
-        /// <param name="playerId">The ID of the player whose turn is starting.</param>
-        /// <returns>A list of game events generated during start-of-turn processing.</returns>
-        /// <exception cref="GameLogicException">Thrown if the game or player state is invalid.</exception>
-        // V2 Refactor: Signature changed to return tuple (Events, IsAiTurn) and use startingPlayerId parameter.
-        // M7 V1.1 Change: Signature updated to remove context and return Task<TurnStartedEventDto>
-        // Made private as per queue design (or potentially removed if logic fully moves)
-        private async Task<TurnStartedEventDto> StartPlayerTurnAsync(string gameId, Guid startingPlayerId)
-        {
-            _logger.LogInformation("[GameService:{GameId}] Executing StartPlayerTurnAsync for Player {StartingPlayerId}.", gameId, startingPlayerId);
-            // M8 Change: Removed local events list creation. Using context.
-
-            // Acquire lock for this specific game
-            bool isAiTurn = false; // M8 Change: Declare isAiTurn here to be accessible for return value
-            object gameLock = _gameLocks.GetOrAdd(gameId, _ => new object()); // Fixed lambda syntax
-            GameState? gameState = null; // Declare gameState here to be accessible after the lock (Changed Type to Domain Entity)
-
-            // --- Pre-fetch card definitions outside the lock ---
-            Dictionary<int, CardDefinition> unitDefinitions = new Dictionary<int, CardDefinition>();
-            // Temporarily get game state to check for units
-            if (_gameStates.TryGetValue(gameId, out var tempGameState))
-            {
-                var tempPlayerState = tempGameState.GetPlayerState(startingPlayerId);
-                if (tempPlayerState != null && tempPlayerState.Field.Any())
-                {
-                    _logger.LogDebug("[GameService:{GameId}] Pre-fetching unit definitions for Player {PlayerId} from cache.", gameId, startingPlayerId);
-                    try
-                    {
-                        // Use GameDataProvider cache instead of database access
-                        var definitionIds = tempPlayerState.Field.Select(u => u.DefinitionId).Distinct().ToList();
-
-                        // Fetch definitions from cache (no async needed)
-                        foreach (var defId in definitionIds)
-                        {
-                            var def = _gameDataProvider.GetCardDefinition(defId);
-                            if (def != null)
-                            {
-                                unitDefinitions[defId] = def;
-                            }
-                            else
-                            {
-                                _logger.LogWarning("[GameService:{GameId}] Pre-fetch: Card definition not found for ID {DefinitionId}.", gameId, defId);
-                            }
-                        }
-                        _logger.LogDebug("[GameService:{GameId}] Pre-fetched {Count} unit definitions from cache.", gameId, unitDefinitions.Count);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "[GameService:{GameId}] Error during pre-fetching card definitions for Player {PlayerId}.", gameId, startingPlayerId);
-                        // Continue without pre-fetched data, the lock block might handle it or fail later.
-                    }
-                }
-                else
-                {
-                    _logger.LogDebug("[GameService:{GameId}] No units on field for Player {PlayerId}, skipping definition pre-fetch.", gameId, startingPlayerId);
-                }
-            }
-            else
-            {
-                _logger.LogWarning("[GameService:{GameId}] Game state not found before lock, cannot pre-fetch unit definitions.", gameId);
-                // The lock block below will handle the missing state error properly.
-            }
-            // --- End Pre-fetch ---
-            lock (gameLock)
-            {
-                // 1. Validate gameId and retrieve GameState.
-                // bool isAiTurnResult = false; // Declaration moved outside lock
-                // M8 Change: Retrieve gameState inside lock, assign to pre-declared variable
-                if (!_gameStates.TryGetValue(gameId, out gameState)) // Removed 'var'
-                {
-                    throw new GameLogicException($"Game not found: {gameId} (in StartPlayerTurnAsync)");
-                }
-
-                // 2. Validate Player State
-                // Use helper method to get player state
-                var startingPlayerState = gameState.GetPlayerState(startingPlayerId);
-                if (startingPlayerState == null)
-                {
-                    throw new GameLogicException($"Player state not found for {startingPlayerId} in game {gameId} (in StartPlayerTurnAsync).");
-                }
-
-                // --- Start of logic adapted from ProcessStartOfTurn ---
-
-                // --- Increment Player's Individual Turn Count ---
-                startingPlayerState.TurnNumber++;
-
-                // Existing code continues below...
-                // V2 Change: Determine AI status inside lock
-                isAiTurn = startingPlayerState.IsAI; // M8 Change: Assign value inside lock where startingPlayerState is valid
-                int currentPlayerTurn = startingPlayerState.TurnNumber; // Use this for player-specific logic
-                _logger.LogInformation("[GameService:{GameId}] Incrementing TurnNumber for {PlayerId} to {PlayerTurn}.",
-                    gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn);
-
-                _logger.LogWarning("[GS_DEBUG_SOT:{GameId}] Processing StartOfTurn for PlayerId={PlayerId}", gameState.GameId, startingPlayerState.PlayerId); // DEBUG LOG (Fixed format string)
-
-                // --- M7 Design Doc Step 5.1: Update Game State ---
-                Guid? oldPlayerId = gameState.CurrentPlayerId; // Store old ID before changing
-                gameState.CurrentPlayerId = startingPlayerState.PlayerId;
-                gameState.Phase = GamePhase.Main; // Transition to Main phase
-                _logger.LogWarning("[GS_DEBUG_SOT:{GameId}] Setting gameState.CurrentPlayerId from '{OldPlayer}' to '{NewPlayer}'", gameState.GameId, oldPlayerId, gameState.CurrentPlayerId); // DEBUG LOG
-                gameState.GameMessage = $"Turn {currentPlayerTurn} - {startingPlayerState.PlayerId}'s turn."; // Use individual turn number for message
-                _logger.LogInformation("[GameService:{GameId}] StartOfTurn processing state updated for Player={CurrentPlayerId}, PlayerTurn={PlayerTurn}, Phase={Phase}.", // Original log
-                   gameState.GameId, gameState.CurrentPlayerId, currentPlayerTurn, gameState.Phase);
-
-                // --- M7 Design Doc Step 5.2: Update Player PP ---
-                // 使用PlayerState领域方法处理PP恢复
-                var ppEvents = startingPlayerState.RestorePlayPoints(currentPlayerTurn);
-                // TODO: 在未来版本中，这些事件应该被添加到事件队列中进行处理
-                // 目前暂时跳过事件处理，直接使用领域方法的状态修改结果
-
-                _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} PP updated: {CurrentPP}/{MaxPP}.",
-                    gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.CurrentPlayPoints, startingPlayerState.MaxPlayPoints);
-
-                // --- M7 Design Doc Step 5.3: Update Player EP (Fixed for Shadowverse Rules) ---
-                int requiredEvoTurn = startingPlayerState.IsFirst ? 5 : 4; // P1 needs Turn 5, P2 needs Turn 4
-                                                                           // Use PlayerState domain property names
-                bool shouldUnlockEvolution = currentPlayerTurn >= requiredEvoTurn && startingPlayerState.MaxEvolutionPoints == 0;
-                int previousEP = startingPlayerState.CurrentEvolutionPoints; // Store previous EP for logging/event
-
-                // Evolution unlock: Set EP limit and grant full EP on first unlock
-                if (shouldUnlockEvolution)
-                {
-                    int maxEpForPlayer = startingPlayerState.IsFirst ? 2 : 3; // P1 gets 2 EP, P2 gets 3 EP
-                                                                              // Use PlayerState domain property names
-                    startingPlayerState.MaxEvolutionPoints = maxEpForPlayer;
-                    startingPlayerState.CurrentEvolutionPoints = maxEpForPlayer; // Grant full EP immediately on unlock
-                    _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} evolution UNLOCKED (Turn {PlayerTurn}). Granted {MaxEP} EP.",
-                       gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn, maxEpForPlayer);
-                }
-                // Note: EP does NOT auto-recover after unlock - only consumed through evolution
-
-                // Use PlayerState domain property names
-                if (startingPlayerState.CurrentEvolutionPoints != previousEP)
-                {
-                    // M7 V1.1 Change: Removed context.AddEvent for EpUpdateEventDto
-                    _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} EP changed. New EP: {CurrentEP}/{MaxEP}.", // Removed "Event added."
-                      gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.CurrentEvolutionPoints, startingPlayerState.MaxEvolutionPoints);
-                } // <<< Closing brace for the if block
-
-                // --- M7 Design Doc Step 5.3.1: Evolution Eligibility Check ---
-                // Player can evolve if they have unlocked evolution and have EP available
-                // Evolution eligibility is now determined by game rules, not stored in PlayerState
-                bool canEvolveThisTurn = CanPlayerEvolve(startingPlayerState);
-                _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} can evolve this turn: {CanEvolve} (MaxEP: {MaxEP}, CurrentEP: {CurrentEP}).",
-                    gameState.GameId, startingPlayerState.PlayerId, canEvolveThisTurn, startingPlayerState.MaxEvolutionPoints, startingPlayerState.CurrentEvolutionPoints);
-
-                // --- M7 Design Doc Step 5.4: Draw Card(s) at Start of Turn ---
-                // Determine number of cards to draw (1 normally, 2 for P2T1)
-                // --- M7 Design Doc Step 5.4: Draw Card(s) ---
-                int cardsToDraw = 1;
-                // Check if it's the second player's *very first* turn (TurnNumber will be 1 after increment)
-                if (!startingPlayerState.IsFirst && currentPlayerTurn == 1)
-                {
-                    cardsToDraw = 2; // Second player draws 2 on their first turn
-                    _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} is second player on their first turn. Drawing {DrawCount} cards.",
-                        gameState.GameId, startingPlayerState.PlayerId, cardsToDraw);
-                }
-                else
-                {
-                    _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} drawing {DrawCount} card(s) for turn {PlayerTurn}.",
-                        gameState.GameId, startingPlayerState.PlayerId, cardsToDraw, currentPlayerTurn);
-                }
-                // --- Roo Debug: Log before DrawCards ---
-                _logger.LogWarning("[DEBUG_DRAW:{GameId}] Before calling DrawCards for Player {PlayerId}. Requesting {DrawCount} cards. Current Deck Count: {DeckCount}",
-                    gameState.GameId, startingPlayerState.PlayerId, cardsToDraw, startingPlayerState.Deck.Count);
-                // --- End Roo Debug ---
-                // 使用PlayerState领域方法处理抽卡
-                var drawnCards = startingPlayerState.DrawCards(cardsToDraw);
-                // TODO: 在未来版本中，这些事件应该被添加到事件队列中进行处理
-                // 目前暂时跳过事件处理，直接使用领域方法的状态修改结果
-
-                // --- Roo Debug: Log after DrawCards ---
-                _logger.LogWarning("[DEBUG_DRAW:{GameId}] After calling DrawCards for Player {PlayerId}. Drawn cards count: {DrawnCount}. New Deck Count: {DeckCount}",
-                    gameState.GameId, startingPlayerState.PlayerId, drawnCards.Count, startingPlayerState.DeckCount);
-                // Generate events related to the card draw:
-                // - HandUpdateEventDto: Notifies the owner about the new hand state, including the drawn card(s).
-                // - DeckUpdateEventDto: Notifies both players about the change in deck size.
-                // - CardDrawnEventDto: Notifies both players about each specific card drawn (for animations/triggers).
-                // --- End Roo Debug ---
-                // Generate events for drawn cards (HandUpdate, DeckUpdate, CardDrawn)
-                if (drawnCards.Any())
-                {
-                    // M7 V1.1 Change: Removed context.AddEvent for HandUpdate, DeckUpdate, CardDrawn events
-                    _logger.LogDebug("[GameService:{GameId}] Hand/Deck updated after drawing {DrawnCount} cards.", // Simplified log
-                        gameState.GameId, drawnCards.Count);
-                }
-
-                // --- M7 Design Doc Step 5.5: Reset Unit States (Updated based on BUG-017 analysis/design doc) ---
-                _logger.LogDebug("[GameService:{GameId}] Resetting unit states for Player {PlayerId} at start of turn.", gameState.GameId, startingPlayerState.PlayerId);
-
-                foreach (var unit in startingPlayerState.Field)
-                {
-                    // Use simple unit name since we removed pre-fetching
-                    string unitName = $"Unit (ID: {unit.DefinitionId})";
-
-                    // Units already on the field at the start of the turn should be able to attack
-                    // (unless affected by a status effect later). Reset flags explicitly here.
-                    // Summoning sickness is handled by units starting with CanAttack=false when played (unless Rush/Storm).
-                    unit.CanAttack = true;          // Reset attack permission
-                    unit.AttacksThisTurn = 0; // Reset attack count for the new turn
-                    _logger.LogTrace("[GameService:{GameId}] Reset state for unit {UnitName} ({UnitInstanceId}): CanAttack=True, AttacksMade=0",
-                        gameState.GameId, unitName, unit.InstanceId);
-                }
-                _logger.LogDebug("[GameService:{GameId}] Finished resetting CanAttack and AttacksThisTurn flags for Player {PlayerId}'s {UnitCount} units.",
-                    gameState.GameId, startingPlayerState.PlayerId, startingPlayerState.Field.Count); // Updated log message
-
-                // M7 V1.1 Change: Removed context.AddEvent for TurnStartedEvent
-                _logger.LogInformation("[GameService:{GameId}] StartOfTurn state updates complete for Player {PlayerId}, PlayerTurn {PlayerTurn}, Phase {Phase}.", // Simplified log
-                    gameState.GameId, startingPlayerState.PlayerId, currentPlayerTurn, gameState.Phase);
-
-                // --- End of logic adapted from ProcessStartOfTurn ---
-            } // <<< Closing brace for the lock block
-              // M8 Change: Method returns Task<bool>. Re-calculate IsAiTurn. Events collected in context.
-              // M8 Change: isAiTurn is now assigned within the lock block. Remove recalculation here.
-              // M7 V1.1 Change: Create and return the full game state DTO (Log message adjusted)
-            _logger.LogInformation("[GS_SOT:{GameId}] Turn start processed for player {PlayerId}. Preparing full state DTO.", gameId, startingPlayerId);
-
-            // M8 Change: Add null check for gameState declared outside lock and use it directly
-            if (gameState == null) // Null check for the variable declared outside lock
-            {
-                _logger.LogError("[GS_SOT:{GameId}] Game state became null unexpectedly after lock for player {PlayerId}", gameId, startingPlayerId);
-                // Throw exception as this indicates an internal error, the DTO cannot represent this failure.
-                throw new InvalidOperationException($"Internal server error: Game state for game {gameId} became null unexpectedly after turn processing for player {startingPlayerId}.");
-            }
-            // Convert GameState entity to DTO for the event using AutoMapper
-            var gameStateDto = _mapper.Map<GameStateDto>(gameState);
-            var updateEvent = new TurnStartedEventDto(gameStateDto, startingPlayerId); // Create event with DTO
-
-            _logger.LogDebug("[GameService:{GameId}] Returning TurnStartedEventDto for player {PlayerId}.",
-                gameState.GameId, startingPlayerId);
-
-            return await Task.FromResult(updateEvent); // Use Task.FromResult for async Task<T>
-        } // <<< Closing brace for StartPlayerTurnAsync method
-        /// <summary>
-        /// 重构后的换牌方法 - 使用MulliganEffectHandler
-        /// 保持GameService只负责验证、调度和队列管理职责
-        /// </summary>
-        private async Task SubmitMulliganAsync(string gameId, Guid playerId, List<Guid> cardUidsToReplace, GameActionContext context)
-        {
-            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting SubmitMulligan with {CardCount} cards.",
-                gameId, playerId, cardUidsToReplace?.Count ?? 0);
-
-            try
-            {
-                var parameters = new Dictionary<string, ValueConfig>
-                {
-                    { "playerId", ValueConfig.Static(playerId) },
-                    { "cardUidsToReplace", ValueConfig.Static(cardUidsToReplace ?? new List<Guid>()) },
-                    { "forceMulligan", ValueConfig.Static(false) },
-                    { "mulliganReason", ValueConfig.Static("PlayerChoice") }
-                };
-
-                var events = await ExecuteEffectHandlerAsync(gameId, playerId, "mulligan", parameters, context);
-
-                _logger.LogInformation("[GameService:{GameId}] Mulligan completed successfully for Player {PlayerId}. Generated {EventCount} events.",
-                    gameId, playerId, events.Count);
-
-                await Task.CompletedTask;
-            }
-            catch (GameLogicException ex)
-            {
-                _logger.LogWarning(ex, "[GameService:{GameId}] Game Logic Error during Mulligan for Player {PlayerId}", gameId, playerId);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during Mulligan for Player {PlayerId}", gameId, playerId);
-                throw new GameLogicException("An unexpected error occurred during mulligan submission.", ex);
-            }
+            return initialEvent;
         }
 
         /// <summary>
@@ -1142,23 +1016,11 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <returns>The GameState domain entity if found, otherwise null.</returns>
-        public async Task<GameState?> GetGameStateAsync(string gameId)
+        public GameState? GetGameState(string gameId)
         {
             _logger.LogDebug("[GameService] Attempting to get game state for Game {GameId}.", gameId);
-
-            // Use Domain Entity type in TryGetValue
-            if (_gameStates.TryGetValue(gameId, out GameState? existingState))
-            {
-                _logger.LogDebug("[GameService] Found existing game state for Game {GameId}.", gameId);
-                // Wrap synchronous result in a completed task.
-                return await Task.FromResult(existingState); // Return existing domain entity
-            }
-            else
-            {
-                _logger.LogDebug("[GameService] No existing game state found for Game {GameId}.", gameId);
-                // Return a completed task with a null result.
-                return await Task.FromResult<GameState?>(null); // Return nullable Domain Entity
-            }
+            _gameStates.TryGetValue(gameId, out var existingState);
+            return existingState;
         }
         // --- End Added GetGameStateAsync Implementation ---
 
@@ -1169,277 +1031,66 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <param name="requestingPlayerId">The ID of the player requesting the game state (used for game creation).</param>
         /// <returns>The GameState domain entity for the game, or null if creation failed unexpectedly.</returns>
-        public async Task<GameState?> GetOrCreateGameStateAsync(string gameId, Guid? requestingPlayerId = null) // Return Domain Entity
+        public GameState? GetOrCreateGameState(string gameId, Guid? requestingPlayerId = null)
         {
-            _logger.LogInformation("[GameService] Attempting to get or create game state for Game {GameId}.", gameId);
-
-            // Use Domain Entity type in TryGetValue
-            if (_gameStates.TryGetValue(gameId, out GameState? existingState)) // Use Domain Entity
+            if (_gameStates.TryGetValue(gameId, out var existingState))
             {
-                _logger.LogInformation("[GameService] Found existing game state for Game {GameId}.", gameId);
                 return existingState;
             }
 
-            _logger.LogInformation("[GameService] No existing game state found for Game {GameId}. Creating new state.", gameId);
-
-            // --- New Game State Creation Logic ---
+            // Creation logic
             try
             {
-                // Use the requesting player ID if provided, otherwise generate new GUIDs
-                Guid player1Id = requestingPlayerId ?? Guid.NewGuid(); // Use requesting player as Player 1
-                Guid player2Id = Guid.NewGuid(); // AI player (Player 2)
+                Guid player1Id = requestingPlayerId ?? Guid.NewGuid();
+                Guid player2Id = Guid.NewGuid();
 
-                // Use GameDataProvider cache instead of database access
-                var allCardDefinitions = _gameDataProvider.GetAllCardDefinitions().Values.ToList();
-                _logger.LogInformation("[GameService:{GameId}] Fetched {Count} total card definitions from cache.", gameId, allCardDefinitions.Count);
-
-                // Check if any definitions were found
-                if (allCardDefinitions == null || !allCardDefinitions.Any())
+                var allCardDefinitions = _gameDataProvider.GetAllCardDefinitions();
+                if (!allCardDefinitions.Any())
                 {
-                    _logger.LogError("[GameService:{GameId}] No card definitions found in the repository. Cannot create game state.", gameId);
-                    return null; // Cannot proceed without cards
+                    _logger.LogError("No card definitions found. Cannot create game.");
+                    return null;
                 }
 
-                // --- Fixed Test Deck Creation Logic ---
-                int targetDeckSize = 20; // Set target deck size to 20 for testing
-                List<CardInstance> player1Deck = new List<CardInstance>(targetDeckSize); // Changed type to Domain Entity
-                List<CardInstance> player2Deck = new List<CardInstance>(targetDeckSize); // Changed type to Domain Entity
-
-                // Create a lookup dictionary for efficient access to definitions
-                var definitionLookup = allCardDefinitions.ToDictionary(def => def.Id);
-
-                // --- Roo Add: Fetch Leader Definition (Using actual Leader ID 0) ---
-                const int leaderCardId = GameConstants.Cards.LeaderCardId;
-                if (!definitionLookup.TryGetValue(leaderCardId, out var leaderCardDef))
-                {
-                    _logger.LogError("[GameService:{GameId}] Leader card definition (ID: {LeaderId}) not found. Cannot create game state.", gameId, leaderCardId);
-                    return null; // Cannot proceed without leader definition
-                }
-                _logger.LogInformation("[GameService:{GameId}] Found placeholder leader definition: {LeaderName} ({LeaderId})", gameId, leaderCardDef.Name, leaderCardDef.Id);
-                // --- End Roo Add ---
-
-                // Validate if all required definitions were fetched (using integer IDs)
-                var missingDefs = _fixedTestDeckCardIds.Distinct().Where(id => !definitionLookup.ContainsKey(id)).ToList();
-                if (missingDefs.Any())
-                {
-                    _logger.LogError("[GameService:{GameId}] Missing required card definitions for test deck (Integers): {MissingIds}. Cannot create game state.", gameId, string.Join(", ", missingDefs));
-                    return null; // Cannot proceed
-                }
-
-                // Build decks using the fixed list of integer card IDs
-                foreach (var cardIdInt in _fixedTestDeckCardIds) // Use integer ID directly
-                {
-                    // Use integer ID directly for lookup
-                    if (definitionLookup.TryGetValue(cardIdInt, out var cardDef))
-                    {
-                        // Create unique CardInstanceDto instances for each player's deck
-                        // Create CardInstance domain entity for player 1
-                        var instance1 = new CardInstance(Guid.NewGuid(), cardDef.Id, player1Id)
-                        {
-                            CardType = cardDef.Type ?? string.Empty, // Use CardType property
-                            CurrentZone = CardZone.Deck,
-                            BaseCost = cardDef.Cost,
-                            CurrentCost = cardDef.Cost,
-                            BaseAttack = cardDef.Attack ?? 0,
-                            CurrentAttack = cardDef.Attack ?? 0,
-                            BaseHealth = cardDef.Health ?? 0,
-                            CurrentHealth = cardDef.Health ?? 0,
-                            MaxHealth = cardDef.Health ?? 0,
-                            IsEvolved = false,
-                            CanAttack = false, // Cannot attack from deck
-                                               // Removed CanEvolve - evolution eligibility is determined by game rules
-                            AttacksThisTurn = 0, // Initialize attack count
-                            Countdown = null, // Initialize countdown
-                            FieldPosition = null // Initialize field position
-                        };
-                        instance1.SetBaseKeywords(cardDef.Keywords ?? Enumerable.Empty<string>()); // Use helper to set keywords
-                        player1Deck.Add(instance1);
-
-                        // Create CardInstance domain entity for player 2
-                        var instance2 = new CardInstance(Guid.NewGuid(), cardDef.Id, player2Id)
-                        {
-                            CardType = cardDef.Type ?? string.Empty, // Use CardType property
-                            CurrentZone = CardZone.Deck,
-                            BaseCost = cardDef.Cost,
-                            CurrentCost = cardDef.Cost,
-                            BaseAttack = cardDef.Attack ?? 0,
-                            CurrentAttack = cardDef.Attack ?? 0,
-                            BaseHealth = cardDef.Health ?? 0,
-                            CurrentHealth = cardDef.Health ?? 0,
-                            MaxHealth = cardDef.Health ?? 0,
-                            IsEvolved = false,
-                            CanAttack = false, // Cannot attack from deck
-                                               // Removed CanEvolve - evolution eligibility is determined by game rules
-                            AttacksThisTurn = 0, // Initialize attack count
-                            Countdown = null, // Initialize countdown
-                            FieldPosition = null // Initialize field position
-                        };
-                        instance2.SetBaseKeywords(cardDef.Keywords ?? Enumerable.Empty<string>()); // Use helper to set keywords
-                        player2Deck.Add(instance2);
-                    }
-                    // else: Error already logged if definition was missing
-                }
-
-                _logger.LogInformation("[GameService:{GameId}] Created fixed test decks (Size: {DeckSize}) for Player 1 and Player 2 using predefined list.",
-                    gameId, player1Deck.Count); // Use Count which should be 20
-
-                // Shuffle the newly created decks
-                ShuffleDeck(player1Deck);
-                ShuffleDeck(player2Deck);
-
-                // Draw initial hands from the shuffled decks
-                int initialHandSize = 3;
-                List<CardInstance> player1Hand = DrawInitialHand(player1Deck, initialHandSize); // Changed type to Domain Entity
-                List<CardInstance> player2Hand = DrawInitialHand(player2Deck, initialHandSize); // Changed type to Domain Entity
-                                                                                                // Deck count in PlayerStateDto will be updated later when assigning the deck
-
-                // Decide first player randomly
                 bool player1IsFirst = new Random().Next(0, 2) == 0;
-                Guid firstPlayerId = player1IsFirst ? player1Id : player2Id;
-                Guid secondPlayerId = player1IsFirst ? player2Id : player1Id;
+                var player1State = new PlayerState(player1Id) { IsFirst = player1IsFirst };
+                var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = true };
 
-                // --- Roo Add: Create Leader Card Instances ---
-                // Create CardInstance domain entity for player 1's leader
-                var player1LeaderInstance = new CardInstance(Guid.NewGuid(), leaderCardDef.Id, player1Id)
+                var newGameState = new GameState(gameId, player1State, player2State, player1IsFirst ? player1Id : player2Id);
+
+                foreach (var cardId in _fixedTestDeckCardIds)
                 {
-                    CardType = leaderCardDef.Type ?? string.Empty, // Use CardType property
-                    CurrentZone = CardZone.Leader,
-                    BaseCost = leaderCardDef.Cost,
-                    CurrentCost = leaderCardDef.Cost,
-                    BaseAttack = leaderCardDef.Attack ?? 0,
-                    CurrentAttack = leaderCardDef.Attack ?? 0,
-                    BaseHealth = leaderCardDef.Health ?? 0,
-                    CurrentHealth = leaderCardDef.Health ?? 0, // Leader health tracked separately in PlayerState
-                    MaxHealth = leaderCardDef.Health ?? 0,
-                    IsEvolved = false,
-                    CanAttack = false, // Leaders don't attack
-                                       // Removed CanEvolve - evolution eligibility is determined by game rules
-                    AttacksThisTurn = 0,
-                    Countdown = null,
-                    FieldPosition = null
-                };
-                player1LeaderInstance.SetBaseKeywords(leaderCardDef.Keywords ?? Enumerable.Empty<string>());
-
-                // Create CardInstance domain entity for player 2's leader
-                var player2LeaderInstance = new CardInstance(Guid.NewGuid(), leaderCardDef.Id, player2Id)
-                {
-                    CardType = leaderCardDef.Type ?? string.Empty, // Use CardType property
-                    CurrentZone = CardZone.Leader,
-                    BaseCost = leaderCardDef.Cost,
-                    CurrentCost = leaderCardDef.Cost,
-                    BaseAttack = leaderCardDef.Attack ?? 0,
-                    CurrentAttack = leaderCardDef.Attack ?? 0,
-                    BaseHealth = leaderCardDef.Health ?? 0,
-                    CurrentHealth = leaderCardDef.Health ?? 0, // Leader health tracked separately in PlayerState
-                    MaxHealth = leaderCardDef.Health ?? 0,
-                    IsEvolved = false,
-                    CanAttack = false, // Leaders don't attack
-                                       // Removed CanEvolve - evolution eligibility is determined by game rules
-                    AttacksThisTurn = 0,
-                    Countdown = null,
-                    FieldPosition = null
-                };
-                player2LeaderInstance.SetBaseKeywords(leaderCardDef.Keywords ?? Enumerable.Empty<string>());
-                // --- End Roo Add ---
-
-                // Create PlayerState domain entities
-                // Create PlayerState domain entities using the correct constructor and properties
-                var player1State = new PlayerState(player1Id)
-                {
-                    IsAI = false, // Assuming player 1 is human
-                    MaxPlayPoints = 0,
-                    CurrentPlayPoints = 0,
-                    MaxEvolutionPoints = player1IsFirst ? 2 : 3,
-                    CurrentEvolutionPoints = 0,
-                    // Removed CanEvolve - evolution eligibility is determined by game rules
-                    Hand = player1Hand, // Assign List<CardInstance>
-                    Deck = player1Deck, // Assign List<CardInstance>
-                                        // Field, Graveyard, Extra are initialized by constructor
-                    IsFirst = player1IsFirst,
-                    PlayedCardCountThisTurn = 0,
-                    TurnNumber = 0,
-                    Leader = player1LeaderInstance, // Assign CardInstance
-                    HasCompletedMulligan = false,
-                    HasTakenFirstTurn = false
-                };
-
-                var player2State = new PlayerState(player2Id)
-                {
-                    IsAI = true, // Assuming player 2 is AI
-                    MaxPlayPoints = 0,
-                    CurrentPlayPoints = 0,
-                    MaxEvolutionPoints = player1IsFirst ? 3 : 2,
-                    CurrentEvolutionPoints = 0,
-                    // Removed CanEvolve - evolution eligibility is determined by game rules
-                    Hand = player2Hand, // Assign List<CardInstance>
-                    Deck = player2Deck, // Assign List<CardInstance>
-                                        // Field, Graveyard, Extra are initialized by constructor
-                    IsFirst = !player1IsFirst,
-                    PlayedCardCountThisTurn = 0,
-                    TurnNumber = 0,
-                    Leader = player2LeaderInstance, // Assign CardInstance
-                    HasCompletedMulligan = false,
-                    HasTakenFirstTurn = false
-                };
-
-                // Player decks are now stored directly in PlayerStateDto.Deck
-
-                // Create the GameState domain entity using the correct constructor
-                var newGameState = new GameState(gameId, player1State, player2State, firstPlayerId)
-                {
-                    // Constructor handles initial setup for GameId, Player1, Player2, FirstPlayerId, CurrentPlayerId, Status, Phase, TurnNumber
-                    // We might set an initial message if needed
-                    GameMessage = "Game created. Waiting for players."
-                    // Status and Phase are set by the constructor
-                    // WinnerId starts as null implicitly
-                };
-
-                // _logger.LogInformation("[GameService:{GameId}] >>> Attempting to add newly created game state to dictionary...", gameId); // REMOVED DIAGNOSTIC LOG
-                // ADDED: Log initial hand details for player 1 before adding state
-                try // Added try-catch for safety during logging complex objects
-                {
-                    // Log only InstanceId and DefinitionId available directly on CardInstance to avoid repo lookup in loop
-                    string player1HandDetails = string.Join(", ", player1State.Hand.Select(c => $"{{InstanceId='{c.InstanceId}', DefId='{c.DefinitionId}'}}"));
-                    _logger.LogInformation("[GameService:{GameId}:GetOrCreate] Player 1 Initial Hand prepared for state: [{Player1HandDetails}]", gameId, player1HandDetails);
+                    player1State.Deck.Add(_cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck));
+                    player2State.Deck.Add(_cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck));
                 }
-                catch (Exception logEx)
+
+                ShuffleDeck(player1State.Deck);
+                ShuffleDeck(player2State.Deck);
+
+                player1State.Hand.AddRange(DrawInitialHand(player1State.Deck, 3));
+                player2State.Hand.AddRange(DrawInitialHand(player2State.Deck, 3));
+                foreach (var card in player1State.Hand) card.CurrentZone = CardZone.Hand;
+                foreach (var card in player2State.Hand) card.CurrentZone = CardZone.Hand;
+
+                const int leaderCardId = GameConstants.Cards.LeaderCardId;
+                player1State.Leader = _cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player1Id, CardZone.Leader);
+                player2State.Leader = _cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player2Id, CardZone.Leader);
+
+                if (_gameStates.TryAdd(gameId, newGameState))
                 {
-                    _logger.LogWarning(logEx, "[GameService:{GameId}:GetOrCreate] Error occurred while logging player 1 hand details.", gameId);
-                }
-                // END ADDED logging block
-                bool addedSuccessfully = _gameStates.TryAdd(gameId, newGameState);
-                // _logger.LogInformation("[GameService:{GameId}] <<< Add attempt finished. Success: {WasSuccess}", gameId, addedSuccessfully); // REMOVED DIAGNOSTIC LOG
-                if (addedSuccessfully) // Use helper variable
-                {
-                    _logger.LogInformation("[GameService] Successfully created and stored new game state for Game {GameId}.", gameId);
-                    // TODO: Add logic to associate player connections with this gameId/group
-                    // await _hubContext.Groups.AddToGroupAsync(player1ConnectionId, $"Game_{gameId}");
-                    // await _hubContext.Groups.AddToGroupAsync(player2ConnectionId, $"Game_{gameId}");
+                    _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState));
                     return newGameState;
                 }
-                else
-                {
-                    _logger.LogWarning("[GameService] Failed to add newly created game state for Game {GameId} to dictionary. Race condition?", gameId);
-                    // Attempt to retrieve again in case another thread added it between TryGetValue and TryAdd
-                    if (_gameStates.TryGetValue(gameId, out var racingState))
-                    {
-                        _logger.LogInformation("[GameService] Retrieved state added by concurrent operation for Game {GameId}.", gameId);
-                        return racingState;
-                    }
-                    else
-                    {
-                        _logger.LogError("[GameService] Failed to store or retrieve game state for Game {GameId} after creation attempt.", gameId);
-                        return null; // Indicate failure
-                    }
-                }
+
+                // If TryAdd fails, it means another thread created the game state.
+                // Return the state created by the other thread.
+                return _gameStates.TryGetValue(gameId, out var racingState) ? racingState : null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[GameService] Unexpected error during game state creation for Game {GameId}. Exception Details: {ExceptionString}", gameId, ex.ToString()); // <-- 使用 ex.ToString()
-                                                                                                                                                                                  // Return null to indicate failure.
+                _logger.LogError(ex, "Error creating game state for Game {GameId}", gameId);
                 return null;
             }
-        } // End of GetOrCreateGameStateAsync method
+        }
 
         /// <summary>
         /// Performs basic spell target validation (simplified version for immediate use)
@@ -1479,382 +1130,6 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        // Static keyword arrays for performance optimization
-        private static readonly string[] TargetingKeywords = {
-            "deal", "damage", "destroy", "target", "enemy", "ally", "follower",
-            "banish", "transform", "give", "restore", "heal"
-        };
-
-        private static readonly string[] GlobalEffectKeywords = {
-            "all", "each", "random", "draw", "summon", "gain", "your", "both"
-        };
-
-        /// <summary>
-        /// Determines if a spell card requires a target based on its definition
-        /// TODO: Replace with proper ability system integration
-        /// </summary>
-        /// <param name="cardDefinition">The spell card definition to check</param>
-        /// <returns>True if the spell requires a target, false otherwise</returns>
-        private bool RequiresTarget(CardDefinition cardDefinition)
-        {
-            try
-            {
-                // Check if the card has targeting keywords in its description or abilities
-                var description = cardDefinition.Description?.ToLowerInvariant() ?? "";
-                var name = cardDefinition.Name?.ToLowerInvariant() ?? "";
-
-                // Check if any targeting keywords are present
-                bool hasTargetingKeywords = TargetingKeywords.Any(keyword =>
-                    description.Contains(keyword) || name.Contains(keyword));
-
-                // Check for global/area effect keywords
-                bool hasGlobalEffects = GlobalEffectKeywords.Any(keyword =>
-                    description.Contains(keyword) || name.Contains(keyword));
-
-                // If it has targeting keywords but no global effect keywords, it likely requires a target
-                bool requiresTarget = hasTargetingKeywords && !hasGlobalEffects;
-
-                _logger.LogDebug("[GameService] Spell {SpellName} target requirement analysis: HasTargeting={HasTargeting}, HasGlobal={HasGlobal}, RequiresTarget={RequiresTarget}",
-                    cardDefinition.Name, hasTargetingKeywords, hasGlobalEffects, requiresTarget);
-
-                return requiresTarget;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService] Error determining target requirement for spell {SpellName}",
-                    cardDefinition.Name);
-                // Fail safe - assume no target required to avoid blocking spell play
-                return false;
-            }
-        }
-
-
-
-
-        /// <summary>
-        /// Executes spell effects through the event-driven ability system
-        /// </summary>
-        /// <param name="gameState">Current game state</param>
-        /// <param name="cardDefinition">The spell card definition</param>
-        /// <param name="targetEntity">The target entity (can be null for non-targeted spells)</param>
-        /// <param name="casterPlayerState">The player casting the spell</param>
-        /// <param name="context">Game action context for event generation</param>
-        private async Task ExecuteSpellEffectsAsync(GameState gameState, CardDefinition cardDefinition, ICard? targetEntity, PlayerState casterPlayerState, GameActionContext context)
-        {
-            try
-            {
-                _logger.LogDebug("[GameService:{GameId}] Executing spell effects for {SpellName} ({SpellId}) through event system",
-                    gameState.GameId, cardDefinition.Name, cardDefinition.Id);
-
-                // Create scope for dependency injection
-                using var scope = _serviceScopeFactory.CreateScope();
-                var eventProcessor = scope.ServiceProvider.GetRequiredService<IEventProcessor>();
-
-                // Create a spell cast event that will trigger abilities
-                var spellCardInstance = new CardInstance(
-                    instanceId: Guid.NewGuid(),
-                    definitionId: cardDefinition.Id,
-                    ownerPlayerId: casterPlayerState.PlayerId
-                );
-
-                // Populate spell card properties
-                spellCardInstance.CardType = cardDefinition.Type ?? "Spell";
-                // Note: CardInstance doesn't have Name/Description properties
-                // These are stored in the CardDefinition and accessed via DefinitionId
-
-                // Create spell cast event
-                var playerStateDto = _mapper.Map<PlayerStateDto>(casterPlayerState);
-                var spellCastEvent = new PlayCardEvent(playerStateDto, spellCardInstance);
-
-                // Create game context for ability processing
-                var gameContext = new GameContext(gameState, casterPlayerState.PlayerId, _mapper, spellCastEvent, spellCardInstance);
-
-                // Process the event through the event processor to trigger abilities
-                var processorResult = await eventProcessor.ProcessEventAsync(spellCastEvent, gameContext);
-
-                // Add generated events to context
-                if (processorResult.ResultingDtos != null)
-                {
-                    context.Events.AddRange(processorResult.ResultingDtos);
-                }
-
-                _logger.LogDebug("[GameService:{GameId}] Spell effects processed through event system. Generated {EventCount} events",
-                    gameState.GameId, processorResult.ResultingDtos?.Count ?? 0);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Error executing spell effects for {SpellName}",
-                    gameState.GameId, cardDefinition.Name);
-                // Don't rethrow - spell effects failure shouldn't break spell play
-            }
-        }
-
-        /// <summary>
-        /// Processes clash effects when two units engage in combat through the event system
-        /// </summary>
-        /// <param name="gameState">Current game state</param>
-        /// <param name="attacker">The attacking unit</param>
-        /// <param name="defender">The defending unit</param>
-        /// <param name="context">Game action context for event generation</param>
-        private async Task ProcessClashEffectsAsync(GameState gameState, CardInstance attacker, CardInstance defender, GameActionContext context)
-        {
-            try
-            {
-                _logger.LogDebug("[GameService:{GameId}] Processing clash effects between {AttackerInstanceId} and {DefenderInstanceId}",
-                    gameState.GameId, attacker.InstanceId, defender.InstanceId);
-
-                // Create scope for dependency injection
-                using var scope = _serviceScopeFactory.CreateScope();
-                var eventProcessor = scope.ServiceProvider.GetRequiredService<IEventProcessor>();
-
-                // Create proper ClashEvent for ability processing
-                var clashEvent = new ClashEvent(attacker, defender);
-
-                // Create game context for ability processing
-                var gameContext = new GameContext(gameState, attacker.OwnerPlayerId, _mapper, clashEvent);
-
-                // Process the clash event through the event processor to trigger abilities
-                var processorResult = await eventProcessor.ProcessEventAsync(clashEvent, gameContext);
-
-                // Add generated events to context
-                if (processorResult.ResultingDtos != null)
-                {
-                    context.Events.AddRange(processorResult.ResultingDtos);
-                }
-
-                _logger.LogDebug("[GameService:{GameId}] ClashEvent processed. Generated {EventCount} events",
-                    gameState.GameId, processorResult.ResultingDtos?.Count ?? 0);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Error processing clash effects between {AttackerInstanceId} and {DefenderInstanceId}",
-                    gameState.GameId, attacker.InstanceId, defender.InstanceId);
-                // Don't rethrow - clash effects failure shouldn't break combat
-            }
-        }
-
-
-
-        /// <summary>
-        /// Prepares hand update information for later broadcasting (synchronous version for use within locks)
-        /// </summary>
-        /// <param name="gameId">Game identifier</param>
-        /// <param name="playerId">Player identifier</param>
-        /// <param name="hand">Player's current hand</param>
-        /// <param name="context">Game action context to add events to</param>
-        private void PrepareHandUpdateEvent(string gameId, Guid playerId, List<CardInstance> hand, GameActionContext context)
-        {
-            try
-            {
-                _logger.LogDebug("[GameService:{GameId}] Preparing hand update for Player {PlayerId} with {CardCount} cards",
-                    gameId, playerId, hand.Count);
-
-                // Convert hand to DTOs for client communication
-                var handDtos = hand.Select(card => _mapper.Map<CardInstanceDto>(card)).ToList();
-
-                // Create deck update event (since HandUpdate is deprecated, we use DeckUpdate for hand count changes)
-                // Note: This is a workaround since HandUpdate is deprecated
-                var deckUpdateEvent = new DeckUpdateEventDto(playerId, hand.Count);
-
-                // Add the event to context for later broadcasting outside the lock
-                context.Events.Add(deckUpdateEvent);
-
-                _logger.LogDebug("[GameService:{GameId}] Hand update event prepared for Player {PlayerId}",
-                    gameId, playerId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Error preparing hand update for Player {PlayerId}",
-                    gameId, playerId);
-                // Don't rethrow - hand update failure shouldn't break the game flow
-            }
-        }
-
-        /// <summary>
-        /// Triggers end-of-turn effects for the specified player (synchronous version for use within locks)
-        /// </summary>
-        /// <param name="gameState">Current game state</param>
-        /// <param name="endingPlayerState">Player whose turn is ending</param>
-        /// <param name="context">Game action context for event generation</param>
-        private void TriggerEndOfTurnEffects(GameState gameState, PlayerState endingPlayerState, GameActionContext context)
-        {
-            _logger.LogDebug("[GameService:{GameId}] Triggering end-of-turn effects for Player {PlayerId}",
-                gameState.GameId, endingPlayerState.PlayerId);
-
-            try
-            {
-                // Create end-of-turn event using the correct class from CoreGameEvents
-                var playerStateDto = _mapper.Map<PlayerStateDto>(endingPlayerState);
-                var endOfTurnEvent = new TurnEndEvent(playerStateDto);
-
-                // Add the event to context for processing outside the lock
-                // Note: Complex async processing should be handled by the caller outside the lock
-                context.Events.Add(new TurnEndedEventDto(endingPlayerState.PlayerId,
-                    gameState.GetOpponentPlayerState(endingPlayerState.PlayerId)?.PlayerId ?? Guid.Empty));
-
-                _logger.LogDebug("[GameService:{GameId}] End-of-turn effects processed synchronously",
-                    gameState.GameId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Error triggering end-of-turn effects for Player {PlayerId}",
-                    gameState.GameId, endingPlayerState.PlayerId);
-                // Don't rethrow - end-of-turn effects failure shouldn't break the turn transition
-            }
-        }
-
-        /// <summary>
-        /// Triggers end-of-turn effects for the specified player (async version for use outside locks)
-        /// </summary>
-        /// <param name="gameState">Current game state</param>
-        /// <param name="endingPlayerState">Player whose turn is ending</param>
-        /// <param name="context">Game action context for event generation</param>
-        private async Task TriggerEndOfTurnEffectsAsync(GameState gameState, PlayerState endingPlayerState, GameActionContext context)
-        {
-            _logger.LogDebug("[GameService:{GameId}] Triggering end-of-turn effects for Player {PlayerId}",
-                gameState.GameId, endingPlayerState.PlayerId);
-
-            try
-            {
-                // Create scope for dependency injection
-                using var scope = _serviceScopeFactory.CreateScope();
-                var abilityManager = scope.ServiceProvider.GetRequiredService<AbilityManager>();
-                var eventProcessor = scope.ServiceProvider.GetRequiredService<IEventProcessor>();
-
-                // Create end-of-turn event using the correct class from CoreGameEvents
-                var playerStateDto = _mapper.Map<PlayerStateDto>(endingPlayerState);
-                var endOfTurnEvent = new TurnEndEvent(playerStateDto);
-
-                // Create game context for ability processing
-                var gameContext = new GameContext(gameState, endingPlayerState.PlayerId, _mapper, endOfTurnEvent);
-
-                // Process the event through the event processor to trigger abilities
-                var processorResult = await eventProcessor.ProcessEventAsync(endOfTurnEvent, gameContext);
-
-                // Add generated events to context
-                if (processorResult.ResultingDtos != null)
-                {
-                    context.Events.AddRange(processorResult.ResultingDtos);
-                }
-
-                _logger.LogDebug("[GameService:{GameId}] End-of-turn effects processed. Generated {EventCount} events",
-                    gameState.GameId, processorResult.ResultingDtos?.Count ?? 0);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Error triggering end-of-turn effects for Player {PlayerId}",
-                    gameState.GameId, endingPlayerState.PlayerId);
-                // Don't rethrow - end-of-turn effects failure shouldn't break the turn transition
-            }
-        }
-
-        /// <summary>
-        /// 重构后的攻击方法 - 使用AttackEffectHandler
-        /// 保持GameService只负责验证、调度和队列管理职责
-        /// </summary>
-        private async Task<bool> AttackAsync(string gameId, Guid playerId, AttackActionDto actionDto, GameActionContext context)
-        {
-            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} executing Attack: Attacker={AttackerUid}, Target={TargetUid}.",
-                gameId, playerId, actionDto.AttackerUid, actionDto.TargetUid);
-
-
-
-            try
-            {
-                // 确定攻击目标类型
-                var targetType = AttackTargetType.Unit; // 默认攻击单位
-                if (_gameStates.TryGetValue(gameId, out var gameState))
-                {
-                    var opponentPlayer = gameState.GetOpponentPlayerState(playerId);
-                    if (opponentPlayer != null && actionDto.TargetUid == opponentPlayer.PlayerId)
-                    {
-                        targetType = AttackTargetType.Player;
-                    }
-                }
-
-                var parameters = new Dictionary<string, ValueConfig>
-                {
-                    { "attackerInstanceId", ValueConfig.Static(actionDto.AttackerUid) },
-                    { "targetId", ValueConfig.Static(actionDto.TargetUid) },
-                    { "targetType", ValueConfig.Static(targetType) },
-                    { "forceAttack", ValueConfig.Static(false) },
-                    { "attackReason", ValueConfig.Static("PlayerAction") }
-                };
-
-                var events = await ExecuteEffectHandlerAsync(gameId, playerId, "attack", parameters, context);
-
-                _logger.LogInformation("[GameService:{GameId}] Attack completed successfully for Player {PlayerId}. Generated {EventCount} events.",
-                    gameId, playerId, events.Count);
-
-                return true;
-            }
-            catch (GameLogicException ex)
-            {
-                _logger.LogWarning(ex, "[GameService:{GameId}] Game Logic Error during Attack for Player {PlayerId}", gameId, playerId);
-                throw; // Let the Hub handle sending error to client
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during Attack for Player {PlayerId}", gameId, playerId);
-                throw new GameLogicException("An unexpected error occurred during the attack.", ex); // Wrap for Hub
-            }
-        } // End of AttackAsync method
-
-        /// <summary>
-        /// Determines if a player can evolve units this turn based on game rules.
-        /// </summary>
-        /// <param name="playerState">The player state to check</param>
-        /// <returns>True if the player can evolve units this turn</returns>
-        private bool CanPlayerEvolve(PlayerState playerState)
-        {
-            // Player can evolve if they have unlocked evolution and have EP available
-            return playerState.MaxEvolutionPoints > 0 && playerState.CurrentEvolutionPoints > 0;
-        }
-        /// <summary>
-        /// 重构后的进化方法 - 使用EvolveEffectHandler
-        /// 保持GameService只负责验证、调度和队列管理职责
-        /// </summary>
-        private async Task EvolveAsync(string gameId, Guid playerId, EvolveActionDto actionDto, GameActionContext context)
-        {
-            _logger.LogInformation("[GameService:{GameId}] Player {PlayerId} attempting Evolve: Unit={UnitUID}",
-                gameId, playerId, actionDto.UnitUid);
-
-            try
-            {
-                var parameters = new Dictionary<string, ValueConfig>
-                {
-                    { "unitInstanceId", ValueConfig.Static(actionDto.UnitUid) },
-                    { "forceEvolve", ValueConfig.Static(false) },
-                    { "evolveReason", ValueConfig.Static("PlayerAction") }
-                };
-
-                var events = await ExecuteEffectHandlerAsync(gameId, playerId, "evolve", parameters, context);
-
-                _logger.LogInformation("[GameService:{GameId}] Evolve completed successfully for Player {PlayerId}. Generated {EventCount} events.",
-                    gameId, playerId, events.Count);
-
-                await Task.CompletedTask;
-            }
-            catch (GameLogicException ex)
-            {
-                _logger.LogWarning(ex, "[GameService:{GameId}] Game Logic Error during Evolve for Player {PlayerId}", gameId, playerId);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during Evolve for Player {PlayerId}", gameId, playerId);
-                throw new GameLogicException("An unexpected error occurred during unit evolution.", ex);
-            }
-        }
-        /// <summary>
-        /// Checks if a card is currently playable by a player, considering cost, field space, and pre-play conditions.
-        /// Also provides information about potential effect targets for UI purposes.
-        /// </summary>
-        /// <param name="gameId">The ID of the game.</param>
-        /// <param name="playerId">The ID of the player attempting to play the card.</param>
-        /// <param name="cardInstanceId">The InstanceId of the card in the player's hand.</param>
-        /// <returns>A DTO containing playability status and target information.</returns>
-
         // Removed the placeholder CreateDeckFromDefinitionAsync method as it's replaced by inline logic
         /// <summary&gt;
         /// Contains the core logic for checking if a card is playable, separated from the initial data fetching.
@@ -1885,7 +1160,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 // Field Space Check (if Follower)
-                if (Enum.TryParse<CardType>(cardDefinition.Type, true, out var cardType) && cardType == CardType.Follower)
+                if (cardDefinition.Type == CardType.Follower)
                 {
                     if (playerState.Field.Count >= MaxBoardSize)
                     {
@@ -1899,25 +1174,21 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting PrePlay condition checks for Card {CardName} ({CardInstanceId}).", gameId, cardDefinition.Name, cardInstanceId);
                 var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
                 var playTriggerConfigs = abilityConfigs
-                    .Where(ac => ac.Trigger.EventTypes.Contains(GameEventType.CardPlayed))
+                    .Where(ac => ac.Trigger.EventTypes.Contains(EventType.PlayCard))
                     .ToList();
 
-                using (var scope = _serviceScopeFactory.CreateScope())
-                {
-                    var conditionEvaluator = scope.ServiceProvider.GetRequiredService<IConditionEvaluator>();
-                    var gameContext = new GameContext(gameState, playerId, _mapper, null, cardInHand); // TriggeringEvent is null for checks
+                var gameContext = new GameContext(gameState, playerId, _mapper, _serviceProvider, null, cardInHand); // IServiceProvider is not needed here
 
-                    foreach (var config in playTriggerConfigs)
+                foreach (var config in playTriggerConfigs)
+                {
+                    foreach (var condition in config.PreConditions)
                     {
-                        foreach (var condition in config.PreConditions)
+                        if (!await _conditionEvaluator.EvaluateAsync(condition, gameContext))
                         {
-                            if (!await conditionEvaluator.EvaluateAsync(condition, gameContext))
-                            {
-                                result.IsPlayable = false;
-                                result.FailureReason = $"打出前置条件未满足: {condition.Name ?? condition.Expression}";
-                                _logger.LogInformation("[CheckPlayabilityCore:{GameId}] PrePlay condition failed for Card {CardInstanceId}: {ConditionExpression}", gameId, cardInstanceId, condition.Expression);
-                                return result;
-                            }
+                            result.IsPlayable = false;
+                            result.FailureReason = $"打出前置条件未满足: {condition.Name ?? condition.Expression}";
+                            _logger.LogInformation("[CheckPlayabilityCore:{GameId}] PrePlay condition failed for Card {CardInstanceId}: {ConditionExpression}", gameId, cardInstanceId, condition.Expression);
+                            return result;
                         }
                     }
                 }
@@ -1931,41 +1202,37 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (playTriggerConfigs.Any()) // playTriggerConfigs is available here now
                 {
-                    using (var scope = _serviceScopeFactory.CreateScope())
+
+                    foreach (var config in playTriggerConfigs)
                     {
-                        var targetSelectionService = scope.ServiceProvider.GetRequiredService<TargetSelectionService>();
-                        var gameContext = new GameContext(gameState, playerId, _mapper, null, cardInHand);
-
-                        foreach (var config in playTriggerConfigs)
+                        foreach (var effect in config.Effects)
                         {
-                            foreach (var effect in config.Effects)
+                            bool isTargetRequired = effect.Target?.PlayerChoiceOptions?.IsRequired == true;
+
+                            if (isTargetRequired)
                             {
-                                bool isTargetRequired = effect.Target?.PlayerChoiceOptions?.IsRequired == true;
+                                result.RequiresTargetSelection = true;
+                                _logger.LogTrace("[CheckPlayabilityCore:{GameId}] Effect requires target (IsRequired=true). Checking valid targets for Card {CardInstanceId}.", gameId, cardInstanceId);
 
-                                if (isTargetRequired)
+                                try
                                 {
-                                    result.RequiresTargetSelection = true;
-                                    _logger.LogTrace("[CheckPlayabilityCore:{GameId}] Effect requires target (IsRequired=true). Checking valid targets for Card {CardInstanceId}.", gameId, cardInstanceId);
+                                    if (effect.Target == null) continue;
+                                    var validTargets = await _targetSelectionService.SelectTargetsAsync(effect.Target, gameContext);
 
-                                    try
+                                    if (validTargets.Any())
                                     {
-                                        var validTargets = await targetSelectionService.SelectTargetsAsync(effect.Target, gameContext);
-
-                                        if (validTargets.Any())
-                                        {
-                                            result.HasValidTargets = true;
-                                            validTargetIdSet = validTargets.Select(t => t.Id).ToHashSet();
-                                            _logger.LogTrace("[CheckPlayabilityCore:{GameId}] Found {Count} valid targets for an effect of Card {CardInstanceId}.", gameId, validTargets.Count, cardInstanceId);
-                                        }
-                                        else
-                                        {
-                                            _logger.LogTrace("[CheckPlayabilityCore:{GameId}] No valid targets found for an effect of Card {CardInstanceId}.", gameId, cardInstanceId);
-                                        }
+                                        result.HasValidTargets = true;
+                                        validTargetIdSet = new HashSet<Guid>(validTargets.Select(t => t.Id));
+                                        _logger.LogTrace("[CheckPlayabilityCore:{GameId}] Found {Count} valid targets for an effect of Card {CardInstanceId}.", gameId, validTargets.Count, cardInstanceId);
                                     }
-                                    catch (Exception ex)
+                                    else
                                     {
-                                        _logger.LogError(ex, "[CheckPlayabilityCore:{GameId}] Error during SelectTargetsAsync for Card {CardInstanceId}.", gameId, cardInstanceId);
+                                        _logger.LogTrace("[CheckPlayabilityCore:{GameId}] No valid targets found for an effect of Card {CardInstanceId}.", gameId, cardInstanceId);
                                     }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "[CheckPlayabilityCore:{GameId}] Error during SelectTargetsAsync for Card {CardInstanceId}.", gameId, cardInstanceId);
                                 }
                             }
                         }
@@ -2002,7 +1269,7 @@ namespace ShadowverseBeyond.Server.Services
             {
                 // --- 1. Get Game State and Basic Entities ---
                 // Use GetGameStateAsync which returns the domain entity
-                var gameState = await GetGameStateAsync(gameId);
+                var gameState = GetGameState(gameId);
                 if (gameState == null)
                 {
                     result.IsPlayable = false;
@@ -2089,7 +1356,7 @@ namespace ShadowverseBeyond.Server.Services
 
             try
             {
-                var gameState = await GetGameStateAsync(gameId);
+                var gameState = GetGameState(gameId);
                 if (gameState == null)
                 {
                     _logger.LogWarning("[UpdateHandPlayability:{GameId}] Game not found.", gameId);
@@ -2132,12 +1399,13 @@ namespace ShadowverseBeyond.Server.Services
                 // Ensure _hubContext is injected and available
                 if (_hubContext != null)
                 {
-                    // Use the client method name defined in IGameClient (e.g., ReceiveHandPlayabilityUpdate)
-                    // Using string literal as ClientMethodNames class/enum was not found
-                    // Get the IClientProxy for the specific user and call the SendAsync extension method
-                    var clientProxy = _hubContext.Clients.User(playerId.ToString());
+                    // 【修复】使用Group而不是User，因为前端使用查询字符串连接，没有设置用户身份验证
+                    // SignalR的Clients.User()需要用户身份验证，但我们使用的是查询字符串传递playerId
+                    // 所以改用Clients.Group()向整个游戏组广播，然后前端根据PlayerId过滤
+                    string groupName = $"Game_{gameId}";
+                    var clientProxy = _hubContext.Clients.Group(groupName);
                     await clientProxy.SendAsync("ReceiveHandPlayabilityUpdate", updateDto);
-                    _logger.LogInformation("[GameService:{GameId}] Sent hand playability update to Player {PlayerId} with {Count} results.", gameId, playerId, playabilityResults.Count);
+                    _logger.LogInformation("[GameService:{GameId}] Sent hand playability update to Game Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
                 }
                 else
                 {
@@ -2156,138 +1424,6 @@ namespace ShadowverseBeyond.Server.Services
         // --- Existing Methods Below ---
         // --- Helper Methods for End Turn Logic ---
 
-        /// <param name="drawCount">The number of cards to draw.</param>
-        /// <param name="context">The game action context for generating events.</param>
-        /// <returns>A list of cards drawn.</returns>
-        private List<CardInstance> DrawCards(PlayerState playerState, int drawCount, GameActionContext? context = null)
-        {
-            _logger.LogDebug("[GameService] Player {PlayerId} attempting to draw {DrawCount} cards. Deck size: {DeckSize}",
-                playerState.PlayerId, drawCount, playerState.Deck.Count);
-
-            List<CardInstance> drawnCards = new();
-            for (int i = 0; i < drawCount; i++)
-            {
-                if (playerState.Deck.Count > 0)
-                {
-                    CardInstance drawnCard = playerState.Deck[0];
-                    drawnCards.Add(drawnCard);
-                    playerState.Deck.RemoveAt(0);
-
-                    // Generate CardDrawn event if context is provided
-                    if (context != null)
-                    {
-                        // Use correct property name: DefinitionId
-                        context.Events.Add(new CardDrawnEventDto(playerState.PlayerId, drawnCard.InstanceId.ToString(), drawnCard.DefinitionId.ToString()));
-                        _logger.LogDebug("[GameService] Generated CardDrawnEvent for CardInstance ({CardInstanceId})",
-                            drawnCard.InstanceId);
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("[GameService] Attempted to draw from empty deck for Player {PlayerId}.", playerState.PlayerId);
-                    break;
-                }
-            }
-
-            // DeckCount is read-only, no need to set it manually
-            playerState.Hand.AddRange(drawnCards);
-
-            // Generate DeckUpdate event if context is provided and cards were drawn
-            if (context != null && drawnCards.Count > 0)
-            {
-                context.Events.Add(new DeckUpdateEventDto(playerState.PlayerId, playerState.DeckCount));
-                _logger.LogDebug("[GameService] Generated DeckUpdateEvent for Player {PlayerId}. New deck size: {DeckSize}",
-                    playerState.PlayerId, playerState.DeckCount);
-            }
-
-            _logger.LogDebug("[GameService] Player {PlayerId} drew {ActualDrawCount} cards. New hand size: {HandSize}, New deck size: {DeckSize}",
-                 playerState.PlayerId, drawnCards.Count, playerState.Hand.Count, playerState.DeckCount);
-            return drawnCards;
-        }
-
-
-        /// <summary>
-        /// Processes end-of-turn effects for the current player.
-        /// Placeholder: Currently only sets HasTakenFirstTurn.
-        /// </summary>
-        /// <param name="currentPlayerState">The state of the player whose turn is ending.</param>
-        /// <param name="gameState">The current game state.</param>
-        /// <returns>A list of game events generated during end-of-turn processing.</returns>
-        /// <summary>
-        /// Processes end-of-turn effects for the current player.
-        /// Based on M7 Design Doc section 3.1, Step 4.
-        /// </summary>
-        /// <param name="endingPlayerState">The state of the player whose turn is ending.</param>
-        /// <param name="gameState">The current game state.</param>
-        /// <returns>A list of events generated during end-of-turn processing.</returns>
-        // Changed DTOs to Domain Entities
-        private void ProcessEndOfTurn(PlayerState endingPlayerState, GameState gameState, GameActionContext context)
-        {
-            // Removed TurnNumber from log
-            _logger.LogInformation("[GameService:{GameId}] Processing EndOfTurn for Player {PlayerId}.",
-                gameState.GameId, endingPlayerState.PlayerId);
-
-
-            // M7 Design Doc - Step 4.1: Update HasTakenFirstTurn
-            if (!endingPlayerState.HasTakenFirstTurn)
-            {
-                endingPlayerState.HasTakenFirstTurn = true;
-                _logger.LogDebug("[GameService:{GameId}] Player {PlayerId} marked as having taken their first turn.", gameState.GameId, endingPlayerState.PlayerId);
-            }
-
-            // M7 Design Doc - Step 4.2: Trigger "End of your turn" effects
-            // Note: End-of-turn effects are processed synchronously to avoid lock issues
-            // Complex async effects should be handled outside the lock context
-            TriggerEndOfTurnEffects(gameState, endingPlayerState, context);
-
-            // M7 Design Doc - Step 4.3: Reset Attack Counts/States for player's units
-            foreach (var unit in endingPlayerState.Field) // Use domain entity Field
-            {
-                // Use correct property name: AttacksThisTurn
-                unit.AttacksThisTurn = 0; // Reset attack count on domain entity
-                                          // Reset CanAttack unless the unit has Storm (Storm allows attacking the turn it's played AND subsequent turns)
-                                          // Rush only allows attack on the turn it's played. Non-Rush/Storm units regain CanAttack at start of their turn.
-                                          // For simplicity now, we only reset the count. CanAttack logic handled in ProcessStartOfTurn.
-                                          // unit.CanAttack = unit.Keywords.Contains("Storm", StringComparer.OrdinalIgnoreCase); // Reset CanAttack based on Storm status? Let's handle CanAttack reset in StartOfTurn.
-            }
-            _logger.LogDebug("[GameService:{GameId}] Reset attack counts for Player {PlayerId}'s units.", gameState.GameId, endingPlayerState.PlayerId);
-
-
-            // M7 Design Doc - Step 4.4: Generate TurnEndedEvent
-            // Use helper method to get opponent state from domain GameState
-            var opponentPlayerState = gameState.GetOpponentPlayerState(endingPlayerState.PlayerId);
-            if (opponentPlayerState == null)
-            {
-                _logger.LogError("[GameService:{GameId}] Critical: Could not find opponent for Player {PlayerId} during ProcessEndOfTurn.", gameState.GameId, endingPlayerState.PlayerId);
-                // In a real scenario, might need more robust error handling, but for now, let the caller handle potential issues.
-                // Returning empty list might mask the problem. Throwing might be better if state is inconsistent.
-                throw new GameLogicException($"Opponent state inconsistent for player {endingPlayerState.PlayerId} in game {gameState.GameId}.");
-            }
-            _logger.LogWarning("[GS_DEBUG_EOT:{GameId}] Preparing TurnEndedEvent. endingPlayerId={EndingPlayer}, nextPlayerId={NextPlayer}", gameState.GameId, endingPlayerState.PlayerId, opponentPlayerState.PlayerId); // DEBUG LOG
-
-            // Global turn number removed. TurnEndedEvent now only needs player IDs.
-            // Removed: int endingTurnNumber = gameState.TurnNumber;
-            // Use PlayerId from domain entities for the DTO
-            context.Events.Add(new TurnEndedEventDto(endingPlayerState.PlayerId, opponentPlayerState.PlayerId)); // M8 Change: Use context
-                                                                                                                 // Removed endingTurnNumber and {TurnNumber} from log as it no longer exists
-            _logger.LogInformation("[GameService:{GameId}] Generated TurnEndedEvent. Next Player: {NextPlayerId}.",
-                gameState.GameId, opponentPlayerState.PlayerId);
-
-
-            _logger.LogInformation("[GameService:{GameId}] EndOfTurn processing complete for Player {PlayerId}.", gameState.GameId, endingPlayerState.PlayerId); // M8 Change: Removed event count and return
-                                                                                                                                                                 // M8 Change: Removed return events;
-        } // End of ProcessEndOfTurn (Replacement)
-
-        /// <summary>
-        /// Processes start-of-turn effects for the player whose turn is beginning.
-        /// Handles PP update, card draw (including P2 first turn bonus), EP update, game state updates,
-        /// resetting flags/unit states, and other start-of-turn triggers based on M7 Design Doc section 3.1, Step 5.
-        /// </summary>
-        /// <param name="startingPlayerState">The state of the player whose turn is starting.</param>
-        /// <param name="gameState">The current game state. This method will modify it.</param>
-        /// <param name="isSecondPlayerFirstTurn">Indicates if this is the second player's very first turn (for draw 2 rule).</param>
-        /// <returns>A list of game events generated during start-of-turn processing.</returns>
-
         /// <summary>
         /// Creates a new CardInstance domain entity from a CardDefinition.
         /// </summary>
@@ -2295,6 +1431,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="ownerPlayerId">The ID of the player who owns this instance.</param>
         /// <param name="initialZone">The initial zone for the card instance.</param>
         /// <returns>A new CardInstance object.</returns>
+        [Obsolete("Use ICardFactory.CreateAndRegisterNewCardAsync instead for consistent registration.")]
         private CardInstance CreateCardInstanceFromDefinition(CardDefinition cardDef, Guid ownerPlayerId, CardZone initialZone)
         {
             if (cardDef == null)
@@ -2310,19 +1447,27 @@ namespace ShadowverseBeyond.Server.Services
                 ownerPlayerId: ownerPlayerId
             )
             {
-                CardType = cardDef.Type ?? string.Empty,
+                CardType = cardDef.Type,
                 CurrentZone = initialZone,
+                BaseCost = cardDef.Cost,            // 【修复】设置基础费用
                 CurrentCost = cardDef.Cost,
+                BaseAttack = cardDef.Attack ?? 0,   // 【修复】设置基础攻击力
                 CurrentAttack = cardDef.Attack ?? 0, // Initialize current stats from base
+                BaseHealth = cardDef.Health ?? 0,   // 【修复】设置基础生命值
                 CurrentHealth = cardDef.Health ?? 0,
                 MaxHealth = cardDef.Health ?? 0,   // Initialize max health from base
+                Name = cardDef.Name,                // 【修复】设置卡牌名称
+                Description = cardDef.Description ?? "", // 【修复】设置卡牌描述
+                Rarity = cardDef.Rarity ?? "",      // 【修复】设置稀有度
+                Class = cardDef.Class ?? "",        // 【修复】设置职业
+                Tribe = cardDef.Tribe,              // 【修复】设置种族
                 IsEvolved = false,                  // Starts unevolved
                 CanAttack = false,                  // Default CanAttack state (adjust based on zone/keywords if needed)
                                                     // Removed CanEvolve - evolution eligibility is determined by game rules
                 AttacksThisTurn = 0,
                 Countdown = null,                   // Initialize Countdown (relevant for amulets)
-                FieldPosition = null                // Initialize FieldPosition
-                                                    // AbilityState is initialized internally
+                ZoneIndex = null                // Initialize FieldPosition
+                                                // AbilityState is initialized internally
             };
 
             // Set base keywords
@@ -2397,56 +1542,6 @@ namespace ShadowverseBeyond.Server.Services
             return hand;
         }
 
-        /// <summary>
-        /// Reassigns field positions for all units on a player's field.
-        /// This should be called after units are removed from the field to maintain correct positions.
-        /// </summary>
-        /// <param name="playerState">The player whose field positions need to be updated</param>
-        /// <param name="gameId">Game ID for logging</param>
-        private void ReassignFieldPositions(PlayerState playerState, string gameId)
-        {
-            _logger.LogDebug("[GameService:{GameId}] Reassigning field positions for Player {PlayerId}. Field size: {FieldSize}",
-                gameId, playerState.PlayerId, playerState.Field.Count);
-
-            for (int i = 0; i < playerState.Field.Count; i++)
-            {
-                var unit = playerState.Field[i];
-                var oldPosition = unit.FieldPosition;
-                unit.FieldPosition = i;
-
-                if (oldPosition != i)
-                {
-                    _logger.LogTrace("[GameService:{GameId}] Updated field position for unit {InstanceId}: {OldPosition} -> {NewPosition}",
-                        gameId, unit.InstanceId, oldPosition, i);
-                }
-            }
-
-            _logger.LogDebug("[GameService:{GameId}] Field position reassignment completed for Player {PlayerId}",
-                gameId, playerState.PlayerId);
-        }
-
-        /// <summary>
-        /// Assigns field position to a newly added unit.
-        /// </summary>
-        /// <param name="cardInstance">The card instance to assign position to</param>
-        /// <param name="playerState">The player state containing the field</param>
-        /// <param name="gameId">Game ID for logging</param>
-        private void AssignFieldPosition(CardInstance cardInstance, PlayerState playerState, string gameId)
-        {
-            // Assign position based on current index in field
-            var position = playerState.Field.IndexOf(cardInstance);
-            if (position >= 0)
-            {
-                cardInstance.FieldPosition = position;
-                _logger.LogDebug("[GameService:{GameId}] Assigned field position {FieldPosition} to unit {InstanceId} for Player {PlayerId}",
-                    gameId, position, cardInstance.InstanceId, playerState.PlayerId);
-            }
-            else
-            {
-                _logger.LogWarning("[GameService:{GameId}] Could not find unit {InstanceId} in Player {PlayerId}'s field to assign position",
-                    gameId, cardInstance.InstanceId, playerState.PlayerId);
-            }
-        }
 
         // --- Helper Methods for Attack Logic ---
 
@@ -2530,61 +1625,6 @@ namespace ShadowverseBeyond.Server.Services
             return null;
         }
 
-        // M8 Change: Signature updated to use GameActionContext
-        private void ApplyDamage(ICard targetEntity, int damage, GameActionContext context, Guid sourcePlayerId, Guid targetPlayerId, Guid? sourceUid, string damageType)
-        {
-            // Check for null or non-positive damage first
-            if (targetEntity == null || damage <= 0) return; // Corrected <=
-
-            // Determine target UID for logging/events and get original health
-            Guid eventTargetUid;
-            int originalHealth;
-            int newHealth;
-            int changeAmount;
-
-            if (targetEntity is CardInstanceDto cardInstance)
-            {
-                eventTargetUid = cardInstance.InstanceId;
-                originalHealth = cardInstance.CurrentHealth; // Use CurrentHealth for CardInstanceDto
-                _logger.LogTrace("[GameService:ApplyDamage] Target is CardInstanceDto. Using InstanceId '{InstanceId}'. Original Health: {OriginalHealth}", eventTargetUid, originalHealth);
-
-                // Apply damage to CardInstanceDto
-                cardInstance.CurrentHealth -= damage;
-                newHealth = cardInstance.CurrentHealth;
-            }
-            else if (targetEntity is PlayerStateDto playerState && playerState.LeaderCard != null)
-            {
-                // Target is PlayerStateDto, use LeaderCard's InstanceId and Health
-                eventTargetUid = playerState.LeaderCard.InstanceId;
-                originalHealth = playerState.LeaderCard.CurrentHealth; // Use LeaderCard.CurrentHealth
-                _logger.LogTrace("[GameService:ApplyDamage] Target is PlayerStateDto. Using LeaderCard InstanceId '{InstanceId}'. Original Health: {OriginalHealth}", eventTargetUid, originalHealth);
-
-                // Apply damage to LeaderCard
-                playerState.LeaderCard.CurrentHealth -= damage;
-                newHealth = playerState.LeaderCard.CurrentHealth;
-            }
-            else
-            {
-                // Fallback/Error case: Log warning and do not apply damage if type is unexpected or LeaderCard is null
-                eventTargetUid = targetEntity.Uid; // Use original Uid as fallback for logging
-                originalHealth = targetEntity.Health; // Use original Health as fallback for logging
-                _logger.LogWarning("[GameService:ApplyDamage] Target entity type is unexpected ({EntityType}) or LeaderCard is null for PlayerStateDto. Damage not applied. Fallback UID: '{FallbackUid}'. Original Health: {OriginalHealth}", targetEntity.GetType().Name, eventTargetUid, originalHealth);
-                return; // Do not proceed with damage application or event generation for unexpected types
-            }
-
-            changeAmount = newHealth - originalHealth;
-
-            // Log damage application (using eventTargetUid)
-            _logger.LogDebug("[GameService] Applying {Damage} damage to Entity {TargetUid} (Owned by {TargetPlayerId}) from Source {SourceUid} (Player {SourcePlayerId}). Type: {DamageType}. Original Health: {OriginalHealth}, New Health: {NewHealth}",
-                damage, eventTargetUid, targetPlayerId, sourceUid.ToString() ?? "Unknown", sourcePlayerId, damageType, originalHealth, newHealth);
-
-            // Generate events (using eventTargetUid and correct newHealth/changeAmount)
-            context.Events.Add(new DamageDealtEventDto(sourcePlayerId, eventTargetUid, damage, targetPlayerId, sourceUid, damageType));
-            context.Events.Add(new HealthChangedEventDto(targetPlayerId, eventTargetUid, newHealth, changeAmount));
-
-            _logger.LogDebug("[GameService] Entity {TargetUid} health changed to {NewHealth}. Change: {ChangeAmount}.",
-               eventTargetUid, newHealth, changeAmount);
-        }
 
         // 已删除：CheckAndHandleDeath方法 - 死亡检查现在通过事件系统和EffectHandler处理
         // --- Helper Methods for HandlePlayCardAsync ---
@@ -2653,11 +1693,8 @@ namespace ShadowverseBeyond.Server.Services
             if (playerState.CurrentPlayPoints < cardDefinition.Cost) throw new GameLogicException($"Not enough PP to play {cardDefinition.Name}. Requires {cardDefinition.Cost}, has {playerState.CurrentPlayPoints}.");
             // Use centralized game constants
             const int MaxFieldSize = GameConstants.Field.MaxFieldSize;
-            // Use domain entity property: Type (string)
-            if (!Enum.TryParse<CardType>(cardDefinition.Type, true, out var cardType))
-            {
-                throw new GameLogicException($"Unknown card type: {cardDefinition.Type}");
-            }
+            // Use domain entity property: Type (CardType enum)
+            var cardType = cardDefinition.Type;
 
             if (cardType == CardType.Follower || cardType == CardType.Amulet) // Both take field space
             {
@@ -2686,14 +1723,22 @@ namespace ShadowverseBeyond.Server.Services
             {
                 // Map properties from CardDefinition to CardInstance
                 CardType = cardDefinition.Type,
+                BaseCost = cardDefinition.Cost,         // 【修复】设置基础费用
                 CurrentCost = cardDefinition.Cost,
+                BaseAttack = cardDefinition.Attack ?? 0, // 【修复】设置基础攻击力
                 CurrentAttack = cardDefinition.Attack ?? 0,
+                BaseHealth = cardDefinition.Health ?? 0, // 【修复】设置基础生命值
                 CurrentHealth = cardDefinition.Health ?? 0,
                 MaxHealth = cardDefinition.Health ?? 0,
+                Name = cardDefinition.Name,             // 【修复】设置卡牌名称
+                Description = cardDefinition.Description ?? "", // 【修复】设置卡牌描述
+                Rarity = cardDefinition.Rarity ?? "",   // 【修复】设置稀有度
+                Class = cardDefinition.Class ?? "",     // 【修复】设置职业
+                Tribe = cardDefinition.Tribe,           // 【修复】设置种族
                 IsEvolved = false,
                 Countdown = null, // Followers don't have countdown
-                FieldPosition = null, // Position is set when added to field list
-                                      // Removed CanEvolve - evolution eligibility is determined by game rules
+                ZoneIndex = null, // Position is set when added to field list
+                                  // Removed CanEvolve - evolution eligibility is determined by game rules
                 AttacksThisTurn = 0,
                 CurrentZone = CardZone.Field // Set initial zone
                                              // ActiveEffects and AbilityState are initialized by CardInstance constructor
@@ -2707,139 +1752,6 @@ namespace ShadowverseBeyond.Server.Services
 
             return instance; // Return the domain entity
         }
-
-        // 已删除：ExecuteFollowerPlay方法 - 已被PlayCardEffectHandler替代
-
-        /// <summary>
-        /// Public method to explicitly trigger the execution of an AI player's turn.
-        /// Called by the Hub. Wraps the internal execution logic.
-        /// </summary>
-        // Made private as per queue design (AI turn triggered differently now)
-        private async Task TriggerAiTurnAsync(string gameId, Guid aiPlayerId)
-        {
-            _logger.LogInformation("[GameService:{GameId}] TriggerAiTurnAsync called for AI Player {PlayerId}.", gameId, aiPlayerId);
-            // We await the internal method to handle potential exceptions during setup/execution,
-            // even though the caller (Hub) might use fire-and-forget for this trigger method.
-            await ExecuteAiActionPhaseAsync(gameId, aiPlayerId);
-            _logger.LogDebug("[GameService:{GameId}] TriggerAiTurnAsync finished for AI Player {PlayerId}.", gameId, aiPlayerId); // Added Debug log
-        }
-        // --- AI Turn Execution Logic ---
-
-        /// <summary>
-        /// Executes the AI's turn asynchronously. Triggered by EndTurnAsync when it's the AI's turn.
-        /// This method runs fire-and-forget and should handle its own scope for dependencies.
-        /// </summary>
-        /// <param name="gameId">The ID of the game.</param>
-        /// <param name="aiPlayerId">The ID of the AI player whose turn it is.</param>
-        /// <param name="previousPlayerId">The ID of the player whose turn just ended.</param> // Roo Add: Parameter doc
-        // --- START AI TURN EXECUTION LOGIC (REPLACEMENT TARGET) ---
-        // Roo Modify: Make previousPlayerId optional
-        private async Task ExecuteAiActionPhaseAsync(string gameId, Guid aiPlayerId, string? previousPlayerId = null)
-        {
-            // Log which trigger context we are in (if previousPlayerId is provided, it's likely from EndTurn, otherwise StartTurn)
-            string triggerContext = previousPlayerId == null ? "ProcessStartOfTurn" : "EndTurnAsync (Opponent)";
-            _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Executing turn via AiTurnExecutor (Triggered by: {Context}). Previous Player: {PrevPlayer}",
-                gameId, aiPlayerId, triggerContext, previousPlayerId ?? "N/A");
-            // Create a scope to resolve the Scoped AiTurnExecutor
-            using var scope = _serviceProvider.CreateScope();
-            var aiTurnExecutorInstance = scope.ServiceProvider.GetRequiredService<AiTurnExecutor>();
-            _logger.LogDebug("[AI_TURN:{GameId}:{PlayerId}] Resolved AiTurnExecutor instance within scope.", gameId, aiPlayerId);
-
-            // --- AI Start-of-Turn Logic REMOVED ---
-            // StartPlayerTurnAsync is now called externally before this method.
-            // Call the AI execution logic using the resolved instance
-            _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Executing AI's main turn actions.", gameId, aiPlayerId);
-            // M8 Step 6: Create context, pass it, and broadcast after
-            var context = new GameActionContext();
-            _logger.LogDebug("[AI_TURN:{GameId}:{PlayerId}] Created GameActionContext for AI turn.", gameId, aiPlayerId);
-            await aiTurnExecutorInstance.ExecuteTurnAsync(gameId, aiPlayerId, context); // Pass context
-            _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] AiTurnExecutor (resolved via scope) completed successfully. Broadcasting {EventCount} collected events.", gameId, aiPlayerId, context.Events.Count);
-
-            // --- BUG-011 DEBUG LOG 2/3 REMOVED (Contained reference to HandUpdateEventDto) ---
-
-            await BroadcastEventsAsync(gameId, context.Events); // Broadcast collected events
-
-            // --- START: Logic to start next human player's turn ---
-            _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] AI turn execution complete. Checking if next player's turn should start.", gameId, aiPlayerId);
-            try
-            {
-                var gameState = await GetGameStateAsync(gameId); // Use existing helper
-                if (gameState == null)
-                {
-                    _logger.LogWarning("[AI_TURN:{GameId}:{PlayerId}] Could not retrieve game state after AI turn. Cannot start next turn.", gameId, aiPlayerId);
-                    return; // Exit if game state is gone
-                }
-
-                if (gameState.IsGameOver)
-                {
-                    _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Game is over after AI turn. Not starting next turn.", gameId, aiPlayerId);
-                    return; // Exit if game ended during AI turn
-                }
-
-                // Use helper method
-                var nextPlayer = gameState.GetOpponentPlayerState(aiPlayerId);
-
-                if (nextPlayer != null && !nextPlayer.IsAI)
-                {
-                    // --- BUG-010 DIAGNOSTIC LOGGING START ---
-                    _logger.LogWarning("[BUG-010_DIAG:{GameId}] Condition met: Next player ({NextPlayerId}) is Human (IsAI={IsAI}). Preparing to call StartPlayerTurnAsync.",
-                        gameId, nextPlayer.PlayerId, nextPlayer.IsAI);
-                    // Log relevant game state details before calling StartPlayerTurnAsync
-                    string gameStateDetails = $"GameOver={gameState?.IsGameOver}, CurrentPlayer={gameState?.CurrentPlayerId}"; // Add null checks
-                    _logger.LogWarning("[BUG-010_DIAG:{GameId}] GameState before StartPlayerTurnAsync call: {GameStateDetails}", gameId, gameStateDetails);
-                    // --- END BUG-010 DIAGNOSTIC LOGGING ---
-
-                    _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Next player ({NextPlayerId}) is human. Starting their turn.", gameId, aiPlayerId, nextPlayer.PlayerId); // Keep original log
-                                                                                                                                                                                  // Start the human player's turn
-                                                                                                                                                                                  // M8 Change: Create context, pass it, remove tuple deconstruction, capture bool result
-                                                                                                                                                                                  // M7 V1.1 Change: Removed context creation
-                    _logger.LogDebug("[AI_TURN:{GameId}:{PlayerId}] Preparing to start human player {NextPlayerId}'s turn.", gameId, aiPlayerId, nextPlayer.PlayerId);
-                    // M7 V1.1 Change: Call new signature, get DTO
-                    TurnStartedEventDto humanTurnStateEvent = await StartPlayerTurnAsync(gameId, nextPlayer.PlayerId);
-                    // Determine AI status from DTO if needed for logging/logic
-                    bool isNextTurnAiResult = humanTurnStateEvent.GameState.Players.FirstOrDefault(p => p.PlayerId == humanTurnStateEvent.GameState.CurrentPlayerId)?.IsAI ?? false;
-
-                    // --- BUG-010 DIAGNOSTIC LOGGING START ---
-                    // M7 V1.1 Change: Update log to use derived boolean result and indicate DTO return
-                    _logger.LogWarning("[BUG-010_DIAG:{GameId}] StartPlayerTurnAsync call completed. Returned IsAI={IsAiTurn}, Returned TurnStartedEventDto",
-                        gameId, isNextTurnAiResult);
-                    // --- END BUG-010 DIAGNOSTIC LOGGING ---
-
-
-                    // Broadcast the TurnStartedEventDto containing the full state for the human player's turn
-                    if (humanTurnStateEvent != null) // Add null check for safety
-                    {
-                        _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Broadcasting TurnStartedEventDto for start of human player {NextPlayerId}'s turn.", gameId, aiPlayerId, nextPlayer.PlayerId);
-                        await BroadcastEventAsync(gameId, humanTurnStateEvent); // Broadcast the specific DTO containing the full state
-                    }
-                    else // Added else block for clarity if DTO was null
-                    {
-                        _logger.LogWarning("[AI_TURN:{GameId}:{PlayerId}] humanTurnStateEvent was null after StartPlayerTurnAsync. Cannot broadcast turn start state.", gameId, aiPlayerId);
-                    }
-                } // <<< Corrected: This brace closes the 'if (nextPlayer != null && !nextPlayer.IsAI)' block
-                else if (nextPlayer == null) // <<< Corrected: 'else if' now correctly follows the 'if'
-                {
-                    _logger.LogWarning("[AI_TURN:{GameId}:{PlayerId}] Could not find opponent player after AI turn. Cannot start next turn.", gameId, aiPlayerId);
-                }
-                else // nextPlayer is AI // <<< Corrected: 'else' now correctly follows the 'else if'
-                {
-                    _logger.LogInformation("[AI_TURN:{GameId}:{PlayerId}] Next player ({NextPlayerId}) is AI. Not starting their turn here (should be handled by their own trigger).", gameId, aiPlayerId, nextPlayer.PlayerId);
-                }
-            } // <<< Corrected: This brace now correctly closes the 'try' block starting at line 2129
-            catch (Exception postAiEx)
-            {
-                _logger.LogError(postAiEx, "[AI_TURN:{GameId}:{PlayerId}] Error during post-AI turn processing (starting next human turn).", gameId, aiPlayerId);
-                // Decide if this error should affect game state or just be logged. Logging for now.
-            }
-            // --- END: Logic to start next human player's turn ---
-        } // <<< END ExecuteAiTurnInternalAsync method - Catch block removed as inner try-catch handles post-AI errors
-
-        /// <summary>
-        /// Broadcasts a list of game events to all clients connected to the specified game's group.
-        /// Loops through the list and calls the single-event broadcast helper.
-        /// </summary>
-        /// <param name="gameId">The ID of the game instance.</param>
-        /// <param name="events">The list of game events to broadcast.</param>
         public async Task BroadcastEventsAsync(string gameId, List<GameEventDto> events)
         {
             if (events == null || !events.Any())
@@ -2884,21 +1796,6 @@ namespace ShadowverseBeyond.Server.Services
             // <<< END ADDED LOG >>>
             _logger.LogDebug("[GameService:{GameId}] Broadcasting event {EventType} to group {GroupName}.", gameId, gameEvent.GetType().Name, groupName); // Keep original debug log too
 
-            // --- BUG-011 DETAILED BROADCAST PREP LOG REMOVED (Contained reference to HandUpdateEventDto) ---
-
-
-            // --- BUG-011 DEBUG LOG 3/3 ---
-            if (gameEvent is PpUpdateEventDto ppEvt)
-            {
-                {
-                    // Format string manually to bypass potential compiler issue with structured logging access
-                    string logMessage = $"[BUG-011 DEBUG 3/3:{gameId}] Broadcasting PpUpdateEvent for Player {ppEvt.SourcePlayerId}. PP: {ppEvt.CurrentPp}/{ppEvt.MaxPp}.";
-                    _logger.LogWarning(logMessage);
-                }
-            }
-            // Removed HandUpdateEventDto check from BUG-011 DEBUG 3/3
-            // --- END BUG-011 DEBUG LOG ---
-
             try
             {
                 // Using IClientMethodMapper for dispatch - Reverted to direct call
@@ -2911,6 +1808,81 @@ namespace ShadowverseBeyond.Server.Services
                 // Do not re-throw here, as broadcasting failure shouldn't crash the main game logic flow.
             }
         } // <<< END BroadcastEventAsync method
+
+        /// <summary>
+        /// 自动触发 AI 玩家的 Mulligan 决策
+        /// 在游戏创建后检测 AI 玩家并自动提交他们的 Mulligan 决策
+        /// </summary>
+        /// <param name="gameId">游戏ID</param>
+        /// <param name="gameState">游戏状态</param>
+        private async Task TriggerAiMulliganIfNeededAsync(string gameId, GameState gameState)
+        {
+            try
+            {
+                _logger.LogInformation("[GameService:{GameId}] Checking for AI players that need automatic mulligan...", gameId);
+
+                // 检查游戏是否在 Mulligan 阶段
+                if (gameState.Phase != GamePhase.Mulligan)
+                {
+                    _logger.LogDebug("[GameService:{GameId}] Game is not in Mulligan phase (Current: {Phase}). Skipping AI mulligan trigger.", gameId, gameState.Phase);
+                    return;
+                }
+
+                // 检查 Player2 是否是 AI 且未完成 Mulligan
+                if (gameState.Player2 != null && !gameState.Player2.HasCompletedMulligan)
+                {
+                    // 直接检查 PlayerState 的 IsAI 属性
+                    if (gameState.Player2.IsAI)
+                    {
+                        _logger.LogInformation("[GameService:{GameId}] Triggering automatic mulligan for AI Player {PlayerId}...", gameId, gameState.Player2.PlayerId);
+
+                        // 延迟一段时间模拟思考
+                        await Task.Delay(2000);
+
+                        // 获取当前游戏状态的 DTO
+                        var gameStateDto = _mapper.Map<GameStateDto>(gameState);
+
+                        // 调用 AI 服务决定 Mulligan
+                        var cardsToReplace = await _aiService.DecideMulliganAsync(gameStateDto, gameState.Player2.PlayerId);
+
+                        // 转换为 Guid 列表
+                        var cardGuidsToReplace = cardsToReplace
+                            .Select(cardId => Guid.TryParse(cardId, out var guid) ? guid : Guid.Empty)
+                            .Where(guid => guid != Guid.Empty)
+                            .ToList();
+
+                        _logger.LogInformation("[GameService:{GameId}] AI Player {PlayerId} decided to replace {Count} cards: [{Cards}]",
+                            gameId, gameState.Player2.PlayerId, cardGuidsToReplace.Count, string.Join(", ", cardGuidsToReplace));
+
+                        // 创建 PlayerActionWrapper 并入队
+                        var wrapper = new PlayerActionWrapper
+                        {
+                            ActionType = "SubmitMulligan",
+                            PlayerId = gameState.Player2.PlayerId,
+                            ActionData = new { CardUidsToReplace = cardGuidsToReplace }
+                        };
+
+                        // 提交 AI 的 Mulligan 决策
+                        EnqueuePlayerAction(gameId, wrapper);
+
+                        _logger.LogInformation("[GameService:{GameId}] AI Player {PlayerId} mulligan decision submitted successfully.", gameId, gameState.Player2.PlayerId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("[GameService:{GameId}] Player2 {PlayerId} is not an AI player. Skipping automatic mulligan.", gameId, gameState.Player2.PlayerId);
+                    }
+                }
+                else
+                {
+                    _logger.LogDebug("[GameService:{GameId}] Player2 is null or has already completed mulligan. Skipping AI mulligan trigger.", gameId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[GameService:{GameId}] Error occurred while triggering AI mulligan.", gameId);
+                // 不重新抛出异常，避免影响游戏创建流程
+            }
+        }
 
     } // Closing brace for GameService class
 } // Closing brace for ShadowverseBeyond.Server.Services namespace

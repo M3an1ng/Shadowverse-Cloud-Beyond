@@ -6,7 +6,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Parameters for the AddKeyword effect.
     /// </summary>
-    public class AddKeywordEffectParams : BaseTargetEffectParams // Target is usually one or more CardInstances
+    public class AddKeywordEffectParams : BaseEffectParams // Target is usually one or more CardInstances
     {
         /// <summary>
         /// The keyword to add to the target(s).

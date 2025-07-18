@@ -6,7 +6,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Parameters for the RemoveKeyword effect.
     /// </summary>
-    public class RemoveKeywordEffectParams : BaseTargetEffectParams // Target is usually one or more CardInstances
+    public class RemoveKeywordEffectParams : BaseEffectParams // Target is usually one or more CardInstances
     {
         /// <summary>
         /// The keyword to remove from the target(s).

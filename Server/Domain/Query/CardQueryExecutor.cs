@@ -22,6 +22,8 @@ using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
                                               // Removed incorrect using: using ShadowverseBeyond.Server.Domain.Query.Operations;
 using ShadowverseBeyond.Server.Domain.Query; // Added for IQueryOperation and implementations
 using AutoMapper; // Added for IMapper
+using ShadowverseBeyond.Server.Extensions; // Added for CardInstance extension methods
+using ShadowverseBeyond.Server.Services.Abstractions; // Added for IGameDataProvider
 
 namespace ShadowverseBeyond.Server.Domain.Query
 {
@@ -31,24 +33,23 @@ namespace ShadowverseBeyond.Server.Domain.Query
     public class CardQueryExecutor : ICardQueryExecutor
     {
         private readonly ILogger<CardQueryExecutor> _logger;
-        // 假设有一个仓库用于获取卡牌定义数据
-        private readonly ICardRepository _cardRepository;
         private readonly DslEvaluator _dslEvaluator; // Inject DslEvaluator
         private readonly Abilities.DSL.Functions.IFunctionRegistry _functionRegistry; // Inject Function Registry
         private readonly IMapper _mapper; // Added IMapper field
+        private readonly IGameDataProvider _gameDataProvider; // Added for complete CardInstance mapping
 
         public CardQueryExecutor(
             ILogger<CardQueryExecutor> logger,
-            ICardRepository cardRepository,
             DslEvaluator dslEvaluator,
             Abilities.DSL.Functions.IFunctionRegistry functionRegistry, // Add IFunctionRegistry to constructor
-            IMapper mapper) // Inject IMapper
+            IMapper mapper, // Inject IMapper
+            IGameDataProvider gameDataProvider) // Add IGameDataProvider to constructor
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository));
             _dslEvaluator = dslEvaluator ?? throw new ArgumentNullException(nameof(dslEvaluator)); // Store injected evaluator
             _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry)); // Store injected registry
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider)); // Store IGameDataProvider
         }
 
         /// <inheritdoc />
@@ -78,16 +79,22 @@ namespace ShadowverseBeyond.Server.Domain.Query
                         var originalPoolCount = currentPool.Count;
 
                         // Apply the operation and update the pool using a switch expression
-                        currentPool = operation switch
+                        if (operation is FilterOperation filterOp)
                         {
-                            // Call the refactored/created methods
-                            FilterOperation filterOp => await ApplyFilterOperationAsync(currentPool, filterOp, context),
-                            SortOperation sortOp => await ApplySortOperation(currentPool, sortOp, context), // Now async
-                            SelectionOperation selectionOp => await ApplySelectionOperationAsync(currentPool, selectionOp, context), // Renamed from ApplyLimit
-                            PostProcessingOperation postProcessingOp => await ApplyPostProcessingOperationAsync(currentPool, postProcessingOp, context), // New method call
-                            // For unsupported types, simply return the pool unchanged.
-                            _ => currentPool
-                        }; // End of switch expression
+                            currentPool = await ApplyFilterOperationAsync(currentPool, filterOp, context);
+                        }
+                        else if (operation is SortOperation sortOp)
+                        {
+                            currentPool = await ApplySortOperationAsync(currentPool, sortOp, context);
+                        }
+                        else if (operation is SelectionOperation selectionOp)
+                        {
+                            currentPool = await ApplySelectionOperationAsync(currentPool, selectionOp, context);
+                        }
+                        else if (operation is PostProcessingOperation postProcessingOp)
+                        {
+                            currentPool = ApplyPostProcessingOperation(currentPool, postProcessingOp, context);
+                        }
 
                         // Log after applying the operation OR if it was skipped
                         if (operation is not FilterOperation && operation is not SortOperation && operation is not SelectionOperation && operation is not PostProcessingOperation)
@@ -221,9 +228,9 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 foreach (var item in currentFilteredPool)
                 {
                     // Resolve the value from the item being filtered
-                    var itemValue = await ResolveValueSource(filterConfig.ValueSource, context, item);
+                    var itemValue = await ResolveValueSourceAsync(filterConfig.ValueSource, context, item);
                     // Resolve the target value to compare against
-                    var targetValue = await ResolveValueSource(filterConfig.TargetValue, context, item); // Pass item for context if TargetValue is dynamic relative to item
+                    var targetValue = await ResolveValueSourceAsync(filterConfig.TargetValue, context, item); // Pass item for context if TargetValue is dynamic relative to item
 
                     _logger.LogTrace("Applying filter: ItemValue={ItemValue}, TargetValue={TargetValue}, Operator={Operator}", itemValue ?? "null", targetValue ?? "null", filterConfig.Operator);
 
@@ -246,7 +253,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         } // End ApplyFilterOperationAsync method
 
         // --- Helper to resolve ValueConfig ---
-        private async Task<object?> ResolveValueSource(ValueConfig? sourceConfig, GameContext context, object? currentItem = null) // Added async Task<>
+        private async Task<object?> ResolveValueSourceAsync(ValueConfig? sourceConfig, GameContext context, object? currentItem = null) // Added async Task<>
         {
             if (sourceConfig == null) return null;
 
@@ -266,7 +273,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
                         _logger.LogWarning("DynamicSource path is empty.");
                         return null;
                     }
-                    resolvedValue = await ResolveDynamicPath(sourceConfig.DynamicSource, context, currentItem);
+                    resolvedValue = await ResolveDynamicPathAsync(sourceConfig.DynamicSource, context, currentItem);
                     break;
 
                 case CommonAbilities.ValueType.Formula: // Use alias
@@ -291,11 +298,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
                     // 2. Evaluate the AST using the injected DslEvaluator
                     _logger.LogDebug("Evaluating DSL Formula AST for: {Formula}", sourceConfig.Formula);
 
-                    // 2a. Create EvaluationContext from GameContext
-                    var evalContext = CreateEvaluationContextFromGameContext(context, currentItem);
-
                     // 2b. Evaluate the AST
-                    var evalResult = await _dslEvaluator.EvaluateAsync(formulaAst, evalContext);
+                    var evalResult = await _dslEvaluator.EvaluateAsync(formulaAst, context);
 
                     // 2c. Process the result
                     if (evalResult.IsSuccess)
@@ -351,8 +355,10 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <returns>生成的随机值</returns>
         private object GenerateRandomValue(RandomConfig randomConfig, GameContext context)
         {
-            // 使用游戏状态的回合数作为种子的一部分，确保游戏的确定性
-            var seed = randomConfig.Seed ?? (context.CurrentGameState.TurnNumber * 31 + context.RequestingPlayerId.GetHashCode());
+            // 【架构重构】使用当前玩家的回合数作为种子的一部分，确保游戏的确定性
+            var currentPlayer = context.CurrentGameState.GetPlayerState(context.RequestingPlayerId);
+            var turnNumber = currentPlayer?.TurnNumber ?? 0;
+            var seed = randomConfig.Seed ?? (turnNumber * 31 + context.RequestingPlayerId.GetHashCode());
             var random = new Random(seed);
 
             // 如果有候选值列表，从中随机选择
@@ -467,7 +473,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         }
 
         // --- Helper to resolve dynamic paths ---
-        private async Task<object?> ResolveDynamicPath(string path, GameContext context, object? currentItem)
+        private async Task<object?> ResolveDynamicPathAsync(string path, GameContext context, object? currentItem)
         {
             var parts = path.Split('.');
             if (parts.Length == 0) return null;
@@ -475,7 +481,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             // 解析根对象
             var currentTarget = parts[0].ToLowerInvariant() == "self"
                 ? currentItem
-                : await ResolveRootObjectAsync(parts[0], context, path);
+                : ResolveRootObject(parts[0], context, path);
 
             if (currentTarget == null)
             {
@@ -510,7 +516,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             };
         }
 
-        private async Task<List<object>> ApplySortOperation(List<object> pool, SortOperation sortOp, GameContext context) // Changed signature to async Task
+        private async Task<List<object>> ApplySortOperationAsync(List<object> pool, SortOperation sortOp, GameContext context) // Changed signature to async Task
         {
             _logger.LogTrace("Applying sort operation with {OrderingCount} criteria.", sortOp.Ordering?.Count ?? 0);
 
@@ -527,7 +533,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 var keys = new List<object?>();
                 foreach (var orderingConfig in sortOp.Ordering)
                 {
-                    var key = await ResolveValueSource(orderingConfig.ValueSource, context, item);
+                    var key = await ResolveValueSourceAsync(orderingConfig.ValueSource, context, item);
                     keys.Add(key);
                     _logger.LogTrace("Resolved sort key for item {Item}: ValueSource={ValueSource}, Key={Key}", item, orderingConfig.ValueSource, key ?? "null");
                 }
@@ -573,7 +579,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             if (selectionOp.CountSource != null)
             {
                 // Added await here
-                object? resolvedCountRaw = await ResolveValueSource(selectionOp.CountSource, context);
+                object? resolvedCountRaw = await ResolveValueSourceAsync(selectionOp.CountSource, context);
                 if (resolvedCountRaw is int resolvedCount && resolvedCount >= 0)
                 {
                     count = resolvedCount;
@@ -650,7 +656,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             string rootSegment = path[0].ToLowerInvariant();
 
             // --- 使用公共方法解析根对象 ---
-            currentTarget = await ResolveRootObjectAsync(rootSegment, context, string.Join(".", path));
+            currentTarget = ResolveRootObject(rootSegment, context, string.Join(".", path));
 
             // 特殊处理allcards的单独路径情况
             if (rootSegment.ToLowerInvariant() == "allcards" && path.Count == 1)
@@ -697,7 +703,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <summary>
         /// Applies post-processing operations to the pool.
         /// </summary>
-        private async Task<List<object>> ApplyPostProcessingOperationAsync(List<object> pool, PostProcessingOperation postProcessingOp, GameContext context)
+        private List<object> ApplyPostProcessingOperation(List<object> pool, PostProcessingOperation postProcessingOp, GameContext context)
         {
             _logger.LogTrace("Applying Post Processing Operation: {Type}", postProcessingOp.Type);
 
@@ -749,7 +755,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
                         {
                             try
                             {
-                                var definition = await _cardRepository.GetCardDefinitionByIdAsync(cardId.Value); // Correct method name
+                                var definition = _gameDataProvider.GetCardDefinition(cardId.Value);
                                 if (definition != null)
                                 {
                                     resultPool.Add(MapToCardDefinitionDto(definition));
@@ -757,12 +763,12 @@ namespace ShadowverseBeyond.Server.Domain.Query
                                 }
                                 else
                                 {
-                                    _logger.LogWarning("Card definition not found in repository for ID: {CardId}, originating from {SourceDescription}.", cardId.Value, sourceDescription);
+                                    _logger.LogWarning("Card definition not found in data provider for ID: {CardId}, originating from {SourceDescription}.", cardId.Value, sourceDescription);
                                 }
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Error retrieving card definition for ID: {CardId} from repository, originating from {SourceDescription}.", cardId.Value, sourceDescription);
+                                _logger.LogError(ex, "Error retrieving card definition for ID: {CardId} from data provider, originating from {SourceDescription}.", cardId.Value, sourceDescription);
                                 // Skip this item on error
                             }
                         }
@@ -783,14 +789,17 @@ namespace ShadowverseBeyond.Server.Domain.Query
                         }
                         else if (item is CardInstance instance)
                         {
-                            // Use AutoMapper directly
-                            resultPool.Add(_mapper.Map<CardInstanceDto>(instance));
-                            _logger.LogTrace("Converted CardInstance (InstanceId: {InstanceId}) to CardInstanceDto using AutoMapper.", instance.InstanceId);
+                            // 【修复】使用扩展方法进行完整映射，包含定义信息
+                            resultPool.Add(instance.ToCompleteDto(_gameDataProvider, _mapper));
+                            _logger.LogTrace("Converted CardInstance (InstanceId: {InstanceId}) to CardInstanceDto using complete mapping.", instance.InstanceId);
                         }
                         else
                         {
                             _logger.LogWarning("Item of type {ItemType} cannot be converted to CardInstanceDto. Keeping original item.", item?.GetType().Name ?? "null");
-                            resultPool.Add(item); // Keep original if not convertible
+                            if (item != null)
+                            {
+                                resultPool.Add(item); // Keep original if not convertible
+                            }
                         }
                     }
                     return resultPool; // Return the new list
@@ -831,6 +840,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             {
                 try
                 {
+                    if (comp1 == null || comp2 == null) return false;
                     int comparisonResult = comp1.CompareTo(comp2); // Use CompareTo for >, <, >=, <=
                     return op switch
                     {
@@ -903,34 +913,6 @@ namespace ShadowverseBeyond.Server.Domain.Query
             };
         }
 
-        // Removed MapToCardInstanceDto method as mapping is now handled by AutoMapper (CardInstanceProfile)
-
-        /// <summary>
-        /// Creates an EvaluationContext from a GameContext for DSL evaluation.
-        /// This is a helper method to bridge GameContext to EvaluationContext.
-        /// </summary>
-        /// <param name="context">The GameContext containing game state.</param>
-        /// <param name="currentItem">The current item being evaluated (optional).</param>
-        /// <returns>An EvaluationContext for DSL evaluation.</returns>
-        private EvaluationContext CreateEvaluationContextFromGameContext(GameContext context, object? currentItem = null)
-        {
-            // Create a GameStateDto snapshot from the GameContext
-            var gameStateDto = context.CreateSnapshot();
-
-            // Resolve player states from the GameStateDto
-            var requestingPlayer = gameStateDto?.Players?.FirstOrDefault(p => p.PlayerId == context.RequestingPlayerId);
-            var opponentPlayer = gameStateDto?.Players?.FirstOrDefault(p => p.PlayerId != context.RequestingPlayerId);
-
-            return new EvaluationContext(
-                cardRepository: _cardRepository,
-                functionRegistry: _functionRegistry,
-                gameState: gameStateDto,
-                player: requestingPlayer,
-                opponent: opponentPlayer,
-                currentItem: currentItem,
-                temporaryVariables: new Dictionary<string, object>(context.TemporaryVariables)
-            );
-        }
 
         // --- Common Helper Methods ---
 
@@ -965,11 +947,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
                     return (false, null);
                 }
 
-                // 3. 创建评估上下文
-                var evalContext = CreateEvaluationContextFromGameContext(context);
-
-                // 4. 评估AST
-                var evalResult = await _dslEvaluator.EvaluateAsync(astNode, evalContext);
+                // 3. 评估AST
+                var evalResult = await _dslEvaluator.EvaluateAsync(astNode, context);
                 if (!evalResult.IsSuccess)
                 {
                     _logger.LogError("{OperationName} DSL evaluation failed: {Dsl}. Errors: {Errors}",
@@ -1040,7 +1019,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <param name="context">游戏上下文</param>
         /// <param name="path">完整路径（用于日志）</param>
         /// <returns>解析的根对象</returns>
-        private async Task<object?> ResolveRootObjectAsync(string rootSegment, GameContext context, string path)
+        private object? ResolveRootObject(string rootSegment, GameContext context, string path)
         {
             switch (rootSegment.ToLowerInvariant())
             {
@@ -1067,14 +1046,14 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 case "allcards":
                     try
                     {
-                        var definitions = await _cardRepository.GetAllCardDefinitionsAsync();
+                        var definitions = _gameDataProvider.GetAllCardDefinitions().Values;
                         _logger.LogDebug("Resolved path 'allcards' to all card definitions ({Count}) for path: {Path}",
                             definitions.Count(), path);
                         return definitions.Cast<object>();
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error retrieving all card definitions from repository for path: {Path}", path);
+                        _logger.LogError(ex, "Error retrieving all card definitions from data provider for path: {Path}", path);
                         return null;
                     }
 

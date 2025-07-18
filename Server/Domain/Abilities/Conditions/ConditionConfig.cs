@@ -36,25 +36,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// </summary>
         public bool IsEnabled { get; set; } = true;
 
-        // /// <summary>
-        // /// 创建简单条件 (已弃用，使用Expression类型替代)
-        // /// </summary>
-        // /// <param name="target">目标</param>
-        // /// <param name="property">属性</param>
-        // /// <param name="op">操作符</param>
-        // /// <param name="value">值</param>
-        // /// <returns>条件配置</returns>
-        // public static ConditionConfig Simple(string target, string property, ComparisonOperator op, object value)
-        // {
-        //     return new ConditionConfig
-        //     {
-        //         Type = ConditionType.Simple,
-        //         // Target = target, // Removed
-        //         // Property = property, // Removed
-        //         // Operator = op, // Removed
-        //         // Value = new ValueConfig { Type = Common.ValueType.Static, StaticValue = value } // Removed
-        //     };
-        // }
 
         /// <summary>
         /// 创建表达式条件
@@ -69,36 +50,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
             };
         }
 
-        // /// <summary>
-        // /// 创建复合条件 (已弃用，使用Expression类型替代)
-        // /// </summary>
-        // /// <param name="conditions">子条件列表</param>
-        // /// <param name="logic">逻辑操作符</param>
-        // /// <returns>条件配置</returns>
-        // public static ConditionConfig Composite(List<ConditionConfig> conditions, LogicOperator logic = LogicOperator.And)
-        // {
-        //     return new ConditionConfig
-        //     {
-        //         Type = ConditionType.Composite,
-        //         // SubConditions = conditions, // Removed
-        //         Logic = logic
-        //     };
-        // }
-
-        /// <summary>
-        /// 创建自定义条件
-        /// </summary>
-        /// <param name="customType">自定义类型</param>
-        /// <param name="parameters">参数</param>
-        /// <returns>条件配置</returns>
-        // public static ConditionConfig Custom(string customType, Dictionary<string, object> parameters)
-        // {
-        //     return new ConditionConfig
-        //     {
-        //         Type = ConditionType.Custom,
-        //         Parameters = parameters
-        //     };
-        // }
     }
 
     // 注意：ConditionType枚举已移至Server/Domain/Abilities/Common/Enums.cs

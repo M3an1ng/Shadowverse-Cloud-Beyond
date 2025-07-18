@@ -31,72 +31,65 @@ import { getCardDefinition } from './cardManager.js'; // Import card data helper
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 // console.log("ui.js loaded");
 
-export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus }; // Added updateMulliganStatus
+export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus};
 
 // --- Specific UI Update Functions ---
 
 /**
  * Updates the PP display for a specific player.
- * @param {string} playerId - 'player1' or 'player2'.
+ * @param {string} playerId - The GUID of the player.
  * @param {number} currentPp - The current PP value.
  * @param {number} maxPp - The maximum PP value.
  */
 function updatePpDisplay(playerId, currentPp, maxPp) {
-    const ppEl = (playerId === 'player1') ? player1PpEl : player2PpEl;
-    const maxPpEl = (playerId === 'player1') ? player1MaxPpEl : player2MaxPpEl;
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const ppEl = isLocalPlayer ? player1PpEl : player2PpEl;
+    const maxPpEl = isLocalPlayer ? player1MaxPpEl : player2MaxPpEl;
 
     if (ppEl) {
         ppEl.textContent = currentPp ?? '??';
-    } else {
-        console.warn(`UI Update Error: ${playerId}PpEl missing, cannot update PP.`);
     }
     if (maxPpEl) {
         maxPpEl.textContent = maxPp ?? '??';
-    } else {
-        console.warn(`UI Update Error: ${playerId}MaxPpEl missing, cannot update Max PP.`);
     }
-    // console.log(`UI UPDATE: Updated ${playerId} PP display to ${currentPp}/${maxPp}`); // Optional Debug
 }
 
 /**
  * Updates the EP display for a specific player.
- * @param {string} playerId - 'player1' or 'player2'.
+ * @param {string} playerId - The GUID of the player.
  * @param {number} currentEp - The current EP value.
  * @param {number} maxEp - The maximum EP value.
  */
 function updateEpDisplay(playerId, currentEp, maxEp) {
-    const epEl = (playerId === 'player1') ? player1EpEl : player2EpEl;
-    const maxEpEl = (playerId === 'player1') ? player1MaxEpEl : player2MaxEpEl;
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const epEl = isLocalPlayer ? player1EpEl : player2EpEl;
+    const maxEpEl = isLocalPlayer ? player1MaxEpEl : player2MaxEpEl;
 
     if (epEl) {
         epEl.textContent = currentEp ?? '?';
-    } else {
-        console.warn(`UI Update Error: ${playerId}EpEl missing, cannot update EP.`);
     }
     if (maxEpEl) {
         maxEpEl.textContent = maxEp ?? '?';
-    } else {
-        console.warn(`UI Update Error: ${playerId}MaxEpEl missing, cannot update Max EP.`);
     }
-    // console.log(`UI UPDATE: Updated ${playerId} EP display to ${currentEp}/${maxEp}`); // Optional Debug
 }
 
 // --- End Specific UI Update Functions ---
 
 /**
 * Updates the deck count display for a specific player.
-* @param {string} playerId - 'player1' or 'player2'.
+* @param {string} playerId - The GUID of the player.
 * @param {number} count - The current deck count.
 */
 function updateDeckCountDisplay(playerId, count) {
-   const deckCountEl = (playerId === 'player1') ? player1DeckCountEl : player2DeckCountEl;
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const deckCountEl = isLocalPlayer ? player1DeckCountEl : player2DeckCountEl;
 
-   if (deckCountEl) {
-       deckCountEl.textContent = count ?? '??';
-   } else {
-       console.warn(`UI Update Error: ${playerId}DeckCountEl missing, cannot update Deck Count.`);
-   }
-   // console.log(`UI UPDATE: Updated ${playerId} Deck Count display to ${count}`); // Optional Debug
+    if (deckCountEl) {
+        deckCountEl.textContent = count ?? '??';
+    } else {
+        const elName = isLocalPlayer ? 'player1DeckCountEl' : 'player2DeckCountEl';
+        console.warn(`UI Update Error: ${elName} missing, cannot update Deck Count for player ${playerId}.`);
+    }
 }
 
 /**
@@ -105,30 +98,55 @@ function updateDeckCountDisplay(playerId, count) {
 * @param {number} count - The current graveyard count.
 */
 function updateGraveyardCountDisplay(playerId, count) {
-   const graveyardCountEl = (playerId === 'player1') ? player1GraveyardCountEl : player2GraveyardCountEl;
+    // 【BUG修复】通过与本地玩家ID比较，正确识别UI元素
+    if (!gameState.localPlayerId) {
+        console.error("UI Error: localPlayerId is not set in gameState. Cannot update graveyard count correctly.");
+        return;
+    }
 
-   if (graveyardCountEl) {
-       graveyardCountEl.textContent = count ?? '??';
-   } else {
-       console.warn(`UI Update Error: ${playerId}GraveyardCountEl missing, cannot update Graveyard Count.`);
-   }
-   // console.log(`UI UPDATE: Updated ${playerId} Graveyard Count display to ${count}`); // Optional Debug
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const graveyardCountEl = isLocalPlayer ? player1GraveEl : player2GraveEl;
+
+    if (graveyardCountEl) {
+        graveyardCountEl.textContent = count ?? '??';
+    } else {
+        const elName = isLocalPlayer ? 'player1GraveEl' : 'player2GraveEl';
+        console.warn(`UI Update Error: ${elName} missing, cannot update Graveyard Count for player ${playerId}.`);
+    }
 }
 
 /**
  * Updates the health display for a specific player's leader.
- * @param {string} playerId - 'player1' or 'player2'.
+ * @param {object} unitInstance - The instance of the unit (leader or follower).
  * @param {number} currentHealth - The current health value of the leader.
  */
-function updateHealthDisplay(playerId, currentHealth) {
-    const hpEl = (playerId === 'player1') ? player1HpEl : player2HpEl;
-
-    if (hpEl) {
-        hpEl.textContent = currentHealth ?? '??';
-    } else {
-        console.warn(`UI Update Error: ${playerId}HpEl missing, cannot update Health display.`);
+function updateHealthDisplay(unitInstance) {
+    if (!unitInstance || !unitInstance.uid) {
+        console.warn("UI Update Error: updateHealthDisplay called with invalid unitInstance.");
+        return;
     }
-    // console.log(`UI UPDATE: Updated ${playerId} Health display to ${currentHealth}`); // Optional Debug
+
+    let healthElement;
+    const newHealth = unitInstance.currentHealth ?? '??';
+
+    // 【重构】统一的生命值更新函数
+    if (unitInstance.type === 'Leader') {
+        // 根据ownerId和本地玩家ID，判断是player1还是player2
+        const uiPlayerPrefix = (unitInstance.ownerId === gameState.localPlayerId) ? 'player1' : 'player2';
+        healthElement = document.getElementById(`${uiPlayerPrefix}-hp`);
+    } else { // Follower or other field unit
+        const unitElement = document.querySelector(`.field-card[data-uid="${unitInstance.uid}"]`);
+        if (unitElement) {
+            healthElement = unitElement.querySelector('.health');
+        }
+    }
+
+    if (healthElement) {
+        healthElement.textContent = newHealth;
+        // console.log(`UI UPDATE: Updated health for ${unitInstance.name} (UID: ${unitInstance.uid}) to ${newHealth}`);
+    } else {
+        console.warn(`UI Update Error: Could not find health element for unit UID: ${unitInstance.uid} (Type: ${unitInstance.type})`);
+    }
 }
 /**
  * Removes all selection and targeting highlight classes from UI elements.
@@ -146,48 +164,42 @@ function clearSelectionHighlights() {
 /**
  * Updates the hand display for a specific player.
  * Clears the existing hand and renders the new cards.
- * @param {string} playerId - 'player1' or 'player2'.
+ * @param {string} playerId - The GUID of the player.
  * @param {Array<object>} handCards - Array of card instance objects in the hand.
  */
 function updateHandDisplay(playerId, handCards = []) {
-    const handElement = (playerId === 'player1') ? player1HandEl : player2HandEl;
-    // console.log(`UI UPDATE: Updating ${playerId} hand display with ${handCards.length} cards.`); // Optional Debug
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const handElement = isLocalPlayer ? player1HandEl : player2HandEl;
 
     if (!handElement) {
-        console.warn(`UI Update Error: ${playerId}HandEl missing, cannot update hand display.`);
+        const elName = isLocalPlayer ? 'player1HandEl' : 'player2HandEl';
+        console.warn(`UI Update Error: ${elName} missing, cannot update hand display for player ${playerId}.`);
         return;
     }
 
-    // Clear existing hand display
     handElement.innerHTML = '';
 
-    // Determine if it's the opponent's hand for rendering card backs
-    const isOpponent = (playerId !== gameState.localPlayerId); // Use localPlayerId for comparison
-
-    // Iterate through hand card instances
     if (!Array.isArray(handCards)) {
-        console.warn(`UI Update Warning: handCards for ${playerId} is not an array in updateHandDisplay.`);
-        handCards = []; // Ensure it's an array
+        console.warn(`UI Update Warning: handCards for player ${playerId} is not an array.`);
+        return;
     }
 
     handCards.forEach(cardInstance => {
         if (!cardInstance) {
-            console.warn(`UI Update Warning: null or undefined card instance found in ${playerId}'s handCards array.`);
-            return; // Skip this iteration
+            console.warn(`UI Update Warning: null or undefined card instance found in player ${playerId}'s hand.`);
+            return;
         }
 
-        if (isOpponent) {
-            // Render card back for opponent
+        // Opponent's hand is rendered with card backs
+        if (!isLocalPlayer) {
             const cardBackDiv = document.createElement('div');
             cardBackDiv.classList.add('card-back');
             handElement.appendChild(cardBackDiv);
         } else {
-            // Render full card for local player
+            // Local player's hand is rendered with full card details
             const cardElement = createCardElement(cardInstance, 'hand');
             if (cardElement) {
                 handElement.appendChild(cardElement);
-            } else {
-                console.warn(`UI Update Warning: Failed to create element for card instance in ${playerId}'s hand:`, cardInstance);
             }
         }
     });
@@ -265,32 +277,26 @@ function updateMulliganStatus(playerId, isComplete) {
 /**
  * Adds a single unit card element to the specified player's field.
  * Does not clear the existing field.
- * @param {string} playerId - 'player1' or 'player2'.
+ * @param {string} playerId - The GUID of the player.
  * @param {object} cardInstance - The card instance object to add to the field.
  */
 function addUnitToField(playerId, cardInstance) {
-    const fieldElement = (playerId === 'player1') ? player1FieldEl : player2FieldEl;
-    // console.log(`UI UPDATE: Adding unit ${cardInstance?.name} (UID: ${cardInstance?.uid}) to ${playerId}'s field.`); // Optional Debug
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const fieldElement = isLocalPlayer ? player1FieldEl : player2FieldEl;
 
     if (!fieldElement) {
-        console.warn(`UI Update Error: ${playerId}FieldEl missing, cannot add unit to field.`);
+        const elName = isLocalPlayer ? 'player1FieldEl' : 'player2FieldEl';
+        console.warn(`UI Update Error: ${elName} missing, cannot add unit to field for player ${playerId}.`);
         return;
     }
     if (!cardInstance) {
-        console.warn(`UI Update Error: cardInstance is null or undefined in addUnitToField for ${playerId}.`);
+        console.warn(`UI Update Error: cardInstance is null or undefined in addUnitToField for player ${playerId}.`);
         return;
     }
 
-    // Create the card's DOM element using the helper, specifying 'field' context
     const cardElement = createCardElement(cardInstance, 'field');
-
     if (cardElement) {
-        // Append the created card element to the field container
         fieldElement.appendChild(cardElement);
-        // console.log(`UI UPDATE: Successfully added unit ${cardInstance.name} to ${playerId}'s field element.`); // Optional Debug
-    } else {
-        // Log if element creation failed
-        console.warn(`UI Update Warning: Failed to create element for card instance on field (Player: ${playerId}):`, cardInstance);
     }
 }
 
@@ -324,11 +330,12 @@ function updateUnitDisplay(unitInstance) {
     } else {
         console.warn(`UI Update Warning: Could not find .attack element for unit UID: ${unitInstance.uid}`);
     }
-    if (healthEl) {
-        healthEl.textContent = unitInstance.currentHealth ?? '?';
-    } else {
-        console.warn(`UI Update Warning: Could not find .health element for unit UID: ${unitInstance.uid}`);
-    }
+    // 生命值更新已移至独立的 updateHealthDisplay 函数，以遵循单一职责原则
+    // if (healthEl) {
+    //     healthEl.textContent = unitInstance.currentHealth ?? '?';
+    // } else {
+    //     console.warn(`UI Update Warning: Could not find .health element for unit UID: ${unitInstance.uid}`);
+    // }
 
     // Update Evolved Status Class
     if (unitInstance.isEvolved) {
@@ -417,7 +424,8 @@ function highlightTargets(attackerInstance) {
     const potentialTargets = [...(opponentPlayerState.field ?? [])];
     const hasWard = potentialTargets.some(follower => follower?.keywords?.includes('Ward'));
 
-    if (!hasWard && opponentPlayerState.leaderCard) {
+    // 【BUG-017修复】总是将敌方主战者添加到潜在目标中，Ward规则在后续处理
+    if (opponentPlayerState.leaderCard) {
         potentialTargets.push(opponentPlayerState.leaderCard);
     }
 
@@ -430,29 +438,67 @@ function highlightTargets(attackerInstance) {
         const isLeader = opponentPlayerState?.leaderCard && targetInstance.uid === opponentPlayerState.leaderCard.uid;
 
         if (isLeader) {
-            const avatarId = `${opponentPlayerId}-avatar`;
+            // 【BUG-018修复】正确映射玩家ID到UI元素ID
+            // opponentPlayerId是实际的GUID，需要映射到player1-avatar或player2-avatar
+            let avatarId = null;
+
+            // 方法1: 通过localPlayerId确定对手是player1还是player2
+            if (gameState.localPlayerId) {
+                // 如果对手不是本地玩家，且本地玩家通常映射到player1，则对手是player2
+                // 但需要考虑实际的映射逻辑
+                const localPlayer = gameState.players.find(p => p.id === gameState.localPlayerId);
+                const opponentPlayer = gameState.players.find(p => p.id === opponentPlayerId);
+
+                // 根据renderGame函数的逻辑：localPlayer映射到player1，opponent映射到player2
+                if (opponentPlayer) {
+                    avatarId = 'player2-avatar'; // 对手总是映射到player2
+                }
+            }
+
+            // 方法2: 备用方案，通过IsAI属性判断
+            if (!avatarId) {
+                const opponentPlayer = gameState.players.find(p => p.id === opponentPlayerId);
+                if (opponentPlayer?.isAI) {
+                    avatarId = 'player2-avatar'; // AI通常是对手，映射到player2
+                } else {
+                    avatarId = 'player1-avatar'; // 非AI玩家映射到player1
+                }
+            }
+
+            // 方法3: 最后的备用方案
+            if (!avatarId) {
+                avatarId = 'player2-avatar'; // 默认假设对手是player2
+            }
+
             targetElement = document.getElementById(avatarId);
+            console.log(`UI Highlights: Leader target - OpponentID: ${opponentPlayerId}, AvatarID: ${avatarId}, Found: ${!!targetElement}`);
         } else {
             targetElement = gameContainerEl?.querySelector(`.card[data-uid="${targetInstance.uid}"]`);
         }
 
         if (targetElement) {
-            let canTarget = false;
+            // 【BUG-017修复】区分UI显示和实际攻击规则
+            // UI中总是显示所有潜在目标，Ward规则在点击时验证
+            let shouldHighlight = true; // 默认高亮所有潜在目标
+            let cssClass = 'targetable';
+
             if (hasWard) {
-                // Only target units with Ward if Ward exists
+                // 有Ward时，Ward单位正常高亮，非Ward目标用不同样式表示受限
                 if (!isLeader && targetInstance.keywords?.includes('Ward')) {
-                    canTarget = true;
+                    // Ward单位：正常可攻击
+                    cssClass = 'targetable';
+                } else {
+                    // 非Ward目标（包括主战者）：显示为受限目标
+                    cssClass = 'targetable-restricted';
                 }
             } else {
-                // Target anything if no Ward
-                canTarget = true;
+                // 没有Ward时，所有目标都正常可攻击
+                cssClass = 'targetable';
             }
 
-            if (canTarget) {
-                targetElement.classList.add('targetable');
-                console.log(`UI Highlights: Marked ${targetInstance.name ?? targetInstance.uid} (Leader: ${isLeader}) as targetable.`); // Optional debug
-            } else {
-                 console.log(`UI Highlights: SKIPPED targeting ${targetInstance.name ?? targetInstance.uid} due to Ward rule (hasWard=${hasWard}, targetHasWard=${targetInstance.keywords?.includes('Ward')})`); // Optional debug
+            if (shouldHighlight) {
+                targetElement.classList.add(cssClass);
+                console.log(`UI Highlights: Marked ${targetInstance.name ?? targetInstance.uid} (Leader: ${isLeader}) as ${cssClass}.`);
             }
         } else {
             console.warn(`%c[UI_HIGHLIGHT_TARGETS] Could not find target element for UID ${targetInstance.uid} (Is Leader: ${isLeader})`, 'color: orange;');
@@ -567,21 +613,9 @@ function renderGame(currentGameState) { // Remove second parameter
 
     // Update the module-level variable
     uiCurrentPlayerId = latestCurrentPlayerId;
-    console.log(`%c[UI_RENDER] Updated uiCurrentPlayerId to: '${uiCurrentPlayerId}' from currentGameState`, 'color: purple; font-weight: bold;'); // Add confirmation log
-    // --- ROO DEBUG: Log entry and state ---
-    const currentTurnForLog = currentGameState?.activePlayer?.turn ?? 'N/A';
-    const playersLengthForLog = currentGameState?.players?.length ?? 'N/A';
-    //console.log(`%c[DEBUG_RENDER_GAME_ENTRY] renderGame called. gameState:`, 'color: green; font-weight: bold;', currentGameState);
-    // --- END ROO DEBUG ---
-    console.log(`UI_RENDER_TRACE: --- renderGame START (Known Player ID: ${uiCurrentPlayerId}) ---`); // <<< ADDED TRACE LOG & ID
-    // console.log("UI Received Game State:", JSON.stringify(currentGameState, null, 2)); // 打印接收到的完整状态
-    // console.log("UI: renderGame called");
     if (!currentGameState || !currentGameState.players || currentGameState.players.length < 2) {
         // 游戏状态无效，可能在初始化阶段，或者出错
-        // --- ROO DEBUG: Log early return ---
-        console.warn(`%c[DEBUG_RENDER_GAME_CHECKS] renderGame returning early: Invalid gameState or insufficient players. State: ${!!currentGameState}, Players: ${currentGameState?.players}, Length: ${currentGameState?.players?.length}`, 'color: orange;');
-        // --- END ROO DEBUG ---
-        // console.warn("UI: renderGame called with invalid or incomplete gameState.");
+        console.warn(`UI: renderGame called with invalid or incomplete gameState.`);
         // 可以考虑显示“加载中”或错误信息
         return;
     }
@@ -592,16 +626,38 @@ function renderGame(currentGameState) { // Remove second parameter
     const opponentPlayer = currentGameState.opponentPlayer;
 
     if (!currentPlayer || !opponentPlayer) {
-        // --- ROO DEBUG: Log early return ---
-        console.error(`%c[DEBUG_RENDER_GAME_CHECKS] renderGame returning early: Could not find activePlayer or opponentPlayer object. Found activePlayer: ${!!currentPlayer}, Found opponentPlayer: ${!!opponentPlayer}`, 'color: red; font-weight: bold;');
-        console.log(`%c[DEBUG_RENDER_GAME_CHECKS] Available players:`, 'color: orange;', currentGameState.players?.map(p => ({id: p?.id, isAI: p?.isAI})));
-        // --- END ROO DEBUG ---
+        console.error(`UI Error: Could not find activePlayer or opponentPlayer object in renderGame.`);
         return;
     }
 
-    // For UI consistency, treat currentPlayer as player1 (bottom) and opponentPlayer as player2 (top)
-    const player1 = currentPlayer;   // Current player (bottom of screen)
-    const player2 = opponentPlayer;  // Opponent player (top of screen)
+    // 【BUG修复】强化本地玩家vs对手的识别逻辑，防止敌方手牌显示为UnknownCard
+    // 确保UI布局一致性：本地玩家在底部(player1)，对手在顶部(player2)
+    let localPlayer = null;
+    let opponentPlayerState = null;
+
+    // 方法1: 使用localPlayerId进行查找（主要方法）
+    if (gameState.localPlayerId) {
+        localPlayer = currentGameState.players.find(p => p.id === gameState.localPlayerId);
+        opponentPlayerState = currentGameState.players.find(p => p.id !== gameState.localPlayerId);
+    }
+
+    // 方法2: 如果localPlayerId未设置或查找失败，使用IsAI属性进行区分
+    if (!localPlayer || !opponentPlayerState) {
+        console.warn(`[BUG修复] localPlayerId查找失败，使用IsAI属性区分玩家`);
+        localPlayer = currentGameState.players.find(p => !p.isAI);  // 人类玩家
+        opponentPlayerState = currentGameState.players.find(p => p.isAI);  // AI玩家
+    }
+
+    // 方法3: 最后的备用方案，使用数组索引（假设第一个是本地玩家）
+    if (!localPlayer || !opponentPlayerState) {
+        console.warn(`[BUG修复] IsAI属性查找失败，使用数组索引备用方案`);
+        localPlayer = currentGameState.players[0];
+        opponentPlayerState = currentGameState.players[1];
+    }
+
+    const player1 = localPlayer;     // 本地玩家（屏幕底部）
+    const player2 = opponentPlayerState;  // 对手玩家（屏幕顶部）
+
 
     // Call helper functions to render specific parts of the UI using game state and cached elements
 
@@ -610,11 +666,10 @@ function renderGame(currentGameState) { // Remove second parameter
     renderPlayerStats(player2, 'player2');
 
     // 2. Render Hands (Ensure hand array exists, fallback to empty array)
-    renderPlayerHand(player1.hand ?? [], player1HandEl);
-    // Note: Typically opponent's hand (player2HandEl) isn't fully rendered.
-    // We might render card backs or just a count later. For now, render if needed for debugging.
-    // Render opponent's hand using card backs
-    renderOpponentHand(player2.hand ?? [], player2HandEl); // NEW Call
+    // Always render local player's hand with full details at the bottom
+    renderPlayerHand(player1?.hand ?? [], player1HandEl);
+    // Always render opponent's hand with card backs at the top
+    renderOpponentHand(player2?.hand ?? [], player2HandEl);
 
     // 3. Render Fields (Ensure field array exists)
     renderField(player1.field ?? [], player1FieldEl);
@@ -762,7 +817,6 @@ function renderOpponentHand(handCards = [], handElement) {
 }
 
 function renderField(fieldCards = [], fieldElement, isOpponent = false) {
-    // console.log(`UI Rendering field. Opponent: ${isOpponent}, Cards: ${fieldCards.length}`); // Noisy log
     if (!fieldElement) {
         return;
     }
@@ -806,11 +860,14 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     const cardDiv = document.createElement('div');
     cardDiv.classList.add('card'); // Base card class
     // 添加卡牌类型作为 class (方便样式化)
-    if (cardInstance.type) {
+    // 【修复】使用正确的属性名：Type（大写）而不是type（小写）
+    const cardType = cardInstance.Type ?? cardInstance.type;
+    if (cardType) {
         // 将类型转为小写，例如 'Follower' -> 'follower'
-        cardDiv.classList.add(cardInstance.type.toLowerCase().split('_')[0]); // Handle 'Follower_Evolved' -> 'follower'
+        cardDiv.classList.add(cardType.toLowerCase().split('_')[0]); // Handle 'Follower_Evolved' -> 'follower'
     }
-    cardDiv.dataset.uid = cardInstance.uid; // Store UID for event handling & state lookup
+    // 【修复】使用正确的UID属性：优先使用uid，备用InstanceId
+    cardDiv.dataset.uid = cardInstance.uid ?? cardInstance.InstanceId; // Store UID for event handling & state lookup
 
     // 添加上下文特定的 class
     if (context === 'hand') {
@@ -834,20 +891,21 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
 
     // 基本的 Inner HTML 结构 - 需要根据 style.css 进行调整
     // 使用 ?? 提供默认值，防止属性缺失导致显示错误
+    // 【修复】使用正确的属性名：Name（大写）而不是name（小写）
     cardDiv.innerHTML = `
         <div class="card-art"></div> <!-- 卡面美术图占位 -->
-        <div class="cost">${cardInstance.cost ?? '?'}</div>
-        <div class="name">${cardInstance.name ?? 'Unknown Card'}</div>
+        <div class="cost">${cardInstance.Cost ?? cardInstance.cost ?? '?'}</div>
+        <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
         ${
         // 仅为随从显示攻击力和生命值区域
-        (cardInstance.type === 'Follower' || cardInstance.type === 'Follower_Evolved') ?
-            // Use baseAttack and baseHealth from the DTO received from server
+        (cardInstance.Type === 'Follower' || cardInstance.type === 'Follower' || cardInstance.Type === 'Follower_Evolved' || cardInstance.type === 'Follower_Evolved') ?
+            // Use CurrentAttack and CurrentHealth from the DTO received from server
             `<div class="stats">
-                <span class="attack">${cardInstance.currentAttack ?? '?'}</span>/<span class="health">${cardInstance.currentHealth ?? '?'}</span>
+                <span class="attack">${cardInstance.CurrentAttack ?? cardInstance.currentAttack ?? '?'}</span>/<span class="health">${cardInstance.CurrentHealth ?? cardInstance.currentHealth ?? '?'}</span>
             </div>`
             : '' // 法术和护符不显示 stats 区域
         }
-        <div class="description">${cardInstance.description ?? ''}</div> <!-- 卡牌描述区域 -->
+        <div class="description">${cardInstance.Description ?? cardInstance.description ?? ''}</div> <!-- 卡牌描述区域 -->
     `;
 
     // 注意: 'playable', 'selected-attacker', 'targetable' 等交互状态相关的 class
@@ -862,7 +920,7 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         // Check conditions for showing the button (mirrors server-side but simplified)
         const showEvolveButton = (
             playerState && // Ensure playerState exists
-            currentPlayerId === 'player1' && // Only show button for human player's turn
+            currentPlayerId === gameState.localPlayerId && // Only show button for human player's turn
             currentPlayerId === cardInstance.ownerId &&
             gameState.phase === 'Main' &&
             playerState.ep > 0 &&
@@ -875,25 +933,27 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
             const evolveBtn = document.createElement('button');
             evolveBtn.className = 'evolve-button';
             evolveBtn.textContent = 'Evolve';
-            evolveBtn.dataset.evolveUid = cardInstance.instanceId || cardInstance.uid;
+            evolveBtn.dataset.evolveUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
             cardDiv.appendChild(evolveBtn);
         }
     }
     // --- END Evolve Button ---
 
-    // --- Add Mouse Enter Listener for Playability Check (Hand Context Only) ---
-    if (context === 'hand') {
-        cardDiv.addEventListener('mouseenter', () => {
-            // Only check for the local player's cards
-            const ownerPlayer = getPlayerState(cardInstance.ownerId);
-            if (ownerPlayer && ownerPlayer.id === gameState.localPlayerId) {
-                 // console.log(`UI: Mouse entered card ${cardInstance.uid}. Requesting playability check.`); // Debug log
-                 requestPlayabilityCheck(cardInstance.uid); // Call the function from gameManager
-            }
-        });
-        // Optional: Add mouseleave listener to clear highlights or cache?
-        // cardDiv.addEventListener('mouseleave', () => { ... });
-    }
+    // 【修复】移除鼠标悬停时的可玩性检查请求，改为依赖服务器主动推送
+    // 服务器会在玩家行动完成后自动推送手牌可玩性信息
+    // --- Mouse Enter Listener Removed (Server now pushes playability proactively) ---
+    // if (context === 'hand') {
+    //     cardDiv.addEventListener('mouseenter', () => {
+    //         // Only check for the local player's cards
+    //         const ownerPlayer = getPlayerState(cardInstance.ownerId);
+    //         if (ownerPlayer && ownerPlayer.id === gameState.localPlayerId) {
+    //              // console.log(`UI: Mouse entered card ${cardInstance.uid}. Requesting playability check.`); // Debug log
+    //              requestPlayabilityCheck(cardInstance.uid); // Call the function from gameManager
+    //         }
+    //     });
+    //     // Optional: Add mouseleave listener to clear highlights or cache?
+    //     // cardDiv.addEventListener('mouseleave', () => { ... });
+    // }
     // --- END Mouse Enter Listener ---
 
     return cardDiv;
@@ -933,7 +993,7 @@ function renderHighlights(currentGameState) {
 
 // Helper 1: Clear All Highlight Classes
 function clearAllHighlights() {
-    const highlightClasses = ['playable', 'selected-attacker', 'targetable', 'targeting-active', 'targeting-spell', 'targetable-spell'];
+    const highlightClasses = ['playable', 'selected-attacker', 'targetable', 'targetable-restricted', 'targeting-active', 'targeting-spell', 'targetable-spell'];
     gameContainerEl?.classList.remove('targeting-active'); // Remove global targeting class
     document.querySelectorAll('.' + highlightClasses.join(', .'))
         .forEach(el => el.classList.remove(...highlightClasses));
@@ -956,10 +1016,10 @@ function renderSpellTargetHighlights(currentGameState) {
 
     // Highlight valid targets using isValidSpellTarget from gameManager
     const allPotentialTargets = [
-        ...(getPlayerState('player1')?.field ?? []),
-        ...(getPlayerState('player2')?.field ?? []),
-        getPlayerState('player1')?.leaderCard, // Assuming leaderCard object exists
-        getPlayerState('player2')?.leaderCard
+        ...(gameState.players.find(p => p.id === gameState.localPlayerId)?.field ?? []),
+        ...(gameState.players.find(p => p.id !== gameState.localPlayerId)?.field ?? []),
+        gameState.players.find(p => p.id === gameState.localPlayerId)?.leaderCard,
+        gameState.players.find(p => p.id !== gameState.localPlayerId)?.leaderCard
     ].filter(Boolean); // Filter out null/undefined leaderCards if not set yet
 
     allPotentialTargets.forEach(targetInstance => {
@@ -1109,9 +1169,10 @@ function renderAttackHighlights(currentGameState) {
 
         if (opponentPlayerState) {
             const potentialTargets = [...(opponentPlayerState.field ?? [])];
-            // Add opponent leader if not hidden by Ward followers
-            const hasWard = potentialTargets.some(follower => follower?.keywords?.includes('Ward')); // Check for Ward keyword
-            if (!hasWard && opponentPlayerState.leaderCard) { // Check if leader exists
+            // Check for Ward keyword
+            const hasWard = potentialTargets.some(follower => follower?.keywords?.includes('Ward'));
+            // 【BUG-017修复】总是将敌方主战者添加到潜在目标中，Ward规则在后续处理
+            if (opponentPlayerState.leaderCard) {
                 potentialTargets.push(opponentPlayerState.leaderCard);
             }
 
@@ -1124,10 +1185,36 @@ function renderAttackHighlights(currentGameState) {
                     const isLeader = opponentPlayerState?.leaderCard && targetInstance.uid === opponentPlayerState.leaderCard.uid;
 
                     if (isLeader) {
-                         // It's the leader, select the avatar based on the opponent's ID
-                         const avatarId = `${opponentPlayerId}-avatar`; // Construct ID like 'player1-avatar' or 'player2-avatar'
-                         targetElement = document.getElementById(avatarId);
-                         console.log(`%c[UI_HIGHLIGHT_FIX] Identified Leader target. Selecting element by ID: #${avatarId}`, 'color: cyan;'); // Debug log
+                        // 【BUG-018修复】正确映射玩家ID到UI元素ID
+                        // opponentPlayerId是实际的GUID，需要映射到player1-avatar或player2-avatar
+                        let avatarId = null;
+
+                        // 方法1: 通过localPlayerId确定对手是player1还是player2
+                        if (gameState.localPlayerId) {
+                            // 根据renderGame函数的逻辑：localPlayer映射到player1，opponent映射到player2
+                            const opponentPlayer = gameState.players.find(p => p.id === opponentPlayerId);
+                            if (opponentPlayer) {
+                                avatarId = 'player2-avatar'; // 对手总是映射到player2
+                            }
+                        }
+
+                        // 方法2: 备用方案，通过IsAI属性判断
+                        if (!avatarId) {
+                            const opponentPlayer = gameState.players.find(p => p.id === opponentPlayerId);
+                            if (opponentPlayer?.isAI) {
+                                avatarId = 'player2-avatar'; // AI通常是对手，映射到player2
+                            } else {
+                                avatarId = 'player1-avatar'; // 非AI玩家映射到player1
+                            }
+                        }
+
+                        // 方法3: 最后的备用方案
+                        if (!avatarId) {
+                            avatarId = 'player2-avatar'; // 默认假设对手是player2
+                        }
+
+                        targetElement = document.getElementById(avatarId);
+                        console.log(`%c[UI_HIGHLIGHT_FIX] Identified Leader target. OpponentID: ${opponentPlayerId}, AvatarID: ${avatarId}, Found: ${!!targetElement}`, 'color: cyan;');
                     } else {
                         // It's a follower, use the original data-uid selector
                         targetElement = gameContainerEl?.querySelector(`.card[data-uid="${targetInstance.uid}"]`);
@@ -1136,25 +1223,28 @@ function renderAttackHighlights(currentGameState) {
                     // --- END REVISED FIX ---
 
                     if (targetElement) {
-                        // --- ADDED WARD CHECK ---
-                        let canTarget = false;
+                        // 【BUG-017修复】区分UI显示和实际攻击规则
+                        // UI中总是显示所有潜在目标，Ward规则在点击时验证
+                        let shouldHighlight = true; // 默认高亮所有潜在目标
+                        let cssClass = 'targetable';
+
                         if (hasWard) {
-                            // If Ward exists on board, ONLY target units that HAVE Ward
+                            // 有Ward时，Ward单位正常高亮，非Ward目标用不同样式表示受限
                             if (targetInstance.keywords?.includes('Ward')) {
-                                canTarget = true;
+                                // Ward单位：正常可攻击
+                                cssClass = 'targetable';
+                            } else {
+                                // 非Ward目标（包括主战者）：显示为受限目标
+                                cssClass = 'targetable-restricted';
                             }
                         } else {
-                            // If no Ward on board, any potential target is valid
-                            canTarget = true;
+                            // 没有Ward时，所有目标都正常可攻击
+                            cssClass = 'targetable';
                         }
-                        // --- END WARD CHECK ---
 
-                        if (canTarget) { // Apply class only if targetable based on Ward rule
-                            targetElement.classList.add('targetable');
-                            // console.log(`UI Highlights: Marked ${targetInstance.name ?? targetInstance.uid} as targetable.`);
-                        } else {
-                             // Optional: Log why it wasn't targeted
-                             // console.log(`UI Highlights: SKIPPED targeting ${targetInstance.name ?? targetInstance.uid} due to Ward rule (hasWard=${hasWard}, targetHasWard=${targetInstance.keywords?.includes('Ward')})`);
+                        if (shouldHighlight) {
+                            targetElement.classList.add(cssClass);
+                            // console.log(`UI Highlights: Marked ${targetInstance.name ?? targetInstance.uid} as ${cssClass}.`);
                         }
                     } else {
                         // Log warning if element not found using either method
@@ -1190,7 +1280,6 @@ function renderActionButtons(currentGameState) {
         confirmMulliganButtonEl.style.display = 'none';
         endTurnButtonEl.style.display = 'inline-block';
         // ADDED: Detailed log before setting disabled state
-        console.log(`UI_RENDER_BUTTONS: Comparing IDs for button state. LocalID='${currentGameState.localPlayerId}', CurrentPlayerID='${currentGameState.currentPlayerId}', isLocalPlayerTurn=${isLocalPlayerTurn}`);
         endTurnButtonEl.disabled = !isLocalPlayerTurn; // Disable if not local player's turn
         // console.log(`UI: Phase ${currentGameState.phase} - End Turn Button Display: inline-block, Disabled: ${!isLocalPlayerTurn}`);
     } else {
@@ -1211,8 +1300,10 @@ function showDamageNumber(targetUid, damageAmount) {
 
     let targetElement = null;
     // --- REVISED: Find target element, handling actual Leader Instance IDs ---
-    const player1LeaderUid = gameState?.players?.find(p => p.id === 'player1')?.leaderCard?.uid;
-    const player2LeaderUid = gameState?.players?.find(p => p.id === 'player2')?.leaderCard?.uid;
+    const localPlayer = gameState.players.find(p => p.id === gameState.localPlayerId);
+    const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
+    const player1LeaderUid = localPlayer?.leaderCard?.uid;
+    const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
 
     // console.log(`[DMG_NUM_DBG] Target UID: ${targetUid}, P1 Leader UID: ${player1LeaderUid}, P2 Leader UID: ${player2LeaderUid}`); // Debug Log
 
@@ -1330,22 +1421,13 @@ function handleGameClick(event) {
     // Check if the click was on the End Turn button
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
-        const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] UI_DBG: End Turn button detected.`);
-
         // Correctly check for the imported endTurnRequest function
         if (typeof endTurnRequest === 'function') {
-            const isDisabledBefore = endTurnButtonEl.disabled;
-            console.log(`[${timestamp}] UI_DBG: End Turn button check passed. BEFORE disabling: button.disabled = ${isDisabledBefore}`);
-
             endTurnButtonEl.disabled = true; // Disable button immediately on click
-            console.log(`[${timestamp}] UI_DBG: End Turn button AFTER disabling: button.disabled = ${endTurnButtonEl.disabled}`);
-
             endTurnRequest(); // Call new SignalR wrapper
-            console.log(`[${timestamp}] UI_DBG: Called endTurnRequest().`);
         } else {
             // This error should ideally not happen if imports are correct, but keep for safety
-            console.error(`[${timestamp}] UI Error: endTurnRequest function is not available/imported!`);
+            console.error(`UI Error: endTurnRequest function is not available/imported!`);
             alert("错误：结束回合功能未加载！(endTurnRequest)"); // Update alert message
         }
         return; // Stop processing this click further
@@ -1381,24 +1463,29 @@ function handleGameClick(event) {
         // console.log("UI_DBG: Click identified as Card:", targetUid);
     // --- BUG-017 FIX: Get actual leader UID instead of hardcoding L1/L2 ---
     } else if (clickedPlayer1Avatar || clickedPlayer2Avatar) {
-        const clickedPlayerId = clickedPlayer1Avatar ? 'player1' : 'player2';
-        console.log(`%c[BUG-017] Clicked Avatar for player: ${clickedPlayerId}`, 'color: blue; font-weight: bold;');
-        // Determine opponent's ID based on local player ID
-        const opponentPlayerId = gameState.players.find(p => p.id !== gameState.localPlayerId)?.id;
-        console.log(`%c[BUG-017] Determined Opponent Player ID: ${opponentPlayerId}`, 'color: blue; font-weight: bold;');
+        const clickedAvatarId = clickedPlayer1Avatar ? 'player1-avatar' : 'player2-avatar';
 
-        // Check if the clicked avatar belongs to the opponent
-        if (opponentPlayerId && clickedPlayerId === opponentPlayerId) {
-             const opponentPlayer = getPlayerState(opponentPlayerId); // Use imported helper
-             if (opponentPlayer && opponentPlayer.leaderCard && opponentPlayer.leaderCard.uid) {
-                 targetUid = opponentPlayer.leaderCard.uid; // Use the actual leader instance UID (Guid)
-                 console.log(`%c[BUG-017] Found opponent leader UID: ${targetUid} for player ${opponentPlayerId}`, 'color: blue; font-weight: bold;');
-             } else {
-                  console.error(`%c[BUG-017] Could not find opponent leader card instance or its UID for player ${opponentPlayerId} in handleGameClick. State:`, 'color: red; font-weight: bold;', opponentPlayer);
-             }
+        // 【关键修复】正确映射DOM ID到实际玩家
+        // 根据renderGame函数的逻辑：localPlayer总是映射到player1，opponent总是映射到player2
+        const localPlayerId = gameState.localPlayerId;
+        const opponentPlayerId = gameState.players.find(p => p.id !== localPlayerId)?.id;
+
+        // 确定点击的是哪个玩家的头像
+        let clickedPlayerActualId = null;
+        if (clickedAvatarId === 'player2-avatar') { // 对手头像总是 player2-avatar
+            clickedPlayerActualId = opponentPlayerId;
         } else {
-             console.log(`%c[BUG-017] Clicked own avatar or opponent ID not found. Clicked: ${clickedPlayerId}, Opponent: ${opponentPlayerId}`, 'color: orange;');
-             // If own avatar is clicked, targetUid remains null, no action needed here for attack targeting.
+            clickedPlayerActualId = localPlayerId;
+        }
+
+        // 检查是否点击的是对手头像
+        if (clickedPlayerActualId && clickedPlayerActualId === opponentPlayerId) {
+             const opponentPlayer = getPlayerState(opponentPlayerId);
+             if (opponentPlayer && opponentPlayer.leaderCard && opponentPlayer.leaderCard.uid) {
+                 targetUid = opponentPlayer.leaderCard.uid;
+             } else {
+                  console.error(`UI Error: Could not find opponent leader card instance or its UID for player ${opponentPlayerId}`, opponentPlayer);
+             }
         }
     // --- END BUG-017 FIX ---
     }
@@ -1441,7 +1528,7 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
     if (isTargetingSpell) {
         // console.log(`UI: In targeting mode (Spell: ${targetingSpellUid}). Clicked card UID: ${cardInstance.uid}`);
         // Check if clicked a field card (potential target)
-        if (cardInstance.location === 'field') {
+        if (cardInstance.zone === 'Field') {
             const targetElement = gameContainerEl?.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
             // Check if the clicked element is marked as a valid spell target
             // Placeholder check: Replace with actual class check later after renderHighlights update
@@ -1460,12 +1547,12 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
                 // console.log("UI: Clicked field card is not a valid target for the current spell.");
                 // Do nothing, allow user to click another target or cancel
             }
-        } else if (cardInstance.location === 'hand' && cardInstance.uid === targetingSpellUid) {
+        } else if (cardInstance.zone === 'Hand' && cardInstance.uid === targetingSpellUid) {
             // Clicked the spell card itself again while targeting - CANCEL
             // console.log("UI: Clicked targeting spell card again. Cancelling targeting.");
             endSpellTargeting(); // Use helper function
             renderGame(gameState); // Re-render to remove highlights
-        } else if (cardInstance.location === 'leader_zone') {
+        } else if (cardInstance.zone === 'LeaderZone') {
             // --- Potential Spell Target Clicked (Leader) ---
             // Get spell data and caster ID to check validity
             const spellInstance = findCardInstanceByUid(targetingSpellUid);
@@ -1515,21 +1602,26 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
         return; // 安全检查
     }
 
-    // <<< MOVED DEBUG LOGGING EARLIER (Before owner/location check) >>>
+    // <<< MOVED DEBUG LOGGING EARLIER (Before owner/zone check) >>>
     // Use optional chaining (?) in case cardInstance is unexpectedly null/undefined at this point
-    console.log(`UI_CLICK_TARGET_DBG: Clicked Card Instance: UID=${cardInstance?.uid}, Name=${cardInstance?.name}, Owner=${cardInstance?.ownerId}, Location=${cardInstance?.location}`);
-    console.log(`UI_CLICK_TARGET_DBG: Known Player ID at click time (from uiCurrentPlayerId): ${currentPlayerId}`); // Use known ID in log
-    console.log(`UI_CLICK_TARGET_DBG: Game State Phase at click time: ${gameState?.phase}`);
     // <<< END MOVED DEBUG LOGGING >>>
 
     // Check if the card is owned by the current player and is in their hand
-    if (cardInstance.ownerId === currentPlayerId && cardInstance.location === 'hand') {
+    if (cardInstance.ownerId === currentPlayerId && cardInstance.zone.toLowerCase() === 'hand') {
         console.log(`UI: Clicked on hand card ${cardInstance.uid}. Checking playability cache.`);
         const playabilityInfo = gameState.playabilityCache[cardInstance.uid];
 
-        if (!playabilityInfo || !playabilityInfo.isPlayable) {
-            console.warn(`UI: Card ${cardInstance.name} (${cardInstance.uid}) is not playable according to cache or cache miss. Reason: ${playabilityInfo?.failureReason}`);
-            alert(playabilityInfo?.failureReason || "该卡牌现在无法使用。"); // Show reason from cache or generic message
+        // 【修复】如果缓存未命中，说明服务器还未推送可玩性信息
+        if (!playabilityInfo) {
+            console.log(`UI: No cache entry for ${cardInstance.name} (${cardInstance.uid}). Server has not yet pushed playability info.`);
+            // 给用户友好的提示，不再主动请求（服务器会自动推送）
+            alert("卡牌可用性信息尚未就绪，请稍后再试。");
+            return; // 等待服务器推送更新
+        }
+
+        if (!playabilityInfo.isPlayable) {
+            console.warn(`UI: Card ${cardInstance.name} (${cardInstance.uid}) is not playable. Reason: ${playabilityInfo.failureReason}`);
+            alert(playabilityInfo.failureReason || "该卡牌现在无法使用。"); // Show reason from cache or generic message
             return; // Stop processing if not playable
         }
 
@@ -1549,8 +1641,10 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
                     let targetElement = document.querySelector(`.card[data-uid="${targetUid}"]`); // Try finding card first
                     if (!targetElement) {
                          // If not found as card, check if it's a leader UID
-                         const player1LeaderUid = getPlayerState('player1')?.leaderCard?.uid;
-                         const player2LeaderUid = getPlayerState('player2')?.leaderCard?.uid;
+                         const localPlayer = getPlayerState(gameState.localPlayerId);
+                         const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
+                         const player1LeaderUid = localPlayer?.leaderCard?.uid;
+                         const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
                          if (targetUid === player1LeaderUid) {
                              targetElement = document.getElementById('player1-avatar');
                          } else if (targetUid === player2LeaderUid) {
@@ -1583,13 +1677,10 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
         }
     } // Closes if block for hand card check
     // Handle click on own field card
-    else if (cardInstance.ownerId === currentPlayerId && cardInstance.location === 'field') {
+    else if (cardInstance.ownerId === currentPlayerId && cardInstance.zone === 'Field') {
         // Initiate Attack with Own Field Card (ONLY if not currently targeting a spell AND unit can attack)
         if (!isTargetingSpell) {
             // Check if the unit is actually allowed to attack
-// --- DEBUG: Check canAttack status before initiating attack ---
-            console.log(`%c[UI_ATTACK_CHECK] Clicking own field card: ${cardInstance.name} (UID: ${cardInstance.uid}). Checking canAttack: ${cardInstance.canAttack}`, 'color: blue; font-weight: bold;');
-            // --- END DEBUG ---
             if (cardInstance.canAttack === true) {
                 // console.log(`UI: Attempting to initiate attack with own field card: ${cardInstance.name} (UID: ${cardInstance.uid})`);
                 initiateAttack(cardInstance.uid); // Call gameManager
@@ -1603,38 +1694,29 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
             // Ignore click while targeting spell.
         }
     }
-    else if (cardInstance.location === 'leader_zone') {
+    else if (cardInstance.zone === 'Leader') {
         // --- Handle Click on Leader (NOT targeting spell) ---
-        console.log(`%c[UI_LEADER_CLICK] Entered 'leader_zone' block. UID: ${cardInstance.uid}, Location: ${cardInstance.location}`, 'color: magenta; font-weight: bold;');
         // Spell targeting on leader is handled inside the "if (isTargetingSpell)" block earlier.
         // This block now only handles attack targeting or non-actionable clicks.
-        // console.log(`UI: Clicked leader zone (UID: ${cardInstance.uid}) while NOT targeting spell.`);
-        console.log(`%c[UI_LEADER_CLICK] Checking gameState.selectedAttackerUid: ${gameState.selectedAttackerUid}`, 'color: magenta;');
         if (gameState.selectedAttackerUid) {
             // --- Handle Attack Targeting on Leader ---
-            console.log(`%c[UI_LEADER_CLICK] Attacker selected (${gameState.selectedAttackerUid}). Checking if target leader is opponent.`, 'color: magenta;');
-            // console.log(`UI: Attacker ${gameState.selectedAttackerUid} selected, attempting to target Leader ${cardInstance.uid} for attack.`);
             // Get opponent ID (simplified check, assumes attacker UID format 'playerId_...')
             // FIX: selectedAttackerUid might not contain player ID prefix. Get attacker instance first.
             const attackerInstance = findCardInstanceByUid(gameState.selectedAttackerUid);
             const attackerOwnerId = attackerInstance?.ownerId; // Get owner from the instance
             const opponentPlayerId = gameState.players.find(p => p.id !== attackerOwnerId)?.id;
-            console.log(`%c[UI_LEADER_CLICK] Attacker Owner: ${attackerOwnerId}, Determined Opponent ID: ${opponentPlayerId}, Target Leader Owner: ${cardInstance.ownerId}`, 'color: magenta;');
 
             if (opponentPlayerId && cardInstance.ownerId === opponentPlayerId) { // Ensure it's opponent's leader
-                console.log(`%c[UI_LEADER_CLICK] Target is opponent leader. Calling selectAttackTarget(${cardInstance.uid})...`, 'color: green; font-weight: bold;');
                 selectAttackTarget(cardInstance.uid); // Call gameManager
             } else {
-                 console.warn(`%c[UI_LEADER_CLICK] Target leader owner (${cardInstance.ownerId}) does not match opponent ID (${opponentPlayerId}). Attack target selection aborted.`, 'color: orange;');
-                // console.warn(`UI: Attempted to attack non-opponent leader ${cardInstance.uid}?`);
+                 console.warn(`UI: Target leader owner (${cardInstance.ownerId}) is not the opponent (${opponentPlayerId}).`);
             }
         } else {
             // --- Handle Non-Actionable Click on Leader ---
-             console.log(`%c[UI_LEADER_CLICK] No attacker selected. Click on leader is non-actionable in this context.`, 'color: gray;');
-            // console.log(`UI: Clicked leader ${cardInstance.uid} in non-actionable context.`);
+             // console.log(`UI: No attacker selected. Click on leader is non-actionable.`);
         }
-    } // End of 'else if (cardInstance.location === 'leader_zone')' block
-    else if (cardInstance.ownerId !== currentPlayerId && cardInstance.location === 'field') {
+    } // End of 'else if (cardInstance.zone === 'Leader')' block
+    else if (cardInstance.ownerId !== currentPlayerId && cardInstance.zone === 'Field') {
         // Handle click on opponent field card (Select Attack Target OR Select Spell Target)
         if (isTargetingSpell) {
             // If targeting a spell, check if this is a valid target
@@ -1666,8 +1748,8 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
             }
         }
     }
-    else { // Handle clicks on cards in other locations (deck, graveyard, etc.) - usually ignore
+    else { // Handle clicks on cards in other zones (deck, graveyard, etc.) - usually ignore
         // 卡牌在牌库、墓地或其他不可点击的位置/状态
-        // console.log(`UI: Clicked card in unhandled location/state: ${cardInstance.location}`);
+        // console.log(`UI: Clicked card in unhandled zone/state: ${cardInstance.zone}`);
     }
 }

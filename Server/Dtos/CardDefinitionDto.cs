@@ -1,5 +1,6 @@
 // File: Server/Dtos/CardDefinitionDto.cs
 using System.Collections.Generic;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Dtos
 {
@@ -13,7 +14,7 @@ namespace ShadowverseBeyond.Server.Dtos
         // Changed CardId to int
         public required int CardId { get; init; }
         public required string Name { get; init; }
-        public required string Type { get; init; } // "Follower", "Spell", "Amulet"
+        public required CardType Type { get; init; } // "Follower", "Spell", "Amulet"
         public required string Rarity { get; init; } // Added Rarity
         public required string CardSet { get; init; } // Added CardSet
         // Removed Class, Rarity as they are not directly in CardDefinition entity

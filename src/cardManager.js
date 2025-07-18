@@ -6,8 +6,6 @@
 // - 游戏事件系统: 文档/05-游戏系统/04-游戏事件系统.md
 //
 
-console.log("cardManager.js loaded");
-
 let cardDatabase = []; // 存储从 JSON 加载的卡牌定义
 let uidCounter = 0; // 用于生成卡牌实例唯一ID的计数器
 
@@ -16,24 +14,16 @@ export async function loadCards() {
     // 注意：fetch 的路径是相对于 HTML 文件的，而不是 JS 文件
     // const dataPath = './data/card_data.json'; // Replaced with API endpoint
     const apiUrl = '/api/cards'; // Use the API endpoint relative to the domain
-    console.log(`Attempting to load card data from API: ${apiUrl}`);
     try {
-        console.log("loadCards: Inside try block, before fetch."); // ADDED
         const response = await fetch(apiUrl); // Fetch from the API
-        console.log(`loadCards: Fetch completed. Status: ${response.status}`); // ADDED
         if (!response.ok) {
-            console.error(`loadCards: HTTP error! Status: ${response.status}`); // ADDED Log before throw
             // 网络错误或文件未找到等
             throw new Error(`HTTP error loading card data! status: ${response.status}`);
         }
-        console.log("loadCards: Response OK. Attempting response.json()..."); // ADDED
         const loadedData = await response.json();
-        console.log("loadCards: response.json() completed."); // ADDED
         if (!Array.isArray(loadedData)) {
-            console.error("loadCards: Loaded data is not an array!"); // ADDED Log before throw
             throw new Error("Loaded card data is not an array.");
         }
-        console.log("loadCards: Data format OK (Array). Converting API format to frontend format...");// ADDED
 
         // Convert API format to frontend format
         // API returns: {cardId: 0, name: "主战者", ...}
@@ -56,10 +46,8 @@ export async function loadCards() {
 
         uidCounter = 0; // 重置 UID 计数器
         console.log(`Card data loaded successfully. ${cardDatabase.length} cards found.`);
-        console.log("First few converted cards:", cardDatabase.slice(0, 3).map(c => ({id: c.id, name: c.name})));
         // 可以添加数据验证逻辑
     } catch (error) {
-        console.error("loadCards: CATCH BLOCK triggered!"); // ADDED
         console.error("Failed to load or parse card data:", error);
         cardDatabase = []; // 加载失败时确保数据库为空
         // 向上抛出错误，让初始化流程知道失败了
@@ -69,18 +57,9 @@ export async function loadCards() {
 
 // 根据 ID 获取卡牌定义
 export function getCardDefinition(cardId) {
-    // --- UNKNOWNCARD BUG DIAGNOSIS START ---
-    console.log(`GM_DBG_UNKNOWN: getCardDefinition called with cardId: ${cardId}`);
-    console.log(`GM_DBG_UNKNOWN: Current cardDatabase length: ${cardDatabase?.length ?? 'undefined'}`);
-    // Log first few IDs for comparison, only if database has items
-    if (cardDatabase && cardDatabase.length > 0) {
-        console.log(`GM_DBG_UNKNOWN: First few IDs in cardDatabase: ${cardDatabase.slice(0, 5).map(c => c.id).join(', ')}`);
-    }
-    // --- UNKNOWNCARD BUG DIAGNOSIS END ---
-
     const definition = cardDatabase.find(card => card && card.id === cardId); // Added check for card existence before accessing id
     if (!definition) {
-        console.warn(`Card definition not found for ID: ${cardId}. cardDatabase length was ${cardDatabase?.length ?? 'undefined'}.`); // Added length to warning
+        console.warn(`Card definition not found for ID: ${cardId}.`);
         // 返回 null 或 undefined，调用者需要处理
         return null;
     }
@@ -91,10 +70,6 @@ export function getCardDefinition(cardId) {
 // 创建卡牌运行时实例 (包含唯一标识和当前状态)
 // Input is assumed to be a DTO object from the server (e.g., CardDto, UnitStateDto)
 export function createCardInstance(cardDto) {
-    // Input Validation
-    // --- DEBUG START: Log incoming DTO ---
-    console.log(`DEBUG_CARDMANAGER: createCardInstance received:`, JSON.stringify(cardDto, null, 2));
-    // --- DEBUG END ---
     if (!cardDto || typeof cardDto !== 'object') {
         console.error("Cannot create instance: Invalid DTO provided. Input was:", cardDto); // Log the problematic input
         return null;
@@ -168,6 +143,9 @@ export function createCardInstance(cardDto) {
         turnPlayed: null,                                                     // Initialized locally
         attackCount: 0,                                                       // Initialized locally
         isEvolved: cardDto.IsEvolved ?? false,                                // Prioritize IsEvolved from input
+        // 【BUG-023修复】显式映射OwnerPlayerId和Zone
+        ownerId: cardDto.OwnerPlayerId,
+        zone: cardDto.Zone,
         // Add other potential DTO properties here if needed (e.g., Countdown for amulets)
     };
     // --- UNIFIED ID LOGIC END ---

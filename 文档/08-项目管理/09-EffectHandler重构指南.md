@@ -1,4 +1,4 @@
-# Effect Handler 重构指南 [COMPLETED]
+# Effect Handler 重构指南
 
 ## 重构状态概览
 
@@ -186,3 +186,107 @@
 - 验证Action委托的独立性和可测试性
 - 检查领域事件的正确生成和聚合
 - 确认日志记录格式的一致性
+
+---
+
+## 8. 第三阶段：原子化重构 (Effect Atomization) [IN PROGRESS]
+
+### 8.1. 背景与目标
+
+在完成了前两个阶段的架构统一后，我们进入了更深层次的重构：将效果（Effect）处理彻底原子化。当前部分 `EffectHandler` 仍然处理着复合逻辑（例如，`DamageEffectHandler` 同时处理伤害计算、生命值修改、死亡检查），这违反了单一职责原则，并使得事件的时序管理变得复杂。
+
+**本阶段目标：**
+
+1.  **实现真正的原子性：** 将每个 `EffectHandler` 的职责限制在**一个不可再分的、最小的游戏状态变更**上。
+2.  **确立“一对一”原则：** 建立一个 `EffectHandler` 只生成一种主要领域事件（`IGameEvent`）的清晰模式。
+3.  **推广效果链（Effect Chain）：** 使用效果链来编排由多个原子效果组成的复杂游戏逻辑，以精确控制执行顺序和时序。
+4.  **明确领域职责：** 进一步明确领域实体（如 `PlayerState`）和 `EffectHandler` 之间的职责边界。
+
+### 8.2. 核心设计原则
+
+1.  **原子效果 (Atomic Effect):**
+    *   一个原子效果只对应一个最小化的状态变更。
+    *   **示例:** `ModifyHealthEffect` 只负责修改生命值；`MoveCardEffect` 只负责将卡牌从一个区域移动到另一个区域。
+
+2.  **一对一事件生成 (One-to-One Event Generation):**
+    *   一个原子 `EffectHandler` 在其执行成功后，**必须只生成一个**与之对应的、描述“既成事实”的领域事件。
+    *   **示例:**
+        *   `ModifyHealthEffectHandler` -> `HealthChangedEvent`
+        *   `MoveCardEffectHandler` -> `CardMovedEvent`
+        *   `AddKeywordEffectHandler` -> `KeywordAddedEvent`
+    *   **严禁**一个 Handler 生成多种不同类型的事件。例如，`ModifyHealthEffectHandler` **不应**生成 `UnitDestroyedEvent`。
+
+3.  **效果链编排 (Orchestration via Effect Chains):**
+    *   所有复杂的、多步骤的逻辑都**必须**通过效果链来实现。
+    *   一个上层逻辑（如 `Ability` 的工厂方法或领域实体的业务流程方法）负责创建并返回一个“父效果”。这个父效果本身可能不执行任何操作，但其 `ChainedEffects` 列表包含了所有需要按顺序执行的原子效果。
+    *   **示例：** “造成2点伤害”这个动作，将由一个父效果编排，其子效果链为：`[ModifyHealthEffect, CheckIfDestroyedEffect]`。
+
+4.  **职责边界:**
+    *   **领域实体 (`PlayerState`, `CardInstance`):** 负责执行**最核心的状态修改**，并返回包含**单个原子事件**的 `DomainOperationResult`。例如，`card.TakeDamage(amount)` 方法内部只会修改 `CurrentHealth` 并返回一个包含 `HealthChangedEvent` 的结果。
+    *   **EffectHandler:** 职责被大幅削减，成为一个非常薄的“适配器”或“调用者”。它的唯一工作就是：
+        1.  解析 `Effect` 对象中的参数。
+        2.  调用 `ITargetProcessingService`。
+        3.  在传递给服务的委托中，调用目标领域实体（如 `player` 或 `card`）上对应的**原子性**方法。
+
+### 8.3. 重构范例：拆解“抽卡 (Draw Card)”
+
+以 `DrawCardEffectHandler` 为例，展示如何将其从一个复合处理器重构为由效果链驱动的原子操作。
+
+#### **重构前 (复合逻辑):**
+
+一个 `DrawCardEffectHandler` 可能包含以下所有逻辑：
+1.  检查牌库是否为空。
+2.  从牌库顶部取牌。
+3.  检查手牌是否已满。
+4.  如果手牌未满，将卡牌加入手牌。
+5.  如果手牌已满，将卡牌置入墓地（爆牌）。
+6.  生成一个 `CardDrawnEvent` 或 `CardDiscardedEvent`。
+
+#### **重构后 (原子效果链):**
+
+现在，不再有 `DrawCardEffectHandler`。取而代之的是，一个更高层的逻辑（例如 `PlayerState.DrawCards` 方法或一个“抽牌能力”）会创建一个效果链。
+
+**`PlayerState.DrawCards(amount)` 方法的职责:**
+此方法不再直接修改状态，而是**创建并返回一个效果链**。
+
+```csharp
+// 在 PlayerState.cs 中 (示意代码)
+public DomainOperationResult DrawCards(int amount)
+{
+    var result = new DomainOperationResult();
+    
+    // 创建一个代表“抽X张牌”这个宏观动作的父效果
+    var drawChainEffect = new Effect(this.PlayerId) {
+        // 这个父效果本身不执行逻辑，但可以携带完成事件
+        CompletionEvents = { new CardsDrawnProcessCompletedEvent(this.PlayerId, amount) }
+    };
+
+    for (int i = 0; i < amount; i++)
+    {
+        // 为每一次抽牌创建一个子效果链
+        var singleDrawChain = new Effect(this.PlayerId);
+        
+        // 1. 从牌库顶移动一张牌到“虚空”或“处理中”区域
+        singleDrawChain.ChainedEffects.Add(SystemEffects.MoveTopCardOfDeck(this.PlayerId, CardZone.Limbo));
+        
+        // 2. 检查手牌上限
+        singleDrawChain.ChainedEffects.Add(SystemEffects.CheckHandSize(this.PlayerId));
+        
+        // 3. 根据检查结果，条件性地移动卡牌
+        //    (这部分可以通过带条件的Effect或在GameService中处理)
+        //    - 如果手牌未满 -> MoveCard(from: Limbo, to: Hand)
+        //    - 如果手牌已满 -> MoveCard(from: Limbo, to: Graveyard)
+        
+        drawChainEffect.ChainedEffects.Add(singleDrawChain);
+    }
+
+    result.Effects.Add(drawChainEffect);
+    return result;
+}
+```
+
+**新的原子 `EffectHandler`:**
+*   `MoveCardEffectHandler`: 只负责将卡牌从一个区域移动到另一个区域，并生成 `CardMovedEvent`。
+*   `CheckHandSizeEffectHandler`: 只负责检查手牌数量，并可能将结果（如 `IsFull`）存入 `GameContext` 的临时变量中，供后续效果使用。它生成 `HandSizeCheckedEvent`。
+
+通过这种方式，我们将复杂的流程分解为一系列简单、可预测、可重用且易于测试的原子步骤。

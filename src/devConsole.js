@@ -16,9 +16,12 @@ class DevConsole {
         this.commandHistory = [];
         this.historyIndex = -1;
         this.commands = new Map();
+        this.eventMonitoring = false;
+        this.eventHandlers = new Map();
         this.initCommands();
         this.createConsoleUI();
         this.bindEvents();
+        this.setupEventMonitoring();
     }
 
     // 初始化命令
@@ -91,6 +94,21 @@ class DevConsole {
         this.commands.set('ai', {
             description: 'AI操作 - 用法: ai <action> (action: play, attack, evolve, endturn)',
             execute: (args) => this.aiAction(args)
+        });
+
+        this.commands.set('events', {
+            description: '显示事件监听状态',
+            execute: () => this.showEventStatus()
+        });
+
+        this.commands.set('monitor', {
+            description: '开启/关闭事件监听 - 用法: monitor <on|off>',
+            execute: (args) => this.toggleEventMonitoring(args)
+        });
+
+        this.commands.set('connection', {
+            description: '检查SignalR连接状态',
+            execute: () => this.checkConnectionStatus()
         });
     }
 
@@ -384,13 +402,38 @@ class DevConsole {
 
     // 显示帮助
     showHelp() {
-        this.output('可用命令:', 'info');
-        for (const [name, cmd] of this.commands) {
-            this.output(`  ${name} - ${cmd.description}`, 'output');
-        }
+        this.output('=== 🛠️ 开发者控制台帮助 ===', 'info');
         this.output('', 'output');
-        this.output('快捷键: Ctrl + ` 切换控制台', 'info');
-        this.output('使用 ↑↓ 键浏览命令历史', 'info');
+
+        // 分类显示命令
+        this.output('📋 基础命令:', 'info');
+        this.output('  help - 显示此帮助信息', 'output');
+        this.output('  clear - 清空控制台输出', 'output');
+        this.output('  connection - 检查SignalR连接状态', 'output');
+        this.output('  gamestate - 显示当前游戏状态', 'output');
+        this.output('', 'output');
+
+        this.output('🎮 游戏操作:', 'info');
+        this.output('  play <cardUid> [targetUid] - 出牌', 'output');
+        this.output('  attack <attackerUid> <targetUid> - 攻击', 'output');
+        this.output('  evolve <unitUid> - 进化单位', 'output');
+        this.output('  endturn - 结束当前回合', 'output');
+        this.output('', 'output');
+
+        this.output('🔍 调试工具:', 'info');
+        this.output('  events - 显示事件监听状态', 'output');
+        this.output('  monitor <on|off> - 开启/关闭事件监听', 'output');
+        this.output('', 'output');
+
+        this.output('⌨️ 快捷键:', 'info');
+        this.output('  Ctrl + ` - 切换控制台显示/隐藏', 'output');
+        this.output('  ↑↓ 键 - 浏览命令历史', 'output');
+        this.output('', 'output');
+
+        this.output('💡 使用提示:', 'info');
+        this.output('  1. 首先运行 "connection" 检查连接状态', 'output');
+        this.output('  2. 使用 "gamestate" 查看当前游戏信息', 'output');
+        this.output('  3. 使用 "monitor on" 开启事件监听以调试', 'output');
     }
 
     // 显示游戏状态
@@ -413,17 +456,29 @@ class DevConsole {
     // 出牌命令
     async playCard(args) {
         if (args.length < 1) {
-            this.output('用法: play <cardId> [targetUid]', 'error');
+            this.output('用法: play <cardUid> [targetUid]', 'error');
             return;
         }
 
-        const cardId = args[0];
+        const cardUid = args[0];
         const targetUid = args[1] || null;
+
+        // Validate GUID format
+        if (!this.isValidGuid(cardUid)) {
+            this.output(`无效的卡牌UID格式: ${cardUid}`, 'error');
+            return;
+        }
 
         try {
             if (connection && connection.state === 'Connected') {
-                await connection.invoke('PlayCard', gameState.gameId, gameState.localPlayerId, cardId, targetUid);
-                this.output(`出牌命令已发送: 卡牌${cardId}`, 'success');
+                // Use current PlayCardActionDto structure
+                const actionDto = {
+                    CardUid: cardUid,
+                    TargetUid: targetUid ? targetUid : null
+                };
+
+                await connection.invoke('PlayCard', actionDto);
+                this.output(`出牌命令已发送: 卡牌UID ${cardUid}`, 'success');
             } else {
                 this.output('未连接到服务器', 'error');
             }
@@ -442,9 +497,21 @@ class DevConsole {
         const attackerUid = args[0];
         const targetUid = args[1];
 
+        // Validate GUID formats
+        if (!this.isValidGuid(attackerUid) || !this.isValidGuid(targetUid)) {
+            this.output(`无效的UID格式 - 攻击者: ${attackerUid}, 目标: ${targetUid}`, 'error');
+            return;
+        }
+
         try {
             if (connection && connection.state === 'Connected') {
-                await connection.invoke('Attack', gameState.gameId, gameState.localPlayerId, attackerUid, targetUid);
+                // Use current AttackActionDto structure
+                const actionDto = {
+                    AttackerUid: attackerUid,
+                    TargetUid: targetUid
+                };
+
+                await connection.invoke('PerformAttack', actionDto);
                 this.output(`攻击命令已发送: ${attackerUid} -> ${targetUid}`, 'success');
             } else {
                 this.output('未连接到服务器', 'error');
@@ -463,9 +530,20 @@ class DevConsole {
 
         const unitUid = args[0];
 
+        // Validate GUID format
+        if (!this.isValidGuid(unitUid)) {
+            this.output(`无效的单位UID格式: ${unitUid}`, 'error');
+            return;
+        }
+
         try {
             if (connection && connection.state === 'Connected') {
-                await connection.invoke('Evolve', gameState.gameId, gameState.localPlayerId, unitUid);
+                // Use current EvolveActionDto structure
+                const actionDto = {
+                    UnitUid: unitUid
+                };
+
+                await connection.invoke('PerformEvolve', actionDto);
                 this.output(`进化命令已发送: ${unitUid}`, 'success');
             } else {
                 this.output('未连接到服务器', 'error');
@@ -479,8 +557,10 @@ class DevConsole {
     async endTurn() {
         try {
             if (connection && connection.state === 'Connected') {
-                await connection.invoke('EndTurn', gameState.gameId, gameState.localPlayerId);
-                this.output('回合结束命令已发送', 'success');
+                // Generate unique request ID for idempotency
+                const requestId = this.generateRequestId();
+                await connection.invoke('EndTurn', requestId);
+                this.output(`回合结束命令已发送 (请求ID: ${requestId})`, 'success');
             } else {
                 this.output('未连接到服务器', 'error');
             }
@@ -516,6 +596,150 @@ class DevConsole {
 
     aiAction(args) {
         this.output('ai 命令暂未实现', 'info');
+    }
+
+    // Helper functions
+    isValidGuid(str) {
+        if (!str || typeof str !== 'string') {
+            return false;
+        }
+        const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return guidRegex.test(str);
+    }
+
+    generateRequestId() {
+        return 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // Event monitoring setup - 延迟初始化以确保connection可用
+    setupEventMonitoring() {
+        // 定义事件类型和处理器，但不立即注册
+        const eventTypes = [
+            'ReceiveGameState',
+            'ReceiveError',
+            'CardPlayed',
+            'CardSummoned',
+            'TurnStarted',
+            'TurnEnded',
+            'AttackDeclared',
+            'DamageDealt',
+            'UnitDestroyed',
+            'UnitEvolved',
+            'GameOver',
+            'PpUpdate',
+            'EpUpdate',
+            'HandUpdated',
+            'DeckUpdate',
+            'GraveyardUpdate',
+            'HealthChanged',
+            'StatChange'
+        ];
+
+        eventTypes.forEach(eventType => {
+            const handler = (eventData) => {
+                if (this.eventMonitoring) {
+                    this.output(`[事件] ${eventType}: ${JSON.stringify(eventData, null, 2)}`, 'info');
+                }
+            };
+            this.eventHandlers.set(eventType, handler);
+        });
+
+        // 添加连接状态检查方法
+        this.checkConnectionAndSetupEvents();
+    }
+
+    // 检查连接状态并设置事件监听
+    checkConnectionAndSetupEvents() {
+        // 如果connection还未准备好，延迟重试
+        if (!connection) {
+            setTimeout(() => this.checkConnectionAndSetupEvents(), 1000);
+            return;
+        }
+
+        // 连接可用时的初始化逻辑
+        this.output('🔗 SignalR连接已就绪，事件监听器已准备', 'success');
+    }
+
+    // Show event monitoring status
+    showEventStatus() {
+        this.output('事件监听状态:', 'info');
+        this.output(`监听状态: ${this.eventMonitoring ? '开启' : '关闭'}`, 'output');
+        this.output(`连接状态: ${connection ? connection.state : '未连接'}`, 'output');
+        this.output(`已注册事件类型: ${this.eventHandlers.size}`, 'output');
+
+        if (this.eventHandlers.size > 0) {
+            this.output('监听的事件类型:', 'output');
+            for (const eventType of this.eventHandlers.keys()) {
+                this.output(`  - ${eventType}`, 'output');
+            }
+        }
+    }
+
+    // 检查连接状态
+    checkConnectionStatus() {
+        this.output('=== SignalR连接状态检查 ===', 'info');
+
+        if (!connection) {
+            this.output('❌ 连接对象: 未初始化', 'error');
+            this.output('💡 提示: 请等待游戏完全加载后再使用控制台', 'info');
+            return;
+        }
+
+        this.output(`🔗 连接对象: 已初始化`, 'success');
+        this.output(`📡 连接状态: ${connection.state}`, connection.state === 'Connected' ? 'success' : 'warning');
+
+        if (connection.connectionId) {
+            this.output(`🆔 连接ID: ${connection.connectionId}`, 'output');
+        }
+
+        this.output(`🎮 游戏状态: ${gameState.gameId ? '已加载' : '未加载'}`, gameState.gameId ? 'success' : 'warning');
+        this.output(`👤 玩家ID: ${gameState.localPlayerId || '未设置'}`, 'output');
+    }
+
+    // Toggle event monitoring
+    toggleEventMonitoring(args) {
+        if (args.length < 1) {
+            this.output('用法: monitor <on|off>', 'error');
+            return;
+        }
+
+        const action = args[0].toLowerCase();
+
+        if (action === 'on') {
+            if (!connection) {
+                this.output('错误: SignalR连接未就绪', 'error');
+                this.output('💡 请先运行 "connection" 命令检查连接状态', 'info');
+                return;
+            }
+
+            if (connection.state !== 'Connected') {
+                this.output(`错误: 连接状态为 ${connection.state}，需要 Connected 状态`, 'error');
+                return;
+            }
+
+            this.eventMonitoring = true;
+
+            // Register event handlers
+            for (const [eventType, handler] of this.eventHandlers) {
+                connection.on(eventType, handler);
+            }
+
+            this.output('✅ 事件监听已开启', 'success');
+            this.output(`📡 正在监听 ${this.eventHandlers.size} 种事件类型`, 'info');
+        } else if (action === 'off') {
+            this.eventMonitoring = false;
+
+            // Unregister event handlers
+            if (connection) {
+                for (const [eventType, handler] of this.eventHandlers) {
+                    connection.off(eventType, handler);
+                }
+            }
+
+            this.output('⏹️ 事件监听已关闭', 'success');
+        } else {
+            this.output('无效参数。使用 on 或 off', 'error');
+        }
     }
 }
 

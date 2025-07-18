@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using ShadowverseBeyond.Server.Dtos.Enums; // Added for CardZone
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases; // Corrected: Using the base class namespace
@@ -12,23 +13,26 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Exceptions;
-using ShadowverseBeyond.Server.Domain.Constants; // Keep this for GameConstants
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Factories; // Keep this for GameConstants
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
     /// <summary>
     /// Handles the effect of adding a specific card definition to a player's hand.
     /// </summary>
-    public class AddCardToHandEffectHandler : EffectHandlerBase<AddCardToHandEffectParams> // Correct: Inherits from base
+    public class AddCardToHandEffectHandler : EffectHandlerBase<AddCardToHandEffectParams>
     {
-        private readonly ICardRepository _cardRepository;
         private readonly ITargetProcessingService _targetProcessingService;
+        private readonly ICardFactory _cardFactory;
 
-        public AddCardToHandEffectHandler(ILogger logger, ICardRepository cardRepository, ITargetProcessingService targetProcessingService)
+        public AddCardToHandEffectHandler(ILogger<AddCardToHandEffectHandler> logger,
+                                          ITargetProcessingService targetProcessingService,
+                                          ICardFactory cardFactory)
             : base(logger)
         {
-            _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository));
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
+            _cardFactory = cardFactory ?? throw new ArgumentNullException(nameof(cardFactory));
         }
 
         public override async Task<GameStateActionResult> ApplyAsync(GameContext context, AddCardToHandEffectParams parameters)
@@ -37,73 +41,47 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             Logger.LogDebug("{EffectName}: Starting with CardDefinitionId={CardDefId}, Amount={Amount}.",
                            effectName, parameters.CardDefinitionId, parameters.Amount);
 
-            // Validate card definition first
-            var cardDefinition = await _cardRepository.GetCardDefinitionByIdAsync(parameters.CardDefinitionId);
-            if (cardDefinition == null)
+            if (parameters.CardDefinitionId <= 0 || parameters.Amount <= 0)
             {
-                Logger.LogError("{EffectName}: CardDefinition with ID {CardDefId} not found.", effectName, parameters.CardDefinitionId);
-                return new GameStateActionResult { Success = false, ErrorMessage = $"CardDefinition ID {parameters.CardDefinitionId} not found." };
+                Logger.LogWarning("{EffectName}: Invalid parameters CardDefinitionId={CardDefId} or Amount={Amount}.",
+                                effectName, parameters.CardDefinitionId, parameters.Amount);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Invalid CardDefinitionId or Amount." };
             }
 
-            // Define the action for adding cards to a player's hand
-            Func<PlayerState, GameContext, Task<IndividualActionResult>> playerAction =
-                async (player, ctx) =>
+            Func<PlayerState, GameContext, Task<DomainOperationResult>> playerAction =
+                (player, ctx) =>
                 {
-                    Logger.LogDebug("{EffectName}: Adding {Amount} card(s) (DefId: {CardDefId}) to Player {PlayerId}'s hand.",
-                                   effectName, parameters.Amount, parameters.CardDefinitionId, player.PlayerId);
-
-                    int cardsAdded = 0;
-                    bool handFull = false;
-                    var individualEvents = new List<IGameEvent>();
-
+                    var cardsToAdd = new List<CardInstance>();
                     for (int i = 0; i < parameters.Amount; i++)
                     {
-                        if (player.Hand.Count >= GameConstants.Hand.MaxHandSize)
-                        {
-                            Logger.LogWarning("{EffectName}: Player {PlayerId} hand is full ({HandSize}/{MaxHandSize}). Cannot add more cards.",
-                                              effectName, player.PlayerId, player.Hand.Count, GameConstants.Hand.MaxHandSize);
-                            handFull = true;
-                            break;
-                        }
-
-                        var newCardInstance = new CardInstance(cardDefinition.Id, player.PlayerId);
-                        player.Hand.Add(newCardInstance);
-                        cardsAdded++;
-
-                        // TODO: Generate CardAddedToHandEvent when event is defined
-                        // var addedEvent = new CardAddedToHandEvent(player.PlayerId, newCardInstance.InstanceId, newCardInstance.DefinitionId);
-                        // individualEvents.Add(addedEvent);
-
-                        Logger.LogTrace("{EffectName}: Added card instance {InstanceId} (DefId: {DefinitionId}) to Player {PlayerId}'s hand. Hand size: {HandCount}",
-                                       effectName, newCardInstance.InstanceId, newCardInstance.DefinitionId, player.PlayerId, player.Hand.Count);
+                        var newCard = _cardFactory.CreateAndRegisterNewCard(
+                            ctx.CurrentGameState,
+                            parameters.CardDefinitionId,
+                            player.PlayerId,
+                            CardZone.Playing // Initial zone before being placed in hand
+                        );
+                        cardsToAdd.Add(newCard);
                     }
-
-                    await Task.CompletedTask; // Adding cards is synchronous
-
-                    string message = $"Added {cardsAdded} card(s) to hand.";
-                    if (handFull && cardsAdded < parameters.Amount)
-                    {
-                        message += " Hand became full.";
-                    }
-
-                    return new IndividualActionResult
-                    {
-                        TargetId = TargetId.Player(player.PlayerId),
-                        Success = true,
-                        Message = message,
-                        GeneratedEvents = individualEvents
-                    };
+                    return Task.FromResult(player.AddCardsToHand(cardsToAdd));
                 };
 
-            // AddCardToHand effect only targets Players
-            Logger.LogDebug("{EffectName}: Processing targets assuming Player type.", effectName);
-
-            return await _targetProcessingService.ProcessTargetsAsync(
+            var serviceResult = await _targetProcessingService.ProcessTargetsAsync(
                 context,
-                TargetIdType.Player, // Expect only Player targets
                 playerAction,
-                null, // No CardInstance action needed
+                null,
                 effectName);
+
+            if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
+            {
+                serviceResult.ErrorMessage = "Failed to process targets for add card to hand effect, or no valid targets found.";
+            }
+
+            // The EffectCompletedEvent will be created by the EffectExecutor.
+            // This handler is now only responsible for invoking the domain logic
+            // and returning the atomic events generated by that logic.
+            return serviceResult;
         }
+
+        // CreateEffectCompletedEvent method is removed as this responsibility has moved to EffectExecutor.
     }
 }

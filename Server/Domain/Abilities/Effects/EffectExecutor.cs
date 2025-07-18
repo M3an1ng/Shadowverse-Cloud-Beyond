@@ -16,6 +16,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers; // Added for H
 // using ShadowverseBeyond.Server.Domain.Abilities.Effects.Parameters; // REMOVED - No longer needed
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // Keep this for ALL parameter types now
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases; // Added for EffectHandlerBase
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing; // For DslExpressionParser
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation; // For DslEvaluator
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST; // For ExpressionNode
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 {
@@ -28,6 +31,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         private readonly IServiceProvider _serviceProvider;
         private readonly IValueSourceResolver _valueSourceResolver;
         private readonly ILogger<EffectExecutor> _logger;
+        private readonly DslExpressionParser _dslExpressionParser;
+        private readonly DslEvaluator _dslEvaluator;
 
         // Registry to map effect type strings to Handler and Parameter types
         private static readonly Dictionary<string, (Type handlerType, Type paramsType)> _effectHandlerRegistry = InitializeRegistry();
@@ -35,17 +40,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         public EffectExecutor(
             IServiceProvider serviceProvider,
             IValueSourceResolver valueSourceResolver,
-            ILogger<EffectExecutor> logger)
+            ILogger<EffectExecutor> logger,
+            DslExpressionParser dslExpressionParser,
+            DslEvaluator dslEvaluator)
         {
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
             _valueSourceResolver = valueSourceResolver ?? throw new ArgumentNullException(nameof(valueSourceResolver));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _dslExpressionParser = dslExpressionParser ?? throw new ArgumentNullException(nameof(dslExpressionParser));
+            _dslEvaluator = dslEvaluator ?? throw new ArgumentNullException(nameof(dslEvaluator));
         }
 
         private static Dictionary<string, (Type handlerType, Type paramsType)> InitializeRegistry()
         {
             // Use case-insensitive keys by default
-            // TODO: 由string改为枚举类
+            // TODO: 由string改为枚举类,应该想办法默认注册所有实现的能力
             var registry = new Dictionary<string, (Type handlerType, Type paramsType)>(StringComparer.OrdinalIgnoreCase)
             {
                 // Register existing handlers
@@ -53,8 +62,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 { "heal", (typeof(HealEffectHandler), typeof(HealEffectParams)) },
                 { "drawcard", (typeof(DrawCardEffectHandler), typeof(DrawCardEffectParams)) },
                 { "modifystats", (typeof(ModifyStatsEffectHandler), typeof(ModifyStatsEffectParams)) },
-                { "summon", (typeof(SummonEffectHandler), typeof(SummonUnitEffectParams)) },
-                { "destroy", (typeof(DestroyEffectHandler), typeof(DestroyUnitEffectParams)) },
+                { "summon", (typeof(SummonEffectHandler), typeof(SummonEffectParams)) },
+                { "destroy", (typeof(DestroyEffectHandler), typeof(DestroyEffectParams)) },
                 { "addkeyword", (typeof(AddKeywordEffectHandler), typeof(AddKeywordEffectParams)) },
                 { "removekeyword", (typeof(RemoveKeywordEffectHandler), typeof(RemoveKeywordEffectParams)) },
 
@@ -71,7 +80,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 { "attack", (typeof(AttackEffectHandler), typeof(AttackEffectParams)) },
                 { "turnend", (typeof(TurnEndEffectHandler), typeof(TurnEndEffectParams)) },
                 { "mulligan", (typeof(MulliganEffectHandler), typeof(MulliganEffectParams)) },
-                { "turnstart", (typeof(TurnStartEffectHandler), typeof(TurnStartEffectParams)) }
+                { "turnstart", (typeof(TurnStartEffectHandler), typeof(TurnStartEffectParams)) },
             };
 
             // Add other handlers here as they are created...
@@ -80,39 +89,43 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         }
 
 
-        /// <inheritdoc />
-        public async Task<List<IGameEvent>> ExecuteEffectAsync(EffectConfig effectConfig, GameContext context)
+
+
+        /// <summary>
+        /// 【架构重构】执行单个效果并返回完整的结果，包括事件和效果请求
+        /// </summary>
+        public async Task<GameStateActionResult> ExecuteEffectAsync(EffectConfig effectConfig, GameContext context)
         {
-            _logger.LogDebug("Executing effect {EffectType} for ability on card {SourceCardId}",
+            _logger.LogDebug("🔧 [EffectExecutor] Executing effect {EffectType} with full result for ability on card {SourceCardId}",
                 effectConfig.Type, context.SourceCard?.InstanceId.ToString() ?? "N/A");
 
             if (context == null)
             {
                 _logger.LogError("AbilityContext cannot be null for effect execution.");
-                return new List<IGameEvent>();
+                return new GameStateActionResult { Success = false, ErrorMessage = "AbilityContext cannot be null." };
             }
 
             try
             {
-                // 1. Resolve parameter values using IValueSourceResolver (now using GameContext directly)
+                // 1. Resolve parameter values using IValueSourceResolver
                 var resolvedParameters = await ResolveEffectParameters(effectConfig, context);
 
                 // 2. Determine the correct handler and parameter type based on effectConfig.Type
-                // 3. Create and populate the strongly-typed parameter object (TParams)
-                // 4. Resolve the specific IEffectHandler<TParams> using IServiceProvider
-                GameStateActionResult actionResult; // Declare actionResult outside the if block
+                GameStateActionResult actionResult;
 
-                // 2. Find Handler and Parameter types from registry
+                // Find Handler and Parameter types from registry
+                _logger.LogDebug("🔧 [EffectExecutor] Looking for handler for effect type '{EffectType}'", effectConfig.Type);
                 if (_effectHandlerRegistry.TryGetValue(effectConfig.Type, out var registration))
                 {
                     var (handlerType, paramsType) = registration;
+                    _logger.LogDebug("🔧 [EffectExecutor] Found handler {HandlerType} with params {ParamsType}", handlerType.Name, paramsType.Name);
 
                     // 3. Create Parameter instance
                     var paramsObject = Activator.CreateInstance(paramsType);
                     if (paramsObject == null)
                     {
                         _logger.LogError("Failed to create parameter object instance for type {ParamsType}", paramsType.Name);
-                        return new List<IGameEvent>(); // Or throw?
+                        return new GameStateActionResult { Success = false, ErrorMessage = $"Failed to create parameter object for {paramsType.Name}" };
                     }
 
                     // 4. Populate Parameter instance from resolved values
@@ -123,28 +136,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     if (handlerInstance == null)
                     {
                         _logger.LogError("Failed to resolve handler instance for type {HandlerType}", handlerType.Name);
-                        return new List<IGameEvent>(); // Or throw?
+                        return new GameStateActionResult { Success = false, ErrorMessage = $"Failed to resolve handler {handlerType.Name}" };
                     }
 
                     // 6. Get the correct ApplyAsync(GameContext, TParams) method
-                    // We need the specific parameter type (paramsType) for the signature
                     var applyMethod = handlerType.GetMethod("ApplyAsync", new[] { typeof(GameContext), paramsType });
                     if (applyMethod == null)
                     {
-                        // Fallback: Check if it inherits from EffectHandlerBase and try getting the ExecuteAsync(TParams, GameContext)
-                        // This might be less direct but could work if ApplyAsync isn't directly found (e.g., explicit interface implementation)
-                        // However, the primary target should be ApplyAsync as defined in IEffectHandler<TParams>
                         _logger.LogError("Could not find ApplyAsync(GameContext, {ParamsTypeName}) method on handler type {HandlerType}", paramsType.Name, handlerType.Name);
-                        // Attempt to find the base class ExecuteAsync as a less ideal fallback - THIS IS LIKELY WRONG for direct call
-                        // var baseExecuteMethod = handlerType.GetMethod("ExecuteAsync", new[] { paramsType, typeof(GameContext) });
-                        // if (baseExecuteMethod == null) {
-                        //    _logger.LogError("Also could not find ExecuteAsync({ParamsTypeName}, GameContext) method on handler type {HandlerType}", paramsType.Name, handlerType.Name);
-                        //    return new List<IGameEvent>(); // Or throw?
-                        // }
-                        // applyMethod = baseExecuteMethod; // Use fallback if found - RECONSIDER THIS
-
-                        // For now, strictly require ApplyAsync
-                        return new List<IGameEvent>(); // Or throw?
+                        return new GameStateActionResult { Success = false, ErrorMessage = $"ApplyAsync method not found on {handlerType.Name}" };
                     }
 
                     // 7. Invoke the ApplyAsync method
@@ -152,34 +152,104 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     if (task == null)
                     {
                         _logger.LogError("ApplyAsync method on {HandlerType} did not return a Task<GameStateActionResult>.", handlerType.Name);
-                        return new List<IGameEvent>(); // Or throw?
+                        return new GameStateActionResult { Success = false, ErrorMessage = $"Invalid return type from {handlerType.Name}" };
                     }
 
+                    _logger.LogDebug("🔧 [EffectExecutor] About to invoke handler method...");
                     actionResult = await task; // Await the task to get the result
+                    _logger.LogDebug("🔧 [EffectExecutor] Handler execution completed. Success: {Success}, Events: {EventCount}",
+                        actionResult.Success, actionResult.GeneratedEvents?.Count ?? 0);
                 }
                 else
                 {
-                    _logger.LogWarning("No handler registered for effect type '{EffectType}'. Effect execution skipped.", effectConfig.Type);
+                    _logger.LogWarning("🔧 [EffectExecutor] No handler registered for effect type '{EffectType}'. Available types: [{AvailableTypes}]",
+                        effectConfig.Type, string.Join(", ", _effectHandlerRegistry.Keys));
                     actionResult = new GameStateActionResult { Success = false, ErrorMessage = $"Unsupported effect type: {effectConfig.Type}" };
                 }
 
-
-                // 7. Process the result (GameStateActionResult already contains events)
+                // 8. Process the result from handler
                 if (!actionResult.Success)
                 {
                     _logger.LogError("Effect handler for {EffectType} failed: {ErrorMessage}", effectConfig.Type, actionResult.ErrorMessage);
-                    // Optionally handle specific errors or return specific events
+                    // Even if handler failed, we might still want to generate an EffectCompletedEvent if Outputs are defined.
+                    // Or, we could return early. For now, let's proceed to generate EffectCompletedEvent.
                 }
 
-                _logger.LogDebug("Effect {EffectType} generated {EventCount} events.", effectConfig.Type, actionResult.GeneratedEvents?.Count ?? 0);
-                // Return the events directly as the type is now List<IGameEvent>
-                return actionResult.GeneratedEvents ?? new List<IGameEvent>();
+                // 9. Resolve Outputs and Create EffectCompletedEvent
+                var calculatedOutputs = new Dictionary<string, object?>();
+                if (effectConfig.Outputs != null && effectConfig.Outputs.Any())
+                {
+                    _logger.LogDebug("🔧 [EffectExecutor] Resolving {OutputCount} outputs for effect {EffectType}", effectConfig.Outputs.Count, effectConfig.Type);
+                    // Prepare context for output evaluation
+                    context.SetTemporaryVariable("inputParameters", resolvedParameters); // resolvedParameters is Dictionary<string, object>
+                    context.SetTemporaryVariable("handlerResults", actionResult.Results); // List<DomainOperationResult>
+                    // context.GeneratedEvents already contains events from the handler
+
+                    foreach (var outputEntry in effectConfig.Outputs)
+                    {
+                        var outputName = outputEntry.Key;
+                        var dslExpression = outputEntry.Value;
+                        if (string.IsNullOrWhiteSpace(dslExpression))
+                        {
+                            calculatedOutputs[outputName] = null;
+                            continue;
+                        }
+
+                        var astNode = _dslExpressionParser.ParseExpression(dslExpression);
+                        if (astNode != null)
+                        {
+                            var evalResult = await _dslEvaluator.EvaluateAsync(astNode, context);
+                            if (evalResult.IsSuccess)
+                            {
+                                calculatedOutputs[outputName] = evalResult.Value;
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Failed to evaluate output DSL '{DslExpression}' for output '{OutputName}'. Errors: {Errors}", dslExpression, outputName, string.Join(", ", evalResult.Errors));
+                                calculatedOutputs[outputName] = null; // Or some error indicator
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Failed to parse output DSL '{DslExpression}' for output '{OutputName}'. Parser errors exist.", dslExpression, outputName);
+                            calculatedOutputs[outputName] = null; // Or some error indicator
+                        }
+                    }
+                }
+
+                // Create EffectCompletedEvent
+                // var originalIntendedEventType = MapEffectTypeToEventType(effectConfig.Type); // Removed: No longer mapping to EventType
+                var abilityTag = context.CurrentAbility?.Config.AbilityTag ?? effectConfig.Id ?? string.Empty;
+
+                var effectCompletedEvent = new EffectCompletedEvent(
+                    effectConfig.Type, // Pass the original effect type string directly
+                    resolvedParameters, // These are the input parameters to the effect handler
+                    context.SelectedTargets.ToList().AsReadOnly(), // Targets selected before handler execution
+                    calculatedOutputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value).AsReadOnly(),
+                    context.RequestingPlayerId,
+                    context.SourceCard,
+                    null // sourceAbilityInstanceId (Guid?) - Ability.AbilityId is long
+                );
+
+                actionResult.GeneratedEvents ??= new List<IGameEvent>();
+                actionResult.GeneratedEvents.Add(effectCompletedEvent);
+                _logger.LogDebug("🔧 [EffectExecutor] Added EffectCompletedEvent for {EffectType}", effectConfig.Type);
+
+
+                // 【关键修复】在Effect执行完毕后清理GameContext的临时状态
+                context.ClearTemporaryState(); // This will clear inputParameters and handlerResults as well
+                _logger.LogDebug("🔧 [EffectExecutor] Cleared GameContext temporary state after executing {EffectType}", effectConfig.Type);
+
+                _logger.LogDebug("🔧 [EffectExecutor] Effect {EffectType} generated {EventCount} events (including EffectCompletedEvent).",
+                    effectConfig.Type, actionResult.GeneratedEvents?.Count ?? 0);
+
+                return actionResult;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error executing effect {EffectType} for ability on card {SourceCardId}",
                     effectConfig.Type, context.SourceCard?.InstanceId.ToString() ?? "N/A");
-                return new List<IGameEvent>();
+                return new GameStateActionResult { Success = false, ErrorMessage = ex.Message };
             }
         }
 
@@ -231,6 +301,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     {
                         // Attempt direct assignment first
                         var value = kvp.Value;
+
+                        // 【修复】优先处理null值，特别是Guid?等可空类型
+                        if (value == null)
+                        {
+                            if (IsNullableType(property.PropertyType))
+                            {
+                                property.SetValue(paramsObject, null);
+                                continue;
+                            }
+                            else
+                            {
+                                // Skip setting non-nullable properties to null
+                                _logger.LogWarning("Attempted to set non-nullable property {PropertyName} to null. Skipping.", property.Name);
+                                continue;
+                            }
+                        }
 
                         // Handle potential type mismatches (e.g., int vs long, string vs enum)
                         if (value != null && property.PropertyType != value.GetType())
@@ -304,5 +390,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             return type == typeof(int) || type == typeof(long) || type == typeof(short) || type == typeof(byte) ||
                    type == typeof(uint) || type == typeof(ulong) || type == typeof(ushort) || type == typeof(sbyte);
         }
+
+        // Helper to check if a type is nullable
+        private static bool IsNullableType(Type type)
+        {
+            return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
+        }
+
+        // Removed MapEffectTypeToEventType method as it's no longer needed.
     }
 } // End of namespace ShadowverseBeyond.Server.Domain.Abilities.Effects

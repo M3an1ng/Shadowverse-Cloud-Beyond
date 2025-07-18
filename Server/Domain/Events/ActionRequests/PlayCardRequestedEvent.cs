@@ -26,13 +26,9 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         // We need to decide how to populate SourcePlayer, SourceCard, Parameters if needed for this specific event.
         // For a request event, these might often be null or determined during processing.
         // Let's initialize them simply for now.
-        public new PlayerStateDto? SourcePlayer { get; init; } = null;
-        public new CardInstance? SourceCard { get; init; } = null;
-        public new Dictionary<string, object> Parameters { get; init; } = new();
-
         // Constructor to initialize properties and call base constructor
         public PlayCardRequestedEvent(Guid playerId, PlayCardActionDto actionDto)
-            : base(nameof(PlayCardRequestedEvent)) // Call base constructor with event type
+            : base(EventType.PlayCardRequested) // Call base constructor with event type
         {
             PlayerId = playerId;
             ActionDto = actionDto;
@@ -41,14 +37,6 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         // The core logic for playing a card (PP deduction, summoning, spell effects)
         // will be handled by the IEventProcessor when it processes this event.
         // Therefore, the ExecuteAsync here should return an empty list of subsequent events.
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // Placeholder: The actual logic is handled by the EventProcessor reacting to this event type.
-            _logger.LogDebug("Executing PlayCardRequestedEvent for Player {PlayerId}, CardUID {CardUid}", PlayerId, ActionDto.CardUid);
-            // This event itself doesn't directly cause state changes or new events here.
-            // It signals the intent, and the processor handles the consequences.
-            return Task.FromResult(new List<IGameEvent>()); // Return empty list
-        }
 
         // This internal domain event likely doesn't need a direct DTO representation for broadcasting.
         // Return null or throw if conversion is attempted unexpectedly.

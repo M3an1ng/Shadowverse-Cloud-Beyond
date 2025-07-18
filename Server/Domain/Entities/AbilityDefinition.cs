@@ -50,19 +50,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int AbilityType { get; set; }
 
         /// <summary>
-        /// 配置存储格式类型
-        /// 0 = DSL, 1 = JSON, 2 = Mixed
-        /// </summary>
-        [Required]
-        public int ConfigFormat { get; set; }
-
-        /// <summary>
-        /// DSL源码（当ConfigFormat为DSL或Mixed时使用）
-        /// </summary>
-        [Column(TypeName = "TEXT")]
-        public string? DslSource { get; set; }
-
-        /// <summary>
         /// JSON配置（当ConfigFormat为JSON或Mixed时使用）
         /// </summary>
         [Column(TypeName = "TEXT")]

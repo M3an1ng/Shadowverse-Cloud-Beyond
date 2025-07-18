@@ -15,6 +15,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 
         /// <summary>
         /// 当前回合数
+        /// TODO: 删除，从PlayerState获取
         /// </summary>
         public int TurnNumber { get; set; } = 0;
 

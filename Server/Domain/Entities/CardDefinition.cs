@@ -7,6 +7,8 @@
 using System.ComponentModel.DataAnnotations;
 using System.Collections.Generic;
 
+using ShadowverseBeyond.Server.Dtos.Enums;
+
 namespace ShadowverseBeyond.Server.Domain.Entities;
 
 /// <summary>
@@ -28,7 +30,7 @@ public class CardDefinition
     /// <summary>
     /// Type of the card (e.g., "Follower", "Spell", "Amulet").
     /// </summary>
-    public string Type { get; set; } = string.Empty;
+    public CardType Type { get; set; }
 
     /// <summary>
     /// 卡牌稀有度

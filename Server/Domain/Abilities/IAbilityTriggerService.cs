@@ -1,5 +1,7 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -14,6 +16,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <param name="gameEvent">触发的游戏事件</param>
         /// <param name="context">游戏上下文</param>
         /// <returns>触发的能力列表</returns>
-        Task<List<Ability>> GetTriggeredAbilitiesAsync(IGameEvent gameEvent, GameContext context);
+        Task<List<IAbility>> GetTriggeredAbilitiesAsync(IGameEvent gameEvent, GameContext context);
+
+        /// <summary>
+        /// Directly processes a single ability instance to generate its effects,
+        /// including condition checks and target resolution. This centralizes the ability execution logic.
+        /// </summary>
+        /// <param name="ability">The ability instance to process.</param>
+        /// <param name="context">The current game context.</param>
+        /// <returns>A list of effects to be enqueued.</returns>
+        Task<List<Effect>> ProcessSingleAbilityAsync(IAbility ability, GameContext context);
     }
 }

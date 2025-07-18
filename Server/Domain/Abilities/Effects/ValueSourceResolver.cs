@@ -20,21 +20,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         private readonly ILogger<ValueSourceResolver> _logger;
         private readonly DslEvaluator _dslEvaluator;
         private readonly DslExpressionParser _dslParser;
-        private readonly IFunctionRegistry _functionRegistry;
-        private readonly ICardRepository _cardRepository;
-
         public ValueSourceResolver(
             ILogger<ValueSourceResolver> logger,
             DslEvaluator dslEvaluator,
-            DslExpressionParser dslParser,
-            IFunctionRegistry functionRegistry,
-            ICardRepository cardRepository)
+            DslExpressionParser dslParser)
         {
             _logger = logger;
             _dslEvaluator = dslEvaluator;
             _dslParser = dslParser;
-            _functionRegistry = functionRegistry;
-            _cardRepository = cardRepository;
         }
 
         /// <summary>
@@ -56,7 +49,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error resolving value: {ValueConfig}", JsonSerializer.Serialize(valueConfig));
-                return valueConfig.StaticValue ?? 0;
+                // 【修复】保持原始值，不要强制转换为0
+                return valueConfig.StaticValue ?? new object();
             }
         }
 
@@ -92,7 +86,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// </summary>
         private object ResolveStaticValue(ValueConfig valueConfig)
         {
-            return valueConfig.StaticValue ?? 0;
+            // 【修复】保持null值，不要自动转换为0
+            // 这样可以正确处理Guid?等可空类型
+            return valueConfig.StaticValue ?? new object();
         }
 
         /// <summary>
@@ -232,17 +228,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 
         /// <summary>
         /// 获取游戏属性
+        /// 【架构重构】使用当前玩家的回合数而不是全局回合数
         /// </summary>
-        private async Task<object> GetGameProperty(GameContext context, string property)
+        private Task<object> GetGameProperty(GameContext context, string property)
         {
-            return property.ToLower() switch
+            if (string.IsNullOrEmpty(property))
+                return Task.FromResult<object>(0);
+
+            return Task.FromResult(property.ToLower() switch
             {
-                "turn" => context.CurrentGameState.TurnNumber,
-                "currentplayerid" => context.CurrentGameState.CurrentPlayerId,
-                "phase" => context.CurrentGameState.Phase.ToString(),
-                "status" => context.CurrentGameState.Status.ToString(),
-                _ => await Task.FromResult(0)
-            };
+                "turn" => (object)(context.CurrentGameState.GetPlayerState(context.CurrentGameState.CurrentPlayerId ?? Guid.Empty)?.TurnNumber ?? 0),
+                "currentplayerid" => (object)(context.CurrentGameState.CurrentPlayerId ?? Guid.Empty),
+                "phase" => (object)context.CurrentGameState.Phase.ToString(),
+                "status" => (object)context.CurrentGameState.Status.ToString(),
+                _ => (object)0
+            });
         }
 
         /// <summary>

@@ -28,12 +28,20 @@ export function runAILogic(currentGameState) { // 接收当前游戏状态
         return;
     }
 
-    // Ensure player 'player2' is the AI and exists
-    const aiPlayer = currentGameState.players.find(p => p && p.id === 'player2');
-    if (!aiPlayer || !aiPlayer.isAI) { // Also check the isAI flag
-         console.error("AI Error: Could not find AI player (player2) state or it's not marked as AI.");
-         setTimeout(endTurnRequest, 500); // Failsafe: Request server to end turn
-         return;
+    // 【修复】动态查找AI玩家，而不是硬编码'player2'
+    const aiPlayer = currentGameState.players.find(p => p && p.isAI);
+    if (!aiPlayer) {
+        console.error("AI Error: Could not find any player marked as AI in the current game state.");
+        setTimeout(endTurnRequest, 500); // Failsafe: Request server to end turn
+        return;
+    }
+
+    // 确保现在是AI的回合
+    if (currentGameState.currentPlayerId !== aiPlayer.id) {
+        console.log(`AI: Skipping logic, it is not my turn. (Current turn: ${currentGameState.currentPlayerId})`);
+        // This case should not happen if called correctly, but as a safeguard:
+        // We don't end the turn here, as it's not our turn to end.
+        return;
     }
 
     // --- 逐步执行 AI 动作 ---

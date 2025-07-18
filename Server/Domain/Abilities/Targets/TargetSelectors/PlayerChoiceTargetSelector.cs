@@ -7,6 +7,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
 {
@@ -223,7 +224,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
         private List<TargetId> ApplyFiltering(List<TargetId> targets, GameContext context)
         {
             if (targets == null || targets.Count == 0)
-                return targets;
+                return targets ?? new List<TargetId>();
 
             try
             {
@@ -233,7 +234,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectors
                 foreach (var targetId in targets)
                 {
                     // 只对卡牌目标应用区域过滤
-                    if (targetId.Type == TargetIdType.CardInstance)
+                    if (targetId.Type == TargetType.Card)
                     {
                         // 尝试从游戏状态中找到对应的卡牌实例
                         var cardInstance = FindCardInstanceById(targetId.Id, context);

@@ -13,93 +13,86 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// 添加Buff效果处理器
     /// 为目标添加指定的Buff效果
     /// </summary>
+    using ShadowverseBeyond.Server.Domain.Buffs;
+
     public class AddBuffEffectHandler : EffectHandlerBase<AddBuffEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
+        private readonly IBuffFactory _buffFactory;
+        private readonly IBuffManager _buffManager;
 
-        public AddBuffEffectHandler(ILogger logger, ITargetProcessingService targetProcessingService)
+        public AddBuffEffectHandler(ILogger<AddBuffEffectHandler> logger,
+                                    ITargetProcessingService targetProcessingService,
+                                    IBuffFactory buffFactory,
+                                    IBuffManager buffManager)
             : base(logger)
         {
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
+            _buffFactory = buffFactory ?? throw new ArgumentNullException(nameof(buffFactory));
+            _buffManager = buffManager ?? throw new ArgumentNullException(nameof(buffManager));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, AddBuffEffectParams parameters)
+        public override GameStateActionResult Apply(GameContext context, AddBuffEffectParams parameters)
         {
             const string effectName = "AddBuffEffect";
-            Logger.LogDebug("{EffectName}: Starting with BuffDefinitionId={BuffId}, Duration={Duration}, Intensity={Intensity}.",
-                           effectName, parameters.BuffDefinitionId, parameters.Duration, parameters.Intensity);
+            Logger.LogDebug("{EffectName}: Starting with BuffDefinitionId={BuffId}.", effectName, parameters.BuffDefinitionId);
 
-            // Validate buff definition ID
             if (parameters.BuffDefinitionId == Guid.Empty)
             {
                 Logger.LogError("{EffectName}: BuffDefinitionId cannot be empty.", effectName);
                 return new GameStateActionResult { Success = false, ErrorMessage = "BuffDefinitionId cannot be empty." };
             }
 
-            // Define the action for adding buffs to a CardInstance
-            Func<CardInstance, GameContext, Task<IndividualActionResult>> cardAddBuffAction =
-                async (card, ctx) =>
+            var sourceAbility = context.CurrentAbility;
+            if (sourceAbility?.SourceCard == null) // sourceAbility itself could be null if effect is not from an ability
+            {
+                Logger.LogError("{EffectName}: Source ability or its source card not found in context for AddBuff.", effectName);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Source ability or card is missing for AddBuff." };
+            }
+
+            // OwnerPlayer might not be strictly necessary here if turnNumber is passed differently or not needed by AddBuff
+            // However, AddBuff currently takes turnNumber.
+            var ownerPlayer = context.CurrentGameState.GetPlayerState(sourceAbility.SourceCard.OwnerPlayerId);
+            if (ownerPlayer == null)
+            {
+                Logger.LogError("{EffectName}: Owner player not found for source card {CardId} of the ability.", effectName, sourceAbility.SourceCard.InstanceId);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Owner player of ability source card not found." };
+            }
+            var turnNumber = ownerPlayer.TurnNumber;
+
+            Func<CardInstance, GameContext, DomainOperationResult> cardAddBuffAction =
+                (card, ctx) =>
                 {
-                    Logger.LogDebug("{EffectName}: Processing card {InstanceId} to add buff {BuffId}.",
-                                   effectName, card.InstanceId, parameters.BuffDefinitionId);
+                    var buff = _buffFactory.CreateBuffFromDefinition(
+                        parameters.BuffDefinitionId.ToString(),
+                        card,
+                        sourceAbility.SourceCard,
+                        sourceAbility,
+                        turnNumber
+                    );
 
-                    // TODO: Implement buff addition logic when Buff system is available
-                    // This is a placeholder implementation that would work with the Buff system
-
-                    // Example implementation (when Buff system is ready):
-                    // var buffDefinition = await _buffRepository.GetBuffDefinitionByIdAsync(parameters.BuffDefinitionId);
-                    // if (buffDefinition == null)
-                    // {
-                    //     Logger.LogError("{EffectName}: BuffDefinition with ID {BuffId} not found.", effectName, parameters.BuffDefinitionId);
-                    //     return new IndividualActionResult
-                    //     {
-                    //         TargetId = TargetId.Card(card.InstanceId),
-                    //         Success = false,
-                    //         Message = "BuffDefinition not found.",
-                    //         GeneratedEvents = new List<IGameEvent>()
-                    //     };
-                    // }
-
-                    // var buff = new Buff(buffDefinition, parameters.Duration, parameters.Intensity);
-                    // 
-                    // if (parameters.CanStack || !card.HasBuff(buffDefinition.Name))
-                    // {
-                    //     card.AddBuff(buff);
-                    //     Logger.LogInformation("{EffectName}: Added buff '{BuffName}' to card {InstanceId}.", effectName, buffDefinition.Name, card.InstanceId);
-                    // }
-                    // else
-                    // {
-                    //     Logger.LogInformation("{EffectName}: Card {InstanceId} already has buff '{BuffName}' and stacking is disabled.", effectName, card.InstanceId, buffDefinition.Name);
-                    // }
-
-                    // Placeholder logic for now
-                    Logger.LogInformation("{EffectName}: Would add buff {BuffId} to card {InstanceId} (Buff system not yet implemented).",
-                                         effectName, parameters.BuffDefinitionId, card.InstanceId);
-
-                    // TODO: Generate BuffAddedEvent when event is defined
-                    // var buffAddedEvent = new BuffAddedEvent(card, buff);
-                    var individualEvents = new List<IGameEvent>(); // Placeholder until event is created
-
-                    await Task.CompletedTask; // Buff addition is synchronous
-
-                    return new IndividualActionResult
+                    // Delegate the actual buff application to the domain entity.
+                    // The CardInstance.AddBuff method will handle null buffs and return an appropriate DomainOperationResult.
+                    if (buff == null)
                     {
-                        TargetId = TargetId.Card(card.InstanceId),
-                        Success = true,
-                        Message = $"Added buff {parameters.BuffDefinitionId} to card.",
-                        GeneratedEvents = individualEvents
-                    };
+                        Logger.LogWarning("{EffectName}: BuffFactory returned a null buff for definition {BuffId}.", effectName, parameters.BuffDefinitionId);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Failed to create buff from definition." };
+                    }
+                    return card.AddBuff(_buffManager, buff);
                 };
 
-            // AddBuff effect only targets CardInstances
-            Logger.LogDebug("{EffectName}: Processing targets assuming CardInstance type.", effectName);
-
-            return await _targetProcessingService.ProcessTargetsAsync(
+            var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                TargetIdType.CardInstance, // Expect only CardInstance targets
-                null, // No PlayerState action needed
+                null,
                 cardAddBuffAction,
                 effectName);
+
+            if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
+            {
+                serviceResult.ErrorMessage = "Failed to process targets for add buff effect, or no valid targets found.";
+            }
+
+            return serviceResult;
         }
     }
 }

@@ -5,10 +5,6 @@
 //
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using Microsoft.Extensions.Logging;
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 {
@@ -24,7 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         {
             _functions = new ConcurrentDictionary<string, IFunctionDefinition>(StringComparer.OrdinalIgnoreCase);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            
+
             // 注册核心函数
             RegisterCoreFunctions();
         }
@@ -41,7 +37,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             }
 
             _functions.TryGetValue(functionName, out var function);
-            
+
             if (function == null)
             {
                 _logger.LogDebug("Function '{FunctionName}' not found in registry", functionName);

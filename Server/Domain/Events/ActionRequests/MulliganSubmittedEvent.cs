@@ -19,28 +19,13 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         public Guid PlayerId { get; }
         public List<Guid> CardUidsToReplace { get; } // Changed from CardInstanceId to Guid based on GameHub likely usage
 
-        // Properties required by IGameEvent
-        public new PlayerStateDto? SourcePlayer { get; init; } = null;
-        public new CardInstance? SourceCard { get; init; } = null;
-        public new Dictionary<string, object> Parameters { get; init; } = new();
-
         public MulliganSubmittedEvent(Guid playerId, List<Guid> cardUidsToReplace)
-            : base(nameof(MulliganSubmittedEvent))
+            : base(EventType.MulliganSubmitted)
         {
             PlayerId = playerId;
             CardUidsToReplace = cardUidsToReplace ?? new List<Guid>(); // Ensure list is not null
         }
 
-        public override Task<List<IGameEvent>> ExecuteAsync(GameContext context)
-        {
-            // MulliganSubmittedEvent 的执行逻辑应该通过 EventProcessor 中的特殊处理来调用 MulliganEffectHandler
-            // 这里只记录事件执行，不直接执行换牌逻辑
-            _logger.LogDebug("Executing MulliganSubmittedEvent for Player {PlayerId}, replacing {Count} cards.",
-                PlayerId, CardUidsToReplace.Count);
-
-            // 返回空列表，实际的 Mulligan 处理由 EventProcessor 通过 MulliganEffectHandler 处理
-            return Task.FromResult(new List<IGameEvent>());
-        }
 
         public GameEventDto? ToDto(IMapper mapper)
         {

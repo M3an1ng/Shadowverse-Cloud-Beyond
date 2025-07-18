@@ -6,8 +6,6 @@ using System.Linq;
 using ShadowverseBeyond.Server.Domain.Entities; // For GameState, PlayerState, CardInstance
 using ShadowverseBeyond.Server.Domain.Abilities; // For Ability, AbilityConfig
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId
-using ShadowverseBeyond.Server.Domain.Interfaces; // For ICardRepository
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions; // For IFunctionRegistry
 using ShadowverseBeyond.Server.Dtos.SignalR.Events; // For GameEventDto
 using ShadowverseBeyond.Server.Dtos; // For GameStateDto
 
@@ -86,12 +84,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <summary>
         /// 在目标选择阶段填充的选定目标列表。
         /// </summary>
-        private readonly List<TargetId> _selectedTargets = new();
+        private readonly List<TargetInfo> _selectedTargets = new();
 
         /// <summary>
         /// 选定目标的只读视图。
         /// </summary>
-        public ReadOnlyCollection<TargetId> SelectedTargets => _selectedTargets.AsReadOnly();
+        public ReadOnlyCollection<TargetInfo> SelectedTargets => _selectedTargets.AsReadOnly();
 
         /// <summary>
         /// 在效果执行前填充的已解析参数字典。
@@ -116,6 +114,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public IReadOnlyDictionary<string, object> TemporaryVariables => _temporaryVariables.AsReadOnly();
 
         /// <summary>
+        /// (新增) 当前效果处理期间累积的原子事件列表。
+        /// 此列表由 EffectHandlerBase 在效果处理的生命周期内管理（填充与清空）。
+        /// DSL 可以通过隐式上下文直接访问此属性 (例如 `CurrentEffectAtomicEvents.Filter(...)`)。
+        /// </summary>
+        public IReadOnlyList<IGameEvent> GeneratedEvents { get; internal set; } = Array.Empty<IGameEvent>();
+
+        /// <summary>
         /// 目标选择结果字典。
         /// 键是目标标识符（string，例如 "target_1"），值是选定对象的列表（例如 List<CardInstance>）。
         /// </summary>
@@ -131,18 +136,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <summary>
         /// 卡牌仓储服务，用于获取卡牌定义。
         /// </summary>
-        public ICardRepository? CardRepository { get; set; }
-
-        /// <summary>
-        /// DSL函数注册表，用于DSL函数查找。
-        /// </summary>
-        public IFunctionRegistry? FunctionRegistry { get; set; }
 
         /// <summary>
         /// 当前正在处理的项目（用于DSL评估）。
         /// 可以是CardInstance、PlayerState等任何对象。
         /// </summary>
         public object? CurrentItem { get; set; }
+
+        /// <summary>
+        /// (新增) .NET Core的依赖注入服务提供者。
+        /// 用于在需要时动态解析服务，例如在能力效果中创建新的能力实例。
+        /// </summary>
+        public IServiceProvider ServiceProvider { get; }
 
         // === 构造函数 ===
 
@@ -156,25 +161,26 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <param name="currentAbility">当前能力实例（可选）。</param>
         /// <param name="cardRepository">卡牌仓储服务（可选）。</param>
         /// <param name="functionRegistry">函数注册表（可选）。</param>
+        /// <param name="abilityTriggerService">能力触发服务。必需。</param>
         /// <param name="mapper">AutoMapper实例。必需。</param>
+        /// <param name="serviceProvider">服务提供者实例。必需。</param>
         public GameContext(
             GameState gameState,
             Guid requestingPlayerId,
             IMapper mapper, // Inject IMapper
+            IServiceProvider serviceProvider, // Inject IServiceProvider
             IGameEvent? triggeringEvent = null,
             CardInstance? sourceCard = null,
-            Ability? currentAbility = null,
-            ICardRepository? cardRepository = null,
-            IFunctionRegistry? functionRegistry = null)
+            Ability? currentAbility = null
+)
         {
             CurrentGameState = gameState ?? throw new ArgumentNullException(nameof(gameState));
             RequestingPlayerId = requestingPlayerId == Guid.Empty ? throw new ArgumentException("RequestingPlayerId cannot be empty", nameof(requestingPlayerId)) : requestingPlayerId;
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
+            ServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider)); // Store IServiceProvider
             TriggeringEvent = triggeringEvent;
             SourceCard = sourceCard;
             CurrentAbility = currentAbility;
-            CardRepository = cardRepository;
-            FunctionRegistry = functionRegistry;
 
             // 提前验证requestingPlayerId在gameState中存在，以便早期捕获错误
             _ = RequestingPlayer;
@@ -236,6 +242,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             _temporaryVariables.Clear();
             _targets.Clear();
             CurrentItem = null;
+            GeneratedEvents = Array.Empty<IGameEvent>(); // 清理累积的原子事件
         }
 
         // === 状态修改方法（受控访问） ===
@@ -244,7 +251,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// 添加选定目标。
         /// </summary>
         /// <param name="target">要添加的目标</param>
-        public void AddSelectedTarget(TargetId target)
+        public void AddSelectedTarget(TargetInfo target)
         {
             _selectedTargets.Add(target);
         }
