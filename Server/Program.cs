@@ -12,6 +12,7 @@ using Microsoft.Extensions.FileProviders;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions; // Added for AddDslFunctionSystem extension
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation; // For IDslCompiler
 using Microsoft.EntityFrameworkCore;
 
 // --- ShadowverseBeyond Namespaces ---
@@ -25,15 +26,18 @@ using ShadowverseBeyond.Server.Hubs;                    // Existing Correct (was
 using ShadowverseBeyond.Server.Services;
 using Microsoft.AspNetCore.SignalR;               // Added for IGameService (located in Services namespace for now)
 // Removed all incorrect 'using Server.*' statements
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing; // Added for AbilityDslParser
 using ShadowverseBeyond.Server.Domain.Query;               // Added for ICardQueryExecutor
-using ShadowverseBeyond.Server.Infrastructure.Data.SeedData; // Added for DatabaseSeeder
 using ShadowverseBeyond.Server.Services.Abstractions;       // Added for IGameDataProvider
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
 using ShadowverseBeyond.Server.Infrastructure.Services; // Added for InMemoryEventHistoryService
 
+
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For IAbility
 using ShadowverseBeyond.Server.Domain.Abilities.System; // For System Ability classes
+using ShadowverseBeyond.Server.Domain.Factories;
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Buffs;
 
 // REMOVED: Static Serilog configuration block (Lines 23-39)
 try // Wrap application startup in try-finally to ensure logs are flushed
@@ -70,9 +74,22 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddEndpointsApiExplorer(); // Use standard .NET 8 methods
     builder.Services.AddSwaggerGen();       // Use standard .NET 8 methods
 
+    // Add support for API Controllers
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            options.JsonSerializerOptions.WriteIndented = true;
+            options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        });
+    Log.Information("Registered API Controllers.");
+
     // Register AutoMapper - Scans the assembly containing Program for Profile classes
     builder.Services.AddAutoMapper(typeof(Program).Assembly);
     Log.Information("Registered AutoMapper."); // Added Log
+
+    // Register custom AutoMapper type converters
+
 
     // 【修复】暂时移除自定义解析器注册，改用更简单的方法
     // builder.Services.AddSingleton<ShadowverseBeyond.Server.Mappings.HandCollectionResolver>();
@@ -98,7 +115,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     builder.Services.AddSingleton<IGameStateManager, InMemoryGameStateManager>(); // Register InMemoryGameStateManager as singleton
     Log.Information("Registered IGameStateManager."); // Added Log
-    builder.Services.AddSingleton<IAiService, AiService>(); // Register AiService as Singleton
+    builder.Services.AddScoped<IAiService, AiService>(); // Register AiService as Scoped
     Log.Information("Registered IAiService."); // Added Log
                                                // Register Effect Handling Services (moved to avoid duplication)
                                                // ITargetProcessingService registration moved to line ~233
@@ -117,19 +134,11 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Attempting to register ApplicationDbContext..."); // Added Log
     // Temporarily force using the hardcoded connection string to isolate configuration issues during design time.
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
-        options.UseSqlite("Data Source=Data/shadowverse.db"));
+        options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db"));
     // options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db")); // Original line
     Log.Information("Successfully registered ApplicationDbContext (using hardcoded path for debugging)."); // Added Log
     // Configure System.Text.Json serialization options globally to handle enums as strings
-    Log.Information("Attempting to configure JsonOptions..."); // Added Log
-    builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
-    {
-        // Removed WriteIndented setting as 'app' is not available here. Set elsewhere if needed.
-        options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
-        // Add other global options if needed, e.g.:
-        // options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-    });
-    Log.Information("Successfully configured JsonOptions."); // Added Log
+    // The configuration is now handled by AddJsonOptions on AddControllers, so this is redundant.
 
     // --- SignalR and Dependent Services Registration ---
     // With DesignTimeDbContextFactory in place, Program.cs should only contain runtime configuration.
@@ -142,7 +151,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddSignalR(hubOptions => // Start AddSignalR
     { // Start lambda body
         hubOptions.EnableDetailedErrors = true; // Added detailed errors option
-        // hubOptions.AddFilter<HubExceptionLoggerFilter>(); // Keep filter commented out
+        hubOptions.AddFilter<GameContextFilter>(); // Register the GameContextFilter for all hubs
     }) // End lambda body, now chain AddJsonProtocol
     .AddJsonProtocol(options => // Chain AddJsonProtocol
     { // Start AddJsonProtocol lambda body
@@ -157,12 +166,16 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register services dependent on SignalR (IHubContext)
     // GameService registration is now dependent on other singletons, so we'll register it after them.
     Log.Information("Registered IGameService."); // Added Log
-    builder.Services.AddSingleton<AiTurnExecutor>(); // Register the new AI turn executor
+    builder.Services.AddScoped<AiTurnExecutor>(); // Register the new AI turn executor
     Log.Information("Registered AiTurnExecutor."); // Added Log
     builder.Services.AddScoped<HubExceptionLoggerFilter>(); // Register the custom Hub filter for global exception logging
     Log.Information("Registered HubExceptionLoggerFilter."); // Added Log
     builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Register the client method mapper
     Log.Information("Registered IClientMethodMapper."); // Added Log
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
+    Log.Information("Registered IDebugCommandParser."); // Added Log
+    builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
+    Log.Information("Registered IMatchService (in-memory lobby)."); // Added Log
 
     // Register Transaction Service
     builder.Services.AddScoped<ITransactionService, TransactionService>(); // Register the transaction service
@@ -175,33 +188,20 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register DSL Function System (includes DslEvaluator, DslExpressionParser, IFunctionRegistry)
     builder.Services.AddDslFunctionSystem();
     // Override DslExpressionParser and DslEvaluator to be Singleton to match ValueSourceResolver lifetime
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing.DslExpressionParser>();
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation.DslEvaluator>();
     Log.Information("Registered DSL Function System with Singleton DslEvaluator and DslExpressionParser.");
 
     // Register Card Query Executor
-    builder.Services.AddScoped<ICardQueryExecutor, CardQueryExecutor>(); // Register the new query executor
-    Log.Information("Registered ICardQueryExecutor."); // Added Log
+    builder.Services.AddScoped<IQueryDslParser, QueryDslParser>(); // Register the new DSL parser
+    builder.Services.AddScoped<IQueryExecutor, QueryExecutor>(); // Register the new query executor
 
-    // Register Ability Loader with GameDataProvider (preferred) and fallback to database
-    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.AbilityLoader>(serviceProvider =>
-    {
-        var gameDataProvider = serviceProvider.GetService<IGameDataProvider>();
-        var logger = serviceProvider.GetRequiredService<ILogger<ShadowverseBeyond.Server.Domain.Abilities.AbilityLoader>>();
+    // Register the DSL expression cache as a Singleton to share compiled expressions across the application.
+    builder.Services.AddSingleton<IDslExpressionCache, DslExpressionCache>();
+    builder.Services.AddScoped<IDslCompiler, DslCompiler>(); // Register the new DSL compiler
+    Log.Information("Registered ICardQueryDslParser, ICardQueryExecutor, IDslExpressionCache, and IDslCompiler."); // Added Log
 
-        if (gameDataProvider != null)
-        {
-            // Use GameDataProvider constructor (preferred)
-            return new ShadowverseBeyond.Server.Domain.Abilities.AbilityLoader(gameDataProvider, logger);
-        }
-        else
-        {
-            // Fallback to database constructor
-            var context = serviceProvider.GetRequiredService<ApplicationDbContext>();
-            return new ShadowverseBeyond.Server.Domain.Abilities.AbilityLoader(context, logger);
-        }
-    });
-    Log.Information("Registered AbilityLoader with GameDataProvider support."); // Updated Log
+    // Register AbilityLoader as a scoped service with a direct dependency on the database context.
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.AbilityLoader>();
+    Log.Information("Registered AbilityLoader with direct database access.");
 
     // Register Core Ability System Services (New Registrations)
     // TODO: Create and register concrete implementations for IValueSourceResolver if it doesn't exist.
@@ -210,14 +210,14 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Log.Information("Registered old IEffectHandler (commented out).");
     // Changed to Singleton to match EffectExecutor lifetime
     // Use factory pattern to resolve ICardRepository from scope when needed
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Effects.IValueSourceResolver>(serviceProvider =>
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.Effects.IValueSourceResolver>(serviceProvider =>
     {
         var logger = serviceProvider.GetRequiredService<ILogger<ShadowverseBeyond.Server.Domain.Abilities.Effects.ValueSourceResolver>>();
-        var dslEvaluator = serviceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation.DslEvaluator>();
-        var dslParser = serviceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing.DslExpressionParser>();
+        var dslCompiler = serviceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation.IDslCompiler>();
 
+        // DslExpressionParser is no longer needed as the new Parser is instantiated on the fly.
         return new ShadowverseBeyond.Server.Domain.Abilities.Effects.ValueSourceResolver(
-            logger, dslEvaluator, dslParser);
+            logger, dslCompiler);
     });
     Log.Information("Registered IValueSourceResolver as Singleton with scoped ICardRepository.");
     // Register GameStateActionDispatcher - REMOVED as it's part of the old system
@@ -225,35 +225,68 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Log.Information("Registered IGameStateActionDispatcher.");
     // Changed to Singleton to match AbilityManager lifetime
     // Use factory pattern to resolve ICardRepository from scope when needed
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionFactory>(serviceProvider =>
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionFactory>(serviceProvider =>
     {
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
         var mapper = serviceProvider.GetRequiredService<IMapper>();
-        var functionRegistry = serviceProvider.GetRequiredService<IFunctionRegistry>();
+        // The factory now depends on IConditionEvaluator, which is resolved from the DI container.
+        var conditionEvaluator = serviceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionEvaluator>();
         return new ShadowverseBeyond.Server.Domain.Abilities.Conditions.ConditionFactory(
-            loggerFactory, mapper, functionRegistry);
+            loggerFactory, mapper, conditionEvaluator);
     });
     Log.Information("Registered IConditionFactory as Singleton with scoped ICardRepository.");
     // Register ConditionEvaluator (Assuming implementation exists)
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionEvaluator, ShadowverseBeyond.Server.Domain.Abilities.Conditions.ConditionEvaluator>();
-    Log.Information("Registered IConditionEvaluator.");
-    // Register IDslConditionEvaluator (DslConditionEvaluator implements both interfaces)
-    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IDslConditionEvaluator, ShadowverseBeyond.Server.Domain.Abilities.Conditions.DslConditionEvaluator>();
-    Log.Information("Registered IDslConditionEvaluator.");
+    // Register IConditionEvaluator, ensuring the concrete implementation is DslConditionEvaluator
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionEvaluator, ShadowverseBeyond.Server.Domain.Abilities.Conditions.DslConditionEvaluator>();
+    Log.Information("Registered IConditionEvaluator with DslConditionEvaluator implementation.");
     // Changed to Scoped to allow access to Scoped EffectHandlers
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Effects.IEffectExecutor, ShadowverseBeyond.Server.Domain.Abilities.Effects.EffectExecutor>();
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.Effects.IEffectExecutor, ShadowverseBeyond.Server.Domain.Abilities.Effects.EffectExecutor>();
     Log.Information("Registered IEffectExecutor as Scoped.");
-    // Register TargetSelectionService
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Targets.TargetSelectionService>();
-    Log.Information("Registered TargetSelectionService.");
 
-    // Register Target Processing Service (New)
+    // --- Target Selection System ---
+    builder.Services.AddScoped<TargetSelectionService>();
+    builder.Services.AddScoped<ITargetFactory, TargetFactory>();
+    Log.Information("Registered Target Selection System with Scoped lifetime.");
+
+    // --- Pending Action Service for interactive choices ---
+    builder.Services.AddSingleton<IPendingActionService, PendingActionService>();
+    Log.Information("Registered IPendingActionService as Singleton.");
+
+    // Register Game Action Transaction Service
+    builder.Services.AddScoped<IGameActionTransactionService, GameActionTransactionService>();
+    Log.Information("Registered IGameActionTransactionService as Scoped.");
+
+    // Register Effect UI Metadata Service
+    builder.Services.AddSingleton<IEffectUIMetadataService, EffectUIMetadataService>();
+    Log.Information("Registered IEffectUIMetadataService as Singleton.");
+
+    // Register DSL Metadata Service
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IDslMetadataService, ShadowverseBeyond.Server.Services.DslMetadataService>();
+    Log.Information("Registered IDslMetadataService as Singleton.");
+
+    // Register Event Metadata Service
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IEventMetadataService, ShadowverseBeyond.Server.Services.EventMetadataService>();
+    Log.Information("Registered IEventMetadataService as Singleton.");
+
+    // Register Query Operation Metadata Service
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IQueryOperationMetadataService, ShadowverseBeyond.Server.Services.QueryOperationMetadataService>();
+    Log.Information("Registered IQueryOperationMetadataService as Singleton.");
+
+    // Register Ability Editor Metadata Service (Top-Level)
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IAbilityEditorMetadataService, ShadowverseBeyond.Server.Services.AbilityEditorMetadataService>();
+    Log.Information("Registered IAbilityEditorMetadataService as Singleton.");
+
+    // Register Target Processing Service
     builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services.ITargetProcessingService, ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services.TargetProcessingService>();
-    Log.Information("Registered ITargetProcessingService.");
+    Log.Information("Registered ITargetProcessingService as Scoped.");
 
     // Register a factory for ILogger (non-generic) to resolve logger issues for EffectHandlers
     builder.Services.AddScoped<Microsoft.Extensions.Logging.ILogger>(serviceProvider =>
         serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("EffectHandler"));
+
+    // Register the new Effect Handler Registry as a Singleton
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services.IEffectHandlerRegistry, ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services.EffectHandlerRegistry>();
+    Log.Information("Registered IEffectHandlerRegistry as Singleton.");
 
     // Register all Effect Handlers using Scrutor (Updated after refactoring)
     // All handlers now inherit from EffectHandlerBase and use ITargetProcessingService
@@ -266,48 +299,54 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Automatically registered all Effect Handlers using Scrutor (all inherit from EffectHandlerBase).");
     Log.Information("New handlers added: VanishEffectHandler, ReturnEffectHandler, RemoveBuffEffectHandler, AddBuffEffectHandler, DiscardEffectHandler");
 
-    // Register AbilityManager as Singleton to match GameService lifetime
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.AbilityManager>();
-    // Register IAbilityTriggerService interface as Singleton to break circular dependency
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.IAbilityTriggerService>(provider =>
-        provider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.AbilityManager>());
-    Log.Information("Registered AbilityManager and IAbilityTriggerService as Singleton.");
+    // --- Ability and Buff Management ---
+    // AbilityFactory and its dependencies must be Scoped to align with the GameState/request lifetime.
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.IAbilityFactory, ShadowverseBeyond.Server.Domain.Abilities.AbilityFactory>();
+
+    // AbilityManager must be Scoped as it manages abilities for a specific game instance.
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.AbilityManager>();
+    builder.Services.AddScoped<IAbilityManager>(provider =>
+    {
+        var contextAccessor = provider.GetRequiredService<IGameContextAccessor>();
+        if (contextAccessor.GameContext?.AbilityManager == null)
+        {
+            // This can happen outside of a game context, which is valid.
+            // Return a transient, non-game-state-bound instance for such cases (e.g., API calls).
+            // The real, stateful manager is provided by the GameContext.
+            return provider.GetRequiredService<AbilityManager>();
+        }
+        return contextAccessor.GameContext.AbilityManager;
+    });
+    Log.Information("Registered AbilityFactory and AbilityManager as Singleton.");
 
     // Register System Abilities as IAbility
-    builder.Services.AddSingleton<IAbility, EndTurnAbility>();
-    builder.Services.AddSingleton<IAbility, PlayCardAbility>();
-    builder.Services.AddSingleton<IAbility, AttackAbility>();
-    builder.Services.AddSingleton<IAbility, EvolveAbility>();
-    builder.Services.AddSingleton<IAbility, MulliganAbility>();
+    // builder.Services.AddSingleton<IAbility, EvolveAbility>(); // Temporarily disabled after refactoring the evolve flow
     // Register MulliganAbility's dependency to be injected into its constructor
-    builder.Services.AddSingleton<CheckMulliganCompletionAbility>();
     Log.Information("Registered System Abilities (EndTurn, PlayCard, Attack, Evolve, Mulligan) and their dependencies as Singleton.");
 
-    // Register IBuffManager as Singleton to match GameService lifetime
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Buffs.IBuffManager, ShadowverseBeyond.Server.Domain.Buffs.BuffManager>();
-    Log.Information("Registered IBuffManager as Singleton.");
+    // Register IBuffManager as Scoped, as it manages buffs for a specific game instance.
+    builder.Services.AddScoped<BuffManager>();
+    builder.Services.AddScoped<IBuffManager>(provider =>
+    {
+        var contextAccessor = provider.GetRequiredService<IGameContextAccessor>();
+        if (contextAccessor.GameContext?.BuffManager == null)
+        {
+            // Similar to AbilityManager, provide a transient instance if outside a game context.
+            return provider.GetRequiredService<BuffManager>();
+        }
+        return contextAccessor.GameContext.BuffManager;
+    });
+    Log.Information("Registered IBuffManager as Scoped.");
     // Register BuffFactory for creating Buff instances with GameDataProvider support
     // Changed to Singleton to match GameService lifetime
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Buffs.IBuffFactory>(serviceProvider =>
-    {
-        var logger = serviceProvider.GetRequiredService<ILogger<ShadowverseBeyond.Server.Domain.Buffs.BuffFactory>>();
-        var gameDataProvider = serviceProvider.GetService<IGameDataProvider>();
-
-        if (gameDataProvider != null)
-        {
-            // Use GameDataProvider constructor (preferred)
-            return new ShadowverseBeyond.Server.Domain.Buffs.BuffFactory(logger, gameDataProvider);
-        }
-        else
-        {
-            // Fallback to basic constructor
-            return new ShadowverseBeyond.Server.Domain.Buffs.BuffFactory(logger);
-        }
-    });
-    Log.Information("Registered IBuffFactory with GameDataProvider support as Singleton.");
 
     // Register CardFactory
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Factories.ICardFactory, ShadowverseBeyond.Server.Domain.Factories.CardFactory>();
+    // Register BuffFactory from the correct namespace
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Buffs.IBuffFactory, ShadowverseBeyond.Server.Domain.Buffs.BuffFactory>();
+    Log.Information("Registered IBuffFactory (from Domain.Buffs) as Scoped.");
+
+    // Register CardFactory
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Factories.ICardFactory, ShadowverseBeyond.Server.Domain.Factories.CardFactory>();
     Log.Information("Registered ICardFactory as Scoped.");
 
     // Register BuffStackingEngine for buff conflict resolution
@@ -319,8 +358,13 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddScoped<IBuffService, BuffService>();
     Log.Information("Registered IBuffService.");
 
+    // Register GameContextAccessor as Singleton. It uses AsyncLocal internally, so a single instance
+    // can safely manage contexts for multiple concurrent requests.
+    builder.Services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+    Log.Information("Registered IGameContextAccessor as Singleton.");
+
     // Register Event Processor as Scoped to allow access to Scoped services like IEffectExecutor
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Events.IEventProcessor, ShadowverseBeyond.Server.Domain.Events.EventProcessor>();
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Events.IEventProcessor, ShadowverseBeyond.Server.Domain.Events.EventProcessor>();
     Log.Information("Registered IEventProcessor as Scoped.");
 
     // Register Effect Queue System
@@ -334,48 +378,48 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IEventHistoryService as Singleton (InMemoryEventHistoryService).");
 
     // Register Database Seeding Services
-    builder.Services.AddDatabaseSeeding(); // Register database seeding services
-    Log.Information("Registered Database Seeding Services."); // Added Log
 
     Log.Information("SignalR and dependent services registered.");
 
     // Register GameService as Singleton now that all its dependencies are registered as Singletons
-    builder.Services.AddSingleton<IGameService, GameService>();
+    // IGameService MUST be a Singleton to manage all game states.
+    // We will resolve its scoped dependencies manually using IServiceProvider.
+    builder.Services.AddSingleton<IGameService>(provider =>
+    {
+        var hubContext = provider.GetRequiredService<IHubContext<GameHub>>();
+        var gameServiceLogger = provider.GetRequiredService<ILogger<GameService>>();
+        var mapper = provider.GetRequiredService<IMapper>();
+        var clientMethodMapper = provider.GetRequiredService<IClientMethodMapper>();
+        var gameDataProvider = provider.GetRequiredService<IGameDataProvider>();
+        var serviceScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var pendingActionService = provider.GetRequiredService<IPendingActionService>();
+
+        return new GameService(
+            hubContext,
+            gameServiceLogger,
+            mapper,
+            clientMethodMapper,
+            gameDataProvider,
+            serviceScopeFactory,
+            pendingActionService
+        );
+    });
     Log.Information("Registered IGameService as Singleton.");
     // --- End SignalR Registration ---
 
 
     Log.Information("All services registered (or skipped). Attempting builder.Build()..."); // Modified Log
-    WebApplication? app = null; // Declare app variable outside try block and initialize to null, mark as nullable
-    try
-    {
-        Log.Information("Entering try block for builder.Build()..."); // Added Log
-        app = builder.Build();
-        Log.Information("builder.Build() completed successfully inside try block."); // Added Log
-    }
-    catch (HostAbortedException habEx) // Catch the specific exception first
-    {
-        // This exception is expected during EF tooling operations.
-        // Log it for information but DO NOT re-throw it, allowing the tool to continue.
-        Log.Warning(habEx, "HostAbortedException caught during builder.Build() - This is expected for EF tools and is being ignored.");
-        // Console.WriteLine($"[INFO] HostAbortedException during builder.Build() (ignored for EF tools): {habEx.Message}"); // Optional: Console log
-    }
-    catch (Exception buildEx) // Catch any other unexpected exceptions
-    {
-        Log.Error(buildEx, "Unexpected Exception occurred during builder.Build()"); // Log the specific exception
-        Console.WriteLine($"[FATAL] Unexpected Exception during builder.Build(): {buildEx.ToString()}"); // Also write directly to console
-        throw; // Re-throw unexpected exceptions
-    }
-    Log.Information("Exited try-catch block for builder.Build(). App instance obtained."); // Added Log
+    var app = builder.Build();
+    Log.Information("builder.Build() completed.");
 
-
-    // --- Check if app was successfully built (might be null if HostAbortedException was caught) ---
-    if (app == null)
-    {
-        Log.Warning("WebApplication instance 'app' is null, likely due to HostAbortedException during EF tooling. Skipping HTTP pipeline configuration and application run.");
-        return; // Exit Program.Main gracefully for tooling scenarios
-    }
-    // --- End Check ---
+    // --- Initialize Static Service Providers ---
+    // This must be done after app is built but before it runs.
+    var gameContextAccessor = app.Services.GetRequiredService<IGameContextAccessor>();
+    GameServiceProvider.ContextAccessor = gameContextAccessor;
+    var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+    GameServiceProvider.Logger = loggerFactory.CreateLogger("GameServiceProvider");
+    Log.Information("Initialized static GameServiceProvider with IGameContextAccessor and ILogger.");
+    // --- End Initialization ---
 
     // Configure the HTTP request pipeline.
     if (app.Environment.IsDevelopment())
@@ -425,32 +469,10 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     .WithName("GetWeatherForecast");
 
     // --- Card Data API Endpoint ---
-    var cardDataPath = Path.Combine(builder.Environment.ContentRootPath, "..", "data", "card_data.json");
-    // List<CardDefinition>? cardDatabase = null; // Removed unused variable (Warning CS0219)
-
-    // Inject ICardRepository and IMapper
-    app.MapGet("/api/cards", async (ICardRepository cardRepository, IMapper mapper, ILogger<Program> logger) => // Added IMapper injection
-    {
-        try
-        {
-            logger.LogInformation("API endpoint /api/cards called.");
-            // Use the repository directly to get entities
-            var cardEntities = await cardRepository.GetAllCardDefinitionsAsync();
-
-            // Map entities to DTOs using AutoMapper
-            var cardDtos = mapper.Map<IEnumerable<CardDefinitionDto>>(cardEntities); // Use mapper.Map
-
-            logger.LogInformation("Returning {CardCount} card DTOs from /api/cards.", cardDtos?.Count() ?? 0); // Log DTO count
-            return Results.Ok(cardDtos ?? Enumerable.Empty<CardDefinitionDto>()); // Return DTOs
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "An error occurred while handling /api/cards request.");
-            // Return a generic server error response
-            return Results.Problem("An unexpected error occurred while retrieving card data.");
-        }
-    })
-    .WithName("GetCardData");
+    // REMOVED: Duplicate minimal API endpoint for /api/cards
+    // This was causing AmbiguousMatchException with CardsController.GetAllCards()
+    // The CardsController properly handles GET /api/cards with proper error handling,
+    // logging, and DTO mapping. No need for duplicate minimal API endpoint.
     // --- End Card Data API Endpoint ---
 
     // --- M3 API Endpoints ---
@@ -479,6 +501,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Map SignalR Hub
     app.MapHub<GameHub>("/gamehub");
 
+    // Map API Controllers
+    app.MapControllers();
 
 
     // ============================================================
@@ -500,27 +524,13 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             logger.LogInformation("Database migrations applied successfully.");
 
             // 在开发环境中强制重新加载数据（临时调试）
-            if (app.Environment.IsDevelopment())
-            {
-                logger.LogInformation("Development environment detected. Checking card data...");
-                var cardCount = await context.CardDefinitions.CountAsync();
-                logger.LogInformation("Current card count in database: {Count}", cardCount);
-
-                if (cardCount == 0)
-                {
-                    logger.LogInformation("No card data found. Force reloading...");
-                    // 强制重新加载数据
-                    await DataSeeder.SeedDatabaseAsync(app);
-                }
-            }
-            else
-            {
-                // 生产环境正常检查
-                await DataSeeder.SeedDatabaseAsync(app);
-            }
+            // The logic to check if seeding is needed is now entirely within DataSeeder.
+            // Program.cs is only responsible for invoking the seeder.
+            logger.LogInformation("Invoking DataSeeder to ensure database is seeded...");
+            await DataSeeder.SeedDatabaseAsync(app);
+            logger.LogInformation("DataSeeder invocation complete.");
 
             // Seed CardAbility data
-            await app.Services.SeedDatabaseInDevelopmentAsync(app.Environment);
         }
     }
     catch (Exception ex)
@@ -564,5 +574,8 @@ record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 // It is now defined in Server/Services/IGameService.cs
 
 // --- End C# Records ---
+
+// Add this partial class definition to make the Program class public and accessible for integration tests.
+public partial class Program { }
 
 

@@ -19,12 +19,13 @@ using ShadowverseBeyond.Server.Dtos;            // GameStateDto etc.
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Specific Action DTOs
 using ShadowverseBeyond.Server.Exceptions; // GameLogicException
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
-using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState
+using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState / MatchRoom
 using AutoMapper; // Added for IMapper
 using System;
 using System.Collections.Generic; // List<> for events
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory; // Added for Idempotency Check
+using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 // Corrected Namespace
 namespace ShadowverseBeyond.Server.Hubs
@@ -40,6 +41,8 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly IMemoryCache _memoryCache; // Added for Idempotency Check
         private readonly IClientMethodMapper _clientMethodMapper; // ADDED
         private readonly IMapper _mapper; // Added for Entity to DTO mapping
+        private readonly IMatchService _matchService; // Added for lobby validation
+        private readonly IDebugCommandParser _debugCommandParser;
 
         /// <summary>
         /// Initializes a new instance of the GameHub class.
@@ -49,13 +52,15 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <param name="memoryCache">The memory cache instance for idempotency checks.</param> // Added param doc
         /// <param name="clientMethodMapper">The service to map event types to client method names.</param> // ADDED
         /// <param name="mapper">The AutoMapper instance for Entity to DTO conversion.</param> // Added param doc
-        public GameHub(IGameService gameService, ILogger<GameHub> logger, IMemoryCache memoryCache, IClientMethodMapper clientMethodMapper, IMapper mapper) // Added mapper parameter
+        public GameHub(IGameService gameService, ILogger<GameHub> logger, IMemoryCache memoryCache, IClientMethodMapper clientMethodMapper, IMapper mapper, IMatchService matchService, IDebugCommandParser debugCommandParser) // Added mapper parameter
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache)); // Added assignment
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // ADDED assignment
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
+            _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
+            _debugCommandParser = debugCommandParser ?? throw new ArgumentNullException(nameof(debugCommandParser));
             _logger.LogInformation("<<<<< GameHub INSTANCE CREATED >>>>>"); // Existing log
         }
 
@@ -97,7 +102,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.CardUid);
 
                 // Call the new GameService method to enqueue the action
-                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued PlayCard action for Card {CardUid} in Game {GameId}.",
                     playerId, gameId, actionDto.CardUid);
@@ -175,7 +180,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, requestId);
 
                 // Call the new GameService method to enqueue the action
-                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued EndTurn action (RequestId: {RequestId}) in Game {GameId}.",
                     playerId, gameId, requestId);
@@ -230,7 +235,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
 
                 // Call the new GameService method to enqueue the action
-                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued Attack action in Game {GameId}.",
                     playerId, gameId);
@@ -283,7 +288,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.UnitUid);
 
                 // Call the new GameService method to enqueue the action
-                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued Evolve action for unit {UnitUid} in Game {GameId}.",
                    playerId, gameId, actionDto.UnitUid);
@@ -301,6 +306,58 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogError(ex, "Unexpected error processing Evolve for Player {PlayerId} in Game {GameId}, Unit {UnitUid}",
                    playerId, gameId, actionDto.UnitUid);
                 await Clients.Caller.ReceiveError("An unexpected server error occurred during evolution.");
+            }
+        }
+
+        /// <summary>
+        /// Debug/ADMIN: Execute a debug command to inject events (DEBUG console only).
+        /// </summary>
+        public async Task ExecuteDebugCommand(DebugCommandDto commandDto)
+        {
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
+            {
+                _logger.LogWarning("ExecuteDebugCommand called by unidentified connection: {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            try
+            {
+                if (!Guid.TryParse(playerId, out var playerGuid))
+                {
+                    throw new HubException("debug-error: invalid player id");
+                }
+
+                var gameState = _gameService.GetGameState(gameId.ToString());
+                if (gameState == null)
+                {
+                    throw new HubException("debug-error: game not found");
+                }
+
+                var parseResult = _debugCommandParser.Parse(gameState, playerGuid, commandDto ?? new DebugCommandDto());
+                if (!parseResult.Success)
+                {
+                    throw new HubException(parseResult.ErrorMessage ?? "debug-error: invalid command");
+                }
+
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "DebugCommand",
+                    PlayerId = playerGuid,
+                    ActionData = commandDto ?? new DebugCommandDto()
+                };
+
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing DebugCommand: {Command}", playerId, gameId, commandDto?.Command);
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+            }
+            catch (HubException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error processing ExecuteDebugCommand for Player {PlayerId} in Game {GameId}", playerId, gameId);
+                await Clients.Caller.ReceiveError($"Debug command error: {ex.Message}");
             }
         }
 
@@ -359,7 +416,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, parsedUids.Count);
 
                 // Call the new GameService method to enqueue the action
-                _gameService.EnqueuePlayerAction(gameId.ToString(), wrapper);
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued SubmitMulligan action in Game {GameId}.",
                     playerId, gameId);
@@ -378,6 +435,44 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId);
                 _logger.LogError("Full Exception Details for SubmitMulligan failure: {ExceptionString}", ex.ToString()); // Log full details
                 await Clients.Caller.ReceiveError("An unexpected server error occurred during mulligan.");
+            }
+        }
+
+        public async Task SubmitTargetChoice(SubmitTargetChoiceActionDto actionDto)
+        {
+            // --- DIAGNOSTIC LOGGING ---
+            _logger.LogWarning("[CHOICE_DEBUG] SubmitTargetChoice method ENTERED. DTO: {DtoJson}", System.Text.Json.JsonSerializer.Serialize(actionDto));
+            // --- END DIAGNOSTIC LOGGING ---
+
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
+            {
+                _logger.LogWarning("SubmitTargetChoice called by unidentified connection: {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} submitting target choice for ability {AbilityId}",
+                    playerId, gameId, actionDto.SourceAbilityRuntimeId);
+
+                // Directly call the new out-of-band method on the game service
+                await _gameService.SubmitTargetChoiceAsync(gameId.ToString(), Guid.Parse(playerId), actionDto);
+
+                _logger.LogInformation("Player {PlayerId} successfully processed SubmitTargetChoice action in Game {GameId}.",
+                    playerId, gameId);
+            }
+            catch (GameLogicException ex)
+            {
+                _logger.LogWarning("Game Logic Error for Player {PlayerId} in Game {GameId} submitting target choice: {Message}",
+                    playerId, gameId, ex.Message);
+                await Clients.Caller.ReceiveError($"Submit Target Choice Error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error processing SubmitTargetChoice for Player {PlayerId} in Game {GameId}",
+                    playerId, gameId);
+                await Clients.Caller.ReceiveError("An unexpected server error occurred while submitting the target choice.");
             }
         }
         // --- New Method for Playability Check ---
@@ -399,45 +494,110 @@ namespace ShadowverseBeyond.Server.Hubs
         /// </summary>
         public override async Task OnConnectedAsync()
         {
-            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync(); // Use helper
-
-            if (gameId != Guid.Empty && !string.IsNullOrEmpty(playerId))
+            var httpContext = Context.GetHttpContext();
+            if (httpContext is null)
             {
-                string groupName = $"Game_{gameId}"; // Consistent group naming convention
-                await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
+                _logger.LogError("HttpContext is null for ConnectionId {ConnectionId} in OnConnectedAsync. Aborting.", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
 
-                _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}, Added to Group={GroupName}",
-                    Context.ConnectionId, playerId, gameId, groupName);
+            var gameIdStr = httpContext.Request.Query["gameId"].ToString();
+            var playerIdStr = httpContext.Request.Query["playerId"].ToString();
+            var token = httpContext.Request.Query["token"].ToString();
 
-                // Optional: Request initial state from GameService and send to caller
-                try
+            if (!Guid.TryParse(gameIdStr, out var gameId) || !Guid.TryParse(playerIdStr, out var playerGuid) || string.IsNullOrWhiteSpace(token))
+            {
+                _logger.LogWarning("Invalid connection parameters. ConnectionId={ConnectionId}, gameId={GameId}, playerId={PlayerId}", Context.ConnectionId, gameIdStr, playerIdStr);
+                await Clients.Caller.ReceiveError("连接参数无效，无法加入房间。");
+                Context.Abort();
+                return;
+            }
+
+            var authResult = _matchService.ValidateConnection(gameIdStr, playerGuid, token);
+            if (!authResult.Success || authResult.Room == null)
+            {
+                _logger.LogWarning("Match validation failed for ConnectionId={ConnectionId}, GameId={GameId}, PlayerId={PlayerId}. Error={Error}",
+                    Context.ConnectionId, gameIdStr, playerIdStr, authResult.Error);
+                await Clients.Caller.ReceiveError(authResult.Message ?? "房间验证失败，无法加入。");
+                Context.Abort();
+                return;
+            }
+
+            // Set items for filters (GameContextFilter will pick these up)
+            Context.Items["GameId"] = gameIdStr;
+            Context.Items["PlayerId"] = playerIdStr;
+
+            var room = authResult.Room;
+            if (room.Status == MatchStatus.Ready)
+            {
+                _matchService.Start(gameIdStr, playerGuid); // Best-effort attempt to mark started
+                var refreshed = _matchService.Get(gameIdStr);
+                if (refreshed.Success && refreshed.Room != null)
                 {
-                    // Parse playerId to Guid and pass it to GetOrCreateGameStateAsync
-                    Guid playerGuid = Guid.Parse(playerId);
-                    GameState? currentStateEntity = _gameService.GetOrCreateGameState(gameId.ToString(), playerGuid); // Pass playerId
-                    GameStateDto? currentState = currentStateEntity != null ? _mapper.Map<GameStateDto>(currentStateEntity) : null;
-                    if (currentState != null)
-                    {
-                        _logger.LogInformation("Sending initial game state to Player {PlayerId} in Game {GameId}", playerId, gameId);
-                        await Clients.Caller.ReceiveGameState(currentState);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Could not retrieve initial game state for Player {PlayerId} in Game {GameId}. Service returned null.", playerId, gameId);
-                        await Clients.Caller.ReceiveError("Failed to load initial game state.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error retrieving or sending initial game state for Player {PlayerId} in Game {GameId}", playerId, gameId);
-                    await Clients.Caller.ReceiveError("Server error loading initial game state.");
+                    room = refreshed.Room;
                 }
             }
-            else
+
+            string groupName = $"Game_{gameId}"; // Consistent group naming convention
+            await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
+
+            string playerGroupName = $"Player_{playerIdStr}";
+            await Groups.AddToGroupAsync(Context.ConnectionId, playerGroupName);
+
+            _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}, Added to Group={GroupName}",
+                Context.ConnectionId, playerIdStr, gameId, groupName);
+
+            // Only create game state when match is started, to avoid "ghost seats" or hanging initialization.
+            if (!room.UseAiFallback && room.Status != MatchStatus.Started)
             {
-                _logger.LogWarning("Client connected with invalid parameters: ConnectionId={ConnectionId}. Could not identify game/player. Aborting connection.",
-                    Context.ConnectionId);
-                Context.Abort(); // Abort connection if essential info is missing
+                _logger.LogInformation("Room {GameId} not started yet (Status={Status}). Skipping GameState creation.", gameId, room.Status);
+                await Clients.Caller.ReceiveError("房间未开始，请等待双方准备完成后再进入对战。");
+                await base.OnConnectedAsync();
+                return;
+            }
+
+            // Request initial state from GameService and broadcast to group
+            try
+            {
+                var requestServices = httpContext.RequestServices;
+                var currentStateEntity = _gameService.GetOrCreateGameState(
+                    gameIdStr,
+                    room.HostPlayerId,
+                    room.GuestPlayerId,
+                    room.UseAiFallback,
+                    requestServices);
+
+                if (currentStateEntity != null)
+                {
+                    var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
+
+                    GameStateDto currentState;
+                    using (var tempContext = new GameContext(
+                        requestServices,
+                        _mapper,
+                        gameContextAccessor,
+                        currentStateEntity,
+                        playerGuid,
+                        Context.ConnectionAborted // Use the connection's cancellation token
+                    ))
+                    {
+                        currentState = _mapper.Map<GameStateDto>(currentStateEntity);
+                    }
+
+                    _logger.LogInformation("Broadcasting initial game state to Game {GameId}", gameId);
+                    await Clients.Group(groupName).ReceiveGameState(currentState);
+                }
+                else
+                {
+                    _logger.LogWarning("Could not retrieve initial game state for Game {GameId}. Service returned null.", gameId);
+                    await Clients.Caller.ReceiveError("Failed to load initial game state.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving or sending initial game state for Player {PlayerId} in Game {GameId}", playerIdStr, gameId);
+                await Clients.Caller.ReceiveError("Server error loading initial game state.");
             }
 
             await base.OnConnectedAsync();
@@ -535,6 +695,16 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <returns>A tuple containing GameId (Guid) and PlayerId (string?). Returns (Guid.Empty, null) if info not found.</returns>
         private Task<(Guid GameId, string? PlayerId)> GetGamePlayerInfoFromContextAsync()
         {
+            // First try items set during connection validation
+            if (Context.Items.TryGetValue("GameId", out var gameIdItem) &&
+                Context.Items.TryGetValue("PlayerId", out var playerIdItem) &&
+                gameIdItem is string gameIdStrItem &&
+                playerIdItem is string playerIdStrItem &&
+                Guid.TryParse(gameIdStrItem, out var gameIdFromItems))
+            {
+                return Task.FromResult<(Guid, string?)>((gameIdFromItems, playerIdStrItem));
+            }
+
             // Prioritize authenticated user if available
             // var authenticatedPlayerId = Context.UserIdentifier; // Returns null if not authenticated
             // if (!string.IsNullOrEmpty(authenticatedPlayerId)) {

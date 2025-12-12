@@ -1,3 +1,4 @@
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 // Server/Services/GameService.cs
 //
@@ -29,19 +30,20 @@ using System.Collections.Generic; // Add for List<>
 using System.Linq; // For helper methods potentially
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events; // Base Event DTO
-using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
+using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Action DTOs incl. DebugCommandDto
 // Updated Namespace
 // using ShadowverseBeyond.Server.Models; // Already included above
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Added for IConditionFactory
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Added for IEffectExecutor
-using ShadowverseBeyond.Server.Domain.Abilities.Common; // Added for ValueConfig
 using ShadowverseBeyond.Server.Domain.Events; // Added for IEventProcessor and PlayCardEvent
 using ShadowverseBeyond.Server.Domain.Factories; // Added for ICardFactory
+using ShadowverseBeyond.Server.Domain.Buffs;
 
 using ShadowverseBeyond.Server.Domain.Abilities; // Added for AbilityManager
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for keyword constants
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -55,9 +57,8 @@ namespace ShadowverseBeyond.Server.Services
 
         // Removed EventBroadcastHandler delegate and _eventHandlers dictionary
 
-        private readonly IAiService _aiService; // Added for AI logic
-        private readonly Abstractions.IGameDataProvider _gameDataProvider; // Inject GameDataProvider for cached data access
-        private readonly Abstractions.IEffectQueueService _effectQueueService; // 【架构重构】注入效果队列服务
+        private readonly IGameDataProvider _gameDataProvider; // Inject GameDataProvider for cached data access
+        private readonly IPendingActionService _pendingActionService; // Add PendingActionService
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
@@ -71,8 +72,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, Task> _gameProcessingLoops = new(); // Stores the running Task for each game's loop
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _gameLoopCancellationTokens = new(); // Stores cancellation tokens for each loop
 
-        // Dictionary to track pending AI requests to prevent flooding
-        private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, DateTime>> _pendingAiRequests = new();
+        // Dictionary to manage DI scopes for each game session
         // Flag to prevent re-entrant EndTurn processing for the same game - REMOVED by Roo
         // private readonly ConcurrentDictionary<string, bool> _isProcessingEndTurn = new();
 
@@ -85,103 +85,39 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         /// <param name="gameId">The ID of the game.</param>
         /// <param name="actionWrapper">The player action to enqueue.</param>
-        public void EnqueuePlayerAction(string gameId, PlayerActionWrapper actionWrapper)
+        public Task EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper actionWrapper)
         {
             if (string.IsNullOrEmpty(gameId) || actionWrapper == null)
             {
                 _logger.LogWarning("[EnqueuePlayerActionAsync] Invalid arguments: gameId or actionWrapper is null/empty.");
-                return; // Or throw ArgumentNullException
+                return Task.CompletedTask;
             }
 
-            _logger.LogDebug("[EnqueuePlayerActionAsync:{GameId}] Received action {ActionType} from Player {PlayerId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
+            _logger.LogDebug("[EnqueuePlayerActionAsync:{GameId}] Received action {ActionType} from Player {PlayerId} with ActionId {ActionId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId, actionWrapper.ActionId);
 
-            if (actionWrapper.ActionType == "PlayCard")
-            {
-                _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: Received PlayCard action for Player {PlayerId}", actionWrapper.PlayerId);
-
-                // Check if this is an AI player and if there are already pending requests
-                var gameState = GetGameState(gameId);
-                if (gameState != null && gameState.Player2.IsAI && actionWrapper.PlayerId == gameState.Player2.PlayerId)
-                {
-                    var pendingRequests = _pendingAiRequests.GetOrAdd(gameId, _ => new ConcurrentDictionary<Guid, DateTime>());
-                    var currentTime = DateTime.UtcNow;
-
-                    // Clean up old pending requests (older than 5 seconds)
-                    var expiredRequests = pendingRequests.Where(kvp => currentTime - kvp.Value > TimeSpan.FromSeconds(5)).ToList();
-                    foreach (var expired in expiredRequests)
-                    {
-                        pendingRequests.TryRemove(expired.Key, out _);
-                    }
-
-                    // Check if there's already a pending request for this AI player
-                    if (pendingRequests.ContainsKey(actionWrapper.PlayerId))
-                    {
-                        _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: AI Player {PlayerId} already has a pending PlayCard request. Rejecting duplicate.", actionWrapper.PlayerId);
-                        return; // Reject the duplicate request
-                    }
-
-                    // Add this request to pending
-                    pendingRequests.TryAdd(actionWrapper.PlayerId, currentTime);
-                    _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: Added AI Player {PlayerId} to pending requests", actionWrapper.PlayerId);
-                }
-            }
-
-            // 1. Get or add the action queue for the game
             var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
-
-            // 2. Enqueue the action
             actionQueue.Enqueue(actionWrapper);
             _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Action {ActionType} enqueued. Queue size: {QueueSize}", gameId, actionWrapper.ActionType, actionQueue.Count);
 
-            if (actionWrapper.ActionType == "PlayCard")
-            {
-                _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: PlayCard action enqueued successfully for Player {PlayerId}, Queue size: {QueueSize}", actionWrapper.PlayerId, actionQueue.Count);
-            }
-
-
-            // 3. Ensure the processing loop is running for this game
-            // Check if a loop task exists and if it's still active
+            // Fire-and-forget: The loop is started if not running, but the client does not wait for it.
             if (!_gameProcessingLoops.TryGetValue(gameId, out var existingLoop) || existingLoop.IsCompleted || existingLoop.IsFaulted || existingLoop.IsCanceled)
             {
-                if (actionWrapper.ActionType == "PlayCard")
-                {
-                    _logger.LogWarning("🔥 [PLAYCARD_DEBUG] EnqueuePlayerActionAsync: Starting/restarting processing loop for game {GameId}", gameId);
-                }
-
-                // Attempt to start a new loop if none is active
-                // Use a lock specific to loop creation to prevent race conditions starting multiple loops
                 object loopLock = _gameLoopCreationLocks.GetOrAdd(gameId, _ => new object());
                 lock (loopLock)
                 {
-                    // Double-check inside the lock
                     if (!_gameProcessingLoops.TryGetValue(gameId, out existingLoop) || existingLoop.IsCompleted || existingLoop.IsFaulted || existingLoop.IsCanceled)
                     {
-                        _logger.LogInformation("[EnqueuePlayerActionAsync:{GameId}] No active processing loop found or loop terminated. Starting a new one.", gameId);
-
-                        // Create and store a new cancellation token source
+                        _logger.LogInformation("[EnqueuePlayerActionAsync:{GameId}] No active processing loop found. Starting a new one.", gameId);
                         var cts = new CancellationTokenSource();
-                        _gameLoopCancellationTokens.AddOrUpdate(gameId, cts, (_, oldCts) => { oldCts.Dispose(); return cts; }); // Dispose old one if replacing
-
-                        // Start the processing loop as a background task
+                        _gameLoopCancellationTokens.AddOrUpdate(gameId, cts, (_, oldCts) => { oldCts.Dispose(); return cts; });
                         var processingTask = Task.Run(() => GameProcessingLoopAsync(gameId, cts.Token), cts.Token);
-
-                        // Store the new loop task, replacing any old/completed one
                         _gameProcessingLoops.AddOrUpdate(gameId, processingTask, (_, oldTask) => processingTask);
-
                         _logger.LogInformation("[EnqueuePlayerActionAsync:{GameId}] New processing loop started.", gameId);
-                    }
-                    else
-                    {
-                        _logger.LogDebug("[EnqueuePlayerActionAsync:{GameId}] Processing loop was already started by another thread.", gameId);
                     }
                 }
             }
-            else
-            {
-                _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Processing loop is already active.", gameId);
-            }
 
-            // Enqueuing itself is fast, loop runs in background
+            return Task.CompletedTask;
         }
 
         // Need a lock object dictionary for loop creation synchronization
@@ -209,50 +145,23 @@ namespace ShadowverseBeyond.Server.Services
         // Removed the duplicate field declaration added previously.
         // The original field declaration should exist elsewhere in the class.
 
-        private readonly IEventProcessor _eventProcessor;
-        private readonly IEffectExecutor _effectExecutor;
-        private readonly IAbilityTriggerService _abilityTriggerService;
-        private readonly ICardFactory _cardFactory;
-        private readonly AbilityManager _abilityManager;
-        private readonly IEventHistoryService _eventHistoryService;
-        private readonly IConditionEvaluator _conditionEvaluator;
-        private readonly TargetSelectionService _targetSelectionService;
-        private readonly IServiceProvider _serviceProvider;
-
+        private readonly IServiceScopeFactory _serviceScopeFactory;
         public GameService(
             IHubContext<GameHub> hubContext,
             ILogger<GameService> logger,
             IMapper mapper,
-            IAiService aiService,
             IClientMethodMapper clientMethodMapper,
-            Abstractions.IGameDataProvider gameDataProvider,
-            Abstractions.IEffectQueueService effectQueueService,
-            IEventProcessor eventProcessor,
-            IEffectExecutor effectExecutor,
-            IAbilityTriggerService abilityTriggerService,
-            ICardFactory cardFactory,
-            AbilityManager abilityManager,
-            Domain.Events.Services.IEventHistoryService eventHistoryService,
-            IConditionEvaluator conditionEvaluator,
-            TargetSelectionService targetSelectionService,
-            IServiceProvider serviceProvider)
+            IGameDataProvider gameDataProvider,
+            IServiceScopeFactory serviceScopeFactory,
+            IPendingActionService pendingActionService)
         {
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
-            _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper));
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
-            _effectQueueService = effectQueueService ?? throw new ArgumentNullException(nameof(effectQueueService));
-            _eventProcessor = eventProcessor ?? throw new ArgumentNullException(nameof(eventProcessor));
-            _effectExecutor = effectExecutor ?? throw new ArgumentNullException(nameof(effectExecutor));
-            _abilityTriggerService = abilityTriggerService ?? throw new ArgumentNullException(nameof(abilityTriggerService));
-            _cardFactory = cardFactory ?? throw new ArgumentNullException(nameof(cardFactory));
-            _abilityManager = abilityManager ?? throw new ArgumentNullException(nameof(abilityManager));
-            _eventHistoryService = eventHistoryService ?? throw new ArgumentNullException(nameof(eventHistoryService));
-            _conditionEvaluator = conditionEvaluator ?? throw new ArgumentNullException(nameof(conditionEvaluator));
-            _targetSelectionService = targetSelectionService ?? throw new ArgumentNullException(nameof(targetSelectionService));
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+            _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
         }
 
 
@@ -342,509 +251,151 @@ namespace ShadowverseBeyond.Server.Services
         // 【架构重构】游戏处理循环 - 使用效果队列架构
         private async Task GameProcessingLoopAsync(string gameId, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop started with effect queue architecture.", gameId);
+            _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop started.", gameId);
             var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
-            // 【架构重构】移除传统事件队列，改为立即事件处理
-            // var eventQueue = _eventQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<IGameEvent>());
 
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    bool processedItem = false; // Flag to check if any work was done in this iteration
+                    bool processedItem = false;
 
-                    // --- 0. 【架构重构】优先处理效果队列 ---
-                    if (_effectQueueService.HasPendingEffects(gameId))
-                    {
-                        try
-                        {
-                            _logger.LogDebug("[GameProcessingLoop:{GameId}] Processing effect queue with {EffectCount} pending effects",
-                                gameId, _effectQueueService.GetPendingEffectCount(gameId));
-
-                            // 【架构重构】实际处理效果队列中的请求
-                            await ProcessEffectQueueForGameAsync(gameId);
-                            processedItem = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error processing effect queue", gameId);
-                        }
-                    }
-
-                    // 【架构重构】移除传统事件队列处理，改为立即事件处理
-                    // 事件现在在效果执行时立即处理，不再需要单独的事件队列循环
-
-                    // --- 2. Process Action Queue (简化处理) ---
-                    // 【架构重构】移除事件队列依赖，直接处理动作队列
                     if (actionQueue.TryDequeue(out var actionWrapper))
                     {
+                        processedItem = true;
                         cancellationToken.ThrowIfCancellationRequested();
-                        _logger.LogDebug("[GameProcessingLoop:{GameId}] Dequeued Player Action: {ActionType} for Player {PlayerId}", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
+                        _logger.LogDebug("[GameProcessingLoop:{GameId}] Dequeued action: {ActionType} for Player {PlayerId}", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
 
-                        if (actionWrapper.ActionType == "PlayCard")
-                        {
-                            _logger.LogWarning("🔥 [PLAYCARD_DEBUG] GameProcessingLoop: Dequeued PlayCard action for Player {PlayerId}", actionWrapper.PlayerId);
-                        }
+                        await using var scope = _serviceScopeFactory.CreateAsyncScope();
+                        var sp = scope.ServiceProvider;
+                        var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
 
                         try
                         {
-                            // Execute the initial step of the player action and get the resulting event
                             var initialEvent = await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper);
-
-                            // 【架构重构】立即处理生成的初始事件，而不是排队
                             if (initialEvent != null)
                             {
-                                _logger.LogDebug("[GameProcessingLoop:{GameId}] Processing initial event {EventType} from Action {ActionType} immediately",
-                                    gameId, initialEvent.GetType().Name, actionWrapper.ActionType);
+                                _currentlyProcessingPlayerActionId.AddOrUpdate(gameId, actionWrapper.PlayerId.ToString(), (_, _) => actionWrapper.PlayerId.ToString());
+                                _logger.LogInformation("[GameProcessingLoop:{GameId}] Started transaction for Player {PlayerId}.", gameId, actionWrapper.PlayerId);
 
-                                // 设置当前处理的玩家ID
-                                _currentlyProcessingPlayerActionId.AddOrUpdate(gameId, actionWrapper.PlayerId.ToString(), (_, existingPlayerId) => actionWrapper.PlayerId.ToString());
-                                _logger.LogInformation("[GameProcessingLoop:{GameId}] Started processing action chain for Player {PlayerId}.", gameId, actionWrapper.PlayerId);
-
-                                // 创建GameContext用于事件处理
-                                GameState? gameState = null;
-                                // No lock needed here for read, ConcurrentDictionary is safe
-                                _gameStates.TryGetValue(gameId, out gameState);
-
-                                if (gameState != null)
+                                if (_gameStates.TryGetValue(gameId, out var gameState) && gameState != null)
                                 {
-                                    var gameContext = new GameContext(
-                                        gameState,
-                                        actionWrapper.PlayerId,
-                                        _mapper,
-                                        _serviceProvider, // IServiceProvider is now available in GameContext constructor
-                                        triggeringEvent: null,
-                                        sourceCard: null
-                                    );
+                                    var mapper = sp.GetRequiredService<IMapper>();
 
-                                    // 立即处理所有初始事件
-                                    await ProcessGeneratedEventsImmediatelyAsync(gameId, new List<IGameEvent> { initialEvent }, gameContext);
+                                    _logger.LogWarning("[STATE_POLLUTION_TRACE] GameService: Creating GameContext for GameId: {GameId} with GameState HashCode: {HashCode}", gameId, gameState.GetHashCode());
+                                    var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, actionWrapper.PlayerId, cancellationToken, initialEvent);
+                                    var transactionService = sp.GetRequiredService<IGameActionTransactionService>();
+                                    var transactionResult = await transactionService.ProcessTransactionAsync(gameContext, new[] { initialEvent });
+
+                                    // --- NEW: Handle Paused Transaction ---
+                                    // The transaction service will now handle its own pauses internally by awaiting player choices.
+                                    // The GameService loop no longer needs to manage the pause/resume flow.
+                                    // --- END: Handle Paused Transaction ---
+
+                                    if (transactionResult.IsSuccess)
+                                    {
+                                        // 【功能补全】检查事务处理结果，如果包含回合开始事件，则触发AI
+                                        var turnStartEvent = transactionResult.ProcessedEvents.OfType<TurnStartEvent>().FirstOrDefault();
+                                        if (turnStartEvent?.Source?.Player != null && turnStartEvent.Source.Player.IsAI)
+                                        {
+                                            _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", turnStartEvent.Source.Player.PlayerId);
+                                            var aiService = sp.GetRequiredService<IAiService>();
+                                            // 【BUG修复】为AI行动创建一个新的后台任务，并确保它拥有自己的DI作用域和GameContext
+                                            _ = Task.Run(async () =>
+                                            {
+                                                // 为这个后台任务创建一个新的、独立的作用域
+                                                await using var aiScope = _serviceScopeFactory.CreateAsyncScope();
+                                                var aiSp = aiScope.ServiceProvider;
+                                                var gameContextAccessor = aiSp.GetRequiredService<IGameContextAccessor>();
+                                                var mapper = aiSp.GetRequiredService<IMapper>();
+
+                                                // 获取最新的游戏状态
+                                                if (_gameStates.TryGetValue(gameId, out var currentGameState))
+                                                {
+                                                    // 创建并设置GameContext
+                                                    using (var aiGameContext = new GameContext(aiSp, mapper, gameContextAccessor, currentGameState, turnStartEvent.Source.Player.PlayerId, cancellationToken))
+                                                    {
+                                                        // 现在，在拥有正确上下文的情况下调用AI服务
+                                                        var aiServiceFromScope = aiSp.GetRequiredService<IAiService>();
+                                                        await aiServiceFromScope.RequestAiActionAsync(gameId, turnStartEvent.Source.Player.PlayerId);
+                                                    }
+                                                }
+                                            }, cancellationToken);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        _logger.LogError("Transaction failed for action {ActionType}: {Error}", actionWrapper.ActionType, transactionResult.ErrorMessage);
+                                    }
+
+                                    // --- BUG-FIX: Action Completion Logic ---
+                                    // This logic MUST run here, after a transaction successfully completes.
+                                    // It cannot run in a separate block that relies on the queue being empty,
+                                    // as that block would incorrectly access a stale `actionWrapper` after a `continue`.
+                                    _logger.LogInformation("[GameProcessingLoop:{GameId}] Action chain for Player {PlayerId} completed.", gameId, actionWrapper.PlayerId);
+
+                                    // 1. Complete the task for the action that just finished.
+                                    // The TaskCompletionSource logic has been removed to prevent deadlocks.
+
+                                    // 2. Update playability for all relevant players.
+                                    await UpdateAndBroadcastHandPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
+                                    var opponentId = gameState.GetOpponentPlayerState(actionWrapper.PlayerId)?.PlayerId;
+                                    if (opponentId.HasValue)
+                                    {
+                                        await UpdateAndBroadcastHandPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
+                                    }
+                                    // --- End BUG-FIX ---
                                 }
                             }
                             else
                             {
-                                _logger.LogWarning("[GameProcessingLoop:{GameId}] Action {ActionType} for Player {PlayerId} did not generate any initial domain events.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
-                                // 如果没有事件，动作立即完成
-                                _currentlyProcessingPlayerActionId.TryRemove(new KeyValuePair<string, string?>(gameId, actionWrapper.PlayerId.ToString()));
+                                _logger.LogWarning("[GameProcessingLoop:{GameId}] Action {ActionType} did not generate initial events.", gameId, actionWrapper.ActionType);
                             }
-                            processedItem = true;
                         }
-                        catch (OperationCanceledException) { throw; } // Re-throw cancellation
-                        catch (GameLogicException glex) // Catch specific game logic errors from initial step
+                        catch (GameLogicException glex)
                         {
-                            _logger.LogWarning(glex, "[GameProcessingLoop:{GameId}] Game logic error executing initial step for action {ActionType} by Player {PlayerId}. Action rejected.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
-                            // TODO: Implement sending error back to the specific player
-                            // await SendErrorToPlayerAsync(actionWrapper.PlayerId, glex.Message);
-                            _logger.LogError("[GameProcessingLoop:{GameId}] Placeholder: Need to implement SendErrorToPlayerAsync for Player {PlayerId}, Error: {ErrorMessage}", gameId, actionWrapper.PlayerId, glex.Message);
+                            _logger.LogWarning(glex, "[GameProcessingLoop:{GameId}] Game logic error for action {ActionType} by Player {PlayerId}. Action rejected.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
+                            // TODO: Send error to player
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error executing initial step for action {ActionType} by Player {PlayerId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
-                            // Handle unexpected errors during action execution
+                            _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error processing action {ActionType} by Player {PlayerId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
                         }
-                    } // End of action queue processing
-
-                    // --- 3. Handle Action Completion (Hand Playability Update) ---
-                    // 【架构重构】简化动作完成检测：只检查动作队列是否为空
-                    if (actionQueue.IsEmpty && _currentlyProcessingPlayerActionId.TryGetValue(gameId, out var completedPlayerId) && completedPlayerId != null)
-                    {
-                        _logger.LogInformation("[GameProcessingLoop:{GameId}] Action chain for Player {PlayerId} completed (Action queue empty).", gameId, completedPlayerId);
-                        // Clear the processing flag *before* starting the update
-                        // Use TryUpdate with comparison for atomicity
-                        if (_currentlyProcessingPlayerActionId.TryUpdate(gameId, null, completedPlayerId))
+                        finally
                         {
-                            try
-                            {
-                                // Clear pending AI request if this was an AI action
-                                if (_pendingAiRequests.TryGetValue(gameId, out var pendingRequests))
-                                {
-                                    if (Guid.TryParse(completedPlayerId, out var playerGuid))
-                                    {
-                                        if (pendingRequests.TryRemove(playerGuid, out _))
-                                        {
-                                            _logger.LogWarning("🔥 [PLAYCARD_DEBUG] Action completion: Cleared pending AI request for Player {PlayerId}", completedPlayerId);
-                                        }
-                                    }
-                                }
-
-                                // 【修复】直接调用可玩性更新，作为系统维护操作
-                                // 这是客户端同步操作，不是游戏逻辑效果，应该直接集成到处理流程中
-                                await UpdateAndBroadcastHandPlayabilityAsync(gameId, Guid.Parse(completedPlayerId));
-
-                                // 【新增】同时为当前回合玩家更新可玩性（如果不同的话）
-                                // 确保回合开始时玩家也有最新的可玩性信息
-                                if (_gameStates.TryGetValue(gameId, out var gameState) && gameState != null)
-                                {
-                                    var currentPlayerId = gameState.CurrentPlayerId;
-                                    if (currentPlayerId.HasValue && currentPlayerId.Value != Guid.Parse(completedPlayerId))
-                                    {
-                                        _logger.LogDebug("[GameProcessingLoop:{GameId}] Also updating hand playability for current turn player {CurrentPlayerId}.", gameId, currentPlayerId.Value);
-                                        await UpdateAndBroadcastHandPlayabilityAsync(gameId, currentPlayerId.Value);
-                                    }
-                                }
-
-                                processedItem = true;
-                            }
-                            catch (OperationCanceledException) { throw; } // Re-throw cancellation
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error during hand playability update for Player {PlayerId}.", gameId, completedPlayerId);
-                                // Log error but continue the loop
-                            }
-                        }
-                        else
-                        {
-                            // This might happen if another thread cleared the flag just before TryUpdate, or if the value wasn't the expected completedPlayerId.
-                            _logger.LogWarning("[GameProcessingLoop:{GameId}] Failed to clear processing player ID flag for Player {PlayerId} (expected value comparison failed or flag already cleared).", gameId, completedPlayerId);
+                            // --- BUG-FIX: Clear the currently processing player ID here ---
+                            // This ensures that even if the transaction fails or is paused, we are ready for the next action.
+                            _currentlyProcessingPlayerActionId.TryUpdate(gameId, null, actionWrapper.PlayerId.ToString());
+                            gameContextAccessor.GameContext = null;
                         }
                     }
 
-                    // --- 4. Wait if Idle ---
                     if (!processedItem)
                     {
-                        // If no items were processed in this iteration, wait a short period
-                        // to avoid busy-waiting when queues are empty.
-                        try
-                        {
-                            // Use Task.Delay with the cancellation token
-                            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken); // Adjust delay as needed
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // Expected when cancellation is requested during delay
-                            _logger.LogInformation("[GameProcessingLoop:{GameId}] Delay canceled.", gameId);
-                            break; // Exit the loop immediately
-                        }
+                        await Task.Delay(50, cancellationToken);
                     }
-                } // End of while (!cancellationToken.IsCancellationRequested)
+                }
             }
             catch (OperationCanceledException)
             {
                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop canceled.", gameId);
-                // Perform any necessary cleanup specific to cancellation
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "[GameProcessingLoop:{GameId}] Unhandled exception in processing loop. Loop terminating.", gameId);
-                // Consider marking the game state as errored or notifying admins
+                _logger.LogCritical(ex, "[GameProcessingLoop:{GameId}] Unhandled exception in processing loop. Terminating.", gameId);
             }
             finally
             {
                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop finished.", gameId);
-                // Ensure cleanup happens even if the loop exits unexpectedly
-                // Remove the loop task and cancellation token source from dictionaries
                 _gameProcessingLoops.TryRemove(gameId, out _);
                 if (_gameLoopCancellationTokens.TryRemove(gameId, out var cts))
                 {
                     cts.Dispose();
                 }
-                // Clear the currently processing player ID on exit
                 _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);
-                // 【架构重构】只检查动作队列的清理
-                if (actionQueue != null && !actionQueue.IsEmpty)
-                {
-                    _logger.LogWarning("[GameProcessingLoop:{GameId}] Loop terminated with {Count} items remaining in action queue.", gameId, actionQueue.Count);
-                }
-                // 事件队列已移除，不再需要检查
-
-                // Clear registered cards for the game state
-                if (_gameStates.TryGetValue(gameId, out var gameStateToClear) && gameStateToClear != null)
-                {
-                    gameStateToClear.ClearAllRegisteredCards();
-                    _logger.LogInformation("[GameProcessingLoop:{GameId}] Cleared all registered card instances for game.", gameId);
-                }
-            }
-        } // End of GameProcessingLoopAsync
-
-        /// <summary>
-        /// 【架构重构】处理指定游戏的效果队列
-        /// 从效果队列中取出请求并通过IEffectExecutor执行
-        /// </summary>
-        private async Task ProcessEffectQueueForGameAsync(string gameId)
-        {
-            _logger.LogDebug("🔧 [效果队列架构] Processing effect queue for game {GameId}", gameId);
-
-            // 获取游戏状态和锁
-            GameState? gameState = null;
-            if (!_gameStates.TryGetValue(gameId, out gameState) || gameState == null)
-            {
-                _logger.LogError("🔧 [效果队列架构] GameState not found for game {GameId}, cannot process effect queue", gameId);
-                return;
-            }
-
-            var eventHistoryService = _eventHistoryService;
-
-            // 处理效果队列中的所有待处理效果
-            while (_effectQueueService.HasPendingEffects(gameId))
-            {
-                try
-                {
-                    // 获取下一个效果请求
-                    var effectRequest = _effectQueueService.GetNextEffectRequest(gameId);
-                    if (effectRequest == null)
-                    {
-                        _logger.LogDebug("🔧 [效果队列架构] No more effect requests in queue for game {GameId}", gameId);
-                        break;
-                    }
-
-                    _logger.LogInformation("🔧 [效果队列架构] Processing effect request: {EffectType} for player {PlayerId} in game {GameId}",
-                        effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.RequestingPlayerId, gameId);
-
-                    // 【BUG-019调试】特别记录destroy类型的效果处理
-                    if (effectRequest.EffectConfig?.Type?.ToLower() == "destroy")
-                    {
-                        _logger.LogWarning("🔧 [BUG-019_DEBUG] Processing DESTROY effect request for player {PlayerId} with {TargetCount} targets",
-                            effectRequest.RequestingPlayerId, effectRequest.SelectedTargets?.Count ?? 0);
-                    }
-
-                    // 获取 TriggeringEvent
-                    IGameEvent? triggeringEvent = null;
-                    if (effectRequest.TriggeredEventId != Guid.Empty)
-                    {
-                        triggeringEvent = await _eventHistoryService.GetEventByIdAsync(gameId, effectRequest.TriggeredEventId);
-                        if (triggeringEvent == null)
-                        {
-                            _logger.LogWarning("🔧 [ProcessEffectQueue] TriggeringEvent with ID {TriggeredEventId} not found for game {GameId}.",
-                                effectRequest.TriggeredEventId, gameId);
-                        }
-                    }
-
-                    // 获取 CurrentAbility (父能力)
-                    IAbility? currentAbility = null;
-                    if (effectRequest.ParentAbilityId.HasValue && effectRequest.ParentAbilityId.Value != Guid.Empty)
-                    {
-                        currentAbility = _abilityManager.GetAbilityByRuntimeId(effectRequest.ParentAbilityId.Value);
-                        if (currentAbility == null)
-                        {
-                            _logger.LogWarning("🔧 [ProcessEffectQueue] CurrentAbility (ParentAbility) with ID {ParentAbilityId} not found.",
-                                effectRequest.ParentAbilityId.Value);
-                        }
-                    }
-
-                    // 获取 SourceCard (能力的源卡牌)
-                    CardInstance? sourceCardOfAbility = null;
-                    if (currentAbility?.SourceCard != null && currentAbility.SourceCard.InstanceId != Guid.Empty)
-                    {
-                        sourceCardOfAbility = gameState.FindCardInstanceById(currentAbility.SourceCard.InstanceId);
-                    }
-                    else if (effectRequest.SourceCardId.HasValue && effectRequest.SourceCardId.Value != Guid.Empty)
-                    {
-                        sourceCardOfAbility = gameState.FindCardInstanceById(effectRequest.SourceCardId.Value);
-                        if (sourceCardOfAbility == null) // Log if explicitly provided SourceCardId from effectRequest is not found
-                        {
-                            _logger.LogWarning("🔧 [ProcessEffectQueue] SourceCard with ID {SourceCardId} from effectRequest not found.", effectRequest.SourceCardId.Value);
-                        }
-                    }
-
-                    if (sourceCardOfAbility == null)
-                    {
-                        string debugMsg = "🔧 [ProcessEffectQueue] Could not determine SourceCard. ";
-                        if (currentAbility != null)
-                        {
-                            debugMsg += $"Ability: {currentAbility.AbilityTag} (RuntimeId: {currentAbility.RuntimeId}), AbilitySourceCardId: {currentAbility.SourceCard?.InstanceId}. ";
-                        }
-                        else
-                        {
-                            debugMsg += "No currentAbility. ";
-                        }
-                        if (effectRequest.SourceCardId.HasValue)
-                        {
-                            debugMsg += $"EffectRequestSourceCardId: {effectRequest.SourceCardId.Value}.";
-                        }
-                        else
-                        {
-                            debugMsg += "No SourceCardId in effectRequest.";
-                        }
-                        _logger.LogWarning(debugMsg);
-                    }
-                    // 【架构重构】直接使用EffectRequest中的EffectConfig
-                    // 这个EffectConfig已经配置为使用现有的EffectHandler（turnstart, turnend, mulligan等）
-                    var effectConfig = effectRequest.EffectConfig;
-
-                    // 创建GameContext
-
-                    var gameContext = new GameContext(
-                        gameState,
-                        effectRequest.RequestingPlayerId,
-                        _mapper,
-                        _serviceProvider, // IServiceProvider
-                        triggeringEvent,
-                        sourceCard: sourceCardOfAbility,
-                        currentAbility: currentAbility as Ability
-                    );
-
-                    // 【架构改进】将请求中携带的目标更新到GameContext
-                    if (effectRequest.SelectedTargets != null && effectRequest.SelectedTargets.Any())
-                    {
-                        gameContext.ClearTemporaryState();
-                        foreach (var target in effectRequest.SelectedTargets)
-                        {
-                            gameContext.AddSelectedTarget(target);
-                        }
-                        _logger.LogDebug("🔧 [效果队列架构] Updated GameContext with {TargetCount} targets from EffectRequest.", effectRequest.SelectedTargets.Count);
-                    }
-
-                    // 【架构重构】执行效果并获取完整结果，包括EffectRequests
-                    if (effectConfig == null)
-                    {
-                        _logger.LogWarning("EffectConfig is null, cannot execute effect.");
-                        continue;
-                    }
-                    var effectResult = await _effectExecutor.ExecuteEffectAsync(effectConfig, gameContext);
-
-                    _logger.LogInformation("🔧 [效果队列架构] Effect execution completed for {EffectType}, generated {EventCount} events.",
-                        effectRequest.EffectConfig?.Type ?? "unknown", effectResult.GeneratedEvents?.Count ?? 0);
-
-                    // --- 核心修改：处理 ChainedAbilities ---
-                    if (effectRequest.ChainedAbilities.Any())
-                    {
-                        _logger.LogInformation("🔧 [能力链] Effect {EffectType} completed and has {Count} chained abilities. Processing them...",
-                                               effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.ChainedAbilities.Count);
-
-                        foreach (var chainedAbility in effectRequest.ChainedAbilities)
-                        {
-                            // The context passed here is the one from *after* the parent effect has executed,
-                            // ensuring the chained ability operates on the most up-to-date game state.
-
-                            // Delegate the entire execution process to the centralized service
-                            var newEffects = await _abilityTriggerService.ProcessSingleAbilityAsync(chainedAbility, gameContext);
-
-                            if (newEffects.Any())
-                            {
-                                _logger.LogDebug("🔧 [能力链] Enqueuing {Count} effects from chained ability {AbilityName}", newEffects.Count, chainedAbility.Name);
-                                foreach (var newEffect in newEffects)
-                                {
-                                    await _effectQueueService.EnqueueEffectRequestAsync(gameId, newEffect);
-                                }
-                            }
-                        }
-                    }
-                    // --- 修改结束 ---
-
-                    // 【架构重构】立即处理生成的事件，而不是排队
-                    if (effectResult.GeneratedEvents != null && effectResult.GeneratedEvents.Any())
-                    {
-                        await ProcessGeneratedEventsImmediatelyAsync(gameId, effectResult.GeneratedEvents, gameContext);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "🔧 [效果队列架构] Error processing effect from queue for game {GameId}", gameId);
-                    break; // 避免无限循环
-                }
             }
         }
 
-
-
-        /// <summary>
-        /// 【架构重构】立即处理生成的事件，支持事件驱动的效果链
-        /// 替代传统的事件队列，实现立即事件广播和能力触发
-        /// </summary>
-        private async Task ProcessGeneratedEventsImmediatelyAsync(string gameId, List<IGameEvent> generatedEvents, GameContext gameContext)
-        {
-            _logger.LogDebug("🔧 [立即事件处理] Processing {EventCount} generated events immediately for game {GameId}",
-                generatedEvents.Count, gameId);
-
-            var eventProcessor = _eventProcessor;
-
-            foreach (var gameEvent in generatedEvents)
-            {
-                try
-                {
-                    _logger.LogWarning("🔧 [攻击调试] Processing event: {EventType} (ID: {EventId})",
-                        gameEvent.GetType().Name, gameEvent.EventId);
-
-                    // 立即处理事件，包括能力触发和DTO转换
-                    var processorResult = await eventProcessor.ProcessEventAsync(gameEvent, gameContext);
-
-                    _logger.LogWarning("🔧 [攻击调试] EventProcessor result: ResultingDtos={DtoCount}, NewDomainEvents={NewEventCount}",
-                        processorResult.ResultingDtos?.Count ?? 0, processorResult.NewDomainEvents?.Count ?? 0);
-
-                    // 立即广播生成的DTO
-                    if (processorResult.ResultingDtos != null && processorResult.ResultingDtos.Any())
-                    {
-                        _logger.LogWarning("🔧 [攻击调试] Broadcasting {DtoCount} DTOs for event {EventType}: {DtoTypes}",
-                            processorResult.ResultingDtos.Count, gameEvent.GetType().Name,
-                            string.Join(", ", processorResult.ResultingDtos.Select(d => d.Type)));
-
-                        // 【伤害事件调试】特别记录DamageDealt事件的广播
-                        var damageEvents = processorResult.ResultingDtos.Where(dto => dto.Type == "DamageDealt").ToList();
-                        if (damageEvents.Any())
-                        {
-                            _logger.LogWarning("🔧 [伤害事件调试] Found {DamageEventCount} DamageDealt events to broadcast for {EventType}",
-                                damageEvents.Count, gameEvent.GetType().Name);
-                        }
-
-                        await BroadcastEventsAsync(gameId, processorResult.ResultingDtos);
-
-                        // 【修复】在TurnStartEvent广播后立即推送手牌可玩性信息
-                        if (gameEvent.EventType == EventType.TurnStart)
-                        {
-                            var startingPlayerId = (gameEvent.Source?.Type == TargetType.Player) ? gameEvent.Source?.Id : null;
-                            if (startingPlayerId.HasValue)
-                            {
-                                _logger.LogInformation("🎯 [TURN_START_PLAYABILITY] Pushing hand playability for Player {PlayerId} after turn start", startingPlayerId.Value);
-                                try
-                                {
-                                    await UpdateAndBroadcastHandPlayabilityAsync(gameId, startingPlayerId.Value);
-
-                                    // 【AI TURN TRIGGER】 Check if the player whose turn is starting is an AI
-                                    var playerState = gameContext.CurrentGameState.GetPlayerState(startingPlayerId.Value);
-                                    if (playerState != null && playerState.IsAI)
-                                    {
-                                        _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", startingPlayerId.Value);
-                                        // Do not await this. The AI will enqueue its own actions in the background.
-                                        _ = _aiService.RequestAiActionAsync(gameId, startingPlayerId.Value);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, "🎯 [TURN_START_PLAYABILITY] Error updating hand playability or triggering AI for Player {PlayerId} after turn start", startingPlayerId.Value);
-                                }
-                            }
-                        }
-                    }
-
-                    // 【架构重构】处理生成的EffectRequests - 将它们入队到效果队列
-                    if (processorResult.EffectRequests != null && processorResult.EffectRequests.Any())
-                    {
-                        _logger.LogInformation("🔧 [立即事件处理] Event {EventType} generated {EffectRequestCount} effect requests, enqueuing them",
-                            gameEvent.GetType().Name, processorResult.EffectRequests.Count);
-
-                        foreach (var effectRequest in processorResult.EffectRequests)
-                        {
-                            await _effectQueueService.EnqueueEffectRequestAsync(gameId, effectRequest);
-                            _logger.LogDebug("🔧 [立即事件处理] Enqueued EffectRequest: {EffectType} for player {PlayerId}",
-                                effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.RequestingPlayerId);
-                        }
-
-                        // 【BUG-019修复】移除立即处理调用，避免重复事件处理和广播
-                        // 效果请求将在主游戏循环中被正常处理，确保正确的事件流
-                        _logger.LogInformation("🔧 [BUG-019修复] Enqueued {EffectRequestCount} effect requests for processing in main game loop",
-                            processorResult.EffectRequests.Count);
-                        // await ProcessEffectQueueForGameAsync(gameId); // 移除此调用以避免重复处理
-                    }
-
-                    // 递归处理新生成的事件（支持事件驱动的效果链）
-                    if (processorResult.NewDomainEvents != null && processorResult.NewDomainEvents.Any())
-                    {
-                        _logger.LogDebug("🔧 [立即事件处理] Event {EventType} generated {NewEventCount} additional events, processing recursively",
-                            gameEvent.GetType().Name, processorResult.NewDomainEvents.Count);
-
-                        // 递归处理新事件，支持事件链
-                        await ProcessGeneratedEventsImmediatelyAsync(gameId, processorResult.NewDomainEvents, gameContext);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "🔧 [立即事件处理] Error processing event {EventType} for game {GameId}",
-                        gameEvent.GetType().Name, gameId);
-                }
-            }
-
-            _logger.LogDebug("🔧 [立即事件处理] Completed immediate processing of all events for game {GameId}", gameId);
-        }
 
         /// <summary>
         /// Executes the initial validation and event generation step for a player action dequeued from the action queue.
@@ -872,32 +423,53 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             // Phase-specific validations
-            if (actionWrapper.ActionType == "SubmitMulligan")
+            bool isDebugAction = actionWrapper.ActionType == "DebugCommand";
+
+            if (!isDebugAction)
             {
-                // Mulligan validation: Only check phase, not turn (mulligan is simultaneous for both players)
-                if (gameState.Phase != GamePhase.Mulligan)
+                if (actionWrapper.ActionType == "SubmitMulligan")
                 {
-                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Mulligan only allowed during Mulligan phase (Current: {gameState.Phase}).");
+                    // Mulligan validation: Only check phase, not turn (mulligan is simultaneous for both players)
+                    if (gameState.Phase != GamePhase.Mulligan)
+                    {
+                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Mulligan only allowed during Mulligan phase (Current: {gameState.Phase}).");
+                    }
+                    // No turn validation for mulligan - both players can submit simultaneously
+                    _logger.LogDebug("[InitialStep:{ActionType}] Mulligan validation passed for Player {PlayerId} during Mulligan phase.",
+                        actionWrapper.ActionType, actionWrapper.PlayerId);
                 }
-                // No turn validation for mulligan - both players can submit simultaneously
-                _logger.LogDebug("[InitialStep:{ActionType}] Mulligan validation passed for Player {PlayerId} during Mulligan phase.",
-                    actionWrapper.ActionType, actionWrapper.PlayerId);
-            }
-            else
-            {
-                // Non-mulligan actions: Check both turn and phase
-                if (gameState.CurrentPlayerId != actionWrapper.PlayerId)
+                else
                 {
-                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] It's not player {actionWrapper.PlayerId}'s turn (Current: {gameState.CurrentPlayerId}).");
-                }
-                // Allow other actions only during Main phase
-                if (gameState.Phase != GamePhase.Main)
-                {
-                    throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during Main phase (Current: {gameState.Phase}).");
+                    // Non-mulligan actions: Check both turn and phase
+                    if (gameState.CurrentPlayerId != actionWrapper.PlayerId)
+                    {
+                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] It's not player {actionWrapper.PlayerId}'s turn (Current: {gameState.CurrentPlayerId}).");
+                    }
+                    // Allow other actions only during Main phase
+                    if (gameState.Phase != GamePhase.Main)
+                    {
+                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during Main phase (Current: {gameState.Phase}).");
+                    }
                 }
             }
 
             // --- 2. Create Initial Domain Event ---
+            // 创建一个临时的服务作用域来获取所需的服务
+            using var scope = _serviceScopeFactory.CreateScope();
+            var serviceProvider = scope.ServiceProvider;
+            var gameContextAccessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+
+            // CancellationToken is not available here directly. For this temporary context,
+            // it's acceptable to use CancellationToken.None as it's short-lived and doesn't perform awaitable operations.
+            // However, the main context created in the loop WILL have the correct token.
+            var gameContext = new GameContext(
+                serviceProvider,
+                _mapper,
+                gameContextAccessor,
+                gameState,
+                actionWrapper.PlayerId,
+                CancellationToken.None // This context is temporary and does not need cancellation.
+            );
             IGameEvent initialEvent;
             switch (actionWrapper.ActionType) // Use the string property
             {
@@ -907,7 +479,7 @@ namespace ShadowverseBeyond.Server.Services
                     if (actionWrapper.ActionData is PlayCardActionDto playDto)
                     {
                         _logger.LogWarning("🔥 [PLAYCARD_DEBUG] ExecutePlayerActionInitialStepAsync: Creating PlayCardRequestedEvent - Card: {CardUid}, Target: {TargetUid}",
-                            playDto.CardUid, playDto.TargetUid);
+                            playDto.CardUid, playDto.TargetUids?.FirstOrDefault());
                         initialEvent = new PlayCardRequestedEvent(actionWrapper.PlayerId, playDto);
                     }
                     else
@@ -925,6 +497,14 @@ namespace ShadowverseBeyond.Server.Services
                     }
                     else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
                     break;
+
+                // case "SubmitTargetChoice":
+                //     if (actionWrapper.ActionData is SubmitTargetChoiceActionDto choiceDto)
+                //     {
+                //         initialEvent = new PlayerChoiceSubmittedEvent(actionWrapper.PlayerId, choiceDto);
+                //     }
+                //     else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
+                //     break;
 
                 case "EndTurn":
                     initialEvent = new EndTurnRequestedEvent(actionWrapper.PlayerId);
@@ -958,7 +538,7 @@ namespace ShadowverseBeyond.Server.Services
                     if (actionWrapper.ActionData is List<Guid> cardUids)
                     {
                         // Direct List<Guid> format
-                        initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, cardUids);
+                        initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, cardUids, gameContext);
                     }
                     // Handle anonymous object with CardUidsToReplace property (from GameHub)
                     else if (actionWrapper.ActionData != null)
@@ -968,7 +548,7 @@ namespace ShadowverseBeyond.Server.Services
 
                         if (cardUidsProperty != null && cardUidsProperty.GetValue(actionWrapper.ActionData) is List<Guid> extractedCardUids)
                         {
-                            initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, extractedCardUids);
+                            initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, extractedCardUids, gameContext);
                         }
                         // Handle JSON element format
                         else if (actionWrapper.ActionData is JsonElement jsonElement && jsonElement.ValueKind == JsonValueKind.Array)
@@ -977,7 +557,7 @@ namespace ShadowverseBeyond.Server.Services
                             {
                                 var deserializedUids = jsonElement.Deserialize<List<Guid>>();
                                 if (deserializedUids == null) throw new ArgumentException("Deserialized card UIDs list is null.");
-                                initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, deserializedUids);
+                                initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, deserializedUids, gameContext);
                             }
                             catch (JsonException jex)
                             {
@@ -992,6 +572,17 @@ namespace ShadowverseBeyond.Server.Services
                     else
                     {
                         throw new ArgumentException($"ActionData is null for {actionWrapper.ActionType}. Expected List<Guid> or object with CardUidsToReplace property.");
+                    }
+                    break;
+
+                case "DebugCommand":
+                    if (actionWrapper.ActionData is DebugCommandDto debugDto)
+                    {
+                        initialEvent = new DebugCommandEvent(actionWrapper.PlayerId, debugDto);
+                    }
+                    else
+                    {
+                        throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}. Expected DebugCommandDto.");
                     }
                     break;
 
@@ -1031,7 +622,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <param name="requestingPlayerId">The ID of the player requesting the game state (used for game creation).</param>
         /// <returns>The GameState domain entity for the game, or null if creation failed unexpectedly.</returns>
-        public GameState? GetOrCreateGameState(string gameId, Guid? requestingPlayerId = null)
+        public GameState? GetOrCreateGameState(string gameId, Guid? hostPlayerId, Guid? guestPlayerId, bool useAiFallback, IServiceProvider scopeServiceProvider)
         {
             if (_gameStates.TryGetValue(gameId, out var existingState))
             {
@@ -1041,8 +632,21 @@ namespace ShadowverseBeyond.Server.Services
             // Creation logic
             try
             {
-                Guid player1Id = requestingPlayerId ?? Guid.NewGuid();
-                Guid player2Id = Guid.NewGuid();
+                var cardFactory = scopeServiceProvider.GetRequiredService<ICardFactory>();
+
+                Guid player1Id = hostPlayerId ?? Guid.NewGuid();
+                Guid player2Id;
+
+                bool createAi = false;
+                if (guestPlayerId.HasValue)
+                {
+                    player2Id = guestPlayerId.Value;
+                }
+                else
+                {
+                    player2Id = Guid.NewGuid();
+                    createAi = useAiFallback;
+                }
 
                 var allCardDefinitions = _gameDataProvider.GetAllCardDefinitions();
                 if (!allCardDefinitions.Any())
@@ -1053,31 +657,69 @@ namespace ShadowverseBeyond.Server.Services
 
                 bool player1IsFirst = new Random().Next(0, 2) == 0;
                 var player1State = new PlayerState(player1Id) { IsFirst = player1IsFirst };
-                var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = true };
+                var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = createAi };
 
                 var newGameState = new GameState(gameId, player1State, player2State, player1IsFirst ? player1Id : player2Id);
 
+                // --- Manual Manager Creation ---
+                var loggerFactory = scopeServiceProvider.GetRequiredService<ILoggerFactory>();
+                var abilityFactory = scopeServiceProvider.GetRequiredService<IAbilityFactory>();
+
+                var systemAbilities = scopeServiceProvider.GetServices<IAbility>();
+                var abilityManager = new AbilityManager(loggerFactory.CreateLogger<AbilityManager>(), abilityFactory, systemAbilities);
+                var buffManager = new BuffManager(loggerFactory.CreateLogger<BuffManager>(), abilityManager);
+
+                newGameState.AbilityManager = abilityManager;
+                newGameState.BuffManager = buffManager;
+
+                _logger.LogInformation("[GameService] Created and assigned AbilityManager for Game {GameId}.", gameId);
+                // --- End Manual Manager Creation ---
+
                 foreach (var cardId in _fixedTestDeckCardIds)
                 {
-                    player1State.Deck.Add(_cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck));
-                    player2State.Deck.Add(_cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck));
+                    // 【重构】直接调用工厂，由工厂负责将卡牌添加到牌堆
+                    cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck);
+                    cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck);
                 }
 
                 ShuffleDeck(player1State.Deck);
                 ShuffleDeck(player2State.Deck);
 
-                player1State.Hand.AddRange(DrawInitialHand(player1State.Deck, 3));
-                player2State.Hand.AddRange(DrawInitialHand(player2State.Deck, 3));
-                foreach (var card in player1State.Hand) card.CurrentZone = CardZone.Hand;
-                foreach (var card in player2State.Hand) card.CurrentZone = CardZone.Hand;
+                // 【最终修复】根据领域规则，初始发牌不属于“抽牌”，不应触发抽牌事件。
+                // 因此，回归到直接操作列表的方式。
+                // 此操作现在是安全的，因为CardFactory的BUG已被修复，能确保Deck列表被正确填充。
+                for (int i = 0; i < 3; i++)
+                {
+                    if (player1State.Deck.Any())
+                    {
+                        var card = player1State.Deck[0];
+                        player1State.Deck.RemoveAt(0);
+                        card.CurrentZone = CardZone.Hand;
+                        player1State.Hand.Add(card);
+                    }
+                    if (player2State.Deck.Any())
+                    {
+                        var card = player2State.Deck[0];
+                        player2State.Deck.RemoveAt(0);
+                        card.CurrentZone = CardZone.Hand;
+                        player2State.Hand.Add(card);
+                    }
+                }
 
                 const int leaderCardId = GameConstants.Cards.LeaderCardId;
-                player1State.Leader = _cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player1Id, CardZone.Leader);
-                player2State.Leader = _cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player2Id, CardZone.Leader);
+                player1State.Leader = cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player1Id, CardZone.Field);
+                player2State.Leader = cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player2Id, CardZone.Field);
 
                 if (_gameStates.TryAdd(gameId, newGameState))
                 {
-                    _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState));
+                    // Obsolete scope management and GameServiceProvider initialization removed.
+                    // Scopes are now created on-demand in the processing loops.
+
+                    // Pass the CancellationToken from the game loop if available, otherwise CancellationToken.None
+                    var loopTokenSource = _gameLoopCancellationTokens.TryGetValue(gameId, out var cts) ? cts.Token : CancellationToken.None;
+                    // 【FIX】Do not pass a scoped service provider to a background task.
+                    // The task will create its own scope.
+                    _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState, loopTokenSource), loopTokenSource);
                     return newGameState;
                 }
 
@@ -1131,27 +773,30 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         // Removed the placeholder CreateDeckFromDefinitionAsync method as it's replaced by inline logic
-        /// <summary&gt;
+        /// <summary>
         /// Contains the core logic for checking if a card is playable, separated from the initial data fetching.
         /// This allows it to be called for proactive hand updates.
-        /// </summary&gt;
+        /// </summary>
+        /// TODO: 需要由单一的可玩性检测改成全面的可执行请求检测（攻击、进化、使用、启动）等等，并改为发送全面的GameStateUpdate
+
         private async Task<PlayabilityResultDto> CheckPlayabilityCoreLogicAsync(
-            GameState gameState,
+            GameContext gameContext, // Pass the context directly
             PlayerState playerState,
             CardInstance cardInHand,
-            CardDefinition cardDefinition,
-            string gameId, // For logging
-            Guid playerId, // For logging
-            Guid cardInstanceId // For logging
+            CardDefinition cardDefinition
         )
         {
             var result = new PlayabilityResultDto();
+            var gameId = gameContext.CurrentGameState.GameId;
+            var playerId = playerState.PlayerId;
+            var cardInstanceId = cardInHand.InstanceId;
+
             _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting core logic check for Card {CardName} ({CardInstanceId}).", gameId, cardDefinition.Name, cardInstanceId);
 
             try
             {
-                // --- Basic Checks --- (Moved from CheckCardPlayabilityAsync)
-                // Cost Check
+                // --- Basic Checks ---
+                // Cost Check - This will now correctly use the context-aware BuffService
                 if (playerState.CurrentPlayPoints < cardInHand.CurrentCost)
                 {
                     result.IsPlayable = false;
@@ -1170,23 +815,23 @@ namespace ShadowverseBeyond.Server.Services
                     }
                 }
 
-                // --- PrePlay Condition Checks --- (Moved from CheckCardPlayabilityAsync)
+                // --- PrePlay Condition Checks ---
                 _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting PrePlay condition checks for Card {CardName} ({CardInstanceId}).", gameId, cardDefinition.Name, cardInstanceId);
                 var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
                 var playTriggerConfigs = abilityConfigs
                     .Where(ac => ac.Trigger.EventTypes.Contains(EventType.PlayCard))
                     .ToList();
 
-                var gameContext = new GameContext(gameState, playerId, _mapper, _serviceProvider, null, cardInHand); // IServiceProvider is not needed here
-
+                // The gameContext is now passed in and is already set correctly in the accessor
                 foreach (var config in playTriggerConfigs)
                 {
+                    var conditionEvaluator = gameContext.ServiceProvider.GetRequiredService<IConditionEvaluator>();
                     foreach (var condition in config.PreConditions)
                     {
-                        if (!await _conditionEvaluator.EvaluateAsync(condition, gameContext))
+                        if (!conditionEvaluator.Evaluate(condition, gameContext))
                         {
                             result.IsPlayable = false;
-                            result.FailureReason = $"打出前置条件未满足: {condition.Name ?? condition.Expression}";
+                            result.FailureReason = $"打出前置条件未满足: {condition.Expression}";
                             _logger.LogInformation("[CheckPlayabilityCore:{GameId}] PrePlay condition failed for Card {CardInstanceId}: {ConditionExpression}", gameId, cardInstanceId, condition.Expression);
                             return result;
                         }
@@ -1194,56 +839,33 @@ namespace ShadowverseBeyond.Server.Services
                 }
                 _logger.LogDebug("[CheckPlayabilityCore:{GameId}] PrePlay conditions met for Card {CardInstanceId}.", gameId, cardInstanceId);
 
-                // --- Effect Target Info Check (for UI) --- (Moved from CheckCardPlayabilityAsync)
-                _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting Effect Target info checks for Card {CardInstanceId}.", gameId, cardInstanceId);
-                result.RequiresTargetSelection = false;
-                result.HasValidTargets = false;
-                var validTargetIdSet = new HashSet<Guid>();
+                // --- NEW: Target Availability Check (Non-Blocking) ---
+                _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting Target Availability checks for Card {CardInstanceId}.", gameId, cardInstanceId);
 
-                if (playTriggerConfigs.Any()) // playTriggerConfigs is available here now
+                var playCardAbilities = cardInHand.Abilities.Where(a => a.TriggerConfig.EventTypes.Contains(EventType.PlayCard));
+
+                foreach (var ability in playCardAbilities)
                 {
+                    // Use the new non-blocking method to check if targets are available.
+                    var availabilityResult = await ability.CheckTargetAvailabilityAsync(gameContext);
 
-                    foreach (var config in playTriggerConfigs)
+                    if (!availabilityResult.IsAvailable)
                     {
-                        foreach (var effect in config.Effects)
-                        {
-                            bool isTargetRequired = effect.Target?.PlayerChoiceOptions?.IsRequired == true;
+                        result.IsPlayable = false;
+                        result.FailureReason = availabilityResult.FailureReason ?? "缺少有效的目标。";
+                        _logger.LogInformation("[CheckPlayabilityCore:{GameId}] Card {CardInstanceId} is unplayable due to unavailable targets: {Reason}", gameId, cardInstanceId, result.FailureReason);
+                        return result;
+                    }
 
-                            if (isTargetRequired)
-                            {
-                                result.RequiresTargetSelection = true;
-                                _logger.LogTrace("[CheckPlayabilityCore:{GameId}] Effect requires target (IsRequired=true). Checking valid targets for Card {CardInstanceId}.", gameId, cardInstanceId);
-
-                                try
-                                {
-                                    if (effect.Target == null) continue;
-                                    var validTargets = await _targetSelectionService.SelectTargetsAsync(effect.Target, gameContext);
-
-                                    if (validTargets.Any())
-                                    {
-                                        result.HasValidTargets = true;
-                                        validTargetIdSet = new HashSet<Guid>(validTargets.Select(t => t.Id));
-                                        _logger.LogTrace("[CheckPlayabilityCore:{GameId}] Found {Count} valid targets for an effect of Card {CardInstanceId}.", gameId, validTargets.Count, cardInstanceId);
-                                    }
-                                    else
-                                    {
-                                        _logger.LogTrace("[CheckPlayabilityCore:{GameId}] No valid targets found for an effect of Card {CardInstanceId}.", gameId, cardInstanceId);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, "[CheckPlayabilityCore:{GameId}] Error during SelectTargetsAsync for Card {CardInstanceId}.", gameId, cardInstanceId);
-                                }
-                            }
-                        }
+                    // Also, check if any target on this ability requires manual player choice.
+                    // This is important for the UI to know whether to enable the 'Play' button or a 'Select Target' button.
+                    if (ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true))
+                    {
+                        result.RequiresTargetSelection = true;
                     }
                 }
-                result.ValidTargetIds = validTargetIdSet.ToList();
-                _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Effect Target info checks complete for Card {CardInstanceId}. RequiresTarget: {Requires}, HasValid: {HasValid}, ValidCount: {Count}",
-                    gameId, cardInstanceId, result.RequiresTargetSelection, result.HasValidTargets, result.ValidTargetIds.Count);
 
                 // --- All Checks Passed ---
-                // If we reached here without returning early, the card is playable based on cost, space, conditions, and target availability (if required)
                 result.IsPlayable = true;
                 _logger.LogInformation("[CheckPlayabilityCore:{GameId}] Card {CardInstanceId} ({CardName}) is playable for Player {PlayerId}.", gameId, cardInstanceId, cardDefinition.Name, playerId);
 
@@ -1259,7 +881,7 @@ namespace ShadowverseBeyond.Server.Services
             return result;
         }
         // Made private - core logic to be extracted for proactive updates
-        private async Task<PlayabilityResultDto> CheckCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId)
+        private async Task<PlayabilityResultDto> CheckCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken)
         {
             var result = new PlayabilityResultDto();
             _logger.LogInformation("[GameService:{GameId}] Checking playability for Player {PlayerId}, CardInstanceId {CardInstanceId}.",
@@ -1301,18 +923,27 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 // Fetch Card Definition from cache
-                var cardDefinition = _gameDataProvider.GetCardDefinition(card.DefinitionId);
+                var cardDefinition = _gameDataProvider.GetCardDefinition(card.CurrentDefinitionId);
                 if (cardDefinition == null)
                 {
                     result.IsPlayable = false;
                     result.FailureReason = "无法加载卡牌定义。";
-                    _logger.LogWarning("[CheckPlayability:{GameId}] Card definition not found for DefinitionId {DefinitionId}.", gameId, card.DefinitionId);
+                    _logger.LogWarning("[CheckPlayability:{GameId}] Card definition not found for DefinitionId {DefinitionId}.", gameId, card.CurrentDefinitionId);
                     return result;
                 }
 
                 // --- 2. Call Core Logic ---
                 // Basic checks (Cost, Field Space) moved to CheckPlayabilityCoreLogicAsync
-                result = await CheckPlayabilityCoreLogicAsync(gameState, playerState, card, cardDefinition, gameId, playerId, cardInstanceId);
+                // --- Create a temporary scope and context for this check ---
+                await using var scope = _serviceScopeFactory.CreateAsyncScope();
+                var sp = scope.ServiceProvider;
+                // By creating the GameContext within a 'using' block, we ensure that the ambient context
+                // in GameServiceProvider is set upon creation and cleared upon disposal.
+                var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+                using (var gameContext = new GameContext(sp, _mapper, gameContextAccessor, gameState, playerId, cancellationToken, null, card))
+                {
+                    result = await CheckPlayabilityCoreLogicAsync(gameContext, playerState, card, cardDefinition);
+                }
 
                 // If core logic determined not playable, return immediately
                 if (!result.IsPlayable)
@@ -1343,16 +974,21 @@ namespace ShadowverseBeyond.Server.Services
             return result;
         }
 
-        /// &lt;summary&gt;
+        /// <summary>
         /// Checks the playability of all cards in a player's hand and broadcasts the results
         /// to the specific player client after their action chain completes.
-        /// &lt;/summary&gt;
-        /// &lt;param name="gameId"&gt;The ID of the game.&lt;/param&gt;
-        /// &lt;param name="playerId"&gt;The ID of the player whose hand needs updating.&lt;/param&gt;
-        private async Task UpdateAndBroadcastHandPlayabilityAsync(string gameId, Guid playerId)
+        /// </summary>
+        /// <param name="gameId">The ID of the game.</param>
+        /// <param name="playerId">The ID of the player whose hand needs updating.</param>
+        private async Task UpdateAndBroadcastHandPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken)
         {
             _logger.LogInformation("[GameService:{GameId}] Updating hand playability for Player {PlayerId} after action completion.", gameId, playerId);
-            var playabilityResults = new Dictionary<Guid, PlayabilityResultDto>(); // Corrected HTML entities
+            var playabilityResults = new Dictionary<Guid, PlayabilityResultDto>();
+
+            // --- Create a dedicated scope and context for this operation ---
+            await using var scope = _serviceScopeFactory.CreateAsyncScope();
+            var sp = scope.ServiceProvider;
+            var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
 
             try
             {
@@ -1360,32 +996,35 @@ namespace ShadowverseBeyond.Server.Services
                 if (gameState == null)
                 {
                     _logger.LogWarning("[UpdateHandPlayability:{GameId}] Game not found.", gameId);
-                    return; // Cannot proceed without game state
+                    return;
                 }
 
                 var playerState = gameState.GetPlayerState(playerId);
                 if (playerState == null)
                 {
                     _logger.LogWarning("[UpdateHandPlayability:{GameId}] Player state not found for Player {PlayerId}.", gameId, playerId);
-                    return; // Cannot proceed without player state
+                    return;
                 }
 
                 // Iterate through each card in the player's hand
-                foreach (var cardInHand in playerState.Hand.ToList()) // Use ToList() to avoid modification issues if needed
+                foreach (var cardInHand in playerState.Hand.ToList())
                 {
-                    var cardDefinition = _gameDataProvider.GetCardDefinition(cardInHand.DefinitionId);
+                    var cardDefinition = _gameDataProvider.GetCardDefinition(cardInHand.CurrentDefinitionId);
                     if (cardDefinition == null)
                     {
                         _logger.LogWarning("[UpdateHandPlayability:{GameId}] Card definition {DefinitionId} not found for card {InstanceId} in Player {PlayerId}'s hand. Skipping.",
-                            gameId, cardInHand.DefinitionId, cardInHand.InstanceId, playerId);
-                        // Add a default non-playable result for this card?
+                            gameId, cardInHand.CurrentDefinitionId, cardInHand.InstanceId, playerId);
                         playabilityResults[cardInHand.InstanceId] = new PlayabilityResultDto { IsPlayable = false, FailureReason = "卡牌定义丢失" };
                         continue;
                     }
 
-                    // Call the core logic checker
-                    var singleResult = await CheckPlayabilityCoreLogicAsync(gameState, playerState, cardInHand, cardDefinition, gameId, playerId, cardInHand.InstanceId);
-                    playabilityResults[cardInHand.InstanceId] = singleResult;
+                    // For each card, create a specific GameContext with that card as the SourceCard.
+                    // This is crucial for abilities that reference 'self' or 'owner' during playability checks.
+                    using (var gameContext = new GameContext(sp, _mapper, gameContextAccessor, gameState, playerId, cancellationToken, null, cardInHand))
+                    {
+                        var singleResult = await CheckPlayabilityCoreLogicAsync(gameContext, playerState, cardInHand, cardDefinition);
+                        playabilityResults[cardInHand.InstanceId] = singleResult;
+                    }
                 }
 
                 // Create the DTO
@@ -1404,6 +1043,11 @@ namespace ShadowverseBeyond.Server.Services
                     // 所以改用Clients.Group()向整个游戏组广播，然后前端根据PlayerId过滤
                     string groupName = $"Game_{gameId}";
                     var clientProxy = _hubContext.Clients.Group(groupName);
+                    // 【临时调试日志】序列化DTO以检查其确切内容
+                    var dtoAsJson = "Serialization failed";
+                    try { dtoAsJson = System.Text.Json.JsonSerializer.Serialize(updateDto); } catch { }
+                    _logger.LogInformation("[DEBUG_PLAYABILITY] Sending HandPlayabilityUpdate to Group {GroupName} for Player {PlayerId}. DTO JSON: {DtoJson}", groupName, playerId, dtoAsJson);
+
                     await clientProxy.SendAsync("ReceiveHandPlayabilityUpdate", updateDto);
                     _logger.LogInformation("[GameService:{GameId}] Sent hand playability update to Game Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
                 }
@@ -1423,78 +1067,6 @@ namespace ShadowverseBeyond.Server.Services
         }
         // --- Existing Methods Below ---
         // --- Helper Methods for End Turn Logic ---
-
-        /// <summary>
-        /// Creates a new CardInstance domain entity from a CardDefinition.
-        /// </summary>
-        /// <param name="cardDef">The static card definition.</param>
-        /// <param name="ownerPlayerId">The ID of the player who owns this instance.</param>
-        /// <param name="initialZone">The initial zone for the card instance.</param>
-        /// <returns>A new CardInstance object.</returns>
-        [Obsolete("Use ICardFactory.CreateAndRegisterNewCardAsync instead for consistent registration.")]
-        private CardInstance CreateCardInstanceFromDefinition(CardDefinition cardDef, Guid ownerPlayerId, CardZone initialZone)
-        {
-            if (cardDef == null)
-            {
-                // Log or throw, depending on how critical this is. Throwing for now.
-                _logger.LogError("Attempted to create CardInstance from null CardDefinition for Player {OwnerPlayerId}.", ownerPlayerId);
-                throw new ArgumentNullException(nameof(cardDef), "CardDefinition cannot be null when creating a CardInstance.");
-            }
-
-            var instance = new CardInstance(
-                instanceId: Guid.NewGuid(), // Generate unique Guid ID
-                definitionId: cardDef.Id,
-                ownerPlayerId: ownerPlayerId
-            )
-            {
-                CardType = cardDef.Type,
-                CurrentZone = initialZone,
-                BaseCost = cardDef.Cost,            // 【修复】设置基础费用
-                CurrentCost = cardDef.Cost,
-                BaseAttack = cardDef.Attack ?? 0,   // 【修复】设置基础攻击力
-                CurrentAttack = cardDef.Attack ?? 0, // Initialize current stats from base
-                BaseHealth = cardDef.Health ?? 0,   // 【修复】设置基础生命值
-                CurrentHealth = cardDef.Health ?? 0,
-                MaxHealth = cardDef.Health ?? 0,   // Initialize max health from base
-                Name = cardDef.Name,                // 【修复】设置卡牌名称
-                Description = cardDef.Description ?? "", // 【修复】设置卡牌描述
-                Rarity = cardDef.Rarity ?? "",      // 【修复】设置稀有度
-                Class = cardDef.Class ?? "",        // 【修复】设置职业
-                Tribe = cardDef.Tribe,              // 【修复】设置种族
-                IsEvolved = false,                  // Starts unevolved
-                CanAttack = false,                  // Default CanAttack state (adjust based on zone/keywords if needed)
-                                                    // Removed CanEvolve - evolution eligibility is determined by game rules
-                AttacksThisTurn = 0,
-                Countdown = null,                   // Initialize Countdown (relevant for amulets)
-                ZoneIndex = null                // Initialize FieldPosition
-                                                // AbilityState is initialized internally
-            };
-
-            // Set base keywords
-            instance.SetBaseKeywords(cardDef.Keywords ?? Enumerable.Empty<string>());
-
-            // Specific initialization based on type or zone could go here
-            if (initialZone == CardZone.Field)
-            {
-                // Example: Followers entering field might check for Rush/Storm
-                if (instance.IsFollower)
-                {
-                    instance.CanAttack = instance.HasKeyword(CardKeyword.Rush) || instance.HasKeyword(CardKeyword.Storm);
-                }
-            }
-            else if (initialZone == CardZone.Leader)
-            {
-                instance.CanAttack = false; // Leaders generally don't attack this way
-                                            // Ensure leader health is set correctly (often a fixed value like 20)
-                instance.CurrentHealth = cardDef.Health ?? 20; // Use definition or default
-                instance.MaxHealth = cardDef.Health ?? 20;
-            }
-
-            _logger.LogTrace("Created CardInstance: Id={InstanceId}, DefId={DefinitionId}, Name={Name}, Owner={OwnerPlayerId}, Zone={CurrentZone}",
-                instance.InstanceId, instance.DefinitionId, cardDef.Name, instance.OwnerPlayerId, instance.CurrentZone);
-
-            return instance;
-        }
 
         private void ShuffleDeck(List<CardInstance> deck) // Changed parameter type to Domain Entity
         {
@@ -1516,242 +1088,6 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        private List<CardInstance> DrawInitialHand(List<CardInstance> deck, int handSize) // Changed types to Domain Entity
-        {
-            _logger.LogWarning("[GameService] Placeholder DrawInitialHand called.");
-            // Placeholder: Draw cards from the top of the deck
-            List<CardInstance> hand = new List<CardInstance>(); // Changed type to Domain Entity
-            int drawCount = Math.Min(handSize, deck.Count);
-            for (int i = 0; i < drawCount; i++)
-            {
-                if (deck.Count > 0) // Check if deck is not empty
-                {
-                    // Note: The original code directly added deck[0] to hand.
-                    // We need to declare the variable first if we want to use it,
-                    // but since the original didn't, let's keep it direct but with the correct type.
-                    // CardInstanceDto drawnCard = deck[0]; // This would be needed if we used the variable
-                    hand.Add(deck[0]); // Keep direct add, type compatibility handled by List<CardInstanceDto>
-                    deck.RemoveAt(0);
-                }
-                else
-                {
-                    _logger.LogWarning("[GameService] Attempted to draw from empty deck in DrawInitialHand.");
-                    break; // Stop drawing if deck is empty
-                }
-            }
-            return hand;
-        }
-
-
-        // --- Helper Methods for Attack Logic ---
-
-        /// <summary>
-        /// 根据UID查找游戏实体，使用GameState实体而不是DTO。
-        /// 支持通过PlayerId查找主战者，或通过InstanceId查找卡牌实例。
-        /// </summary>
-        /// <param name="gameState">游戏状态实体</param>
-        /// <param name="uid">目标UID（可以是PlayerId或InstanceId）</param>
-        /// <returns>找到的实体，如果未找到则返回null</returns>
-        private ICard? FindEntityByUid(GameState gameState, Guid uid)
-        {
-            if (uid == Guid.Empty) // Changed to null check for GuidTypeMapping
-            {
-                _logger.LogWarning("[GameService:FindEntityByUid] Target UID is null or empty.");
-                return null;
-            }
-
-            // 首先尝试通过PlayerId查找主战者
-            // var targetPlayerById = gameState.GetPlayerState(uid);
-            // if (targetPlayerById?.Leader != null)
-            // {
-            //     _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by PlayerId: {PlayerId}", uid);
-            //     return targetPlayerById.Leader; // 返回主战者CardInstance
-            // }
-
-            // 如果不是PlayerId，尝试解析为Guid格式的InstanceId
-            // if (!Guid.TryParse(uid, out Guid targetGuid))
-            // {
-            //     _logger.LogWarning("[GameService:FindEntityByUid] Target UID '{TargetUid}' is not a valid Guid or PlayerId.", uid);
-            //     return null;
-            // }
-
-
-            // 搜索所有玩家的所有区域
-            foreach (var player in new[] { gameState.Player1, gameState.Player2 })
-            {
-                if (player == null) continue;
-
-                // 检查主战者InstanceId
-                if (player.Leader?.InstanceId == uid)
-                {
-                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Leader InstanceId: {InstanceId} for Player {PlayerId}", uid, player.PlayerId);
-                    return player.Leader;
-                }
-
-                // 检查场上单位
-                var unit = player.Field.FirstOrDefault(u => u.InstanceId == uid);
-                if (unit != null)
-                {
-                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Field Unit InstanceId: {InstanceId} for Player {PlayerId}", uid, player.PlayerId);
-                    return unit;
-                }
-
-                // 检查手牌（某些法术可能需要目标手牌）
-                var handCard = player.Hand.FirstOrDefault(c => c.InstanceId == uid);
-                if (handCard != null)
-                {
-                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Hand Card InstanceId: {InstanceId} for Player {PlayerId}", uid, player.PlayerId);
-                    return handCard;
-                }
-
-                // 检查牌堆
-                var deckCard = player.Deck.FirstOrDefault(c => c.InstanceId == uid);
-                if (deckCard != null)
-                {
-                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Hand Card InstanceId: {InstanceId} for Player {PlayerId}", uid, player.PlayerId);
-                    return deckCard;
-                }
-
-                // 检查墓地（某些法术可能需要目标墓地卡牌）
-                var graveyardCard = player.Graveyard.FirstOrDefault(c => c.InstanceId == uid);
-                if (graveyardCard != null)
-                {
-                    _logger.LogDebug("[GameService:FindEntityByUid] Found target entity by Graveyard Card InstanceId: {InstanceId} for Player {PlayerId}", uid, player.PlayerId);
-                    return graveyardCard;
-                }
-            }
-
-            _logger.LogWarning("[GameService:FindEntityByUid] Target entity with InstanceId/PlayerId '{TargetUid}' not found after checking all players and zones.", uid);
-            return null;
-        }
-
-
-        // 已删除：CheckAndHandleDeath方法 - 死亡检查现在通过事件系统和EffectHandler处理
-        // --- Helper Methods for HandlePlayCardAsync ---
-
-        // Fetches CardDefinition and CardDto from hand synchronously using cache
-        private Task<(CardDefinition? CardDefinition, CardInstance? CardInHand)> FetchCardDataAsync(string gameId, Guid playerId, Guid cardUid) // Return CardInstance?
-        {
-            _logger.LogDebug("[GameService:{GameId}:FetchCardData] Starting fetch for CardUID {CardUID}.", gameId, cardUid);
-            if (cardUid == Guid.Empty)
-                throw new GameLogicException("Card UID cannot be empty for fetching.");
-            Guid cardInstanceId = cardUid; // cardUid is already a Guid
-
-            int cardDefinitionId; // Use int for definition ID
-            CardInstance? cardInHand; // Use CardInstance?
-            object gameLock = _gameLocks.GetOrAdd(gameId, _ => new object());
-
-            // Short lock just to get cardId from hand state (using Domain Entities)
-            lock (gameLock)
-            {
-                // Use Domain Entity GameState
-                if (!_gameStates.TryGetValue(gameId, out var gameState))
-                    throw new GameLogicException($"Game not found: {gameId} (during card fetch)");
-
-                // Use Domain Entity PlayerState
-                var playerState = gameState.GetPlayerState(playerId);
-                if (playerState == null)
-                    throw new GameLogicException($"Player state error in game {gameId} (during card fetch).");
-
-                // Find CardInstance in PlayerState.Hand (which should be List<CardInstance>)
-                // Corrected: Compare Guid directly
-                cardInHand = playerState.Hand.FirstOrDefault(c => c.InstanceId == cardInstanceId);
-                if (cardInHand == null)
-                    throw new GameLogicException($"Card with UID {cardUid} not found in player {playerId}'s hand (during card fetch).");
-
-                cardDefinitionId = cardInHand.DefinitionId; // Get int DefinitionId from CardInstance
-            }
-
-            _logger.LogDebug("[GameService:{GameId}:FetchCardData] Need definition for CardId {CardDefinitionId}.", gameId, cardDefinitionId);
-
-            // Fetch definition from cache instead of database
-            var cardDefinition = _gameDataProvider.GetCardDefinition(cardDefinitionId);
-            if (cardDefinition == null)
-                throw new GameLogicException($"Card definition not found for CardId: {cardDefinitionId}");
-
-            _logger.LogDebug("[GameService:{GameId}:FetchCardData] Fetched definition for {CardName} ({CardId}) from cache.", gameId, cardDefinition.Name, cardDefinition.Id);
-            // Return CardInstance?
-            return Task.FromResult<(CardDefinition? CardDefinition, CardInstance? CardInHand)>((cardDefinition, cardInHand));
-        }
-
-        // Validates preconditions for playing a card inside the main lock
-        private void ValidatePlayCardPreconditions(GameState gameState, PlayerState playerState, CardDefinition cardDefinition, CardInstance? cardInHand, PlayCardActionDto actionDto, Guid playerId) // Changed DTOs to Domain Entities
-        {
-            _logger.LogDebug("[GameService:{GameId}:ValidatePlayCard] Validating preconditions for Player {PlayerId}, Card {CardName}.", gameState.GameId, playerId, cardDefinition.Name);
-            if (gameState.IsGameOver) throw new GameLogicException("Game is already over.");
-            if (gameState.CurrentPlayerId != playerId) throw new GameLogicException($"It's not player {playerId}'s turn.");
-            if (gameState.Phase != GamePhase.Main) throw new GameLogicException($"Can only play cards during the Main phase (Current: {gameState.Phase}).");
-
-            // Re-validate card still in hand inside lock
-            // Now comparing CardInstance.InstanceId (string) with CardInstance?.InstanceId (string)
-            if (!playerState.Hand.Any(c => c.InstanceId == cardInHand?.InstanceId))
-                throw new GameLogicException($"Card {cardInHand?.InstanceId} disappeared from hand unexpectedly (inside lock validation).");
-
-            // Null check for cardInHand before accessing Cost (though definition should exist if hand check passed)
-            if (cardInHand == null) throw new GameLogicException("Internal error: Card instance became null after hand check.");
-            // Use domain entity property: CurrentPlayPoints
-            if (playerState.CurrentPlayPoints < cardDefinition.Cost) throw new GameLogicException($"Not enough PP to play {cardDefinition.Name}. Requires {cardDefinition.Cost}, has {playerState.CurrentPlayPoints}.");
-            // Use centralized game constants
-            const int MaxFieldSize = GameConstants.Field.MaxFieldSize;
-            // Use domain entity property: Type (CardType enum)
-            var cardType = cardDefinition.Type;
-
-            if (cardType == CardType.Follower || cardType == CardType.Amulet) // Both take field space
-            {
-                // Use domain entity property: Field.Count
-                if (playerState.Field.Count >= MaxFieldSize)
-                {
-                    throw new GameLogicException($"Cannot play {cardDefinition.Name}, field is full ({playerState.Field.Count}/{MaxFieldSize}).");
-                }
-            }
-            _logger.LogDebug("[GameService:{GameId}:ValidatePlayCard] Preconditions validated successfully.", gameState.GameId);
-        }
-
-        // 已删除：ApplyPlayCardCostAndRemoveCard方法 - 已被PlayCardEffectHandler替代
-
-        // Creates a new CardInstanceDto representing a follower entering the field
-        private CardInstance CreateCardInstanceForBattle(CardDefinition cardDefinition, Guid ownerPlayerId) // Changed return type to CardInstance
-        {
-            _logger.LogDebug("[GameService:CreateCardInstanceForField] Creating CardInstance for {CardName} ({CardId}) for Player {PlayerId}.",
-                cardDefinition.Name, cardDefinition.Id, ownerPlayerId);
-
-            var instance = new CardInstance(
-                instanceId: Guid.NewGuid(), // Generate Guid ID
-                definitionId: cardDefinition.Id,
-                ownerPlayerId: ownerPlayerId
-            )
-            {
-                // Map properties from CardDefinition to CardInstance
-                CardType = cardDefinition.Type,
-                BaseCost = cardDefinition.Cost,         // 【修复】设置基础费用
-                CurrentCost = cardDefinition.Cost,
-                BaseAttack = cardDefinition.Attack ?? 0, // 【修复】设置基础攻击力
-                CurrentAttack = cardDefinition.Attack ?? 0,
-                BaseHealth = cardDefinition.Health ?? 0, // 【修复】设置基础生命值
-                CurrentHealth = cardDefinition.Health ?? 0,
-                MaxHealth = cardDefinition.Health ?? 0,
-                Name = cardDefinition.Name,             // 【修复】设置卡牌名称
-                Description = cardDefinition.Description ?? "", // 【修复】设置卡牌描述
-                Rarity = cardDefinition.Rarity ?? "",   // 【修复】设置稀有度
-                Class = cardDefinition.Class ?? "",     // 【修复】设置职业
-                Tribe = cardDefinition.Tribe,           // 【修复】设置种族
-                IsEvolved = false,
-                Countdown = null, // Followers don't have countdown
-                ZoneIndex = null, // Position is set when added to field list
-                                  // Removed CanEvolve - evolution eligibility is determined by game rules
-                AttacksThisTurn = 0,
-                CurrentZone = CardZone.Field // Set initial zone
-                                             // ActiveEffects and AbilityState are initialized by CardInstance constructor
-            };
-
-            // Set base keywords
-            instance.SetBaseKeywords(cardDefinition.Keywords ?? new List<string>());
-
-            // Set initial CanAttack based on keywords
-            instance.CanAttack = instance.HasKeyword(CardKeyword.Rush) || instance.HasKeyword(CardKeyword.Storm);
-
-            return instance; // Return the domain entity
-        }
         public async Task BroadcastEventsAsync(string gameId, List<GameEventDto> events)
         {
             if (events == null || !events.Any())
@@ -1810,78 +1146,118 @@ namespace ShadowverseBeyond.Server.Services
         } // <<< END BroadcastEventAsync method
 
         /// <summary>
+        /// Broadcasts a single event to a specific player in a game group.
+        /// </summary>
+        private async Task BroadcastEventToPlayerAsync(string gameId, Guid playerId, GameEventDto gameEvent)
+        {
+            if (gameEvent == null) return;
+            // Note: This relies on the client-side connection having its ConnectionId associated with the PlayerId group.
+            // This is a common pattern but requires correct group management in the Hub.
+            string playerGroupName = $"Player_{playerId}";
+            _logger.LogInformation("[BROADCAST_PLAYER:{GameId}] Attempting to broadcast event of type {EventType} to player group {PlayerGroupName}.",
+                gameId, gameEvent.GetType().Name, playerGroupName);
+
+            try
+            {
+                await _clientMethodMapper.BroadcastEventToGroupAsync(playerGroupName, gameEvent);
+                _logger.LogDebug("[GameService:{GameId}] Successfully invoked SendAsync for event type {EventType} to player group {PlayerGroupName}.",
+                    gameId, gameEvent.GetType().Name, playerGroupName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[GameService:{GameId}] Error invoking client method for event type {EventType} to player group {PlayerGroupName}.",
+                    gameId, gameEvent.GetType().Name, playerGroupName);
+            }
+        }
+
+        /// <summary>
         /// 自动触发 AI 玩家的 Mulligan 决策
         /// 在游戏创建后检测 AI 玩家并自动提交他们的 Mulligan 决策
         /// </summary>
         /// <param name="gameId">游戏ID</param>
         /// <param name="gameState">游戏状态</param>
-        private async Task TriggerAiMulliganIfNeededAsync(string gameId, GameState gameState)
+        private async Task TriggerAiMulliganIfNeededAsync(string gameId, GameState gameState, CancellationToken cancellationToken)
         {
             try
             {
                 _logger.LogInformation("[GameService:{GameId}] Checking for AI players that need automatic mulligan...", gameId);
 
-                // 检查游戏是否在 Mulligan 阶段
                 if (gameState.Phase != GamePhase.Mulligan)
                 {
                     _logger.LogDebug("[GameService:{GameId}] Game is not in Mulligan phase (Current: {Phase}). Skipping AI mulligan trigger.", gameId, gameState.Phase);
                     return;
                 }
 
-                // 检查 Player2 是否是 AI 且未完成 Mulligan
-                if (gameState.Player2 != null && !gameState.Player2.HasCompletedMulligan)
+                if (gameState.Player2 != null && !gameState.Player2.HasCompletedMulligan && gameState.Player2.IsAI)
                 {
-                    // 直接检查 PlayerState 的 IsAI 属性
-                    if (gameState.Player2.IsAI)
+                    _logger.LogInformation("[GameService:{GameId}] Triggering automatic mulligan for AI Player {PlayerId}...", gameId, gameState.Player2.PlayerId);
+
+                    await Task.Delay(2000, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    // 【FIX】Create a new scope for this background task to resolve scoped services correctly.
+                    await using var scope = _serviceScopeFactory.CreateAsyncScope();
+                    var sp = scope.ServiceProvider;
+                    var aiService = sp.GetRequiredService<IAiService>();
+                    var mapper = sp.GetRequiredService<IMapper>();
+                    var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+
+                    List<Guid> cardGuidsToReplace;
+
+                    // Create a temporary context for the AI's decision-making process.
+                    using (var tempContext = new GameContext(sp, mapper, gameContextAccessor, gameState, gameState.Player2.PlayerId, cancellationToken))
                     {
-                        _logger.LogInformation("[GameService:{GameId}] Triggering automatic mulligan for AI Player {PlayerId}...", gameId, gameState.Player2.PlayerId);
-
-                        // 延迟一段时间模拟思考
-                        await Task.Delay(2000);
-
-                        // 获取当前游戏状态的 DTO
-                        var gameStateDto = _mapper.Map<GameStateDto>(gameState);
-
-                        // 调用 AI 服务决定 Mulligan
-                        var cardsToReplace = await _aiService.DecideMulliganAsync(gameStateDto, gameState.Player2.PlayerId);
-
-                        // 转换为 Guid 列表
-                        var cardGuidsToReplace = cardsToReplace
+                        var gameStateDto = mapper.Map<GameStateDto>(gameState);
+                        var cardsToReplace = await aiService.DecideMulliganAsync(gameStateDto, gameState.Player2.PlayerId);
+                        cardGuidsToReplace = cardsToReplace
                             .Select(cardId => Guid.TryParse(cardId, out var guid) ? guid : Guid.Empty)
                             .Where(guid => guid != Guid.Empty)
                             .ToList();
-
-                        _logger.LogInformation("[GameService:{GameId}] AI Player {PlayerId} decided to replace {Count} cards: [{Cards}]",
-                            gameId, gameState.Player2.PlayerId, cardGuidsToReplace.Count, string.Join(", ", cardGuidsToReplace));
-
-                        // 创建 PlayerActionWrapper 并入队
-                        var wrapper = new PlayerActionWrapper
-                        {
-                            ActionType = "SubmitMulligan",
-                            PlayerId = gameState.Player2.PlayerId,
-                            ActionData = new { CardUidsToReplace = cardGuidsToReplace }
-                        };
-
-                        // 提交 AI 的 Mulligan 决策
-                        EnqueuePlayerAction(gameId, wrapper);
-
-                        _logger.LogInformation("[GameService:{GameId}] AI Player {PlayerId} mulligan decision submitted successfully.", gameId, gameState.Player2.PlayerId);
                     }
-                    else
+
+                    _logger.LogInformation("[GameService:{GameId}] AI Player {PlayerId} decided to replace {Count} cards: [{Cards}]",
+                        gameId, gameState.Player2.PlayerId, cardGuidsToReplace.Count, string.Join(", ", cardGuidsToReplace));
+
+                    var wrapper = new PlayerActionWrapper
                     {
-                        _logger.LogDebug("[GameService:{GameId}] Player2 {PlayerId} is not an AI player. Skipping automatic mulligan.", gameId, gameState.Player2.PlayerId);
-                    }
+                        ActionType = "SubmitMulligan",
+                        PlayerId = gameState.Player2.PlayerId,
+                        ActionData = new { CardUidsToReplace = cardGuidsToReplace }
+                    };
+
+                    _ = EnqueuePlayerActionAsync(gameId, wrapper);
+
+                    _logger.LogInformation("[GameService:{GameId}] AI Player {PlayerId} mulligan decision submitted successfully.", gameId, gameState.Player2.PlayerId);
                 }
                 else
                 {
-                    _logger.LogDebug("[GameService:{GameId}] Player2 is null or has already completed mulligan. Skipping AI mulligan trigger.", gameId);
+                    _logger.LogDebug("[GameService:{GameId}] Player2 is null, has already completed mulligan, or is not an AI. Skipping AI mulligan trigger.", gameId);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("[GameService:{GameId}] AI mulligan trigger was canceled.", gameId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[GameService:{GameId}] Error occurred while triggering AI mulligan.", gameId);
-                // 不重新抛出异常，避免影响游戏创建流程
             }
+        }
+
+        /// <summary>
+        /// Handles the submission of a player's target choice, bypassing the main action queue.
+        /// This is an "out-of-band" request that resumes a paused action.
+        /// </summary>
+        public Task SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto)
+        {
+            _logger.LogInformation("[SubmitTargetChoiceAsync:{GameId}] Received target choice from Player {PlayerId} for ability {AbilityId}",
+                gameId, playerId, dto.SourceAbilityRuntimeId);
+
+            // This method now only completes the pending choice.
+            // The actual processing of the choice happens inside the game loop.
+            _pendingActionService.CompletePlayerChoice(dto.PendingChoiceId, dto);
+
+            return Task.CompletedTask;
         }
 
     } // Closing brace for GameService class

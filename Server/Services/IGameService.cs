@@ -25,9 +25,12 @@ namespace ShadowverseBeyond.Server.Services
         /// Ensures a game state is available for processing actions or requests.
         /// </summary>
         /// <param name="gameId">The unique identifier for the game.</param>
-        /// <param name="requestingPlayerId">The ID of the player requesting the game state (used for game creation).</param>
-        /// <returns>The GameStateDto for the game, or null if creation failed unexpectedly.</returns>
-        GameState? GetOrCreateGameState(string gameId, Guid? requestingPlayerId = null); // Return Domain Entity
+        /// <param name="hostPlayerId">Host/seat A player ID (mandatory for creation).</param>
+        /// <param name="guestPlayerId">Guest/seat B player ID (null allowed when using AI fallback).</param>
+        /// <param name="useAiFallback">When true and guestPlayerId is null, create an AI opponent.</param>
+        /// <param name="scopeServiceProvider">Scope service provider (from HttpContext) for dependency resolution.</param>
+        /// <returns>The GameState domain entity for the game, or null if creation failed unexpectedly.</returns>
+        GameState? GetOrCreateGameState(string gameId, Guid? hostPlayerId, Guid? guestPlayerId, bool useAiFallback, IServiceProvider scopeServiceProvider); // Return Domain Entity
 
         /// <summary>
         /// Retrieves the current game state for the specified game ID.
@@ -55,7 +58,12 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The ID of the game instance.</param>
         /// <param name="action">The wrapper object containing action details.</param>
         /// <returns>A task representing the asynchronous operation of enqueuing.</returns>
-        void EnqueuePlayerAction(string gameId, PlayerActionWrapper action);
+        Task EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper action);
+
+        /// <summary>
+        /// Handles the submission of a player's target choice, bypassing the main action queue.
+        /// </summary>
+        Task SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto);
 
         /// <summary>
         /// 【BUG-019修复】广播事件列表给前端，确保AI和人类玩家使用相同的事件广播机制
@@ -65,5 +73,6 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="events">The list of events to broadcast.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
         Task BroadcastEventsAsync(string gameId, List<GameEventDto> events);
+
     }
 }
