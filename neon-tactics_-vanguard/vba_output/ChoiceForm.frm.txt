@@ -1,0 +1,159 @@
+Attribute VB_Name = "ChoiceForm"
+Attribute VB_Base = "0{F6F7A0E0-DAE2-445F-8F9A-7B2D225512DA}{3380AB01-74C4-47A6-B49D-5980C5D180F8}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ==================================================
+' 窗体名称: ChoiceForm
+' 功能：动态创建选择按钮的窗体
+' 说明：支持多列布局、多选模式和自定义按钮尺寸
+' ==================================================
+
+' ========== 公共变量声明 ==========
+Public SelectedIndex As String
+Private ButtonHandlers() As ButtonClick
+Public BtnColumns As Integer      ' 按钮列数参数
+Public SelectCount As Integer     ' 选择数量限制
+
+' ========== 窗体初始化事件 ==========
+Private Sub UserForm_Initialize()
+    SelectedIndex = Empty
+End Sub
+
+' ==================================================
+' 过程功能：动态创建按钮（带列布局）
+' 参数：choices - 选项数组, Button_Width - 按钮宽度
+'       BtnColumns - 按钮列数, n - 选择数量限制
+' 说明：根据参数动态生成按钮布局，支持多列和多选模式
+' ==================================================
+Public Sub CreateButtons(choices() As String, Button_Width As Integer, BtnColumns As Integer, Optional n As Integer = 1)
+    ' ========== 布局参数设置 ==========
+    ' 按钮高度固定
+    Dim Button_Height As Integer
+    Button_Height = 30
+    
+    ' 水平间距设置
+    Dim Button_H_Spacing As Integer
+    Button_H_Spacing = 20
+    
+    ' 垂直间距设置（根据按钮宽度调整）
+    Dim Button_V_Spacing As Integer
+    Button_V_Spacing = 10
+    If Button_Width > 100 Then Button_V_Spacing = 20
+    
+    ' 窗体边距常量
+    Const FORM_MARGIN As Integer = 20
+    SelectCount = n
+    
+    ' ========== 窗体标题设置 ==========
+    ' 设置窗体标题为第一个选项（通常是标题文本）
+    Me.Caption = choices(0)
+
+    ' ========== 按钮数量计算 ==========
+    ' 确定需要创建的按钮数量
+    Dim buttonCount As Long
+    buttonCount = UBound(choices) - LBound(choices)
+    If buttonCount < 1 Then Exit Sub
+
+    ' ========== 布局计算 ==========
+    ' 计算需要的行数（向上取整）
+    Dim rows As Long
+    rows = Application.WorksheetFunction.Ceiling(buttonCount / BtnColumns, 1)
+
+    ' ========== 窗体尺寸调整 ==========
+    ' 根据按钮布局计算并设置窗体大小
+    Me.Width = (BtnColumns * Button_Width) + _
+                ((BtnColumns - 1) * Button_H_Spacing) + _
+                FORM_MARGIN * 2 + 10 + 5
+    Me.Height = (rows * Button_Height) + _
+                ((rows - 1) * Button_V_Spacing) + _
+                FORM_MARGIN * 2 + 10 + 30
+    
+    ' 任选模式下的窗体高度调整
+    If SelectCount < 0 Then Me.Height = Me.Height + Button_Height + Button_V_Spacing
+    If SelectCount < 0 Then buttonCount = buttonCount + 1
+    
+    ' ========== 按钮创建准备 ==========
+    ' 重置按钮处理器数组
+    ReDim ButtonHandlers(1 To buttonCount)
+
+    ' ========== 选项按钮创建 ==========
+    Dim i As Long, btnIndex As Long
+    btnIndex = 1
+    
+    Dim Btn As MSForms.ToggleButton
+    Dim rowIndex As Long, colIndex As Long
+    
+    ' 遍历选项数组创建按钮（跳过第一个标题选项）
+    For i = LBound(choices) + 1 To UBound(choices)
+        Set Btn = Me.Controls.Add("Forms.ToggleButton.1")
+
+        ' ========== 按钮位置计算 ==========
+        ' 计算行和列位置 (0-based)
+        rowIndex = (btnIndex - 1) \ BtnColumns  ' 整除计算行索引
+        colIndex = (btnIndex - 1) Mod BtnColumns ' 取模计算列索引
+
+        ' 计算按钮具体位置坐标
+        leftPos = FORM_MARGIN + colIndex * (Button_Width + Button_H_Spacing)
+        topPos = FORM_MARGIN + rowIndex * (Button_Height + Button_V_Spacing)
+
+        ' ========== 按钮属性设置 ==========
+        With Btn
+            .Caption = choices(i)
+            .Width = Button_Width
+            .Height = Button_Height
+            .Top = topPos
+            .Left = leftPos
+            .Name = "btnChoice" & i
+        End With
+
+        ' ========== 事件处理器绑定 ==========
+        ' 创建新的事件处理器并绑定到按钮
+        Set ButtonHandlers(btnIndex) = New ButtonClick
+        With ButtonHandlers(btnIndex)
+            Set .Button = Btn
+            .ButtonIndex = btnIndex
+            Set .ParentForm = Me
+        End With
+
+        btnIndex = btnIndex + 1
+    Next i
+    
+    ' ========== 任选模式处理 ==========
+    ' 如果SelectCount为-1，代表任选模式，添加完成按钮
+    If SelectCount < 0 Then
+        Set Btn = Me.Controls.Add("Forms.ToggleButton.1")
+
+        ' ========== 完成按钮位置计算 ==========
+        ' 计算完成按钮的位置（居中显示在最后一行）
+        rowIndex = (UBound(choices) - 1) \ BtnColumns + 1
+        colIndex = 1
+
+        ' 计算按钮具体位置坐标（水平居中）
+        leftPos = (Me.Width - Button_Width) / 2
+        topPos = FORM_MARGIN + rowIndex * (Button_Height + Button_V_Spacing)
+
+        ' ========== 完成按钮属性设置 ==========
+        With Btn
+            .Caption = Translate("Finish")
+            .Width = Button_Width
+            .Height = Button_Height
+            .Top = topPos
+            .Left = leftPos
+            .Name = "Finish"
+        End With
+
+        ' ========== 完成按钮事件绑定 ==========
+        ' 创建完成按钮的事件处理器
+        Set ButtonHandlers(btnIndex) = New ButtonClick
+        With ButtonHandlers(btnIndex)
+            Set .Button = Btn
+            .ButtonIndex = 0  ' 特殊标识：完成按钮
+            Set .ParentForm = Me
+        End With
+    End If
+End Sub
+

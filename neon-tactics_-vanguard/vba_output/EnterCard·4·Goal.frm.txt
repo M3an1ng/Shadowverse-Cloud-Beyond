@@ -1,0 +1,837 @@
+Attribute VB_Name = "EnterCard·4·Goal"
+Attribute VB_Base = "0{C5D8F18F-9BDD-48E7-966D-BF3357F0E9C0}{7650D0E8-2E02-47C7-80C6-E679381C8790}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ========== 通用点击事件处理程序 ==========
+Function ToggleButton_Click(Btn As MSForms.ToggleButton)
+    ' 遍历所有控件，处理同组ToggleButton的互斥逻辑
+    Dim Flag As Boolean
+    Flag = False ' 记录同组是否有按键按下
+    
+    For Each ctrl In Me.Controls
+        ' 只处理同组的 ToggleButton
+        If ctrl.Tag = Btn.Tag Then
+            ' 核心逻辑：当前按钮按下，其他弹起
+            If Btn.Value Then ctrl.Value = (ctrl.Name = Btn.Name)
+            If ctrl.Value Then Flag = True
+        End If
+    Next ctrl
+    
+    ' 如果同组都没有按钮按下，则选中当前按钮
+    If Not Flag Then Btn.Value = True
+End Function
+
+
+
+' ========== 目标选择方式：所有/随机/选择 ==========
+
+' 选择所有目标
+Private Sub AllCard_Click()
+    ToggleButton_Click AllCard
+    Call EffectPreview
+End Sub
+
+
+' 随机选择目标
+Private Sub RandomCard_Click()
+    ' 判断Tag限制
+    If AllCard.Tag = "All" Or SelectCard.Tag = "Select" Then
+        RandomCard.Value = False
+        Exit Sub
+    End If
+
+    ToggleButton_Click RandomCard
+    
+    ' 询问选择数量并更新按钮显示
+    If RandomCard.Caption = Translate("Random") Then
+        Dim Str As String
+        Str = NumInputBox(Translate("Random"), "Random")
+        
+        ' 处理不同名选项（@前缀）
+        If Left(Str, 1) = "@" Then
+            RandomCard.Caption = "Random" & Str
+        Else
+            RandomCard.Caption = "Random&" & Str
+        End If
+        
+        RandomCard.Caption = SentenceTranslate(RandomCard.Caption)
+    End If
+    
+    ' 恢复默认显示
+    If Not RandomCard.Value Then RandomCard.Caption = Translate("Random")
+    
+    Call EffectPreview
+End Sub
+
+' 手动选择目标
+Private Sub SelectCard_Click()
+    ' 判断Tag限制
+    If AllCard.Tag = "All" Or RandomCard.Tag = "Random" Then
+        SelectCard.Value = False
+        Exit Sub
+    End If
+    
+    ' 检查是否在可选择的时点
+    Dim IsSelect As Boolean
+    IsSelect = False
+    Dim Arr() As String
+    If TimePoint = "" Then
+        IsSelect = True
+    Else
+        Arr = Split(TimePoint, "&")
+        If Arr(0) = "Fanfare" Then IsSelect = True
+        If Arr(0) = "LastWords" Then IsSelect = True
+        If Arr(0) = "Play" Then IsSelect = True
+        If Arr(0) = "Evolve" Then IsSelect = True
+        If Arr(0) = "SuperEvolve" Then IsSelect = True
+        If Arr(0) = "Engage" Then IsSelect = True
+        If Arr(0) = "Enhance" Then IsSelect = True
+    End If
+    
+    If Not IsSelect Then
+        SelectCard.Value = False
+        Exit Sub
+    End If
+    
+    ToggleButton_Click SelectCard
+    
+    ' 询问选择数量并更新按钮显示
+    If SelectCard.Caption = Translate("Select") Then
+        SelectCard.Caption = SentenceTranslate("Select&" & NumInputBox(Translate("Select"), "Select"))
+    End If
+    
+    ' 恢复默认显示
+    If Not SelectCard.Value Then SelectCard.Caption = Translate("Select")
+    
+    ' 选择模式下的一些限制
+    If SelectCard.Value Then
+        Deck.Value = False
+        Crest.Value = False
+        Faith.Value = False
+    End If
+    
+    ' 选择对手时限制生效区域为战场
+    If SelectCard.Value And Enemy.Value Then
+        Field.Value = True
+        Hand.Value = False
+        Deck.Value = False
+        ActionCards.Value = False
+    End If
+    
+    Call EffectPreview
+End Sub
+
+' ========== 特殊目标类型 ==========
+
+' 本卡牌目标
+Private Sub ThisCard_Click()
+    ' 互斥处理
+    If ThisCard.Value Then
+'        Opposing.Value = False
+'        PreviousGoal.Value = False
+'        PrePrevious.Value = False
+'        PreviousFuse.Value = False
+        Call EraseTypes
+    End If
+    Call EffectPreview
+End Sub
+
+' 交战对手目标
+Private Sub Opposing_Click()
+    If TimePoint = "" Then
+        Opposing = False
+        Exit Sub
+    End If
+
+    ' 检查是否在攻击/交战相关时点
+    Dim Arr() As String
+    Arr = Split(TimePoint, "|")
+    Dim IsStrike As Boolean
+    IsStrike = False
+    
+    If Arr(0) = "Strike" Or Arr(0) = "Clash" Then IsStrike = True
+    If UBound(Arr) >= 2 Then
+        If Arr(0) = "When" And (Arr(2) = "Strike" Or Arr(2) = "Clash") Then IsStrike = True
+    End If
+    
+    If Not IsStrike Then Opposing = False
+    
+    ' 互斥处理
+    If Opposing.Value Then
+'        ThisCard.Value = False
+'        PreviousGoal.Value = False
+'        PrePrevious.Value = False
+'        PreviousFuse.Value = False
+        Call EraseTypes
+    End If
+    
+    Call EffectPreview
+End Sub
+
+' 上一个限定的目标
+Private Sub PreviousGoal_Click()
+    If PreviousGoal.Value Then
+'        ThisCard.Value = False
+'        Opposing.Value = False
+'        PrePrevious.Value = False
+'        PreviousFuse.Value = False
+        Call EraseTypes
+    End If
+    Call EffectPreview
+End Sub
+
+' 上上个限定的目标
+Private Sub PrePrevious_Click()
+    If PrePrevious.Value Then
+'        ThisCard.Value = False
+'        Opposing.Value = False
+'        PreviousGoal.Value = False
+'        PreviousFuse.Value = False
+        Call EraseTypes
+    End If
+    Call EffectPreview
+End Sub
+
+' 上一次融合的目标
+Private Sub PreviousFuse_Click()
+    If PreviousFuse.Value Then
+'        ThisCard.Value = False
+'        Opposing.Value = False
+'        PrePrevious.Value = False
+'        PreviousGoal.Value = False
+        Call EraseTypes
+    End If
+    Call EffectPreview
+End Sub
+
+' 除上述目标以外
+Private Sub Except_Click()
+    If Not ThisCard.Value And Not Opposing.Value And Not PreviousGoal.Value And Not PrePrevious.Value And Not PreviousFuse.Value Then
+        Except.Value = False
+'    ElseIf DifferentName.Value Or SameName.Value Then
+'        Except.Value = False
+    Else
+        Call EffectPreview
+    End If
+End Sub
+
+' 清空类型选择
+Function EraseTypes()
+    If Not Except.Value And Not SameName.Value And Not DifferentName.Value Then
+        AllCard.Value = True
+        Allied.Value = False
+        Enemy.Value = False
+        Field.Value = False
+        Hand.Value = False
+        Deck.Value = False
+        ActionCards.Value = False
+        Follower.Value = False
+        Spell.Value = False
+        Amulet.Value = False
+        Leader.Value = False
+        Crest.Value = False
+        Faith.Value = False
+    End If
+End Function
+
+' ========== 名称相关条件 ==========
+
+' 同名目标
+Private Sub SameName_Click()
+    If SameName.Value Then
+        DifferentName.Value = False
+        Except.Value = False
+    End If
+    Call EffectPreview
+End Sub
+
+' 不同名目标
+Private Sub DifferentName_Click()
+    If DifferentName.Value Then
+        SameName.Value = False
+        Except.Value = False
+    End If
+    Call EffectPreview
+End Sub
+
+' 卡牌名称变化
+Private Sub CardName_Change()
+    Call EffectPreview
+End Sub
+Private Sub CardName2_Change()
+    Call EffectPreview
+End Sub
+
+
+' ========== 生效方和生效区域 ==========
+
+' 生效方选择：己方/敌方
+Private Sub Allied_Click()
+    If Allied.Tag = "Enemy" Then Allied.Value = False
+    If Allied.Tag = "All" Then Allied.Value = True
+    Call EffectPreview("Allied")
+End Sub
+
+Private Sub Enemy_Click()
+    If Enemy.Tag = "Allied" Then Enemy.Value = False
+    If Enemy.Tag = "All" Then Enemy.Value = True
+    Call EffectPreview("Enemy")
+End Sub
+
+' 生效区域选择：战场/手牌/牌组/墓场
+Private Sub Field_Click()
+    If InStr(Field.Tag, "Field") = 0 And Field.Tag <> "" Then Field.Value = False
+    
+    ' 纹章必须在战场
+'    If Not Field.Value Then
+'        Leader.Value = False
+'        Crest.Value = False
+'        Faith.Value = False
+'    End If
+    Call EffectPreview("Field")
+End Sub
+
+Private Sub Hand_Click()
+    If InStr(Hand.Tag, "Hand") = 0 And Field.Tag <> "" Then Hand.Value = False
+    
+    ' 选择对手时手牌不生效
+    If SelectCard.Value And Enemy.Value Then Hand.Value = False
+    Call EffectPreview("Hand")
+End Sub
+
+Private Sub Deck_Click()
+    If InStr(Deck.Tag, "Deck") = 0 And Field.Tag <> "" Then Deck.Value = False
+    
+    ' 选择模式下牌堆不生效
+    If SelectCard.Value Then Deck.Value = False
+    Call EffectPreview("Deck")
+End Sub
+
+Private Sub ActionCards_Click()
+    If InStr(ActionCards.Tag, "ActionCards") = 0 And Field.Tag <> "" Then ActionCards.Value = False
+    
+    ' 选择模式下记录卡牌不生效
+    If SelectCard.Value Then ActionCards.Value = False
+
+    If ActionCards.Caption = Translate("ActionCardsBtn") Then
+        Dim options() As String
+        options = Split(ActionCards.Caption & SentenceTranslate("|ThisTurn|ThisMatch"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 2))
+        ActionCards.Caption = options(i)
+        
+        EnterCard·6·Action.Show
+        
+        ActionCards.Caption = ActionCards.Caption & "@" & Translate(Action)
+    End If
+    
+    If Not ActionCards.Value Then ActionCards.Caption = Translate("ActionCardsBtn")
+    Call EffectPreview
+End Sub
+
+
+' ========== 卡牌种类选择 ==========
+
+' 从者/法术/护符/主战者/纹章/信仰
+Private Sub Follower_Click()
+    If InStr(Follower.Tag, "Follower") = 0 And Follower.Tag <> "" Then Follower.Value = False
+    Call EffectPreview("Follower")
+End Sub
+
+Private Sub Spell_Click()
+    If InStr(Spell.Tag, "Spell") = 0 And Spell.Tag <> "" Then Spell.Value = False
+    Call EffectPreview("Spell")
+End Sub
+
+Private Sub Amulet_Click()
+    If InStr(Amulet.Tag, "Amulet") = 0 And Amulet.Tag <> "" Then Amulet.Value = False
+    Call EffectPreview("Amulet")
+End Sub
+
+Private Sub Leader_Click()
+    If InStr(Leader.Tag, "Leader") = 0 And Leader.Tag <> "" Then Leader.Value = False
+    
+    ' 主战者必须在战场
+    'If Leader.Value Then Field.Value = True
+    Call EffectPreview("Leader")
+End Sub
+
+Private Sub Crest_Click()
+    If InStr(Crest.Tag, "Crest") = 0 And Crest.Tag <> "" Then Crest.Value = False
+    
+    ' 纹章无法手动选择且必须在战场
+    If SelectCard.Value Then Crest.Value = False
+    'If Crest.Value Then Field.Value = True
+    Call EffectPreview("Crest")
+End Sub
+
+Private Sub Faith_Click()
+    If InStr(Faith.Tag, "Faith") = 0 And Faith.Tag <> "" Then Faith.Value = False
+    
+    ' 信仰无法手动选择且必须在战场
+    If SelectCard.Value Then Faith.Value = False
+    'If Faith.Value Then Field.Value = True
+    Call EffectPreview("Faith")
+End Sub
+
+' ========== 位置相关条件 ==========
+
+' 最先持有/最后持有
+Private Sub LeftMost_Click()
+    If LeftMost.Value Then RightMost.Value = False
+    
+    ' 询问选择数量并更新显示
+    If LeftMost.Caption = Translate("LeftMost") Then
+        LeftMost.Caption = "LeftMost&" & NumInputBox(Translate("LeftMost"), "LeftMost")
+        LeftMost.Caption = SentenceTranslate(LeftMost.Caption)
+    End If
+    
+    If Not LeftMost.Value Then LeftMost.Caption = Translate("LeftMost")
+    Call EffectPreview
+End Sub
+
+Private Sub RightMost_Click()
+    If RightMost.Value Then LeftMost.Value = False
+    
+    If RightMost.Caption = Translate("RightMost") Then
+        RightMost.Caption = "RightMost&" & NumInputBox(Translate("RightMost"), "RightMost")
+        RightMost.Caption = SentenceTranslate(RightMost.Caption)
+    End If
+    
+    If Not RightMost.Value Then RightMost.Caption = Translate("RightMost")
+    Call EffectPreview
+End Sub
+
+' ========== 状态条件 ==========
+
+' 进化/攻击/受伤/启动状态
+Private Sub Evolve_Click()
+    If Evolve.Caption = Translate("EvolveButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("EvolveButton|UnEvolved|Evolved|SuperEvolved"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 3))
+        Evolve.Caption = options(i)
+    End If
+    
+    If Not Evolve.Value Then Evolve.Caption = Translate("EvolveButton")
+    
+    ' 进化状态限制为战场从者
+    If Evolve.Value Then
+        Field.Value = True
+        Follower.Value = True
+    End If
+    Call EffectPreview
+End Sub
+
+Private Sub Strike_Click()
+    If Strike.Caption = Translate("AttackButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("AttackButton|UnStriked|Striked"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 2))
+        Strike.Caption = options(i)
+    End If
+    
+    If Not Strike.Value Then Strike.Caption = Translate("AttackButton")
+    
+    ' 攻击状态限制为战场从者
+    If Strike.Value Then
+        Field.Value = True
+        Follower.Value = True
+    End If
+    Call EffectPreview
+End Sub
+
+Private Sub Damaged_Click()
+    If Damaged.Caption = Translate("DamagedButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("DamagedButton|UnDamaged|Damaged"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 2))
+        Damaged.Caption = options(i)
+    End If
+    
+    If Not Damaged.Value Then Damaged.Caption = Translate("DamagedButton")
+    
+    ' 受伤状态限制为战场从者
+    If Damaged.Value Then
+        Field.Value = True
+        Follower.Value = True
+    End If
+    Call EffectPreview
+End Sub
+
+Private Sub Engage_Click()
+    If Engage.Caption = Translate("EngageButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("EngageButton|UnEngaged|Engaged"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 2))
+        Engage.Caption = options(i)
+    End If
+    
+    If Not Engage.Value Then Engage.Caption = Translate("EngageButton")
+    
+    ' 启动状态限制为战场护符
+    If Engage.Value Then
+        Field.Value = True
+        Amulet.Value = True
+    End If
+    Call EffectPreview
+End Sub
+
+' ========== 职业和能力关键词 ==========
+
+' 职业选择
+Private Sub Class_Click()
+    If Class.Caption = Translate("Class") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("Class|Forestcraft|Swordcraft|Runecraft|Dragoncraft|Abysscraft|Havencraft|Portalcraft|Neutral|All-Class"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 4))
+        Class.Caption = options(i)
+    End If
+    
+    If Not Class.Value Then Class.Caption = Translate("Class")
+    Call EffectPreview
+End Sub
+
+' 能力关键词选择
+Private Sub Keyword_Click()
+    If Keyword.Caption = Translate("Keyword") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("ModelButton|Fanfare|LastWords|Evolve|SuperEvolve|Strike|Clash|Engage|Spellboost|Fuse|" & _
+            "Enhance|Accelerate|Crystallize|Rush|Storm|Ambush|Bane|Ward|Drain|Intimidate|Aura|Barrier|Combo|Rally|EarthRite|Overflow|Necromancy|Sacrifice|Countdown|Mode|Crest|Faith|Reanimate"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 60, 4))
+        Keyword.Caption = options(i)
+    End If
+    
+    If Not Keyword.Value Then Keyword.Caption = Translate("Keyword")
+    Call EffectPreview
+End Sub
+
+' 类型输入
+Private Sub Trait_Change()
+    Call EffectPreview
+End Sub
+
+' ========== 数值条件 ==========
+
+' 数值条件1和条件2的设置
+Private Sub Model1_Click()
+    If Model1.Caption = Translate("Model") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("Model|OrigCost|Cost|OrigAttack|Attack|OrigDefense|Defense|OrigCountdown|Countdown"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 70, 2))
+        Model1.Caption = options(i)
+        
+        ' 比较关系选择
+        options = Split(SentenceTranslate("Compare|<|=|>|<>|Highest|Lowest"), "|")
+        i = Val(ShowChoice(options, 60, 2))
+        
+        If options(i) <> Translate("Highest") And options(i) <> Translate("Lowest") Then
+            Model1.Caption = Model1.Caption & options(i)
+            
+            ' 比较对象选择
+            options = Split(SentenceTranslate("Model|OrigCost|Cost|OrigAttack|Attack|OrigDefense|Defense|OrigCountdown|Countdown|Const&Variate"), "|")
+            i = Val(ShowChoice(options, 70, 2))
+            
+            If options(i) = SentenceTranslate("Const&Variate") Then
+                Model1.Caption = Model1.Caption & NumInputBox(Translate("Compare"), "")
+            Else
+                Model1.Caption = Model1.Caption & options(i)
+            End If
+        Else
+            Model1.Caption = Model1.Caption & "$" & options(i)
+        End If
+    End If
+    
+    If Not Model1.Value Then Model1.Caption = Translate("Model")
+    Call EffectPreview
+End Sub
+
+Private Sub Model2_Click()
+    ' 与Model1相同的逻辑
+    If Model2.Caption = Translate("Model") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("Model|OrigCost|Cost|OrigAttack|Attack|OrigDefense|Defense|OrigCountdown|Countdown"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 70, 2))
+        Model2.Caption = options(i)
+        
+        options = Split(SentenceTranslate("Compare|<|=|>|<>|Highest|Lowest"), "|")
+        i = Val(ShowChoice(options, 60, 2))
+        
+        If options(i) <> Translate("Highest") And options(i) <> Translate("Lowest") Then
+            Model2.Caption = Model2.Caption & options(i)
+            
+            options = Split(SentenceTranslate("Model|OrigCost|Cost|OrigAttack|Attack|OrigDefense|Defense|OrigCountdown|Countdown|Const&Variate"), "|")
+            i = Val(ShowChoice(options, 70, 2))
+            
+            If options(i) = SentenceTranslate("Const&Variate") Then
+                Model2.Caption = Model2.Caption & NumInputBox(Translate("Compare"), "")
+            Else
+                Model2.Caption = Model2.Caption & options(i)
+            End If
+        Else
+            Model2.Caption = Model2.Caption & "$" & options(i)
+        End If
+    End If
+    
+    If Not Model2.Value Then Model2.Caption = Translate("Model")
+    Call EffectPreview
+End Sub
+
+' 逻辑关系：与/或
+Private Sub AndLogic_Click()
+    OrLogic.Value = Not AndLogic.Value
+    Call EffectPreview
+End Sub
+
+Private Sub OrLogic_Click()
+    AndLogic.Value = Not OrLogic.Value
+    Call EffectPreview
+End Sub
+
+' ========== 窗体初始化和效果预览 ==========
+
+' 窗体初始化
+Private Sub UserForm_Activate()
+    Goal = Empty
+
+    ' 解析Tag设置控件属性
+    Dim Arr() As String
+    Arr = Split(EnterCard·4·Goal.Tag, "|")
+    ReDim Preserve Arr(0 To 3)
+    
+    ' 设置选择方式
+    If Arr(0) = "" Then Arr(0) = "Methods"
+    AllCard.Tag = Arr(0)
+    RandomCard.Tag = Arr(0)
+    SelectCard.Tag = Arr(0)
+    
+    ' 设置生效方
+    Allied.Tag = Arr(1)
+    Enemy.Tag = Arr(1)
+    
+    ' 设置生效区域
+    Field.Tag = Arr(2)
+    Hand.Tag = Arr(2)
+    Deck.Tag = Arr(2)
+    ActionCards.Tag = Arr(2)
+    
+    ' 设置生效种类
+    Follower.Tag = Arr(3)
+    Spell.Tag = Arr(3)
+    Amulet.Tag = Arr(3)
+    Leader.Tag = Arr(3)
+    Crest.Tag = Arr(3)
+    Faith.Tag = Arr(3)
+    
+    ' 默认设置
+    AndLogic.Value = True
+    
+    ' 根据Tag自动选择
+    If RandomCard.Tag = "Random" Then RandomCard.Value = True
+    If SelectCard.Tag = "Select" Then SelectCard.Value = True
+    
+    Call EffectPreview
+    
+    If CardEffect <> "" Then EnterCard·4·Goal.Caption = SentenceTranslate(CardEffect)
+End Sub
+
+' 完成选择
+Private Sub Finish_Click()
+    Call EffectPreview
+    Unload EnterCard·4·Goal
+End Sub
+
+' 效果预览生成函数
+Function EffectPreview(Optional InputBtn As String = "")
+    Dim i%
+    Dim Str As String
+    Dim Flag As Boolean
+    
+    ' 检查特殊目标类型
+    If Not Except.Value Then _
+        If ThisCard.Value Or Opposing.Value Or PreviousGoal.Value Or PrePrevious.Value Or PreviousFuse.Value Then Flag = True
+        
+    ' 确保至少选择一个生效方、区域和类型
+    If Not Flag Then
+        ' 生效方选择验证
+        For i = 1 To 2
+            If Not (Allied.Value Or Enemy.Value) Then
+                If InputBtn = "Allied" Then
+                    Enemy.Value = True
+                ElseIf InputBtn = "Enemy" Then
+                    Allied.Value = True
+                Else
+                    Allied.Value = True
+                End If
+            Else
+                Exit For
+            End If
+        Next i
+        
+        ' 生效区域选择验证
+        For i = 1 To 5
+            If Not (Field.Value Or Hand.Value Or Deck.Value Or ActionCards.Value) Then
+                Select Case InputBtn
+                    Case "Field": Hand.Value = True
+                    Case "Hand": Deck.Value = True
+                    Case "Deck": ActionCards.Value = True
+                    Case "ActionCards": Field.Value = True
+                    Case Else: Field.Value = True
+                End Select
+            Else
+                Exit For
+            End If
+        Next i
+        
+        ' 生效种类选择验证
+        For i = 1 To 6
+            If Not (Follower.Value Or Spell.Value Or Amulet.Value Or Leader.Value Or Crest.Value Or Faith.Value) Then
+                Select Case InputBtn
+                    Case "Follower": Spell.Value = True
+                    Case "Spell": Amulet.Value = True
+                    Case "Amulet": Leader.Value = True
+                    Case "Leader": Crest.Value = True
+                    Case "Crest": Faith.Value = True
+                    Case "Faith": Follower.Value = True
+                    Case Else: Follower.Value = True
+                End Select
+            Else
+                Exit For
+            End If
+        Next i
+    End If
+    
+    ' 生成目标描述字符串
+    Goal = Empty
+    Dim StrID As String
+    Dim StrID2 As String
+    StrID = IDByName(CardName.Value)
+    StrID2 = IDByName(CardName2.Value)
+    
+    ' 添加选择方式
+    If RandomCard.Value Then Goal = Goal & SentenceTranslate(RandomCard.Caption) & "-"
+    If SelectCard.Value Then Goal = Goal & SentenceTranslate(SelectCard.Caption) & "-"
+    
+    ' 添加生效方
+    If Len(Allied.Tag) = 0 Then
+        If Allied.Value And Not Enemy.Value Then Goal = Goal & "Allied-"
+        If Enemy.Value And Not Allied.Value Then Goal = Goal & "Enemy-"
+    End If
+    
+    ' 添加生效区域
+    If (InStr(Field.Tag, "&") > 0 Or Len(Field.Tag) = 0) Then
+        If Field.Value Then Goal = Goal & "Field&"
+        If Hand.Value Then Goal = Goal & "Hand&"
+        If Deck.Value Then Goal = Goal & "Deck&"
+        If ActionCards.Value Then Goal = Goal & SentenceTranslate(ActionCards.Caption) & "&"
+        If Len(Goal) > 0 Then Goal = Left(Goal, Len(Goal) - 1) & "-"
+    End If
+    
+    ' 添加特殊目标条件
+    If Except.Value Then
+        If ThisCard.Value Then Goal = Goal & "Other-"
+        If Opposing.Value Then Goal = Goal & "Opposing&Except-"
+        If PreviousGoal.Value Then Goal = Goal & "It&Except-"
+        If PrePrevious.Value Then Goal = Goal & "That&Except-"
+        If PreviousFuse.Value Then Goal = Goal & "FuseCards&Except-"
+    End If
+    
+    ' 添加状态条件
+    If Evolve.Value Then Goal = Goal & Translate(Evolve.Caption) & "-"
+    If Strike.Value Then Goal = Goal & Translate(Strike.Caption) & "-"
+    If Damaged.Value Then Goal = Goal & Translate(Damaged.Caption) & "-"
+    If Engage.Value Then Goal = Goal & Translate(Engage.Caption) & "-"
+    
+    ' 添加职业和能力关键词
+    If Class.Value Then Goal = Goal & Translate(Class.Caption) & "-"
+    If Keyword.Value Then Goal = Goal & "Keyword&" & Translate(Keyword.Caption) & "-"
+    
+    ' 添加类型
+    If Len(Trait.Value) > 0 Then
+        i = Val(IDTranslate("Trait", Trait.Value))
+        If i > -1 Then Goal = Goal & "Trait:" & i & "-"
+    End If
+    
+    ' 添加数值条件
+    Str = Empty
+    If Model1.Value Then Str = Str & SentenceTranslate(Model1.Caption) & "-"
+    If Model2.Value Then Str = Str & SentenceTranslate(Model2.Caption) & "-"
+    If OrLogic.Value Then Str = Replace(Str, "-", "&")
+    If Len(Str) > 0 Then Goal = Goal & Left(Str, Len(Str) - 1) & "-"
+    
+    ' 添加名称条件
+    If Len(StrID) = Len("1000000") Then
+        If DifferentName.Value Then
+            Goal = Goal & "DifferentName&"
+        Else
+            Goal = Goal & "SameName&"
+        End If
+        If Len(StrID2) = Len("1000000") Then
+            Goal = Goal & StrID & "&" & StrID2 & "-"
+        Else
+            Goal = Goal & StrID & "-"
+        End If
+    ElseIf (ThisCard.Value Or Opposing.Value Or PreviousGoal.Value Or PrePrevious.Value Or PreviousFuse.Value Or SelectCard.Value) And (DifferentName.Value Or SameName.Value) Then
+        If DifferentName.Value Then
+            Goal = Goal & "DifferentName&"
+        Else
+            Goal = Goal & "SameName&"
+        End If
+        If ThisCard.Value Then
+            Goal = Goal & "ThisCard-"
+        ElseIf Opposing.Value Then
+            Goal = Goal & "Opposing-"
+        ElseIf PreviousGoal.Value Then
+            Goal = Goal & "It-"
+        ElseIf PrePrevious.Value Then
+            Goal = Goal & "That-"
+        ElseIf PreviousFuse.Value Then
+            Goal = Goal & "FuseCards-"
+        ElseIf SelectCard.Value Then
+            Goal = Goal & "Select-"
+        End If
+    End If
+    
+    ' 添加位置条件
+    If LeftMost.Value Then Goal = Goal & SentenceTranslate(LeftMost.Caption) & "-"
+    If RightMost.Value Then Goal = Goal & SentenceTranslate(RightMost.Caption) & "-"
+    
+    ' 添加卡牌种类
+    If Follower.Value Then Goal = Goal & "Follower&"
+    If Spell.Value Then Goal = Goal & "Spell&"
+    If Amulet.Value Then Goal = Goal & "Amulet&"
+    If Leader.Value Then Goal = Goal & "Leader&"
+    If Crest.Value Then Goal = Goal & "Crest&"
+    If Faith.Value Then Goal = Goal & "Faith&"
+    
+    ' 优化描述字符串
+    Goal = Replace(Goal, "Follower&Spell&Amulet", "Card")
+    If Hand.Value = False And Deck.Value = False Then Goal = Replace(Goal, "Follower&Amulet", "Card")
+    
+    ' 修正格式
+    If Right(Goal, 1) = "&" Then Goal = Left(Goal, Len(Goal) - 1)
+    If Len(Goal) > 0 And Flag And Right(Goal, 1) <> "-" Then Goal = Goal & "-"
+    
+    ' 处理特殊目标
+    If Flag And ThisCard.Value Then Goal = Goal & "ThisCard"
+    If Flag And Opposing.Value Then Goal = Goal & "Opposing"
+    If Flag And PreviousGoal.Value Then Goal = Goal & "It"
+    If Flag And PrePrevious.Value Then Goal = Goal & "That"
+    If Flag And PreviousFuse.Value Then Goal = Goal & "FuseCards"
+    
+    ' 更新显示
+    Effect.Caption = SentenceTranslate(Goal)
+End Function
+

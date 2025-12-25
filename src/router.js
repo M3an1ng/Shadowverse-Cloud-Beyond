@@ -47,6 +47,13 @@ class Router {
             cleanup: null
         });
 
+        this.routes.set('deck-builder', {
+            element: document.getElementById('deck-builder-page'),
+            title: '牌组编辑 - 影之诗 Beyond',
+            init: this.initDeckBuilderPage.bind(this),
+            cleanup: null
+        });
+
         this.routes.set('multiplayer', {
             element: document.getElementById('navigation-page'), // reuse navigation container for now
             title: '多人对战 - 影之诗 Beyond',
@@ -205,6 +212,33 @@ class Router {
                     <div class="error-message">
                         <h3>加载失败</h3>
                         <p>无法加载卡牌编辑器: ${error.message}</p>
+                        <button onclick="location.reload()">重新加载</button>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    /**
+     * 初始化牌组编辑器页面
+     */
+    async initDeckBuilderPage() {
+        console.log('Router: Initializing deck builder page...');
+        
+        try {
+            // 动态导入牌组编辑器模块
+            const deckBuilderModule = await import('./deckBuilder.js');
+            await deckBuilderModule.initializeDeckBuilder();
+        } catch (error) {
+            console.error('Router: Failed to initialize deck builder:', error);
+            
+            // 显示错误信息
+            const container = document.getElementById('deck-builder-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="error-message">
+                        <h3>加载失败</h3>
+                        <p>无法加载牌组编辑器: ${error.message}</p>
                         <button onclick="location.reload()">重新加载</button>
                     </div>
                 `;

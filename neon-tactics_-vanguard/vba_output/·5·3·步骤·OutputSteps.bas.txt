@@ -1,0 +1,63 @@
+Attribute VB_Name = "·5·3·步骤·OutputSteps"
+Function OutputSteps()
+    Dim i%, j%
+    Dim Str As String
+    Dim Turn As String
+    Dim Arr As Variant
+    Dim OutputStr As String
+    
+    Dim objData As Object
+    Set objData = CreateObject("New:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+    
+    ' ========== 查找最近的重要动作 ==========
+    ' 获取Steps区域的所有步骤记录
+    Turn = Down("Turn")
+    
+    '记录动作
+    Arr = Down("Steps")
+    For i = 1 To UBound(Arr)
+        If Arr(i, 1) = Turn Then
+            If Arr(i, 2) = "Play" Or Arr(i, 2) = "Engage" Or _
+                Arr(i, 2) = "Select" Or Arr(i, 2) = "Random" Then
+                
+                OutputStr = OutputStr & Arr(i, 2) & "|" & Arr(i, 3) & "||"
+                
+            ElseIf Arr(i, 2) = "Evolve" And Arr(i, 4) <> "" And Arr(i, 4) <> "0" Then
+                If i = UBound(Arr) Then
+                    OutputStr = OutputStr & Arr(i, 2) & "|" & Arr(i, 3) & "||"
+                ElseIf Arr(i + 1, 2) <> "SuperEvolve" Or Arr(i, 3) <> Arr(i + 1, 3) Then
+                    OutputStr = OutputStr & Arr(i, 2) & "|" & Arr(i, 3) & "||"
+                Else
+                    OutputStr = OutputStr & "SuperEvolve" & "|" & Arr(i, 3) & "||"
+                End If
+                
+            ElseIf Arr(i, 2) = "Strike" Then
+                OutputStr = OutputStr & Arr(i, 2) & "|" & Arr(i, 3) & "|"
+                If Arr(i + 1, 2) = "Clash" And Arr(i + 2, 2) = "Clash" Then
+                    OutputStr = OutputStr & Arr(i + 2, 3) & "||"
+                ElseIf Left(Turn, 1) = "F" Then
+                    OutputStr = OutputStr & "S1000||"
+                ElseIf Left(Turn, 1) = "S" Then
+                    OutputStr = OutputStr & "F1000||"
+                End If
+                
+            ElseIf Arr(i, 2) = "Keyword&Fuse" Then
+                OutputStr = OutputStr & Arr(i, 2) & "|" & Arr(i, 3) & "|"
+                For j = i + 1 To i + 100
+                    If Arr(j, 2) = "Fused" Then OutputStr = OutputStr & Arr(j, 3) & "&" Else Exit For
+                Next j
+                If Right(OutputStr, 1) = "&" Then OutputStr = Left(OutputStr, Len(OutputStr) - 1) & "||"
+                
+            ElseIf Arr(i, 2) = "GetPP" Then
+                OutputStr = OutputStr & Arr(i, 2) & "||"
+            End If
+        End If
+    Next i
+    OutputStr = OutputStr & "TurnEnd"
+    
+    objData.SetText OutputStr
+    objData.PutInClipboard
+    Set objData = Nothing
+    
+    InputBox "「复制」发送给对手，然后任意按钮关闭", "回合结束", OutputStr
+End Function

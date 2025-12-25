@@ -46,6 +46,15 @@ public class TransactionService : ITransactionService
             return await operation();
         }
 
+        // EF Core InMemory provider does not support transactions.
+        if (!_context.Database.IsRelational())
+        {
+            _logger.LogDebug("Database provider is non-relational, executing operation without transaction.");
+            var result = await operation();
+            await _context.SaveChangesAsync();
+            return result;
+        }
+
         using var transaction = await _context.Database.BeginTransactionAsync();
 
         try

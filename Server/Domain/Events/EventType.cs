@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
@@ -10,41 +12,66 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <summary>
         /// 卡牌从手牌被打出时触发。
         /// </summary>
+        [Description("卡牌打出")]
         PlayCard,
         /// <summary>
         /// 卡牌进入战场时触发（包括出牌召唤、效果召唤等）。
         /// </summary>
+        [Description("卡牌召唤")]
         Summon,
         /// <summary>
         /// 卡牌从战场或手牌等区域离开游戏（通常进入墓地）时触发。
         /// </summary>
+        [Description("卡牌死亡")]
         Destroy,
         /// <summary>
         /// 卡牌从战场或手牌等区域离开游戏时（不进入墓地）触发。
         /// </summary>
+        [Description("卡牌消失")]
         Vanish,
+        /// <summary>
+        /// 卡牌被公开时触发（公开其卡面信息）。
+        /// </summary>
+        [Description("卡牌公开")]
+        CardRevealed,
         /// <summary>
         /// 卡牌进化时触发。
         /// </summary>
+        [Description("卡牌进化")]
         Evolve,
+        /// <summary>
+        /// 卡牌超进化时触发（继承进化触发，额外提供超进化触发）。
+        /// </summary>
+        [Description("卡牌超进化")]
+        SuperEvolve,
         /// <summary>
         /// 玩家从牌库抽牌时触发。
         /// </summary>
+        [Description("抽牌")]
         Draw,
         /// <summary>
         /// 造成伤害时触发。
         /// </summary>
+        [Description("造成伤害")]
         Damage,
         /// <summary>
         /// 卡牌从手牌被弃置时触发。
         /// </summary>
         Discard,
+        /// <summary>
+        /// 卡牌被添加到手牌时触发（例如，通过效果生成）。
+        /// </summary>
+        AddCardToHand,
 
         // --- 战斗相关事件 ---
         /// <summary>
         /// 单位宣告攻击时触发（在伤害计算前）。
         /// </summary>
         Attack,
+        /// <summary>
+        /// 单位宣告攻击，并已消耗攻击次数时触发（在伤害计算前）。
+        /// </summary>
+        AttackDeclared,
         /// <summary>
         /// 单位或玩家的生命值发生改变时触发。
         /// </summary>
@@ -57,6 +84,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// 攻击状态（CanAttack）发生改变时触发。
         /// </summary>
         AttackStateUpdated,
+        /// <summary>
+        /// 玩家的可进化状态发生改变时触发。
+        /// </summary>
+        EvolveStateUpdated,
+        /// <summary>
+        /// 玩家的可超进化状态发生改变时触发。
+        /// </summary>
+        SuperEvolveStateUpdated,
 
         // --- 回合与阶段事件 ---
         /// <summary>
@@ -82,13 +117,29 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         // --- 资源相关事件 ---
         /// <summary>
-        /// 玩家PP（Play Point）发生改变时触发。
+        /// 玩家PP（Play Point）当前值发生改变时触发。
         /// </summary>
         PpUpdated,
         /// <summary>
-        /// 玩家EP（Evolve Point）发生改变时触发。
+        /// 玩家PP（Play Point）最大值发生改变时触发。
+        /// </summary>
+        PpMaxUpdated,
+        /// <summary>
+        /// 玩家EP（Evolve Point）当前值发生改变时触发。
         /// </summary>
         EpUpdated,
+        /// <summary>
+        /// 玩家EP（Evolve Point）最大值发生改变时触发。
+        /// </summary>
+        EpMaxUpdated,
+        /// <summary>
+        /// 玩家SEP（Super Evolve Point）当前值发生改变时触发。
+        /// </summary>
+        SepUpdated,
+        /// <summary>
+        /// 玩家SEP（Super Evolve Point）最大值发生改变时触发。
+        /// </summary>
+        SepMaxUpdated,
         /// <summary>
         /// 玩家牌库数量发生改变时触发。
         /// </summary>
@@ -126,6 +177,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         // --- 游戏流程事件 ---
         /// <summary>
+        /// 玩家使用EP执行了进化动作后触发，用于通知本回合进化权已消耗。
+        /// </summary>
+        PlayerEvolved,
+        /// <summary>
         /// 整场游戏开始时触发。
         /// </summary>
         GameStart,
@@ -158,6 +213,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         EvolveRequested,
         /// <summary>
+        /// 玩家请求超进化时触发。
+        /// </summary>
+        SuperEvolveRequested,
+        /// <summary>
         /// 玩家请求出牌时触发。
         /// </summary>
         PlayCardRequested,
@@ -176,6 +235,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// 倒计时结束时触发。
         /// </summary>
         CountdownFinished,
+        /// <summary>
+        /// 倒计时减少时触发。
+        /// </summary>
+        CountdownTick,
         /// <summary>
         /// 治疗效果时触发。
         /// </summary>
@@ -215,13 +278,38 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         EffectCompleted,
         /// <summary>
-        /// 玩家做出选择时触发。
+        /// An internal event used to resume a transaction with a player's choice.
         /// </summary>
-        PlayerChoiceMade,
+        PlayerChoiceSubmitted,
         /// <summary>
         /// 未知或自定义事件类型。
         /// </summary>
-        Unknown
+        Unknown,
+
+        /// <summary>
+        /// 创建卡牌实例并放置到指定区域（可用于效果生成、调试注入等）。
+        /// </summary>
+        CreateCard,
+
+        /// <summary>
+        /// 一张卡牌成功发动了 Act（启动）能力（用于触发 Activated 能力）。
+        /// </summary>
+        Act,
+
+        /// <summary>
+        /// 玩家请求发动场上卡牌的 Act（启动）能力。
+        /// </summary>
+        ActRequested,
+
+        /// <summary>
+        /// 场上卡牌的 Act 可用性/已使用状态发生变化（用于驱动客户端 UI）。
+        /// </summary>
+        ActStateUpdated,
+
+        /// <summary>
+        /// 融合已结算（用于驱动客户端动画与日志）。
+        /// </summary>
+        CardsFused
     }
 
 

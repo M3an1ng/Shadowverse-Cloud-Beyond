@@ -14,6 +14,8 @@ using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // For AttackEffectParams and AttackTargetType
 using ShadowverseBeyond.Server.Dtos; // For CardZone (assuming it's directly under Dtos)
+using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.System
 {
@@ -25,7 +27,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public Guid RuntimeId => _runtimeId;
         public long DefinitionId => GameConstants.SystemAbilityIds.AttackAbilityId;
         public string Name => "Attack";
-        public string AbilityTag => "System";
+        public EffectKeyword AbilityTag => EffectKeyword.System;
         public AbilityType Type => AbilityType.Triggered;
 
         public TriggerConfig TriggerConfig
@@ -39,7 +41,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             }
         }
 
+        public Guid? SourceCardId { get; set; }
+
         public CardInstance? SourceCard { get; set; }
+
+        public Guid? SourceBuffId => null; // System abilities are not granted by buffs.
+
+        public List<Runtime.Target> Targets => new List<Target>();
 
         public AttackAbility(ILogger<AttackAbility> logger)
         {
@@ -59,12 +67,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             return Task.FromResult(true);
         }
 
-        public Task<bool> CheckConditionsAsync(GameContext context)
+        public bool CheckConditions(GameContext context)
         {
             if (context.TriggeringEvent is not AttackRequestedEvent requestEvent)
             {
                 _logger?.LogWarning("{AbilityName}: Triggering event is not AttackRequestedEvent. Event: {Event}", Name, context.TriggeringEvent?.GetType().Name);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Check if it's the requesting player's turn
@@ -72,14 +80,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Player {RequestingPlayerId} attempted to attack, but it's not their turn (Active: {ActivePlayerId}).",
                     Name, requestEvent.PlayerId, context.CurrentGameState.CurrentPlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             PlayerState? attackerPlayerState = context.CurrentGameState.GetPlayerState(requestEvent.PlayerId);
             if (attackerPlayerState == null)
             {
                 _logger?.LogError("{AbilityName}: Could not find player state for Attacker PlayerId {PlayerId}.", Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             CardInstance? attacker = attackerPlayerState.Field.FirstOrDefault(c => c.InstanceId == requestEvent.ActionDto.AttackerUid);
@@ -95,16 +103,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                 {
                     _logger?.LogWarning("{AbilityName}: Attacker card with UID {AttackerUid} not found on player {PlayerId}'s field or as leader.",
                         Name, requestEvent.ActionDto.AttackerUid, requestEvent.PlayerId);
-                    return Task.FromResult(false);
+                    return false;
                 }
             }
 
+            var target = context.CurrentGameState.FindCardInstance(requestEvent.ActionDto.TargetUid);
+
+            if (target == null)
+            {
+                _logger?.LogWarning("{AbilityName}: Target card with UID {TargetUid} not found.", Name, requestEvent.ActionDto.TargetUid);
+                return false;
+            }
+
             // Use the CardInstance's CanPerformAttack method for detailed checks
-            if (!attacker.CanPerformAttack(context.CurrentGameState, attackerPlayerState))
+            if (!attacker.CanPerformAttack(context.CurrentGameState, attackerPlayerState, target))
             {
                 _logger?.LogWarning("{AbilityName}: Attacker {AttackerName} (UID: {AttackerUid}) cannot perform attack based on its state.",
                    Name, attacker.Name, attacker.InstanceId);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Basic target existence check (target could be a unit or a player leader)
@@ -112,7 +128,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             if (opponentPlayerState == null)
             {
                 _logger?.LogError("{AbilityName}: Could not find opponent for player {PlayerId}.", Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             var targetUid = requestEvent.ActionDto.TargetUid;
@@ -123,7 +139,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Target UID {TargetUid} not found on opponent's field or as their leader.",
                     Name, targetUid);
-                return Task.FromResult(false);
+                return false;
             }
 
             // More specific target validation (e.g., Ward, can't attack friendly unless specified)
@@ -131,16 +147,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
 
             _logger?.LogInformation("{AbilityName}: Conditions met for player {PlayerId} to attack with {AttackerUid} against {TargetUid}.",
                 Name, requestEvent.PlayerId, requestEvent.ActionDto.AttackerUid, requestEvent.ActionDto.TargetUid);
-            return Task.FromResult(true);
+            return true;
         }
 
-        public Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
+        public Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false)
         {
-            _logger?.LogInformation("{AbilityName}: Targets are specified in the AttackRequestedEvent.", Name);
-            return Task.FromResult(new List<TargetInfo>());
+            _logger?.LogInformation("{AbilityName}: Targets are specified in the AttackRequestedEvent and resolved directly in CreateEffectsAsync.", Name);
+            var result = new TargetResolutionResult { Status = ResolutionStatus.Completed };
+            return Task.FromResult(result);
         }
 
-        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, TargetResolutionResult targetResult)
         {
             var effects = new List<Effect>();
 
@@ -150,46 +167,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                 return Task.FromResult(effects);
             }
 
-            // Determine TargetType
-            AttackTargetType targetType;
-            PlayerState? opponentPlayerState = context.CurrentGameState.GetOpponentPlayerState(requestEvent.PlayerId);
-
-            if (opponentPlayerState?.Leader?.InstanceId == requestEvent.ActionDto.TargetUid)
-            {
-                targetType = AttackTargetType.Player;
-            }
-            else
-            {
-                targetType = AttackTargetType.Unit;
-            }
-
-            var attackParams = new AttackEffectParams
-            {
-                AttackerInstanceId = requestEvent.ActionDto.AttackerUid,
-                TargetId = requestEvent.ActionDto.TargetUid,
-                TargetType = targetType
-            };
-
-            var effectConfig = new EffectConfig
-            {
-                Type = "attack", // Corresponds to AttackEffectHandler
-                Parameters = new Dictionary<string, ValueConfig>
-                {
-                    { nameof(AttackEffectParams.AttackerInstanceId), ValueConfig.Static(attackParams.AttackerInstanceId) },
-                    { nameof(AttackEffectParams.TargetId), ValueConfig.Static(attackParams.TargetId) },
-                    { nameof(AttackEffectParams.TargetType), ValueConfig.Static(attackParams.TargetType) }
-                }
-            };
-
             var requestingPlayerId = requestEvent.PlayerId;
             var selectedTargetsForEffect = new List<TargetInfo>();
+            var targetUid = requestEvent.ActionDto.TargetUid;
 
-            // We need to find the target card to add to the TargetInfo list for the effect.
-            var targetCard = context.CurrentGameState.FindCardInstance(requestEvent.ActionDto.TargetUid);
+            // Find the target entity (card or player leader) and create the appropriate TargetInfo.
+            var targetCard = context.CurrentGameState.FindCardInstance(targetUid);
             if (targetCard != null)
             {
                 selectedTargetsForEffect.Add(TargetInfo.ForCard(targetCard));
             }
+            else
+            {
+                var opponentPlayerState = context.CurrentGameState.GetOpponentPlayerState(requestingPlayerId);
+                if (opponentPlayerState?.Leader?.InstanceId == targetUid)
+                {
+                    selectedTargetsForEffect.Add(TargetInfo.ForPlayer(opponentPlayerState));
+                }
+                else
+                {
+                    _logger?.LogError("{AbilityName}: Could not find target with UID {TargetUid} for attack effect.", Name, targetUid);
+                    return Task.FromResult(effects); // Return empty list if target is not found
+                }
+            }
+
+            // The new AttackEffectHandler gets all required info from the context and SelectedTargets.
+            // The parameters in EffectConfig are now for behavioral modifiers, which can be empty for a standard attack.
+            var effectConfig = new EffectConfig
+            {
+                Type = EffectType.Attack, // Corresponds to AttackEffectHandler
+                Parameters = new Dictionary<string, ValueConfig>() // Empty, as we use default behaviors.
+            };
 
             effects.Add(new Effect(
                 effectConfig,
@@ -197,10 +205,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                 selectedTargetsForEffect,
                 this.RuntimeId, // parentAbilityId
                 context.TriggeringEvent?.EventId ?? Guid.Empty, // triggeredEventId
-                requestEvent.ActionDto.AttackerUid // sourceCardId
+                requestEvent.ActionDto.AttackerUid // sourceCardId is the attacker
             ));
-            _logger?.LogInformation("{AbilityName}: Added 'attack' effect for Attacker {AttackerUid} against Target {TargetUid} (Type: {TargetType}).",
-                Name, requestEvent.ActionDto.AttackerUid, requestEvent.ActionDto.TargetUid, targetType);
+
+            _logger?.LogInformation("{AbilityName}: Created 'attack' effect for Attacker {AttackerUid} against Target {TargetUid}.",
+                Name, requestEvent.ActionDto.AttackerUid, targetUid);
 
             return Task.FromResult(effects);
         }

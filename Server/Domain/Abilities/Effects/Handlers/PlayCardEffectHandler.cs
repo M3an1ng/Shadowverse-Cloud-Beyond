@@ -1,75 +1,72 @@
+using System;
+using System.Linq;
 using Microsoft.Extensions.Logging;
-using AutoMapper;
-using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
-
-using ShadowverseBeyond.Server.Domain.Events;
-using ShadowverseBeyond.Server.Domain.Constants;
-using ShadowverseBeyond.Server.Dtos;
-using ShadowverseBeyond.Server.Dtos.Enums;
-using ShadowverseBeyond.Server.Services;
-using ShadowverseBeyond.Server.Services.Abstractions;
-using ShadowverseBeyond.Server.Exceptions;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
     /// <summary>
-    /// 【重构】出牌效果处理器。
-    /// 此处理器遵循新的架构，使用 ITargetProcessingService 来处理作为目标的玩家，
-    /// 并调用 PlayerState 中新增的领域方法 ExecutePlayCard 来执行核心逻辑。
+    /// 出牌效果处理器。
+    /// 此处理器遵循标准效果处理流程，对目标玩家执行出牌操作。
     /// </summary>
+    [EffectHandler(EffectType.Play)]
     public class PlayCardEffectHandler : EffectHandlerBase<PlayCardEffectParams>
     {
-        private readonly IGameDataProvider _gameDataProvider;
         private readonly ITargetProcessingService _targetProcessingService;
 
-        public PlayCardEffectHandler(
-            ILogger<PlayCardEffectHandler> logger,
-            IGameDataProvider gameDataProvider,
-            ITargetProcessingService targetProcessingService)
+        public PlayCardEffectHandler(ILogger<PlayCardEffectHandler> logger, ITargetProcessingService targetProcessingService)
             : base(logger)
         {
-            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, PlayCardEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, PlayCardEffectParams parameters)
         {
             const string effectName = "PlayCardEffect";
 
-            var playerState = context.RequestingPlayer;
-            if (playerState == null)
-                return new GameStateActionResult { Success = false, ErrorMessage = "Requesting player not found." };
-
-            var cardInHand = playerState.Hand.FirstOrDefault(c => c.InstanceId == parameters.CardInstanceId);
-            if (cardInHand == null)
-                return new GameStateActionResult { Success = false, ErrorMessage = "Card not found in hand." };
-
-
-            // 定义对目标（玩家）执行的操作
-            Func<PlayerState, GameContext, Task<DomainOperationResult>> playerAction =
-                async (player, ctx) =>
+            Func<TargetInfo, GameContext, DomainOperationResult> playCardAction =
+                (targetInfo, ctx) =>
                 {
+                    if (targetInfo.Type != Common.TargetType.Player || targetInfo.Player == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Target is not a player or player data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "PlayCard effect can only be applied to players." };
+                    }
 
-                    // 调用PlayerState中的新领域方法
-                    var operationResult = player.ExecutePlayCard(cardInHand);
+                    var playerState = targetInfo.Player;
+                    var cardInHand = playerState.Hand.FirstOrDefault(c => c.InstanceId == parameters.CardInstanceId);
+                    if (cardInHand == null)
+                    {
+                        return new DomainOperationResult { Success = false, ErrorMessage = $"Card with InstanceId {parameters.CardInstanceId} not found in hand for player {playerState.PlayerId}." };
+                    }
 
-                    await Task.CompletedTask;
-
-                    return operationResult;
+                    var result = new DomainOperationResult();
+                    var evt = new PlayCardEvent(playerState, cardInHand);
+                    result.GeneratedEvents.Add(evt);
+                    result.Success = true;
+                    return result;
                 };
 
-            // 使用服务来处理这个单一的玩家目标
-            return await _targetProcessingService.ProcessTargetsAsync(
+            var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                playerAction,
-                null, // No card action
+                effect.SelectedTargets,
+                playCardAction,
                 effectName);
+
+            if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
+            {
+                serviceResult.ErrorMessage = "Failed to process targets for play card effect, or no valid targets found.";
+            }
+
+            return serviceResult;
         }
-
-
     }
 }

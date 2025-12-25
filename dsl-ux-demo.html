@@ -1,0 +1,1064 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DSL 可视化编辑器风格 Demo</title>
+    <style>
+      :root{
+        --bg:#0b1220; --panel:#111a2e; --text:#f3f5ff; --muted:#b8c1e0;
+        --line:rgba(255,255,255,.12); --brand:#7c3aed; --brand2:#22c55e;
+        --danger:#ef4444; --shadow:0 18px 50px rgba(0,0,0,.35);
+        --r:14px; --r2:10px;
+        --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+        --sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,"Noto Sans","Liberation Sans",sans-serif;
+      }
+      *{ box-sizing:border-box; }
+      body{
+        margin:0; font-family:var(--sans); color:var(--text);
+        background:
+          radial-gradient(1000px 600px at 25% 0%, rgba(124,58,237,.28), transparent 60%),
+          radial-gradient(900px 560px at 75% 10%, rgba(34,197,94,.18), transparent 55%),
+          linear-gradient(180deg, #050813 0%, var(--bg) 45%, #050813 100%);
+      }
+      .wrap{ max-width:1100px; margin:0 auto; padding:26px 16px 56px; }
+      header{ display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:14px; }
+      h1{ margin:0; font-size:18px; letter-spacing:.2px; }
+      .sub{ color:var(--muted); font-size:12px; line-height:1.6; margin-top:6px; }
+      .badge{ display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line);
+        border-radius:999px; background:rgba(255,255,255,.04); color:var(--muted); font-size:12px; white-space:nowrap; }
+      .dot{ width:8px; height:8px; border-radius:999px; background:var(--brand2); box-shadow:0 0 0 6px rgba(34,197,94,.14); }
+      .tabs{ display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+      .tab{ cursor:pointer; user-select:none; padding:10px 12px; border-radius:999px; font-size:13px;
+        border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--muted); transition:.15s ease; }
+      .tab:hover{ transform:translateY(-1px); border-color:rgba(255,255,255,.2); }
+      .tab.active{ color:var(--text); border-color:rgba(124,58,237,.55); background:rgba(124,58,237,.18); box-shadow:0 10px 22px rgba(124,58,237,.14); }
+      .grid{ display:grid; grid-template-columns: 1.35fr 1fr; gap:12px; }
+      @media (max-width: 980px){ .grid{ grid-template-columns:1fr; } }
+      .panel{ border:1px solid var(--line); background:rgba(255,255,255,.05); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
+      .panel .hd{ padding:14px 14px 12px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.03); display:flex; justify-content:space-between; gap:12px; }
+      .panel .hd h2{ margin:0; font-size:13px; }
+      .panel .hd .hint{ color:var(--muted); font-size:12px; }
+      .panel .bd{ padding:14px; }
+      .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+      .pill{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--muted); font-size:12px; }
+      .pill strong{ color:var(--text); font-weight:600; }
+      .btn{ cursor:pointer; user-select:none; border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--text);
+        border-radius:10px; padding:9px 11px; font-size:13px; transition:.15s ease; }
+      .btn:hover{ transform:translateY(-1px); border-color:rgba(255,255,255,.2); }
+      .btn.primary{ border-color:rgba(124,58,237,.55); background:rgba(124,58,237,.18); }
+      .btn.danger{ border-color:rgba(239,68,68,.55); background:rgba(239,68,68,.12); }
+      select, input[type="text"], input[type="number"]{
+        background:rgba(255,255,255,.05); border:1px solid var(--line); color:var(--text);
+        border-radius:10px; padding:9px 10px; font-size:13px; outline:none;
+      }
+      .help{ color:var(--muted); font-size:12px; line-height:1.65; margin-top:10px; }
+      .preview{ margin-top:10px; border:1px dashed rgba(255,255,255,.18); background:rgba(0,0,0,.18); border-radius:var(--r2); padding:10px; }
+      .preview .label{ color:var(--muted); font-size:12px; margin-bottom:6px; }
+      .code{ font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.82); padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(0,0,0,.25); overflow:auto; }
+      .hidden{ display:none !important; }
+      .chips{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+      .chip{ cursor:pointer; user-select:none; border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--text);
+        border-radius:999px; padding:7px 10px; font-size:13px; transition:.15s ease; }
+      .chip:hover{ transform:translateY(-1px); border-color:rgba(255,255,255,.2); }
+      .chip.active{ border-color:rgba(124,58,237,.55); background:rgba(124,58,237,.18); }
+      .crumb{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:12px; margin-bottom:10px; }
+      .crumb .seg{ border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.04); border-radius:999px; padding:5px 8px; }
+      .kv{ display:grid; grid-template-columns: 120px 1fr; gap:8px 12px; font-size:12px; color:var(--muted); }
+      .kv .v{ color:rgba(255,255,255,.88); }
+      details summary{ cursor:pointer; color:var(--muted); font-size:12px; }
+      .tree{ border:1px solid rgba(255,255,255,.12); background:rgba(0,0,0,.14); border-radius:12px; padding:12px; }
+      .node{ border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.04); border-radius:12px; padding:10px; }
+      .node + .node{ margin-top:10px; }
+      .slot{ cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:6px 9px; border:1px dashed rgba(255,255,255,.22);
+        background:rgba(255,255,255,.03); border-radius:999px; font-size:12px; color:rgba(255,255,255,.8); }
+      .slot:hover{ border-color:rgba(124,58,237,.55); }
+      .mini{ font-size:11px; color:var(--muted); }
+
+      .segbtn{ display:inline-flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; }
+      .segbtn button{
+        cursor:pointer; user-select:none; border:0; background:rgba(255,255,255,.04); color:var(--muted);
+        padding:7px 10px; font-size:12px;
+      }
+      .segbtn button + button{ border-left:1px solid var(--line); }
+      .segbtn button.active{ color:var(--text); background:rgba(124,58,237,.18); }
+      .tag{
+        display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:999px;
+        border:1px solid rgba(124,58,237,.45); background:rgba(124,58,237,.14); color:rgba(255,255,255,.92);
+        font-size:12px;
+      }
+      .tag .k{ color:rgba(255,255,255,.75); font-size:11px; }
+
+      .modal-backdrop{
+        position:fixed; inset:0; background:rgba(0,0,0,.55);
+        display:none; align-items:center; justify-content:center; padding:18px;
+      }
+      .modal-backdrop.open{ display:flex; }
+      .modal{
+        width:min(880px, 100%);
+        border:1px solid rgba(255,255,255,.14);
+        background:linear-gradient(180deg, rgba(20,28,52,.95) 0%, rgba(12,18,32,.96) 100%);
+        border-radius:16px;
+        box-shadow: 0 26px 80px rgba(0,0,0,.55);
+        overflow:hidden;
+      }
+      .modal .mh{
+        padding:14px 14px 12px;
+        border-bottom:1px solid rgba(255,255,255,.12);
+        display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+        background:rgba(255,255,255,.03);
+      }
+      .modal .mh h3{ margin:0; font-size:14px; }
+      .modal .mh .sub{ margin-top:6px; }
+      .modal .mb{ padding:14px; display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+      @media (max-width: 860px){ .modal .mb{ grid-template-columns: 1fr; } }
+      .optlist{ display:grid; gap:8px; }
+      .opt{
+        cursor:pointer; user-select:none;
+        border:1px solid rgba(255,255,255,.12);
+        background:rgba(255,255,255,.04);
+        border-radius:12px;
+        padding:10px;
+        transition:.15s ease;
+      }
+      .opt:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.20); }
+      .opt.active{ border-color: rgba(124,58,237,.55); background: rgba(124,58,237,.16); }
+      .opt .t{ font-size:13px; font-weight:600; }
+      .opt .d{ color:var(--muted); font-size:12px; margin-top:6px; line-height:1.55; }
+      .fake-dsl{
+        border:1px dashed rgba(255,255,255,.16);
+        background:rgba(0,0,0,.18);
+        border-radius:12px;
+        padding:12px;
+      }
+      .fake-dsl .top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .fake-dsl .top .tt{ font-size:13px; font-weight:600; }
+      .fake-dsl .chips{ margin-top:10px; }
+      .fake-dsl .chips .chip{ font-size:12px; padding:6px 9px; }
+      .modal .mf{
+        padding:12px 14px;
+        border-top:1px solid rgba(255,255,255,.12);
+        display:flex; justify-content:flex-end; gap:8px; background:rgba(255,255,255,.03);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div>
+          <h1>DSL 可视化编辑器风格 Demo（不实现完整逻辑）</h1>
+          <div class="sub">目标：展示 4 种成熟交互风格的外观与体验路径（面向普通玩家，不默认暴露 DSL）。</div>
+        </div>
+        <div class="badge"><span class="dot"></span>纯前端静态 Demo</div>
+      </header>
+
+      <div class="tabs" id="tabs">
+        <div class="tab active" data-view="rule">规则构建器</div>
+        <div class="tab" data-view="query">查询构建器</div>
+        <div class="tab" data-view="chips">中文片段 + 侧栏</div>
+        <div class="tab" data-view="drill">逐级展开</div>
+      </div>
+
+      <section class="grid" data-view-section="rule">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>规则构建器（升级示意）：支持 且/或 条件组 + 动态值（用 DSL 子编辑器填槽位）</h2>
+              <div class="hint">玩家只看中文；动态值/公式通过“值槽位编辑器”完成</div>
+            </div>
+            <div class="pill"><strong>输出</strong> 布尔</div>
+          </div>
+          <div class="bd">
+            <div class="row">
+              <span class="pill"><strong>当</strong> 满足以下条件：</span>
+              <button class="btn primary" id="ruleAdd">+ 添加条件</button>
+              <button class="btn" id="ruleAddGroup">+ 添加条件组</button>
+              <button class="btn" id="ruleReset">重置示例</button>
+            </div>
+            <div class="help">升级点：每个“值”不只常量输入，还能选择动态值/公式（弹窗内用现有 DslEditor 的能力，但仅针对该槽位，且强制 expectedType）。同时支持条件组的 且/或 切换与嵌套。</div>
+            <div id="ruleTree" style="margin-top:12px;"></div>
+            <div class="preview">
+              <div class="label">中文预览（示例）</div>
+              <div id="ruleCn" style="font-size:13px; line-height:1.6;">当（【伤害量】大于【3】且【目标.费用】大于等于【2】）时</div>
+              <details style="margin-top:10px;">
+                <summary>开发者预览（可选）：内部 DSL（仅演示）</summary>
+                <div class="code" id="ruleDsl">eventInt("amount") &gt; 3 && self.Cost &gt;= 2</div>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>设计要点</h2>
+              <div class="hint">为何更适合普通玩家</div>
+            </div>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <div>心智模型</div><div class="v">像“筛选器/规则设置”，不是“写代码”</div>
+              <div>错误体验</div><div class="v">就地提示（该字段只能填数字/布尔）</div>
+              <div>扩展方式</div><div class="v">字段选择器 + 条件组（且/或）+ 模板</div>
+              <div>兜底</div><div class="v">极少数复杂表达式再进入“逐级展开”</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid hidden" data-view-section="query">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>查询构建器（Query Builder）：卡池 → 筛选 → 排序 → 数量</h2>
+              <div class="hint">适合：目标列表 List&lt;卡牌&gt; 的链式操作</div>
+            </div>
+            <div class="pill"><strong>输出</strong> 目标列表</div>
+          </div>
+          <div class="bd">
+            <div class="row">
+              <span class="pill"><strong>从</strong></span>
+              <select id="qbSource">
+                <option>敌方随从</option>
+                <option>我方随从</option>
+                <option>我方手牌</option>
+              </select>
+              <span class="pill"><strong>中选择</strong></span>
+            </div>
+
+            <div style="margin-top:12px;">
+              <div class="panel" style="box-shadow:none;">
+                <div class="hd">
+                  <div>
+                    <h2>筛选条件</h2>
+                    <div class="hint">复用规则构建器风格（演示）</div>
+                  </div>
+                  <button class="btn primary" id="qbAdd">+ 添加筛选</button>
+                </div>
+                <div class="bd" id="qbFilters"></div>
+              </div>
+            </div>
+
+            <div class="row" style="margin-top:12px;">
+              <span class="pill"><strong>排序</strong></span>
+              <select id="qbSortField">
+                <option value="cost">费用</option>
+                <option value="attack">攻击力</option>
+                <option value="hp">生命值</option>
+              </select>
+              <select id="qbSortDir">
+                <option value="asc">升序</option>
+                <option value="desc">降序</option>
+              </select>
+              <span class="pill"><strong>取前</strong></span>
+              <input id="qbTake" type="number" min="1" max="10" value="2" />
+              <span class="pill">个</span>
+            </div>
+
+            <div class="preview">
+              <div class="label">中文预览（示例）</div>
+              <div id="qbCn" style="font-size:13px; line-height:1.6;">从【敌方随从】中，筛选【费用 ≥ 2】且【攻击力 ≥ 3】，按【费用 升序】排序，取前【2】个</div>
+              <details style="margin-top:10px;">
+                <summary>开发者预览（可选）：内部 DSL（仅演示）</summary>
+                <div class="code" id="qbDsl">enemyMinions.query((self.Cost &gt;= 2 && self.Attack &gt;= 3)).orderBy(self.Cost).take(2)</div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>设计要点</h2>
+              <div class="hint">把“链式 DSL”变成“步骤 UI”</div>
+            </div>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <div>领域语言</div><div class="v">筛选/排序/数量 是玩家可理解的动作</div>
+              <div>一致性</div><div class="v">每一步都有固定 UI，不需要理解链式调用</div>
+              <div>可解释</div><div class="v">中文预览可直接用作确认文本</div>
+              <div>复用</div><div class="v">筛选条件仍然复用“规则构建器”</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid hidden" data-view-section="chips">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>中文片段（Chips）+ 侧栏：就地编辑</h2>
+              <div class="hint">适合：快速修改局部，不钻入子编辑器</div>
+            </div>
+            <div class="pill"><strong>输出</strong> 布尔</div>
+          </div>
+          <div class="bd">
+            <div class="crumb" id="chipCrumb">
+              <span class="seg">条件</span>
+              <span class="seg">组 #1（且）</span>
+              <span class="seg">选中：未选择</span>
+            </div>
+            <div class="chips" id="chipLine"></div>
+            <div class="help">玩家看到的是“中文片段”，点击片段后在右侧替换字段/运算符/值。成熟实现会加搜索、最近使用、模板、即时校验。</div>
+            <div class="preview">
+              <div class="label">中文预览（示例）</div>
+              <div id="chipCn" style="font-size:13px; line-height:1.6;">当【伤害量】大于【3】且【目标.费用】大于等于【2】时</div>
+              <details style="margin-top:10px;">
+                <summary>开发者预览（可选）：内部 DSL（仅演示）</summary>
+                <div class="code" id="chipDsl">eventInt("amount") &gt; 3 && self.Cost &gt;= 2</div>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>侧栏编辑（示意）</h2>
+              <div class="hint">点击左侧片段后更新</div>
+            </div>
+          </div>
+          <div class="bd">
+            <div class="kv" id="chipMeta">
+              <div>当前片段</div><div class="v">未选择</div>
+              <div>期望类型</div><div class="v">—</div>
+              <div>说明</div><div class="v">—</div>
+            </div>
+            <div class="row" style="margin-top:12px;">
+              <button class="btn" data-chip-action="field">替换字段</button>
+              <button class="btn" data-chip-action="op">替换运算符</button>
+              <button class="btn" data-chip-action="value">替换数值</button>
+            </div>
+            <div class="row" id="chipEditor" style="margin-top:10px;"></div>
+            <div class="help">成熟实现里，这个侧栏通常会显示：字段说明、类型要求、示例值、错误提示、以及一键模板。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid hidden" data-view-section="drill">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>逐级展开（Drill-down）：按槽位进入子编辑</h2>
+              <div class="hint">适合：复杂表达式/强约束；但玩家步骤偏多</div>
+            </div>
+            <div class="pill"><strong>输出</strong> 任意</div>
+          </div>
+          <div class="bd">
+            <div class="crumb">
+              <span class="seg">主表达式</span>
+              <span class="seg">点击槽位进入编辑</span>
+            </div>
+            <div class="tree">
+              <div class="node">
+                <div class="row" style="justify-content:space-between;">
+                  <div><strong style="font-size:13px;">节点：筛选（.query）</strong></div>
+                  <span class="pill"><strong>返回</strong> 目标列表</span>
+                </div>
+                <div class="row" style="margin-top:10px;">
+                  <span class="slot" data-drill-slot="source">源集合 <span class="mini">（List&lt;卡牌&gt;）</span></span>
+                  <span class="slot" data-drill-slot="predicate">筛选条件 <span class="mini">（必须为布尔）</span></span>
+                </div>
+              </div>
+              <div class="node">
+                <div class="row" style="justify-content:space-between;">
+                  <div><strong style="font-size:13px;">节点：比较（&gt;=）</strong></div>
+                  <span class="pill"><strong>返回</strong> 布尔</span>
+                </div>
+                <div class="row" style="margin-top:10px;">
+                  <span class="slot" data-drill-slot="left">左值 <span class="mini">（数字）</span></span>
+                  <span class="slot" data-drill-slot="right">右值 <span class="mini">（数字）</span></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="preview">
+              <div class="label">中文预览（示例）</div>
+              <div style="font-size:13px; line-height:1.6;">从【敌方随从】中筛选（【当前项.费用】≥【2】）</div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h2>子编辑器工作区（示意）</h2>
+              <div class="hint">展示“进入槽位 → 构建 → 保存 → 返回”</div>
+            </div>
+          </div>
+          <div class="bd">
+            <div class="pill" id="drillHint"><strong>当前槽位</strong> 未选择</div>
+            <div class="help">成熟产品若保留逐级展开，必须配套：面包屑、清晰的“我在编辑哪个槽位”、撤销/重做、以及尽量的就地替换，减少用户迷失。</div>
+            <div class="row" style="margin-top:12px;">
+              <button class="btn" id="drillPickField">选择字段</button>
+              <button class="btn" id="drillPickOp">选择运算符</button>
+              <button class="btn" id="drillPickValue">输入值</button>
+              <button class="btn primary" id="drillSave">保存当前层</button>
+            </div>
+            <div class="preview">
+              <div class="label">当前工作区（示意）</div>
+              <div id="drillWorkspace" style="font-size:13px; line-height:1.6;">（空）</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 动态值/公式：槽位级编辑器弹窗（风格演示） -->
+    <div class="modal-backdrop" id="dynModal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dynTitle">
+        <div class="mh">
+          <div>
+            <h3 id="dynTitle">选择动态值 / 公式（槽位编辑）</h3>
+            <div class="sub" id="dynSub">此处应嵌入现有 DslEditor（仅编辑一个值槽位，并强制 expectedType）</div>
+          </div>
+          <button class="btn danger" id="dynClose">关闭</button>
+        </div>
+        <div class="mb">
+          <div>
+            <div class="pill"><strong>可选项</strong>（示例）</div>
+            <div class="help">真实实现中，这里来自 metadata：触发事件字段、上下文字段、可用函数（按 expectedType 过滤）。</div>
+            <div class="optlist" id="dynOptions"></div>
+          </div>
+          <div>
+            <div class="pill"><strong>预览</strong></div>
+            <div class="preview">
+              <div class="label">中文显示</div>
+              <div id="dynCn" style="font-size:13px; line-height:1.6;">（未选择）</div>
+              <details style="margin-top:10px;">
+                <summary>开发者预览（可选）：内部 DSL（仅演示）</summary>
+                <div class="code" id="dynDsl">(none)</div>
+              </details>
+            </div>
+            <div class="fake-dsl" style="margin-top:12px;">
+              <div class="top">
+                <div class="tt">可视化公式编辑器（示意）</div>
+                <div class="pill"><strong>期望类型</strong> <span id="dynExpected">数字</span></div>
+              </div>
+              <div class="help">这里展示的是“风格”：节点/槽位/chips + 候选项。真实实现可直接复用你们当前的 DslEditor 组件并传 expectedType。</div>
+              <div class="chips" style="margin-top:10px;">
+                <span class="chip">触发事件.伤害量</span>
+                <span class="pill"><strong>+</strong></span>
+                <span class="chip">2</span>
+                <span class="pill"><strong>=</strong></span>
+                <span class="tag"><span class="k">结果</span> 数字</span>
+              </div>
+              <div class="row" style="margin-top:10px;">
+                <button class="btn">选择字段</button>
+                <button class="btn">选择函数</button>
+                <button class="btn">输入常量</button>
+                <button class="btn primary">应用到槽位</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mf">
+          <button class="btn" id="dynCancel">取消</button>
+          <button class="btn primary" id="dynApply">应用</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ---- tabs ----
+      const tabs = document.getElementById('tabs');
+      const sections = Array.from(document.querySelectorAll('[data-view-section]'));
+      tabs.addEventListener('click', (e) => {
+        const t = e.target.closest('.tab');
+        if (!t) return;
+        const view = t.dataset.view;
+        document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+        sections.forEach(s => s.classList.toggle('hidden', s.dataset.viewSection !== view));
+      });
+
+      // ---- Rule builder (upgraded demo) ----
+      const ruleTree = document.getElementById('ruleTree');
+
+      const rbFields = [
+        { id:'evt_amount', label:'伤害量', type:'number', dsl:'eventInt("amount")', desc:'触发事件（输入字段）' },
+        { id:'evt_heal', label:'治疗量', type:'number', dsl:'eventInt("heal")', desc:'触发事件（输入字段）' },
+        { id:'self_cost', label:'目标.费用', type:'number', dsl:'self.Cost', desc:'目标（self）字段' },
+        { id:'self_attack', label:'目标.攻击力', type:'number', dsl:'self.Attack', desc:'目标（self）字段' },
+        { id:'self_isFollower', label:'目标.是否随从', type:'bool', dsl:'self.IsFollower', desc:'目标（self）字段' }
+      ];
+
+      const rbOpsNumber = [
+        { id:'gt', label:'大于', cn:'>', dsl:'>' },
+        { id:'gte', label:'大于等于', cn:'≥', dsl:'>=' },
+        { id:'lt', label:'小于', cn:'<', dsl:'<' },
+        { id:'eq', label:'等于', cn:'=', dsl:'==' }
+      ];
+      const rbOpsBool = [
+        { id:'isTrue', label:'为真', cn:'为真', dsl:'== true' },
+        { id:'isFalse', label:'为假', cn:'为假', dsl:'== false' }
+      ];
+
+      const dynModal = document.getElementById('dynModal');
+      const dynOptionsEl = document.getElementById('dynOptions');
+      const dynCnEl = document.getElementById('dynCn');
+      const dynDslEl = document.getElementById('dynDsl');
+      const dynExpectedEl = document.getElementById('dynExpected');
+      const dynSubEl = document.getElementById('dynSub');
+      let dynEditingRow = null;
+      let dynSelected = null;
+
+      const rbDynamicOptions = [
+        { id:'opt_evt_amount', cn:'触发事件.伤害量', dsl:'eventInt("amount")', desc:'从触发事件读取字段（输入）' },
+        { id:'opt_evt_heal', cn:'触发事件.治疗量', dsl:'eventInt("heal")', desc:'从触发事件读取字段（输入）' },
+        { id:'opt_self_cost', cn:'目标.费用', dsl:'self.Cost', desc:'从目标（self）读取字段' },
+        { id:'opt_calc_add2', cn:'触发事件.伤害量 + 2', dsl:'(eventInt("amount") + 2)', desc:'公式模板（示例）' },
+        { id:'opt_calc_min', cn:'取较小值(触发事件.伤害量, 目标.费用)', dsl:'min(eventInt("amount"), self.Cost)', desc:'函数模板（示例）' }
+      ];
+
+      function createSegButton() {
+        const wrap = document.createElement('span');
+        wrap.className = 'segbtn';
+        const a = document.createElement('button');
+        const b = document.createElement('button');
+        a.type = b.type = 'button';
+        a.textContent = '常量';
+        b.textContent = '动态';
+        wrap.appendChild(a);
+        wrap.appendChild(b);
+        return { wrap, a, b };
+      }
+
+      function createConditionRow({ fieldId='evt_amount', opId='gt', rhs=null, onChange = () => {} } = {}) {
+        const row = document.createElement('div');
+        row.className = 'row cond-row';
+        row.style.alignItems = 'center';
+        row.__onChange = onChange;
+
+        const fs = document.createElement('select');
+        rbFields.forEach(f => {
+          const o = document.createElement('option');
+          o.value = f.id;
+          o.textContent = f.label;
+          fs.appendChild(o);
+        });
+        fs.value = fieldId;
+
+        const os = document.createElement('select');
+
+        const valueSlot = document.createElement('span');
+        valueSlot.className = 'row';
+        valueSlot.style.gap = '8px';
+
+        const seg = createSegButton();
+        valueSlot.appendChild(seg.wrap);
+
+        const constInput = document.createElement('input');
+        constInput.type = 'number';
+        constInput.value = rhs?.mode === 'const' ? (rhs.value ?? '1') : '3';
+
+        const dynTag = document.createElement('span');
+        dynTag.className = 'tag';
+        dynTag.innerHTML = `<span class="k">动态值</span><span class="v">（未选择）</span>`;
+        dynTag.style.display = 'none';
+
+        const dynEdit = document.createElement('button');
+        dynEdit.className = 'btn';
+        dynEdit.type = 'button';
+        dynEdit.textContent = '编辑动态值…';
+        dynEdit.style.display = 'none';
+
+        const dynClear = document.createElement('button');
+        dynClear.className = 'btn danger';
+        dynClear.type = 'button';
+        dynClear.textContent = '清除';
+        dynClear.style.display = 'none';
+
+        valueSlot.appendChild(constInput);
+        valueSlot.appendChild(dynTag);
+        valueSlot.appendChild(dynEdit);
+        valueSlot.appendChild(dynClear);
+
+        const del = document.createElement('button');
+        del.className = 'btn danger';
+        del.type = 'button';
+        del.textContent = '删除';
+
+        function setMode(mode) {
+          row.dataset.valueMode = mode;
+          seg.a.classList.toggle('active', mode === 'const');
+          seg.b.classList.toggle('active', mode === 'dyn');
+
+          constInput.style.display = mode === 'const' ? '' : 'none';
+          dynTag.style.display = mode === 'dyn' ? '' : 'none';
+          dynEdit.style.display = mode === 'dyn' ? '' : 'none';
+          dynClear.style.display = mode === 'dyn' ? '' : 'none';
+          onChange();
+        }
+
+        function refreshOps() {
+          const f = rbFields.find(x => x.id === fs.value);
+          const isBool = f?.type === 'bool';
+          const list = isBool ? rbOpsBool : rbOpsNumber;
+          os.innerHTML = '';
+          list.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.id;
+            opt.textContent = o.label;
+            os.appendChild(opt);
+          });
+          os.value = list.some(o => o.id === opId) ? opId : list[0].id;
+
+          // bool：默认隐藏值槽位（“为真/为假”）
+          valueSlot.style.display = isBool ? 'none' : '';
+
+          // expectedType（演示）：数字
+          if (!isBool) {
+            dynExpectedEl.textContent = '数字';
+          }
+
+          onChange();
+        }
+
+        function setDynamicValue(opt) {
+          row.dataset.dynamicCn = opt?.cn || '';
+          row.dataset.dynamicDsl = opt?.dsl || '';
+          dynTag.innerHTML = `<span class="k">动态值</span><span class="v">${opt?.cn || '（未选择）'}</span>`;
+          onChange();
+        }
+
+        // init mode and value
+        seg.a.addEventListener('click', () => setMode('const'));
+        seg.b.addEventListener('click', () => setMode('dyn'));
+
+        dynEdit.addEventListener('click', () => {
+          dynEditingRow = row;
+          openDynModalForRow(row);
+        });
+        dynClear.addEventListener('click', () => {
+          setMode('const');
+          setDynamicValue(null);
+        });
+
+        del.addEventListener('click', () => {
+          row.remove();
+          onChange();
+        });
+
+        fs.addEventListener('change', () => refreshOps());
+        os.addEventListener('change', () => onChange());
+        constInput.addEventListener('input', () => onChange());
+
+        row.appendChild(fs);
+        row.appendChild(os);
+        row.appendChild(valueSlot);
+        row.appendChild(del);
+
+        // apply rhs init
+        if (rhs?.mode === 'dyn') {
+          setMode('dyn');
+          setDynamicValue({ cn: rhs.cn || '（未选择）', dsl: rhs.dsl || '' });
+        } else {
+          setMode('const');
+        }
+        refreshOps();
+        return row;
+      }
+
+      function createGroup({ mode='AND', isRoot=false, onChange = () => {} } = {}) {
+        const box = document.createElement('div');
+        box.className = 'panel rb-group';
+        box.style.boxShadow = 'none';
+        box.style.borderRadius = '12px';
+        box.style.overflow = 'hidden';
+        box.dataset.groupMode = mode;
+        box.__onChange = onChange;
+
+        const hd = document.createElement('div');
+        hd.className = 'hd';
+        const left = document.createElement('div');
+        left.innerHTML = `<h2>条件组（${mode === 'AND' ? '且' : '或'}）</h2><div class="hint">组内条件以 ${mode === 'AND' ? '且' : '或'} 连接</div>`;
+        const right = document.createElement('div');
+        right.className = 'row';
+
+        const toggle = document.createElement('button');
+        toggle.className = 'btn';
+        toggle.type = 'button';
+        toggle.textContent = `切换为：${mode === 'AND' ? '或' : '且'}`;
+
+        const addCond = document.createElement('button');
+        addCond.className = 'btn primary';
+        addCond.type = 'button';
+        addCond.textContent = '+ 条件';
+
+        const addGrp = document.createElement('button');
+        addGrp.className = 'btn';
+        addGrp.type = 'button';
+        addGrp.textContent = '+ 子组';
+
+        const delGrp = document.createElement('button');
+        delGrp.className = 'btn danger';
+        delGrp.type = 'button';
+        delGrp.textContent = '删除组';
+        delGrp.style.display = isRoot ? 'none' : '';
+
+        right.appendChild(toggle);
+        right.appendChild(addCond);
+        right.appendChild(addGrp);
+        right.appendChild(delGrp);
+        hd.appendChild(left);
+        hd.appendChild(right);
+
+        const bd = document.createElement('div');
+        bd.className = 'bd';
+
+        function updateHeader() {
+          const m = box.dataset.groupMode;
+          left.querySelector('h2').textContent = `条件组（${m === 'AND' ? '且' : '或'}）`;
+          left.querySelector('.hint').textContent = `组内条件以 ${m === 'AND' ? '且' : '或'} 连接`;
+          toggle.textContent = `切换为：${m === 'AND' ? '或' : '且'}`;
+        }
+
+        toggle.addEventListener('click', () => {
+          box.dataset.groupMode = box.dataset.groupMode === 'AND' ? 'OR' : 'AND';
+          updateHeader();
+          onChange();
+        });
+        addCond.addEventListener('click', () => {
+          bd.appendChild(createConditionRow({ fieldId:'self_attack', opId:'gte', rhs:{ mode:'const', value:'3' }, onChange }));
+          onChange();
+        });
+        addGrp.addEventListener('click', () => {
+          bd.appendChild(createGroup({ mode:'AND', isRoot:false, onChange }));
+          onChange();
+        });
+        delGrp.addEventListener('click', () => {
+          box.remove();
+          onChange();
+        });
+
+        box.appendChild(hd);
+        box.appendChild(bd);
+        return box;
+      }
+
+      function compileConditionRow(row) {
+        const selects = row.querySelectorAll('select');
+        const fs = selects[0];
+        const os = selects[1];
+        const f = rbFields.find(x => x.id === fs.value) || rbFields[0];
+        const isBool = f.type === 'bool';
+        const opList = isBool ? rbOpsBool : rbOpsNumber;
+        const op = opList.find(x => x.id === os.value) || opList[0];
+
+        if (isBool) {
+          return {
+            cn: `【${f.label}】${op.label}`,
+            dsl: `${f.dsl} ${op.dsl}`
+          };
+        }
+
+        const mode = row.dataset.valueMode || 'const';
+        if (mode === 'dyn') {
+          const cn = row.dataset.dynamicCn || '（未选择）';
+          const dsl = row.dataset.dynamicDsl || '(none)';
+          return { cn: `【${f.label}】${op.label}【${cn}】`, dsl: `${f.dsl} ${op.dsl} ${dsl}` };
+        }
+
+        const input = row.querySelector('input');
+        const v = (input?.value ?? '').toString().trim() || '…';
+        return { cn: `【${f.label}】${op.label}【${v}】`, dsl: `${f.dsl} ${op.dsl} ${v}` };
+      }
+
+      function compileGroup(groupEl) {
+        const mode = groupEl.dataset.groupMode || 'AND';
+        const joinCn = mode === 'AND' ? '且' : '或';
+        const joinDsl = mode === 'AND' ? ' && ' : ' || ';
+
+        const partsCn = [];
+        const partsDsl = [];
+
+        const children = Array.from(groupEl.querySelector(':scope > .bd').children);
+        for (const ch of children) {
+          if (ch.classList.contains('cond-row')) {
+            const c = compileConditionRow(ch);
+            partsCn.push(c.cn);
+            partsDsl.push(c.dsl);
+          } else if (ch.classList.contains('rb-group')) {
+            const g = compileGroup(ch);
+            partsCn.push(`（${g.cn}）`);
+            partsDsl.push(`(${g.dsl})`);
+          }
+        }
+
+        return {
+          cn: partsCn.join(joinCn) || '（空）',
+          dsl: partsDsl.join(joinDsl) || '(empty)'
+        };
+      }
+
+      function refreshRulePreview() {
+        const root = ruleTree.querySelector('.rb-group');
+        if (!root) return;
+        const g = compileGroup(root);
+        document.getElementById('ruleCn').textContent = `当（${g.cn}）时`;
+        document.getElementById('ruleDsl').textContent = g.dsl;
+      }
+
+      function openDynModalForRow(row) {
+        dynSelected = null;
+        dynOptionsEl.innerHTML = '';
+        dynCnEl.textContent = '（未选择）';
+        dynDslEl.textContent = '(none)';
+
+        const selects = row.querySelectorAll('select');
+        const fs = selects[0];
+        const f = rbFields.find(x => x.id === fs.value) || rbFields[0];
+        dynSubEl.textContent = `当前槽位：作为【${f.label}】的右值（期望类型：${f.type === 'bool' ? '布尔' : '数字'}）`;
+        dynExpectedEl.textContent = f.type === 'bool' ? '布尔' : '数字';
+
+        const available = f.type === 'bool'
+          ? [
+              { id:'opt_true', cn:'真', dsl:'true', desc:'布尔常量（示例）' },
+              { id:'opt_false', cn:'假', dsl:'false', desc:'布尔常量（示例）' }
+            ]
+          : rbDynamicOptions;
+
+        for (const opt of available) {
+          const item = document.createElement('div');
+          item.className = 'opt';
+          item.innerHTML = `<div class="t">${opt.cn}</div><div class="d">${opt.desc}</div>`;
+          item.addEventListener('click', () => {
+            dynSelected = opt;
+            Array.from(dynOptionsEl.children).forEach(x => x.classList.remove('active'));
+            item.classList.add('active');
+            dynCnEl.textContent = opt.cn;
+            dynDslEl.textContent = opt.dsl;
+          });
+          dynOptionsEl.appendChild(item);
+        }
+
+        dynModal.classList.add('open');
+      }
+
+      function closeDynModal() {
+        dynModal.classList.remove('open');
+        dynEditingRow = null;
+        dynSelected = null;
+      }
+
+      document.getElementById('dynClose').addEventListener('click', closeDynModal);
+      document.getElementById('dynCancel').addEventListener('click', closeDynModal);
+      dynModal.addEventListener('click', (e) => {
+        if (e.target === dynModal) closeDynModal();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && dynModal.classList.contains('open')) closeDynModal();
+      });
+      document.getElementById('dynApply').addEventListener('click', () => {
+        if (!dynEditingRow) return closeDynModal();
+        if (!dynSelected) return; // keep open
+        dynEditingRow.dataset.valueMode = 'dyn';
+        dynEditingRow.dataset.dynamicCn = dynSelected.cn;
+        dynEditingRow.dataset.dynamicDsl = dynSelected.dsl;
+        const tag = dynEditingRow.querySelector('.tag');
+        if (tag) tag.innerHTML = `<span class="k">动态值</span><span class="v">${dynSelected.cn}</span>`;
+        const onChange = dynEditingRow.__onChange;
+        closeDynModal();
+        if (typeof onChange === 'function') onChange();
+      });
+
+      function resetRuleTree() {
+        ruleTree.innerHTML = '';
+        const root = createGroup({ mode:'AND', isRoot:true, onChange: refreshRulePreview });
+        const bd = root.querySelector(':scope > .bd');
+        bd.appendChild(createConditionRow({ fieldId:'evt_amount', opId:'gt', rhs:{ mode:'const', value:'3' }, onChange: refreshRulePreview }));
+        bd.appendChild(createConditionRow({
+          fieldId:'self_cost',
+          opId:'gte',
+          rhs:{ mode:'dyn', cn:'触发事件.伤害量 + 2', dsl:'(eventInt("amount") + 2)' },
+          onChange: refreshRulePreview
+        }));
+        // nested OR group demo
+        const g2 = createGroup({ mode:'OR', isRoot:false, onChange: refreshRulePreview });
+        const bd2 = g2.querySelector(':scope > .bd');
+        bd2.appendChild(createConditionRow({ fieldId:'self_attack', opId:'gte', rhs:{ mode:'const', value:'3' }, onChange: refreshRulePreview }));
+        bd2.appendChild(createConditionRow({ fieldId:'self_isFollower', opId:'isTrue', rhs:{ mode:'const', value:'1' }, onChange: refreshRulePreview }));
+        bd.appendChild(g2);
+
+        ruleTree.appendChild(root);
+        refreshRulePreview();
+      }
+
+      document.getElementById('ruleAdd').addEventListener('click', () => {
+        const root = ruleTree.querySelector('.rb-group');
+        if (!root) return;
+        root.querySelector(':scope > .bd').appendChild(createConditionRow({ fieldId:'self_attack', opId:'gte', rhs:{ mode:'const', value:'3' }, onChange: refreshRulePreview }));
+        refreshRulePreview();
+      });
+      document.getElementById('ruleAddGroup').addEventListener('click', () => {
+        const root = ruleTree.querySelector('.rb-group');
+        if (!root) return;
+        root.querySelector(':scope > .bd').appendChild(createGroup({ mode:'AND', isRoot:false, onChange: refreshRulePreview }));
+        refreshRulePreview();
+      });
+      document.getElementById('ruleReset').addEventListener('click', resetRuleTree);
+      resetRuleTree();
+
+      // ---- Query builder (tiny) ----
+      const qbFilters = document.getElementById('qbFilters');
+      function addFilter() {
+        const box = document.createElement('div');
+        box.className = 'panel';
+        box.style.boxShadow = 'none';
+        const hd = document.createElement('div');
+        hd.className = 'hd';
+        const left = document.createElement('div');
+        left.innerHTML = '<h2>筛选（规则行）</h2><div class="hint">仅展示风格</div>';
+        const del = document.createElement('button');
+        del.className = 'btn danger';
+        del.textContent = '删除';
+        del.addEventListener('click', () => { box.remove(); refreshQbPreview(); });
+        hd.appendChild(left);
+        hd.appendChild(del);
+        const bd = document.createElement('div');
+        bd.className = 'bd';
+        bd.appendChild(createConditionRow({ fieldId:'self_cost', opId:'gte', rhs:{ mode:'const', value:'2' }, onChange: refreshQbPreview }));
+        box.appendChild(hd);
+        box.appendChild(bd);
+        qbFilters.appendChild(box);
+        refreshQbPreview();
+      }
+      function refreshQbPreview(){
+        const source = document.getElementById('qbSource').value;
+        const sortField = document.getElementById('qbSortField').value;
+        const sortDir = document.getElementById('qbSortDir').value;
+        const take = document.getElementById('qbTake').value;
+        const cnFilters = Array.from(qbFilters.querySelectorAll('.panel')).map(p => {
+          const row = p.querySelector('.cond-row');
+          if (!row) return null;
+          const c = compileConditionRow(row);
+          return `【${c.cn}】`;
+        }).join('且') || '（无）';
+        const fieldCn = sortField === 'cost' ? '费用' : sortField === 'attack' ? '攻击力' : '生命值';
+        const dirCn = sortDir === 'asc' ? '升序' : '降序';
+        document.getElementById('qbCn').textContent = `从【${source}】中，筛选${cnFilters}，按【${fieldCn} ${dirCn}】排序，取前【${take}】个`;
+      }
+      document.getElementById('qbAdd').addEventListener('click', addFilter);
+      ['qbSource','qbSortField','qbSortDir','qbTake'].forEach(id => document.getElementById(id).addEventListener('change', refreshQbPreview));
+      addFilter();
+
+      // ---- Chips + side panel (tiny) ----
+      const chipLine = document.getElementById('chipLine');
+      const chipEditor = document.getElementById('chipEditor');
+      const chipMeta = document.getElementById('chipMeta');
+      const chipCrumb = document.getElementById('chipCrumb');
+      const chipModel = [
+        { id:'c1', kind:'field', text:'伤害量', expected:'数字', hint:'触发事件字段', dsl:'eventInt("amount")' },
+        { id:'c2', kind:'op', text:'大于', expected:'运算符', hint:'数字比较', dsl:'>' },
+        { id:'c3', kind:'value', text:'3', expected:'数字', hint:'常量', dsl:'3' },
+        { id:'c4', kind:'join', text:'且', expected:'连接', hint:'逻辑连接', dsl:'&&' },
+        { id:'c5', kind:'field', text:'目标.费用', expected:'数字', hint:'目标字段', dsl:'self.Cost' },
+        { id:'c6', kind:'op', text:'大于等于', expected:'运算符', hint:'数字比较', dsl:'>=' },
+        { id:'c7', kind:'value', text:'2', expected:'数字', hint:'常量', dsl:'2' },
+      ];
+      let activeChipId = null;
+      function renderChipPreview(){
+        const cn = `当【${chipModel[0].text}】${chipModel[1].text}【${chipModel[2].text}】且【${chipModel[4].text}】${chipModel[5].text}【${chipModel[6].text}】时`;
+        const dsl = `${chipModel[0].dsl} ${chipModel[1].dsl} ${chipModel[2].dsl} ${chipModel[3].dsl} ${chipModel[4].dsl} ${chipModel[5].dsl} ${chipModel[6].dsl}`;
+        document.getElementById('chipCn').textContent = cn;
+        document.getElementById('chipDsl').textContent = dsl;
+      }
+      function renderChips(){
+        chipLine.innerHTML='';
+        for (const c of chipModel) {
+          const n = document.createElement('span');
+          n.className = 'chip' + (c.kind === 'join' ? ' hidden' : '') + (c.id === activeChipId ? ' active' : '');
+          n.textContent = c.text;
+          n.addEventListener('click', () => selectChip(c.id));
+          chipLine.appendChild(n);
+          if (c.kind === 'join') {
+            const join = document.createElement('span');
+            join.className = 'pill';
+            join.innerHTML = `<strong>${c.text}</strong>`;
+            chipLine.appendChild(join);
+          }
+        }
+        renderChipPreview();
+      }
+      function selectChip(id){
+        activeChipId = id;
+        const c = chipModel.find(x => x.id === id);
+        chipCrumb.querySelectorAll('.seg')[2].textContent = `选中：${c.text}`;
+        chipMeta.innerHTML = '';
+        const kv = [['当前片段', c.text], ['期望类型', c.expected], ['说明', c.hint]];
+        for (const [k,v] of kv) {
+          const kk=document.createElement('div'); kk.textContent=k;
+          const vv=document.createElement('div'); vv.className='v'; vv.textContent=v;
+          chipMeta.appendChild(kk); chipMeta.appendChild(vv);
+        }
+        chipEditor.innerHTML = '';
+        chipEditor.appendChild(document.createTextNode('选择一个替换动作（右侧按钮）'));
+        renderChips();
+      }
+      function setChipEditor(kind){
+        chipEditor.innerHTML='';
+        const c = chipModel.find(x => x.id === activeChipId);
+        if (!c) { chipEditor.textContent = '先选择一个片段'; return; }
+        if (kind === 'field') {
+          const s=document.createElement('select');
+          ['伤害量','治疗量','目标.费用','目标.攻击力'].forEach(x => { const o=document.createElement('option'); o.value=x; o.textContent=x; s.appendChild(o); });
+          s.value=c.text;
+          const ok=document.createElement('button'); ok.className='btn primary'; ok.textContent='应用';
+          ok.addEventListener('click', () => {
+            c.text=s.value;
+            c.dsl = s.value === '伤害量' ? 'eventInt("amount")'
+              : s.value === '治疗量' ? 'eventInt("heal")'
+              : s.value === '目标.费用' ? 'self.Cost'
+              : 'self.Attack';
+            renderChips();
+          });
+          chipEditor.appendChild(s); chipEditor.appendChild(ok);
+          return;
+        }
+        if (kind === 'op') {
+          const s=document.createElement('select');
+          [['大于','>'],['大于等于','>='],['小于','<'],['等于','==']].forEach(([cn,op]) => { const o=document.createElement('option'); o.value=op; o.textContent=cn; s.appendChild(o); });
+          const map = { '>':'大于', '>=':'大于等于', '<':'小于', '==':'等于' };
+          s.value=c.dsl;
+          const ok=document.createElement('button'); ok.className='btn primary'; ok.textContent='应用';
+          ok.addEventListener('click', () => { c.dsl=s.value; c.text=map[s.value] || c.text; renderChips(); });
+          chipEditor.appendChild(s); chipEditor.appendChild(ok);
+          return;
+        }
+        if (kind === 'value') {
+          const v=document.createElement('input'); v.type='number'; v.value=c.text;
+          const ok=document.createElement('button'); ok.className='btn primary'; ok.textContent='应用';
+          ok.addEventListener('click', () => { c.text=String(v.value || '0'); c.dsl=c.text; renderChips(); });
+          chipEditor.appendChild(v); chipEditor.appendChild(ok);
+          return;
+        }
+      }
+      document.querySelectorAll('[data-chip-action]').forEach(b => b.addEventListener('click', () => setChipEditor(b.dataset.chipAction)));
+      renderChips();
+
+      // ---- Drill-down (tiny) ----
+      const drillHint = document.getElementById('drillHint');
+      const drillWorkspace = document.getElementById('drillWorkspace');
+      let drillSlot = null;
+      document.querySelectorAll('[data-drill-slot]').forEach(s => s.addEventListener('click', () => {
+        drillSlot = s.dataset.drillSlot;
+        drillHint.innerHTML = `<strong>当前槽位</strong> ${drillSlot}`;
+        drillWorkspace.textContent = '（空）';
+      }));
+      document.getElementById('drillPickField').addEventListener('click', () => {
+        if (!drillSlot) return;
+        drillWorkspace.textContent = drillSlot === 'source' ? '敌方随从（卡池）' : '当前项.费用';
+      });
+      document.getElementById('drillPickOp').addEventListener('click', () => {
+        if (!drillSlot) return;
+        drillWorkspace.textContent = '比较：大于等于（>=）';
+      });
+      document.getElementById('drillPickValue').addEventListener('click', () => {
+        if (!drillSlot) return;
+        drillWorkspace.textContent = '常量：2';
+      });
+      document.getElementById('drillSave').addEventListener('click', () => {
+        if (!drillSlot) return;
+        drillWorkspace.textContent = `已保存到槽位：${drillSlot}（示意）`;
+      });
+    </script>
+  </body>
+</html>

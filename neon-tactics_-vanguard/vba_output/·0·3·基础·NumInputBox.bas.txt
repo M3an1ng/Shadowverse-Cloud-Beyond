@@ -1,0 +1,126 @@
+Attribute VB_Name = "·0·3·基础·NumInputBox"
+' ==================================================
+' 函数功能：数字输入框函数，支持多种输入模式和格式验证
+' 参数：BoxName - 输入框标题
+'        Tag - 输入模式标识，控制允许的输入类型和格式
+' 返回：格式化后的输入字符串
+' 支持模式：Engage, Random, MaxPP, Attack, Select
+' ==================================================
+Function NumInputBox(BoxName As String, Optional Tag As String = "") As String
+    Dim Str As String
+    
+    ' 基础提示信息
+    Str = "请输入数字：" & Chr(13) & _
+        "提示：可以输入X"
+    
+    ' ========== 根据Tag值设置特定输入提示 ==========
+    
+    ' Engage模式：不允许输入X
+    If Tag = "Engage" Then
+        Str = "请输入数字："
+    
+    ' Random模式：允许输入@符号表示不同名卡牌
+    ElseIf Tag = "Random" Then
+        Str = Str & Chr(13) & "提示：输入@2代表不同名的2张"
+    
+    ' MaxPP模式：允许输入$符号表示数值变更
+    ElseIf Tag = "MaxPP" Then
+        Str = Str & Chr(13) & "提示：输入$1代表变为1"
+    
+    ' Attack模式：Buff类输入，支持多种数学操作符
+    ElseIf Tag = "Attack" Then
+        Str = "请输入数字：" & Chr(13) & _
+            "提示：可以输入+X或-X" & Chr(13) & _
+            "提示：输入*2代表变为2倍" & Chr(13) & _
+            "提示：输入%2代表除2（进位）" & Chr(13) & _
+            "提示：输入$1代表变为1"
+    
+    ' Select模式：选择相关输入，支持反选操作
+'    ElseIf Tag = "Select" Then
+'        Str = "请输入数字：" & Chr(13) & _
+'            "提示：输入-1代表反选1张"
+    End If
+    
+    ' 显示输入框并获取用户输入，默认值为"1"
+    NumInputBox = InputBox(Str, BoxName, "1")
+    
+    ' ========== 输入验证和格式化处理 ==========
+    
+    ' 处理X变量输入（Engage和Select模式除外）
+    If (NumInputBox = "X" Or NumInputBox = "x") And Tag <> "Engage" And Tag <> "Select" Then
+        NumInputBox = "X"
+        If Tag = "Attack" Then NumInputBox = "+X"   ' Attack模式下自动添加+号
+    
+    ' 处理+X输入（仅Attack模式）
+    ElseIf (NumInputBox = "+X" Or NumInputBox = "+x") And Tag = "Attack" Then
+        NumInputBox = "+X"
+    
+    ' 处理-X输入（仅Attack模式）
+    ElseIf (NumInputBox = "-X" Or NumInputBox = "-x") And Tag = "Attack" Then
+        NumInputBox = "-X"
+    
+    ' 处理-X输入（仅Attack模式）
+    ElseIf (NumInputBox = "$X" Or NumInputBox = "$x") And Tag = "Attack" Then
+        NumInputBox = "$X"
+    
+    ' 处理Y变量输入（Engage和Select模式除外）
+    ElseIf (NumInputBox = "Y" Or NumInputBox = "y") And Tag <> "Engage" And Tag <> "Select" Then
+        NumInputBox = "Y"
+        If Tag = "Attack" Then NumInputBox = "+Y"   ' Attack模式下自动添加+号
+    
+    ' 处理+Y输入（仅Attack模式）
+    ElseIf (NumInputBox = "+Y" Or NumInputBox = "+y") And Tag = "Attack" Then
+        NumInputBox = "+Y"
+    
+    ' 处理-Y输入（仅Attack模式）
+    ElseIf (NumInputBox = "-Y" Or NumInputBox = "-y") And Tag = "Attack" Then
+        NumInputBox = "-Y"
+    
+    ' 处理+Y输入（仅Attack模式）
+    ElseIf (NumInputBox = "$Y" Or NumInputBox = "$y") And Tag = "Attack" Then
+        NumInputBox = "$Y"
+    
+    ' 处理Z变量输入（Engage和Select模式除外）
+    ElseIf (NumInputBox = "Z" Or NumInputBox = "z") And Tag <> "Engage" And Tag <> "Select" Then
+        NumInputBox = "Z"
+        If Tag = "Attack" Then NumInputBox = "+Z"   ' Attack模式下自动添加+号
+    
+    ' 处理+Z输入（仅Attack模式）
+    ElseIf (NumInputBox = "+Z" Or NumInputBox = "+z") And Tag = "Attack" Then
+        NumInputBox = "+Z"
+    
+    ' 处理-Z输入（仅Attack模式）
+    ElseIf (NumInputBox = "-Z" Or NumInputBox = "-z") And Tag = "Attack" Then
+        NumInputBox = "-Z"
+    
+    ' 处理-Z输入（仅Attack模式）
+    ElseIf (NumInputBox = "$Z" Or NumInputBox = "$z") And Tag = "Attack" Then
+        NumInputBox = "$Z"
+    
+    ' 处理Random模式的@符号输入
+    ElseIf Left(NumInputBox, 1) = "@" And Tag = "Random" Then
+        NumInputBox = "@" & Val(Mid(NumInputBox, 2, 10))   ' 提取并验证数字部分
+    
+    ' 处理Attack模式的$符号输入（设为固定值）
+    ElseIf Left(NumInputBox, 1) = "$" And (Tag = "Attack" Or Tag = "MaxPP") Then
+        NumInputBox = "$" & Val(Mid(NumInputBox, 2, 10))   ' 提取并验证数字部分
+    
+    ' 处理Attack模式的*符号输入（倍数操作）
+    ElseIf Left(NumInputBox, 1) = "*" And Tag = "Attack" Then
+        NumInputBox = "*" & Val(Mid(NumInputBox, 2, 10))   ' 提取并验证数字部分
+    
+    ' 处理Attack模式的%符号输入（除法进位操作）
+    ElseIf Left(NumInputBox, 1) = "%" And Tag = "Attack" Then
+        NumInputBox = "%" & Val(Mid(NumInputBox, 2, 10))   ' 提取并验证数字部分
+    
+    ' 处理Attack模式的正数输入（自动添加+号）
+    ElseIf Tag = "Attack" And Val(NumInputBox) >= 0 Then
+        NumInputBox = "+" & Val(NumInputBox)
+    
+    ' 默认情况：验证并转换纯数字输入
+    Else
+        NumInputBox = Val(NumInputBox)
+    End If
+    
+End Function
+

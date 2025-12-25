@@ -1,160 +1,65 @@
-// src/cardManager.js - 卡牌数据加载与实例创建
+// src/cardManager.js - 卡牌实例创建
 //
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
 // - API集成: 文档/03-前端架构/03-API集成.md
-// - 游戏事件系统: 文档/05-游戏系统/04-游戏事件系统.md
 //
+// 架构说明:
+// 在2025年7月的重构后，此文件不再维护客户端卡牌数据库。
+// 服务器现在被视为单一数据源（Single Source of Truth），
+// 并发送包含所有必要信息的“完整”CardInstanceDto。
+// 此文件的唯一职责是将这些DTO转换为前端可以使用的运行时对象。
 
-let cardDatabase = []; // 存储从 JSON 加载的卡牌定义
-let uidCounter = 0; // 用于生成卡牌实例唯一ID的计数器
-
-// 异步加载卡牌数据
-export async function loadCards() {
-    // 注意：fetch 的路径是相对于 HTML 文件的，而不是 JS 文件
-    // const dataPath = './data/card_data.json'; // Replaced with API endpoint
-    const apiUrl = '/api/cards'; // Use the API endpoint relative to the domain
-    try {
-        const response = await fetch(apiUrl); // Fetch from the API
-        if (!response.ok) {
-            // 网络错误或文件未找到等
-            throw new Error(`HTTP error loading card data! status: ${response.status}`);
-        }
-        const loadedData = await response.json();
-        if (!Array.isArray(loadedData)) {
-            throw new Error("Loaded card data is not an array.");
-        }
-
-        // Convert API format to frontend format
-        // API returns: {cardId: 0, name: "主战者", ...}
-        // Frontend expects: {id: 0, name: "主战者", ...}
-        cardDatabase = loadedData.map(apiCard => ({
-            id: apiCard.cardId,           // Convert cardId to id
-            name: apiCard.name,
-            cost: apiCard.cost,
-            type: apiCard.type,
-            attack: apiCard.attack,
-            health: apiCard.health,
-            description: apiCard.description,
-            keywords: apiCard.keywords || [],
-            rarity: apiCard.rarity,
-            cardSet: apiCard.cardSet,
-            canEvolve: apiCard.canEvolve,
-            // Add any other properties that might be needed
-            effects: [] // Initialize empty effects array for compatibility
-        }));
-
-        uidCounter = 0; // 重置 UID 计数器
-        console.log(`Card data loaded successfully. ${cardDatabase.length} cards found.`);
-        // 可以添加数据验证逻辑
-    } catch (error) {
-        console.error("Failed to load or parse card data:", error);
-        cardDatabase = []; // 加载失败时确保数据库为空
-        // 向上抛出错误，让初始化流程知道失败了
-        throw error;
-    }
-}
-
-// 根据 ID 获取卡牌定义
-export function getCardDefinition(cardId) {
-    const definition = cardDatabase.find(card => card && card.id === cardId); // Added check for card existence before accessing id
-    if (!definition) {
-        console.warn(`Card definition not found for ID: ${cardId}.`);
-        // 返回 null 或 undefined，调用者需要处理
-        return null;
-    }
-    // 返回定义的副本，防止意外修改原始数据库
-    return { ...definition };
-}
-
-// 创建卡牌运行时实例 (包含唯一标识和当前状态)
-// Input is assumed to be a DTO object from the server (e.g., CardDto, UnitStateDto)
+/**
+ * 根据从服务器接收到的完整的CardInstanceDto，创建一个前端卡牌实例。
+ * 这个函数现在是幂等的，并且不依赖任何外部状态。
+ * @param {object} cardDto - 从服务器接收的 CardInstanceDto 对象。
+ * @returns {object|null} 一个包含所有卡牌数据的前端实例对象，如果DTO无效则返回null。
+ */
 export function createCardInstance(cardDto) {
-    if (!cardDto || typeof cardDto !== 'object') {
-        console.error("Cannot create instance: Invalid DTO provided. Input was:", cardDto); // Log the problematic input
+    // [FIX] 修正了验证逻辑，使用 PascalCase (InstanceId)
+    const instanceId = cardDto?.InstanceId ?? cardDto?.instanceId;
+    if (!cardDto || typeof cardDto !== 'object' || instanceId === undefined) {
+        console.error("Cannot create card instance: Invalid or incomplete DTO provided.", cardDto);
         return null;
     }
 
-    // --- UNKNOWNCARD BUG DIAGNOSIS ---
-    // Log the received DTO to understand its structure if issues persist
-    // console.log("GM_DBG_UNKNOWN: createCardInstance received DTO:", JSON.stringify(cardDto));
-    // ---
-
-    // --- UNIFIED ID LOGIC START ---
-    // Input object MUST have an 'id' (lowercase) OR 'CardId' (PascalCase) property
-    // Prioritize lowercase 'id' if both exist, otherwise use 'CardId'.
-    const identifier = cardDto.id ?? cardDto.CardId; // Use nullish coalescing
-
-    // Check if identifier is null or undefined (after checking both id and CardId), allowing 0 as a valid ID
-    if (identifier === null || identifier === undefined) {
-         console.error("Cannot create instance: Input object missing required 'id' or 'CardId' property. Input was:", cardDto);
-        return null;
-    }
-
-    // Find the base definition using the resolved identifier
-    const baseDefinition = cardDatabase.find(card => card && card.id === identifier);
-
-    if (!baseDefinition) {
-        console.error(`Cannot create instance: Base definition not found for id '${identifier}'. Input object:`, cardDto);
-        return null;
-    }
-
-    // Increment UID counter for fallback scenario if Uid is missing in DTO/input
-    uidCounter++;
-
-    // Create the instance:
-    // - Use baseDefinition for static properties.
-    // - Use cardDto (the input object) for runtime properties if available, otherwise fallback to baseDefinition or defaults.
+    // [FIX] 修正了所有属性映射，从 DTO 读取 PascalCase 属性
     const instance = {
-        // Base static properties from definition
-        id: baseDefinition.id, // Use id from definition
-        name: baseDefinition.name ?? 'Unknown Card',
-        cost: baseDefinition.cost ?? 0,
-        attack: baseDefinition.attack ?? 0, // Base attack from definition
-        health: baseDefinition.health ?? 0, // Base health from definition
-        type: baseDefinition.type ?? 'Unknown',
-        effects: Array.isArray(baseDefinition.effects) ? [...baseDefinition.effects] : [], // Use definition effects
-        keywords: Array.isArray(baseDefinition.keywords) ? [...baseDefinition.keywords] : [], // Use definition keywords
+        // 静态数据 (由服务器在DTO中提供)
+        // NOTE: CardId is serialized as `id` in CardInstanceDto.
+        id: cardDto.CardId ?? cardDto.id,
+        name: cardDto.Name,
+        cost: cardDto.Cost,
+        attack: cardDto.Attack,
+        health: cardDto.Health,
+        maxAttack: cardDto.MaxAttack,
+        maxHealth: cardDto.MaxHealth,
+        type: cardDto.Type,
+        rarity: cardDto.Rarity,
+        class: cardDto.Class,
+        description: cardDto.Description,
+        keywords: cardDto.Keywords || [],
+        tribe: cardDto.Tribe || [],
+        canEvolve: cardDto.CanEvolve ?? cardDto.canEvolve,
 
-        // Runtime/State properties, prioritizing input object (cardDto) values if they exist
-        // This assumes cardDto might contain runtime state even if it's primarily a definition (like for the leader)
-        // OR it might be an actual DTO that has been pre-processed to have 'id' instead of 'CardId'.
-
-        // !! 核心修复点 !!
-        // 尝试从服务器 DTO 读取 instanceId (注意 JSON 序列化后的大小写)
-        uid: (() => { // Use IIFE for cleaner logic
-            const serverUid = cardDto.instanceId || cardDto.InstanceId || cardDto.uid || cardDto.Uid;
-            if (serverUid) {
-                return serverUid; // 使用服务器提供的真实 GUID
-            } else {
-                // 服务器未提供 UID，这是一个严重错误，记录日志
-                console.error(`CRITICAL: Server DTO missing instanceId/Uid for card definition ID: ${baseDefinition.id}`, cardDto);
-                // 不应生成备用 UID。让 uid 保持 null。
-                return null;
-            }
-        })(), // End IIFE
-
-        currentAttack: cardDto.CurrentAttack ?? baseDefinition.attack ?? 0,       // Prioritize CurrentAttack from input, fallback to definition base attack
-        currentHealth: cardDto.CurrentHealth ?? baseDefinition.health ?? 0,       // Prioritize CurrentHealth from input, fallback to definition base health
-        maxHealth: cardDto.MaxHealth ?? baseDefinition.health ?? 0,           // Prioritize MaxHealth from input, fallback to definition base health
-
-        // Default runtime state (can be overridden by hydration logic later if needed)
-        canAttack: cardDto.CanAttack ?? false,                                // Prioritize CanAttack from input
-        turnPlayed: null,                                                     // Initialized locally
-        attackCount: 0,                                                       // Initialized locally
-        isEvolved: cardDto.IsEvolved ?? false,                                // Prioritize IsEvolved from input
-        // 【BUG-023修复】显式映射OwnerPlayerId和Zone
+        // 运行时状态 (由服务器在DTO中提供)
+        uid: instanceId,
+        currentCost: cardDto.CurrentCost,
+        currentAttack: cardDto.CurrentAttack,
+        currentHealth: cardDto.CurrentHealth,
+        isEvolved: cardDto.IsEvolved,
+        canAttack: cardDto.CanAttack,
+        hasActAbility: cardDto.HasActAbility ?? false,
+        actLastUsedTurnNumber: cardDto.ActLastUsedTurnNumber ?? null,
         ownerId: cardDto.OwnerPlayerId,
         zone: cardDto.Zone,
-        // Add other potential DTO properties here if needed (e.g., Countdown for amulets)
-    };
-    // --- UNIFIED ID LOGIC END ---
-    // console.log("Created card instance:", instance); // Debugging
-    return instance;
-}
+        countdown: cardDto.CurrentCountdown,
 
-// 获取所有卡牌定义 (例如用于未来的卡组构建界面)
-export function getAllCardDefinitions() {
-    // 返回数据库的深拷贝，防止外部修改
-    return JSON.parse(JSON.stringify(cardDatabase));
+        // 纯前端状态 (在本地初始化和管理)
+        turnPlayed: null,
+        attackCount: 0,
+    };
+
+    return instance;
 }

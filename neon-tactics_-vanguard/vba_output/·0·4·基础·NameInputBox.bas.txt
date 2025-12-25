@@ -1,0 +1,40 @@
+Attribute VB_Name = "·0·4·基础·NameInputBox"
+' ==================================================
+' 函数功能：卡牌名称输入框函数
+' 参数：BoxName - 输入框标题
+'        Tag - 可选参数，预留用于扩展功能（当前未使用）
+' 返回：卡牌ID字符串
+' 说明：根据输入的卡牌名称返回对应ID，如卡牌不存在则自动创建1费从者
+' ==================================================
+Function NameInputBox(BoxName As String, Optional Tag As String = "") As String
+    ' ========== 变量声明 ==========
+    Dim Str As String      ' 存储用户输入的卡牌名称
+    Dim Arr As Variant
+    Dim StrID As String    ' 存储卡牌ID查询结果
+    NameInputBox = Empty
+    
+    ' ========== 输入提示设置 ==========
+    Str = "请输入卡牌名称：" & Chr(13) & _
+            "提示：如果该卡牌尚未创建，会默认创建为1费从者" & Chr(13) & _
+            "提示：如果是类似财宝的加入手牌，用@分开"
+    
+    ' ========== 获取用户输入 ==========
+    Str = InputBox(Str, BoxName, "妖精")   ' 默认值为"妖精"
+    Arr = Split(Str, "@")
+    For i = 0 To UBound(Arr)
+        Str = Arr(i)
+        ' ========== 卡牌存在性检查 ==========
+        StrID = IDByName(Str)   ' 通过名称查询卡牌ID
+        
+        ' ========== 卡牌处理逻辑 ==========
+        If Val(StrID) < 0 Then
+            ' 卡牌不存在：创建新卡牌并返回新卡牌ID
+            NameInputBox = NameInputBox & CreateFollower(Str) & "@"
+        Else
+            ' 卡牌已存在：直接返回查询到的卡牌ID
+            NameInputBox = NameInputBox & StrID & "@"
+        End If
+    Next i
+    If Right(NameInputBox, 1) = "@" Then NameInputBox = Left(NameInputBox, Len(NameInputBox) - 1)
+End Function
+

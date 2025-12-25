@@ -29,7 +29,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// <param name="conditionGroup">条件组配置</param>
         /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateConditionGroupAsync(ConditionGroupConfig conditionGroup, GameContext context)
+        public bool EvaluateConditionGroup(ConditionGroupConfig conditionGroup, GameContext context)
         {
             if (conditionGroup == null)
                 throw new ArgumentNullException(nameof(conditionGroup));
@@ -57,7 +57,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
                 var results = new List<bool>();
                 foreach (var condition in conditionGroup.Conditions)
                 {
-                    var result = await _conditionEvaluator.EvaluateAsync(condition, context);
+                    var result = _conditionEvaluator.Evaluate(condition, context);
                     results.Add(result);
 
                     _logger.LogTrace("Condition {ConditionId} in group {GroupId} evaluated to {Result}",
@@ -85,7 +85,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// <param name="conditionGroups">条件组列表</param>
         /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateConditionGroupsAsync(List<ConditionGroupConfig> conditionGroups, GameContext context)
+        public bool EvaluateConditionGroups(List<ConditionGroupConfig> conditionGroups, GameContext context)
         {
             if (conditionGroups == null || !conditionGroups.Any())
             {
@@ -108,7 +108,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
                 }
 
                 // 评估第一个组
-                var firstGroupResult = await EvaluateConditionGroupAsync(sortedGroups[0], context);
+                var firstGroupResult = EvaluateConditionGroup(sortedGroups[0], context);
 
                 if (sortedGroups.Count == 1)
                     return firstGroupResult;
@@ -117,7 +117,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
                 var combinedResult = firstGroupResult;
                 for (int i = 1; i < sortedGroups.Count; i++)
                 {
-                    var groupResult = await EvaluateConditionGroupAsync(sortedGroups[i], context);
+                    var groupResult = EvaluateConditionGroup(sortedGroups[i], context);
                     combinedResult = CombineResults(new List<bool> { combinedResult, groupResult }, sortedGroups[i].ExternalLogic);
 
                     _logger.LogTrace("Combined result after group {GroupId}: {Result}", sortedGroups[i].Id, combinedResult);
@@ -140,7 +140,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// <param name="context">统一的游戏上下文</param>
         /// <param name="logic">逻辑操作符</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateConditionsAsync(List<ConditionConfig> conditions, GameContext context, LogicOperator logic = LogicOperator.And)
+        public bool EvaluateConditions(List<ConditionConfig> conditions, GameContext context, LogicOperator logic = LogicOperator.And)
         {
             if (conditions == null || !conditions.Any())
             {
@@ -153,7 +153,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
                 var results = new List<bool>();
                 foreach (var condition in conditions.Where(c => c.IsEnabled))
                 {
-                    var result = await _conditionEvaluator.EvaluateAsync(condition, context);
+                    var result = _conditionEvaluator.Evaluate(condition, context);
                     results.Add(result);
 
                     _logger.LogTrace("Condition {ConditionId} evaluated to {Result}", condition.Id, result);

@@ -17,6 +17,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 
 using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -24,6 +27,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// Handles the application of the SummonUnit effect.
     /// Targets Players to summon units onto their field.
     /// </summary>
+    [EffectHandler(EffectType.Summon)]
     public class SummonEffectHandler : EffectHandlerBase<SummonEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
@@ -39,15 +43,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             _cardFactory = cardFactory ?? throw new ArgumentNullException(nameof(cardFactory));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, SummonEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, SummonEffectParams parameters)
         {
             const string effectName = "SummonEffect";
             Logger.LogDebug("{EffectName}: Starting with CardDefinitionId={CardDefId}, Count={Count}.",
                            effectName, parameters.CardDefinitionId, parameters.SummonCount);
 
-            Func<PlayerState, GameContext, Task<DomainOperationResult>> playerSummonAction =
-                (player, ctx) =>
+            Func<TargetInfo, GameContext, DomainOperationResult> summonAction =
+                (targetInfo, ctx) =>
                 {
+                    if (targetInfo.Type != Common.TargetType.Player || targetInfo.Player == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Target is not a player or player data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Summon effect can only be applied to players." };
+                    }
+
+                    var player = targetInfo.Player;
                     var tokensToSummon = new List<CardInstance>();
                     for (int i = 0; i < parameters.SummonCount; i++)
                     {
@@ -63,21 +74,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     var combinedResult = new DomainOperationResult { Success = true };
                     foreach (var token in tokensToSummon)
                     {
-                        var summonResult = player.SummonCardToField(token);
-                        combinedResult.GeneratedEvents.AddRange(summonResult.GeneratedEvents);
-                        if (!summonResult.Success)
-                        {
-                            combinedResult.Success = false;
-                            combinedResult.ErrorMessage = (combinedResult.ErrorMessage ?? "") + summonResult.ErrorMessage;
-                        }
+                        // 支持位置参数：从参数传递 Position（ZoneIndex），null 表示追加到末尾
+                        var evt = new SummonEvent(player, token, parameters.Position);
+                        combinedResult.GeneratedEvents.Add(evt);
                     }
-                    return Task.FromResult(combinedResult);
+                    return combinedResult;
                 };
 
-            return await _targetProcessingService.ProcessTargetsAsync(
+            return _targetProcessingService.ProcessTargets(
                 context,
-                playerSummonAction,
-                null,
+                effect.SelectedTargets,
+                summonAction,
                 effectName);
         }
     }

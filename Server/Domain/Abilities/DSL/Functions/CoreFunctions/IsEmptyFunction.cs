@@ -3,6 +3,7 @@
 // - 卡牌能力系统: 文档/05-游戏系统/01-卡牌能力系统.md
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 //
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -20,6 +21,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class IsEmptyFunction : BaseDslFunction
     {
         public override string Name => "isEmpty";
+        public override string Description => "检查一个集合是否为空。";
+
+        public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
+        {
+            new DslParameterInfo("collection", typeof(IEnumerable), "要进行检查的集合。")
+        };
 
         protected override int? GetExpectedArgumentCount() => 1;
 
@@ -35,10 +42,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return arg == null || IsCollection(arg) || arg is string;
         }
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
+        public override object? Execute(List<object?> args, GameContext context)
         {
-            await Task.CompletedTask; // 标记为异步但实际上是同步操作
-
             if (args.Count != 1)
             {
                 return true; // 无效参数视为空

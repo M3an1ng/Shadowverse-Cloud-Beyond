@@ -9,6 +9,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -16,6 +19,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// 弃牌效果处理器
     /// 强制目标卡牌从其拥有者的手牌中被弃置
     /// </summary>
+    [EffectHandler(EffectType.Discard)]
     public class DiscardEffectHandler : EffectHandlerBase<DiscardEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
@@ -26,29 +30,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, DiscardEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, DiscardEffectParams parameters)
         {
             const string effectName = "DiscardEffect";
             Logger.LogDebug("{EffectName}: Starting with DiscardReason={Reason}.", effectName, parameters.DiscardReason);
 
-            Func<CardInstance, GameContext, Task<DomainOperationResult>> cardDiscardAction =
-                (card, ctx) => // Made lambda synchronous as DiscardCard is sync
+            Func<TargetInfo, GameContext, DomainOperationResult> discardAction =
+                (targetInfo, ctx) =>
                 {
+                    if (targetInfo.Type != Common.TargetType.Card || targetInfo.Card == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Target is not a card or card data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Discard effect can only be applied to cards." };
+                    }
+
+                    var card = targetInfo.Card;
                     var ownerPlayer = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
                     if (ownerPlayer == null)
                     {
                         Logger.LogError("{EffectName}: Could not find owner PlayerState for card {CardId}.", effectName, card.InstanceId);
-                        return Task.FromResult(new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found." });
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found." };
                     }
 
-                    var operationResult = ownerPlayer.DiscardCard(card, parameters.DiscardReason);
-                    return Task.FromResult(operationResult);
+                    var result = new DomainOperationResult { Success = true };
+                    result.GeneratedEvents.Add(new CardDiscardedEvent(ownerPlayer, card, parameters.DiscardReason));
+                    return result;
                 };
 
-            return await _targetProcessingService.ProcessTargetsAsync(
+            return _targetProcessingService.ProcessTargets(
                 context,
-                null,
-                cardDiscardAction,
+                effect.SelectedTargets,
+                discardAction,
                 effectName);
         }
 

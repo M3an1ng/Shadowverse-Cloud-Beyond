@@ -62,16 +62,6 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
                 keyword == CardKeyword.Rush || keyword == CardKeyword.Storm);
         }
 
-        /// <summary>
-        /// 检查CardInstance是否可以攻击主战者
-        /// </summary>
-        /// <param name="cardInstance">卡牌实例</param>
-        /// <returns>如果可以攻击主战者则返回true</returns>
-        public static bool CanAttackLeader(this CardInstance cardInstance)
-        {
-            return cardInstance.Keywords.Contains(CardKeyword.Storm);
-        }
-
         // CardInstanceDto扩展方法（为了兼容现有代码）
         /// <summary>
         /// 检查CardInstanceDto是否拥有指定关键字
@@ -194,7 +184,7 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
                 return false;
 
             // 如果目标是主战者，检查是否可以攻击主战者
-            if (target.Zone == CardZone.Leader)
+            if (target.Type == CardType.Leader)
             {
                 // 如果刚召唤且只有Rush（不是Storm），不能攻击主战者
                 if (justSummoned && attacker.HasRush() && !attacker.HasStorm())

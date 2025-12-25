@@ -135,7 +135,7 @@
                 <h3>🔌 连接管理</h3>
                 <div class="input-group">
                     <label>服务器地址:</label>
-                    <input type="text" id="serverUrl" value="http://localhost:5000">
+                    <input type="text" id="serverUrl" value="http://localhost:5100">
                 </div>
                 <button class="btn" onclick="connectToServer()">连接服务器</button>
                 <button class="btn danger" onclick="disconnectFromServer()">断开连接</button>
@@ -355,7 +355,7 @@
                 // Use current PlayCardActionDto structure
                 const actionDto = {
                     CardUid: cardUid,
-                    TargetUid: targetUid ? targetUid : null
+                    TargetUids: targetUid ? [targetUid] : []
                 };
 
                 await connection.invoke("PlayCard", actionDto);

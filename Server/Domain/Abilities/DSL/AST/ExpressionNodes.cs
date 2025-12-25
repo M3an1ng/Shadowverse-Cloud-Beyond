@@ -411,4 +411,46 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
             return $"{Array}[{Index}]";
         }
     }
+
+    /// <summary>
+    /// Represents a member access expression, e.g., "self.Attack" or "context.Player.Hand".
+    /// </summary>
+    public class MemberAccessNode : ExpressionNode
+    {
+        public override string NodeType => "MemberAccess";
+
+        /// <summary>
+        /// The expression representing the object whose member is being accessed.
+        /// </summary>
+        public ExpressionNode Target { get; set; } = new IdentifierNode();
+
+        /// <summary>
+        /// The identifier of the member being accessed.
+        /// </summary>
+        public IdentifierNode Member { get; set; } = new IdentifierNode();
+
+        public override List<AstNode> Children => new() { Target, Member };
+
+        public override T Accept<T>(IAstVisitor<T> visitor)
+        {
+            return visitor.VisitMemberAccess(this);
+        }
+
+        public override AstNode Clone()
+        {
+            return new MemberAccessNode
+            {
+                Target = this.Target.Clone() as ExpressionNode ?? new IdentifierNode(),
+                Member = this.Member.Clone() as IdentifierNode ?? new IdentifierNode(),
+                DataType = this.DataType,
+                Location = this.Location,
+                Metadata = new Dictionary<string, object>(this.Metadata)
+            };
+        }
+
+        public override string ToString()
+        {
+            return $"{Target}.{Member}";
+        }
+    }
 }

@@ -17,130 +17,64 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
     using ShadowverseBeyond.Server.Domain.Buffs;
     using ShadowverseBeyond.Server.Domain.Abilities.Common;
+    using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+    using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+    using ShadowverseBeyond.Server.Domain.Effects;
 
+    [EffectHandler(EffectType.SetStatus)]
     public class ModifyStatsEffectHandler : EffectHandlerBase<ModifyStatsEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
-        private readonly IBuffFactory _buffFactory;
-        private readonly IBuffManager _buffManager;
-        private readonly IBuffService _buffService;
 
         public ModifyStatsEffectHandler(ILogger<ModifyStatsEffectHandler> logger,
-                                        ITargetProcessingService targetProcessingService,
-                                        IBuffFactory buffFactory,
-                                        IBuffManager buffManager,
-                                        IBuffService buffService)
+                                        ITargetProcessingService targetProcessingService)
             : base(logger)
         {
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
-            _buffFactory = buffFactory ?? throw new ArgumentNullException(nameof(buffFactory));
-            _buffManager = buffManager ?? throw new ArgumentNullException(nameof(buffManager));
-            _buffService = buffService ?? throw new ArgumentNullException(nameof(buffService));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, ModifyStatsEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, ModifyStatsEffectParams parameters)
         {
             const string effectName = "ModifyStatsEffect";
-            var sourceAbility = context.CurrentAbility;
 
-            if (sourceAbility?.SourceCard == null)
-            {
-                Logger.LogError("{EffectName}: Source ability or its source card not found in context.", effectName);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Source ability or card is missing." };
-            }
-
-            var ownerPlayer = context.CurrentGameState.GetPlayerState(sourceAbility.SourceCard.OwnerPlayerId);
-            if (ownerPlayer == null)
-            {
-                Logger.LogError("{EffectName}: Owner player not found for source card {CardId}.", effectName, sourceAbility.SourceCard.InstanceId);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Owner player not found." };
-            }
-
-            Func<CardInstance, GameContext, Task<DomainOperationResult>> cardModifyAction =
-                async (card, ctx) =>
+            // The action for each target is now simply to create a StatChangedEvent.
+            // The event's Commit method will handle the rest of the logic.
+            Func<TargetInfo, GameContext, DomainOperationResult> modifyStatsAction =
+                (targetInfo, ctx) =>
                 {
-                    var domainResult = new DomainOperationResult { Success = true };
-                    var modifications = new List<StatModification>();
-
-                    // Get stats before applying any buff
-                    int oldEffectiveAttack = await _buffService.GetEffectiveAttackAsync(card, ctx);
-                    int oldEffectiveMaxHealth = await _buffService.GetEffectiveMaxHealthAsync(card, ctx);
-                    int oldEffectiveCost = await _buffService.GetEffectiveCostAsync(card, ctx);
-
-                    if (parameters.AttackModifier.HasValue && parameters.AttackModifier.Value != 0)
-                        modifications.Add(new StatModification(StatType.Attack, parameters.AttackModifier.Value, ModifierLayer.Additive));
-
-                    if (parameters.HealthModifier.HasValue && parameters.HealthModifier.Value != 0)
+                    var result = new DomainOperationResult();
+                    if (targetInfo.Type != Common.TargetType.Card || targetInfo.Card == null)
                     {
-                        // HealthModifier affects MaxHealth (and CurrentHealth adjusts via CardInstance logic)
-                        modifications.Add(new StatModification(StatType.Defense, parameters.HealthModifier.Value, ModifierLayer.Additive));
+                        Logger.LogWarning("{EffectName}: Target is not a card or card data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "ModifyStats effect can only be applied to cards." };
                     }
 
-                    if (parameters.CostModifier.HasValue && parameters.CostModifier.Value != 0)
-                        modifications.Add(new StatModification(StatType.Cost, parameters.CostModifier.Value, ModifierLayer.Additive));
+                    var card = targetInfo.Card;
 
-                    if (!modifications.Any())
-                    {
-                        Logger.LogInformation("{EffectName}: No stat modifiers provided or all modifiers are zero.", effectName);
-                        return domainResult;
-                    }
-
-                    var buff = _buffFactory.CreateStatBuff(
-                        target: card,
-                        sourceCard: sourceAbility.SourceCard,
-                        sourceAbility: sourceAbility,
-                        statModifications: modifications,
-                        durationType: DurationType.Permanent,
-                        durationParameter: null,
-                        currentTurn: ownerPlayer.TurnNumber,
-                        isNonStackable: false
+                    // Create the event with the modifier values from the effect parameters.
+                    var statChangedEvent = new StatChangedEvent(
+                        targetCard: card,
+                        attackModifier: parameters.AttackModifier ?? 0,
+                        healthModifier: parameters.HealthModifier ?? 0,
+                        costModifier: parameters.CostModifier ?? 0
                     );
 
-                    await _buffManager.RegisterBuffAsync(buff);
-                    domainResult.GeneratedEvents.Add(new BuffAppliedEvent(buff, sourceAbility.SourceCard));
-
-                    // Get stats after applying the buff
-                    int newEffectiveAttack = await _buffService.GetEffectiveAttackAsync(card, ctx);
-                    int newEffectiveMaxHealth = await _buffService.GetEffectiveMaxHealthAsync(card, ctx);
-                    // CurrentHealth is handled internally by CardInstance when MaxHealth changes.
-                    // ModifyStatsEffect does not directly report CurrentHealth changes beyond what MaxHealth implies.
-                    int newEffectiveCost = await _buffService.GetEffectiveCostAsync(card, ctx);
-
-                    if (oldEffectiveAttack != newEffectiveAttack ||
-                        oldEffectiveMaxHealth != newEffectiveMaxHealth ||
-                        oldEffectiveCost != newEffectiveCost)
-                    {
-                        // StatChangedEvent now takes newMaxHealth as its health parameter
-                        domainResult.GeneratedEvents.Add(new StatChangedEvent(
-                            ownerPlayer,
-                            card.InstanceId,
-                            newEffectiveAttack,
-                            newEffectiveMaxHealth, // Pass the new MaxHealth
-                            newEffectiveCost
-                        ));
-                    }
-
-                    // No separate HealthChangedEvent here as per user feedback for ModifyStatsEffect.
-                    // CurrentHealth changes are a consequence of MaxHealth changes within CardInstance.
-
-                    return domainResult;
+                    result.GeneratedEvents.Add(statChangedEvent);
+                    result.Success = true;
+                    return result;
                 };
 
-            var serviceResult = await _targetProcessingService.ProcessTargetsAsync(
+            var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                null,
-                cardModifyAction,
+                effect.SelectedTargets,
+                modifyStatsAction,
                 effectName);
-            // Removed duplicate effectName);
 
             if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
             {
                 serviceResult.ErrorMessage = "Failed to process targets for modify stats effect, or no valid targets found.";
             }
 
-            // The EffectCompletedEvent will be created by the EffectExecutor.
-            // This handler is now only responsible for invoking the domain logic
-            // and returning the atomic events generated by that logic.
             return serviceResult;
         }
 

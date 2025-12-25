@@ -108,6 +108,11 @@ public class User
     /// </summary>
     public List<UserCardPack> CardPacks { get; set; } = new();
 
+    /// <summary>
+    /// 用户卡组列表
+    /// </summary>
+    public List<UserDeck> Decks { get; set; } = new();
+
 
 }
 

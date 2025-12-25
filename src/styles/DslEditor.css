@@ -1,0 +1,62 @@
+/* src/styles/DslEditor.css */
+
+/* 确保DSL编辑器样式正确加载 */
+.dsl-options-dropdown {
+    position: absolute !important;
+    background: #34495e !important;
+    border: 1px solid #4a5f7a !important;
+    border-radius: 4px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+    z-index: 1000 !important;
+    max-height: 200px !important;
+    overflow-y: auto !important;
+    min-width: 200px !important;
+}
+
+.dsl-option {
+    padding: 8px 12px !important;
+    cursor: pointer !important;
+    border-bottom: 1px solid #4a5f7a !important;
+    background: #34495e !important;
+    color: #ecf0f1 !important;
+}
+
+.dsl-option:last-child {
+    border-bottom: none !important;
+}
+
+.dsl-option:hover {
+    background: #3498db !important;
+    color: white !important;
+}
+
+.dsl-option-label {
+    font-weight: bold !important;
+    display: block !important;
+}
+
+.dsl-option-description {
+    font-size: 11px !important;
+    color: #bdc3c7 !important;
+    margin-top: 2px !important;
+}
+
+.dsl-option:hover .dsl-option-description {
+    color: #ecf0f1 !important;
+}
+
+/* 类型不匹配的脉冲动画 */
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}

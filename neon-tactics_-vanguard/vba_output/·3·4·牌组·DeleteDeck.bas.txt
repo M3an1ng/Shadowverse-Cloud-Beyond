@@ -1,0 +1,81 @@
+Attribute VB_Name = "·3·4·牌组·DeleteDeck"
+' ==================================================
+' 函数功能：卡组删除核心函数
+' 参数：DeckName - 可选，要删除的卡组名称，为空时显示选择对话框
+' 说明：从Deck工作表中删除指定卡组的所有数据
+' ==================================================
+Function DeleteDeckFunction(Optional DeckName As String = "")
+    ' ========== 变量声明 ==========
+    Dim Decks As Variant         ' Deck工作表数据数组
+    Dim i As Integer, j As Integer, k As Integer   ' 循环计数器
+    Dim options() As String      ' 选择对话框选项数组
+    Dim Str As String            ' 选项字符串
+    
+    ' ========== Deck工作表数据初始化 ==========
+    ' 读取Deck工作表全部数据（42行×100列）
+    Decks = Range(Sheets("Deck").Cells(1, 1), Sheets("Deck").Cells(42, 100))
+    
+    ' ========== 卡组选择逻辑 ==========
+    ' 如果未指定要删除的卡组名称，显示选择对话框
+    If DeckName = "" Then
+        ' 构建选择对话框的选项字符串
+        Str = Translate("Select") & Translate("Deck")   ' 基础提示：选择卡组
+        
+        ' 遍历所有卡组，构建选项列表
+        For k = 1 To UBound(Decks, 2)
+            If Decks(1, k) <> "" Then
+                Str = Str & "|" & Decks(1, k)   ' 添加卡组名称到选项
+            End If
+            k = k + 3   ' 每组卡组占用3列，跳过2列（循环自动+1）
+        Next k
+        
+        ' 显示选择对话框并获取用户选择
+        options = Split(Str, "|")               ' 按竖线分割选项字符串
+        i = Val(ShowChoice(options, 100, 4))    ' 显示选择对话框，按钮宽度100，4列
+        
+        ' 根据用户选择确定要删除的卡组
+        If i > 0 Then DeckName = options(i)     ' 有效选择时设置卡组名称
+    End If
+    
+    ' ========== 卡组数据删除 ==========
+    ' 遍历Deck工作表查找目标卡组
+    For k = 1 To UBound(Decks, 2)
+        ' 检查当前列组是否匹配目标卡组名称
+        If Decks(1, k) = DeckName Then
+            ' 清空该卡组的所有数据（3列×42行）
+            For i = 1 To UBound(Decks, 1)
+                Decks(i, k) = Empty       ' 清空第1列（费用/卡组名称）
+                Decks(i, k + 1) = Empty   ' 清空第2列（卡牌名称）
+                Decks(i, k + 2) = Empty   ' 清空第3列（数量/职业）
+            Next i
+            Exit For   ' 找到并删除后退出循环
+        End If
+        
+        k = k + 3   ' 每组卡组占用3列，跳过2列（循环自动+1）
+    Next k
+    
+    ' ========== 数据回写 ==========
+    ' 将更新后的数据写回Deck工作表
+    Range(Sheets("Deck").Cells(1, 1), Sheets("Deck").Cells(42, 100)) = Decks
+End Function
+
+' ==================================================
+' 过程功能：卡组删除用户接口
+' 说明：提供给用户调用的卡组删除入口，调用核心删除函数
+' ==================================================
+Sub DeleteDeck()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    Call DeleteDeckFunction   ' 调用卡组删除核心函数
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub

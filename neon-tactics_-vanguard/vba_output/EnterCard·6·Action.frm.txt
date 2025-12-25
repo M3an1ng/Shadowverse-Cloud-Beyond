@@ -1,0 +1,262 @@
+Attribute VB_Name = "EnterCard·6·Action"
+Attribute VB_Base = "0{0E9A3A1A-D9E2-4F3C-B930-834CCAB96999}{426F1D29-BEB8-43D0-8A5B-234CE8D8FB20}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+
+
+'手牌类动作
+Private Sub Play_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "Play"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Discard_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "Discard"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Fused_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "Fused"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Spellboost_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "Spellboost"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub AddToHand_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "AddToHand"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub DrawToHand_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "DrawToHand"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub HandDestroy_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Action = "HandDestroy"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+
+'战场类动作
+
+'进场/离场类动作
+Private Sub EnterField_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet&Crest&Faith"
+    Action = "EnterField"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub LeaveField_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet&Crest&Faith"
+    Action = "LeaveField"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Destroy_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet&Crest&Faith"
+    Action = "Destroy"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Banish_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower&Amulet&Crest&Faith"
+    Action = "Banish"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+
+Private Sub EffectEnter_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet"
+    Action = "EffectEnter"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+Private Sub Invoke_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet"
+    Action = "Invoke"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+'扳机类动作
+Private Sub Strike_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower"
+    Action = "Strike"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Clash_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower"
+    Action = "Clash"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Evolve_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower"
+    Action = "Evolve"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub SuperEvolve_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower"
+    Action = "SuperEvolve"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Engage_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Amulet"
+    Action = "Engage"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+'特殊类动作
+Private Sub Restore_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Leader"
+    Action = "Restore"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Damaged_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Leader"
+    Action = "Damaged"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub ReturnToHand_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower"
+    Action = "ReturnToHand"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub LostBarrier_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field|Follower&Leader"
+    Action = "LostBarrier"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub AttackIncreased_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower"
+    Action = "AttackIncreased"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub DefenseIncreased_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower"
+    Action = "DefenseIncreased"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub AttackDecreased_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower"
+    Action = "AttackDecreased"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub DefenseDecreased_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower"
+    Action = "DefenseDecreased"
+    
+    Unload EnterCard·6·Action
+End Sub
+Private Sub Increased_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower"
+    Action = "Increased"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+Private Sub Decreased_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower"
+    Action = "Decreased"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+Private Sub GetBuff_Click()
+    '标签Goal窗体
+    EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower&Spell&Amulet&Crest&Faith"
+    Action = "GetBuff"
+    
+    Unload EnterCard·6·Action
+End Sub
+
+
+Private Sub Keyword_Click()
+    Dim options() As String
+    options = Split(SentenceTranslate( _
+                "Keyword&|Fanfare|LastWords|Evolve|SuperEvolve|Strike|Clash|" & _
+                "Fuse|Enhance|Accelerate|Crystallize|" & _
+                "EarthRite|Necromancy|Sacrifice|Mode|Reanimate"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 60, 4))
+    
+    '标签Goal窗体
+    If i <= 6 Then
+        EnterCard·4·Goal.Tag = "All||Field|Follower"
+        If options(i) = Translate("Fanfare") Then EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet"
+        If options(i) = Translate("LastWords") Then EnterCard·4·Goal.Tag = "All||Field|Follower&Amulet"
+        If options(i) = Translate("Engage") Then EnterCard·4·Goal.Tag = "All||Field|Amulet"
+    ElseIf i <= 10 Then
+        EnterCard·4·Goal.Tag = "All||Hand|Follower&Spell&Amulet"
+    Else
+        EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower&Spell&Amulet&Crest&Faith"
+        If options(i) = Translate("Mode") Then EnterCard·4·Goal.Tag = "All||Field&Hand&Deck|Follower&Spell&Amulet"
+    End If
+    
+    Action = "Keyword&" & Translate(options(i))
+    
+    Unload EnterCard·6·Action
+End Sub
+
+
+Private Sub UserForm_Activate()
+
+    If CardEffect <> "" Then EnterCard·6·Action.Caption = SentenceTranslate(CardEffect)
+End Sub

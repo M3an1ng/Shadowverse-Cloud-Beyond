@@ -1,0 +1,562 @@
+Attribute VB_Name = "EnterCard·3·Ability"
+Attribute VB_Base = "0{D26C27C6-B726-4DA8-A38F-F8923346603A}{E1075F69-D3DB-4D1F-9B2D-A116FE60A342}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ========== 生效条件和生效方设置 ==========
+' 设置效果生效条件
+Private Sub Effect_Click()
+    Dim Arr
+    Dim response As VbMsgBoxResult
+    Arr = Split(CardEffect, "||")
+    
+    ' 检查是否为改变效果类型
+    If Arr(UBound(Arr)) = "Change|" Then
+        ' 进化时改为超进化时的确认
+        If TimePoint = "Evolve" Then
+            response = MsgBox("是否要改为超进化时？", vbYesNo, Translate("SuperEvolve"))
+            If response = vbYes Then
+                CardEffect = CardEffect & "SuperEvolve||"
+                Effect.Caption = SentenceTranslate(CardEffect)
+                Exit Sub
+            End If
+        ' 入场曲/法术发动改为爆能强化的确认
+        ElseIf TimePoint = "Fanfare" Or TimePoint = "Play" Then
+            response = MsgBox("是否要改为爆能强化？", vbYesNo, Translate("Enhance"))
+            If response = vbYes Then
+                CardEffect = CardEffect & "Enhance&" & NumInputBox(Translate("Enhance"), "Engage") & "||"
+                Effect.Caption = SentenceTranslate(CardEffect)
+                Exit Sub
+            End If
+        End If
+    End If
+    
+    ' 打开条件设置窗体
+    EnterCard·2·If.Show
+    If IfEffect = "If|" Then IfEffect = Empty
+    Effect.Caption = SentenceTranslate(CardEffect & IfEffect)
+End Sub
+
+' 生效方选择：己方/敌方
+Private Sub Allied_Click()
+    Enemy.Value = Not Allied.Value
+End Sub
+Private Sub Enemy_Click()
+    Allied.Value = Not Enemy.Value
+End Sub
+
+' ========== 常规资源类效果 ==========
+
+' 抽卡、召唤、加入手牌、加入牌组效果
+Private Sub Draw_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "Draw|" & NumInputBox(Draw.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Summon_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "Summon|" & NameInputBox(Summon.Caption, Empty) & "|" & NumInputBox(Summon.Caption, "")
+    Call UnloadForm
+End Sub
+
+Private Sub AddToHand_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "AddToHand|" & NameInputBox(AddToHand.Caption, Empty) & "|" & NumInputBox(AddToHand.Caption, "")
+    Call UnloadForm
+End Sub
+
+Private Sub AddToDeck_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "AddToDeck|" & NameInputBox(AddToDeck.Caption, Empty) & "|" & NumInputBox(AddToDeck.Caption, "")
+    Call UnloadForm
+End Sub
+
+' PP、最大PP、进化点、最大生命值效果
+Private Sub PP_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "PP|" & NumInputBox(PP.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub MaxPP_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "MaxPP|" & NumInputBox(MaxPP.Caption, "MaxPP")
+    Call UnloadForm
+End Sub
+
+Private Sub EP_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Dim options() As String
+    options = Split(SentenceTranslate("EP&SEP|EP|SEP"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 40, 2))
+    Ability = Ability & Translate(options(i)) & "|" & NumInputBox(EP.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub MaxDefense_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Ability = Ability & "MaxDefense|" & NumInputBox(MaxDefense.Caption, "MaxPP")
+    Call UnloadForm
+End Sub
+
+' ========== 效果持续时间设置 ==========
+
+' 持续时间和回合限制设置
+Private Sub Whenever_Click()
+    If Whenever.Value Then UntilTurn.Value = False
+    If Not Whenever.Value And Not UntilTurn.Value Then Whenever.Value = True
+End Sub
+
+Private Sub UntilTurn_Click()
+    If UntilTurn.Caption = Translate("UntilTurnButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("UntilTurnButton|Allied|Enemy|Allied&Enemy"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 70, 2))
+
+        If i = 3 Then
+            UntilTurn.Caption = SentenceTranslate("Turn-")
+        Else
+            UntilTurn.Caption = SentenceTranslate(Translate(options(i)) & "-Turn-")
+        End If
+        
+        options = Split(SentenceTranslate("UntilTurnButton|Start|End"), "|")
+        i = Val(ShowChoice(options, 50, 2))
+
+        UntilTurn.Caption = UntilTurn.Caption & options(i) & "-" & Translate("Until")
+    End If
+    
+    If Not UntilTurn.Value Then
+        UntilTurn.Caption = Translate("UntilTurnButton")
+        Whenever.Value = True
+    Else
+        Whenever.Value = False
+    End If
+End Sub
+
+' ========== 赋予能力类效果 ==========
+
+' 费用、身材、赋予能力、移除能力效果
+Private Sub Cost_Click()
+    If UntilTurn.Value Then Ability = Ability & SentenceTranslate(UntilTurn.Caption) & "|"
+    Ability = Ability & "Cost" & NumInputBox(Translate("Cost"), "Attack")
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & "|" & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub AttackDefense_Click()
+    If UntilTurn.Value Then Ability = Ability & SentenceTranslate(UntilTurn.Caption) & "|"
+    Ability = Ability & NumInputBox(Translate("Attack"), "Attack") & "/" & NumInputBox(Translate("Defense"), "Attack")
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower"
+    EnterCard·4·Goal.Show
+    Ability = Ability & "|" & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Give_Click()
+    If UntilTurn.Value Then Ability = Ability & SentenceTranslate(UntilTurn.Caption) & "|"
+    Ability = Ability & "Give|"
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower&Spell&Amulet&Leader&Crest&Faith"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal & "|{Effect}"
+    Call UnloadForm
+End Sub
+
+Private Sub Remove_Click()
+    If UntilTurn.Value Then Ability = Ability & SentenceTranslate(UntilTurn.Caption) & "|"
+    Dim options() As String
+    options = Split(SentenceTranslate("Remove|All|Fanfare|LastWords|Evolve|SuperEvolve|Strike|Clash|Engage|Enhance|Accelerate|Crystallize|Rush|Storm|Ambush|Bane|Ward|Drain|Intimidate|Aura|Barrier"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 60, 4))
+    Ability = "Remove|" & Translate(options(i))
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower&Spell&Amulet&Crest"
+    EnterCard·4·Goal.Show
+    Ability = Ability & "|" & Goal
+    Call UnloadForm
+End Sub
+
+' ========== 特殊资源类效果 ==========
+
+' 返回手牌、返回牌组、搜索、复制召唤等效果
+Private Sub ReturnToHand_Click()
+    Ability = Ability & "ReturnToHand|"
+    EnterCard·4·Goal.Tag = "||Field|Follower&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub ReturnToDeck_Click()
+    Ability = Ability & "ReturnToDeck|"
+    EnterCard·4·Goal.Tag = "||Hand|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub HandSummon_Click()
+    Ability = Ability & "HandSummon|"
+    EnterCard·4·Goal.Tag = "||HandSummon|Follower&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Search_Click()
+    EnterCard·4·Goal.Tag = "Random|Allied|Deck|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & "Search|" & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub SearchSummon_Click()
+    EnterCard·4·Goal.Tag = "Random|Allied|Deck|Follower&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & "SearchSummon|" & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Copy_Click()
+    Ability = Ability & "Copy|"
+    EnterCard·4·Goal.Tag = "|||Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub CopySummon_Click()
+    Ability = Ability & "CopySummon|"
+    EnterCard·4·Goal.Tag = "|||Follower&Amulet&Crest&Faith"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub SameNameToHand_Click()
+    Ability = Ability & "SameNameToHand|"
+    EnterCard·4·Goal.Tag = "|||Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub SameSummon_Click()
+    Ability = Ability & "SameSummon|"
+    EnterCard·4·Goal.Tag = "|||Follower&Amulet&Crest&Faith"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Invoke_Click()
+    Ability = Ability & "Invoke"
+    Call UnloadForm
+End Sub
+
+' ========== 战场交互类效果 ==========
+
+' 破坏、放逐、变形、弃牌、倒计时等效果
+Private Sub Destroy_Click()
+    Ability = Ability & "Destroy|"
+    EnterCard·4·Goal.Tag = "||Field|Follower&Amulet&Crest"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Banish_Click()
+    Ability = Ability & "Banish|"
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower&Spell&Amulet&Crest"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Transform_Click()
+    Ability = Ability & "Transform|"
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal & "|" & NameInputBox(Transform.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Discard_Click()
+    Ability = Ability & "Discard|"
+    EnterCard·4·Goal.Tag = "||Hand|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub Countdown_Click()
+    Ability = Ability & "Countdown" & NumInputBox(Translate("Countdown"), "Attack")
+    EnterCard·4·Goal.Tag = "||Field|Amulet&Crest"
+    EnterCard·4·Goal.Show
+    Ability = Ability & "|" & Goal
+    Call UnloadForm
+End Sub
+
+' 伤害、分裂伤害、恢复、进化、超进化效果
+Private Sub Damage_Click()
+    Ability = Ability & "Damage|"
+    EnterCard·4·Goal.Tag = "||Field|Follower&Leader"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal & "|" & NumInputBox(Damage.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub SplitDamage_Click()
+    Ability = Ability & "SplitDamage|"
+    EnterCard·4·Goal.Tag = "||Field|Follower&Leader"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal & "|" & NumInputBox(SplitDamage.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Restore_Click()
+    Ability = Ability & "Restore|"
+    EnterCard·4·Goal.Tag = "||Field|Follower&Leader"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal & "|" & NumInputBox(Restore.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Evolve_Click()
+    Ability = Ability & "Evolve|"
+    EnterCard·4·Goal.Tag = "||Field|Follower"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub SuperEvolve_Click()
+    Ability = Ability & "SuperEvolve|"
+    EnterCard·4·Goal.Tag = "||Field|Follower"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+Private Sub SelectBtn_Click()
+    Ability = Ability & "AuxSelect|"
+    EnterCard·4·Goal.Tag = "|||Follower&Spell&Amulet&Leader&Crest&Faith"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    SameTimePoint.Value = True
+    Call UnloadForm
+End Sub
+
+Private Sub UnStriked_Click()
+    Ability = Ability & "UnStriked|"
+    EnterCard·4·Goal.Tag = "||Field|Follower&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+' ========== 特殊效果类型 ==========
+
+' 效果改变、重复、多模式、纹章、信仰等特殊效果
+Private Sub Change_Click()
+    If InStr(CardEffect, "Change") > 0 Then Change.Value = False
+End Sub
+
+Private Sub SameTimePoint_Click()
+    ' 相同时间点多效果（功能待完善）
+End Sub
+
+Private Sub Repeat_Click()
+    If Repeat.Caption = Translate("RepeatButton") Then
+        Ability = "Repeat&" & NumInputBox(Translate("Repeat"), Empty) & "|"
+        Repeat.Caption = SentenceTranslate(Ability)
+    End If
+    If Not Repeat.Value Then Repeat.Caption = Translate("RepeatButton")
+End Sub
+
+Private Sub Mode_Click()
+    Dim i%, j%
+    i = NumInputBox("选择几个能力发动？", "Engage")
+    j = NumInputBox("总共几个选择？", "Engage")
+    Ability = "Mode&" & i
+    For i = 1 To j
+        Ability = Ability & "|{Ability}"
+    Next i
+    Call UnloadForm
+End Sub
+
+Private Sub Crest_Click()
+    If Enemy.Value Then Ability = "Enemy-"
+    Dim Str As String
+    Ability = Ability & "Crest&" & NumInputBox("输入倒数（0代表没有倒数）", "Engage")
+    Str = NumInputBox("希望输入几个效果？", "Engage")
+    Dim i%
+    For i = 1 To Val(Str)
+        Ability = Ability & "|{Effect}"
+    Next i
+    Call UnloadForm
+End Sub
+
+Private Sub Faith_Click()
+    Dim Str As String
+    Ability = Ability & NumInputBox("输入信仰起始值）", "Engage")
+    Str = NumInputBox("希望输入几个效果？", "Engage")
+    Dim i%
+    For i = 1 To Val(Str)
+        Ability = Ability & "|{Effect}"
+    Next i
+    CardEffect = Left(CardEffect, Len(CardEffect) - Len(TimePoint & "||")) & "Faith||"
+    TimePoint = "Faith"
+    Call UnloadForm
+End Sub
+
+Private Sub InOrder_Click()
+    Dim i%, j%
+    i = NumInputBox("依序发动几个能力？", "Engage")
+    j = NumInputBox("总共几个能力？", "Engage")
+    Ability = "InOrder&" & i
+    For i = 1 To j
+        Ability = Ability & "|{Ability}"
+    Next i
+    Call UnloadForm
+End Sub
+
+' ========== 职业类效果 ==========
+
+' 各职业专属效果：法术增幅、墓场、连击、集结等
+Private Sub Spellboost_Click()
+    Ability = Ability & "Spellboost|"
+    EnterCard·4·Goal.Tag = "|Allied|Hand&Deck|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal & "|" & NumInputBox(Spellboost.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Shadows_Click()
+    Ability = Ability & "Shadows|" & NumInputBox(Shadows.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Combo_Click()
+    Ability = Ability & "Combo|" & NumInputBox(Combo.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Rally_Click()
+    Ability = Ability & "Rally|" & NumInputBox(Rally.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub EarthSigil_Click()
+    Ability = Ability & "EarthSigil|" & NumInputBox(EarthSigil.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Reanimate_Click()
+    Ability = Ability & "Reanimate|" & NumInputBox(Reanimate.Caption, Empty)
+    Call UnloadForm
+End Sub
+
+' ========== 其他特殊效果 ==========
+
+' 替换牌组、命名计数、胜利、复制、放逐同名卡等效果
+Private Sub ReplaceDeck_Click()
+    Dim Str As String
+    Str = InputBox("请输入牌组名", Translate("ReplaceDeck"), "启示录牌组")
+    Ability = Ability & "ReplaceDeck|Deck:" & IDTranslate("Deck", Str, True)
+    Call UnloadForm
+End Sub
+
+Private Sub NamingCount_Click()
+    Dim Arr As Variant
+    Dim i%, j%
+    Dim Str As String
+    Str = "NamingCount"
+    Arr = Down("Count")
+    For i = 1 To UBound(Arr, 1)
+        If Arr(i, 1) = "" Then Exit For
+        If Mid(Arr(i, 1), 2, 100) <> "Class" Then
+            Str = Str & "|" & Mid(Arr(i, 1), 2, 100)
+        End If
+        i = i + 1
+    Next i
+    Dim options() As String
+    options = Split(SentenceTranslate(Str), "|")
+    i = Val(ShowChoice(options, 50, 4))
+    If i = 0 Then Exit Sub
+    Ability = Ability & "NamingCount|" & Translate(options(i)) & "|" & NumInputBox(options(i), Empty)
+    Call UnloadForm
+End Sub
+
+Private Sub Victory_Click()
+    Ability = Ability & "Victory"
+    Call UnloadForm
+End Sub
+
+Private Sub Replicate_Click()
+    Dim options() As String
+    options = Split(SentenceTranslate("Replicate|Fanfare|LastWords|Evolve|SuperEvolve|Strike|Clash|Engage|Enhance"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 60, 4))
+    Ability = "Replicate|" & Translate(options(i))
+    Call UnloadForm
+End Sub
+
+Private Sub BanishDuplicates_Click()
+    Ability = Ability & "BanishDuplicates|"
+    EnterCard·4·Goal.Tag = "||Field&Hand&Deck|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    Ability = Ability & Goal
+    Call UnloadForm
+End Sub
+
+' ========== 窗体初始化和退出处理 ==========
+
+' 窗体激活时初始化变量
+Private Sub UserForm_Activate()
+    IfEffect = Empty
+    Ability = Empty
+    Allied.Value = True
+    Whenever.Value = True
+    Effect.Caption = SentenceTranslate(CardEffect)
+End Sub
+
+' 统一退出处理函数
+Function UnloadForm()
+    ' 记录条件效果
+    If Len(IfEffect) > 0 Then CardEffect = CardEffect & IfEffect & "||"
+    
+    ' 记录能力效果
+    CardEffect = CardEffect & Ability
+    
+    ' 处理特殊效果类型
+    If Change.Value Then
+        CardEffect = CardEffect & "||Change|"
+        Effect.Caption = SentenceTranslate(CardEffect)
+        ' 重新初始化并打开效果设置
+        IfEffect = Empty
+        Ability = Empty
+        Change.Value = False
+        SameTimePoint.Value = False
+        Repeat = False
+        Call Effect_Click
+    ElseIf SameTimePoint.Value Then
+        CardEffect = CardEffect & "||"
+        Effect.Caption = SentenceTranslate(CardEffect)
+        ' 重新初始化
+        IfEffect = Empty
+        Ability = Empty
+        Change.Value = False
+        SameTimePoint.Value = False
+        Repeat = False
+    Else
+        ' 正常退出窗体
+        Unload EnterCard·3·Ability
+    End If
+End Function

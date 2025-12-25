@@ -1,0 +1,140 @@
+Attribute VB_Name = "·3·2·牌组·AddToOrigDeck"
+' ==================================================
+' 过程功能：向原卡组添加卡牌
+' 说明：检查选中的卡牌，将其添加到原卡组并进行排序
+' ==================================================
+Sub AddToOrigDeck()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim CardName As String       ' 选中的卡牌名称
+    Dim OrigDeck As Variant      ' 原卡组数据数组
+    Dim i As Integer             ' 排序位置索引
+    
+    ' ========== 选中卡牌检查 ==========
+    CardName = CStr(IsSelected("CardSet·Cards"))   ' 获取选中区域的卡牌名称
+    
+    ' 如果选中了有效卡牌，则进行添加操作
+    If CardName <> "" Then
+        ' ========== 卡牌排序处理 ==========
+        i = OrigDeckSorting(CardName)   ' 获取卡牌排序位置（同时处理重复卡牌）
+        
+        ' ========== 卡组数据更新 ==========
+        OrigDeck = Down("OrigDeck")                     ' 获取当前原卡组数据
+        
+        OrigDeck(i + 1, 1) = DownByID(IDByName(CardName), "Cost")   ' 设置费用（第1列）
+        OrigDeck(i + 1, 2) = CardName                               ' 设置卡牌名称（第2列）
+        OrigDeck(i + 1, 3) = 3                                      ' 设置数量为3（第3列）
+        
+        Call Up("OrigDeck", OrigDeck)   ' 更新原卡组数据
+    End If
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+' ==================================================
+' 函数功能：原卡组排序管理
+' 参数：CardName - 可选，要处理的卡牌名称
+' 返回：Integer - 排序后的非空行数量
+' 说明：对原卡组按费用排序，支持卡牌去重和空行清理
+' ==================================================
+Function OrigDeckSorting(Optional CardName As String = "") As Integer
+    ' ========== 变量声明 ==========
+    Dim OrigDeck As Variant          ' 原卡组数据数组
+    Dim rowCount As Integer          ' 总行数
+    Dim colCount As Integer          ' 总列数
+    Dim nonEmptyCount As Integer     ' 非空行计数
+    Dim i As Integer, j As Integer, k As Integer   ' 循环计数器
+    Dim tempArr() As Variant         ' 临时排序数组
+    Dim tempVal As Variant           ' 临时交换变量
+    
+    ' ========== 数据初始化 ==========
+    OrigDeck = Down("OrigDeck")      ' 获取原卡组数据
+    rowCount = 40                    ' 固定行数：40行
+    colCount = 3                     ' 固定列数：3列（费用、名称、数量）
+    
+    ' ========== 重复卡牌处理 ==========
+    ' 如果提供了卡牌名称，检查并删除现有重复项
+    If CardName <> "" Then
+        For i = 1 To rowCount
+            If CStr(OrigDeck(i, 2)) = CardName Then
+                ' 找到重复卡牌，清空该行数据
+                OrigDeck(i, 1) = Empty
+                Exit For
+            End If
+        Next i
+    End If
+    
+    ' ========== 非空行统计 ==========
+    nonEmptyCount = 0
+    For i = 1 To rowCount
+        If Not IsEmpty(OrigDeck(i, 1)) Then
+            nonEmptyCount = nonEmptyCount + 1   ' 统计非空行数量
+        End If
+    Next i
+    
+    ' ========== 空卡组处理 ==========
+    If nonEmptyCount = 0 Then
+        OrigDeckSorting = 0   ' 返回0表示卡组为空
+        Exit Function
+    End If
+    
+    ' ========== 临时数组创建 ==========
+    ReDim tempArr(1 To nonEmptyCount, 1 To colCount)   ' 创建临时数组存放非空行
+    
+    ' ========== 数据提取到临时数组 ==========
+    k = 1   ' 临时数组行索引
+    For i = 1 To rowCount
+        If Not IsEmpty(OrigDeck(i, 1)) Then
+            ' 复制整行数据到临时数组
+            For j = 1 To colCount
+                tempArr(k, j) = OrigDeck(i, j)
+            Next j
+            k = k + 1
+        End If
+    Next i
+    
+    ' ========== 冒泡排序算法 ==========
+    ' 按费用（第1列）升序排序
+    For i = 1 To nonEmptyCount - 1
+        For j = i + 1 To nonEmptyCount
+            If tempArr(i, 1) > tempArr(j, 1) Then
+                ' 交换整行数据
+                For k = 1 To colCount
+                    tempVal = tempArr(i, k)
+                    tempArr(i, k) = tempArr(j, k)
+                    tempArr(j, k) = tempVal
+                Next k
+            End If
+        Next j
+    Next i
+    
+    ' ========== 排序数据回写 ==========
+    ' 将排序后的数据写回原数组前部
+    For i = 1 To nonEmptyCount
+        For j = 1 To colCount
+            OrigDeck(i, j) = tempArr(i, j)
+        Next j
+    Next i
+    
+    ' ========== 剩余行清空 ==========
+    ' 清空非空行之后的所有行
+    For i = nonEmptyCount + 1 To rowCount
+        For j = 1 To colCount
+            OrigDeck(i, j) = Empty
+        Next j
+    Next i
+    
+    ' ========== 数据更新与返回 ==========
+    Call Up("OrigDeck", OrigDeck)        ' 更新原卡组数据
+    OrigDeckSorting = nonEmptyCount      ' 返回非空行数量
+End Function

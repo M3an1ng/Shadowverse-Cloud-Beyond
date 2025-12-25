@@ -1,0 +1,36 @@
+Attribute VB_Name = "·4·4·辅助·DownByMatchID"
+' ==================================================
+' 函数功能：根据匹配ID获取数据记录
+' 参数：idValue - 匹配ID值
+'        HeaderName - 要获取的字段名称
+' 返回：String - 对应的字段值
+' 说明：从Data区域中查找指定ID的记录并返回对应字段值
+' ==================================================
+Function DownByMatchID(idValue As String, HeaderName As String) As String
+    ' ========== 变量声明 ==========
+    Dim i As Integer           ' 循环计数器
+    Dim AllData As Variant     ' 全部数据数组
+    
+    ' ========== 数据获取 ==========
+    ' 获取全部Data区域数据
+    AllData = Down("Data")
+    
+    ' ========== 数据遍历查找 ==========
+    ' 遍历所有数据记录查找匹配的ID
+    For i = 1 To UBound(AllData)
+        If AllData(i, 1) = idValue Then
+            ' ========== 字段值返回 ==========
+            ' 根据字段名称返回对应的值
+            If HeaderName = "ID" Then
+                DownByMatchID = AllData(i, 2)   ' 返回卡牌ID
+            ElseIf HeaderName = "Turn" Then
+                DownByMatchID = AllData(i, 3)   ' 返回回合信息
+            ElseIf HeaderName = "Area" Then
+                DownByMatchID = AllData(i, 4)   ' 返回区域信息
+            ElseIf HeaderName = "Effect" Then
+                DownByMatchID = AllData(i, 5)   ' 返回效果信息
+            End If
+            Exit For   ' 找到匹配记录后退出循环
+        End If
+    Next i
+End Function

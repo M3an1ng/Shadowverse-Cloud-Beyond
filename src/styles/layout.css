@@ -1,0 +1,552 @@
+/* 
+ * Layout Styles
+ * Handles page structure, grids, and major containers.
+ */
+
+/* --- Page Containers --- */
+#app-container {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.page {
+    display: none;
+    width: 100%;
+    height: 100%;
+    padding: var(--space-4);
+    overflow: hidden;
+    flex-direction: column;
+}
+
+.page.active {
+    display: flex;
+    animation: fade-in 0.5s ease-out;
+}
+
+.page-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: var(--space-4);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.page-header h2 {
+    margin-left: var(--space-4);
+    font-size: var(--text-xl);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+/* --- Navigation Page --- */
+#navigation-page {
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.nav-menu {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: var(--space-6);
+    width: 100%;
+    max-width: 1000px;
+    margin-top: var(--space-8);
+}
+
+.nav-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-6);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    transition: all var(--transition-normal);
+    text-align: center;
+    height: 100%;
+}
+
+.nav-button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--color-primary);
+    transform: translateY(-5px);
+    box-shadow: var(--shadow-lg);
+}
+
+.nav-icon {
+    font-size: 4rem;
+    margin-bottom: var(--space-4);
+    filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.2));
+}
+
+.nav-text h3 {
+    font-size: var(--text-lg);
+    margin-bottom: var(--space-2);
+    color: var(--color-primary);
+}
+
+.nav-text p {
+    font-size: var(--text-sm);
+    color: var(--color-secondary);
+}
+
+/* --- Game Board Layout --- */
+#game-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center; /* Center battlefield vertically */
+    height: 100%;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    position: relative;
+    overflow: hidden;
+}
+
+/* HUD Elements (Absolute Positioning within Game Container) */
+.player-info {
+    position: absolute; /* Changed to absolute to stay within game-container */
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-4);
+    z-index: 90; /* Ensure HUD is above battlefield but below modals */
+    width: 300px;
+    pointer-events: none; /* Let clicks pass through */
+    transition: all 0.3s ease;
+}
+
+.opponent-info {
+    top: 0;
+    right: 0;
+    align-items: flex-end;
+    /* HUD Background Plate */
+    /* background: linear-gradient(135deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 100%); */
+    /* border-left: 2px solid var(--color-error); */ /* Removed to fix edge glitch */
+    /* border-bottom: 1px solid rgba(255, 255, 255, 0.1); Removed white border */
+    border-bottom-left-radius: var(--radius-lg);
+    backdrop-filter: blur(8px);
+    padding-top: var(--space-4);
+    padding-right: var(--space-4);
+}
+
+.player-info-self {
+    bottom: 0;
+    left: 0;
+    align-items: flex-start;
+    /* HUD Background Plate */
+    /* background: linear-gradient(315deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 100%); */
+    /* border-right: 2px solid var(--color-primary); */ /* Removed to fix edge glitch */
+    /* border-top: 1px solid rgba(255, 255, 255, 0.1); Removed white border */
+    border-top-right-radius: var(--radius-lg);
+    backdrop-filter: blur(8px);
+    padding-bottom: var(--space-4);
+    padding-left: var(--space-4);
+}
+
+/* Avatar & Name Row */
+.player-avatar-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+    pointer-events: auto;
+}
+
+.opponent-info .player-avatar-row {
+    flex-direction: row-reverse;
+}
+
+.player-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-highlight);
+    color: var(--color-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: var(--text-lg);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+}
+
+.player-name {
+    font-weight: 700;
+    font-size: var(--text-base);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-secondary);
+}
+
+/* Stats Grid */
+.player-stats {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-secondary);
+    width: 100%;
+    background: transparent;
+    pointer-events: auto;
+}
+
+.stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 0;
+}
+
+/* HP Styling */
+.stat.hp {
+    font-size: var(--text-2xl);
+    color: var(--color-text);
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+    font-weight: 900;
+}
+
+/* PP Styling (Blue Bar) */
+.stat.pp {
+    color: #60a5fa; /* Blue 400 */
+    font-weight: bold;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+}
+
+.pp-header {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.pp-bar-container {
+    display: flex;
+    gap: 2px;
+    height: 6px;
+    width: 100%;
+}
+
+.pp-segment {
+    flex: 1;
+    background-color: #1e3a8a; /* Dark Blue */
+    border-radius: 1px;
+    transition: all 0.3s ease;
+}
+
+.pp-segment.active {
+    background-color: #60a5fa; /* Blue 400 */
+    box-shadow: 0 0 4px rgba(96, 165, 250, 0.5);
+}
+
+.pp-segment.empty {
+    background-color: #18181b; /* Zinc 900 */
+    border: 1px solid #27272a; /* Zinc 800 */
+}
+
+/* EP Styling (Yellow Dots) */
+.stat.ep {
+    color: #facc15; /* Yellow 400 */
+    font-weight: bold;
+    flex-direction: row; /* Changed to row */
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: #18181b; /* Zinc 900 */
+    padding: 4px 8px;
+    border: 1px solid #27272a; /* Zinc 800 */
+    border-radius: 2px;
+}
+
+.ep-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ep-dots-container {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+}
+
+.ep-dot {
+    width: 12px; /* Larger dots */
+    height: 12px;
+    background-color: #27272a; /* Zinc 800 */
+    border: 1px solid #3f3f46; /* Zinc 700 */
+    border-radius: 50%;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ep-dot.active {
+    background-color: #facc15; /* Yellow 400 */
+    border-color: #fef08a; /* Yellow 200 */
+    box-shadow: 0 0 8px rgba(250, 204, 21, 0.6);
+    transform: scale(1.1);
+}
+
+.sep-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sep-dots-container {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+}
+
+.sep-dot {
+    width: 12px;
+    height: 12px;
+    background-color: #27272a;
+    border: 1px solid #3f3f46;
+    border-radius: 50%;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sep-dot.active {
+    background-color: #fb7185; /* Rose 400 */
+    border-color: #fecdd3; /* Rose 200 */
+    box-shadow: 0 0 8px rgba(251, 113, 133, 0.6);
+    transform: scale(1.1);
+}
+
+/* Turn Indicator Badge */
+.turn-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.turn-badge.first {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    color: white;
+    border: 1px solid #60a5fa;
+}
+
+.turn-badge.second {
+    background: linear-gradient(135deg, #ef4444, #b91c1c);
+    color: white;
+    border: 1px solid #f87171;
+}
+
+/* Deck & Grave Styling */
+.stat.deck {
+    color: #a1a1aa; /* Zinc 400 */
+    background: #18181b; /* Zinc 900 */
+    padding: 4px 8px;
+    border: 1px solid #27272a; /* Zinc 800 */
+    border-radius: 2px;
+}
+
+.stat.graveyard {
+    color: #a1a1aa; /* Zinc 400 */
+    background: #18181b; /* Zinc 900 */
+    padding: 4px 8px;
+    border: 1px solid #27272a; /* Zinc 800 */
+    border-radius: 2px;
+}
+
+.stat span {
+    font-weight: bold;
+    color: inherit;
+}
+
+/* Battlefield (Centered Holographic Table) */
+#battlefield {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 50%; /* Full width */
+    height: 60%; /* Occupy central area */
+    min-height: 500px;
+    display: flex; /* Changed to flex column to separate fields */
+    flex-direction: column;
+    justify-content: space-between; /* Push fields apart */
+    gap: 60px; /* Gap for Turn Info */
+    z-index: 1;
+    pointer-events: none; /* Allow clicks to pass through empty areas */
+}
+
+/* Grid Background Pattern for Battlefield - Moved to individual fields or removed if causing clutter */
+/* Removed global grid to clean up center area */
+
+/* Gradient Zones */
+#player2-field {
+    /* Opponent Zone: Red/Magenta tint */
+    background:
+        linear-gradient(180deg, rgba(239, 68, 68, 0.15) 0%, rgba(0,0,0,0.4) 100%);
+    display: flex;
+    align-items: flex-end; /* Align cards to the bottom of their zone */
+    padding-bottom: var(--space-4);
+    position: relative;
+    flex: 1;
+    width: 100%;
+    pointer-events: auto; /* Re-enable clicks */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(4px);
+}
+
+#player1-field {
+    /* Player Zone: Cyan/Blue tint */
+    background:
+        linear-gradient(0deg, rgba(6, 182, 212, 0.15) 0%, rgba(0,0,0,0.4) 100%);
+    display: flex;
+    align-items: flex-start; /* Align cards to the top of their zone */
+    padding-top: var(--space-4);
+    position: relative;
+    flex: 1;
+    width: 100%;
+    pointer-events: auto; /* Re-enable clicks */
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(4px);
+}
+
+/* Central Divider Line - Removed as we now have a gap */
+
+.field {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    min-height: 160px;
+}
+
+/* Hand Area */
+.hand, .hand-container {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    gap: -40px;
+    height: 160px;
+    z-index: 20;
+    perspective: 1000px;
+    bottom: -20px; /* Default for player hand */
+    transition: bottom 0.3s;
+}
+
+.hand-container:hover, .player-hand:hover {
+    bottom: 0;
+    gap: var(--space-2);
+}
+
+.opponent-hand {
+    top: -20px; /* Adjusted to be visible */
+    transform: translateX(-50%) scale(0.7);
+    opacity: 0.9;
+    pointer-events: none; /* Prevent interaction with opponent hand */
+}
+
+/* Action Buttons (End Turn) */
+#end-turn-button, #end-turn-btn {
+    position: absolute;
+    bottom: 40px;
+    right: 40px;
+    width: 120px;
+    height: 50px;
+    font-size: var(--text-base);
+    background-color: var(--color-text);
+    color: var(--color-background);
+    font-weight: 900;
+    z-index: 50;
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+}
+
+#spectator-toggle-view {
+    position: absolute;
+    bottom: 40px;
+    right: 40px;
+    width: 120px;
+    height: 50px;
+    font-size: var(--text-base);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--color-text);
+    font-weight: 900;
+    z-index: 50;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.12);
+}
+
+#spectator-toggle-view:hover {
+    transform: scale(1.05);
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.22);
+}
+
+#end-turn-button:hover, #end-turn-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.4);
+}
+
+#confirm-mulligan-button {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 100;
+    padding: var(--space-4) var(--space-8);
+    font-size: var(--text-xl);
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    border: 2px solid var(--color-primary);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+#confirm-mulligan-button:hover {
+    background-color: var(--color-background);
+    color: var(--color-primary);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
+    transform: translate(-50%, -50%) scale(1.05);
+}
+
+/* Turn Info Display (Center Screen) */
+#turn-info {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 4rem;
+    font-weight: 900;
+    color: rgba(255, 255, 255, 0.1); /* Subtle background text */
+    pointer-events: none;
+    z-index: 0; /* Behind cards but visible if not covered */
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    text-shadow: 0 0 20px rgba(0,0,0,0.5);
+    transition: all 0.5s ease;
+}
+
+/* When active/changing, pop out */
+#turn-info.active {
+    color: rgba(255, 255, 255, 0.8);
+    transform: translate(-50%, -50%) scale(1.2);
+    z-index: 100; /* Bring to front briefly */
+    text-shadow: 0 0 30px var(--color-primary);
+}

@@ -9,13 +9,17 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For CardKeyword
 using ShadowverseBeyond.Server.Dtos; // For PlayerStateDto (needed for CardDestroyedEvent)
 using AutoMapper;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
-using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For mapping PlayerState to PlayerStateDto
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // For mapping PlayerState to PlayerStateDto
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
     /// <summary>
     /// Handles the "DestroyUnit" effect, moving targeted units to the graveyard.
     /// </summary>
+    [EffectHandler(EffectType.Destroy)]
     public class DestroyEffectHandler : EffectHandlerBase<DestroyEffectParams>
     {
         private readonly IMapper _mapper;
@@ -28,29 +32,49 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, DestroyEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, DestroyEffectParams parameters)
         {
             const string effectName = "DestroyEffect";
-            Logger.LogDebug("{EffectName}: Starting with DestroyReason={Reason}.", effectName, parameters.DestroyReason);
+            var sourceCard = context.SourceCard;
 
-            Func<CardInstance, GameContext, Task<DomainOperationResult>> cardDestroyAction =
-                (card, ctx) => // DestroyCard is synchronous
+            if (sourceCard == null)
+            {
+                Logger.LogError("{EffectName}: SourceCard is null, cannot determine the cause of destruction.", effectName);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Cannot destroy card without a source." };
+            }
+
+            Func<TargetInfo, GameContext, DomainOperationResult> createDestroyEventAction =
+                (targetInfo, ctx) =>
                 {
-                    var ownerPlayer = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
-                    if (ownerPlayer == null)
+                    var result = new DomainOperationResult();
+                    if (targetInfo.Card == null)
                     {
-                        Logger.LogError("{EffectName}: Could not find owner PlayerState for card {CardId}.", effectName, card.InstanceId);
-                        return Task.FromResult(new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found." });
+                        Logger.LogWarning("{EffectName}: Target card data is missing for one of the targets.", effectName);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Destroy target is not a valid card." };
                     }
 
-                    var operationResult = ownerPlayer.DestroyCard(card, ctx.SourceCard, parameters.DestroyReason);
-                    return Task.FromResult(operationResult);
+                    var targetCard = targetInfo.Card;
+
+                    // Precondition check: Ensure the target has an owner.
+                    var ownerPlayer = ctx.CurrentGameState.GetPlayerState(targetCard.OwnerPlayerId);
+                    if (ownerPlayer == null)
+                    {
+                        Logger.LogError("{EffectName}: Could not find owner PlayerState for card {CardId}.", effectName, targetCard.InstanceId);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found for target card." };
+                    }
+
+                    // Create the DestroyEvent command.
+                    var destroyEvent = new DestroyEvent(targetCard, sourceCard, parameters.DestroyReason);
+                    result.GeneratedEvents.Add(destroyEvent);
+                    result.Success = true;
+
+                    return result;
                 };
 
-            var serviceResult = await _targetProcessingService.ProcessTargetsAsync(
+            var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                null,
-                cardDestroyAction,
+                effect.SelectedTargets,
+                createDestroyEventAction,
                 effectName);
 
             if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
@@ -58,9 +82,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 serviceResult.ErrorMessage = "Failed to process targets for destroy effect, or no valid targets found.";
             }
 
-            // The EffectCompletedEvent will be created by the EffectExecutor.
-            // This handler is now only responsible for invoking the domain logic
-            // and returning the atomic events generated by that logic.
             return serviceResult;
         }
 

@@ -1,0 +1,73 @@
+Attribute VB_Name = "·2·2·录卡·GetCardID"
+' ==================================================
+' 函数功能：卡牌ID后缀生成器，创建卡牌的下一位ID（仅后两位）
+' 参数：prefix - 卡牌ID前缀（通常为卡包ID+职业+可构筑+稀有度）
+' 返回：完整卡牌ID字符串或错误信息
+' 说明：在给定前缀下查找01-99范围内第一个可用的后缀数字
+' ==================================================
+Function GetCardID(prefix As String) As String
+    On Error GoTo ErrorHandler
+    
+    ' ========== 常量定义 ==========
+    Const SHEET_NAME As String = "Effect"    ' 数据源工作表名称
+    Const ID_COL As Integer = 1              ' ID所在列（A列）
+    Const MAX_NUM As Integer = 99            ' 最大后缀数字
+    
+    ' ========== 变量声明 ==========
+    Dim ws As Worksheet              ' 工作表对象
+    Dim lastRow As Long              ' 最后数据行号
+    Dim i As Long                    ' 循环计数器
+    Dim idValue As String            ' 临时存储ID值
+    Dim existingNumbers As Object    ' 已使用后缀数字字典
+    Dim Num As Integer               ' 当前检查的数字
+    
+    ' ========== 工作表初始化 ==========
+    Set ws = ThisWorkbook.Sheets(SHEET_NAME)   ' 设置Effect工作表
+    
+    ' 获取ID列最后一行数据位置
+    lastRow = ws.Cells(ws.rows.count, ID_COL).End(xlUp).Row
+    
+    ' ========== 已使用后缀数字收集 ==========
+    Set existingNumbers = CreateObject("Scripting.Dictionary")   ' 创建字典存储已用后缀
+    
+    ' 遍历Effect工作表查找匹配前缀的ID
+    For i = 2 To lastRow   ' 从第2行开始（假设第1行是标题）
+        idValue = CStr(ws.Cells(i, ID_COL).Value)   ' 获取卡牌ID字符串
+        
+        ' 检查ID是否以指定前缀开头
+        If Left(idValue, Len(prefix)) = prefix Then
+            ' 提取后缀部分（前缀后的两位数字）
+            Dim suffix As String
+            suffix = Mid(idValue, Len(prefix) + 1, 2)
+            
+            ' 验证后缀是否为有效数字
+            If IsNumeric(suffix) Then
+                Dim numValue As Integer
+                numValue = CInt(suffix)   ' 转换为整数
+                
+                ' 只记录01-99范围内的有效数字
+                If numValue >= 1 And numValue <= MAX_NUM Then
+                    existingNumbers(numValue) = True   ' 记录已使用的后缀数字
+                End If
+            End If
+        End If
+    Next i
+    
+    ' ========== 可用后缀数字查找 ==========
+    ' 在1-99范围内顺序查找第一个可用数字
+    For Num = 1 To MAX_NUM
+        If Not existingNumbers.Exists(Num) Then
+            ' 格式化为两位数字符串并与前缀组合
+            GetCardID = prefix & Format(Num, "00")
+            Exit Function
+        End If
+    Next Num
+    
+    ' ========== 无可用后缀处理 ==========
+    GetCardID = "ID溢出: 无可用后缀"   ' 所有后缀数字都被使用
+    Exit Function
+
+ErrorHandler:
+    ' ========== 错误处理 ==========
+    GetCardID = "错误: " & Err.Description   ' 返回错误信息
+End Function

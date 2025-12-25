@@ -1,4 +1,6 @@
 // Location: Server/Dtos/PlayabilityResultDto.cs
+using ShadowverseBeyond.Server.Dtos.Enums;
+
 namespace ShadowverseBeyond.Server.Dtos
 {
     /// <summary>
@@ -31,5 +33,15 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Used for UI highlighting.
         /// </summary>
         public List<Guid> ValidTargetIds { get; set; } = new List<Guid>(); // Assuming InstanceId is int based on other DTOs/design
+
+        /// <summary>
+        /// The available play modes for this card.
+        /// </summary>
+        public List<PlayModeAvailabilityDto> PlayModes { get; set; } = new();
+
+        /// <summary>
+        /// The default selected play mode based on availability.
+        /// </summary>
+        public PlayMode? SelectedPlayMode { get; set; }
     }
 }

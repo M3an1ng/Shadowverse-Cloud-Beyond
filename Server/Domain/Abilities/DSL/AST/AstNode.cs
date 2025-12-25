@@ -136,6 +136,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
         T VisitBlock(BlockNode node);
         T VisitConditionalExpression(ConditionalExpressionNode node);
         T VisitArrayAccess(ArrayAccessNode node);
+        T VisitMemberAccess(MemberAccessNode node);
     }
 
     /// <summary>
@@ -161,6 +162,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
         public virtual T VisitBlock(BlockNode node) => DefaultVisit(node);
         public virtual T VisitConditionalExpression(ConditionalExpressionNode node) => DefaultVisit(node);
         public virtual T VisitArrayAccess(ArrayAccessNode node) => DefaultVisit(node);
+        public virtual T VisitMemberAccess(MemberAccessNode node) => DefaultVisit(node);
 
         protected abstract T DefaultVisit(AstNode node);
     }

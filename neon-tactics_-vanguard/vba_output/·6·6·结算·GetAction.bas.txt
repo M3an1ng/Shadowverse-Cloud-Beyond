@@ -1,0 +1,115 @@
+Attribute VB_Name = "·6·6·结算·GetAction"
+' ==================================================
+' 函数功能：获取符合条件的动作效果
+' 参数：
+'   InputAction - 输入的动作类型
+'   ThisCard - 当前卡牌ID
+'   InputValue - 是否只处理当前卡牌（可选，默认False）
+' ==================================================
+Function GetAction(InputAction As String, ThisCard As String, Optional InputValue As Variant = "")
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%                          ' 循环计数器
+    Dim Arr As Variant                      ' 临时数组
+    Dim Flag As Boolean                     ' 标志位
+    
+    Dim Effectrr() As String                ' 效果数组
+    Dim EffectSplit() As String             ' 分割后的效果数组
+    Dim TimePointSplit() As String          ' 时间点分割数组
+    
+    Dim MatchID As String                   ' 匹配的卡牌ID
+    Dim AllGoal As Variant                  ' 所有目标数组
+    Dim Area As String                      ' 区域信息
+
+    ' ========== 目标筛选处理 ==========
+    ' 获取所有数据作为初始目标
+    AllGoal = Down("Data")
+    
+    ' 根据InputValue参数决定处理范围
+    If InputValue = True Then
+        ' 只处理当前卡牌
+        ReDim AllGoal(1 To 1, 1 To UBound(AllGoal))
+        AllGoal(1, 1) = ThisCard
+    Else
+        ' 处理符合条件的其他卡牌
+        For i = 1 To UBound(AllGoal, 1)
+            ' 排除当前卡牌
+            If AllGoal(i, 1) = ThisCard Then
+                AllGoal(i, 1) = Empty
+            ' 检查场地区域的条件效果
+            ElseIf (InStr(AllGoal(i, 5), "When||") > 0 Or InStr(AllGoal(i, 5), "{When|") > 0) And _
+                (AllGoal(i, 4) = "Field" Or AllGoal(i, 4) = "Crest" Or AllGoal(i, 4) = "Faith" Or AllGoal(i, 4) = "Leader") Then
+                ' 保留符合条件的场地区域卡牌
+            ' 检查手牌区域的条件效果
+            ElseIf (InStr(AllGoal(i, 5), "ActivateInHand-When||") > 0 Or InStr(AllGoal(i, 5), "{ActivateInHand-When|") > 0) And _
+                AllGoal(i, 4) = "Hand" Then
+                ' 保留符合条件的手牌区域卡牌
+            ' 检查牌组区域的条件效果
+            ElseIf (InStr(AllGoal(i, 5), "ActivateInDeck-When||") > 0 Or InStr(AllGoal(i, 5), "{ActivateInDeck-When|") > 0) And _
+                AllGoal(i, 4) = "Deck" Then
+                ' 保留符合条件的牌组区域卡牌
+            Else
+                ' 其他情况排除该卡牌
+                AllGoal(i, 1) = Empty
+            End If
+        Next i
+        
+        ' 过滤掉空元素，只保留有效目标
+        AllGoal = NonEmptyArray(AllGoal)
+        
+        ' 更新步骤信息
+        Flag = True
+        If InputAction = "Play" Then Flag = False
+        If InputAction = "Evolve" And InputValue <> "" Then Flag = False
+        If InputAction = "SuperEvolve" And InputValue <> "" Then Flag = False
+        If InputAction = "Engage" Then Flag = False
+        
+        If Flag Then Call UpSteps(InputAction, ThisCard, CStr(InputValue))
+    End If
+
+    ' ========== 效果遍历处理 ==========
+    ' 遍历所有目标卡牌
+    For k = 1 To UBound(AllGoal, 1)
+        MatchID = AllGoal(k, 1)
+        Effectrr = GetEffect(MatchID)
+        
+        ' 遍历当前卡牌的所有效果
+        For i = 1 To UBound(Effectrr)
+            If Effectrr(i) <> "" Then
+                EffectSplit = Split(Effectrr(i), "||")
+                
+                ' 检查是否为When类型效果（排除Turn相关）
+                If InStr(EffectSplit(0), "When") > 0 And InStr(EffectSplit(0), "Turn-") = 0 Then
+                    TimePointSplit = Split(EffectSplit(0), "|")
+                    
+                    ' ========== 动作匹配检查 ==========
+                    Flag = False
+                    Area = DownByMatchID(MatchID, "Area")
+                    
+                    ' 检查动作类型是否匹配
+                    If InputAction = TimePointSplit(2) Then
+                        ' ========== 目标匹配检查 ==========
+                        ' 获取目标并检查是否包含当前卡牌
+                        If InputAction = "EnterField" Then
+                            Call GetGoal("Field-" & TimePointSplit(1), MatchID)
+                        Else
+                            Call GetGoal("AnyArea-" & TimePointSplit(1), MatchID)
+                        End If
+                        
+                        If InStr(PreviousGoal, ThisCard) > 0 Then
+                            ' 更新时间点信息为目标卡牌
+                            TimePointSplit(1) = "Goal&" & ThisCard
+                            EffectSplit(0) = Join(TimePointSplit, "|")
+                            Effectrr(i) = Join(EffectSplit, "||")
+                            
+                            ' 处理时间点效果
+                            Call GetTimePoint(Effectrr(i), MatchID)
+                        End If
+                        
+                        Arr = PreviousGoal
+                    End If
+                End If
+            End If
+        Next i
+    Next k
+End Function
+

@@ -8,6 +8,11 @@ namespace ShadowverseBeyond.Server.Models
     public class PlayerActionWrapper
     {
         /// <summary>
+        /// A unique identifier for this specific action instance, used for tracking its completion.
+        /// </summary>
+        public Guid ActionId { get; } = Guid.NewGuid();
+
+        /// <summary>
         /// Identifies the type of action (e.g., "PlayCard", "Attack", "EndTurn").
         /// Consider using an enum for better type safety in the future.
         /// </summary>

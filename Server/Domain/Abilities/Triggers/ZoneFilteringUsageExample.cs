@@ -87,7 +87,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             var config = new TriggerConfig
             {
                 EventTypes = new List<EventType> { eventType },
-                Timing = TriggerTiming.After
+                Timing = TriggerTiming.On
             };
 
             // 根据卡牌类型设置最优区域
@@ -102,11 +102,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
                 case "spell":
                     // 法术可能在手牌中就有效果（如显示可用目标）
                     config.WithZones(CardZone.Hand, CardZone.Playing);
-                    break;
-
-                case "leader":
-                    // 领袖能力通常全局生效
-                    config.WithZone(CardZone.Leader);
                     break;
 
                 default:

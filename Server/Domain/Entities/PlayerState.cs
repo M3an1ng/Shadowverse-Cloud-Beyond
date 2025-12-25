@@ -14,32 +14,73 @@ using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Exceptions;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
+    [DslExposable("玩家状态", Description = "代表游戏中一个玩家的完整状态信息")]
     public class PlayerState
     {
         public Guid PlayerId { get; set; }
+
+        [DslExposable("最大PP", Description = "玩家的最大PP值")]
         public int MaxPlayPoints { get; set; } = 0;
+
+        [DslExposable("当前PP", Description = "玩家当前可用的PP值")]
         public int CurrentPlayPoints { get; set; } = 0;
+
+        [DslExposable("最大EP", Description = "玩家的最大进化点数")]
         public int MaxEvolutionPoints { get; set; } = 0;
+
+        [DslExposable("当前EP", Description = "玩家当前可用的进化点数")]
         public int CurrentEvolutionPoints { get; set; } = 0;
+
+        [DslExposable("最大SEP", Description = "玩家的最大超进化点数")]
+        public int MaxSuperEvolutionPoints { get; set; } = 0;
+
+        [DslExposable("当前SEP", Description = "玩家当前可用的超进化点数")]
+        public int CurrentSuperEvolutionPoints { get; set; } = 0;
         public bool IsAI { get; set; } = false;
+        
+        [DslExposable("是否先手", Description = "玩家是否为先手")]
         public bool IsFirst { get; set; } = false;
         public bool HasCompletedMulligan { get; set; } = false;
+
+        [DslExposable("回合数", Description = "当前回合数")]
         public int TurnNumber { get; set; } = 0;
+
+        [DslExposable("本回合出牌数", Description = "本回合已出牌的数量")]
         public int PlayedCardCountThisTurn { get; set; } = 0;
+
         public bool HasTakenFirstTurn { get; set; } = false;
+
+        [DslExposable("当前生命值", Description = "玩家当前的生命值")]
         public int CurrentHealth => Leader?.CurrentHealth ?? 0;
+
+        [DslExposable("最大生命值", Description = "玩家的最大生命值")]
         public int MaxHealth => Leader?.MaxHealth ?? 0;
+
+        [DslExposable("主战者", Description = "玩家的主战者卡牌")]
         public CardInstance Leader { get; set; } = null!;
+
+        [DslExposable("手牌", Description = "玩家手中的卡牌列表")]
         public List<CardInstance> Hand { get; set; } = new List<CardInstance>();
+
+        [DslExposable("牌库", Description = "玩家牌库中的卡牌列表")]
         public List<CardInstance> Deck { get; set; } = new List<CardInstance>();
+
+        [DslExposable("战场", Description = "玩家战场上的卡牌列表")]
         public List<CardInstance> Field { get; set; } = new List<CardInstance>();
+
+        [DslExposable("墓地", Description = "玩家墓地中的卡牌列表")]
         public List<CardInstance> Graveyard { get; set; } = new List<CardInstance>();
+
         public List<CardInstance> Extra { get; set; } = new List<CardInstance>();
+        [DslExposable("纹章区", Description = "玩家纹章区域中的卡牌列表")]
+        public List<CardInstance> Emblem { get; set; } = new List<CardInstance>();
         public int DeckCount => Deck?.Count ?? 0;
         public bool CanEvolve { get; set; } = false;
+        public bool CanSuperEvolve { get; set; } = false;
 
         public PlayerState(Guid playerId)
         {
@@ -49,6 +90,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Field = new List<CardInstance>();
             Graveyard = new List<CardInstance>();
             Extra = new List<CardInstance>();
+            Emblem = new List<CardInstance>();
         }
 
         private PlayerState()
@@ -59,18 +101,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Field = new List<CardInstance>();
             Graveyard = new List<CardInstance>();
             Extra = new List<CardInstance>();
+            Emblem = new List<CardInstance>();
         }
 
         public DomainOperationResult ModifyPlayPoints(int amount)
         {
             var result = new DomainOperationResult();
-            int originalPP = this.CurrentPlayPoints;
-            int newPP = Math.Max(0, Math.Min(originalPP + amount, this.MaxPlayPoints));
-            if (originalPP != newPP)
-            {
-                this.CurrentPlayPoints = newPP;
-                result.GeneratedEvents.Add(new PpUpdateEvent(this, this.CurrentPlayPoints, this.MaxPlayPoints));
-            }
+            // Do not mutate here; just emit an event with the intended target values.
+            int targetCurrent = Math.Max(0, Math.Min(this.CurrentPlayPoints + amount, this.MaxPlayPoints));
+            result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent));
             result.Success = true;
             return result;
         }
@@ -78,13 +117,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult ModifyMaxPlayPoints(int amount)
         {
             var result = new DomainOperationResult();
-            int originalMaxPP = this.MaxPlayPoints;
-            int newMaxPP = Math.Max(0, Math.Min(originalMaxPP + amount, GameConstants.PlayPoints.MaxPlayPoints));
-            if (originalMaxPP != newMaxPP)
-            {
-                this.MaxPlayPoints = newMaxPP;
-                result.GeneratedEvents.Add(new PpUpdateEvent(this, this.CurrentPlayPoints, this.MaxPlayPoints));
-            }
+            // Emit target values; Commit will apply state.
+            int targetMax = Math.Max(0, Math.Min(this.MaxPlayPoints + amount, GameConstants.PlayPoints.MaxPlayPoints));
+            result.GeneratedEvents.Add(new PpMaxUpdateEvent(this, targetMax));
             result.Success = true;
             return result;
         }
@@ -98,6 +133,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 CardZone.Field => this.Field,
                 CardZone.Graveyard => this.Graveyard,
                 CardZone.Extra => this.Extra,
+                CardZone.Emblem => this.Emblem,
                 _ => null,
             };
         }
@@ -124,6 +160,46 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return false;
         }
 
+        #region Internal State Mutations
+        internal bool ApplyCardZoneChange(CardInstance card, CardZone from, CardZone to, int? index)
+        {
+            if (card.CurrentZone != from)
+            {
+                // If source mismatch, try to reconcile by removing from actual zone
+                RemoveCardFromCurrentZone(card);
+            }
+
+            var sourceZone = card.CurrentZone;
+            if (sourceZone == to)
+                return true;
+
+            // Remove from current zone
+            if (!RemoveCardFromCurrentZone(card))
+                return false;
+
+            var destinationList = GetZoneList(to);
+            if (destinationList == null && to != CardZone.Extra && to != CardZone.None && to != CardZone.Removed)
+            {
+                // Revert to original zone
+                GetZoneList(sourceZone)?.Add(card);
+                UpdateZoneIndices(sourceZone);
+                return false;
+            }
+
+            card.CurrentZone = to;
+            if (destinationList != null)
+            {
+                if (index.HasValue && index.Value >= 0 && index.Value <= destinationList.Count)
+                    destinationList.Insert(index.Value, card);
+                else
+                    destinationList.Add(card);
+                UpdateZoneIndices(to);
+            }
+
+            return true;
+        }
+        #endregion
+
         private DomainOperationResult MoveCard(CardInstance card, CardZone destination, int? index = null)
         {
             var result = new DomainOperationResult();
@@ -135,51 +211,79 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return result;
             }
 
-            if (!RemoveCardFromCurrentZone(card))
-            {
-                result.Success = false;
-                result.ErrorMessage = $"Card {card.InstanceId} not found in its declared source zone '{sourceZone}'.";
-                return result;
-            }
-
-            var destinationList = GetZoneList(destination);
-            if (destinationList == null && destination != CardZone.Extra && destination != CardZone.None)
-            {
-                result.Success = false;
-                result.ErrorMessage = $"Cannot add card to an invalid or unsupported target zone: {destination}";
-                // Attempt to return the card to its original zone to prevent card loss
-                GetZoneList(sourceZone)?.Add(card);
-                UpdateZoneIndices(sourceZone);
-                return result;
-            }
-
-            card.CurrentZone = destination;
-
-            if (destinationList != null)
-            {
-                if (index.HasValue && index.Value >= 0 && index.Value <= destinationList.Count)
-                {
-                    destinationList.Insert(index.Value, card);
-                }
-                else
-                {
-                    destinationList.Add(card);
-                }
-                UpdateZoneIndices(destination);
-            }
-
+            // Emit only the atomic move; notifications will be derived in CardMovedEvent.Commit
             result.GeneratedEvents.Add(new CardMovedEvent(card, sourceZone, destination));
-            if (destination == CardZone.Hand || sourceZone == CardZone.Hand)
-            {
-                result.GeneratedEvents.Add(new HandUpdatedEvent(this, this.Hand.ToList()));
-            }
-            if (destination == CardZone.Deck || sourceZone == CardZone.Deck)
-            {
-                result.GeneratedEvents.Add(new DeckCountChangedEvent(this, this.Deck.Count));
-            }
-
             result.Success = true;
             return result;
+        }
+
+        #region Internal State Mutations (Evolution)
+        /// <summary>
+        /// 内部方法：标记本回合已使用进化权。
+        /// </summary>
+        internal void ApplyEvolutionRightUsed()
+        {
+            this.CanEvolve = false;
+        }
+
+        internal void ApplySuperEvolutionRightUsed()
+        {
+            this.CanSuperEvolve = false;
+        }
+        #endregion
+
+        // Internal State Mutations for resources and flags
+        internal void ApplyEvolutionPointsMaxChange(int maxEp)
+        {
+            MaxEvolutionPoints = Math.Max(0, maxEp);
+            if (CurrentEvolutionPoints > MaxEvolutionPoints)
+            {
+                CurrentEvolutionPoints = MaxEvolutionPoints;
+            }
+        }
+
+        internal void ApplyEvolutionPointsCurrentChange(int currentEp)
+        {
+            CurrentEvolutionPoints = Math.Max(0, Math.Min(currentEp, MaxEvolutionPoints));
+        }
+
+        internal void ApplySuperEvolutionPointsMaxChange(int maxSep)
+        {
+            MaxSuperEvolutionPoints = Math.Max(0, maxSep);
+            if (CurrentSuperEvolutionPoints > MaxSuperEvolutionPoints)
+            {
+                CurrentSuperEvolutionPoints = MaxSuperEvolutionPoints;
+            }
+        }
+
+        internal void ApplySuperEvolutionPointsCurrentChange(int currentSep)
+        {
+            CurrentSuperEvolutionPoints = Math.Max(0, Math.Min(currentSep, MaxSuperEvolutionPoints));
+        }
+
+        internal void ApplyPlayPointsMaxChange(int maxPp)
+        {
+            MaxPlayPoints = Math.Max(0, maxPp);
+            if (CurrentPlayPoints > MaxPlayPoints)
+            {
+                CurrentPlayPoints = MaxPlayPoints;
+            }
+        }
+
+        internal void ApplyPlayPointsCurrentChange(int currentPp)
+        {
+            CurrentPlayPoints = Math.Max(0, Math.Min(currentPp, MaxPlayPoints));
+        }
+
+        internal void ApplyMulliganCompleted()
+        {
+            HasCompletedMulligan = true;
+        }
+
+        internal void ApplyPlayedCardCountChange(int increment)
+        {
+            PlayedCardCountThisTurn += increment;
+            if (PlayedCardCountThisTurn < 0) PlayedCardCountThisTurn = 0;
         }
 
         public DomainOperationResult SummonCardToField(CardInstance card, int? index = null)
@@ -188,11 +292,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "Field is full." };
             }
+            // Only generate atomic move; SummonEvent command should not be re-enqueued here
             var result = MoveCard(card, CardZone.Field, index);
-            if (result.Success)
-            {
-                result.GeneratedEvents.Add(new SummonEvent(this, card, index));
-            }
             return result;
         }
 
@@ -207,24 +308,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance? cause, string reason = "Effect")
+        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance cause, string reason = "Effect")
         {
             var moveResult = MoveCardToGraveyard(cardToDestroy);
-            if (moveResult.Success)
-            {
-                // The 'cause' is the source of the destruction, 'cardToDestroy' is the target.
-                // This now correctly aligns with the CardDestroyedEvent constructor.
-                moveResult.GeneratedEvents.Add(new CardDestroyedEvent(cause, cardToDestroy, reason));
-            }
+            // As per two-method pattern, DestroyEvent is a high-level command and should not be re-enqueued here.
+            // MoveCardToGraveyard already generates the atomic CardMovedEvent; no further command events are needed.
             return moveResult;
         }
 
-        public DomainOperationResult PlayCard(CardInstance cardInHand, List<Guid> targetIds)
+        public DomainOperationResult PlayCard(CardInstance cardInHand, List<Guid> targetIds, int? paidCost = null)
         {
             var result = new DomainOperationResult();
-            var ppResult = ModifyPlayPoints(-cardInHand.CurrentCost);
+            var effectiveCost = paidCost ?? cardInHand.CurrentCost;
+            var ppResult = ModifyPlayPoints(-effectiveCost);
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
-            this.PlayedCardCountThisTurn++;
+            ApplyPlayedCardCountChange(1);
             return result;
         }
 
@@ -234,45 +332,53 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 return new DomainOperationResult { Success = true };
             }
-            return ModifyEvolutionPoints(-amount);
-        }
-
-        public DomainOperationResult ModifyEvolutionPoints(int amount)
-        {
             var result = new DomainOperationResult();
-            int originalEP = this.CurrentEvolutionPoints;
-            int newEP = Math.Max(0, Math.Min(originalEP + amount, this.MaxEvolutionPoints));
-            if (originalEP != newEP)
-            {
-                this.CurrentEvolutionPoints = newEP;
-                result.GeneratedEvents.Add(new EpUpdateEvent(this, this.CurrentEvolutionPoints, this.MaxEvolutionPoints));
-            }
+            int targetCurrent = Math.Max(0, Math.Min(this.CurrentEvolutionPoints - amount, this.MaxEvolutionPoints));
+            result.GeneratedEvents.Add(new EpUpdateEvent(this, targetCurrent));
             result.Success = true;
             return result;
         }
 
-        public DomainOperationResult EvolveCard(CardInstance cardToEvolve, CardDefinition evolvedDefinition)
+        public DomainOperationResult ConsumeSuperEvolutionPoints(int amount)
+        {
+            if (amount <= 0)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+            var result = new DomainOperationResult();
+            int targetCurrent = Math.Max(0, Math.Min(this.CurrentSuperEvolutionPoints - amount, this.MaxSuperEvolutionPoints));
+            result.GeneratedEvents.Add(new SepUpdateEvent(this, targetCurrent));
+            result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult EvolveCard(CardInstance cardToEvolve)
         {
             var result = new DomainOperationResult();
 
-            // Preconditions (EP, CanEvolve flag, etc.) are now expected to be validated by the calling service/handler.
-            // This method now only executes the state change.
+            // This method now only generates the events that describe the evolution process.
+            // It no longer changes state directly.
 
-            // 1. Consume Evolution Point
-            var epResult = ConsumeEvolutionPoints(GameConstants.Evolution.EvolutionPointCost);
-            if (!epResult.Success)
+            if (cardToEvolve.HasKeyword(CardKeyword.BanEvolve))
             {
-                // This check is a safeguard; the caller should have already verified EP.
-                return epResult;
+                return new DomainOperationResult { Success = false, ErrorMessage = "Card cannot evolve due to BanEvolve." };
             }
-            result.GeneratedEvents.AddRange(epResult.GeneratedEvents);
 
-            // 2. Apply the transformation by calling the method on the card instance
-            var evolveResult = cardToEvolve.ApplyEvolution(evolvedDefinition);
+            // 1. Generate event for consuming an Evolution Point
+            if (!cardToEvolve.HasKeyword(CardKeyword.FreeEvolve))
+            {
+                var epResult = ConsumeEvolutionPoints(GameConstants.Evolution.EvolutionPointCost);
+                if (!epResult.Success)
+                {
+                    // This check is a safeguard; the caller should have already verified EP.
+                    return epResult;
+                }
+                result.GeneratedEvents.AddRange(epResult.GeneratedEvents);
+            }
+
+            // 2. Generate the event for the card's transformation
+            var evolveResult = cardToEvolve.ApplyEvolution();
             result.GeneratedEvents.AddRange(evolveResult.GeneratedEvents);
-
-            // 3. Finalize player state
-            this.CanEvolve = false; // Consume the turn's evolution right
 
             result.Success = true;
             return result;
@@ -302,61 +408,137 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 this.MaxEvolutionPoints = newEp;
                 this.CurrentEvolutionPoints = newEp;
                 this.CanEvolve = true; // Grant evolution right for the turn
-                result.GeneratedEvents.Add(new EpUpdateEvent(this, this.CurrentEvolutionPoints, this.MaxEvolutionPoints));
+                result.GeneratedEvents.Add(new EpMaxUpdateEvent(this, this.MaxEvolutionPoints));
+                result.GeneratedEvents.Add(new EpUpdateEvent(this, this.CurrentEvolutionPoints));
             }
 
             result.Success = true;
             return result;
         }
+
+        public DomainOperationResult SuperEvolveCard(CardInstance cardToEvolve)
+        {
+            var result = new DomainOperationResult();
+
+            if (cardToEvolve.HasKeyword(CardKeyword.BanEvolve))
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "Card cannot super evolve due to BanEvolve." };
+            }
+
+            var sepResult = ConsumeSuperEvolutionPoints(GameConstants.SuperEvolution.SuperEvolutionPointCost);
+            if (!sepResult.Success)
+            {
+                return sepResult;
+            }
+            result.GeneratedEvents.AddRange(sepResult.GeneratedEvents);
+
+            var evolveResult = cardToEvolve.ApplySuperEvolution();
+            result.GeneratedEvents.AddRange(evolveResult.GeneratedEvents);
+
+            result.Success = true;
+            return result;
+        }
+
+        private DomainOperationResult CheckAndUnlockSuperEvolutionPoints()
+        {
+            var result = new DomainOperationResult();
+
+            if (this.MaxSuperEvolutionPoints > 0)
+            {
+                result.Success = true;
+                return result;
+            }
+
+            bool isEligibleForUnlock =
+                (this.IsFirst && this.TurnNumber == GameConstants.SuperEvolution.FirstPlayerSuperEvolutionStartTurn) ||
+                (!this.IsFirst && this.TurnNumber == GameConstants.SuperEvolution.SecondPlayerSuperEvolutionStartTurn);
+
+            if (isEligibleForUnlock)
+            {
+                int newSep = this.IsFirst
+                    ? GameConstants.SuperEvolution.FirstPlayerSuperEvolutionPoints
+                    : GameConstants.SuperEvolution.SecondPlayerSuperEvolutionPoints;
+
+                this.MaxSuperEvolutionPoints = newSep;
+                this.CurrentSuperEvolutionPoints = newSep;
+                this.CanSuperEvolve = true;
+                result.GeneratedEvents.Add(new SepMaxUpdateEvent(this, this.MaxSuperEvolutionPoints));
+                result.GeneratedEvents.Add(new SepUpdateEvent(this, this.CurrentSuperEvolutionPoints));
+            }
+
+            result.Success = true;
+            return result;
+        }
+        internal void ApplyTurnEnd()
+        {
+            PlayedCardCountThisTurn = 0;
+        }
+
 
         public DomainOperationResult EndTurn()
         {
             var result = new DomainOperationResult();
-            result.GeneratedEvents.Add(new TurnEndEvent(this));
-            this.PlayedCardCountThisTurn = 0;
+            ApplyTurnEnd();
             result.Success = true;
             return result;
         }
-
-        public MulliganResult PerformMulligan(List<Guid> cardUidsToReplace, GameState gameState)
+        internal void ApplyTurnStart(GameState gameState)
         {
+            CanEvolve = CurrentEvolutionPoints > 0;
+            CanSuperEvolve = CurrentSuperEvolutionPoints > 0;
+            TurnNumber += 1;
+            HasTakenFirstTurn = true;
+            gameState.CurrentPlayerId = PlayerId;
+        }
+
+
+        public DomainOperationResult PerformMulligan(List<Guid> cardUidsToReplace, GameState gameState)
+        {
+            // Validation remains the same.
             if (gameState.Phase != GamePhase.Mulligan)
-                throw new GameLogicException("Mulligan can only be performed during mulligan phase.");
+                throw new GameLogicException("Mulligan can only be performed during the mulligan phase.");
             if (this.HasCompletedMulligan)
                 throw new GameLogicException($"Player {this.PlayerId} has already completed mulligan.");
             if (cardUidsToReplace.Count > this.Hand.Count)
-                throw new GameLogicException("Cannot replace more cards than in hand.");
+                throw new GameLogicException("Cannot replace more cards than are in hand.");
 
-            var result = new MulliganResult();
+            var result = new DomainOperationResult();
             var cardsToReplace = this.Hand.Where(c => cardUidsToReplace.Contains(c.InstanceId)).ToList();
 
+            // Per user instruction, perform direct state mutation as Mulligan is a special case.
+
+            // 1. Move cards from Hand to Deck
             foreach (var card in cardsToReplace)
             {
-                MoveCard(card, CardZone.Deck, null);
+                this.Hand.Remove(card);
+                this.Deck.Add(card);
+                card.CurrentZone = CardZone.Deck;
             }
 
+            // 2. Shuffle the deck
             ShuffleDeck();
 
+            // 3. Draw new cards from Deck to Hand
             int cardsToDrawCount = cardsToReplace.Count;
-            for (int i = 0; i < cardsToDrawCount && Deck.Count > 0; i++)
+            for (int i = 0; i < cardsToDrawCount && this.Deck.Count > 0; i++)
             {
-                if (Hand.Count >= GameConstants.Hand.MaxHandSize) break;
-                var drawnCard = Deck[0];
-                MoveCard(drawnCard, CardZone.Hand, null);
+                if (this.Hand.Count >= GameConstants.Hand.MaxHandSize) break;
+
+                var drawnCard = this.Deck[0];
+                this.Deck.RemoveAt(0);
+                this.Hand.Add(drawnCard);
+                drawnCard.CurrentZone = CardZone.Hand;
             }
 
-            HasCompletedMulligan = true;
-            result.GeneratedEvents.Add(new HandUpdatedEvent(this, Hand.ToList()));
+            // 4. Update zone indices for consistency
+            UpdateZoneIndices(CardZone.Hand);
+            UpdateZoneIndices(CardZone.Deck);
 
-            if (gameState.AreBothMulligansCompleted())
-            {
-                var transitionEvents = gameState.TransitionFromMulliganToMain();
-                result.GeneratedEvents.AddRange(transitionEvents);
-                result.PhaseTransitionTriggered = true;
-                result.FirstTurnPlayerId = gameState.FirstPlayerId;
-            }
+            // 5. Apply state change and generate final events
+            this.HasCompletedMulligan = true;
+            result.GeneratedEvents.Add(new HandUpdatedEvent(this, this.Hand.ToList())); // Send the NEW hand state
+            result.GeneratedEvents.Add(new MulliganCompletedEvent(this, cardsToReplace));
 
-            result.GeneratedEvents.Add(new MulliganCompletedEvent(this, cardUidsToReplace));
             result.Success = true;
             return result;
         }
@@ -377,15 +559,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 throw new GameLogicException("Game is already over.");
             if (gameState.Phase == GamePhase.Mulligan)
                 throw new GameLogicException("Cannot start turn during mulligan phase.");
+            // Internal apply for turn-start state changes
+            ApplyTurnStart(gameState);
 
             var result = new DomainOperationResult();
-            this.CanEvolve = this.CurrentEvolutionPoints > 0;
-            TurnNumber += 1;
-            this.HasTakenFirstTurn = true;
-            gameState.CurrentPlayerId = this.PlayerId;
+
+            foreach (var amulet in this.Field.Where(c => c.CurrentCountdown.HasValue && c.CurrentCountdown.Value > 0))
+            {
+                result.GeneratedEvents.Add(new CountdownTickEvent(amulet, -1));
+            }
 
             var epResult = CheckAndUnlockEvolutionPoints();
             result.GeneratedEvents.AddRange(epResult.GeneratedEvents);
+
+            var sepResult = CheckAndUnlockSuperEvolutionPoints();
+            result.GeneratedEvents.AddRange(sepResult.GeneratedEvents);
 
             var ppResult = RestorePlayPoints();
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
@@ -397,8 +585,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var unitResetResult = ResetUnitsForTurnStart();
             result.GeneratedEvents.AddRange(unitResetResult.GeneratedEvents);
 
-            result.GeneratedEvents.Add(new TurnStartEvent(this));
-
             result.Success = true;
             return result;
         }
@@ -406,14 +592,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult RestorePlayPoints()
         {
             var result = new DomainOperationResult();
-            int originalPP = CurrentPlayPoints;
-            int originalMaxPP = MaxPlayPoints;
-            MaxPlayPoints = Math.Min(10, MaxPlayPoints + 1);
-            CurrentPlayPoints = MaxPlayPoints;
-            if (originalPP != CurrentPlayPoints || originalMaxPP != MaxPlayPoints)
-            {
-                result.GeneratedEvents.Add(new PpUpdateEvent(this, CurrentPlayPoints, MaxPlayPoints));
-            }
+            int targetMax = Math.Min(GameConstants.PlayPoints.MaxPlayPoints, this.MaxPlayPoints + 1);
+            int targetCurrent = targetMax; // restore to full
+            result.GeneratedEvents.Add(new PpMaxUpdateEvent(this, targetMax));
+            result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent));
             return result;
         }
 
@@ -422,37 +604,76 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var result = new DomainOperationResult();
             var drawnCardIds = new List<Guid>();
 
-            for (int i = 0; i < drawCount; i++)
+            if (drawCount <= 0)
             {
-                if (this.Deck.Count == 0)
+                result.Success = true;
+                return result;
+            }
+
+            // 仅选择要抽取的卡牌实例ID，不在此处进行状态移动；移动逻辑在 DrawEvent.Commit -> DrawCards(List<Guid>) 中执行
+            var drawnCards = new List<CardInstance>();
+            int available = Math.Min(drawCount, this.Deck.Count);
+            for (int i = 0; i < available; i++)
+            {
+                var topCard = this.Deck[i];
+                if (topCard != null)
                 {
-                    result.GeneratedEvents.Add(new DeckEmptyOnDrawEvent(this));
-                    break;
+                    drawnCardIds.Add(topCard.InstanceId);
+                    drawnCards.Add(topCard);
                 }
-                var drawnCard = this.Deck[0];
+            }
+
+            if (available < drawCount)
+            {
+                // 牌库不足时，记录一次 DeckEmptyOnDrawEvent 提示
+                result.GeneratedEvents.Add(new DeckEmptyOnDrawEvent(this));
+            }
+
+            if (drawnCards.Any())
+            {
+                result.GeneratedEvents.Add(new DrawEvent(this, drawnCards));
+            }
+
+            result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult DrawCards(List<Guid> cardInstanceIds)
+        {
+            var result = new DomainOperationResult();
+            var successfullyDrawnIds = new List<Guid>();
+
+            foreach (var cardId in cardInstanceIds)
+            {
+                var cardToDraw = this.Deck.FirstOrDefault(c => c.InstanceId == cardId);
+
+                if (cardToDraw == null)
+                {
+                    // This is a critical error, the card specified in the event does not exist in the deck.
+                    // This might indicate a state desync or a bug in event creation.
+                    result.Success = false;
+                    result.ErrorMessage = $"Card with ID {cardId} not found in deck for player {this.PlayerId}.";
+                    return result; // Stop processing immediately.
+                }
+
                 if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
                 {
-                    var burnOpResult = MoveCard(drawnCard, CardZone.Graveyard, null);
+                    var burnOpResult = MoveCard(cardToDraw, CardZone.Graveyard, null);
                     result.GeneratedEvents.AddRange(burnOpResult.GeneratedEvents);
                     if (burnOpResult.Success)
                     {
-                        result.GeneratedEvents.Add(new CardBurnedEvent(drawnCard, "HandFull"));
+                        result.GeneratedEvents.Add(new CardBurnedEvent(cardToDraw, "HandFull"));
                     }
                 }
                 else
                 {
-                    var addOpResult = MoveCard(drawnCard, CardZone.Hand, null);
+                    var addOpResult = MoveCard(cardToDraw, CardZone.Hand, null);
                     if (addOpResult.Success)
                     {
-                        drawnCardIds.Add(drawnCard.InstanceId);
+                        successfullyDrawnIds.Add(cardToDraw.InstanceId);
                     }
                     result.GeneratedEvents.AddRange(addOpResult.GeneratedEvents);
                 }
-            }
-
-            if (drawnCardIds.Any())
-            {
-                result.GeneratedEvents.Add(new DrawEvent(this, drawnCardIds));
             }
 
             result.Success = true;
@@ -484,22 +705,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         private DomainOperationResult ResetUnitsForTurnStart()
         {
             var result = new DomainOperationResult();
-            // The responsibility of cleaning up dead units is now with the handlers
-            // that cause the damage/destruction (AttackEffectHandler, DamageEffectHandler, etc.).
-            // This method should only reset turn-based states.
             foreach (var unit in Field)
             {
+                var oldCanAttack = unit.CanAttack;
                 unit.AttacksThisTurn = 0;
-                if (!unit.CanAttack)
+                unit.FieldTurn++;
+                if (!oldCanAttack && unit.CanAttack)
                 {
-                    unit.CanAttack = true;
+                    result.GeneratedEvents.Add(new AttackStateUpdatedEvent(unit, true));
                 }
             }
             result.Success = true;
             return result;
         }
 
-        public DomainOperationResult ExecutePlayCard(CardInstance cardInHand)
+        public DomainOperationResult PreparePlayCard(CardInstance cardInHand, PlayMode playMode = PlayMode.Base, int? paidCost = null)
         {
             var result = new DomainOperationResult();
             if (!this.Hand.Contains(cardInHand))
@@ -508,25 +728,36 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 result.ErrorMessage = $"Card {cardInHand.InstanceId} not found in hand.";
                 return result;
             }
-            if (this.CurrentPlayPoints < cardInHand.CurrentCost)
+            var effectiveCost = paidCost ?? cardInHand.CurrentCost;
+            if (this.CurrentPlayPoints < effectiveCost)
             {
                 result.Success = false;
-                result.ErrorMessage = $"Not enough PP. Required: {cardInHand.CurrentCost}, Available: {this.CurrentPlayPoints}";
+                result.ErrorMessage = $"Not enough PP. Required: {effectiveCost}, Available: {this.CurrentPlayPoints}";
                 return result;
             }
 
-            var ppResult = ModifyPlayPoints(-cardInHand.CurrentCost);
+            // The cost is now paid when the PlayCardEvent is committed, not when it's requested.
+            // This prevents PP loss if the player cancels target selection.
+            result.GeneratedEvents.Add(new PlayCardEvent(this, cardInHand, playMode, effectiveCost));
+            return result;
+        }
+
+        public DomainOperationResult ExecutePlayCard(CardInstance cardInHand, int? paidCost = null)
+        {
+            var result = new DomainOperationResult();
+
+            // Pay PP cost and increment play count now that the action is confirmed.
+            var effectiveCost = paidCost ?? cardInHand.CurrentCost;
+            var ppResult = ModifyPlayPoints(-effectiveCost);
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
-            this.PlayedCardCountThisTurn++;
+            ApplyPlayedCardCountChange(1);
 
             switch (cardInHand.CardType)
             {
                 case CardType.Follower:
                 case CardType.Amulet:
-                    cardInHand.CanAttack = cardInHand.HasKeyword(CardKeyword.Rush) || cardInHand.HasKeyword(CardKeyword.Storm);
-                    cardInHand.AttacksThisTurn = 0;
-                    var summonResult = SummonCardToField(cardInHand);
-                    result.GeneratedEvents.AddRange(summonResult.GeneratedEvents);
+                    cardInHand.FieldTurn = 0; // Initialize field turn count upon summon
+                    result.GeneratedEvents.Add(new SummonEvent(this, cardInHand));
                     break;
                 case CardType.Spell:
                     var graveyardResult = MoveCardToGraveyard(cardInHand);
@@ -550,7 +781,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var result = MoveCardToGraveyard(cardToDiscard);
             if (result.Success)
             {
-                result.GeneratedEvents.Add(new CardDiscardedEvent(this, cardToDiscard.InstanceId, reason));
+                result.GeneratedEvents.Add(new CardDiscardedEvent(this, cardToDiscard, reason));
             }
             return result;
         }
@@ -570,7 +801,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var result = MoveCard(cardToReturn, CardZone.Hand, null);
             if (result.Success)
             {
-                result.GeneratedEvents.Add(new CardReturnedToHandEvent(cardToReturn));
+                result.GeneratedEvents.Add(new ReturnEvent(cardToReturn));
             }
             return result;
         }
@@ -596,14 +827,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        public DomainOperationResult VanishCard(CardInstance cardToVanish)
+        public DomainOperationResult VanishCard(CardInstance cardToVanish, string vanishReason = "Effect")
         {
-            var originalZone = cardToVanish.CurrentZone;
-            var result = MoveCard(cardToVanish, CardZone.Extra, null);
-            if (result.Success)
-            {
-                result.GeneratedEvents.Add(new CardVanishedEvent(cardToVanish, originalZone));
-            }
+            var result = new DomainOperationResult { Success = true };
+            result.GeneratedEvents.Add(new CardVanishedEvent(cardToVanish, cardToVanish.CurrentZone, vanishReason));
             return result;
         }
 

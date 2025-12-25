@@ -1,0 +1,148 @@
+Attribute VB_Name = "·1·2·翻译·IDTranslate"
+' ==================================================
+' 函数功能：简化版双向翻译函数，用于翻译ID和名称的对应关系
+' 参数：groupName - 分组名称（如"Class", "Rarity"）
+'        inputValue - 输入值（可以是ID或名称）
+'        IsCreate - 可选，是否自动创建新条目，默认为False
+' 返回：对应的翻译结果（数字ID省略前导零）
+' 特性：支持双向查找（ID→名称，名称→ID），自动ID分配
+' ==================================================
+Function IDTranslate(groupName As String, InputValue As Variant, Optional IsCreate As Boolean = False) As Variant
+    On Error GoTo ErrorHandler
+    
+    ' ========== 变量声明 ==========
+    Dim ws As Worksheet           ' ID工作表对象
+    Dim lastRow As Long           ' 工作表最后行号
+    Dim i As Long                 ' 循环计数器
+    Dim found As Boolean          ' 查找状态标识
+    
+    ' ========== 工作表初始化 ==========
+    Set ws = ThisWorkbook.Sheets("ID")                    ' 设置ID工作表
+    lastRow = ws.Cells(ws.rows.count, 1).End(xlUp).Row    ' 获取最后数据行
+    
+    ' ========== 数字ID输入处理 ==========
+    If IsNumeric(InputValue) Then
+        Dim idNum As Integer
+        idNum = CInt(InputValue)   ' 转换为整数
+        
+        ' 遍历查找匹配的ID
+        For i = 2 To lastRow
+            If ws.Cells(i, 1).Value = groupName Then
+                ' 将ID列的值转换为整数比较（处理前导零）
+                If IsNumeric(ws.Cells(i, 3).Value) Then
+                    If CInt(ws.Cells(i, 3).Value) = idNum Then
+                        IDTranslate = ws.Cells(i, 2).Value   ' 返回对应名称
+                        Exit Function
+                    End If
+                End If
+            End If
+        Next i
+        
+        IDTranslate = "ID不存在"   ' 未找到匹配ID
+        
+    ' ========== 字符串名称输入处理 ==========
+    ElseIf VarType(InputValue) = vbString Then
+        Dim InputStr As String
+        InputStr = CStr(InputValue)   ' 转换为字符串
+        
+        ' 第一阶段：精确匹配（不区分大小写）
+        For i = 2 To lastRow
+            If ws.Cells(i, 1).Value = groupName Then
+                If LCase(ws.Cells(i, 2).Value) = LCase(InputStr) Then
+                    ' 返回ID（转换为整数自动省略前导零）
+                    IDTranslate = CInt(ws.Cells(i, 3).Value)
+                    Exit Function
+                End If
+            End If
+        Next i
+        
+        ' 第二阶段：不区分大小写查找（与第一阶段逻辑相同，原代码重复？）
+        For i = 2 To lastRow
+            If ws.Cells(i, 1).Value = groupName Then
+                If LCase(ws.Cells(i, 2).Value) = LCase(InputStr) Then
+                    IDTranslate = CInt(ws.Cells(i, 3).Value)
+                    Exit Function
+                End If
+            End If
+        Next i
+        
+        ' 第三阶段：未找到时的处理
+        If IsCreate Then
+            ' 自动创建新条目并返回新ID
+            IDTranslate = CreateNewSimpleEntry(groupName, InputStr, ws, lastRow)
+        Else
+            IDTranslate = "-1"   ' 返回未找到标识
+        End If
+        
+    ' ========== 无效输入类型处理 ==========
+    Else
+        IDTranslate = "无效输入类型"
+    End If
+    
+    Exit Function
+
+ErrorHandler:
+    ' 错误处理：返回错误描述
+    IDTranslate = "错误: " & Err.Description
+End Function
+
+' ==================================================
+' 函数功能：创建新ID条目（简化版）
+' 参数：groupName - 分组名称
+'        newName - 新条目名称
+'        ws - ID工作表对象
+'        lastRow - 当前最后行号
+' 返回：新分配的ID整数，失败返回-1
+' 特性：自动查找最小可用ID（1-99），存储为两位数格式
+' ==================================================
+Private Function CreateNewSimpleEntry(groupName As String, newName As String, ws As Worksheet, lastRow As Long) As Integer
+    On Error GoTo ErrorHandler
+    
+    ' ========== 收集已用ID ==========
+    Dim usedIDs As Object
+    Set usedIDs = CreateObject("Scripting.Dictionary")   ' 创建字典存储已用ID
+    
+    Dim i As Long
+    For i = 2 To lastRow
+        If ws.Cells(i, 1).Value = groupName Then
+            If IsNumeric(ws.Cells(i, 3).Value) Then
+                usedIDs(CInt(ws.Cells(i, 3).Value)) = True   ' 记录已用ID
+            End If
+        End If
+    Next i
+    
+    ' ========== 查找最小可用ID ==========
+    Dim newID As Integer
+    Dim idFound As Boolean
+    idFound = False
+    
+    ' 在1-99范围内查找第一个可用ID
+    For newID = 1 To 99
+        If Not usedIDs.Exists(newID) Then
+            idFound = True
+            Exit For
+        End If
+    Next newID
+    
+    ' 检查是否找到可用ID
+    If Not idFound Then
+        CreateNewSimpleEntry = -1   ' ID范围已满
+        Exit Function
+    End If
+    
+    ' ========== 添加新条目到工作表 ==========
+    Dim newRow As Long
+    newRow = lastRow + 1   ' 新行位置
+    
+    ' 写入新条目数据
+    ws.Cells(newRow, 1).Value = groupName                     ' A列：分组名称
+    ws.Cells(newRow, 2).Value = newName                       ' B列：条目名称
+    ws.Cells(newRow, 3).Value = Format(newID, "00")           ' C列：ID（两位数格式存储）
+    
+    CreateNewSimpleEntry = newID   ' 返回新分配的ID（整数格式）
+    
+    Exit Function
+
+ErrorHandler:
+    CreateNewSimpleEntry = -1   ' 错误标识
+End Function

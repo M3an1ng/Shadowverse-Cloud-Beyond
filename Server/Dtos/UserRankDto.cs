@@ -56,11 +56,11 @@ public class UserRankDto
     /// 从实体转换为DTO
     /// </summary>
     /// <param name="userEconomy">用户经济实体</param>
+    /// <param name="ranking">用户排名实体（可选）</param>
+    /// <param name="dailyReward">用户每日奖励实体（可选）</param>
     /// <returns>用户排名DTO</returns>
-    public static UserRankDto FromEntity(UserEconomy userEconomy)
+    public static UserRankDto FromEntities(UserEconomy userEconomy, UserRanking? ranking, UserDailyReward? dailyReward)
     {
-        var ranking = userEconomy.Ranking;
-        var dailyReward = userEconomy.DailyReward;
         var pointsToNext = (ranking?.Rank ?? 0) >= 5 ? 0 : (100 - (ranking?.RankPoints ?? 0));
 
         return new UserRankDto

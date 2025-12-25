@@ -30,6 +30,12 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         IReadOnlyDictionary<int, CardDefinition> GetAllCardDefinitions();
 
         /// <summary>
+        /// Gets a read-only collection of all card definitions.
+        /// This is the preferred way for DSL to access all cards.
+        /// </summary>
+        IReadOnlyCollection<CardDefinition> Cards { get; }
+
+        /// <summary>
         /// 获取指定卡牌的所有能力配置
         /// </summary>
         /// <param name="cardId">卡牌ID</param>

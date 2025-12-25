@@ -71,27 +71,28 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// <returns>是否可以触发</returns>
         public bool CanTrigger(IGameEvent gameEvent, CardInstance? sourceCard)
         {
-            if (!IsEnabled)
+            if (!IsEnabled || TriggeredThisEvent)
                 return false;
 
-            if (TriggeredThisEvent)
-                return false;
-
-            // 检查区域限制（性能优化）
+            // 1. 检查区域限制
             if (sourceCard != null && !Config.IsValidZone(sourceCard.CurrentZone))
             {
-                // 记录区域过滤的日志（仅在调试模式下）
 #if DEBUG
-                // Note: We don't have access to logger here, but this could be added if needed
-                // _logger?.LogTrace("[RuntimeTrigger] Trigger filtered out due to zone restriction. Card {CardId} in zone {Zone}, valid zones: {ValidZones}",
-                //     sourceCard.InstanceId, sourceCard.CurrentZone, string.Join(", ", Config.ValidZones));
+                // Console.WriteLine($"[TriggerDebug] Trigger for '{sourceCard.Card.Name}' filtered by zone. Current: {sourceCard.CurrentZone}, Valid: {string.Join(",", Config.ValidZones)}");
 #endif
                 return false;
             }
 
-            // 检查时序匹配
-            // 时序检查由事件处理器在适当的时机调用触发器
-            // 这里假设调用时机已经正确
+            // 2. 检查触发源限制
+            if (!IsValidRelation(gameEvent, sourceCard))
+            {
+#if DEBUG
+                // Console.WriteLine($"[TriggerDebug] Trigger for '{sourceCard?.Card.Name}' filtered by relation type. Required: {Config.RelationType}");
+#endif
+                return false;
+            }
+
+            // 3. 检查时序匹配 (由调用者保证)
             return true;
         }
 
@@ -120,6 +121,44 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         public void ResetEventFlags()
         {
             TriggeredThisEvent = false;
+        }
+
+        /// <summary>
+        /// Checks if the relationship between the ability owner and the event participants
+        /// matches the required relation type.
+        /// </summary>
+        private bool IsValidRelation(IGameEvent gameEvent, CardInstance? abilityOwnerCard)
+        {
+            if (Config.RelationType == TriggerRelationType.Any)
+                return true;
+
+            // If the ability has no owner, it cannot be "Self" in any context.
+            if (abilityOwnerCard == null)
+            {
+                return Config.RelationType != TriggerRelationType.SourceSelf &&
+                       Config.RelationType != TriggerRelationType.TargetSelf;
+            }
+
+            var eventSourceCard = gameEvent.Source?.Card;
+            var eventTargetCard = gameEvent.Target.FirstOrDefault()?.Card;
+
+            switch (Config.RelationType)
+            {
+                case TriggerRelationType.SourceSelf:
+                    return eventSourceCard != null && eventSourceCard.InstanceId == abilityOwnerCard.InstanceId;
+
+                case TriggerRelationType.SourceOther:
+                    return eventSourceCard != null && eventSourceCard.InstanceId != abilityOwnerCard.InstanceId;
+
+                case TriggerRelationType.TargetSelf:
+                    return eventTargetCard != null && eventTargetCard.InstanceId == abilityOwnerCard.InstanceId;
+
+                case TriggerRelationType.TargetOther:
+                    return eventTargetCard != null && eventTargetCard.InstanceId != abilityOwnerCard.InstanceId;
+
+                default:
+                    return true; // Should be covered by the 'Any' check at the beginning
+            }
         }
     }
 }

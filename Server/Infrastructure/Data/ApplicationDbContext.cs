@@ -6,6 +6,8 @@
 //
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
+using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Infrastructure.Persistence.Entities;
 
 namespace ShadowverseBeyond.Server.Infrastructure.Data; // Added ShadowverseBeyond prefix
 
@@ -50,6 +52,11 @@ public class ApplicationDbContext : DbContext
   /// </summary>
   public DbSet<GameSession> GameSessions { get; set; } = null!;
 
+  /// <summary>
+  /// Gets or sets the DbSet for GameSettlement entities. Represents the GameSettlements table.
+  /// </summary>
+  public DbSet<GameSettlement> GameSettlements { get; set; } = null!;
+
   // 经济系统相关实体
   /// <summary>
   /// Gets or sets the DbSet for UserEconomy entities. Represents the UserEconomies table.
@@ -77,6 +84,21 @@ public class ApplicationDbContext : DbContext
   public DbSet<UserCard> UserCards { get; set; } = null!;
 
   /// <summary>
+  /// Gets or sets the DbSet for UserDeck entities. Represents the UserDecks table.
+  /// </summary>
+  public DbSet<UserDeck> UserDecks { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for UserDeckCard entities. Represents the UserDeckCards table.
+  /// </summary>
+  public DbSet<UserDeckCard> UserDeckCards { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for AbilityDslFavorite entities. Represents the AbilityDslFavorites table.
+  /// </summary>
+  public DbSet<AbilityDslFavorite> AbilityDslFavorites { get; set; } = null!;
+
+  /// <summary>
   /// Gets or sets the DbSet for QuestDefinition entities. Represents the QuestDefinitions table.
   /// </summary>
   public DbSet<QuestDefinition> QuestDefinitions { get; set; } = null!;
@@ -97,6 +119,20 @@ public class ApplicationDbContext : DbContext
   public DbSet<UserDailyReward> UserDailyRewards { get; set; } = null!;
 
   /// <summary>
+  /// Gets or sets the DbSet for BuffDefinition entities. Represents the BuffDefinitions table.
+  /// </summary>
+  public DbSet<BuffDefinition> BuffDefinitions { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for ReplayEventRecord entities. Represents the ReplayEvents table.
+  /// </summary>
+  public DbSet<ReplayEventRecord> ReplayEvents { get; set; } = null!;
+
+  public DbSet<ReplayGameRecord> ReplayGames { get; set; } = null!;
+  public DbSet<ReplayBundleRecord> ReplayBundles { get; set; } = null!;
+  public DbSet<ReplaySnapshotRecord> ReplaySnapshots { get; set; } = null!;
+
+  /// <summary>
   /// Configures the model that was discovered by convention from the entity types
   /// exposed in <see cref="DbSet{TEntity}"/> properties on your derived context.
   /// The resulting model may be cached and re-used for subsequent instances of your derived context.
@@ -109,12 +145,23 @@ public class ApplicationDbContext : DbContext
     // 配置现有实体
     ConfigureCardDefinition(modelBuilder);
     ConfigureCardAbility(modelBuilder);
+    ConfigureBuffDefinition(modelBuilder);
 
     // 配置用户管理实体
     ConfigureUserEntities(modelBuilder);
 
     // 配置经济系统实体
     ConfigureEconomyEntities(modelBuilder);
+
+    // 配置卡组相关实体
+    ConfigureDeckEntities(modelBuilder);
+
+    // 配置元进度实体
+    ConfigureMetaProgressionEntities(modelBuilder);
+
+    ConfigureDslFavoriteEntities(modelBuilder);
+
+    ConfigureReplayEntities(modelBuilder);
   }
 
   /// <summary>
@@ -139,6 +186,12 @@ public class ApplicationDbContext : DbContext
         .HasConversion(
           v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
           v => System.Text.Json.JsonSerializer.Deserialize<List<long>>(v, (System.Text.Json.JsonSerializerOptions?)null) ?? new List<long>()
+        ).Metadata.SetValueComparer(
+            new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<long>>(
+                (c1, c2) => c1.SequenceEqual(c2),
+                c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c.ToList()
+            )
         );
 
       // 配置 Keywords 属性 - 将 List<string> 转换为 JSON 字符串存储
@@ -146,6 +199,12 @@ public class ApplicationDbContext : DbContext
         .HasConversion(
           v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
           v => v == null ? null : System.Text.Json.JsonSerializer.Deserialize<List<string>>(v, (System.Text.Json.JsonSerializerOptions?)null)
+        ).Metadata.SetValueComparer(
+            new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<string>>(
+                (c1, c2) => c1.SequenceEqual(c2),
+                c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c.ToList()
+            )
         );
 
       // 配置 Tribe 属性 - 将 List<string> 转换为 JSON 字符串存储
@@ -153,6 +212,12 @@ public class ApplicationDbContext : DbContext
         .HasConversion(
           v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
           v => v == null ? null : System.Text.Json.JsonSerializer.Deserialize<List<string>>(v, (System.Text.Json.JsonSerializerOptions?)null)
+        ).Metadata.SetValueComparer(
+            new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<string>>(
+                (c1, c2) => c1.SequenceEqual(c2),
+                c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c.ToList()
+            )
         );
     });
   }
@@ -201,6 +266,7 @@ public class ApplicationDbContext : DbContext
       entity.HasKey(e => e.Id);
       entity.HasIndex(e => e.UserId);
       entity.HasIndex(e => e.GameStateId);
+      entity.HasIndex(e => new { e.UserId, e.GameStateId }).IsUnique();
 
       entity.Property(e => e.GameStateId).HasMaxLength(100).IsRequired();
 
@@ -278,18 +344,6 @@ public class ApplicationDbContext : DbContext
                 .WithOne(u => u.Economy)
                 .HasForeignKey<UserEconomy>(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-      // 配置与UserRanking的一对一关系
-      entity.HasOne(e => e.Ranking)
-                .WithOne()
-                .HasForeignKey<UserRanking>(r => r.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-      // 配置与UserDailyReward的一对一关系
-      entity.HasOne(e => e.DailyReward)
-                .WithOne()
-                .HasForeignKey<UserDailyReward>(dr => dr.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
     });
 
     // 配置CoinTransaction实体
@@ -299,6 +353,11 @@ public class ApplicationDbContext : DbContext
       entity.HasKey(e => e.Id);
       entity.HasIndex(e => e.UserId);
       entity.HasIndex(e => e.CreatedAt);
+
+      // Idempotency for critical reward paths (avoid duplicate grants on retries/replays).
+      entity.HasIndex(e => new { e.UserId, e.Type, e.RelatedEntityId })
+            .IsUnique()
+            .HasFilter("[RelatedEntityId] IS NOT NULL AND [Type] IN (1, 2, 3, 4)");
 
       entity.Property(e => e.Description).HasMaxLength(500);
       entity.Property(e => e.RelatedEntityId).HasMaxLength(100);
@@ -387,8 +446,9 @@ public class ApplicationDbContext : DbContext
       entity.HasIndex(e => e.UserId);
       entity.HasIndex(e => e.QuestDefinitionId);
       entity.HasIndex(e => e.ExpiresAt);
+      entity.HasIndex(e => new { e.UserId, e.QuestDefinitionId }).IsUnique();
 
-      // 配置与User的多对一关系 (通过UserEconomy)
+      // 配置与User的多对一关系
       entity.HasOne(e => e.User)
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
@@ -431,6 +491,192 @@ public class ApplicationDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+    });
+  }
+
+  /// <summary>
+  /// 配置卡组相关实体
+  /// </summary>
+  private void ConfigureDeckEntities(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<UserDeck>(entity =>
+    {
+      entity.ToTable("UserDecks");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => e.UserId);
+      entity.HasIndex(e => e.UpdatedAt);
+
+      entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.Environment).HasDefaultValue(DeckEnvironment.Open);
+
+      entity.HasOne(e => e.User)
+            .WithMany(u => u.Decks)
+            .HasForeignKey(e => e.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    });
+
+    modelBuilder.Entity<UserDeckCard>(entity =>
+    {
+      entity.ToTable("UserDeckCards");
+      entity.HasKey(e => e.Id);
+      entity.HasIndex(e => new { e.DeckId, e.CardDefinitionId }).IsUnique();
+
+      entity.Property(e => e.Count).IsRequired();
+
+      entity.HasOne(e => e.Deck)
+            .WithMany(d => d.Cards)
+            .HasForeignKey(e => e.DeckId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+      entity.HasOne(e => e.CardDefinition)
+            .WithMany()
+            .HasForeignKey(e => e.CardDefinitionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
+  }
+
+  private void ConfigureDslFavoriteEntities(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<AbilityDslFavorite>(entity =>
+    {
+      entity.ToTable("AbilityDslFavorites");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => e.UserId);
+      entity.HasIndex(e => e.ExpectedType);
+      entity.HasIndex(e => e.UsageCount);
+
+      entity.Property(e => e.Label)
+        .HasMaxLength(200)
+        .IsRequired();
+
+      entity.Property(e => e.Expression)
+        .HasColumnType("TEXT")
+        .IsRequired();
+
+      entity.Property(e => e.ExpectedType)
+        .HasMaxLength(200);
+
+      entity.Property(e => e.Tags)
+        .HasMaxLength(500);
+
+      entity.Property(e => e.CreatedAt)
+        .IsRequired();
+
+      entity.Property(e => e.UpdatedAt)
+        .IsRequired();
+
+      entity.HasOne(e => e.User)
+        .WithMany()
+        .HasForeignKey(e => e.UserId)
+        .OnDelete(DeleteBehavior.Cascade);
+    });
+  }
+
+  private void ConfigureMetaProgressionEntities(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<GameSettlement>(entity =>
+    {
+      entity.ToTable("GameSettlements");
+      entity.HasKey(e => e.Id);
+      entity.HasIndex(e => new { e.GameId, e.UserId }).IsUnique();
+      entity.HasIndex(e => e.UserId);
+      entity.HasIndex(e => e.SettledAtUtc);
+
+      entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+
+      entity.HasOne(e => e.User)
+        .WithMany()
+        .HasForeignKey(e => e.UserId)
+        .OnDelete(DeleteBehavior.Cascade);
+    });
+  }
+
+  /// <summary>
+  /// 配置BuffDefinition实体
+  /// </summary>
+  private void ConfigureBuffDefinition(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<BuffDefinition>(entity =>
+    {
+      entity.ToTable("BuffDefinitions");
+
+      // 配置主键
+      entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).ValueGeneratedNever();
+
+      // 配置索引
+      entity.HasIndex(e => e.BuffType);
+      entity.HasIndex(e => e.IsActive);
+
+      // 配置乐观锁
+      entity.Property(e => e.RowVersion).IsRowVersion();
+    });
+  }
+
+  private void ConfigureReplayEntities(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<ReplayEventRecord>(entity =>
+    {
+      entity.ToTable("ReplayEvents");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.GameId, e.Seq }).IsUnique();
+      entity.HasIndex(e => e.EventId).IsUnique();
+      entity.HasIndex(e => e.BundleId);
+
+      entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.EventType).HasMaxLength(64).IsRequired();
+      entity.Property(e => e.SchemaVersion).HasDefaultValue(1);
+      entity.Property(e => e.Announcement).HasMaxLength(512);
+      entity.Property(e => e.DtosJson);
+      entity.Property(e => e.RawEventJson);
+      entity.Property(e => e.TargetIdsJson).HasMaxLength(2048);
+    });
+
+    modelBuilder.Entity<ReplayGameRecord>(entity =>
+    {
+      entity.ToTable("ReplayGames");
+      entity.HasKey(e => e.GameId);
+
+      entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.ServerBuild).HasMaxLength(64);
+      entity.Property(e => e.SchemaVersion).HasDefaultValue(1);
+      entity.Property(e => e.HostPlayerId).HasMaxLength(64);
+      entity.Property(e => e.GuestPlayerId).HasMaxLength(64);
+      entity.Property(e => e.WinnerPlayerId).HasMaxLength(64);
+
+      entity.HasIndex(e => e.CreatedAtUtc);
+      entity.HasIndex(e => e.EndedAtUtc);
+    });
+
+    modelBuilder.Entity<ReplayBundleRecord>(entity =>
+    {
+      entity.ToTable("ReplayBundles");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.GameId, e.BundleSeq }).IsUnique();
+      entity.HasIndex(e => new { e.GameId, e.BundleId }).IsUnique();
+      entity.HasIndex(e => e.GameId);
+
+      entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.CommittedAtUtc).IsRequired();
+    });
+
+    modelBuilder.Entity<ReplaySnapshotRecord>(entity =>
+    {
+      entity.ToTable("ReplaySnapshots");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.GameId, e.AtSeq }).IsUnique();
+      entity.HasIndex(e => e.GameId);
+
+      entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.SchemaVersion).HasDefaultValue(1);
+      entity.Property(e => e.Compression).HasMaxLength(16).IsRequired();
+      entity.Property(e => e.PayloadHash).HasMaxLength(64).IsRequired();
+      entity.Property(e => e.Payload).IsRequired();
     });
   }
 }

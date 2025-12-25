@@ -72,6 +72,27 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task EpUpdate(EpUpdateEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client of an update to a player's Super Evolution Points (SEP).
+        /// </summary>
+        Task SepUpdate(SepUpdateEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client of an update to a player's maximum Play Points (PP).
+        /// </summary>
+        Task PpMaxUpdate(PpMaxUpdateEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client of an update to a player's maximum Evolution Points (EP).
+        /// </summary>
+        Task EpMaxUpdate(EpMaxUpdateEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client of an update to a player's maximum Super Evolution Points (SEP).
+        /// </summary>
+        Task SepMaxUpdate(SepMaxUpdateEventDto eventDto);
+
+
+        /// <summary>
         /// Notifies the client of an update to their hand (cards drawn, discarded, etc.).
         /// </summary>
         Task HandUpdated(HandUpdatedEventDto eventDto); // Restored for mulligan functionality
@@ -137,8 +158,44 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task AttackStateUpdated(AttackStateUpdatedEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client that a player's evolve state has been updated.
+        /// </summary>
+        Task EvolveStateUpdated(EvolveStateUpdatedEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that a player's super evolve state has been updated.
+        /// </summary>
+        Task SuperEvolveStateUpdated(SuperEvolveStateUpdatedEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that a card's Act state has been updated.
+        /// </summary>
+        Task ActStateUpdated(ActStateUpdatedEventDto eventDto);
+
+        /// <summary>
         /// Notifies the client that the game has ended.
         /// </summary>
         Task GameOver(GameOverEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that the game is paused and requires a choice from the player.
+        /// </summary>
+        /// <param name="eventDto">The DTO containing details about the choice required.</param>
+        Task PlayerChoiceRequested(PlayerChoiceRequestedEventDto eventDto);
+
+        /// <summary>
+        /// Sends a generic log/announcement entry for events without a dedicated UI DTO.
+        /// </summary>
+        Task LogEvent(LogEventDto eventDto);
+
+        /// <summary>
+        /// Notifies both clients that a card has been revealed.
+        /// </summary>
+        Task CardRevealed(CardRevealedEventDto eventDto);
+
+        /// <summary>
+        /// Notifies clients that Fusion materials have been consumed (UI animation/log).
+        /// </summary>
+        Task CardsFused(CardsFusedEventDto eventDto);
     }
 }

@@ -26,6 +26,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
         public DateTime ExpiresAt { get; set; }
         public string? ClosedReason { get; set; }
+
+        public MatchDeckSelection HostDeckSelection { get; set; } = new();
+        public MatchDeckSelection GuestDeckSelection { get; set; } = new();
+        public MatchDeckSelection AiDeckSelection { get; set; } = new();
     }
 
     public enum MatchStatus

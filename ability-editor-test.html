@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>能力编辑器测试页面</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="src/styles/ability-editor.css">
+    <style>
+        /* 测试页面特定样式 */
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .test-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #2c3e50;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .test-title {
+            color: #ecf0f1;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .test-button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        
+        .test-button:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1 class="test-title">能力编辑器测试页面</h1>
+        <button class="test-button" onclick="showAbilityEditor()">显示能力编辑器</button>
+        
+        <div id="test-info">
+            <p style="color: #bdc3c7;">点击按钮显示能力编辑器，观察布局问题</p>
+        </div>
+    </div>
+
+    <script type="module">
+        // 导入组件
+        import { TriggerConfigEditor } from './src/components/TriggerConfigEditor.js';
+        import { ConditionConfigEditor } from './src/components/ConditionConfigEditor.js';
+        import { TargetConfigEditor } from './src/components/TargetConfigEditor.js';
+        import { EffectConfigEditor } from './src/components/EffectConfigEditor.js';
+
+        // 模拟智慧之光的能力数据
+        const mockAbility = {
+            id: 1,
+            name: "智慧之光",
+            description: "Draw a card.",
+            abilityTag: "Fanfare",
+            abilityType: "Triggered",
+            priority: 1,
+            isActive: true,
+            jsonConfig: {
+                id: "wisdom_of_light",
+                name: "智慧之光",
+                type: "Triggered",
+                abilityTag: "Fanfare",
+                trigger: {
+                    eventTypes: ["PlayCard"],
+                    relationType: "TargetSelf"
+                },
+                conditions: [],
+                targets: [
+                    {
+                        selectorType: "Filtered",
+                        query: {
+                            sourcePoolExpression: "owner"
+                        }
+                    }
+                ],
+                effects: [
+                    {
+                        type: "Draw",
+                        parameters: {
+                            drawAmount: 1
+                        }
+                    }
+                ]
+            }
+        };
+
+        // 显示能力编辑器的函数
+        window.showAbilityEditor = async function() {
+            // 创建模态框HTML
+            const modalHTML = `
+                <div class="modal-overlay" id="test-ability-modal">
+                    <div class="modal-container ability-edit-container">
+                        <div class="modal-header">
+                            <h3>测试能力编辑器</h3>
+                            <button class="modal-close-btn" onclick="closeAbilityEditor()">×</button>
+                        </div>
+                        <div class="modal-content" id="ability-editor-container">
+                            <div class="ability-editor">
+                                <div class="ability-editor-header">
+                                    <h3>能力编辑器</h3>
+                                    <div class="editor-actions">
+                                        <button class="btn-secondary" onclick="closeAbilityEditor()">取消</button>
+                                        <button class="btn-primary">保存</button>
+                                    </div>
+                                </div>
+                                
+                                <div class="ability-editor-tabs">
+                                    <button class="tab-button active" data-tab="basic">基础信息</button>
+                                    <button class="tab-button" data-tab="trigger">触发器</button>
+                                    <button class="tab-button" data-tab="conditions">条件</button>
+                                    <button class="tab-button" data-tab="targets">目标</button>
+                                    <button class="tab-button" data-tab="effects">效果</button>
+                                </div>
+                                
+                                <div class="ability-editor-content">
+                                    <div class="tab-panel active" id="basic-panel">
+                                        <div class="config-section">
+                                            <h4>基础信息</h4>
+                                            <div class="form-group">
+                                                <label class="form-label">能力名称</label>
+                                                <input type="text" class="form-input" value="${mockAbility.name}">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">能力描述</label>
+                                                <textarea class="form-textarea">${mockAbility.description}</textarea>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">能力标签</label>
+                                                <select class="form-select">
+                                                    <option value="Fanfare" selected>入场</option>
+                                                    <option value="LastWords">遗言</option>
+                                                    <option value="Rush">突进</option>
+                                                    <option value="Storm">疾走</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">优先级</label>
+                                                <input type="number" class="form-input" value="${mockAbility.priority}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="tab-panel" id="trigger-panel">
+                                        <div class="config-section">
+                                            <h4>触发器配置</h4>
+                                            <div id="trigger-config-container">
+                                                <!-- 触发器配置编辑器将在这里渲染 -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="tab-panel" id="conditions-panel">
+                                        <div class="config-section">
+                                            <h4>条件配置</h4>
+                                            <div id="conditions-config-container">
+                                                <!-- 条件配置编辑器将在这里渲染 -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="tab-panel" id="targets-panel">
+                                        <div class="config-section">
+                                            <h4>目标配置</h4>
+                                            <div class="placeholder-text">
+                                                目标配置将在这里显示
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="tab-panel" id="effects-panel">
+                                        <div class="config-section">
+                                            <h4>效果配置</h4>
+                                            <div id="effects-config-container">
+                                                <!-- 效果配置编辑器将在这里渲染 -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // 添加到页面
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+            // 绑定标签页切换事件
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const tabPanels = document.querySelectorAll('.tab-panel');
+
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const tabName = button.dataset.tab;
+
+                    // 移除所有活动状态
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabPanels.forEach(panel => panel.classList.remove('active'));
+
+                    // 激活当前标签页
+                    button.classList.add('active');
+                    document.getElementById(tabName + '-panel').classList.add('active');
+                });
+            });
+
+            // 渲染元数据驱动的组件
+            await renderMetadataDrivenComponents();
+        };
+
+        // 渲染元数据驱动组件
+        async function renderMetadataDrivenComponents() {
+            try {
+                // 渲染触发器配置编辑器
+                const triggerEditor = new TriggerConfigEditor();
+                const triggerContainer = document.getElementById('trigger-config-container');
+                if (triggerContainer) {
+                    await triggerEditor.render(
+                        triggerContainer,
+                        mockAbility.jsonConfig.trigger,
+                        (newConfig) => {
+                            mockAbility.jsonConfig.trigger = newConfig;
+                            console.log('触发器配置更新:', newConfig);
+                        }
+                    );
+                }
+
+                // 渲染条件配置编辑器
+                const conditionEditor = new ConditionConfigEditor();
+                const conditionsContainer = document.getElementById('conditions-config-container');
+                if (conditionsContainer) {
+                    await conditionEditor.render(
+                        conditionsContainer,
+                        mockAbility.jsonConfig.conditions,
+                        (newConditions) => {
+                            mockAbility.jsonConfig.conditions = newConditions;
+                            console.log('条件配置更新:', newConditions);
+                        }
+                    );
+                }
+
+                // 渲染效果配置编辑器
+                const effectEditor = new EffectConfigEditor();
+                const effectsContainer = document.getElementById('effects-config-container');
+                if (effectsContainer) {
+                    await effectEditor.render(
+                        effectsContainer,
+                        mockAbility.jsonConfig.effects,
+                        (newEffects) => {
+                            mockAbility.jsonConfig.effects = newEffects;
+                            console.log('效果配置更新:', newEffects);
+                        }
+                    );
+                }
+
+            } catch (error) {
+                console.error('渲染元数据驱动组件失败:', error);
+            }
+        }
+
+        // 关闭能力编辑器的函数
+        window.closeAbilityEditor = function() {
+            const modal = document.getElementById('test-ability-modal');
+            if (modal) {
+                modal.remove();
+            }
+        };
+    </script>
+</body>
+</html>

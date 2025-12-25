@@ -79,7 +79,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// <summary>
             /// Evolution points for second player
             /// </summary>
-            public const int SecondPlayerEvolutionPoints = 3;
+            public const int SecondPlayerEvolutionPoints = 2;
 
             /// <summary>
             /// Turn when first player can start evolving
@@ -95,6 +95,37 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// Cost in evolution points to evolve a unit
             /// </summary>
             public const int EvolutionPointCost = 1;
+        }
+
+        /// <summary>
+        /// Super evolution related constants
+        /// </summary>
+        public static class SuperEvolution
+        {
+            /// <summary>
+            /// Super evolution points for first player
+            /// </summary>
+            public const int FirstPlayerSuperEvolutionPoints = 2;
+
+            /// <summary>
+            /// Super evolution points for second player
+            /// </summary>
+            public const int SecondPlayerSuperEvolutionPoints = 2;
+
+            /// <summary>
+            /// Turn when first player can start super evolving
+            /// </summary>
+            public const int FirstPlayerSuperEvolutionStartTurn = 7;
+
+            /// <summary>
+            /// Turn when second player can start super evolving
+            /// </summary>
+            public const int SecondPlayerSuperEvolutionStartTurn = 6;
+
+            /// <summary>
+            /// Cost in super evolution points to super evolve a unit
+            /// </summary>
+            public const int SuperEvolutionPointCost = 1;
         }
 
         /// <summary>
@@ -219,13 +250,50 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             public const long EvolveAbilityId = -3L;
             public const long EndTurnAbilityId = -4L;
             public const long MulliganAbilityId = -5L;
-            public const long CheckMulliganCompletionAbilityId = -7L;
             public const long StartTurnAbilityId = -6L; // Example for a common system ability
 
             // Add more system ability IDs as needed, ensuring they are unique.
             // Consider a scheme for ID generation or assignment if many system abilities are anticipated.
             // For example, negative numbers for core system abilities, specific ranges for others.
         }
+
+        /// <summary>
+        /// Constants and helpers related to Ability triggering logic
+        /// </summary>
+        public static class AbilityTrigger
+        {
+            /// <summary>
+            /// Gets the priority value for a given card zone and ownership context.
+            /// Lower numbers have higher priority.
+            /// </summary>
+            /// <param name="zone">The card zone where the ability's source card resides.</param>
+            /// <param name="isMyTurn">True if the ability's owner is the active player.</param>
+            /// <returns>An integer representing the priority.</returns>
+            public static int GetZonePriority(Dtos.Enums.CardZone zone, bool isMyTurn)
+            {
+                // The priority is defined as: Field > Hand > Deck > Graveyard.
+                // Within the same zone, the active player's abilities (isMyTurn = true) have priority.
+                return (zone, isMyTurn) switch
+                {
+                    (Dtos.Enums.CardZone.Hand, true) => 1, // My Hand
+                    (Dtos.Enums.CardZone.Emblem, true) => 2,
+                    (Dtos.Enums.CardZone.Field, true) => 3, // My Field
+                    (Dtos.Enums.CardZone.Hand, false) => 4, // Opponent's Hand
+                    (Dtos.Enums.CardZone.Emblem, false) => 5,
+                    (Dtos.Enums.CardZone.Field, false) => 6, // Opponent's Field
+
+                    // Deck
+                    (Dtos.Enums.CardZone.Deck, true) => 7, // My Deck
+                    (Dtos.Enums.CardZone.Deck, false) => 8, // Opponent's Deck
+
+                    // Graveyard
+                    (Dtos.Enums.CardZone.Graveyard, true) => 9, // My Graveyard
+                    (Dtos.Enums.CardZone.Graveyard, false) => 10, // Opponent's Graveyard
+
+                    // Other zones have the lowest priority
+                    _ => 99
+                };
+            }
+        }
     }
 }
-

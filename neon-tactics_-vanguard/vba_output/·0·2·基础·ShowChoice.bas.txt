@@ -1,0 +1,53 @@
+Attribute VB_Name = "·0·2·基础·ShowChoice"
+' ==================================================
+' 函数功能：显示选项选择对话框
+' 参数：choices - 选项字符串数组
+'        Button_Width - 按钮宽度
+'        BtnColumns - 按钮列数
+'        SelectCount - 可选，选择数量，默认为1
+' 返回：字符串，选中的选项索引（格式："1&2&3"）
+' ==================================================
+Public Function ShowChoice(choices() As String, Button_Width As Integer, BtnColumns As Integer, Optional SelectCount As Integer = 1) As String
+    On Error GoTo ErrorHandler
+    Dim i As Integer
+
+    ' 验证输入数组有效性
+    If UBound(choices) - LBound(choices) < 1 Then
+        ' 数组元素不足时直接返回0
+        ' MsgBox "数组至少需要包含一个标题和一个选项", vbExclamation
+        ShowChoice = 0
+        Exit Function
+    End If
+
+    ' 特殊情况处理：选项数量不超过选择数量时直接返回所有选项
+    If UBound(choices) <= SelectCount Then
+        For i = 1 To UBound(choices)
+            ShowChoice = ShowChoice & i & "&"   ' 构建索引字符串
+        Next i
+        ' 移除末尾多余的"&"符号
+        If Len(ShowChoice) > 0 Then ShowChoice = Left(ShowChoice, Len(ShowChoice) - 1)
+        Exit Function
+    End If
+
+    ' 创建并初始化选择窗体
+    Dim ChoiceForm As New ChoiceForm
+    Call ChoiceForm.CreateButtons(choices, Button_Width, BtnColumns, SelectCount)
+
+    ' 显示模态窗体并等待用户选择
+    ChoiceForm.Show vbModal
+
+    ' 获取用户选择结果
+    ShowChoice = ChoiceForm.SelectedIndex
+
+    ' 清理窗体资源
+    Unload ChoiceForm
+    Set ChoiceForm = Nothing
+    Exit Function
+
+ErrorHandler:
+    ' 错误处理：显示错误信息并返回0
+    MsgBox "错误 " & Err.Number & ": " & Err.Description & vbCrLf & _
+           "发生在 " & Erl, vbCritical
+    ShowChoice = 0
+End Function
+

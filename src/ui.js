@@ -21,17 +21,31 @@ import {
     selectAttackTarget,
     cancelSelection,
     evolveCard,
+    superEvolveCard,
+    requestAct,
     // handleMulligan, // Removed import - Now uses submitMulligan
     isValidSpellTarget,
     submitMulligan, // Added import for SignalR mulligan submission
     endTurnRequest,  // Added import for SignalR end turn request
-    requestPlayabilityCheck // Added import for playability check function
+    submitPlayerChoice,
+    cancelPlayerChoice
 } from './gameManager.js';
-import { getCardDefinition } from './cardManager.js'; // Import card data helper
+// getCardDefinition is obsolete. Card instances now contain all necessary data.
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 // console.log("ui.js loaded");
 
-export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus};
+export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection };
+
+let mulliganSelectedUids = new Set();
+
+function resetMulliganSelection() {
+    mulliganSelectedUids = new Set();
+    try {
+        player1HandEl?.querySelectorAll?.('.card.selected-for-mulligan')?.forEach?.(el => el.classList.remove('selected-for-mulligan'));
+    } catch (_) {
+        // ignore
+    }
+}
 
 // --- Specific UI Update Functions ---
 
@@ -43,14 +57,37 @@ export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateD
  */
 function updatePpDisplay(playerId, currentPp, maxPp) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
-    const ppEl = isLocalPlayer ? player1PpEl : player2PpEl;
-    const maxPpEl = isLocalPlayer ? player1MaxPpEl : player2MaxPpEl;
-
-    if (ppEl) {
-        ppEl.textContent = currentPp ?? '??';
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const ppBarContainer = document.getElementById(`${prefix}-pp-bar`);
+    
+    // Update text if container exists (handled in renderPlayerStats, but good for standalone updates)
+    const statsContainer = document.getElementById(`${prefix}-stats`);
+    if (statsContainer) {
+        const ppTextEl = statsContainer.querySelector('.pp-text');
+        if (ppTextEl) ppTextEl.textContent = `${currentPp ?? 0} / ${maxPp ?? 0}`;
     }
-    if (maxPpEl) {
-        maxPpEl.textContent = maxPp ?? '??';
+
+    // Render PP Bar Segments
+    if (ppBarContainer) {
+        ppBarContainer.innerHTML = '';
+        const displayMax = 10; // Always show 10 slots for consistency
+        const filledSegments = currentPp || 0;
+        const unlockedSegments = maxPp || 0;
+
+        for (let i = 0; i < displayMax; i++) {
+            const segment = document.createElement('div');
+            segment.classList.add('pp-segment');
+            
+            if (i < filledSegments) {
+                segment.classList.add('active'); // Filled PP
+            } else if (i < unlockedSegments) {
+                // Unlocked but empty (default style)
+            } else {
+                segment.classList.add('empty'); // Locked/Max capacity limit
+            }
+            
+            ppBarContainer.appendChild(segment);
+        }
     }
 }
 
@@ -62,14 +99,55 @@ function updatePpDisplay(playerId, currentPp, maxPp) {
  */
 function updateEpDisplay(playerId, currentEp, maxEp) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
-    const epEl = isLocalPlayer ? player1EpEl : player2EpEl;
-    const maxEpEl = isLocalPlayer ? player1MaxEpEl : player2MaxEpEl;
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const epDotsContainer = document.getElementById(`${prefix}-ep-dots`);
 
-    if (epEl) {
-        epEl.textContent = currentEp ?? '?';
+    // Render EP Dots
+    if (epDotsContainer) {
+        epDotsContainer.innerHTML = '';
+        // Default to 2 max EP if 0 or undefined (User Request for initial state)
+        const totalDots = (maxEp && maxEp > 0) ? maxEp : 2;
+        const currentDots = currentEp || 0;
+
+        for (let i = 0; i < totalDots; i++) {
+            const dot = document.createElement('div');
+            dot.classList.add('ep-dot');
+            if (i < currentDots) {
+                dot.classList.add('active');
+            }
+            epDotsContainer.appendChild(dot);
+        }
     }
-    if (maxEpEl) {
-        maxEpEl.textContent = maxEp ?? '?';
+}
+
+/**
+ * Updates the SEP display for a specific player.
+ * @param {string} playerId - The GUID of the player.
+ * @param {number} currentSep - The current SEP value.
+ * @param {number} maxSep - The maximum SEP value.
+ */
+function updateSepDisplay(playerId, currentSep, maxSep) {
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const sepDotsContainer = document.getElementById(`${prefix}-sep-dots`);
+
+    if (sepDotsContainer) {
+        sepDotsContainer.innerHTML = '';
+        // Default to 2 max SEP if 0 or undefined (User Request for initial state)
+        const totalDots = (maxSep && maxSep > 0) ? maxSep : 2;
+        const currentDots = currentSep || 0;
+
+        for (let i = 0; i < totalDots; i++) {
+            const dot = document.createElement('div');
+            dot.classList.add('sep-dot');
+            // Add animation delay for staggered effect if multiple dots update
+            dot.style.transitionDelay = `${i * 0.1}s`;
+            
+            if (i < currentDots) {
+                dot.classList.add('active');
+            }
+            sepDotsContainer.appendChild(dot);
+        }
     }
 }
 
@@ -82,13 +160,11 @@ function updateEpDisplay(playerId, currentEp, maxEp) {
 */
 function updateDeckCountDisplay(playerId, count) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
-    const deckCountEl = isLocalPlayer ? player1DeckCountEl : player2DeckCountEl;
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const deckCountEl = document.getElementById(`${prefix}-deck-count`);
 
     if (deckCountEl) {
-        deckCountEl.textContent = count ?? '??';
-    } else {
-        const elName = isLocalPlayer ? 'player1DeckCountEl' : 'player2DeckCountEl';
-        console.warn(`UI Update Error: ${elName} missing, cannot update Deck Count for player ${playerId}.`);
+        deckCountEl.textContent = count ?? '0';
     }
 }
 
@@ -98,20 +174,14 @@ function updateDeckCountDisplay(playerId, count) {
 * @param {number} count - The current graveyard count.
 */
 function updateGraveyardCountDisplay(playerId, count) {
-    // 【BUG修复】通过与本地玩家ID比较，正确识别UI元素
-    if (!gameState.localPlayerId) {
-        console.error("UI Error: localPlayerId is not set in gameState. Cannot update graveyard count correctly.");
-        return;
-    }
+    if (!gameState.localPlayerId) return;
 
     const isLocalPlayer = (playerId === gameState.localPlayerId);
-    const graveyardCountEl = isLocalPlayer ? player1GraveEl : player2GraveEl;
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const graveyardCountEl = document.getElementById(`${prefix}-grave-count`);
 
     if (graveyardCountEl) {
-        graveyardCountEl.textContent = count ?? '??';
-    } else {
-        const elName = isLocalPlayer ? 'player1GraveEl' : 'player2GraveEl';
-        console.warn(`UI Update Error: ${elName} missing, cannot update Graveyard Count for player ${playerId}.`);
+        graveyardCountEl.textContent = count ?? '0';
     }
 }
 
@@ -133,30 +203,43 @@ function updateHealthDisplay(unitInstance) {
     if (unitInstance.type === 'Leader') {
         // 根据ownerId和本地玩家ID，判断是player1还是player2
         const uiPlayerPrefix = (unitInstance.ownerId === gameState.localPlayerId) ? 'player1' : 'player2';
-        healthElement = document.getElementById(`${uiPlayerPrefix}-hp`);
-    } else { // Follower or other field unit
-        const unitElement = document.querySelector(`.field-card[data-uid="${unitInstance.uid}"]`);
-        if (unitElement) {
-            healthElement = unitElement.querySelector('.health');
+        const hpContainer = document.getElementById(`${uiPlayerPrefix}-hp`);
+        
+        if (hpContainer) {
+            const maxHp = unitInstance.maxHealth ?? 20;
+            const hpPercent = Math.max(0, Math.min(100, (newHealth / maxHp) * 100));
+            
+            const valueEl = hpContainer.querySelector('.hp-value');
+            const fillEl = hpContainer.querySelector('.hp-bar-fill');
+            const ghostEl = hpContainer.querySelector('.hp-bar-ghost');
+
+            if (valueEl) valueEl.textContent = `${newHealth}/${maxHp}`;
+            
+            if (fillEl) {
+                fillEl.style.width = `${hpPercent}%`;
+                if (hpPercent < 30) fillEl.classList.add('low-hp');
+                else fillEl.classList.remove('low-hp');
+            }
+            
+            if (ghostEl) {
+                ghostEl.style.width = `${hpPercent}%`;
+            }
+            return; // Exit early for Leader
         }
+    }
+    
+    // Follower or other field unit
+    const unitElement = document.querySelector(`.field-card[data-uid="${unitInstance.uid}"]`);
+    if (unitElement) {
+        healthElement = unitElement.querySelector('.health');
     }
 
     if (healthElement) {
         healthElement.textContent = newHealth;
         // console.log(`UI UPDATE: Updated health for ${unitInstance.name} (UID: ${unitInstance.uid}) to ${newHealth}`);
     } else {
-        console.warn(`UI Update Error: Could not find health element for unit UID: ${unitInstance.uid} (Type: ${unitInstance.type})`);
+        // console.warn(`UI Update Error: Could not find health element for unit UID: ${unitInstance.uid} (Type: ${unitInstance.type})`);
     }
-}
-/**
- * Removes all selection and targeting highlight classes from UI elements.
- */
-function clearSelectionHighlights() {
-    const highlightClasses = ['playable', 'selected-attacker', 'targetable', 'targeting-active', 'targeting-spell', 'targetable-spell', 'selected-for-mulligan']; // Added mulligan class
-    gameContainerEl?.classList.remove('targeting-active'); // Remove global targeting class
-    document.querySelectorAll('.' + highlightClasses.join(', .'))
-        .forEach(el => el.classList.remove(...highlightClasses));
-    // console.log("UI Highlights: Cleared all selection/targeting highlight classes via clearSelectionHighlights()."); // Optional debug
 }
 
 // --- Specific UI Update Functions (Continued) ---
@@ -199,6 +282,17 @@ function updateHandDisplay(playerId, handCards = []) {
             // Local player's hand is rendered with full card details
             const cardElement = createCardElement(cardInstance, 'hand');
             if (cardElement) {
+                if (gameState.phase === 'Mulligan') {
+                    const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+                    const localCompleted = localPlayer?.hasCompletedMulligan === true;
+                    if (!localCompleted) {
+                        cardElement.classList.add('mulligan-selectable');
+                        const uid = cardElement.dataset.uid;
+                        if (uid && mulliganSelectedUids.has(uid)) {
+                            cardElement.classList.add('selected-for-mulligan');
+                        }
+                    }
+                }
                 handElement.appendChild(cardElement);
             }
         }
@@ -226,6 +320,9 @@ function showMulliganInterface(localPlayerId, handArray) {
     // 1. Add class to game container to indicate Mulligan phase visually
     gameContainerEl.classList.add('mulligan-active');
 
+    // Clear any stale selection from previous match/re-render.
+    resetMulliganSelection();
+
     // 2. Update the local player's hand display (using existing function)
     updateHandDisplay(localPlayerId, handArray); // Render the actual cards for selection
 
@@ -235,6 +332,8 @@ function showMulliganInterface(localPlayerId, handArray) {
     // 4. Show the Confirm Mulligan button
     confirmMulliganButtonEl.style.display = 'inline-block';
     confirmMulliganButtonEl.disabled = false; // Ensure it's enabled
+    // Reset any stale state from previous matches (e.g., "等待对方..." after leaving a PVP room mid-mulligan)
+    confirmMulliganButtonEl.textContent = '确认调度';
 
     // 5. Hide End Turn button during Mulligan
     if (endTurnButtonEl) {
@@ -421,17 +520,38 @@ function highlightTargets(attackerInstance) {
         return;
     }
 
-    const potentialTargets = [...(opponentPlayerState.field ?? [])];
-    const hasWard = potentialTargets.some(follower => follower?.keywords?.includes('Ward'));
+    // --- Start of Rush/Storm Validation Logic ---
+    const opponentBoard = opponentPlayerState.field ?? [];
+    const opponentLeader = opponentPlayerState.leaderCard;
+    // 【BUG修复】在函数作用域内正确定义 hasWard 变量
+    const hasWard = opponentBoard.some(follower => follower?.keywords?.includes('Ward'));
+    const wardFollowers = opponentBoard.filter(f => f && f.keywords?.includes('Ward'));
 
-    // 【BUG-017修复】总是将敌方主战者添加到潜在目标中，Ward规则在后续处理
-    if (opponentPlayerState.leaderCard) {
-        potentialTargets.push(opponentPlayerState.leaderCard);
+    let validTargets = [];
+
+    if (wardFollowers.length > 0) {
+        // If Ward is present, only Ward followers are valid targets
+        validTargets = wardFollowers;
+    } else {
+        // If no Ward, all followers are valid targets
+        validTargets = [...opponentBoard];
+        
+        // Check if the leader is a valid target
+        const hasStorm = attackerInstance.keywords?.includes("Storm");
+        const isSummoningSick = attackerInstance.fieldTurn === 0 && !attackerInstance.isEvolved;
+
+        if (hasStorm || !isSummoningSick) {
+            if (opponentLeader) {
+                validTargets.push(opponentLeader);
+            }
+        }
     }
+    
+    const finalTargets = validTargets.filter(Boolean);
+    console.log(`UI Highlights: Highlighting ${finalTargets.length} valid targets for attacker ${attackerInstance.uid}.`);
+    // --- End of Rush/Storm Validation Logic ---
 
-    console.log(`UI Highlights: Highlighting targets for attacker ${attackerInstance.uid}. Opponent: ${opponentPlayerId}. Has Ward on field: ${hasWard}. Potential targets count: ${potentialTargets.length}`); // Debug
-
-    potentialTargets.forEach(targetInstance => {
+    finalTargets.forEach(targetInstance => {
         if (!targetInstance) return; // Skip null/undefined
 
         let targetElement = null;
@@ -507,31 +627,172 @@ function highlightTargets(attackerInstance) {
 }
 
 // --- UI State Variables ---
-let isTargetingSpell = false; // Flag for spell targeting mode
-let targetingSpellUid = null; // UID of the spell being targeted
-// --- UI State Management Functions ---
-function startSpellTargeting(spellUid) {
-    isTargetingSpell = true;
-    targetingSpellUid = spellUid;
-    // console.log(`UI State DBG: Started targeting spell ${spellUid}`);
+
+// --- NEW: Player Choice State Management ---
+let isAwaitingPlayerChoice = false;
+let currentChoiceRequest = null;
+let currentChoiceSelectedTargetIds = new Set();
+
+function startPlayerChoice(requestData) {
+    isAwaitingPlayerChoice = true;
+    currentChoiceRequest = requestData;
+    currentChoiceSelectedTargetIds = new Set();
+    console.log("UI State: Entered player choice mode.", requestData);
+    gameContainerEl?.classList.add('player-choice-active');
+
+    // BUG-FIX: Disable other actions while a choice is pending.
+    if (endTurnButtonEl) {
+        endTurnButtonEl.disabled = true;
+    }
+    // Potentially disable other buttons like evolve here as well if needed.
 }
 
-function endSpellTargeting() {
-    isTargetingSpell = false;
-    targetingSpellUid = null;
-    // console.log(`UI State DBG: Ended spell targeting.`);
+function endPlayerChoice(notifyBackendOfCancellation = true) {
+    if (!isAwaitingPlayerChoice) return; // Prevent multiple calls
+
+    const choiceToCancel = currentChoiceRequest; // Capture before clearing
+    isAwaitingPlayerChoice = false;
+    currentChoiceRequest = null;
+    currentChoiceSelectedTargetIds = new Set();
+
+    console.log(`UI State: Exited player choice mode. Notify backend of cancellation: ${notifyBackendOfCancellation}`);
+    clearSelectionHighlights();
+    gameContainerEl?.classList.remove('player-choice-active');
+
+    removeChoiceOverlayUI();
+
+    // BUG-FIX: Notify the backend that the choice was cancelled, only if requested.
+    if (notifyBackendOfCancellation && choiceToCancel && choiceToCancel.PendingChoiceId && choiceToCancel.SourceAbilityRuntimeId) {
+        console.log(`UI: Choice cancelled. Notifying game manager for ability ${choiceToCancel.SourceAbilityRuntimeId} with PendingChoiceId ${choiceToCancel.PendingChoiceId}.`);
+        cancelPlayerChoice(choiceToCancel.PendingChoiceId, choiceToCancel.SourceAbilityRuntimeId);
+    } else if (notifyBackendOfCancellation) {
+        console.warn("UI: endPlayerChoice was called to notify backend, but there was no active choice request to cancel.");
+    }
+
+    // BUG-FIX: Restore the state of the end turn button.
+    if (endTurnButtonEl) {
+        const isLocalPlayerTurn = gameState.localPlayerId === gameState.currentPlayerId;
+        // Only enable if it's the local player's turn and the game is in a phase where ending the turn is possible.
+        endTurnButtonEl.disabled = !isLocalPlayerTurn || (gameState.phase !== 'Main' && gameState.phase !== 'TurnStart');
+    }
 }
 // --- End UI State Management Functions ---
+
+function removeChoiceOverlayUI() {
+    document.getElementById('choice-overlay-root')?.remove();
+    // Backward compatibility cleanup (older prompt overlay).
+    document.getElementById('choice-prompt-overlay')?.remove();
+}
+
+function getChoiceMinMax(choiceRequest) {
+    const min = Number.isFinite(choiceRequest?.MinSelectionCount) ? choiceRequest.MinSelectionCount : 1;
+    const max = Number.isFinite(choiceRequest?.MaxSelectionCount) ? choiceRequest.MaxSelectionCount : 1;
+    return { min, max };
+}
+
+function isSingleMandatoryChoice(choiceRequest) {
+    const { min, max } = getChoiceMinMax(choiceRequest);
+    return min === 1 && max === 1;
+}
+
+function isChoiceSelectionValid(choiceRequest, selectedCount) {
+    const { min, max } = getChoiceMinMax(choiceRequest);
+    return selectedCount >= min && selectedCount <= max;
+}
+
+function updateChoiceOverlayUI() {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+
+    const { min, max } = getChoiceMinMax(currentChoiceRequest);
+    const selectedCount = currentChoiceSelectedTargetIds.size;
+
+    const countEl = document.getElementById('choice-selected-count');
+    if (countEl) {
+        countEl.textContent = `${selectedCount}/${min}-${max}`;
+    }
+
+    const confirmBtn = document.getElementById('choice-confirm-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = !isChoiceSelectionValid(currentChoiceRequest, selectedCount);
+    }
+
+    const cancelBtn = document.getElementById('choice-cancel-btn');
+    if (cancelBtn) {
+        cancelBtn.disabled = currentChoiceRequest.IsCancellable !== true;
+        cancelBtn.style.display = currentChoiceRequest.IsCancellable === true ? '' : 'none';
+    }
+
+    // Update selected visuals in the choice panel, if present.
+    document.querySelectorAll('.choice-card[data-uid]').forEach(el => {
+        const uid = el.dataset.uid;
+        if (!uid) return;
+        el.classList.toggle('choice-card-selected', currentChoiceSelectedTargetIds.has(uid));
+    });
+}
+
+async function confirmPlayerChoice() {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
+
+    const chosenIds = Array.from(currentChoiceSelectedTargetIds);
+    if (!isChoiceSelectionValid(currentChoiceRequest, chosenIds.length)) return;
+
+    const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
+    if (ok) {
+        endPlayerChoice(false);
+    }
+}
+
+function requestCancelPlayerChoiceUI() {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    if (currentChoiceRequest.IsCancellable !== true) {
+        console.warn("UI: Player choice is not cancellable. Ignoring cancel request.");
+        return;
+    }
+    endPlayerChoice(true);
+}
+
+async function handleChoiceTargetClick(targetUid) {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+
+    const validTargetUids = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
+    if (!validTargetUids.has(String(targetUid))) return;
+
+    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
+
+    if (isSingleMandatoryChoice(currentChoiceRequest)) {
+        const ok = await submitPlayerChoice(PendingChoiceId, [targetUid], SourceAbilityRuntimeId, false);
+        if (ok) {
+            endPlayerChoice(false);
+        }
+        return;
+    }
+
+    const { max } = getChoiceMinMax(currentChoiceRequest);
+    const key = String(targetUid);
+    if (currentChoiceSelectedTargetIds.has(key)) {
+        currentChoiceSelectedTargetIds.delete(key);
+    } else {
+        if (currentChoiceSelectedTargetIds.size >= max) return;
+        currentChoiceSelectedTargetIds.add(key);
+    }
+
+    // Refresh highlights so selected targets remain visually consistent across zones.
+    renderHighlights(gameState);
+    updateChoiceOverlayUI();
+}
 
 // --- Module-level variable to store the latest known current player ID ---
 let uiCurrentPlayerId = null;
 
 // --- DOM Element References (缓存以提高性能) ---
 // 变量将在 cacheDOMElements 中定义和赋值
-let player1HandEl, player1FieldEl, player1HpEl, player1PpEl, player1MaxPpEl, player1EpEl, player1DeckEl, player1GraveEl;
-let player2HandEl, player2FieldEl, player2HpEl, player2PpEl, player2MaxPpEl, player2EpEl, player2DeckEl, player2GraveEl;
-let player1MaxEpEl, player2MaxEpEl; // ADDED Declaration for Max EP elements
+let player1HandEl, player1FieldEl, player1HpEl, player1PpEl, player1MaxPpEl, player1EpEl, player1SepEl, player1DeckEl, player1GraveEl;
+let player2HandEl, player2FieldEl, player2HpEl, player2PpEl, player2MaxPpEl, player2EpEl, player2SepEl, player2DeckEl, player2GraveEl;
+let player1MaxEpEl, player2MaxEpEl;
+let player1MaxSepEl, player2MaxSepEl;
 let turnInfoEl, endTurnButtonEl, confirmMulliganButtonEl, gameContainerEl; // Added confirmMulliganButtonEl
+let spectatorToggleViewButtonEl;
 
 // 缓存 DOM 元素的函数
 function cacheDOMElements() {
@@ -541,34 +802,35 @@ function cacheDOMElements() {
         turnInfoEl = document.getElementById('turn-info');
         endTurnButtonEl = document.getElementById('end-turn-button');
         confirmMulliganButtonEl = document.getElementById('confirm-mulligan-button'); // Cache the new button
+        spectatorToggleViewButtonEl = document.getElementById('spectator-toggle-view');
 
         // Player 1 elements
         player1HandEl = document.getElementById('player1-hand');
         player1FieldEl = document.getElementById('player1-field');
         player1HpEl = document.getElementById('player1-hp');
-        player1PpEl = document.getElementById('player1-pp');
-        player1MaxPpEl = document.getElementById('player1-max-pp');
-        player1EpEl = document.getElementById('player1-ep');
-        player1MaxEpEl = document.getElementById('player1-max-ep'); // ADDED
-        player1DeckEl = document.getElementById('player1-deck');
-        player1GraveEl = document.getElementById('player1-graveyard');
+        // Updated IDs to match new HTML structure
+        player1PpEl = document.getElementById('player1-pp-bar');
+        player1EpEl = document.getElementById('player1-ep-dots');
+        player1SepEl = document.getElementById('player1-sep-dots');
+        player1DeckEl = document.getElementById('player1-deck-count');
+        player1GraveEl = document.getElementById('player1-grave-count');
 
         // Player 2 elements
         player2HandEl = document.getElementById('player2-hand'); // Often hidden/simplified
         player2FieldEl = document.getElementById('player2-field');
         player2HpEl = document.getElementById('player2-hp');
-        player2PpEl = document.getElementById('player2-pp');
-        player2MaxPpEl = document.getElementById('player2-max-pp');
-        player2EpEl = document.getElementById('player2-ep');
-        player2MaxEpEl = document.getElementById('player2-max-ep'); // ADDED
-        player2DeckEl = document.getElementById('player2-deck');
-        player2GraveEl = document.getElementById('player2-graveyard');
+        // Updated IDs to match new HTML structure
+        player2PpEl = document.getElementById('player2-pp-bar');
+        player2EpEl = document.getElementById('player2-ep-dots');
+        player2SepEl = document.getElementById('player2-sep-dots');
+        player2DeckEl = document.getElementById('player2-deck-count');
+        player2GraveEl = document.getElementById('player2-grave-count');
 
         // Verification
         const elementsToVerify = {
             gameContainerEl, turnInfoEl, endTurnButtonEl, confirmMulliganButtonEl, // Added confirmMulliganButtonEl
-            player1HandEl, player1FieldEl, player1HpEl, player1PpEl, player1MaxPpEl, player1EpEl, player1MaxEpEl, player1DeckEl, player1GraveEl, // ADDED player1MaxEpEl
-            player2HandEl, player2FieldEl, player2HpEl, player2PpEl, player2MaxPpEl, player2EpEl, player2MaxEpEl, player2DeckEl, player2GraveEl // ADDED player2MaxEpEl
+            player1HandEl, player1FieldEl, player1HpEl, player1PpEl, player1MaxPpEl, player1EpEl, player1MaxEpEl, player1SepEl, player1MaxSepEl, player1DeckEl, player1GraveEl,
+            player2HandEl, player2FieldEl, player2HpEl, player2PpEl, player2MaxPpEl, player2EpEl, player2MaxEpEl, player2SepEl, player2MaxSepEl, player2DeckEl, player2GraveEl
         };
         let missing = [];
         for (const key in elementsToVerify) {
@@ -620,6 +882,19 @@ function renderGame(currentGameState) { // Remove second parameter
         return;
     }
 
+    if (spectatorToggleViewButtonEl) {
+        if (gameState.isSpectator) {
+            spectatorToggleViewButtonEl.style.display = '';
+            spectatorToggleViewButtonEl.title = `切换视角（当前底部玩家：${gameState.localPlayerId || 'unknown'}）`;
+        } else {
+            spectatorToggleViewButtonEl.style.display = 'none';
+        }
+    }
+
+    if (endTurnButtonEl) {
+        endTurnButtonEl.style.display = gameState.isSpectator ? 'none' : '';
+    }
+
     // Use dynamic player IDs instead of hardcoded 'player1' and 'player2'
     // Get the current player (activePlayer) and opponent player (opponentPlayer)
     const currentPlayer = currentGameState.activePlayer;
@@ -641,11 +916,22 @@ function renderGame(currentGameState) { // Remove second parameter
         opponentPlayerState = currentGameState.players.find(p => p.id !== gameState.localPlayerId);
     }
 
-    // 方法2: 如果localPlayerId未设置或查找失败，使用IsAI属性进行区分
+    // 方法2: 如果localPlayerId未设置或查找失败，仅在“人类 vs AI”场景下使用 IsAI 属性进行区分
     if (!localPlayer || !opponentPlayerState) {
-        console.warn(`[BUG修复] localPlayerId查找失败，使用IsAI属性区分玩家`);
-        localPlayer = currentGameState.players.find(p => !p.isAI);  // 人类玩家
-        opponentPlayerState = currentGameState.players.find(p => p.isAI);  // AI玩家
+        const aiPlayers = currentGameState.players.filter(p => p?.isAI === true);
+        const nonAiPlayers = currentGameState.players.filter(p => p?.isAI !== true);
+
+        if (aiPlayers.length === 1 && nonAiPlayers.length === 1) {
+            console.warn(`[BUG修复] localPlayerId查找失败，推断为人类 vs AI，对齐到人类玩家`);
+            localPlayer = nonAiPlayers[0];
+            opponentPlayerState = aiPlayers[0];
+        } else {
+            console.error(`[PVP] localPlayerId 未设置或不匹配，无法安全推断座位。`, {
+                localPlayerId: gameState.localPlayerId,
+                players: currentGameState.players.map(p => ({ id: p?.id, isAI: p?.isAI }))
+            });
+            return;
+        }
     }
 
     // 方法3: 最后的备用方案，使用数组索引（假设第一个是本地玩家）
@@ -676,7 +962,10 @@ function renderGame(currentGameState) { // Remove second parameter
     renderField(player2.field ?? [], player2FieldEl, true); // isOpponent = true
 
     // 4. Render Turn Info
-    renderTurnInfo(currentGameState.activePlayer?.turn, currentGameState.currentPlayerId); // Use active player's turn count
+    renderTurnInfo(currentGameState.activePlayer?.turnNumber, currentGameState.currentPlayerId); // Use active player's turn count
+
+    // 4.5 Render Game Log
+    renderGameLog(currentGameState.gameLog);
 
     // 5. Render Highlights (Playable cards, selected attackers, targets)
     renderHighlights(currentGameState);
@@ -690,75 +979,84 @@ function renderGame(currentGameState) { // Remove second parameter
 // --- 具体渲染辅助函数 (占位符) ---
 function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'player2'
     if (!playerState) {
-        // console.warn(`UI: Player state for ${prefix} is missing for stats rendering.`);
         return;
     }
 
     try {
-        // Dynamically select elements based on prefix using cached variables
-        const hpEl = (prefix === 'player1') ? player1HpEl : player2HpEl;
-        const ppEl = (prefix === 'player1') ? player1PpEl : player2PpEl;
-        const maxPpEl = (prefix === 'player1') ? player1MaxPpEl : player2MaxPpEl;
-        const epEl = (prefix === 'player1') ? player1EpEl : player2EpEl;
-        const deckEl = (prefix === 'player1') ? player1DeckEl : player2DeckEl;
-        const graveEl = (prefix === 'player1') ? player1GraveEl : player2GraveEl;
-
-        // Update text content only if the element was successfully cached
-        if (hpEl) {
-            // FIX: Use leaderCard.currentHealth for leader HP display
-            hpEl.textContent = playerState.leaderCard?.currentHealth ?? '??';
-        } else { /* console.warn(`UI: ${prefix}HpEl missing, cannot render HP.`); */ }
-
-        if (ppEl) {
-            ppEl.textContent = playerState.pp ?? '??';
-        } else { /* console.warn(`UI: ${prefix}PpEl missing, cannot render PP.`); */ }
-
-        if (maxPpEl) {
-            maxPpEl.textContent = playerState.maxPP ?? '??';
-        } else { /* console.warn(`UI: ${prefix}MaxPpEl missing, cannot render MaxPP.`); */ }
-
-        if (epEl) {
-            epEl.textContent = playerState.ep ?? '?'; // Default EP display
-        } else { /* console.warn(`UI: ${prefix}EpEl missing, cannot render EP.`); */ }
-
-        // ADDED: Update Max EP element
-        const maxEpEl = (prefix === 'player1') ? player1MaxEpEl : player2MaxEpEl;
-        if (maxEpEl) {
-            maxEpEl.textContent = playerState.maxEP ?? '?'; // Use the correct playerState property
-        } else { /* console.warn(`UI: ${prefix}MaxEpEl missing, cannot render Max EP.`); */ }
-        // Use optional chaining and nullish coalescing for deck/graveyard counts
-        if (deckEl) {
-            deckEl.textContent = playerState.deckCount ?? 0; // FIX: Use deckCount property updated by DeckUpdate event
-        } else { /* console.warn(`UI: ${prefix}DeckEl missing, cannot render Deck count.`); */ }
-
-        if (graveEl) {
-            graveEl.textContent = playerState.graveyard?.length ?? 0;
-        } else { /* console.warn(`UI: ${prefix}GraveEl missing, cannot render Graveyard count.`); */ }
-        // ADDED: Render First/Second Player Indicator
-        const turnIndicatorId = `${prefix}-turn-indicator`;
-        const turnIndicatorEl = document.getElementById(turnIndicatorId);
-        if (turnIndicatorEl) {
-            // Access gameState directly here since it's imported at the top
-            if (gameState.firstPlayerId && gameState.secondPlayerId && playerState) {
-                if (playerState.id === gameState.firstPlayerId) {
-                    turnIndicatorEl.textContent = '(先手)';
-                    // console.log(`UI-${prefix}: Set turn indicator to (先手)`); // Optional Debug
-                } else if (playerState.id === gameState.secondPlayerId) {
-                    turnIndicatorEl.textContent = '(后手)';
-                    // console.log(`UI-${prefix}: Set turn indicator to (后手)`); // Optional Debug
-                } else {
-                    turnIndicatorEl.textContent = ''; // Clear if neither (shouldn't happen in 2-player)
-                }
-            } else {
-                turnIndicatorEl.textContent = ''; // Clear if first/second IDs aren't set yet or playerState missing
-            }
-        } else {
-            // console.warn(`UI: Turn indicator element #${turnIndicatorId} not found.`);
+        // We need the container element for the player stats block.
+        // Assuming index.html has a container like #player1-stats-container or we use the existing structure.
+        // Based on previous code, we were selecting individual elements.
+        // To implement the new layout, we should ideally target the parent container of these stats.
+        // However, since we might not want to rewrite index.html, we can inject the new structure into the existing parent
+        // if we can identify it, OR we can repurpose one of the existing elements as the root.
+        
+        // Let's assume the existing HTML structure has a container that holds these elements.
+        // If not, we might need to be creative.
+        // Looking at typical structure: <div id="player1-info"><div class="player-stats">...</div></div>
+        
+        const infoContainer = document.getElementById(`${prefix}-info`);
+        const statsContainer = infoContainer ? infoContainer.querySelector('.player-stats') : null;
+        
+        if (!statsContainer) {
+            console.warn(`UI: Stats container for ${prefix} not found.`);
+            return;
         }
-        // --- END ADDED ---
+
+        // Update Values
+        
+        // 1. HP
+        const currentHp = playerState.leaderCard?.currentHealth ?? 0;
+        const hpValueEl = statsContainer.querySelector('.hp-value');
+        if (hpValueEl) {
+            hpValueEl.textContent = currentHp;
+            // Optional: Add color change for low HP
+            if (currentHp <= 5) hpValueEl.style.color = '#ef4444'; // Red
+            else hpValueEl.style.color = '#fff';
+        }
+
+        // 2. PP
+        const currentPp = playerState.pp ?? 0;
+        const maxPp = playerState.maxPP ?? 0;
+        const ppTextEl = statsContainer.querySelector('.pp-text');
+        if (ppTextEl) ppTextEl.textContent = `${currentPp} / ${maxPp}`;
+        updatePpDisplay(playerState.id, currentPp, maxPp);
+
+        // 3. EP
+        // Default maxEP to 2 if 0 or undefined (User Request)
+        const maxEp = (playerState.maxEP && playerState.maxEP > 0) ? playerState.maxEP : 2;
+        updateEpDisplay(playerState.id, playerState.ep, maxEp);
+
+        // 4. SEP
+        // Default maxSEP to 2 if 0 or undefined (User Request)
+        const maxSep = (playerState.maxSEP && playerState.maxSEP > 0) ? playerState.maxSEP : 2;
+        updateSepDisplay(playerState.id, playerState.sep, maxSep);
+
+        // 5. Deck
+        const deckCountEl = statsContainer.querySelector(`#${prefix}-deck-count`);
+        if (deckCountEl) deckCountEl.textContent = playerState.deckCount ?? 0;
+
+        // 6. Graveyard
+        const graveCountEl = statsContainer.querySelector(`#${prefix}-grave-count`);
+        if (graveCountEl) graveCountEl.textContent = playerState.graveyard?.length ?? 0;
+
+        // 7. Class Name (Update if changed, e.g. transformation)
+        const classEl = statsContainer.querySelector('.class-name');
+        if (classEl && playerState.class) classEl.textContent = playerState.class;
+
+        // 8. Player Name & Avatar (Ensure they are correct)
+        const isLocal = prefix === 'player1';
+        const playerNameEl = statsContainer.querySelector('.player-name');
+        if (playerNameEl) {
+             // For now, static names, but could be dynamic from playerState.name
+             playerNameEl.textContent = isLocal ? 'PLAYER' : 'OPPONENT';
+        }
+        const avatarEl = statsContainer.querySelector('.stats-avatar');
+        if (avatarEl) {
+            avatarEl.textContent = isLocal ? 'YOU' : 'OPP';
+        }
 
     } catch (error) {
-        // console.error(`UI Error rendering stats for ${prefix}:`, error);
+        console.error(`UI Error rendering stats for ${prefix}:`, error);
     }
 }
 function renderPlayerHand(handCards = [], handElement) {
@@ -781,6 +1079,18 @@ function renderPlayerHand(handCards = [], handElement) {
         // Create the card's DOM element using the helper, specifying 'hand' context
         const cardElement = createCardElement(cardInstance, 'hand');
         if (cardElement) {
+            const isLocalHand = handElement === player1HandEl;
+            if (isLocalHand && gameState.phase === 'Mulligan') {
+                const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+                const localCompleted = localPlayer?.hasCompletedMulligan === true;
+                if (!localCompleted) {
+                    cardElement.classList.add('mulligan-selectable');
+                    const uid = cardElement.dataset.uid;
+                    if (uid && mulliganSelectedUids.has(uid)) {
+                        cardElement.classList.add('selected-for-mulligan');
+                    }
+                }
+            }
             // Append the created card element to the hand container
             handElement.appendChild(cardElement);
         } else {
@@ -918,6 +1228,22 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         const playerState = getPlayerState(currentPlayerId);
 
         // Check conditions for showing the button (mirrors server-side but simplified)
+        const cardType = cardInstance.type ?? cardInstance.Type;
+        const isEvolved = (cardInstance.isEvolved ?? cardInstance.IsEvolved) === true;
+        const canEvolve = (cardInstance.canEvolve ?? cardInstance.CanEvolve) === true;
+
+        const showSuperEvolveButton = (
+            playerState &&
+            currentPlayerId === gameState.localPlayerId &&
+            currentPlayerId === cardInstance.ownerId &&
+            gameState.phase === 'Main' &&
+            playerState.sep > 0 &&
+            playerState.canSuperEvolve === true &&
+            cardType === 'Follower' &&
+            isEvolved === false &&
+            canEvolve === true
+        );
+
         const showEvolveButton = (
             playerState && // Ensure playerState exists
             currentPlayerId === gameState.localPlayerId && // Only show button for human player's turn
@@ -925,9 +1251,18 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
             gameState.phase === 'Main' &&
             playerState.ep > 0 &&
             playerState.canEvolve === true &&
-            cardInstance.type === 'Follower' &&
-            cardInstance.isEvolved === false
+            cardType === 'Follower' &&
+            isEvolved === false &&
+            canEvolve === true
         );
+
+        if (showSuperEvolveButton) {
+            const superEvolveBtn = document.createElement('button');
+            superEvolveBtn.className = 'super-evolve-button';
+            superEvolveBtn.textContent = 'Super Evolve';
+            superEvolveBtn.dataset.superEvolveUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
+            cardDiv.appendChild(superEvolveBtn);
+        }
 
         if (showEvolveButton) {
             const evolveBtn = document.createElement('button');
@@ -938,6 +1273,35 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         }
     }
     // --- END Evolve Button ---
+
+    // --- Add Act Button Conditionally (UI Side) ---
+    if (context === 'field') {
+        const currentPlayerId = getCurrentPlayerId();
+        const playerState = getPlayerState(currentPlayerId);
+
+        const hasActAbility = (cardInstance.hasActAbility === true) || (cardInstance.HasActAbility === true);
+        const lastActTurn = cardInstance.actLastUsedTurnNumber ?? cardInstance.ActLastUsedTurnNumber ?? null;
+        const currentTurnNumber = playerState?.turnNumber ?? playerState?.TurnNumber ?? 0;
+        const usedThisTurn = lastActTurn !== null && lastActTurn === currentTurnNumber;
+
+        const showActButton = (
+            playerState &&
+            currentPlayerId === gameState.localPlayerId &&
+            currentPlayerId === cardInstance.ownerId &&
+            gameState.phase === 'Main' &&
+            hasActAbility
+        );
+
+        if (showActButton) {
+            const actBtn = document.createElement('button');
+            actBtn.className = 'act-button';
+            actBtn.textContent = usedThisTurn ? 'Act (Used)' : 'Act';
+            actBtn.disabled = usedThisTurn;
+            actBtn.dataset.actUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
+            cardDiv.appendChild(actBtn);
+        }
+    }
+    // --- END Act Button ---
 
     // 【修复】移除鼠标悬停时的可玩性检查请求，改为依赖服务器主动推送
     // 服务器会在玩家行动完成后自动推送手牌可玩性信息
@@ -964,13 +1328,114 @@ function renderTurnInfo(turnNumber, currentPlayerId) {
     // Update the turn information display element if it was cached successfully
     if (turnInfoEl) {
         // Display "Starting..." or similar if turnNumber is 0 (initial hydration)
-        const displayTurn = turnNumber === 0 ? "Starting" : `Turn ${turnNumber}`;
-        // Use template literals for clarity and potential future localization
-        // Displaying in English for code consistency, can be localized later.
-        turnInfoEl.textContent = `${displayTurn} - Player: ${currentPlayerId ?? 'N/A'}`;
+        const displayTurn = turnNumber === 0 ? "GAME START" : `TURN ${turnNumber}`;
+        
+        // Simplified display: Just the Turn Number.
+        // The active player is indicated by the turn badge or other UI cues (like glowing avatar).
+        turnInfoEl.textContent = displayTurn;
+        
+        // Optional: Add a class to indicate whose turn it is for styling the text
+        const isLocalPlayerTurn = (currentPlayerId === gameState.localPlayerId);
+        if (isLocalPlayerTurn) {
+            turnInfoEl.style.color = 'var(--color-primary)';
+        } else {
+            turnInfoEl.style.color = 'var(--color-secondary)';
+        }
+    }
+}
+
+// --- 渲染游戏日志的辅助函数 ---
+let isLogExpanded = false; // Default to collapsed
+
+export function renderGameLog(logs) {
+    let logContainer = document.getElementById('game-log-container');
+    let logContent = document.getElementById('game-log-content');
+    
+    // Create container structure if it doesn't exist
+    if (!logContainer) {
+        logContainer = document.createElement('div');
+        logContainer.id = 'game-log-container';
+        logContainer.className = isLogExpanded ? 'expanded' : 'collapsed'; // Set initial state
+
+        // Create Header Container
+        const header = document.createElement('div');
+        header.className = 'log-header';
+
+        // Create Toggle Button
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'game-log-toggle';
+        toggleBtn.className = 'log-toggle-btn';
+        toggleBtn.title = 'Toggle Log';
+        toggleBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" class="icon-svg">
+                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+            </svg>
+        `;
+        toggleBtn.onclick = () => {
+            isLogExpanded = !isLogExpanded;
+            logContainer.className = isLogExpanded ? 'expanded' : 'collapsed';
+            // Auto-scroll to bottom when expanding
+            if (isLogExpanded && logContent) {
+                logContent.scrollTop = logContent.scrollHeight;
+            }
+        };
+
+        // Create Title
+        const title = document.createElement('span');
+        title.className = 'log-title';
+        title.textContent = 'BATTLE LOG';
+
+        header.appendChild(toggleBtn);
+        header.appendChild(title);
+
+        // Create Content Wrapper
+        logContent = document.createElement('div');
+        logContent.id = 'game-log-content';
+
+        logContainer.appendChild(header);
+        logContainer.appendChild(logContent);
+
+        // Append to game-container
+        const gameContainer = document.getElementById('game-container');
+        if (gameContainer) {
+            gameContainer.appendChild(logContainer);
+        } else {
+            document.body.appendChild(logContainer); // Fallback
+        }
     } else {
-        // Log an error if the element is missing, as this indicates a UI setup issue
-        console.error("UI Error: Cannot render turn info because turnInfoEl is missing or wasn't cached.");
+        // Ensure content element exists if container was found but might be malformed (legacy support)
+        logContent = document.getElementById('game-log-content');
+        if (!logContent) {
+            logContainer.innerHTML = ''; // Reset if structure is wrong
+            // Re-call to recreate structure
+            renderGameLog(logs);
+            return;
+        }
+        // Sync class with state
+        logContainer.className = isLogExpanded ? 'expanded' : 'collapsed';
+    }
+
+    // Update Logs Content
+    if (!logs || !Array.isArray(logs)) {
+        return;
+    }
+
+    // Clear existing logs in content wrapper
+    logContent.innerHTML = '';
+
+    // Render last 15 logs
+    const recentLogs = logs.slice(-15);
+    
+    recentLogs.forEach(log => {
+        const logEntry = document.createElement('div');
+        logEntry.className = 'log-entry';
+        logEntry.textContent = `> ${log}`;
+        logContent.appendChild(logEntry);
+    });
+
+    // Auto-scroll to bottom if expanded
+    if (isLogExpanded) {
+        logContent.scrollTop = logContent.scrollHeight;
     }
 }
 
@@ -978,73 +1443,80 @@ function renderTurnInfo(turnNumber, currentPlayerId) {
 // --- 处理高亮 (可交互状态) 的辅助函数 ---
 // --- 处理高亮 (可交互状态) 的辅助函数 --- // Keeping the comment from original line 411
 function renderHighlights(currentGameState) {
-    // console.log("UI Highlights: Processing highlights..."); // Optional debug
-    clearAllHighlights(); // Step 1: Clear everything
+    clearSelectionHighlights();
 
-    if (isTargetingSpell && targetingSpellUid) { // Condition starts here now
-        renderSpellTargetHighlights(currentGameState); // Step 2a: Apply spell target highlights
+    if (isAwaitingPlayerChoice) {
+        renderAbilityTargetHighlights(currentGameState);
     } else {
-        renderPlayableCardHighlights(currentGameState); // Step 2b-i: Apply playable card highlights
-        renderAttackHighlights(currentGameState);     // Step 2b-ii: Apply attack selection/target highlights
+        renderPlayableCardHighlights(currentGameState);
+        renderAttackHighlights(currentGameState);
     }
 }
 
 // --- Highlight Helper Functions ---
 
 // Helper 1: Clear All Highlight Classes
-function clearAllHighlights() {
-    const highlightClasses = ['playable', 'selected-attacker', 'targetable', 'targetable-restricted', 'targeting-active', 'targeting-spell', 'targetable-spell'];
+function clearSelectionHighlights() {
+    const highlightClasses = ['playable', 'selected-attacker', 'targetable', 'targetable-restricted', 'targeting-active', 'targeting-spell', 'targetable-spell', 'choice-selected'];
     gameContainerEl?.classList.remove('targeting-active'); // Remove global targeting class
     document.querySelectorAll('.' + highlightClasses.join(', .'))
         .forEach(el => el.classList.remove(...highlightClasses));
     // console.log("UI Highlights: Cleared all highlight classes."); // Optional debug
 }
 
-// Helper 2: Render Spell Targeting Highlights
-function renderSpellTargetHighlights(currentGameState) {
-    // console.log("UI Highlights: Applying spell targeting highlights.");
-    // Add global targeting class
-    gameContainerEl?.classList.add('targeting-active');
-
-    // Highlight the spell card itself in hand
-    const spellCardElement = player1HandEl?.querySelector(`.card[data-uid="${targetingSpellUid}"]`);
-    if (spellCardElement) {
-        spellCardElement.classList.add('targeting-spell');
-    } else {
-        // console.warn(`UI Highlights: Could not find element for targeting spell UID ${targetingSpellUid} in hand.`);
+// Helper 2: Render Ability Target Highlights (Replaces renderSpellTargetHighlights)
+function renderAbilityTargetHighlights(currentGameState) {
+    if (!currentChoiceRequest) {
+        console.warn("UI Highlights: renderAbilityTargetHighlights called but currentChoiceRequest is null.");
+        return;
     }
 
-    // Highlight valid targets using isValidSpellTarget from gameManager
-    const allPotentialTargets = [
-        ...(gameState.players.find(p => p.id === gameState.localPlayerId)?.field ?? []),
-        ...(gameState.players.find(p => p.id !== gameState.localPlayerId)?.field ?? []),
-        gameState.players.find(p => p.id === gameState.localPlayerId)?.leaderCard,
-        gameState.players.find(p => p.id !== gameState.localPlayerId)?.leaderCard
-    ].filter(Boolean); // Filter out null/undefined leaderCards if not set yet
+    console.log(`UI Highlights: Applying ability target highlights.`);
+    gameContainerEl?.classList.add('targeting-active'); // Use a generic targeting class
 
-    allPotentialTargets.forEach(targetInstance => {
-        // Get spell data and caster ID to check validity correctly
-        const spellInstance = findCardInstanceByUid(targetingSpellUid);
-        const spellData = spellInstance ? getCardDefinition(spellInstance.id) : null;
-        const casterId = getCurrentPlayerId();
-        if (isValidSpellTarget(targetInstance, spellData?.validTargets || [], casterId)) { // Pass correct args for highlighting
-            let targetElement = null; // Initialize targetElement
-            if (targetInstance.uid === 'L1') {
-                targetElement = document.getElementById('player1-avatar'); // Use specific ID for Player 1 Leader
-            } else if (targetInstance.uid === 'L2') {
-                targetElement = document.getElementById('player2-avatar'); // Use specific ID for Player 2 Leader
-            } else {
-                // For non-leader cards (followers), use the original selector
-                targetElement = gameContainerEl?.querySelector(`.card[data-uid="${targetInstance.uid}"]`);
-            }
+    const { SelectableTargetIds, SourceCardUid } = currentChoiceRequest;
 
-            if (targetElement) {
-                targetElement.classList.add('targetable-spell'); // Apply highlight to the found element
-                // console.log(`UI Highlights: Marked ${targetInstance.name} (UID: ${targetInstance.uid}) as targetable-spell.`);
-            } else {
-                // Log warning if element not found using either method
-                // console.warn(`UI Highlights: Could not find element for spell target UID ${targetInstance.uid}`);
+    // Highlight the source card itself (whether in hand or on field)
+    if (SourceCardUid) {
+        const sourceCardElement = document.querySelector(`.card[data-uid="${SourceCardUid}"]`);
+        if (sourceCardElement) {
+            sourceCardElement.classList.add('targeting-spell'); // Reuse same class as spell source
+        }
+    }
+
+    const validTargetIds = SelectableTargetIds || [];
+
+    if (validTargetIds.length === 0) {
+        console.warn(`UI Highlights: No valid targets found in currentChoiceRequest.`);
+        return;
+    }
+
+    console.log(`UI Highlights: Highlighting ${validTargetIds.length} valid targets for player choice:`, validTargetIds);
+
+    validTargetIds.forEach(targetUid => {
+        let targetElement = null;
+        targetElement = document.querySelector(`.card[data-uid="${targetUid}"]`);
+
+        if (!targetElement) {
+            const localPlayer = getPlayerState(gameState.localPlayerId);
+            const opponentPlayer = currentGameState.players.find(p => p.id !== gameState.localPlayerId);
+            const player1LeaderUid = localPlayer?.leaderCard?.uid;
+            const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
+
+            if (targetUid === player1LeaderUid) {
+                targetElement = document.getElementById('player1-avatar');
+            } else if (targetUid === player2LeaderUid) {
+                targetElement = document.getElementById('player2-avatar');
             }
+        }
+
+        if (targetElement) {
+            targetElement.classList.add('targetable-spell'); // Reuse same class as spell target
+            if (currentChoiceSelectedTargetIds?.has?.(String(targetUid))) {
+                targetElement.classList.add('choice-selected');
+            }
+        } else {
+            console.warn(`UI Highlights: Could not find element for player choice target UID ${targetUid}`);
         }
     });
 }
@@ -1156,104 +1628,17 @@ function renderAttackHighlights(currentGameState) {
         const attackerElement = gameContainerEl?.querySelector(`.field-card[data-uid="${currentGameState.selectedAttackerUid}"]`);
         if (attackerElement) {
             attackerElement.classList.add('selected-attacker');
-            // console.log(`UI Highlights: Marked ${attackerElement.querySelector('.name')?.textContent} as selected-attacker.`); // Optional debug
-        } else {
-            // console.warn(`UI Highlights: Could not find element for selected attacker UID ${currentGameState.selectedAttackerUid}`);
         }
 
-        // Highlight Valid Targets for the selected attacker
-        // Determine opponent player ID robustly
-        const currentPlayerId = getCurrentPlayerId();
-        const opponentPlayerId = currentGameState.players.find(p => p.id !== currentPlayerId)?.id;
-        const opponentPlayerState = getPlayerState(opponentPlayerId);
+        // 【BUG修复】重构高亮逻辑，确保调用唯一且正确的`highlightTargets`函数
+        // 1. 从gameState中获取最新的攻击者实例
+        const attackerInstance = findCardInstanceByUid(currentGameState.selectedAttackerUid);
 
-        if (opponentPlayerState) {
-            const potentialTargets = [...(opponentPlayerState.field ?? [])];
-            // Check for Ward keyword
-            const hasWard = potentialTargets.some(follower => follower?.keywords?.includes('Ward'));
-            // 【BUG-017修复】总是将敌方主战者添加到潜在目标中，Ward规则在后续处理
-            if (opponentPlayerState.leaderCard) {
-                potentialTargets.push(opponentPlayerState.leaderCard);
-            }
-
-            potentialTargets.forEach(targetInstance => {
-                if (targetInstance) { // Check if targetInstance is not null/undefined
-                    let targetElement = null; // Initialize targetElement
-                    // --- REVISED FIX: Handle Leader Avatar Element Selection ---
-                    // Check if the instance represents a leader (using ownerId and comparing with opponent's leader UID)
-                    // Ensure opponentPlayerState and leaderCard are available before comparison
-                    const isLeader = opponentPlayerState?.leaderCard && targetInstance.uid === opponentPlayerState.leaderCard.uid;
-
-                    if (isLeader) {
-                        // 【BUG-018修复】正确映射玩家ID到UI元素ID
-                        // opponentPlayerId是实际的GUID，需要映射到player1-avatar或player2-avatar
-                        let avatarId = null;
-
-                        // 方法1: 通过localPlayerId确定对手是player1还是player2
-                        if (gameState.localPlayerId) {
-                            // 根据renderGame函数的逻辑：localPlayer映射到player1，opponent映射到player2
-                            const opponentPlayer = gameState.players.find(p => p.id === opponentPlayerId);
-                            if (opponentPlayer) {
-                                avatarId = 'player2-avatar'; // 对手总是映射到player2
-                            }
-                        }
-
-                        // 方法2: 备用方案，通过IsAI属性判断
-                        if (!avatarId) {
-                            const opponentPlayer = gameState.players.find(p => p.id === opponentPlayerId);
-                            if (opponentPlayer?.isAI) {
-                                avatarId = 'player2-avatar'; // AI通常是对手，映射到player2
-                            } else {
-                                avatarId = 'player1-avatar'; // 非AI玩家映射到player1
-                            }
-                        }
-
-                        // 方法3: 最后的备用方案
-                        if (!avatarId) {
-                            avatarId = 'player2-avatar'; // 默认假设对手是player2
-                        }
-
-                        targetElement = document.getElementById(avatarId);
-                        console.log(`%c[UI_HIGHLIGHT_FIX] Identified Leader target. OpponentID: ${opponentPlayerId}, AvatarID: ${avatarId}, Found: ${!!targetElement}`, 'color: cyan;');
-                    } else {
-                        // It's a follower, use the original data-uid selector
-                        targetElement = gameContainerEl?.querySelector(`.card[data-uid="${targetInstance.uid}"]`);
-                        // console.log(`%c[UI_HIGHLIGHT_FIX] Identified Follower target. Selecting element by UID: ${targetInstance.uid}`, 'color: cyan;'); // Debug log
-                    }
-                    // --- END REVISED FIX ---
-
-                    if (targetElement) {
-                        // 【BUG-017修复】区分UI显示和实际攻击规则
-                        // UI中总是显示所有潜在目标，Ward规则在点击时验证
-                        let shouldHighlight = true; // 默认高亮所有潜在目标
-                        let cssClass = 'targetable';
-
-                        if (hasWard) {
-                            // 有Ward时，Ward单位正常高亮，非Ward目标用不同样式表示受限
-                            if (targetInstance.keywords?.includes('Ward')) {
-                                // Ward单位：正常可攻击
-                                cssClass = 'targetable';
-                            } else {
-                                // 非Ward目标（包括主战者）：显示为受限目标
-                                cssClass = 'targetable-restricted';
-                            }
-                        } else {
-                            // 没有Ward时，所有目标都正常可攻击
-                            cssClass = 'targetable';
-                        }
-
-                        if (shouldHighlight) {
-                            targetElement.classList.add(cssClass);
-                            // console.log(`UI Highlights: Marked ${targetInstance.name ?? targetInstance.uid} as ${cssClass}.`);
-                        }
-                    } else {
-                        // Log warning if element not found using either method
-                        console.warn(`%c[UI_HIGHLIGHT_FIX] Could not find target element for UID ${targetInstance.uid} (Is Leader: ${isLeader})`, 'color: orange;');
-                    }
-                }
-            });
+        // 2. 如果找到了实例，则调用标准的目标高亮函数
+        if (attackerInstance) {
+            highlightTargets(attackerInstance);
         } else {
-            // console.warn(`UI Highlights: Could not find opponent player state for ID: ${opponentPlayerId}`);
+            console.warn(`UI Highlights: Could not find attacker instance for UID ${currentGameState.selectedAttackerUid} in renderAttackHighlights.`);
         }
     }
 }
@@ -1269,15 +1654,24 @@ function renderActionButtons(currentGameState) {
     const isLocalPlayerTurn = currentGameState.localPlayerId === currentGameState.currentPlayerId;
 
     if (currentGameState.phase === 'Mulligan') {
-        // Mulligan Phase: Show confirm button (only if local player hasn't confirmed), hide end turn
-        // Assuming player1MulliganComplete refers to the local player for now
-        confirmMulliganButtonEl.style.display = currentGameState.player1MulliganComplete ? 'none' : 'inline-block';
+        const localPlayer = currentGameState.players?.find(p => p?.id === currentGameState.localPlayerId) || null;
+        const localCompleted = localPlayer?.hasCompletedMulligan === true;
+
+        // Mulligan Phase:
+        // - If local has not confirmed: show enabled confirm button
+        // - If local has confirmed: keep showing as disabled "waiting" (avoids stale UI across matches)
+        confirmMulliganButtonEl.style.display = 'inline-block';
+        confirmMulliganButtonEl.disabled = localCompleted;
+        confirmMulliganButtonEl.textContent = localCompleted ? '等待对方...' : '确认调度';
+
         endTurnButtonEl.style.display = 'none';
         endTurnButtonEl.disabled = true; // Also disable
         // console.log("UI: Phase Mulligan - Confirm Button:", confirmMulliganButtonEl.style.display, "End Turn Button: none/disabled");
     } else if (currentGameState.phase === 'TurnStart' || currentGameState.phase === 'Main') {
         // TurnStart or Main Phase: Show end turn, hide confirm. Enable/disable based on whose turn it is.
         confirmMulliganButtonEl.style.display = 'none';
+        confirmMulliganButtonEl.disabled = false;
+        confirmMulliganButtonEl.textContent = '确认调度';
         endTurnButtonEl.style.display = 'inline-block';
         // ADDED: Detailed log before setting disabled state
         endTurnButtonEl.disabled = !isLocalPlayerTurn; // Disable if not local player's turn
@@ -1285,6 +1679,8 @@ function renderActionButtons(currentGameState) {
     } else {
         // Other phases or opponent's turn: Hide both (or just hide confirm, end turn might be handled by turn manager logic implicitly)
         confirmMulliganButtonEl.style.display = 'none';
+        confirmMulliganButtonEl.disabled = false;
+        confirmMulliganButtonEl.textContent = '确认调度';
         endTurnButtonEl.style.display = 'none'; // Hide end turn if not P1's main phase
         endTurnButtonEl.disabled = true; // Also disable when hidden
         // console.log("UI: Phase Other/Opponent - Confirm Button: none", "End Turn Button: none");
@@ -1381,18 +1777,40 @@ function setupGlobalEventListeners() {
 function handleGameClick(event) {
     // console.log("UI_DBG: handleGameClick fired! Phase:", gameState.phase); // Log phase on click
 
+    const clickedSpectatorToggle = event.target.closest('#spectator-toggle-view');
+    if (clickedSpectatorToggle) {
+        if (!gameState.isSpectator) return;
+        const playerIds = (gameState.players || []).map(p => p?.id).filter(Boolean);
+        if (playerIds.length < 2) return;
+
+        const next = playerIds.find(id => id !== gameState.localPlayerId) || playerIds[0];
+        gameState.localPlayerId = next;
+        clearSelectionHighlights();
+        renderGame(gameState);
+        return;
+    }
+
     // --- Mulligan Phase Logic ---
     if (gameState.phase === 'Mulligan') {
         const clickedMulliganConfirm = event.target.closest('#confirm-mulligan-button');
         const clickedHandCard = event.target.closest('#player1-hand .card'); // Only care about player 1 hand
 
         if (clickedMulliganConfirm) {
-            // Gather selected card UIDs
-            const selectedCards = player1HandEl.querySelectorAll('.card.selected-for-mulligan');
-            const selectedUids = Array.from(selectedCards).map(card => card.dataset.uid);
+            const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+            const handUids = (localPlayer?.hand || []).map(c => c?.uid ?? c?.InstanceId).filter(Boolean);
+            const selectedUids = Array.from(mulliganSelectedUids).filter(uid => handUids.includes(uid));
 
             // Call submitMulligan (the imported SignalR wrapper) from gameManager
             if (typeof submitMulligan === 'function') { // <<< FIXED: Check for the correct imported function 'submitMulligan'
+                // Optimistically lock UI to prevent double-submit and to survive re-renders.
+                if (confirmMulliganButtonEl) {
+                    confirmMulliganButtonEl.disabled = true;
+                    confirmMulliganButtonEl.textContent = '等待对方...';
+                }
+                if (localPlayer) {
+                    localPlayer.hasCompletedMulligan = true;
+                }
+                mulliganSelectedUids = new Set();
                 submitMulligan(selectedUids); // Call new SignalR wrapper
             } else {
                 // console.error("UI Error: submitMulligan function is not available/imported!"); // Log the correct function name in error
@@ -1403,8 +1821,20 @@ function handleGameClick(event) {
             return; // Stop processing click after handling mulligan confirm
 
         } else if (clickedHandCard) {
-            // Toggle selection class on the clicked hand card
-            clickedHandCard.classList.toggle('selected-for-mulligan');
+            const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+            const localCompleted = localPlayer?.hasCompletedMulligan === true;
+            if (localCompleted) return;
+
+            const uid = clickedHandCard.dataset.uid;
+            if (!uid) return;
+
+            if (mulliganSelectedUids.has(uid)) {
+                mulliganSelectedUids.delete(uid);
+                clickedHandCard.classList.remove('selected-for-mulligan');
+            } else {
+                mulliganSelectedUids.add(uid);
+                clickedHandCard.classList.add('selected-for-mulligan');
+            }
             // Optionally provide visual feedback immediately if needed, or rely on style changes
             return; // Stop processing click after toggling selection
 
@@ -1421,6 +1851,7 @@ function handleGameClick(event) {
     // Check if the click was on the End Turn button
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
+        if (gameState.isSpectator) return;
         // Correctly check for the imported endTurnRequest function
         if (typeof endTurnRequest === 'function') {
             endTurnButtonEl.disabled = true; // Disable button immediately on click
@@ -1434,6 +1865,20 @@ function handleGameClick(event) {
     }
 
     // Existing logic follows... (This comment isn't inserted, just for clarity here)
+    // --- Check for Super Evolve Button Click FIRST ---
+    const clickedSuperEvolveButton = event.target.closest('.super-evolve-button');
+    if (clickedSuperEvolveButton) {
+        const superEvolveUid = clickedSuperEvolveButton.dataset.superEvolveUid;
+        if (superEvolveUid) {
+            if (typeof superEvolveCard === 'function') {
+                superEvolveCard(superEvolveUid);
+            } else {
+                alert("错误：超进化功能未加载！");
+            }
+        }
+        return;
+    }
+
     // --- Check for Evolve Button Click FIRST ---
     const clickedEvolveButton = event.target.closest('.evolve-button');
     if (clickedEvolveButton) {
@@ -1453,6 +1898,23 @@ function handleGameClick(event) {
         return; // <<< IMPORTANT: Stop processing click here if evolve button was hit
     }
     // --- END Check for Evolve Button ---
+
+    // --- Check for Act Button Click ---
+    const clickedActButton = event.target.closest('.act-button');
+    if (clickedActButton) {
+        if (gameState.isSpectator) return;
+        const actUid = clickedActButton.dataset.actUid;
+        if (actUid) {
+            if (typeof requestAct === 'function') {
+                requestAct(actUid);
+            } else {
+                alert("错误：启动功能未加载！");
+            }
+        }
+        return;
+    }
+    // --- END Check for Act Button ---
+
     const clickedCardElement = event.target.closest('.card');
     const clickedPlayer1Avatar = event.target.closest('#player1-avatar'); // Check player avatar
     const clickedPlayer2Avatar = event.target.closest('#player2-avatar'); // Check opponent avatar
@@ -1478,14 +1940,24 @@ function handleGameClick(event) {
             clickedPlayerActualId = localPlayerId;
         }
 
-        // 检查是否点击的是对手头像
-        if (clickedPlayerActualId && clickedPlayerActualId === opponentPlayerId) {
-             const opponentPlayer = getPlayerState(opponentPlayerId);
-             if (opponentPlayer && opponentPlayer.leaderCard && opponentPlayer.leaderCard.uid) {
-                 targetUid = opponentPlayer.leaderCard.uid;
-             } else {
-                  console.error(`UI Error: Could not find opponent leader card instance or its UID for player ${opponentPlayerId}`, opponentPlayer);
-             }
+        // Player choice mode: both leaders may be valid targets.
+        if (isAwaitingPlayerChoice) {
+            const player = getPlayerState(clickedPlayerActualId);
+            const leaderUid = player?.leaderCard?.uid ?? player?.leaderCard?.InstanceId ?? null;
+            if (leaderUid) {
+                targetUid = leaderUid;
+            }
+        } else {
+            // Attack/other interactions: only opponent leader is actionable.
+            if (clickedPlayerActualId && clickedPlayerActualId === opponentPlayerId) {
+                const opponentPlayer = getPlayerState(opponentPlayerId);
+                const leaderUid = opponentPlayer?.leaderCard?.uid ?? opponentPlayer?.leaderCard?.InstanceId ?? null;
+                if (leaderUid) {
+                    targetUid = leaderUid;
+                } else {
+                    console.error(`UI Error: Could not find opponent leader card instance or its UID for player ${opponentPlayerId}`, opponentPlayer);
+                }
+            }
         }
     // --- END BUG-017 FIX ---
     }
@@ -1503,16 +1975,19 @@ function handleGameClick(event) {
         // Clicked on non-card, non-avatar element
         // console.log("UI: Clicked non-interactive area.");
 
-        // 1. Check if currently targeting a spell - Clicking outside cancels it
-        if (isTargetingSpell) {
-            // console.log("UI: Clicked non-interactive area while targeting a spell. Cancelling targeting.");
-            endSpellTargeting(); // Use helper function
-            renderGame(gameState); // Re-render to remove highlights
+        // Player choice mode: clicking blank area cancels only if allowed.
+        if (isAwaitingPlayerChoice) {
+            // Ignore clicks inside the overlay UI.
+            if (event.target.closest?.('#choice-overlay-root')) return;
+            console.log("UI: Clicked non-interactive area while awaiting player choice.");
+            requestCancelPlayerChoiceUI();
+            return;
         }
-        // 2. If not targeting a spell, check if an attacker is selected - Clicking outside cancels attack
-        else if (gameState.selectedAttackerUid) {
+
+        // 1. Check if currently targeting a spell - Clicking outside cancels it
+        if (gameState.selectedAttackerUid) {
             // Only cancel if click wasn't end turn or evolve button (already handled)
-            if (!event.target.closest('#end-turn-button') && !event.target.closest('.evolve-button')) {
+            if (!event.target.closest('#end-turn-button') && !event.target.closest('.evolve-button') && !event.target.closest('.super-evolve-button') && !event.target.closest('.act-button')) {
                 cancelSelection(); // Call the imported gameManager function
             }
         }
@@ -1524,58 +1999,10 @@ function handleGameClick(event) {
 
 // 具体处理卡牌点击的逻辑 (由 handleGameClick 在找到实例后调用)
 function handleCardClick(cardInstance) { // 需要传入卡牌实例
-    // --- Spell Target Selection Logic ---
-    if (isTargetingSpell) {
-        // console.log(`UI: In targeting mode (Spell: ${targetingSpellUid}). Clicked card UID: ${cardInstance.uid}`);
-        // Check if clicked a field card (potential target)
-        if (cardInstance.zone === 'Field') {
-            const targetElement = gameContainerEl?.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
-            // Check if the clicked element is marked as a valid spell target
-            // Placeholder check: Replace with actual class check later after renderHighlights update
-            // Get spell data and caster ID to check validity correctly when clicking target
-            const spellInstance = findCardInstanceByUid(targetingSpellUid);
-            const spellData = spellInstance ? getCardDefinition(spellInstance.id) : null;
-            const casterId = getCurrentPlayerId();
-            // Check validity using the correct arguments (target instance, spell rules, caster)
-            if (isValidSpellTarget(cardInstance, spellData?.validTargets || [], casterId)) {
-                // console.log(`UI: Spell target selected (Field): ${cardInstance.name} (UID: ${cardInstance.uid})`);
-                const currentTargetingSpellUid = targetingSpellUid; // Store UID before resetting
-                endSpellTargeting(); // Use helper function
-                // Let playCard handle the render update
-                playCard(currentTargetingSpellUid, cardInstance.uid); // Call gameManager AFTER resetting UI state, pass stored UID
-            } else {
-                // console.log("UI: Clicked field card is not a valid target for the current spell.");
-                // Do nothing, allow user to click another target or cancel
-            }
-        } else if (cardInstance.zone === 'Hand' && cardInstance.uid === targetingSpellUid) {
-            // Clicked the spell card itself again while targeting - CANCEL
-            // console.log("UI: Clicked targeting spell card again. Cancelling targeting.");
-            endSpellTargeting(); // Use helper function
-            renderGame(gameState); // Re-render to remove highlights
-        } else if (cardInstance.zone === 'LeaderZone') {
-            // --- Potential Spell Target Clicked (Leader) ---
-            // Get spell data and caster ID to check validity
-            const spellInstance = findCardInstanceByUid(targetingSpellUid);
-            const spellData = spellInstance ? getCardDefinition(spellInstance.id) : null;
-            const casterId = getCurrentPlayerId();
-            // Check validity
-            if (isValidSpellTarget(cardInstance, spellData?.validTargets || [], casterId)) {
-                // console.log(`UI: Spell target selected (Leader): ${cardInstance.name} (UID: ${cardInstance.uid}). Playing card.`);
-                const currentTargetingSpellUid = targetingSpellUid; // Store UID before resetting
-                endSpellTargeting(); // Use helper function
-                // Render will happen via gameManager callback
-                playCard(currentTargetingSpellUid, cardInstance.uid); // Play spell targeting the leader AFTER resetting UI state, pass stored UID
-            } else {
-                // console.log(`UI: Clicked leader ${cardInstance.uid} is NOT a valid target for spell ${targetingSpellUid}.`);
-                // Do nothing, allow re-selection or cancellation
-            }
-        } else {
-            // Clicked an irrelevant card (e.g., opponent hand, own hand but not the spell, etc.)
-            // console.log("UI: Clicked irrelevant card during spell targeting.");
-            // Do nothing, wait for valid target click or cancellation
-        }
-        // REMOVED premature return; Fall through to allow other logic if necessary,
-        // though typically spell selection should conclude the interaction within this block.
+    // --- NEW: Player Choice Handling Logic ---
+    if (isAwaitingPlayerChoice) {
+        void handleChoiceTargetClick(cardInstance.uid);
+        return; // IMPORTANT: Stop further execution in this click handler
     }
     // --- End Spell Target Selection ---
 
@@ -1608,90 +2035,34 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
 
     // Check if the card is owned by the current player and is in their hand
     if (cardInstance.ownerId === currentPlayerId && cardInstance.zone.toLowerCase() === 'hand') {
-        console.log(`UI: Clicked on hand card ${cardInstance.uid}. Checking playability cache.`);
+        // NEW SIMPLIFIED LOGIC
+        // 1. Check the cache. If the card isn't marked as playable, show an error and stop.
         const playabilityInfo = gameState.playabilityCache[cardInstance.uid];
-
-        // 【修复】如果缓存未命中，说明服务器还未推送可玩性信息
-        if (!playabilityInfo) {
-            console.log(`UI: No cache entry for ${cardInstance.name} (${cardInstance.uid}). Server has not yet pushed playability info.`);
-            // 给用户友好的提示，不再主动请求（服务器会自动推送）
-            alert("卡牌可用性信息尚未就绪，请稍后再试。");
-            return; // 等待服务器推送更新
+        if (!playabilityInfo || !playabilityInfo.isPlayable) {
+            const reason = playabilityInfo?.failureReason || "该卡牌现在无法使用。";
+            console.warn(`UI: Clicked card ${cardInstance.name} (${cardInstance.uid}) is not playable. Reason: ${reason}`);
+            alert(reason);
+            return;
         }
 
-        if (!playabilityInfo.isPlayable) {
-            console.warn(`UI: Card ${cardInstance.name} (${cardInstance.uid}) is not playable. Reason: ${playabilityInfo.failureReason}`);
-            alert(playabilityInfo.failureReason || "该卡牌现在无法使用。"); // Show reason from cache or generic message
-            return; // Stop processing if not playable
-        }
+        // 2. If the card IS playable, just call playCard.
+        //    The server will now handle everything else. If a target is needed,
+        //    the server will send a `PlayerChoiceRequested` event.
+        console.log(`UI: Playable card ${cardInstance.name} (${cardInstance.uid}) clicked. Invoking playCard.`);
+        playCard(cardInstance.uid);
 
-        // Card is playable, check if it requires a target
-        if (playabilityInfo.requiresTargetSelection) {
-            if (playabilityInfo.hasValidTargets) {
-                console.log(`UI: Card ${cardInstance.name} requires target. Entering targeting mode.`);
-                startSpellTargeting(cardInstance.uid); // Enter targeting mode (reuse spell targeting flag/logic)
-                // Highlight the source card and potential targets based on ValidTargetIds from cache
-                clearSelectionHighlights();
-                // --- Highlight Source Card ---
-                const sourceCardElement = player1HandEl?.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
-                if (sourceCardElement) sourceCardElement.classList.add('targeting-spell'); // Reuse class
-                // --- Highlight Valid Targets ---
-                playabilityInfo.validTargetIds?.forEach(targetUid => {
-                    // Find target element (could be field card or leader avatar)
-                    let targetElement = document.querySelector(`.card[data-uid="${targetUid}"]`); // Try finding card first
-                    if (!targetElement) {
-                         // If not found as card, check if it's a leader UID
-                         const localPlayer = getPlayerState(gameState.localPlayerId);
-                         const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
-                         const player1LeaderUid = localPlayer?.leaderCard?.uid;
-                         const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
-                         if (targetUid === player1LeaderUid) {
-                             targetElement = document.getElementById('player1-avatar');
-                         } else if (targetUid === player2LeaderUid) {
-                             targetElement = document.getElementById('player2-avatar');
-                         }
-                    }
-
-                    if (targetElement) {
-                        targetElement.classList.add('targetable-spell'); // Reuse class
-                    } else {
-                         console.warn(`UI Highlights: Could not find element for target UID ${targetUid} during targeting initiation.`);
-                    }
-                });
-                gameContainerEl?.classList.add('targeting-active'); // Add global indicator
-                // IMPORTANT: Do NOT call playCard here yet! Wait for target selection click.
-            } else {
-                 // Requires target, but none available
-                 if (playabilityInfo.canPlayWithoutTarget) {
-                     console.log(`UI: Card ${cardInstance.name} requires target, none available, but can play without target. Playing directly.`);
-                     playCard(cardInstance.uid, null); // Play without target UID
-                 } else {
-                     console.warn(`UI: Card ${cardInstance.name} requires target, but no valid targets available and cannot play without target.`);
-                     alert("该卡牌需要目标，但当前没有可用的目标。");
-                 }
-            }
-        } else {
-            // Card is playable and does not require a target, play directly
-            console.log(`UI: Card ${cardInstance.name} is playable and does not require target. Playing directly.`);
-            playCard(cardInstance.uid); // Call gameManager function without target
-        }
     } // Closes if block for hand card check
     // Handle click on own field card
     else if (cardInstance.ownerId === currentPlayerId && cardInstance.zone === 'Field') {
         // Initiate Attack with Own Field Card (ONLY if not currently targeting a spell AND unit can attack)
-        if (!isTargetingSpell) {
-            // Check if the unit is actually allowed to attack
-            if (cardInstance.canAttack === true) {
-                // console.log(`UI: Attempting to initiate attack with own field card: ${cardInstance.name} (UID: ${cardInstance.uid})`);
-                initiateAttack(cardInstance.uid); // Call gameManager
-            } else {
-                // console.log(`UI: Clicked own field card ${cardInstance.name}, but it cannot attack (canAttack: ${cardInstance.canAttack}).`);
-                // Optionally provide user feedback (e.g., a slight visual shake or message)
-                // For now, just ignore the click.
-            }
+        // Check if the unit is actually allowed to attack
+        if (cardInstance.canAttack === true) {
+            // console.log(`UI: Attempting to initiate attack with own field card: ${cardInstance.name} (UID: ${cardInstance.uid})`);
+            initiateAttack(cardInstance.uid); // Call gameManager
         } else {
-            // console.log("UI: Cannot initiate attack while targeting a spell.");
-            // Ignore click while targeting spell.
+            // console.log(`UI: Clicked own field card ${cardInstance.name}, but it cannot attack (canAttack: ${cardInstance.canAttack}).`);
+            // Optionally provide user feedback (e.g., a slight visual shake or message)
+            // For now, just ignore the click.
         }
     }
     else if (cardInstance.zone === 'Leader') {
@@ -1718,38 +2089,302 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
     } // End of 'else if (cardInstance.zone === 'Leader')' block
     else if (cardInstance.ownerId !== currentPlayerId && cardInstance.zone === 'Field') {
         // Handle click on opponent field card (Select Attack Target OR Select Spell Target)
-        if (isTargetingSpell) {
-            // If targeting a spell, check if this is a valid target
-            // Get spell data to find valid targets
-            const spellInstance = findCardInstanceByUid(targetingSpellUid);
-            const spellData = spellInstance ? getCardDefinition(spellInstance.id) : null;
-            const casterId = getCurrentPlayerId(); // Get the ID of the player casting the spell
-            // Check validity using the correct arguments
-            if (isValidSpellTarget(cardInstance, spellData?.validTargets || [], casterId)) { // Pass target instance, spell's valid targets, and caster ID
-                // console.log(`UI: Spell target selected (Opponent Field): ${cardInstance.name} (UID: ${cardInstance.uid})`);
-                const currentTargetingSpellUid = targetingSpellUid; // Store UID before resetting
-                endSpellTargeting(); // Use helper function
-                // Render will happen via gameManager callback
-                playCard(currentTargetingSpellUid, cardInstance.uid); // Call gameManager with spell and target AFTER resetting UI state, pass stored UID
-            } else {
-                // console.log("UI: Clicked opponent field card is not a valid target for the current spell.");
-                // Do nothing, allow user to click another target or cancel
-            }
+        // If NOT targeting a spell, proceed with attack target selection
+        // console.log(`UI: Clicked opponent field card for potential attack target: ${cardInstance.name} (UID: ${cardInstance.uid})`);
+        // Check if an attacker is currently selected from our side
+        if (gameState.selectedAttackerUid) { // Check the imported global state
+            // console.log(`UI: Attacker ${gameState.selectedAttackerUid} is selected, attempting to target ${cardInstance.uid} for attack.`);
+            selectAttackTarget(cardInstance.uid); // Call the imported function
         } else {
-            // If NOT targeting a spell, proceed with attack target selection
-            // console.log(`UI: Clicked opponent field card for potential attack target: ${cardInstance.name} (UID: ${cardInstance.uid})`);
-            // Check if an attacker is currently selected from our side
-            if (gameState.selectedAttackerUid) { // Check the imported global state
-                // console.log(`UI: Attacker ${gameState.selectedAttackerUid} is selected, attempting to target ${cardInstance.uid} for attack.`);
-                selectAttackTarget(cardInstance.uid); // Call the imported function
-            } else {
-                // console.log("UI: Clicked opponent field card, but no attacker is selected for attack.");
-                // Optionally provide feedback or do nothing
-            }
+            // console.log("UI: Clicked opponent field card, but no attacker is selected for attack.");
+            // Optionally provide feedback or do nothing
         }
     }
     else { // Handle clicks on cards in other zones (deck, graveyard, etc.) - usually ignore
         // 卡牌在牌库、墓地或其他不可点击的位置/状态
         // console.log(`UI: Clicked card in unhandled zone/state: ${cardInstance.zone}`);
+    }
+}
+
+/**
+ * Shows the player choice UI when the server requests a choice from the player.
+ * This function is called by gameManager when a PlayerChoiceRequested event is received.
+ * @param {Object} eventData - The choice request data from the server
+ * @param {string} eventData.SourceCardUid - The UID of the card that initiated the choice
+ * @param {Array<string>} eventData.SelectableTargets - Array of UIDs that can be selected
+ * @param {string} eventData.ChoicePrompt - The prompt to show to the player
+ */
+export function showPlayerChoiceUI(choiceRequest) {
+    console.log("UI: showPlayerChoiceUI called with data:", choiceRequest);
+
+    if (isAwaitingPlayerChoice) {
+        console.warn("UI: Received a new player choice request while another one is active. Clearing UI state without notifying backend.");
+        endPlayerChoice(false);
+    }
+
+    const selectableTargetIds = Array.isArray(choiceRequest?.SelectableTargetIds) ? choiceRequest.SelectableTargetIds : [];
+    const { min } = getChoiceMinMax(choiceRequest);
+
+    if (selectableTargetIds.length === 0) {
+        // If there are no candidates and min==0, the only valid submission is an empty selection.
+        if (min === 0 && choiceRequest?.PendingChoiceId && choiceRequest?.SourceAbilityRuntimeId) {
+            void (async () => {
+                startPlayerChoice(choiceRequest);
+                const ok = await submitPlayerChoice(choiceRequest.PendingChoiceId, [], choiceRequest.SourceAbilityRuntimeId, false);
+                if (ok) endPlayerChoice(false);
+            })();
+            return;
+        }
+
+        console.warn("UI: No selectable targets provided for player choice. Ending choice UI.");
+        endPlayerChoice(false);
+        return;
+    }
+
+    // Enter player choice mode and render.
+    startPlayerChoice(choiceRequest);
+    renderGame(gameState);
+    renderChoiceOverlayUI();
+    updateChoiceOverlayUI();
+    console.log(`UI: Player choice UI activated.`);
+}
+
+// --- Reveal UI ---
+const revealQueue = [];
+let revealIsShowing = false;
+
+export function showRevealOverlay(cardDto, options = {}) {
+    if (!cardDto) return;
+    const durationMs = Number.isFinite(options.durationMs) ? options.durationMs : 1600;
+    revealQueue.push({ cardDto, durationMs });
+    void processRevealQueue();
+}
+
+async function processRevealQueue() {
+    if (revealIsShowing) return;
+    revealIsShowing = true;
+
+    try {
+        while (revealQueue.length > 0) {
+            const { cardDto, durationMs } = revealQueue.shift();
+            renderRevealOverlay(cardDto);
+            await new Promise(r => setTimeout(r, durationMs));
+            document.getElementById('reveal-overlay-root')?.remove();
+            await new Promise(r => setTimeout(r, 120));
+        }
+    } finally {
+        revealIsShowing = false;
+    }
+}
+
+function renderRevealOverlay(cardDto) {
+    document.getElementById('reveal-overlay-root')?.remove();
+
+    const overlayRoot = document.createElement('div');
+    overlayRoot.id = 'reveal-overlay-root';
+    overlayRoot.className = 'reveal-overlay-root';
+
+    const name = cardDto?.Name ?? 'Unknown Card';
+    const cost = Number.isFinite(cardDto?.Cost) ? cardDto.Cost : '?';
+    const desc = cardDto?.Description ?? '';
+
+    overlayRoot.innerHTML = `
+        <div class="reveal-overlay-backdrop"></div>
+        <div class="reveal-overlay-content">
+            <div class="reveal-title">公开</div>
+            <div class="card reveal-card">
+                <div class="cost">${cost}</div>
+                <div class="name">${name}</div>
+                <div class="desc">${desc}</div>
+            </div>
+        </div>
+    `;
+
+    overlayRoot.addEventListener('click', () => {
+        document.getElementById('reveal-overlay-root')?.remove();
+        revealQueue.length = 0;
+        revealIsShowing = false;
+    }, { once: true });
+
+    if (gameContainerEl) {
+        gameContainerEl.appendChild(overlayRoot);
+    } else {
+        document.body.appendChild(overlayRoot);
+    }
+}
+
+// --- Fusion UI ---
+export function showFusionAnimation(fusingPlayerId, fusedCardInstanceIds = []) {
+    const ids = Array.isArray(fusedCardInstanceIds) ? fusedCardInstanceIds : [];
+    if (!fusingPlayerId || ids.length === 0) return;
+
+    const isLocal = fusingPlayerId === gameState.localPlayerId;
+    if (!isLocal) {
+        showFusionBurst(ids.length);
+        return;
+    }
+
+    const handRoot = document.getElementById('player1-hand');
+    if (!handRoot) return;
+
+    const target = getFusionTargetPoint();
+    showFusionBurst(ids.length);
+
+    ids.forEach((uid, idx) => {
+        const el = handRoot.querySelector(`.card[data-uid="${uid}"]`);
+        if (!el) return;
+
+        const rect = el.getBoundingClientRect();
+        const clone = el.cloneNode(true);
+        clone.classList.add('fusion-float-card');
+        clone.style.left = `${rect.left}px`;
+        clone.style.top = `${rect.top}px`;
+        clone.style.width = `${rect.width}px`;
+        clone.style.height = `${rect.height}px`;
+
+        document.body.appendChild(clone);
+
+        const fromX = rect.left + rect.width / 2;
+        const fromY = rect.top + rect.height / 2;
+        const dx = (target.x - fromX);
+        const dy = (target.y - fromY) - (idx * 8);
+
+        // Start next frame so the transition runs reliably.
+        requestAnimationFrame(() => {
+            clone.style.transform = `translate(${dx}px, ${dy}px) scale(0.25)`;
+            clone.style.opacity = '0';
+        });
+
+        window.setTimeout(() => clone.remove(), 700);
+    });
+}
+
+function getFusionTargetPoint() {
+    const rect = (gameContainerEl ?? document.body).getBoundingClientRect();
+    return {
+        x: rect.left + rect.width * 0.5,
+        y: rect.top + rect.height * 0.52
+    };
+}
+
+function showFusionBurst(count) {
+    document.getElementById('fusion-burst-root')?.remove();
+
+    const root = document.createElement('div');
+    root.id = 'fusion-burst-root';
+    root.className = 'fusion-burst-root';
+    root.innerHTML = `
+        <div class="fusion-burst">
+            <div class="fusion-burst-ring"></div>
+            <div class="fusion-burst-text">Fusion x${count}</div>
+        </div>
+    `;
+
+    (gameContainerEl ?? document.body).appendChild(root);
+    window.setTimeout(() => root.remove(), 700);
+}
+
+/**
+ * Renders the player-choice overlay UI (prompt/controls + optional selection panel).
+ */
+function renderChoiceOverlayUI() {
+    removeChoiceOverlayUI();
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+
+    const container = gameContainerEl ?? document.getElementById('game-container') ?? document.body;
+
+    const overlayRoot = document.createElement('div');
+    overlayRoot.id = 'choice-overlay-root';
+    overlayRoot.className = 'choice-overlay-root';
+    container.appendChild(overlayRoot);
+
+    const { min, max } = getChoiceMinMax(currentChoiceRequest);
+    const singleMandatory = isSingleMandatoryChoice(currentChoiceRequest);
+
+    const controls = document.createElement('div');
+    controls.className = 'choice-controls-overlay choice-overlay';
+    controls.addEventListener('click', e => e.stopPropagation());
+
+    const message = currentChoiceRequest.Message || '请选择目标';
+    const hint = singleMandatory
+        ? (currentChoiceRequest.IsCancellable === true ? '点击目标选择；点击空白处或取消可中止' : '点击目标选择')
+        : (currentChoiceRequest.IsCancellable === true ? '点击目标可多选；点击确定提交，取消可中止' : '点击目标可多选；点击确定提交');
+
+    controls.innerHTML = `
+        <div class="choice-prompt-text">${message}</div>
+        <div class="choice-prompt-hint">${hint}</div>
+        <div class="choice-controls-row">
+            <div class="choice-selected-count">已选：<span id="choice-selected-count">0/${min}-${max}</span></div>
+            <div class="choice-controls-actions">
+                <button id="choice-confirm-btn" class="choice-btn choice-confirm-btn" type="button">确定</button>
+                <button id="choice-cancel-btn" class="choice-btn choice-cancel-btn" type="button">取消</button>
+            </div>
+        </div>
+    `;
+
+    overlayRoot.appendChild(controls);
+
+    const confirmBtn = controls.querySelector('#choice-confirm-btn');
+    const cancelBtn = controls.querySelector('#choice-cancel-btn');
+
+    if (confirmBtn) {
+        confirmBtn.style.display = singleMandatory ? 'none' : '';
+        confirmBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            void confirmPlayerChoice();
+        });
+    }
+
+    if (cancelBtn) {
+        cancelBtn.style.display = currentChoiceRequest.IsCancellable === true ? '' : 'none';
+        cancelBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            requestCancelPlayerChoiceUI();
+        });
+    }
+
+    // Optional: selection panel for non-clickable zones (deck/graveyard candidates).
+    const allCardInstances = Array.isArray(currentChoiceRequest.SelectableCardInstances)
+        ? currentChoiceRequest.SelectableCardInstances
+        : [];
+
+    const selectableIdSet = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
+    const missingCardInstances = allCardInstances
+        .filter(dto => {
+            const uid = dto?.InstanceId ?? null;
+            if (!uid) return false;
+            if (!selectableIdSet.has(String(uid))) return false;
+            return !document.querySelector(`.card[data-uid="${uid}"]`);
+        });
+
+    if (missingCardInstances.length > 0) {
+        const panel = document.createElement('div');
+        panel.className = 'choice-panel-overlay choice-overlay';
+        panel.addEventListener('click', e => e.stopPropagation());
+
+        const list = document.createElement('div');
+        list.className = 'choice-card-list';
+
+        missingCardInstances.forEach(dto => {
+            const uid = dto.InstanceId;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'choice-card';
+            btn.dataset.uid = String(uid);
+            btn.innerHTML = `
+                <div class="choice-card-cost">${dto.Cost ?? '?'}</div>
+                <div class="choice-card-name">${dto.Name ?? 'Unknown Card'}</div>
+                <div class="choice-card-desc">${dto.Description ?? ''}</div>
+            `;
+            btn.addEventListener('click', e => {
+                e.stopPropagation();
+                void handleChoiceTargetClick(uid);
+            });
+            list.appendChild(btn);
+        });
+
+        panel.innerHTML = `<div class="choice-panel-title">可选择的卡牌</div>`;
+        panel.appendChild(list);
+        overlayRoot.appendChild(panel);
     }
 }

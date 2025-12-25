@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Constants;
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
 {
@@ -35,7 +36,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public bool AllowAdd { get; set; } = true;
 
         /// <summary>需要移除的Buff列表（用于非叠加Buff的替换）</summary>
-        public List<BuffConfig> BuffsToRemove { get; set; } = new();
+        public List<Buff> BuffsToRemove { get; set; } = new();
 
         /// <summary>操作原因（主要用于日志记录）</summary>
         public string Reason { get; set; } = "Additive stacking - all buffs allowed";
@@ -61,7 +62,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="newBuff">要添加的新Buff</param>
         /// <param name="existingBuffs">已存在的Buff列表</param>
         /// <returns>叠加结果</returns>
-        public BuffStackingResult EvaluateStacking(BuffConfig newBuff, List<BuffConfig> existingBuffs)
+        public BuffStackingResult EvaluateStacking(Buff newBuff, List<Buff> existingBuffs)
         {
             try
             {
@@ -109,9 +110,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="existingBuffs">现有Buff列表</param>
         /// <param name="buffsToReplace">需要替换的Buff列表</param>
         /// <returns>是否需要进行替换</returns>
-        private bool CheckNonStackableBuff(BuffConfig newBuff, List<BuffConfig> existingBuffs, out List<BuffConfig> buffsToReplace)
+        private bool CheckNonStackableBuff(Buff newBuff, List<Buff> existingBuffs, out List<Buff> buffsToReplace)
         {
-            buffsToReplace = new List<BuffConfig>();
+            buffsToReplace = new List<Buff>();
 
             // 检查新Buff是否标记为非叠加
             if (!newBuff.IsNonStackable)
@@ -123,7 +124,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             // 当新Buff是非叠加时，应该替换来自相同能力的所有现有Buff
             var sameAbilityBuffs = existingBuffs
                 .Where(b => b.IsActive &&
-                           b.SourceAbility.DefinitionId == newBuff.SourceAbility.DefinitionId)
+                           b.SourceAbilityId == newBuff.SourceAbilityId)
                 .ToList();
 
             if (sameAbilityBuffs.Any())
@@ -142,7 +143,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         /// <param name="buff">要验证的Buff</param>
         /// <returns>验证结果</returns>
-        public BuffValidationResult ValidateBuff(BuffConfig buff)
+        public BuffValidationResult ValidateBuff(Buff buff)
         {
             try
             {
@@ -156,7 +157,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 }
 
                 var effectCount = buff.Effects?.Count ?? 0;
-                var keywords = buff.GetGrantedKeywords().ToList();
+                List<CardKeyword> keywords = buff.GetGrantedKeywords().ToList();
                 var statMods = buff.GetStatModifications().ToList();
                 var abilities = buff.GetGrantedAbilityConfigs().ToList();
 

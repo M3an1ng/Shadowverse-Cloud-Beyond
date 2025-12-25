@@ -1,0 +1,2184 @@
+Attribute VB_Name = "·6·3·结算·GetAbility"
+' ==================================================
+' 函数功能：清空能力队列
+' 说明：逐个处理队列中的能力，直到队列为空或达到最大处理次数
+' ==================================================
+Function EraseQueue()
+    ' ========== 变量声明 ==========
+    Dim Arr() As String     ' 能力队列分割数组
+    Dim Brr() As String     ' 匹配ID队列分割数组
+    Dim i%                  ' 循环计数器
+    Dim Str As String       ' 临时存储能力字符串
+    Dim Str2 As String      ' 临时存储匹配ID字符串
+
+    ' ========== 队列处理循环 ==========
+    ' 最多处理100次，防止无限循环
+    For i = 1 To 100
+        If QueueAbility = "" Then Exit For   ' 队列为空时退出
+        
+        ' 分割队列字符串
+        Arr = Split(QueueAbility, "\")
+        Brr = Split(QueueMatchID, "\")
+        
+        ' 获取队列首项并移除
+        Str = Arr(1)
+        Arr(1) = "/"
+        QueueAbility = Replace(Join(Arr, "\"), "\/", "")
+        
+        Str2 = Brr(1)
+        Brr(1) = "/"
+        QueueMatchID = Replace(Join(Brr, "\"), "\/", "")
+        
+        ' 执行能力效果
+        Call GetAbility(Str, Str2)
+    Next i
+End Function
+
+' ==================================================
+' 函数功能：计算XYZ变量值
+' 参数：
+'   EffectSplit - 效果分割数组
+'   ThisCard - 当前卡牌ID
+'   i - 当前处理的位置索引
+'   InputX - 输入变量标识（默认"X"）
+' 返回：Integer - 计算得到的变量值
+' 说明：处理效果中的X、Y、Z变量计算
+' ==================================================
+Function GetXFunction(EffectSplit() As String, ThisCard As String, i As Integer, Optional InputX As String = "X") As Integer
+    ' ========== 变量声明 ==========
+    Dim j%                  ' 循环计数器
+    Dim Str As String       ' 临时字符串
+    Dim MatchXYZ As Integer ' 匹配的XYZ值
+
+    ' ========== 构建效果字符串 ==========
+    ' 将前面的效果段组合
+    Str = Empty
+    For j = 0 To i
+        Str = Str & EffectSplit(j) & "||"
+    Next j
+    
+    ' ========== 查找变量定义 ==========
+    ' 找到XYZ变量定义的位置
+    For j = i + 1 To UBound(EffectSplit)
+        If Left(EffectSplit(j), 2) = Right(InputX, 1) & "=" Then Exit For
+    Next j
+    
+    ' ========== 变量计算处理 ==========
+    ' 如果找到变量定义
+    If j <= UBound(EffectSplit) Then
+        ' 连接效果字符串
+        Str = Str & EffectSplit(j)
+        
+        ' 确定要匹配的变量
+        If Right(InputX, 1) = "X" Then MatchXYZ = MatchX
+        If Right(InputX, 1) = "Y" Then MatchXYZ = MatchY
+        If Right(InputX, 1) = "Z" Then MatchXYZ = MatchZ
+        
+        ' 计算变量值
+        If MatchXYZ = -1 Then
+            GetXFunction = Val(GetX(Mid(EffectSplit(j), 3, 100), ThisCard, Str))
+            ' 更新全局变量值
+            If Right(InputX, 1) = "X" Then MatchX = GetXFunction
+            If Right(InputX, 1) = "Y" Then MatchY = GetXFunction
+            If Right(InputX, 1) = "Z" Then MatchZ = GetXFunction
+        Else
+            GetXFunction = MatchXYZ
+        End If
+        
+        ' 处理负值情况
+        If Len(InputX) > 1 Then GetXFunction = GetXFunction * -1
+    Else
+        GetXFunction = 0
+    End If
+End Function
+
+' ==================================================
+' 函数功能：执行能力效果
+' 参数：
+'   InputEffect - 输入效果字符串
+'   ThisCard - 当前卡牌ID
+' 说明：解析并执行各种卡牌能力效果，包括抽牌、召唤、属性调整等
+' ==================================================
+Function GetAbility(InputEffect As String, ThisCard As String)
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%, m%, n%, Ia%, Ib%   ' 循环计数器
+    Dim Str As String                   ' 临时字符串
+    Dim Arr As Variant                  ' 临时数组
+    Dim Brr As Variant                  ' 临时数组2
+    Dim Crr As Variant                  ' 临时数组3
+    Dim Flag As Boolean                 ' 标志位
+    Dim PreviousStr As String
+    
+    Dim LastGoal As String
+    
+    Dim Effectrr() As String            ' 效果数组
+    Dim EffectSplit() As String         ' 效果分割数组
+    Dim AbilitySplit() As String        ' 能力分割数组
+
+    ' ========== 初始化变量 ==========
+    MatchX = -1
+    MatchY = -1
+    MatchZ = -1
+
+    ' ========== 嵌套效果处理 ==========
+    ' 提取花括号内的嵌套效果
+    ReDim Effectrr(1 To 10)
+    Flag = False
+    k = 1
+    For i = 1 To Len(InputEffect)
+        Select Case Mid(InputEffect, i, 1)
+            Case "{"
+                j = j + 1
+                If j = 1 Then
+                    m = i   ' 记录起始位置
+                    Flag = True
+                End If
+            Case "}"
+                If j > 0 Then
+                    j = j - 1
+                    If j = 0 And Flag Then
+                        ' 提取当前第一层{}内的内容
+                        Effectrr(k) = Mid(InputEffect, m, i - m + 1)
+                        k = k + 1
+                        Flag = False
+                    End If
+                End If
+        End Select
+    Next i
+    
+    ' 替换嵌套效果为占位符
+    For i = 1 To UBound(Effectrr)
+        If Effectrr(i) = "" Then Exit For
+        InputEffect = Replace(InputEffect, Effectrr(i), "{Effect" & i & "}")
+    Next i
+    
+    ' 分割效果字符串
+    EffectSplit = Split(InputEffect, "||")
+    
+    ' ========== 区域条件检查 ==========
+    ' 检查卡牌是否在正确的区域执行能力
+    Flag = False
+    If EffectSplit(0) = "Fanfare" Or EffectSplit(0) = "Evolve" Or EffectSplit(0) = "SuperEvolve" Or _
+        EffectSplit(0) = "Strike" Or EffectSplit(0) = "Clash" Or Left(EffectSplit(0), Len("Enhance")) = "Enhance" Then
+        Flag = True
+    ElseIf EffectSplit(0) = "When|Goal&" & ThisCard & "|LeaveField" Or _
+        EffectSplit(0) = "When|Goal&" & ThisCard & "Destroy" Or _
+        EffectSplit(0) = "When|Goal&" & ThisCard & "|Banish" Or _
+        EffectSplit(0) = "When|Goal&" & ThisCard & "|ReturnToHand" Then
+        Flag = False
+    ElseIf Left(EffectSplit(0), Len("When")) = "When" Then
+        Flag = True
+    End If
+    
+    If Flag Then
+        Str = DownByID(DownByMatchID(ThisCard, "ID"), "Type")
+        If Str = "Follower" Or Str = "Amulet" Or Str = "Crest" Or Str = "Faith" Then
+            Str = DownByMatchID(ThisCard, "Area")
+            If Str <> "Field" And Str <> "Crest" And Str <> "Leader" Then Exit Function
+        End If
+    End If
+
+    ' ========== Change条件处理 ==========
+    ' 处理Change条件，确定执行范围
+    Ia = 1
+    Ib = UBound(EffectSplit)
+    For i = 1 To UBound(EffectSplit)
+        AbilitySplit = Split(EffectSplit(i), "|")
+        ' 遍历选项
+        If AbilitySplit(0) = "Change" Then
+            If AbilitySplit(1) = "True" Then
+                Ia = i + 1
+                Ib = UBound(EffectSplit)
+            Else
+                Ia = 1
+                Ib = i - 1
+            End If
+            Exit For
+        End If
+    Next i
+
+    ' ========== 能力效果遍历 ==========
+    ' 遍历所有能力效果段
+    For i = Ia To Ib
+        AbilitySplit = Split(EffectSplit(i), "|")
+        
+        ' ========== 重复次数处理 ==========
+        RepeatTimes = 1
+        If Left(AbilitySplit(0), Len("Repeat&")) = "Repeat&" Then
+            ' 处理重复次数中的变量
+            Str = Mid(AbilitySplit(0), 1 + Len("Repeat&"), 10)
+            If InStr("-X-Y-Z", Str) > 0 Then
+                Str = GetXFunction(EffectSplit, ThisCard, i, Str)
+            End If
+            RepeatTimes = Val(Str)
+            
+            ' 清理重复标记
+            AbilitySplit(0) = "\"
+            EffectSplit(i) = Join(AbilitySplit, "|")
+            EffectSplit(i) = Replace(EffectSplit(i), "\|", "")
+            AbilitySplit = Split(EffectSplit(i), "|")
+        End If
+        
+Repeat:  ' 重复执行标签
+
+        ' ========== 回合条件调整 ==========
+        ' 处理回合条件的能力顺序调整
+        If UBound(AbilitySplit) >= 1 And InStr(AbilitySplit(0), "Turn-") > 0 Then
+            If Left(AbilitySplit(1), Len("Cost")) = "Cost" Or InStr(AbilitySplit(1), "/") > 0 Or AbilitySplit(1) = "Give" Or AbilitySplit(1) = "Remove" Then
+                Str = AbilitySplit(0)
+                For j = 0 To UBound(AbilitySplit) - 1
+                    AbilitySplit(j) = AbilitySplit(j + 1)
+                Next j
+                AbilitySplit(UBound(AbilitySplit)) = Str
+            End If
+        End If
+        
+        ' ========== 能力类型分发处理 ==========
+        ' 根据能力类型执行不同的处理逻辑
+        
+'========================================================================================================================================================================================================
+        ' ========== 条件判断能力 ==========
+        If AbilitySplit(0) = "True" Then
+            ' ========== 关键词能力处理 ==========
+            Flag = True
+            For j = 1 To UBound(AbilitySplit)
+                ' 唤灵能力处理
+                If Left(AbilitySplit(j), Len("Necromancy&")) = "Necromancy&" Then
+                    n = Down("Shadows", ThisCard)                                ' 当前墓场数量
+                    m = Val(Mid(AbilitySplit(j), 1 + Len("Necromancy&"), 10))    ' 要求的墓场数量
+                    If n < m Then
+                        Flag = False
+                        Exit For
+                    End If
+                    
+                    k = Val(Mid(AbilitySplit(j), 1 + Len("Necromancy&"), 10))
+                    Call Up("Shadows", Val(Down("Shadows", ThisCard)) - k, ThisCard)
+                    
+                    ' 触发其他卡牌的唤灵响应
+                    Call GetAction("Keyword&Necromancy", ThisCard, k)
+                    
+                ' 血祭能力处理
+                ElseIf Left(AbilitySplit(j), Len("Sacrifice&")) = "Sacrifice&" Then
+                    n = Down("BloodPool", ThisCard)                                ' 当前墓场数量
+                    m = Val(Mid(AbilitySplit(j), 1 + Len("Sacrifice&"), 10))    ' 要求的墓场数量
+                    If n < m Then
+                        Flag = False
+                        Exit For
+                    End If
+                    
+                    k = Val(Mid(AbilitySplit(j), 1 + Len("Sacrifice&"), 10))
+                    Call Up("BloodPool", Val(Down("BloodPool", ThisCard)) - k, ThisCard)
+                    
+                    ' 触发其他卡牌的唤灵响应
+                    Call GetAction("Keyword&Sacrifice", ThisCard, k)
+                
+                ' 土之秘术能力处理
+                ElseIf Left(AbilitySplit(j), Len("EarthRite&")) = "EarthRite&" Then
+                    k = Val(Mid(AbilitySplit(j), 1 + Len("EarthRite&"), 10))
+                    ' 查找土之印
+                    Arr = Down("Field", ThisCard)
+                    For m = 1 To UBound(Arr, 1)
+                        If InStr(Arr(m, 5), "EarthSigil&") > 0 Then Exit For
+                    Next m
+                    ' 消耗土之印
+                    If m <= UBound(Arr, 1) Then
+                        Brr = SplitEffect(Arr(m, 5))
+                        For n = 0 To UBound(Brr)
+                            If Left(Brr(n), Len("EarthSigil&")) = "EarthSigil&" Then
+                                k = Val(Mid(Brr(n), 1 + Len("EarthSigil&"), 10)) - k
+                                Exit For
+                            End If
+                        Next n
+                        If k < 0 Then
+                            Flag = False
+                            Exit For
+                        ElseIf k = 0 Then
+                            ' 完全消耗，移除土之印
+                            Brr(n) = "\"
+                            Arr(m, 5) = Join(Brr, "||") & "||"
+                            Arr(m, 5) = Replace(Arr(m, 5), "\||", "")
+                            Call UpByMatchID(CStr(Arr(m, 1)), "Effect", Arr(m, 5))
+                            Call DestroyFunction(CStr(Arr(m, 1)))
+                        ElseIf k > 0 Then
+                            ' 部分消耗，更新土之印计数
+                            Brr(n) = "EarthSigil&" & k
+                            Arr(m, 5) = Join(Brr, "||") & "||"
+                            Call UpByMatchID(CStr(Arr(m, 1)), "Effect", Arr(m, 5))
+                        End If
+                    Else
+                        Exit For
+                    End If
+                    
+                    ' 触发其他卡牌的土之秘术响应
+                    Call GetAction("Keyword&EarthRite", ThisCard, Val(Mid(AbilitySplit(j), 1 + Len("EarthRite&"), 10)))
+                    
+                ' 限次能力处理
+                ElseIf Left(AbilitySplit(j), Len("TimesPerTurn&")) = "TimesPerTurn&" Then
+                    Arr = SplitEffect(DownByMatchID(ThisCard, "Effect"))   ' 获取当前效果
+            
+                    ' 查找已有的次数记录
+                    For k = 0 To UBound(Arr)
+                        If Left(Arr(k), Len("TimesPerTurn&")) = "TimesPerTurn&" Then
+                            m = Val(Mid(Arr(k), 1 + Len("TimesPerTurn&"), 10))   ' 已触发次数
+                            n = Val(Mid(AbilitySplit(j), 1 + Len("TimesPerTurn&"), 10))          ' 允许的最大次数
+                            Arr(k) = "TimesPerTurn&" & m + 1   ' 更新次数
+                            Exit For
+                        End If
+                    Next k
+                    If m >= n Then
+                        Flag = False
+                        Exit For
+                    End If
+                    
+                    ' 如果没有找到次数记录，添加新的记录\
+                    Str = Empty
+                    If UBound(Arr) >= 0 Then Str = Join(Arr, "||") & "||"
+                    If k > UBound(Arr) Then Str = Str & "TimesPerTurn&1||"
+                    
+                    ' 更新效果记录
+                    Call UpByMatchID(ThisCard, "Effect", Str)
+                End If
+            Next j
+            If Not Flag Then Exit For
+
+'========================================================================================================================================================================================================
+        ' ========== 条件终止 ==========
+        ElseIf AbilitySplit(0) = "False" Then
+            Exit For
+
+'========================================================================================================================================================================================================
+        ' ========== 抽牌能力 ==========
+        ElseIf AbilitySplit(0) = "Draw" Or AbilitySplit(0) = "Enemy-Draw" Then
+            ' 处理抽牌数量变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 确定抽牌方并获取目标
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                Arr = GetGoal("Random&" & AbilitySplit(1) & "-Enemy-Deck-Card", ThisCard, InputEffect, EffectSplit(i))
+            Else
+                Arr = GetGoal("Random&" & AbilitySplit(1) & "-Allied-Deck-Card", ThisCard, InputEffect, EffectSplit(i))
+            End If
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            ' 处理抽到的卡牌
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                If Flag Then
+                    Call GetAction("AddToHand", CStr(Arr(j)), True)
+                    Call GetAction("DrawToHand", CStr(Arr(j)), True)
+                    Call GetAction("AddToHand", CStr(Arr(j)))
+                    Call GetAction("DrawToHand", CStr(Arr(j)))
+                Else
+                    Call GetAction("HandDestroy", CStr(Arr(j)), True)
+                    Call GetAction("HandDestroy", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 召唤能力 ==========
+        ElseIf AbilitySplit(0) = "Summon" Or AbilitySplit(0) = "Enemy-Summon" Then
+            ' 处理召唤数量变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            '随机
+            Str = Empty
+            Arr = Split(AbilitySplit(1), "@")
+            If UBound(Arr) = 0 Then
+                For m = 1 To Val(AbilitySplit(2))
+                    Str = Str & Arr(0) & "&"
+                Next m
+                If Right(Str, 1) = "&" Then Str = Left(Str, Len(Str) - 1)
+            ElseIf QueueAction = "" Then
+                If UBound(Arr) + 1 < AbilitySplit(2) Then AbilitySplit(2) = UBound(Arr) + 1
+                
+                Brr = GetRandom(UBound(Arr) + 1)
+                For m = 1 To Val(AbilitySplit(2))
+                    Str = Str & Arr(Brr(m) - 1) & "&"
+                Next m
+                If Right(Str, 1) = "&" Then Str = Left(Str, Len(Str) - 1)
+                
+                Call UpSteps("Random", Str)
+            Else
+                Str = EraseQueueAction("Random")
+                If Str = "" Then
+                    MsgBox ("出现bug，请将excel发给sgg，交换控制方继续对局")
+                    Application.DisplayAlerts = False
+                    ThisWorkbook.Close False
+                    Application.DisplayAlerts = True
+                End If
+            End If
+            Crr = Split(Str, "&")
+            
+            ' 确定召唤方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Brr = "S" Else Brr = "F"
+            Else
+                Brr = Left(ThisCard, 1)
+            End If
+            
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Brr Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 创建卡牌
+            Str = Empty
+            For n = 0 To UBound(Crr)
+                Arr(j, 1) = Brr & k + 1
+                Arr(j, 2) = Crr(n)
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next n
+            Call Up("Data", Arr)
+            
+            ' 进入战场
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Field")
+                If Flag Then
+                    Call GetAction("EnterField", CStr(Arr(j)), True)
+                    Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                    Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                    Call GetAction("EffectEnter", CStr(Arr(j)))
+                    
+                    Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+'========================================================================================================================================================================================================
+        ' ========== 加入手牌能力 ==========
+        ElseIf AbilitySplit(0) = "AddToHand" Or AbilitySplit(0) = "Enemy-AddToHand" Then
+            ' 处理数量变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            '随机
+            Str = Empty
+            Arr = Split(AbilitySplit(1), "@")
+            If UBound(Arr) = 0 Then
+                For m = 1 To Val(AbilitySplit(2))
+                    Str = Str & Arr(0) & "&"
+                Next m
+                If Right(Str, 1) = "&" Then Str = Left(Str, Len(Str) - 1)
+            ElseIf QueueAction = "" Then
+                If UBound(Arr) + 1 < AbilitySplit(2) Then AbilitySplit(2) = UBound(Arr) + 1
+                
+                Brr = GetRandom(UBound(Arr) + 1)
+                For m = 1 To Val(AbilitySplit(2))
+                    Str = Str & Arr(Brr(m) - 1) & "&"
+                Next m
+                If Right(Str, 1) = "&" Then Str = Left(Str, Len(Str) - 1)
+                
+                Call UpSteps("Random", Str)
+            Else
+                Str = EraseQueueAction("Random")
+                If Str = "" Then
+                    MsgBox ("出现bug，请将excel发给sgg，交换控制方继续对局")
+                    Application.DisplayAlerts = False
+                    ThisWorkbook.Close False
+                    Application.DisplayAlerts = True
+                End If
+            End If
+            Crr = Split(Str, "&")
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Brr = "S" Else Brr = "F"
+            Else
+                Brr = Left(ThisCard, 1)
+            End If
+            
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Brr Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 创建卡牌
+            Str = Empty
+            For n = 0 To UBound(Crr)
+                Arr(j, 1) = Brr & k + 1
+                Arr(j, 2) = Crr(n)
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next n
+            Call Up("Data", Arr)
+            
+            ' 加入手牌
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                If Flag Then
+                    Call GetAction("AddToHand", CStr(Arr(j)), True)
+                    Call GetAction("AddToHand", CStr(Arr(j)))
+                Else
+                    Call GetAction("HandDestroy", CStr(Arr(j)), True)
+                    Call GetAction("HandDestroy", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+'========================================================================================================================================================================================================
+        ' ========== 加入牌组能力 ==========
+        ElseIf AbilitySplit(0) = "AddToDeck" Or AbilitySplit(0) = "Enemy-AddToDeck" Then
+            ' 处理数量变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            '随机
+            Str = Empty
+            Arr = Split(AbilitySplit(1), "@")
+            If UBound(Arr) = 0 Then
+                For m = 1 To Val(AbilitySplit(2))
+                    Str = Str & Arr(0) & "&"
+                Next m
+                If Right(Str, 1) = "&" Then Str = Left(Str, Len(Str) - 1)
+            ElseIf QueueAction = "" Then
+                If UBound(Arr) + 1 < AbilitySplit(2) Then AbilitySplit(2) = UBound(Arr) + 1
+                
+                Brr = GetRandom(UBound(Arr) + 1)
+                For m = 1 To Val(AbilitySplit(2))
+                    Str = Str & Arr(Brr(m) - 1) & "&"
+                Next m
+                If Right(Str, 1) = "&" Then Str = Left(Str, Len(Str) - 1)
+                
+                Call UpSteps("Random", Str)
+            Else
+                Str = EraseQueueAction("Random")
+                If Str = "" Then
+                    MsgBox ("出现bug，请将excel发给sgg，交换控制方继续对局")
+                    Application.DisplayAlerts = False
+                    ThisWorkbook.Close False
+                    Application.DisplayAlerts = True
+                End If
+            End If
+            Crr = Split(Str, "&")
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Brr = "S" Else Brr = "F"
+            Else
+                Brr = Left(ThisCard, 1)
+            End If
+            
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Brr Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 创建卡牌
+            Str = Empty
+            For n = 0 To UBound(Crr)
+                Arr(j, 1) = Brr & k + 1
+                Arr(j, 2) = Crr(n)
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next n
+            Call Up("Data", Arr)
+            
+            ' 加入牌组
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Call UpByMatchID(CStr(Arr(j)), "Area", "Deck")
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+'========================================================================================================================================================================================================
+        ' ========== 能量点调整能力 ==========
+        ElseIf AbilitySplit(0) = "PP" Or AbilitySplit(0) = "Enemy-PP" Then
+            ' 处理数值变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Str = "S1000" Else Str = "F1000"
+            Else
+                Str = ThisCard
+            End If
+            
+            ' 调整能量点
+            j = Down("PP", Str)
+            k = Down("MaxPP", Str)
+            j = j + AbilitySplit(1)
+            If j > k Then j = k
+            Call Up("PP", j, Str)
+
+'========================================================================================================================================================================================================
+        ' ========== 能量点最大值调整能力 ==========
+        ElseIf AbilitySplit(0) = "MaxPP" Or AbilitySplit(0) = "Enemy-MaxPP" Then
+            ' 处理数值变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Str = "S1000" Else Str = "F1000"
+            Else
+                Str = ThisCard
+            End If
+            
+            ' 调整能量点最大值
+            If Left(AbilitySplit(1), 1) = "$" Then
+                j = Val(Mid(AbilitySplit(1), 2, 10))
+            Else
+                j = Down("MaxPP", Str)
+                j = j + AbilitySplit(1)
+            End If
+            If j > 10 Then j = 10
+            Call Up("MaxPP", j, Str)
+
+'========================================================================================================================================================================================================
+        ' ========== EP调整能力 ==========
+        ElseIf AbilitySplit(0) = "EP" Or AbilitySplit(0) = "Enemy-EP" Then
+            ' 处理数值变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Str = "S1000" Else Str = "F1000"
+            Else
+                Str = ThisCard
+            End If
+            
+            ' 调整EP
+            j = Down("EP", Str)
+            j = j + AbilitySplit(1)
+            If j > 2 Then j = 2
+            Call Up("EP", j, Str)
+
+'========================================================================================================================================================================================================
+        ' ========== SEP调整能力 ==========
+        ElseIf AbilitySplit(0) = "SEP" Or AbilitySplit(0) = "Enemy-SEP" Then
+            ' 处理数值变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Str = "S1000" Else Str = "F1000"
+            Else
+                Str = ThisCard
+            End If
+            
+            ' 调整SEP
+            j = Down("SEP", Str)
+            j = j + AbilitySplit(1)
+            If j > 2 Then j = 2
+            Call Up("SEP", j, Str)
+
+'========================================================================================================================================================================================================
+        ' ========== 最大防御调整能力 ==========
+        ElseIf AbilitySplit(0) = "MaxDefense" Or AbilitySplit(0) = "Enemy-MaxDefense" Then
+            ' 处理数值变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Str = "S1000" Else Str = "F1000"
+            Else
+                Str = ThisCard
+            End If
+            
+            ' 调整最大防御
+            If Left(AbilitySplit(1), 1) = "$" Then
+                j = Val(Mid(AbilitySplit(1), 2, 10))
+            Else
+                j = Down("MaxDefense", Str)
+                j = j + AbilitySplit(1)
+            End If
+            Call Up("MaxDefense", j, Str)
+
+'========================================================================================================================================================================================================
+        ' ========== 回手能力 ==========
+        ElseIf AbilitySplit(0) = "ReturnToHand" Then
+            ' 获取目标并回手
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Call UpByMatchID(CStr(Arr(j)), "Effect", "")
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                Call GetAction("LeaveField", CStr(Arr(j)), True)
+                Call GetAction("ReturnToHand", CStr(Arr(j)), True)
+                Call GetAction("LeaveField", CStr(Arr(j)))
+                Call GetAction("ReturnToHand", CStr(Arr(j)))
+                If Flag Then
+                    Call GetAction("AddToHand", CStr(Arr(j)), True)
+                    Call GetAction("AddToHand", CStr(Arr(j)))
+                Else
+                    Call GetAction("HandDestroy", CStr(Arr(j)), True)
+                    Call GetAction("HandDestroy", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 回牌组能力 ==========
+        ElseIf AbilitySplit(0) = "ReturnToDeck" Then
+            ' 获取目标并回牌组
+            Arr = GetGoal("Hand-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Deck")
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 手牌召唤能力 ==========
+        ElseIf AbilitySplit(0) = "HandSummon" Then
+            ' 获取目标并回牌组
+            Arr = GetGoal("Hand-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            Str = Empty
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Field")
+                If Flag Then
+                    Call GetAction("EnterField", CStr(Arr(j)), True)
+                    Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                    Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                    Call GetAction("EffectEnter", CStr(Arr(j)))
+                    Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                    Str = Str & "&" & Arr(j)
+                Else
+                    Call UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & Str
+
+'========================================================================================================================================================================================================
+        ' ========== 检索能力 ==========
+        ElseIf AbilitySplit(0) = "Search" Then
+            ' 检索牌组中的卡牌
+            Arr = GetGoal("Allied-Deck-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                If Flag Then
+                    Call GetAction("AddToHand", CStr(Arr(j)), True)
+                    Call GetAction("DrawToHand", CStr(Arr(j)), True)
+                    Call GetAction("AddToHand", CStr(Arr(j)))
+                    Call GetAction("DrawToHand", CStr(Arr(j)))
+                Else
+                    Call GetAction("HandDestroy", CStr(Arr(j)), True)
+                    Call GetAction("HandDestroy", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 检索召唤能力 ==========
+        ElseIf AbilitySplit(0) = "SearchSummon" Then
+            ' 检索并召唤
+            Arr = GetGoal("Allied-Deck-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            Str = Empty
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Field")
+                If Flag Then
+                    Call GetAction("EnterField", CStr(Arr(j)), True)
+                    Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                    Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                    Call GetAction("EffectEnter", CStr(Arr(j)))
+                    Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                    Str = Str & "&" & Arr(j)
+                Else
+                    Call UpByMatchID(CStr(Arr(j)), "Area", "Deck")
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+'========================================================================================================================================================================================================
+        ' ========== 瞬念召唤能力 ==========
+        ElseIf AbilitySplit(0) = "Invoke" Then
+            Str = Down("Turn")
+            Flag = SearchSteps("AnyCard", "Invoke", Str)
+            
+            If Not Flag Then
+                ' 瞬念召唤
+                Flag = UpByMatchID(ThisCard, "Area", "Field")
+                If Flag Then
+                    Call GetAction("EnterField", ThisCard, True)
+                    Call GetAction("Invoke", ThisCard, True)
+                    Call GetAction("EffectEnter", ThisCard, True)
+                    Str = DownByID(DownByMatchID(ThisCard, "ID"), "Name")
+                    Call GetAction("EnterField", ThisCard, Str)
+                    Call GetAction("Invoke", ThisCard, Str)
+                    Call GetAction("EffectEnter", ThisCard)
+                    
+                    Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                Else
+                    Call UpByMatchID(ThisCard, "Area", "Deck")
+                End If
+            End If
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & ThisCard
+
+'========================================================================================================================================================================================================
+        ' ========== 复制加入手牌能力 ==========
+        ElseIf AbilitySplit(0) = "Copy" Then
+            ' 获取同名卡目标
+            Brr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Left(ThisCard, 1) Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 创建同名卡
+            Str = Empty
+            For m = 1 To UBound(Brr)
+                Arr(j, 1) = Left(ThisCard, 1) & k + 1
+                Arr(j, 2) = DownByMatchID(CStr(Brr(m)), "ID")
+                Arr(j, 5) = DownByMatchID(CStr(Brr(m)), "Effect")
+                Crr = SplitEffect(Arr(j, 5))
+                For n = 0 To UBound(Crr)
+                    If Crr(n) = "Engaged" Then
+                        Crr(n) = "\"
+                    ElseIf Left(Crr(n), Len("Striked&")) = "Striked&" Then
+                        Crr(n) = "\"
+                    End If
+                Next n
+                Arr(j, 5) = Join(Crr, "||") & "||"
+                Arr(j, 5) = Replace(Arr(j, 5), "\||", "")
+                
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next m
+            Call Up("Data", Arr)
+                
+            ' 加入手牌
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                If Flag Then
+                    Call GetAction("AddToHand", CStr(Arr(j)), True)
+                    Call GetAction("AddToHand", CStr(Arr(j)))
+                Else
+                    Call GetAction("HandDestroy", CStr(Arr(j)), True)
+                    Call GetAction("HandDestroy", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+
+'========================================================================================================================================================================================================
+        ' ========== 复制召唤能力 ==========
+        ElseIf AbilitySplit(0) = "CopySummon" Then
+            ' 复制目标并召唤
+            Brr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Left(ThisCard, 1) Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 复制卡牌
+            Str = Empty
+            For m = 1 To UBound(Brr)
+                Arr(j, 1) = Left(ThisCard, 1) & k + 1
+                Arr(j, 2) = DownByMatchID(CStr(Brr(m)), "ID")
+                Arr(j, 5) = DownByMatchID(CStr(Brr(m)), "Effect")
+                Crr = SplitEffect(Arr(j, 5))
+                For n = 0 To UBound(Crr)
+                    If Crr(n) = "Engaged" Then
+                        Crr(n) = "\"
+                    ElseIf Left(Crr(n), Len("Striked&")) = "Striked&" Then
+                        Crr(n) = "\"
+                    End If
+                Next n
+                Arr(j, 5) = Join(Crr, "||") & "||"
+                Arr(j, 5) = Replace(Arr(j, 5), "\||", "")
+                
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next m
+            Call Up("Data", Arr)
+                
+            ' 进入战场
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Brr = DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Type")
+                If Brr = "Crest" Or Brr = "Faith" Then
+                    Flag = UpByMatchID(CStr(Arr(j)), "Area", "Crest")
+                    If Flag Then
+                        Call GetAction("EnterField", CStr(Arr(j)), True)
+                        'Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                        Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                        'Call GetAction("EffectEnter", CStr(Arr(j)))
+                        'Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                    End If
+                Else
+                    Flag = UpByMatchID(CStr(Arr(j)), "Area", "Field")
+                    If Flag Then
+                        Call GetAction("EnterField", CStr(Arr(j)), True)
+                        Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                        Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                        Call GetAction("EffectEnter", CStr(Arr(j)))
+                        If Brr = "Follower" Then Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                    End If
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+'========================================================================================================================================================================================================
+        ' ========== 同名卡加入手牌能力 ==========
+        ElseIf AbilitySplit(0) = "SameNameToHand" Then
+            ' 获取同名卡目标
+            Brr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Left(ThisCard, 1) Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 创建同名卡
+            Str = Empty
+            For m = 1 To UBound(Brr)
+                Arr(j, 1) = Left(ThisCard, 1) & k + 1
+                Arr(j, 2) = DownByMatchID(CStr(Brr(m)), "ID")
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next m
+            Call Up("Data", Arr)
+                
+            ' 加入手牌
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Flag = UpByMatchID(CStr(Arr(j)), "Area", "Hand")
+                If Flag Then
+                    Call GetAction("AddToHand", CStr(Arr(j)), True)
+                    Call GetAction("AddToHand", CStr(Arr(j)))
+                Else
+                    Call GetAction("HandDestroy", CStr(Arr(j)), True)
+                    Call GetAction("HandDestroy", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+
+'========================================================================================================================================================================================================
+        ' ========== 同名召唤能力 ==========
+        ElseIf AbilitySplit(0) = "SameSummon" Then
+            ' 复制目标并召唤
+            Brr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+
+            ' 寻找最大序号创建新卡牌
+            Arr = Down("Data")
+            k = 0
+            For j = 1 To UBound(Arr)
+                If Arr(j, 1) = "" Then Exit For
+                If Left(Arr(j, 1), 1) = Left(ThisCard, 1) Then
+                    If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                End If
+            Next j
+            
+            ' 复制卡牌
+            Str = Empty
+            For m = 1 To UBound(Brr)
+                Arr(j, 1) = Left(ThisCard, 1) & k + 1
+                Arr(j, 2) = DownByMatchID(CStr(Brr(m)), "ID")
+                Str = Str & "&" & Arr(j, 1)
+                j = j + 1
+                k = k + 1
+            Next m
+            Call Up("Data", Arr)
+                
+            ' 进入战场
+            Arr = Split(Str, "&")
+            For j = 1 To UBound(Arr)
+                Brr = DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Type")
+                If Brr = "Crest" Or Brr = "Faith" Then
+                    Flag = UpByMatchID(CStr(Arr(j)), "Area", "Crest")
+                    If Flag Then
+                        Call GetAction("EnterField", CStr(Arr(j)), True)
+                        'Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                        Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                        'Call GetAction("EffectEnter", CStr(Arr(j)))
+                        'Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                    End If
+                Else
+                    Flag = UpByMatchID(CStr(Arr(j)), "Area", "Field")
+                    If Flag Then
+                        Call GetAction("EnterField", CStr(Arr(j)), True)
+                        Call GetAction("EffectEnter", CStr(Arr(j)), True)
+                        Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                        Call GetAction("EffectEnter", CStr(Arr(j)))
+                        If Brr = "Follower" Then Call Up("Rally", Down("Rally", ThisCard) + 1, ThisCard) '协作+1
+                    End If
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+
+
+'========================================================================================================================================================================================================
+        ' ========== 费用调整能力 ==========
+        ElseIf Left(AbilitySplit(0), Len("Cost")) = "Cost" Then
+            ' 处理费用中的变量
+            For j = 1 To Len(AbilitySplit(0))
+                Str = Mid(AbilitySplit(0), j, 1)
+                If InStr("XYZ", Str) > 0 Then
+                    k = GetXFunction(EffectSplit, ThisCard, i, Str)
+                    AbilitySplit(0) = Replace(AbilitySplit(0), Str, k)
+                End If
+            Next j
+            
+            ' 获取目标并应用费用效果
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                ' 添加持续时间
+                If UBound(AbilitySplit) >= 2 Then
+                    If Left(Arr(j), 1) = Left(ThisCard, 1) Then
+                        Str = Str & AbilitySplit(2) & "|"
+                    ElseIf Left(AbilitySplit(2), Len("Allied-")) = "Allied-" Then
+                        Str = Str & "Enemy-" & Mid(AbilitySplit(2), 1 + Len("Allied-"), 100) & "|"
+                    ElseIf Left(AbilitySplit(2), Len("Enemy-")) = "Enemy-" Then
+                        Str = Str & "Allied-" & Mid(AbilitySplit(2), 1 + Len("Enemy-"), 100) & "|"
+                    Else
+                        Str = Str & AbilitySplit(2) & "|"
+                    End If
+                End If
+                
+                Str = Str & AbilitySplit(0) & "||"
+                
+                ' 合并上传效果
+                If UBound(AbilitySplit) < 2 Then Str = JoinEffect(Str)
+                Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                
+                ' 触发其他卡牌响应
+                Call GetAction("GetBuff", CStr(Arr(j)), True)
+                Call GetAction("GetBuff", CStr(Arr(j)), AbilitySplit(0))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 属性Buff能力 ==========
+        ElseIf InStr(AbilitySplit(0), "/") > 0 Then
+            ' 处理Buff中的变量
+            For j = 1 To Len(AbilitySplit(0))
+                Str = Mid(AbilitySplit(0), j, 1)
+                If InStr("XYZ", Str) > 0 Then
+                    k = GetXFunction(EffectSplit, ThisCard, i, Str)
+                    AbilitySplit(0) = Replace(AbilitySplit(0), Str, k)
+                End If
+            Next j
+            
+            ' 获取目标并应用Buff
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                ' 添加持续时间
+                If UBound(AbilitySplit) >= 2 Then
+                    If Left(Arr(j), 1) = Left(ThisCard, 1) Then
+                        Str = Str & AbilitySplit(2) & "|"
+                    ElseIf Left(AbilitySplit(2), Len("Allied-")) = "Allied-" Then
+                        Str = Str & "Enemy-" & Mid(AbilitySplit(2), 1 + Len("Allied-"), 100) & "|"
+                    ElseIf Left(AbilitySplit(2), Len("Enemy-")) = "Enemy-" Then
+                        Str = Str & "Allied-" & Mid(AbilitySplit(2), 1 + Len("Enemy-"), 100) & "|"
+                    Else
+                        Str = Str & AbilitySplit(2) & "|"
+                    End If
+                End If
+                
+                Str = Str & AbilitySplit(0) & "||"
+                
+                ' 特殊效果处理
+                ' 固定生命值处理
+                If InStr(AbilitySplit(0), "/$") > 0 Then
+                    Brr = SplitEffect(Str)
+                    For k = 0 To UBound(Brr)
+                        If Left(Brr(k), Len("Damaged&")) = "Damaged&" Then Brr(k) = "\"
+                    Next k
+                    Str = Join(Brr, "||") & "||"
+                    Str = Replace(Str, "\||", "")
+                ' 生命值翻倍处理
+                ElseIf InStr(AbilitySplit(0), "/*") > 0 Then
+                    m = InStr(AbilitySplit(0), "/*")
+                    m = Val(Mid(AbilitySplit(0), m + Len("/*"), 10))
+                    Brr = SplitEffect(Str)
+                    For k = 0 To UBound(Brr)
+                        If Left(Brr(k), Len("Damaged&")) = "Damaged&" Then
+                            Brr(k) = "Damaged&" & Val(Mid(Brr(k), 1 + Len("Damaged&"), 10)) * m
+                        End If
+                    Next k
+                    Str = Join(Brr, "||") & "||"
+                End If
+                
+                ' 合并上传效果
+                If UBound(AbilitySplit) < 2 Then Str = JoinEffect(Str)
+                Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                
+                ' 检查是否破坏
+                k = GetModel("Defense", DownByMatchID(CStr(Arr(j)), "ID"), Str)
+                If k <= 0 Then Call DestroyFunction(CStr(Arr(j)))
+                
+                ' 触发其他卡牌响应
+'                If Left(AbilitySplit(0), 1) = "+" Then
+'                    Call GetAction("AttackIncreased", CStr(Arr(j)), True)
+'                    Call GetAction("AttackIncreased", CStr(Arr(j)), AbilitySplit(0))
+'                ElseIf Left(AbilitySplit(0), 1) = "-" Then
+'                    Call GetAction("AttackDecreased", CStr(Arr(j)), True)
+'                    Call GetAction("AttackDecreased", CStr(Arr(j)), AbilitySplit(0))
+'                End If
+                If InStr(AbilitySplit(0), "/+") > 0 Then
+                    'Call GetAction("DefenseIncreased", CStr(Arr(j)), True)
+                    'Call GetAction("DefenseIncreased", CStr(Arr(j)), AbilitySplit(0))
+                ElseIf InStr(AbilitySplit(0), "/-") > 0 Then
+                    Call GetAction("DefenseDecreased", CStr(Arr(j)), True)
+                    Call GetAction("DefenseDecreased", CStr(Arr(j)), AbilitySplit(0))
+                End If
+                If Left(AbilitySplit(0), 1) = "+" Or InStr(AbilitySplit(0), "/+") > 0 Then
+                    Call GetAction("Increased", CStr(Arr(j)), True)
+                    Call GetAction("Increased", CStr(Arr(j)), AbilitySplit(0))
+                ElseIf Left(AbilitySplit(0), 1) = "-" Or InStr(AbilitySplit(0), "/-") > 0 Then
+                    Call GetAction("Decreased", CStr(Arr(j)), True)
+                    Call GetAction("Decreased", CStr(Arr(j)), AbilitySplit(0))
+                End If
+                Call GetAction("GetBuff", CStr(Arr(j)), True)
+                Call GetAction("GetBuff", CStr(Arr(j)), AbilitySplit(0))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 给予能力 ==========
+        ElseIf AbilitySplit(0) = "Give" Then
+            ' 获取目标并给予能力
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            k = Val(Mid(AbilitySplit(2), 1 + Len("{Effect"), 10))
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                ' 添加持续时间
+                If UBound(AbilitySplit) >= 3 Then
+                    If Left(Arr(j), 1) = Left(ThisCard, 1) Then
+                        Str = Str & AbilitySplit(3) & "|"
+                    ElseIf Left(AbilitySplit(3), Len("Allied-")) = "Allied-" Then
+                        Str = Str & "Enemy-" & Mid(AbilitySplit(3), 1 + Len("Allied-"), 100) & "|"
+                    ElseIf Left(AbilitySplit(3), Len("Enemy-")) = "Enemy-" Then
+                        Str = Str & "Allied-" & Mid(AbilitySplit(3), 1 + Len("Enemy-"), 100) & "|"
+                    Else
+                        Str = Str & AbilitySplit(3) & "|"
+                    End If
+                End If
+                
+                Str = Str & Effectrr(k) & "||"
+                
+                Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                
+                ' 触发其他卡牌响应
+                Call GetAction("GetBuff", CStr(Arr(j)), True)
+                Call GetAction("GetBuff", CStr(Arr(j)), Effectrr(k))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr & "|" & AbilitySplit(2)
+
+'========================================================================================================================================================================================================
+        ' ========== 移除能力 ==========
+        ElseIf AbilitySplit(0) = "Remove" Then
+            ' 获取目标并移除能力
+            Arr = GetGoal(AbilitySplit(2), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                
+                '移除全部能力
+                If AbilitySplit(1) = "All" Then
+                    Brr = SplitEffect(Str)
+                    Str = Empty
+                    For k = 0 To UBound(Brr)
+                        If Brr(k) = "SuperEvolved" Then
+                            Str = Str & Brr(k) & "||"
+                        ElseIf Brr(k) = "Evolved" Then
+                            Str = Str & Brr(k) & "||"
+                        ElseIf Left(Brr(k), Len("Striked&")) = "Striked&" Then
+                            Str = Str & Brr(k) & "||"
+                        ElseIf Left(Brr(k), Len("Damaged&")) = "Damaged&" Then
+                            Str = Str & Brr(k) & "||"
+                        ElseIf Left(Brr(k), Len("Countdown&")) = "Countdown&" Then
+                            Str = Str & Brr(k) & "||"
+                        End If
+                    Next k
+                End If
+                
+                ' 添加持续时间
+                If UBound(AbilitySplit) >= 3 Then
+                    If Left(Arr(j), 1) = Left(ThisCard, 1) Then
+                        Str = Str & AbilitySplit(3) & "|"
+                    ElseIf Left(AbilitySplit(3), Len("Allied-")) = "Allied-" Then
+                        Str = Str & "Enemy-" & Mid(AbilitySplit(3), 1 + Len("Allied-"), 100) & "|"
+                    ElseIf Left(AbilitySplit(3), Len("Enemy-")) = "Enemy-" Then
+                        Str = Str & "Allied-" & Mid(AbilitySplit(3), 1 + Len("Enemy-"), 100) & "|"
+                    Else
+                        Str = Str & AbilitySplit(3) & "|"
+                    End If
+                End If
+                
+                Str = Str & AbilitySplit(0) & "|" & AbilitySplit(1) & "||"
+                
+                Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|" & AbilitySplit(1) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 破坏能力 ==========
+        ElseIf AbilitySplit(0) = "Destroy" Then
+            ' 获取目标并破坏
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Call DestroyFunction(CStr(Arr(j)))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 消失能力 ==========
+        ElseIf AbilitySplit(0) = "Banish" Then
+            ' 获取目标并消失
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Call UpByMatchID(CStr(Arr(j)), "Area", "Banish")
+                Call GetAction("Banish", CStr(Arr(j)), True)
+                Call GetAction("LeaveField", CStr(Arr(j)), True)
+                Call GetAction("Banish", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                Call GetAction("LeaveField", CStr(Arr(j)))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 变身能力 ==========
+        ElseIf AbilitySplit(0) = "Transform" Then
+            ' 获取目标并变身
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Call UpByMatchID(CStr(Arr(j)), "ID", AbilitySplit(2))
+                Call UpByMatchID(CStr(Arr(j)), "Effect", Empty)
+                Call UpByMatchID(CStr(Arr(j)), "Area", DownByMatchID(CStr(Arr(j)), "Area"))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr & "|" & AbilitySplit(2)
+
+'========================================================================================================================================================================================================
+        ' ========== 弃牌能力 ==========
+        ElseIf AbilitySplit(0) = "Discard" Then
+            ' 获取目标并弃牌
+            Arr = GetGoal("Hand-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Call UpByMatchID(CStr(Arr(j)), "Area", "Discard")
+                Call GetAction("Discard", CStr(Arr(j)), True)
+                Call GetAction("Discard", CStr(Arr(j)))
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 倒数调整能力 ==========
+        ElseIf Left(AbilitySplit(0), Len("Countdown")) = "Countdown" Then
+            ' 处理倒数中的变量
+            For j = 1 + Len("Countdown") To Len(AbilitySplit(0))
+                Str = Mid(AbilitySplit(0), j, 1)
+                If InStr("XYZ", Str) > 0 Then
+                    k = GetXFunction(EffectSplit, ThisCard, i, Str)
+                    AbilitySplit(0) = Replace(AbilitySplit(0), Str, k)
+                End If
+            Next j
+            
+            ' 调整倒数
+            k = Val(Mid(AbilitySplit(0), 1 + Len("Countdown"), 10))
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Brr = SplitEffect(DownByMatchID(CStr(Arr(j)), "Effect"))
+                For m = 0 To UBound(Brr)
+                    If Left(Brr(m), Len("Countdown&")) = "Countdown&" Then
+                        n = Val(Mid(Brr(m), 1 + Len("Countdown&"), 10))
+                        n = n + k
+                        If n <= 0 Then
+                            Call DestroyFunction(CStr(Arr(j)))
+                        Else
+                            Brr(m) = "Countdown&" & n
+                            Str = Join(Brr, "||") & "||"
+                            Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                        End If
+                    End If
+                Next m
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 伤害能力 ==========
+        ElseIf AbilitySplit(0) = "Damage" Then
+            ' 处理伤害数值变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            ' 获取目标并造成伤害
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                Brr = SplitEffect(Str)
+                
+                ' 检查屏障
+                Flag = False
+                For k = 0 To UBound(Brr)
+                    If Brr(k) = "Barrier" Or InStr(Brr(k), "{Barrier}") > 0 Then
+                        ' 屏障抵消伤害
+                        Flag = True
+                        Brr(k) = "\"
+                        Str = Join(Brr, "||") & "||"
+                        Str = Replace(Str, "\||", "")
+                        Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    ElseIf Brr(k) = "Remove|Barrier" Then
+                        Flag = False
+                        Exit For
+                    End If
+                Next k
+                
+                '计算伤害
+                n = Val(AbilitySplit(2))
+                Crr = GetEffect(ThisCard)
+                For k = 1 To UBound(Crr)
+                    If Left(Crr(k), Len("DoDamage&")) = "DoDamage&" Then
+                        m = Val(Mid(Crr(k), 1 + Len("DoDamage&"), 10))
+                        n = n + m
+                    End If
+                Next k
+                Crr = GetEffect(CStr(Arr(j)))
+                For k = 1 To UBound(Crr)
+                    If Left(Crr(k), Len("TakeDamage&")) = "TakeDamage&" Then
+                        m = Val(Mid(Crr(k), 1 + Len("TakeDamage&"), 10))
+                        n = n + m
+                    End If
+                Next k
+                For k = 1 To UBound(Crr)
+                    If Left(Crr(k), Len("CantTakeMoreDamage&")) = "CantTakeMoreDamage&" Then
+                        m = Val(Mid(Crr(k), 1 + Len("CantTakeMoreDamage&"), 10))
+                        If n > m Then n = m
+                    End If
+                Next k
+                If n < 0 Then n = 0
+                    
+                ' 处理伤害
+                If Flag Then
+                    ' 触发失去屏障响应
+                    'Call GetAction("LostBarrier", CStr(Arr(j)), True)
+                    'Call GetAction("LostBarrier", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                ElseIf InStr(Str, "SuperEvolved||") > 0 And Left(Down("Turn"), 1) = Left(Arr(j), 1) Then
+                    ' 超进化免伤处理
+                ElseIf Mid(Arr(j), 2, 10) = "1000" Then
+                    ' 主战者受伤
+                    Call Up("Defense", Down("Defense", CStr(Arr(j))) - n, CStr(Arr(j)))
+                    Call Up("BloodPool", Down("BloodPool", CStr(Arr(j))) + n, CStr(Arr(j)))  '血池+
+                    Call GetAction("Damaged", CStr(Arr(j)), n)
+                Else
+                    ' 从者受伤
+                    For k = 0 To UBound(Brr)
+                        If Left(Brr(k), Len("Damaged&")) = "Damaged&" Then Exit For
+                    Next k
+                    If k <= UBound(Brr) Then
+                        Brr(k) = "Damaged&" & Val(Mid(Brr(k), 1 + Len("Damaged&"), 10)) + n
+                        Str = Join(Brr, "||") & "||"
+                    Else
+                        Str = Str & "Damaged&" & n & "||"
+                    End If
+                    Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    ' 检查是否破坏
+                    m = GetModel("Defense", DownByMatchID(CStr(Arr(j)), "ID"), Str)
+                    If m <= 0 Then Call DestroyFunction(CStr(Arr(j)))
+                End If
+                
+                ' 触发受伤响应
+                If DownByMatchID(CStr(Arr(j)), "Area") = "Field" Then
+                    Call GetAction("Damaged", CStr(Arr(j)), True)
+                    Call GetAction("Damaged", CStr(Arr(j)), Val(AbilitySplit(2)))
+                End If
+            Next j
+            
+            ' 失去潜行
+            If UBound(Arr) > 0 Then
+                If Arr(1) <> "" Then
+                    Str = DownByMatchID(ThisCard, "Effect")
+                    Brr = SplitEffect(Str)
+                    For j = 0 To UBound(Brr)
+                        If Brr(j) = "Ambush" Or InStr(Brr(j), "{Ambush}") > 0 Then
+                            ' 移除潜行
+                            Brr(j) = "\"
+                            Brr = Join(Brr, "||") & "||"
+                            Brr = Replace(Str, "\||", "")
+                            Call UpByMatchID(ThisCard, "Effect", Str)
+                        End If
+                    Next j
+                End If
+            End If
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr & "|" & AbilitySplit(2)
+
+'========================================================================================================================================================================================================
+        ' ========== 分摊伤害能力 ==========
+        ElseIf AbilitySplit(0) = "SplitDamage" Then
+            ' 处理伤害数值变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            ' 获取目标并分摊伤害
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            ' 主战者置后处理
+            If PreviousGoal <> "" Then
+                If Mid(Arr(1), 2, 10) = "1000" Then
+                    ReDim Brr(1 To UBound(Arr))
+                    For j = 2 To UBound(Arr)
+                        Brr(j - 1) = Arr(j)
+                    Next j
+                    Brr(j - 1) = Arr(1)
+                    Arr = Brr
+                End If
+            End If
+            
+            ' 分摊伤害处理
+            For j = 1 To UBound(Arr)
+                ' 伤害减为0时退出循环
+                If AbilitySplit(2) <= 0 Then Exit For
+                
+                ' 获取目标效果
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                Brr = SplitEffect(Str)
+                
+                ' 分配伤害
+                If Mid(Arr(j), 2, 10) = "1000" Then
+                    n = 1000
+                ElseIf j = UBound(Arr) Then
+                    n = 1000
+                Else
+                    n = GetModel("Defense", DownByMatchID(CStr(Arr(j)), "ID"), Str)
+                End If
+                If n > AbilitySplit(2) Then n = AbilitySplit(2)
+                AbilitySplit(2) = AbilitySplit(2) - n
+                
+                '计算伤害
+                Crr = GetEffect(ThisCard)
+                For k = 1 To UBound(Crr)
+                    If Left(Crr(k), Len("DoDamage&")) = "DoDamage&" Then
+                        m = Val(Mid(Crr(k), 1 + Len("DoDamage&"), 10))
+                        n = n + m
+                    End If
+                Next k
+                Crr = GetEffect(CStr(Arr(j)))
+                For k = 1 To UBound(Crr)
+                    If Left(Crr(k), Len("TakeDamage&")) = "TakeDamage&" Then
+                        m = Val(Mid(Crr(k), 1 + Len("TakeDamage&"), 10))
+                        n = n + m
+                    End If
+                Next k
+                For k = 1 To UBound(Crr)
+                    If Left(Crr(k), Len("CantTakeMoreDamage&")) = "CantTakeMoreDamage&" Then
+                        m = Val(Mid(Crr(k), 1 + Len("CantTakeMoreDamage&"), 10))
+                        If n > m Then n = m
+                    End If
+                Next k
+                If n < 0 Then n = 0
+                
+                ' 检查屏障
+                Flag = False
+                For k = 0 To UBound(Brr)
+                    If Brr(k) = "Barrier" Or InStr(Brr(k), "{Barrier}") > 0 Then
+                        ' 屏障抵消伤害
+                        Flag = True
+                        Brr(k) = "\"
+                        Str = Join(Brr, "||") & "||"
+                        Str = Replace(Str, "\||", "")
+                        Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    ElseIf Brr(k) = "Remove|Barrier" Then
+                        Flag = False
+                        Exit For
+                    End If
+                Next k
+                
+                ' 处理伤害
+                If Flag Then
+                    ' 触发失去屏障响应
+                    'Call GetAction("LostBarrier", CStr(Arr(j)), True)
+                    'Call GetAction("LostBarrier", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                ElseIf InStr(Str, "SuperEvolved||") > 0 And Left(Down("Turn"), 1) = Left(Arr(j), 1) Then
+                    ' 超进化免伤处理
+                ElseIf Mid(Arr(j), 2, 10) = "1000" Then
+                    ' 主战者受伤
+                    Call Up("Defense", Down("Defense", CStr(Arr(j))) - n, CStr(Arr(j)))
+                    Call Up("BloodPool", Down("BloodPool", CStr(Arr(j))) + n, CStr(Arr(j)))  '血池+
+                    Call GetAction("Damaged", CStr(Arr(j)), n)
+                Else
+                    ' 从者受伤
+                    For k = 0 To UBound(Brr)
+                        If Left(Brr(k), Len("Damaged&")) = "Damaged&" Then Exit For
+                    Next k
+                    If k <= UBound(Brr) Then
+                        Brr(k) = "Damaged&" & Val(Mid(Brr(k), 1 + Len("Damaged&"), 10)) + n
+                        Str = Join(Brr, "||") & "||"
+                    Else
+                        Str = Str & "Damaged&" & n & "||"
+                    End If
+                    Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    ' 检查是否破坏
+                    m = GetModel("Defense", DownByMatchID(CStr(Arr(j)), "ID"), Str)
+                    If m <= 0 Then Call DestroyFunction(CStr(Arr(j)))
+                End If
+                
+                ' 触发受伤响应
+                If DownByMatchID(CStr(Arr(j)), "Area") = "Field" Then
+                    Call GetAction("Damaged", CStr(Arr(j)), True)
+                    Call GetAction("Damaged", CStr(Arr(j)), n)
+                End If
+            Next j
+            
+            ' 失去潜行
+            If UBound(Arr) > 0 Then
+                If Arr(1) <> "" Then
+                    Str = DownByMatchID(ThisCard, "Effect")
+                    Brr = SplitEffect(Str)
+                    For j = 0 To UBound(Brr)
+                        If Brr(j) = "Ambush" Or InStr(Brr(j), "{Ambush}") > 0 Then
+                            ' 移除潜行
+                            Brr(j) = "\"
+                            Brr = Join(Brr, "||") & "||"
+                            Brr = Replace(Str, "\||", "")
+                            Call UpByMatchID(ThisCard, "Effect", Str)
+                        End If
+                    Next j
+                End If
+            End If
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr & "|" & AbilitySplit(2)
+
+'========================================================================================================================================================================================================
+        ' ========== 回复能力 ==========
+        ElseIf AbilitySplit(0) = "Restore" Then
+            ' 处理回复数值变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            ' 获取目标并回复
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                Brr = SplitEffect(Str)
+                
+                If Mid(Arr(j), 2, 10) = "1000" Then
+                    ' 主战者回复
+                    k = Down("Defense", CStr(Arr(j))) + Val(AbilitySplit(2))
+                    m = Down("MaxDefense", CStr(Arr(j)))
+                    If k > m Then k = m
+                    Call Up("Defense", k, CStr(Arr(j)))
+                    Call GetAction("Restore", CStr(Arr(j)), Val(AbilitySplit(2)))
+                Else
+                    ' 从者回复
+                    For k = 0 To UBound(Brr)
+                        If Left(Brr(k), Len("Damaged&")) = "Damaged&" Then Exit For
+                    Next k
+                    If k <= UBound(Brr) Then
+                        m = Val(Mid(Brr(k), 1 + Len("Damaged&"), 10)) - Val(AbilitySplit(2))
+                        If m > 0 Then
+                            Brr(k) = "Damaged&" & m
+                        Else
+                            Brr(k) = "\"
+                        End If
+                        Str = Join(Brr, "||") & "||"
+                        Str = Replace(Str, "\||", "")
+                        Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    End If
+                    Call GetAction("Restore", CStr(Arr(j)), True)
+                    Call GetAction("Restore", CStr(Arr(j)), Val(AbilitySplit(2)))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr & "|" & AbilitySplit(2)
+
+'========================================================================================================================================================================================================
+        ' ========== 进化能力 ==========
+        ElseIf AbilitySplit(0) = "Evolve" Then
+            ' 获取目标并进化
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                ' 检查是否已进化
+                If InStr(Str, "Evolved||") = 0 Then
+                    Str = Str & "{Rush}||Evolved||"
+                    Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    Call GetAbility("||+2/+2|ThisCard", CStr(Arr(j)))
+                    Call GetAction("Evolve", CStr(Arr(j)), True)
+                    
+                    '奥义
+                    Brr = Down("Hand", ThisCard)
+                    For k = 1 To UBound(Brr)
+                        Crr = SplitEffect(CStr(Brr(k, 5)))
+                        For m = 0 To UBound(Crr)
+                            If Left(Crr(m), Len("Skybound&")) = "Skybound&" Then
+                                n = Val(Mid(Crr(m), 1 + Len("Skybound&"), 10))
+                                n = n + 1
+                                Crr(m) = "Skybound&" & n
+                                Exit For
+                            End If
+                        Next m
+                        Brr(k, 5) = Join(Crr, "||")
+                        If Brr(k, 5) <> "" Then Brr(k, 5) = Brr(k, 5) & "||"
+                        Call UpByMatchID(CStr(Brr(k, 1)), "Effect", CStr(Brr(k, 5)))
+                    Next k
+                    
+                    Call GetAction("Evolve", CStr(Arr(j)))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 超进化能力 ==========
+        ElseIf AbilitySplit(0) = "SuperEvolve" Then
+            ' 获取目标并超进化
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(j)), "Effect")
+                ' 检查是否已超进化
+                If InStr(Str, "SuperEvolved||") = 0 Then
+                    Str = Str & "{Rush}||SuperEvolved||"
+                    Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+                    Call GetAbility("||+3/+3|ThisCard", CStr(Arr(j)))
+                    Call GetAction("SuperEvolve", CStr(Arr(j)), True)
+                    
+                    '奥义
+                    Brr = Down("Hand", ThisCard)
+                    For k = 1 To UBound(Brr)
+                        Crr = SplitEffect(CStr(Brr(k, 5)))
+                        For m = 0 To UBound(Crr)
+                            If Left(Crr(m), Len("Skybound&")) = "Skybound&" Then
+                                n = Val(Mid(Crr(m), 1 + Len("Skybound&"), 10))
+                                n = n + 1
+                                Crr(m) = "Skybound&" & n
+                                Exit For
+                            End If
+                        Next m
+                        Brr(k, 5) = Join(Crr, "||")
+                        If Brr(k, 5) <> "" Then Brr(k, 5) = Brr(k, 5) & "||"
+                        Call UpByMatchID(CStr(Brr(k, 1)), "Effect", CStr(Brr(k, 5)))
+                    Next k
+                    
+                    Call GetAction("Evolve", CStr(Arr(j)))
+                    Call GetAction("SuperEvolve", CStr(Arr(j)))
+                End If
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 未攻击/未启动 ==========
+        ElseIf AbilitySplit(0) = "UnStriked" Then
+            ' 获取目标
+            Arr = GetGoal("Field-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For j = 1 To UBound(Arr)
+                Brr = SplitEffect(DownByMatchID(CStr(Arr(j)), "Effect"))
+                For k = 0 To UBound(Brr)
+                    If Left(Brr(k), Len("Striked&")) = "Striked&" Then
+                        Brr(k) = "\"
+                    ElseIf Brr(k) = "Engaged" Then
+                        Brr(k) = "\"
+                    End If
+                Next k
+                Str = Join(Brr, "||") & "||"
+                Str = Replace(Str, "\||", "")
+                If Str = "||" Then Str = ""
+                Call UpByMatchID(CStr(Arr(j)), "Effect", Str)
+            Next j
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 选择能力 ==========
+        ElseIf AbilitySplit(0) = "AuxSelect" Then
+            ' 获取目标并超进化
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr
+
+'========================================================================================================================================================================================================
+        ' ========== 替换牌组能力 ==========
+        ElseIf AbilitySplit(0) = "ReplaceDeck" Then
+            ' 翻译牌组ID
+            Str = IDTranslate("Deck", Mid(AbilitySplit(1), 1 + Len("Deck:"), 100))
+            
+            ' 清除现有牌组
+            Arr = Down("Data")
+            For j = 1 To UBound(Arr)
+                If Arr(j, 4) = "Deck" Then
+                    If Left(Arr(j, 1), 1) = Left(ThisCard, 1) Then Arr(j, 1) = Empty
+                ElseIf Arr(j, 1) = "" Then
+                    Exit For
+                End If
+            Next j
+            Arr = NonEmptyArray(Arr, True)
+            Call Up("Data", Arr)
+            
+            ' 获得新牌组
+            Arr = Sheets("SetDeck").UsedRange
+            For k = 1 To UBound(Arr, 2)
+                If Arr(1, k) = Str Then Exit For
+            Next k
+            If k <= UBound(Arr, 2) Then
+                For j = 2 To UBound(Arr, 1)
+                    If Arr(j, k) = "" Then
+                        Exit For
+                    Else
+                        Call GetAbility("||AddToDeck|" & IDByName(CStr(Arr(j, k))) & "|1", ThisCard)
+                    End If
+                Next j
+            End If
+
+'========================================================================================================================================================================================================
+        ' ========== 去重消失能力 ==========
+        ElseIf AbilitySplit(0) = "BanishDuplicates" Then
+            ' 获取目标并去重
+            Arr = GetGoal(AbilitySplit(1), ThisCard, InputEffect)
+            Call GetGoal("Random@1000-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            Str = "|Goal"
+            For j = 1 To UBound(Arr)
+                If InStr(PreviousGoal, Arr(j)) = 0 Then Str = Str & "&" & Arr(j)
+            Next j
+            If Str <> "|Goal" Then
+                Call GetAbility("||Banish" & Str, ThisCard)
+                
+                ' 更新效果字符串
+                EffectSplit(i) = AbilitySplit(0) & Str
+            End If
+
+'========================================================================================================================================================================================================
+        ' ========== 纹章能力 ==========
+        ElseIf Left(AbilitySplit(0), Len("Crest&")) = "Crest&" Or Left(AbilitySplit(0), Len("Enemy-Crest&")) = "Enemy-Crest&" Then
+            ' 生成纹章ID
+            Crr = Translate("Crest") & ":" & DownByID(DownByMatchID(ThisCard, "ID"), "Name")
+            Str = IDByName(CStr(Crr))
+            
+            ' 确定生效方
+            If Left(AbilitySplit(0), Len("Enemy-")) = "Enemy-" Then
+                If Left(ThisCard, 1) = "F" Then Brr = "S" Else Brr = "F"
+            Else
+                Brr = Left(ThisCard, 1)
+            End If
+            
+            ' 检查是否已存在
+            Arr = Down("Crest", CStr(Brr))
+            For j = 1 To UBound(Arr)
+                If Arr(j, 2) = Str Then Exit For
+            Next j
+            
+            ' 不存在则创建
+            If j > UBound(Arr) Then
+                ' 创建纹章卡牌
+                Arr = Down("Data")
+                k = 0
+                For j = 1 To UBound(Arr)
+                    If Arr(j, 1) = "" Then Exit For
+                    If Left(Arr(j, 1), 1) = Brr Then
+                        If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                    End If
+                Next j
+                Arr(j, 1) = Brr & k + 1
+                Arr(j, 2) = Str
+                Str = Arr(j, 1)
+                Call Up("Data", Arr)
+                
+                ' 进入战场
+                Flag = UpByMatchID(Str, "Area", "Crest")
+                If Flag Then
+                    Call GetAction("EnterField", Str, True)
+                    Call GetAction("EnterField", Str, Crr)
+                End If
+                
+                ' 更新效果字符串
+                EffectSplit(i) = AbilitySplit(0) & "|Goal&" & Str
+            End If
+            
+'========================================================================================================================================================================================================
+        ' ========== 信仰能力 ==========
+        ElseIf AbilitySplit(0) = "Faith" Then
+            ' 生成信仰ID
+            Crr = Translate("Faith") & ":" & DownByID(DownByMatchID(ThisCard, "ID"), "Name")
+            Str = IDByName(CStr(Crr))
+            
+            ' 确定生效方
+            Brr = Left(ThisCard, 1)
+            
+            ' 检查是否已存在
+            Arr = Down("Crest", CStr(Brr))
+            For j = 1 To UBound(Arr)
+                If Arr(j, 2) = Str Then Exit For
+            Next j
+            
+            ' 不存在则创建
+            If j > UBound(Arr) Then
+                ' 创建信仰卡牌
+                Arr = Down("Data")
+                k = 0
+                For j = 1 To UBound(Arr)
+                    If Arr(j, 1) = "" Then Exit For
+                    If Left(Arr(j, 1), 1) = Brr Then
+                        If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                    End If
+                Next j
+                Arr(j, 1) = Brr & k + 1
+                Arr(j, 2) = Str
+                Str = Arr(j, 1)
+                Call Up("Data", Arr)
+                
+                ' 进入战场
+                Flag = UpByMatchID(Str, "Area", "Crest")
+                If Flag Then
+                    Call GetAction("EnterField", Str, True)
+                    Call GetAction("EnterField", Str, Crr)
+                End If
+                
+                ' 更新效果字符串
+                EffectSplit(i) = AbilitySplit(0) & "|Goal&" & Str
+            End If
+
+'========================================================================================================================================================================================================
+        ' ========== 魔力增幅能力 ==========
+        ElseIf AbilitySplit(0) = "Spellboost" Then
+            ' 处理增幅次数变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            ' 获取目标并魔力增幅
+            Arr = GetGoal("Allied-" & AbilitySplit(1), ThisCard, InputEffect, EffectSplit(i))
+            
+            '记录
+            PreviousStr = PreviousGoal
+            
+            For m = 1 To UBound(Arr)
+                Str = DownByMatchID(CStr(Arr(m)), "Effect")
+                Brr = GetEffect(CStr(Arr(m)))
+                Flag = False
+                For n = 1 To UBound(Brr, 1)
+                    If Left(Brr(n), Len("Spellboost|X=")) = "Spellboost|X=" Then
+                        ' 处理X=类型的魔力增幅
+                        Flag = True
+                        Crr = SplitEffect(Str)
+                        For k = 0 To UBound(Crr)
+                            If Left(Crr(k), Len("Spellboost&")) = "Spellboost&" Then
+                                Crr(k) = "Spellboost&" & Val(Mid(Crr(k), 1 + Len("Spellboost&"), 10)) + AbilitySplit(2)
+                                Str = Join(Crr, "||") & "||"
+                                Exit For
+                            End If
+                        Next k
+                        If k > UBound(Crr) Then Str = Str & "||Spellboost&" & AbilitySplit(2)
+                    ElseIf Left(Brr(n), Len("Spellboost|")) = "Spellboost|" Then
+                        ' 处理其他类型的魔力增幅
+                        Flag = True
+                        For k = 1 To AbilitySplit(2)
+                            Str = Str & Mid(Brr(n), 1 + Len("Spellboost|"), 10) & "||"
+                        Next k
+                    End If
+                Next n
+                Str = JoinEffect(Str)
+                Call UpByMatchID(CStr(Arr(m)), "Effect", Str)
+                If Flag Then Call GetAction("Spellboost", CStr(Arr(m)), True)
+                If Flag Then Call GetAction("Spellboost", CStr(Arr(m)), AbilitySplit(2))
+            Next m
+            
+            ' 更新效果字符串
+            EffectSplit(i) = AbilitySplit(0) & "|Goal&" & PreviousStr & "|" & AbilitySplit(2)
+
+'========================================================================================================================================================================================================
+        ' ========== 冠名计数能力 ==========
+        ElseIf AbilitySplit(0) = "NamingCount" Then
+            ' 处理计数变量
+            If InStr("-X-Y-Z", AbilitySplit(2)) > 0 Then
+                AbilitySplit(2) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(2))
+            End If
+            
+            ' 更新冠名计数
+            Call Up(AbilitySplit(1), Down(AbilitySplit(1), ThisCard) + AbilitySplit(2), ThisCard)
+
+'========================================================================================================================================================================================================
+        ' ========== 土之印能力 ==========
+        ElseIf AbilitySplit(0) = "EarthSigil" Then
+            ' 处理土之印数量变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 查找土之印
+            Arr = Down("Field", ThisCard)
+            For m = 1 To UBound(Arr, 1)
+                If InStr(Arr(m, 5), "EarthSigil&") > 0 Then Exit For
+            Next m
+            ' 增加土之印
+            If m <= UBound(Arr, 1) Then
+                Brr = SplitEffect(Arr(m, 5))
+                For n = 0 To UBound(Brr)
+                    If Left(Brr(n), Len("EarthSigil&")) = "EarthSigil&" Then
+                        k = Val(Mid(Brr(n), 1 + Len("EarthSigil&"), 10)) + AbilitySplit(1)
+                        Exit For
+                    End If
+                Next n
+                
+                Brr(n) = "EarthSigil&" & k
+                Arr(m, 5) = Join(Brr, "||") & "||"
+                Call UpByMatchID(CStr(Arr(m, 1)), "Effect", Arr(m, 5))
+            Else
+                ' 没有土之印则召唤一个
+                Call GetAbility("||Summon|1030401|1", ThisCard)
+                '重新获取新召唤的土之印
+                Arr = Down("Field", ThisCard)
+                For m = 1 To UBound(Arr, 1)
+                    If InStr(Arr(m, 5), "EarthSigil&") > 0 Then Exit For
+                Next m
+                '给新土之印补加 (AbilitySplit(1) - 1)
+                If AbilitySplit(1) > 1 Then
+                    Brr = SplitEffect(Arr(m, 5))
+                    For n = 0 To UBound(Brr)
+                        If Left(Brr(n), Len("EarthSigil&")) = "EarthSigil&" Then
+                        k = Val(Mid(Brr(n), 1 + Len("EarthSigil&"), 10)) + (AbilitySplit(1) - 1)
+                        Brr(n) = "EarthSigil&" & k
+                    Exit For
+                End If
+                Next n
+                Arr(m, 5) = Join(Brr, "||") & "||"
+                Call UpByMatchID(CStr(Arr(m, 1)), "Effect", Arr(m, 5))
+            End If
+        End If
+
+'========================================================================================================================================================================================================
+        ' ========== 亡者召还能力 ==========
+        ElseIf AbilitySplit(0) = "Reanimate" Then
+            ' 处理召还费用变量
+            If InStr("-X-Y-Z", AbilitySplit(1)) > 0 Then
+                AbilitySplit(1) = GetXFunction(EffectSplit, ThisCard, i, AbilitySplit(1))
+            End If
+            
+            ' 获取符合条件的亡者
+            Call GetGoal("Cost<" & AbilitySplit(1) + 1 & "-Allied-ThisMatch@Destroy-Follower", ThisCard, InputEffect, EffectSplit(i))
+            Brr = GetGoal("Random&1-Cost$Highest-It", ThisCard, "Goal&" & PreviousGoal & "||Random&1-Cost&Highest-It", "Random&1-Cost&Highest-It")
+            
+            ' 召还亡者
+            If PreviousGoal <> "-1" And PreviousGoal <> "" Then
+                Arr = Down("Data")
+                k = 0
+                For j = 1 To UBound(Arr)
+                    If Arr(j, 1) = "" Then Exit For
+                    If Left(Arr(j, 1), 1) = Left(ThisCard, 1) Then
+                        If Val(Mid(Arr(j, 1), 2, 10)) > k Then k = Val(Mid(Arr(j, 1), 2, 10))
+                    End If
+                Next j
+                Str = Empty
+                For m = 1 To 1
+                    Arr(j, 1) = Left(ThisCard, 1) & k + 1
+                    Arr(j, 2) = DownByMatchID(CStr(Brr(1)), "ID")
+                    Arr(j, 5) = "Trait:5||"
+                    Str = Str & "&" & Arr(j, 1)
+                    j = j + 1
+                    k = k + 1
+                Next m
+                Call Up("Data", Arr)
+                
+                ' 进入战场
+                Arr = Split(Str, "&")
+                For j = 1 To UBound(Arr)
+                    Flag = UpByMatchID(CStr(Arr(j)), "Area", "Field")
+                    If Flag Then
+                        Call GetAction("EnterField", CStr(Arr(j)), True)
+                        Call GetAction("EnterField", CStr(Arr(j)), DownByID(DownByMatchID(CStr(Arr(j)), "ID"), "Name"))
+                    End If
+                Next j
+                
+                Call GetAction("Reanimate", ThisCard, True)
+                Call GetAction("Reanimate", ThisCard, AbilitySplit(1))
+                
+                ' 更新效果字符串
+                EffectSplit(i) = AbilitySplit(0) & "|Goal" & Str
+            End If
+
+'========================================================================================================================================================================================================
+        ' ========== 其他能力 ==========
+        Else
+            ' 未定义的能力类型
+        
+        End If
+        
+        ' ========== 效果字符串更新 ==========
+        ' 更新输入效果字符串
+        InputEffect = Join(EffectSplit, "||")
+        
+        ' ========== 重复执行检查 ==========
+        RepeatTimes = RepeatTimes - 1
+        If RepeatTimes > 0 Then GoTo Repeat
+    Next i
+    
+    Call OutputLog(InputEffect, ThisCard)
+End Function

@@ -11,6 +11,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using System.Linq; // Added for OfType, FirstOrDefault, Any, Select
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // Added for DestroyEffectRequest
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -18,6 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// Handles the application of the Damage effect.
     /// </summary>
     // Inherit from EffectHandlerBase instead of IEffectHandler directly
+    [EffectHandler(EffectType.Damage)]
     public class DamageEffectHandler : EffectHandlerBase<DamageEffectParams>
     {
         // Remove private _logger, use base.Logger or Logger directly
@@ -30,7 +33,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
-        public override GameStateActionResult Apply(GameContext context, DamageEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, DamageEffectParams parameters)
         {
             const string effectName = "DamageEffect";
             Logger.LogDebug("{EffectName}: Starting with DamageAmount={Amount}.", effectName, parameters.DamageAmount);
@@ -38,13 +41,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             if (parameters.DamageAmount <= 0)
             {
                 Logger.LogInformation("{EffectName}: DamageAmount is {DamageAmount}. No damage will be dealt.", effectName, parameters.DamageAmount);
-                // Still return success as it's not an error, just no action.
-                // An EffectCompletedEvent might still be useful to indicate the effect was processed.
+                return new GameStateActionResult { Success = true };
             }
 
-            Func<CardInstance, GameContext, DomainOperationResult> cardDamageAction =
-                (card, ctx) =>
+            Func<TargetInfo, GameContext, DomainOperationResult> damageAction =
+                (targetInfo, ctx) =>
                 {
+                    if (targetInfo.Type != Common.TargetType.Card || targetInfo.Card == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Target is not a card or card data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Damage effect can only be applied to cards." };
+                    }
+
+                    var card = targetInfo.Card;
                     var operationResult = card.TakeDamage(parameters.DamageAmount, ctx.SourceCard);
 
                     // After dealing damage, check if the card is destroyed.
@@ -54,9 +63,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         var ownerPlayer = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
                         if (ownerPlayer != null)
                         {
-                            var destroyResult = ownerPlayer.DestroyCard(card, ctx.SourceCard, "DestroyedByDamage");
-                            // Merge the events from the destroy operation.
-                            operationResult.GeneratedEvents.AddRange(destroyResult.GeneratedEvents);
+                            if (ctx.SourceCard == null)
+                            {
+                                Logger.LogError("SourceCard is null in DamageEffectHandler when trying to destroy a card. This should not happen.");
+                                // Even if source is null, we should probably still destroy the card as it has 0 health.
+                                // However, we cannot call DestroyCard without a source. This indicates a deeper issue.
+                                // For now, we will fail gracefully for this target.
+                                operationResult.Success = false;
+                                operationResult.ErrorMessage = "Could not determine damage source for destruction.";
+                            }
+                            else
+                            {
+                                var destroyResult = ownerPlayer.DestroyCard(card, ctx.SourceCard, "DestroyedByDamage");
+                                // Merge the events from the destroy operation.
+                                operationResult.GeneratedEvents.AddRange(destroyResult.GeneratedEvents);
+                            }
                         }
                         else
                         {
@@ -69,19 +90,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
             var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                null, // No specific player context needed for the action itself
-                cardDamageAction,
+                effect.SelectedTargets,
+                damageAction,
                 effectName);
 
             if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
             {
-                // If ProcessTargets itself failed without a specific message (e.g. no valid targets found by selector)
                 serviceResult.ErrorMessage = "Failed to process targets for damage effect, or no valid targets found.";
             }
 
-            // The EffectCompletedEvent will be created by the EffectExecutor.
-            // This handler is now only responsible for invoking the domain logic
-            // and returning the atomic events generated by that logic.
             return serviceResult;
         }
 

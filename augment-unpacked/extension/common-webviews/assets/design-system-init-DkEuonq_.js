@@ -1,0 +1,1 @@
+import{a8 as m,a9 as a,aa as d}from"./SpinnerAugment-BY2Lraps.js";const e="dark",n="light";function o(t){t===d.dark?(document.documentElement.classList.add(e),document.documentElement.classList.remove(n)):(document.documentElement.classList.add(n),document.documentElement.classList.remove(e))}let s;s===void 0&&(s=function(){const t=m(c=>{o(c)});return o(a()),t}());

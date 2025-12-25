@@ -1,0 +1,1 @@
+import{C as o,J as p,Q as r,ab as t,b as e}from"./SpinnerAugment-BY2Lraps.js";var b=p("<span></span>");function f(c,a){let n=o(a,"icon",8),i=o(a,"class",8,"");var s=b();r(()=>t(s,1,`codicon codicon-${n()??""} ${i()??""}`)),e(c,s)}export{f as V};

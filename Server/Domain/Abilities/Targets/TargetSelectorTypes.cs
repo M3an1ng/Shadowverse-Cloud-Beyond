@@ -1,5 +1,7 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
+using System.ComponentModel;
+
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 {
     /// <summary>
@@ -122,16 +124,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// <summary>
         /// 中止能力
         /// </summary>
+        [Description("中止能力")]
         AbortAbility,
 
         /// <summary>
         /// 跳过效果
         /// </summary>
+        [Description("跳过效果")]
         SkipEffect,
 
         /// <summary>
         /// 记录警告
         /// </summary>
+        [Description("记录警告")]
         LogWarning
     }
 

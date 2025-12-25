@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pipeline UI Variants</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Spectral:wght@600&display=swap");
+
+      :root {
+        --ink: #1f1b16;
+        --muted: #5c5a56;
+        --bg: #f7f1ea;
+        --card: #fffaf3;
+        --line: #e4d4c4;
+        --accent: #0e7c86;
+        --accent-2: #f4a259;
+        --accent-3: #7b6cff;
+        --shadow: rgba(35, 25, 15, 0.15);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 600px at 80% -20%, rgba(255, 214, 153, 0.45), transparent 60%),
+          radial-gradient(900px 600px at -10% 20%, rgba(195, 238, 241, 0.55), transparent 55%),
+          linear-gradient(120deg, #fff1df 0%, #f9f6f0 45%, #edf4ff 100%);
+        min-height: 100vh;
+      }
+
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 48px 20px 72px;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      h1 {
+        font-family: "Spectral", serif;
+        font-size: clamp(28px, 4vw, 40px);
+        margin: 0;
+        letter-spacing: 0.5px;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        max-width: 760px;
+        font-size: 15px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 18px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px 18px 20px;
+        box-shadow: 0 10px 30px var(--shadow);
+        position: relative;
+        overflow: visible;
+        animation: lift 0.6s ease both;
+      }
+
+      .card:nth-child(2) {
+        animation-delay: 0.08s;
+      }
+
+      .card:nth-child(3) {
+        animation-delay: 0.16s;
+      }
+
+      .card::after {
+        content: "";
+        position: absolute;
+        inset: 12px;
+        border-radius: 12px;
+        border: 1px dashed rgba(125, 106, 82, 0.25);
+        pointer-events: none;
+      }
+
+      .variant-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1.8px;
+        color: var(--muted);
+      }
+
+      .variant-title {
+        font-size: 18px;
+        margin: 6px 0 12px;
+        font-weight: 700;
+      }
+
+      .dsl-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: #fff;
+        border-radius: 12px;
+        border: 1px solid rgba(80, 62, 41, 0.12);
+      }
+
+      .capsule {
+        background: #f3e6d6;
+        border: 1px solid #dfc1a2;
+        color: #3f2a16;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 13px;
+      }
+
+      .pipe-label {
+        font-size: 11px;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        color: #0b5260;
+        background: rgba(14, 124, 134, 0.1);
+        border: 1px solid rgba(14, 124, 134, 0.3);
+        padding: 4px 8px;
+        border-radius: 8px;
+      }
+
+      .stage-chip {
+        font-size: 12px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid #c5d8da;
+        background: #f2fbfb;
+        color: #0b4b53;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .stage-chip .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #69c095;
+        box-shadow: 0 0 0 2px rgba(105, 192, 149, 0.2);
+      }
+
+      .stage-chip.missing .dot {
+        background: #f4a259;
+        box-shadow: 0 0 0 2px rgba(244, 162, 89, 0.2);
+      }
+
+      .stage-chip.error .dot {
+        background: #e05353;
+        box-shadow: 0 0 0 2px rgba(224, 83, 83, 0.2);
+      }
+
+      .suffix-pill {
+        background: #f5ebff;
+        border: 1px solid #d6c9ff;
+        color: #3f3a6b;
+      }
+
+      .wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 14px;
+        background: #f8f0ff;
+        border: 1px solid #dcc6ff;
+        position: relative;
+      }
+
+      .wrap::before,
+      .wrap::after {
+        content: "";
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        border: 2px solid #7b6cff;
+        border-radius: 4px;
+      }
+
+      .wrap::before {
+        left: -8px;
+        top: 50%;
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .wrap::after {
+        right: -8px;
+        top: 50%;
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .note {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 10px;
+      }
+
+      .main-expression-shell {
+        background: #e9ecef;
+        border: 1px solid #ced4da;
+        border-radius: 8px;
+        padding: 12px 14px;
+      }
+
+      .main-expression-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #495057;
+        margin-bottom: 8px;
+      }
+
+      .main-expression-body {
+        background: #f8f9fa;
+        border: 1px dashed #ced4da;
+        border-radius: 6px;
+        padding: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+
+      .capsule-outer {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: linear-gradient(135deg, #e8f5e8 0%, #f0f8f0 100%);
+        border: 2px solid #27ae60;
+        color: #2c3e50;
+        border-radius: 20px;
+        padding: 6px 12px;
+        font-weight: 600;
+        box-shadow: 0 2px 4px rgba(39, 174, 96, 0.2);
+        flex-wrap: wrap;
+        row-gap: 6px;
+        max-width: 100%;
+      }
+
+      .capsule-inner {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: linear-gradient(135deg, #e8f5e8 0%, #f0f8f0 100%);
+        border: 2px solid #27ae60;
+        color: #2c3e50;
+        border-radius: 18px;
+        padding: 4px 10px;
+        font-size: 12px;
+        box-shadow: 0 2px 4px rgba(39, 174, 96, 0.2);
+      }
+
+      .operator-chip {
+        background: #ffebee;
+        color: #c62828;
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-weight: 700;
+        font-size: 12px;
+      }
+
+      .pipeline-inline {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        background: #e1f5fe;
+        color: #0277bd;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      details {
+        width: 100%;
+      }
+
+      summary {
+        list-style: none;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #0b5260;
+        background: rgba(14, 124, 134, 0.08);
+        border: 1px solid rgba(14, 124, 134, 0.3);
+        padding: 6px 10px;
+        border-radius: 10px;
+      }
+
+      summary::marker {
+        display: none;
+      }
+
+      summary::after {
+        content: "▸";
+        display: inline-block;
+        margin-left: 4px;
+        transition: transform 0.2s ease;
+      }
+
+      details[open] summary::after {
+        transform: rotate(90deg);
+      }
+
+      .pipeline-actions {
+        display: inline-flex;
+        gap: 6px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      .mini-btn {
+        border: 1px solid rgba(14, 124, 134, 0.35);
+        background: rgba(14, 124, 134, 0.1);
+        color: #0b5260;
+        padding: 6px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+      }
+
+      @keyframes lift {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 720px) {
+        main {
+          padding: 28px 16px 48px;
+        }
+
+        .dsl-line {
+          gap: 6px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Pipeline UI Variants</h1>
+        <div class="subtitle">
+          Three ways to summarize a pipeline now that a dedicated editor exists. Each card
+          keeps the DSL chain readable while providing a compact stage overview.
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <div class="variant-label">Variant A</div>
+          <div class="variant-title">Single Summary Chip</div>
+          <div class="dsl-line">
+            <span class="capsule">context.triggeringEvent.target</span>
+            <span class="pipe-label">Pipeline</span>
+            <span class="stage-chip"><span class="dot"></span>Filter</span>
+            <span class="stage-chip"><span class="dot"></span>Sort</span>
+            <span class="stage-chip missing"><span class="dot"></span>Select</span>
+          </div>
+          <div class="pipeline-actions">
+            <span class="mini-btn">Edit pipeline</span>
+            <span class="mini-btn">Add stage</span>
+          </div>
+          <div class="note">Best for low noise. Emphasizes status over syntax.</div>
+        </article>
+
+        <article class="card">
+          <div class="variant-label">Variant B</div>
+          <div class="variant-title">Prefix + Expandable Tags</div>
+          <div class="dsl-line">
+            <span class="capsule">context.triggeringEvent.target</span>
+            <details open>
+              <summary>Pipeline · 3 stages</summary>
+              <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+                <span class="stage-chip"><span class="dot"></span>Filter</span>
+                <span class="stage-chip"><span class="dot"></span>Sort</span>
+                <span class="stage-chip error"><span class="dot"></span>Select</span>
+              </div>
+            </details>
+          </div>
+          <div class="note">Keeps a prefix label but hides tags when collapsed.</div>
+        </article>
+
+        <article class="card">
+          <div class="variant-label">Variant C</div>
+          <div class="variant-title">Wrapped Pipeline Block</div>
+          <div class="dsl-line">
+            <span class="wrap">
+              <span class="capsule-inner">context.triggeringEvent.target</span>
+              <span class="stage-chip"><span class="dot"></span>Filter</span>
+              <span class="stage-chip suffix-pill"><span class="dot"></span>Sort</span>
+              <span class="stage-chip missing"><span class="dot"></span>Select</span>
+            </span>
+          </div>
+          <div class="note">Visually groups the stages into a single pipeline module.</div>
+        </article>
+      </section>
+
+      <section>
+        <div class="variant-label">Main Expression Context</div>
+        <div class="variant-title">How each variant sits inside a finished expression</div>
+        <div class="grid" style="margin-top:12px;">
+          <article class="card">
+            <div class="variant-label">Variant A</div>
+            <div class="main-expression-shell">
+              <div class="main-expression-title">已完成表达式</div>
+              <div class="main-expression-body">
+                <span class="capsule-outer">
+                  <span class="capsule-inner">context.triggeringEvent.target</span>
+                  <span class="pipeline-inline">Pipeline</span>
+                  <span class="stage-chip"><span class="dot"></span>Filter</span>
+                  <span class="stage-chip"><span class="dot"></span>Sort</span>
+                  <span class="stage-chip missing"><span class="dot"></span>Select</span>
+                  <span class="operator-chip">.count()</span>
+                </span>
+              </div>
+            </div>
+            <div class="note">Outer capsule wraps the whole expression; inner capsule marks the source.</div>
+          </article>
+
+          <article class="card">
+            <div class="variant-label">Variant B</div>
+            <div class="main-expression-shell">
+              <div class="main-expression-title">已完成表达式</div>
+              <div class="main-expression-body">
+                <span class="capsule-outer">
+                  <span class="capsule-inner">context.triggeringEvent.target</span>
+                  <details>
+                    <summary>Pipeline · 3 stages</summary>
+                    <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+                      <span class="stage-chip"><span class="dot"></span>Filter</span>
+                      <span class="stage-chip"><span class="dot"></span>Sort</span>
+                      <span class="stage-chip error"><span class="dot"></span>Select</span>
+                    </div>
+                  </details>
+                  <span class="operator-chip">.count()</span>
+                </span>
+              </div>
+            </div>
+            <div class="note">Nested capsule still shows the source while the pipeline stays collapsible.</div>
+          </article>
+
+          <article class="card">
+            <div class="variant-label">Variant C</div>
+            <div class="main-expression-shell">
+              <div class="main-expression-title">已完成表达式</div>
+              <div class="main-expression-body">
+                <span class="capsule-outer">
+                  <span class="wrap">
+                    <span class="capsule-inner">context.triggeringEvent.target</span>
+                    <span class="stage-chip"><span class="dot"></span>Filter</span>
+                    <span class="stage-chip suffix-pill"><span class="dot"></span>Sort</span>
+                    <span class="stage-chip missing"><span class="dot"></span>Select</span>
+                  </span>
+                  <span class="operator-chip">.count()</span>
+                </span>
+              </div>
+            </div>
+            <div class="note">Pipeline block is visually packaged inside the outer capsule.</div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

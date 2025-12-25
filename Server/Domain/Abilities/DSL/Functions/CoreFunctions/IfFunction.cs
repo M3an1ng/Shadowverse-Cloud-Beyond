@@ -19,14 +19,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class IfFunction : BaseDslFunction
     {
         public override string Name => "if";
+        public override string Description => "根据条件返回两个值中的一个。";
+
+        public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
+        {
+            new DslParameterInfo("condition", typeof(bool), "判断条件。"),
+            new DslParameterInfo("thenValue", typeof(object), "如果条件为真，则返回此值。"),
+            new DslParameterInfo("elseValue", typeof(object), "如果条件为假，则返回此值。", isOptional: true, defaultValue: null)
+        };
 
         protected override int GetMinimumArgumentCount() => 2;
         protected override int? GetMaximumArgumentCount() => 3;
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
+        public override object? Execute(List<object?> args, GameContext context)
         {
-            await Task.CompletedTask; // 标记为异步但实际上是同步操作
-
             if (args.Count < 2)
             {
                 return null;

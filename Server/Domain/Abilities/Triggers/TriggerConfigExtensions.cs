@@ -121,7 +121,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             var optimizedConfig = new TriggerConfig
             {
                 Id = config.Id,
-                Name = config.Name + "_ActiveZoneOptimized",
                 EventTypes = new List<EventType>(config.EventTypes),
                 Timing = config.Timing,
                 IsEnabled = config.IsEnabled

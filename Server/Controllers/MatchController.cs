@@ -5,8 +5,12 @@
 using System;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Hubs;
+using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Controllers
@@ -17,11 +21,25 @@ namespace ShadowverseBeyond.Server.Controllers
     {
         private readonly IMatchService _matchService;
         private readonly ILogger<MatchController> _logger;
+        private readonly IHubContext<GameHub, IGameClient> _hubContext;
+        private readonly IDeckService _deckService;
+        private readonly IDeckValidationService _deckValidation;
+        private readonly IDeckCodeService _deckCodeService;
 
-        public MatchController(IMatchService matchService, ILogger<MatchController> logger)
+        public MatchController(
+            IMatchService matchService,
+            ILogger<MatchController> logger,
+            IHubContext<GameHub, IGameClient> hubContext,
+            IDeckService deckService,
+            IDeckValidationService deckValidation,
+            IDeckCodeService deckCodeService)
         {
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
+            _deckService = deckService ?? throw new ArgumentNullException(nameof(deckService));
+            _deckValidation = deckValidation ?? throw new ArgumentNullException(nameof(deckValidation));
+            _deckCodeService = deckCodeService ?? throw new ArgumentNullException(nameof(deckCodeService));
         }
 
         [HttpPost]
@@ -89,6 +107,119 @@ namespace ShadowverseBeyond.Server.Controllers
             return MapResult(result, includeTokens: false);
         }
 
+        [HttpPost("{id}/deck")]
+        [ProducesResponseType(typeof(MatchResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public async Task<ActionResult<MatchResponse>> SelectDeck(string id, [FromBody] DeckSelectionRequest request, CancellationToken cancellationToken)
+        {
+            var validate = ValidateDeckSelectionRequest(request);
+            if (validate != null) return validate;
+
+            var auth = _matchService.ValidateConnection(id, request.PlayerId, request.Token);
+            if (!auth.Success) return MapResult(auth, includeTokens: false);
+
+            if (!TryBuildDeckOwner(request.UserId, request.GuestId, out var owner, out var ownerError))
+            {
+                return BadRequest(ownerError);
+            }
+
+            var playerDeckId = request.DeckId;
+            var playerDeckValidation = await _deckService.ExportCodeAsync(owner, playerDeckId, cancellationToken);
+            if (!playerDeckValidation.Success)
+            {
+                return MapNotFoundOrBadRequest(playerDeckValidation.Error);
+            }
+
+            var selection = new MatchDeckSelection
+            {
+                UserId = owner.UserId,
+                GuestId = owner.GuestId,
+                DeckId = playerDeckId
+            };
+
+            MatchDeckSelection? aiSelection = null;
+            if (request.AiDeckId.HasValue || !string.IsNullOrWhiteSpace(request.AiDeckCode))
+            {
+                if (!TryBuildDeckOwner(request.AiUserId, request.AiGuestId, out var aiOwner, out _))
+                {
+                    aiOwner = owner;
+                }
+
+                if (request.AiDeckId.HasValue)
+                {
+                    var aiDeckId = request.AiDeckId.Value;
+                    var aiDeckValidation = await _deckService.ExportCodeAsync(aiOwner, aiDeckId, cancellationToken);
+                    if (!aiDeckValidation.Success)
+                    {
+                        return MapNotFoundOrBadRequest(aiDeckValidation.Error);
+                    }
+
+                    aiSelection = new MatchDeckSelection
+                    {
+                        UserId = aiOwner.UserId,
+                        GuestId = aiOwner.GuestId,
+                        DeckId = aiDeckId
+                    };
+                }
+                else if (!string.IsNullOrWhiteSpace(request.AiDeckCode))
+                {
+                    if (!_deckCodeService.TryDecode(request.AiDeckCode, out var aiDeckClass, out var aiCards, out var decodeError))
+                    {
+                        return BadRequest(decodeError ?? "AI deck code is invalid.");
+                    }
+
+                    var aiValidation = await _deckValidation.ValidateAsync(aiDeckClass, aiCards, requireComplete: true, cancellationToken);
+                    if (!aiValidation.Success)
+                    {
+                        return BadRequest(aiValidation.Error ?? "AI deck validation failed.");
+                    }
+
+                    aiSelection = new MatchDeckSelection
+                    {
+                        DeckCode = request.AiDeckCode
+                    };
+                }
+            }
+
+            var result = _matchService.SubmitDeckSelection(id, request.PlayerId, selection, aiSelection);
+            return MapResult(result, includeTokens: false);
+        }
+
+        [HttpPost("{id}/leave")]
+        [ProducesResponseType(typeof(MatchResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public async Task<ActionResult<MatchResponse>> Leave(string id, [FromBody] SeatRequest request)
+        {
+            var validate = ValidateSeatRequest(request);
+            if (validate != null) return validate;
+
+            var auth = _matchService.ValidateConnection(id, request.PlayerId, request.Token);
+            if (!auth.Success && auth.Error != MatchOperationError.AlreadyClosed) return MapResult(auth, includeTokens: false);
+            if (auth.Room == null) return MapResult(auth, includeTokens: false);
+            if (auth.Error == MatchOperationError.AlreadyClosed)
+            {
+                return Ok(ToResponse(auth.Room, includeTokens: false));
+            }
+
+            var room = auth.Room;
+            var leaverRole = request.PlayerId == room.HostPlayerId ? "Host" : "Guest";
+            var reason = leaverRole == "Host"
+                ? "房主已退出，房间已解散。"
+                : "访客已退出，房间已解散。";
+
+            _matchService.Close(id, reason);
+
+            // Notify any connected gameplay clients immediately; lobby clients rely on polling.
+            await _hubContext.Clients.Group($"Game_{id}").ReceiveError($"ROOM_CLOSED:{reason}");
+
+            var closed = _matchService.Get(id);
+            return MapResult(closed, includeTokens: false);
+        }
+
         [HttpGet("{id}")]
         [ProducesResponseType(typeof(MatchResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -113,6 +244,26 @@ namespace ShadowverseBeyond.Server.Controllers
             return null;
         }
 
+        private ActionResult<MatchResponse>? ValidateDeckSelectionRequest(DeckSelectionRequest request)
+        {
+            if (request == null)
+            {
+                return BadRequest("请求体不能为空");
+            }
+
+            if (request.PlayerId == Guid.Empty || string.IsNullOrWhiteSpace(request.Token))
+            {
+                return BadRequest("playerId 和 token 必填");
+            }
+
+            if (request.DeckId == Guid.Empty)
+            {
+                return BadRequest("deckId 必填");
+            }
+
+            return null;
+        }
+
         private ActionResult<MatchResponse> MapResult(MatchOperationResult result, bool includeTokens)
         {
             if (result.Success && result.Room != null)
@@ -130,9 +281,41 @@ namespace ShadowverseBeyond.Server.Controllers
                 MatchOperationError.Expired => Conflict(result.Message ?? "房间已过期"),
                 MatchOperationError.NotParticipant => StatusCode(StatusCodes.Status403Forbidden, result.Message ?? "玩家不在房间内"),
                 MatchOperationError.NotReady => Conflict(result.Message ?? "未满足开始条件"),
+                MatchOperationError.MissingDeckSelection => Conflict(result.Message ?? "卡组未选择完成"),
                 MatchOperationError.Forbidden => StatusCode(StatusCodes.Status403Forbidden, result.Message ?? "无权限"),
                 _ => StatusCode(StatusCodes.Status500InternalServerError, result.Message ?? "未知错误")
             };
+        }
+
+        private static bool TryBuildDeckOwner(Guid? userId, Guid? guestId, out DeckOwner owner, out string? error)
+        {
+            if (userId.HasValue && userId.Value != Guid.Empty)
+            {
+                owner = new DeckOwner(userId, null);
+                error = null;
+                return true;
+            }
+
+            if (guestId.HasValue && guestId.Value != Guid.Empty)
+            {
+                owner = new DeckOwner(null, guestId);
+                error = null;
+                return true;
+            }
+
+            owner = default;
+            error = "userId or guestId is required.";
+            return false;
+        }
+
+        private ActionResult<MatchResponse> MapNotFoundOrBadRequest(string? error)
+        {
+            if (!string.IsNullOrWhiteSpace(error) && error.Contains("not found", StringComparison.OrdinalIgnoreCase))
+            {
+                return NotFound(error);
+            }
+
+            return BadRequest(error ?? "请求无效");
         }
 
         private static MatchResponse ToResponse(MatchRoom room, bool includeTokens)
@@ -148,7 +331,8 @@ namespace ShadowverseBeyond.Server.Controllers
                 Status = room.Status.ToString(),
                 HostReady = room.HostReady,
                 GuestReady = room.GuestReady,
-                UseAiFallback = room.UseAiFallback
+                UseAiFallback = room.UseAiFallback,
+                ClosedReason = room.ClosedReason
             };
         }
 
@@ -171,6 +355,19 @@ namespace ShadowverseBeyond.Server.Controllers
             public string Token { get; set; } = string.Empty;
         }
 
+        public class DeckSelectionRequest
+        {
+            public Guid PlayerId { get; set; }
+            public string Token { get; set; } = string.Empty;
+            public Guid? UserId { get; set; }
+            public Guid? GuestId { get; set; }
+            public Guid DeckId { get; set; }
+            public Guid? AiUserId { get; set; }
+            public Guid? AiGuestId { get; set; }
+            public Guid? AiDeckId { get; set; }
+            public string? AiDeckCode { get; set; }
+        }
+
         public class MatchResponse
         {
             public string GameId { get; set; } = string.Empty;
@@ -183,6 +380,7 @@ namespace ShadowverseBeyond.Server.Controllers
             public bool HostReady { get; set; }
             public bool GuestReady { get; set; }
             public bool UseAiFallback { get; set; }
+            public string? ClosedReason { get; set; }
         }
     }
 }

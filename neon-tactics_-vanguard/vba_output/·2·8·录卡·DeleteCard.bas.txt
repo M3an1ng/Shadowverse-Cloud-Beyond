@@ -1,0 +1,35 @@
+Attribute VB_Name = "·2·8·录卡·DeleteCard"
+Sub DelectCard()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim CardName As String       ' 选中的卡牌名称
+    Dim OrigDeck As Variant      ' 原卡组数据数组
+    Dim i As Integer             ' 排序位置索引
+    Dim Str As String            ' 排序位置索引
+    
+    ' ========== 选中卡牌检查 ==========
+    CardName = CStr(IsSelected("CardSet·Cards"))   ' 获取选中区域的卡牌名称
+    
+    ' ========== 确认 ==========
+    Str = MsgBox("确认删除吗？", vbYesNo, "删除卡牌")
+    If Str = vbYes Then Str = MsgBox("真的确认删除吗？", vbYesNo, "删除卡牌") Else GoTo CleanUp
+    If Str <> vbYes Then GoTo CleanUp
+    
+    ' 如果选中了有效卡牌，则进行添加操作
+    If CardName <> "" Then
+        ' ========== 删除 ==========
+        Call DeleteEffect(IDByName(CardName), "")
+    End If
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub

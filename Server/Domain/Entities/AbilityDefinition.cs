@@ -34,14 +34,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// 能力描述
         /// </summary>
         [MaxLength(500)]
-        public string Description { get; set; } = string.Empty;
+        public string? Description { get; set; }
 
         /// <summary>
         /// 能力标签（如 "Fanfare", "Rush", "LastWords"）
         /// </summary>
         [Required]
         [MaxLength(50)]
-        public string AbilityTag { get; set; } = string.Empty;
+        public string? AbilityTag { get; set; } = string.Empty;
 
         /// <summary>
         /// 能力类型（枚举值）

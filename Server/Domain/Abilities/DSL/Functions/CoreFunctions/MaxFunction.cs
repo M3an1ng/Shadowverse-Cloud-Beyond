@@ -4,6 +4,7 @@
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 //
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,6 +23,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class MaxFunction : BaseDslFunction
     {
         public override string Name => "max";
+        public override string Description => "找出集合中的最大值。可选择性地根据集合中对象的特定属性进行比较。";
+
+        public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
+        {
+            new DslParameterInfo("collection", typeof(IEnumerable), "要查找最大值的目标集合。"),
+            new DslParameterInfo("property", typeof(string), "（可选）一个属性名称。如果提供，则比较该属性的值。", isOptional: true, defaultValue: null)
+        };
 
         protected override int GetMinimumArgumentCount() => 1;
 
@@ -53,10 +61,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return args.All(arg => arg == null || IsNumeric(arg));
         }
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
+        public override object? Execute(List<object?> args, GameContext context)
         {
-            await Task.CompletedTask; // 标记为异步但实际上是同步操作
-
             if (args.Count == 0)
             {
                 return null;

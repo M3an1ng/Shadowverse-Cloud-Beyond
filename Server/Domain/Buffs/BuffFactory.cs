@@ -12,127 +12,27 @@ using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities; // For Ability class
-using ShadowverseBeyond.Server.Services.Abstractions;
+using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Domain.Constants;
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
 {
-    /// <summary>
-    /// Buff工厂接口，负责创建不同类型的Buff实例
-    /// </summary>
-    public interface IBuffFactory
-    {
-        /// <summary>
-        /// 创建属性修改Buff
-        /// </summary>
-        /// <param name="target">目标卡牌</param>
-        /// <param name="sourceCard">源卡牌</param>
-        /// <param name="sourceAbility">源能力</param>
-        /// <param name="statType">属性类型</param>
-        /// <param name="modificationValue">修改值</param>
-        /// <param name="modifierLayer">修改层级</param>
-        /// <param name="durationType">持续时间类型</param>
-        /// <param name="durationParameter">持续时间参数</param>
-        /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
-        /// <returns>创建的Buff实例</returns>
-        BuffConfig CreateStatBuff(
-            CardInstance target,
-            CardInstance? sourceCard,
-            Ability sourceAbility,
-            List<StatModification> statModifications,
-            DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
-
-        /// <summary>
-        /// 创建关键字Buff
-        /// </summary>
-        /// <param name="target">目标卡牌</param>
-        /// <param name="sourceCard">源卡牌</param>
-        /// <param name="sourceAbility">源能力</param>
-        /// <param name="keywords">要添加的关键字列表</param>
-        /// <param name="durationType">持续时间类型</param>
-        /// <param name="durationParameter">持续时间参数</param>
-        /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
-        /// <returns>创建的Buff实例</returns>
-        BuffConfig CreateKeywordBuff(
-            CardInstance target,
-            CardInstance? sourceCard,
-            Ability sourceAbility,
-            List<string> keywords,
-            DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
-
-        /// <summary>
-        /// 创建复合Buff（包含多种效果）
-        /// </summary>
-        /// <param name="target">目标卡牌</param>
-        /// <param name="sourceCard">源卡牌</param>
-        /// <param name="sourceAbility">源能力</param>
-        /// <param name="effects">效果列表</param>
-        /// <param name="durationType">持续时间类型</param>
-        /// <param name="durationParameter">持续时间参数</param>
-        /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
-        /// <returns>创建的Buff实例</returns>
-        BuffConfig CreateCompositeBuff(
-            CardInstance target,
-            CardInstance? sourceCard,
-            Ability sourceAbility,
-            List<IBuffEffect> effects,
-            DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
-
-        /// <summary>
-        /// 根据BuffDefinition创建Buff实例（使用缓存）
-        /// </summary>
-        /// <param name="buffDefinitionId">BuffDefinition ID</param>
-        /// <param name="target">目标卡牌</param>
-        /// <param name="sourceCard">源卡牌</param>
-        /// <param name="sourceAbility">源能力</param>
-        /// <param name="currentTurn">当前回合</param>
-        /// <param name="customParameters">自定义参数（可选）</param>
-        /// <returns>创建的Buff实例，如果失败则返回null</returns>
-        BuffConfig? CreateBuffFromDefinition(
-            string buffDefinitionId,
-            CardInstance target,
-            CardInstance? sourceCard,
-            Ability sourceAbility,
-            int currentTurn,
-            Dictionary<string, object?>? customParameters = null);
-    }
-
     /// <summary>
     /// Buff工厂实现
     /// </summary>
     public class BuffFactory : IBuffFactory
     {
         private readonly ILogger<BuffFactory> _logger;
-        private readonly IGameDataProvider? _gameDataProvider;
-
         public BuffFactory(ILogger<BuffFactory> logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _gameDataProvider = null;
-        }
-
-        public BuffFactory(ILogger<BuffFactory> logger, IGameDataProvider gameDataProvider)
-        {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
         }
 
         /// <inheritdoc />
-        public BuffConfig CreateStatBuff(
+        public Buff CreateStatBuff(
             CardInstance target,
             CardInstance? sourceCard,
-            Ability sourceAbility,
+            IAbility sourceAbility,
             List<StatModification> statModifications,
             DurationType durationType,
             object? durationParameter,
@@ -143,11 +43,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
             if (statModifications == null || !statModifications.Any()) throw new ArgumentException("Stat modifications cannot be null or empty", nameof(statModifications));
 
-            var statEffect = new StatBuffEffect(statModifications);
+            var statEffect = new StatBuffEffect(new List<StatModification>(statModifications));
             var effects = new List<IBuffEffect> { statEffect };
 
-            var buff = new BuffConfig(
-                sourceAbility: sourceAbility,
+            var buff = new Buff(
+                sourceAbilityId: sourceAbility.RuntimeId,
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
                 effects: effects,
@@ -163,11 +63,42 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         }
 
         /// <inheritdoc />
-        public BuffConfig CreateKeywordBuff(
+        public Buff CreateSystemStatBuff(
+            CardInstance target,
+            List<StatModification> statModifications,
+            DurationType durationType,
+            object? durationParameter,
+            int currentTurn,
+            bool isNonStackable = false)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (statModifications == null || !statModifications.Any()) throw new ArgumentException("Stat modifications cannot be null or empty", nameof(statModifications));
+
+            var statEffect = new StatBuffEffect(new List<StatModification>(statModifications));
+            var effects = new List<IBuffEffect> { statEffect };
+
+            var buff = new Buff(
+                sourceAbilityId: Guid.Empty,
+                targetCardInstanceId: target.InstanceId,
+                currentTurn: currentTurn,
+                effects: effects,
+                durationType: durationType,
+                durationParameter: durationParameter,
+                isNonStackable: isNonStackable
+            );
+
+            _logger.LogDebug("Created system stat buff {BuffId} with {Count} modifications on target {TargetId}",
+                buff.Id, statModifications.Count, target.InstanceId);
+
+            return buff;
+        }
+
+        /// <inheritdoc />
+        public Buff CreateKeywordBuff(
             CardInstance target,
             CardInstance? sourceCard,
-            Ability sourceAbility,
-            List<string> keywords,
+            IAbility sourceAbility,
+            List<CardKeyword> keywords,
             DurationType durationType,
             object? durationParameter,
             int currentTurn,
@@ -177,11 +108,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
             if (keywords == null || !keywords.Any()) throw new ArgumentException("Keywords cannot be null or empty", nameof(keywords));
 
-            var keywordEffect = new KeywordBuffEffect(keywords);
+            var keywordStrings = keywords.Select(k => k.ToString()).ToList();
+            var keywordEffect = new KeywordBuffEffect(new List<CardKeyword>(keywords));
             var effects = new List<IBuffEffect> { keywordEffect };
 
-            var buff = new BuffConfig(
-                sourceAbility: sourceAbility,
+            var buff = new Buff(
+                sourceAbilityId: sourceAbility.RuntimeId,
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
                 effects: effects,
@@ -191,16 +123,48 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             );
 
             _logger.LogDebug("Created keyword buff {BuffId} adding keywords [{Keywords}] to target {TargetId}",
-                buff.Id, string.Join(", ", keywords), target.InstanceId);
+                buff.Id, string.Join(", ", keywordStrings), target.InstanceId);
 
             return buff;
         }
 
         /// <inheritdoc />
-        public BuffConfig CreateCompositeBuff(
+        public Buff CreateSystemKeywordBuff(
+            CardInstance target,
+            List<CardKeyword> keywords,
+            DurationType durationType,
+            object? durationParameter,
+            int currentTurn,
+            bool isNonStackable = false)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (keywords == null || !keywords.Any()) throw new ArgumentException("Keywords cannot be null or empty", nameof(keywords));
+
+            var keywordStrings = keywords.Select(k => k.ToString()).ToList();
+            var keywordEffect = new KeywordBuffEffect(new List<CardKeyword>(keywords));
+            var effects = new List<IBuffEffect> { keywordEffect };
+
+            var buff = new Buff(
+                sourceAbilityId: Guid.Empty,
+                targetCardInstanceId: target.InstanceId,
+                currentTurn: currentTurn,
+                effects: effects,
+                durationType: durationType,
+                durationParameter: durationParameter,
+                isNonStackable: isNonStackable
+            );
+
+            _logger.LogDebug("Created system keyword buff {BuffId} adding keywords [{Keywords}] to target {TargetId}",
+                buff.Id, string.Join(", ", keywordStrings), target.InstanceId);
+
+            return buff;
+        }
+
+        /// <inheritdoc />
+        public Buff CreateCompositeBuff(
             CardInstance target,
             CardInstance? sourceCard,
-            Ability sourceAbility,
+            IAbility sourceAbility,
             List<IBuffEffect> effects,
             DurationType durationType,
             object? durationParameter,
@@ -211,8 +175,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
             if (effects == null || !effects.Any()) throw new ArgumentException("Effects cannot be null or empty", nameof(effects));
 
-            var buff = new BuffConfig(
-                sourceAbility: sourceAbility,
+            var buff = new Buff(
+                sourceAbilityId: sourceAbility.RuntimeId,
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
                 effects: effects,
@@ -228,24 +192,18 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         }
 
         /// <inheritdoc />
-        public BuffConfig? CreateBuffFromDefinition(
+        public Buff? CreateBuffFromDefinition(
             string buffDefinitionId,
             CardInstance target,
             CardInstance? sourceCard,
-            Ability sourceAbility,
+            IAbility sourceAbility,
             int currentTurn,
             Dictionary<string, object?>? customParameters = null)
         {
-            if (_gameDataProvider == null)
-            {
-                _logger.LogWarning("GameDataProvider not available. Cannot create buff from definition: {BuffDefinitionId}", buffDefinitionId);
-                return null;
-            }
-
             try
             {
                 // 从缓存获取BuffDefinition
-                var buffDefinition = _gameDataProvider.GetBuffDefinition(buffDefinitionId);
+                var buffDefinition = GameDataProvider.Instance.GetBuffDefinition(buffDefinitionId);
                 if (buffDefinition == null)
                 {
                     _logger.LogWarning("BuffDefinition not found in cache: {BuffDefinitionId}", buffDefinitionId);
@@ -256,21 +214,153 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     buffDefinitionId, target.InstanceId);
 
                 // 解析BuffDefinition的JSON配置
-                var buffConfig = ParseBuffDefinitionConfig(buffDefinition);
-                if (buffConfig == null)
+                var buff = ParseBuffDefinitionConfig(buffDefinition);
+                if (buff == null)
                 {
                     _logger.LogError("Failed to parse BuffDefinition config: {BuffDefinitionId}", buffDefinitionId);
                     return null;
                 }
 
                 // 根据BuffDefinition的类型创建相应的Buff
-                return CreateBuffFromConfig(buffDefinition, buffConfig, target, sourceCard, sourceAbility, currentTurn, customParameters);
+                return CreateBuffFromConfig(buffDefinition, buff, target, sourceCard, sourceAbility, currentTurn, customParameters);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating buff from definition: {BuffDefinitionId}", buffDefinitionId);
                 return null;
             }
+        }
+
+        /// <inheritdoc />
+        public Buff CreateBuffCopy(Buff originalBuff, CardInstance? newTarget = null)
+        {
+            if (originalBuff == null)
+            {
+                throw new ArgumentNullException(nameof(originalBuff));
+            }
+
+            // Determine the target ID for the new buff. If a new target is provided, use its ID; otherwise, use the original's.
+            var targetId = newTarget?.InstanceId ?? originalBuff.TargetCardInstanceId;
+
+            var effectsCopy = CloneEffects(originalBuff.Effects);
+
+            // Corrected implementation: Use the constructor directly instead of CreateCompositeBuff with nulls.
+            var newBuff = new Buff(
+                sourceAbilityId: originalBuff.SourceAbilityId,
+                targetCardInstanceId: targetId, // Use the determined target ID
+                currentTurn: originalBuff.AppliedTurn,
+                effects: effectsCopy,
+                definitionId: originalBuff.DefinitionId,
+                durationType: originalBuff.DurationType,
+                durationParameter: originalBuff.DurationParameter,
+                removalTrigger: originalBuff.RemovalTrigger,
+                removalCondition: originalBuff.RemovalCondition,
+                applicabilityCondition: originalBuff.ApplicabilityCondition,
+                isNonStackable: originalBuff.IsNonStackable
+            )
+            {
+                IsActive = originalBuff.IsActive
+            };
+
+            if (newTarget != null)
+            {
+                _logger.LogDebug("Created a retargeted copy of Buff {OriginalBuffId} as {NewBuffId} for new target {NewTargetId}",
+                    originalBuff.Id, newBuff.Id, newTarget.InstanceId);
+            }
+            else
+            {
+                _logger.LogDebug("Created a deep copy of Buff {OriginalBuffId} as {NewBuffId}", originalBuff.Id, newBuff.Id);
+            }
+
+            return newBuff;
+        }
+
+        /// <inheritdoc />
+        public Buff CreateRemoveKeywordBuff(
+            CardInstance target,
+            CardInstance? sourceCard,
+            IAbility sourceAbility,
+            List<Constants.CardKeyword> keywordsToRemove,
+            int currentTurn)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
+            if (keywordsToRemove == null || !keywordsToRemove.Any()) throw new ArgumentException("Keywords to remove cannot be null or empty", nameof(keywordsToRemove));
+
+            var removeEffect = new RemoveKeywordBuffEffect(new List<CardKeyword>(keywordsToRemove));
+            var effects = new List<IBuffEffect> { removeEffect };
+
+            var buff = new Buff(
+                sourceAbilityId: sourceAbility.RuntimeId,
+                targetCardInstanceId: target.InstanceId,
+                currentTurn: currentTurn,
+                effects: effects,
+                durationType: Abilities.Common.DurationType.Permanent, // Suppression is always permanent
+                durationParameter: null,
+                isNonStackable: true // A card can't have the same keyword suppressed twice by the same source
+            );
+
+            _logger.LogDebug("Created remove keyword buff {BuffId} removing keywords [{Keywords}] from target {TargetId}",
+                buff.Id, string.Join(", ", keywordsToRemove.Select(k => k.ToString())), target.InstanceId);
+
+            return buff;
+        }
+
+        /// <inheritdoc />
+        public Buff CreateSystemRemoveKeywordBuff(
+            CardInstance target,
+            List<CardKeyword> keywordsToRemove,
+            int currentTurn)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (keywordsToRemove == null || !keywordsToRemove.Any()) throw new ArgumentException("Keywords to remove cannot be null or empty", nameof(keywordsToRemove));
+
+            var removeEffect = new RemoveKeywordBuffEffect(new List<CardKeyword>(keywordsToRemove));
+            var effects = new List<IBuffEffect> { removeEffect };
+
+            var buff = new Buff(
+                sourceAbilityId: Guid.Empty,
+                targetCardInstanceId: target.InstanceId,
+                currentTurn: currentTurn,
+                effects: effects,
+                durationType: Abilities.Common.DurationType.Permanent,
+                durationParameter: null,
+                isNonStackable: true
+            );
+
+            _logger.LogDebug("Created system remove keyword buff {BuffId} removing keywords [{Keywords}] from target {TargetId}",
+                buff.Id, string.Join(", ", keywordsToRemove.Select(k => k.ToString())), target.InstanceId);
+
+            return buff;
+        }
+
+        private List<IBuffEffect> CloneEffects(List<IBuffEffect> effects)
+        {
+            var cloned = new List<IBuffEffect>(effects.Count);
+            foreach (var effect in effects)
+            {
+                switch (effect)
+                {
+                    case StatBuffEffect stat:
+                        cloned.Add(new StatBuffEffect(new List<StatModification>(stat.Modifications)));
+                        break;
+                    case KeywordBuffEffect keyword:
+                        cloned.Add(new KeywordBuffEffect(new List<CardKeyword>(keyword.GrantedKeywords)));
+                        break;
+                    case RemoveKeywordBuffEffect remove:
+                        cloned.Add(new RemoveKeywordBuffEffect(remove.KeywordsToRemove.ToList()));
+                        break;
+                    case AbilityBuffEffect ability:
+                        cloned.Add(new AbilityBuffEffect(new List<AbilityConfig>(ability.GrantedAbilityConfigs)));
+                        break;
+                    default:
+                        _logger.LogWarning("Unknown buff effect type {EffectType}; reusing effect instance in copy.", effect.GetType().Name);
+                        cloned.Add(effect);
+                        break;
+                }
+            }
+
+            return cloned;
         }
 
         /// <summary>
@@ -299,12 +389,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary>
         /// 根据配置创建Buff实例
         /// </summary>
-        private BuffConfig? CreateBuffFromConfig(
+        private Buff? CreateBuffFromConfig(
             BuffDefinition buffDefinition,
             BuffDefinitionConfig config,
             CardInstance target,
             CardInstance? sourceCard,
-            Ability sourceAbility,
+            IAbility sourceAbility,
             int currentTurn,
             Dictionary<string, object?>? customParameters)
         {
@@ -323,8 +413,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 }
 
                 // 创建Buff实例
-                var buff = new BuffConfig(
-                    sourceAbility: sourceAbility,
+                var buff = new Buff(
+                    sourceAbilityId: sourceAbility.RuntimeId,
                     targetCardInstanceId: target.InstanceId,
                     currentTurn: currentTurn,
                     effects: effects,
@@ -477,10 +567,22 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     return null;
                 }
 
-                // 创建KeywordBuffEffect
-                var keywordEffect = new KeywordBuffEffect(keywordList);
+                // Convert string list to enum list
+                var keywordEnumList = keywordList
+                    .Select(kStr => Enum.TryParse<CardKeyword>(kStr, true, out var kEnum) ? kEnum : CardKeyword.None)
+                    .Where(k => k != CardKeyword.None)
+                    .ToList();
 
-                _logger.LogDebug("Created keyword effect: [{Keywords}]", string.Join(", ", keywordList));
+                if (!keywordEnumList.Any())
+                {
+                    _logger.LogWarning("No valid keywords could be parsed from the list: [{Keywords}]", string.Join(", ", keywordList));
+                    return null;
+                }
+
+                // 创建KeywordBuffEffect
+                var keywordEffect = new KeywordBuffEffect(keywordEnumList);
+
+                _logger.LogDebug("Created keyword effect: [{Keywords}]", string.Join(", ", keywordEnumList));
                 return keywordEffect;
             }
             catch (Exception ex)

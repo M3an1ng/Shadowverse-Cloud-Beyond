@@ -1,0 +1,345 @@
+Attribute VB_Name = "·9·1·文件·SaveGame"
+' ==================================================
+' 函数功能：保存游戏存档和Deck工作表
+' 参数：gameData - 要保存的游戏数据字符串
+' 返回：Boolean - 保存是否成功
+' 说明：将游戏数据保存到文档文件夹，同时备份Deck工作表
+' ==================================================
+Function SaveGame(gameData As String) As Boolean
+    ' ========== 应用程序状态保存 ==========
+    Dim screenUpdatingState As Boolean
+    Dim eventsState As Boolean
+    Dim calculationState As XlCalculation
+    Dim displayAlertsState As Boolean
+    
+    screenUpdatingState = Application.ScreenUpdating
+    eventsState = Application.EnableEvents
+    calculationState = Application.Calculation
+    displayAlertsState = Application.DisplayAlerts
+    
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    On Error GoTo ErrorHandler
+    
+    ' ========== 多路径保存策略 ==========
+    ' 定义多个备用保存路径
+    Dim savePaths(1 To 3) As String
+    Dim currentPath As String
+    Dim i As Integer
+    
+    ' 主路径：用户文档文件夹
+    savePaths(1) = Environ("USERPROFILE") & "\Documents\GameSaves\"
+    
+    ' 备用路径1：应用程序所在目录
+    savePaths(2) = Environ("TEMP") & "\GameSaves\"
+    
+    ' 备用路径2：临时文件夹
+    savePaths(3) = ThisWorkbook.Path & "\GameSaves\"
+    
+    Dim saveSuccess As Boolean
+    saveSuccess = False
+    
+    ' 尝试在多个路径中保存
+    For i = 1 To 3
+        currentPath = savePaths(i)
+        
+        ' 跳过无效路径（如应用程序路径为空时）
+        If currentPath = "\GameSaves\" Then GoTo NextPath
+        
+        On Error Resume Next
+        ' 创建文件夹（如果不存在）
+        If Dir(currentPath, vbDirectory) = "" Then
+            MkDir currentPath
+        End If
+        
+        ' 检查文件夹是否创建成功
+        If Dir(currentPath, vbDirectory) <> "" Then
+            ' 尝试保存游戏数据
+            Dim filePath As String
+            filePath = currentPath & "szb_cloud.txt"
+            
+            Dim fileNumber As Integer
+            fileNumber = FreeFile
+            
+            Open filePath For Output As fileNumber
+            Print #fileNumber, gameData
+            Close fileNumber
+            
+            ' 如果文件保存成功，继续保存Deck工作表
+            If Dir(filePath) <> "" Then
+                Dim deckSaved As Boolean
+                deckSaved = SaveDeckSheet(currentPath)
+                
+                If deckSaved Then
+                    saveSuccess = True
+                    Exit For  ' 保存成功，退出循环
+                Else
+                    ' Deck保存失败，删除已保存的数据文件
+                    Kill filePath
+                End If
+            End If
+        End If
+        
+NextPath:
+        On Error GoTo ErrorHandler
+    Next i
+    
+    If Not saveSuccess Then
+        Err.Raise 513, "SaveGame", "所有保存路径都不可用"
+    End If
+    
+    SaveGame = True
+
+CleanUp:
+    ' ========== 应用程序状态恢复 ==========
+    Application.ScreenUpdating = screenUpdatingState
+    Application.EnableEvents = eventsState
+    Application.Calculation = calculationState
+    Application.DisplayAlerts = displayAlertsState
+    
+    Exit Function
+    
+ErrorHandler:
+    ' ========== 错误处理 ==========
+    SaveGame = False
+    MsgBox "保存失败: " & Err.Description, vbExclamation
+    GoTo CleanUp
+End Function
+
+' ==================================================
+' 函数功能：保存Deck工作表到CSV文件
+' 参数：savePath - 保存路径
+' 返回：Boolean - 保存是否成功
+' 说明：将Deck工作表数据导出为CSV格式备份
+' ==================================================
+Private Function SaveDeckSheet(savePath As String) As Boolean
+    On Error GoTo ErrorHandler
+    
+    Dim ws As Worksheet
+    Dim deckFile As String
+    deckFile = savePath & "szb_deck.csv"
+    
+    ' ========== 工作表存在性检查 ==========
+    ' 检查Deck工作表是否存在
+    Set ws = Nothing
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("Deck")
+    On Error GoTo ErrorHandler
+    
+    If ws Is Nothing Then
+        ' 工作表不存在，返回False但不显示错误
+        SaveDeckSheet = False
+        Exit Function
+    End If
+    
+    ' ========== 工作表状态保存 ==========
+    ' 保存工作表当前的可见状态
+    Dim originalVisibility As XlSheetVisibility
+    originalVisibility = ws.Visible
+    
+    ' 如果工作表是隐藏的，临时取消隐藏
+    If originalVisibility <> xlSheetVisible Then
+        ws.Visible = xlSheetVisible
+    End If
+    
+    ' ========== 文件保存处理 ==========
+    ' 禁用警告提示以避免用户确认对话框
+    Application.DisplayAlerts = False
+    
+    ' 保存工作表数据为CSV文件
+    ws.Copy ' 复制工作表到一个新工作簿
+    With ActiveWorkbook
+        .SaveAs fileName:=deckFile, FileFormat:=xlCSV
+        .Close SaveChanges:=False
+    End With
+    
+    ' ========== 状态恢复 ==========
+    ' 恢复工作表原来的可见状态
+    If originalVisibility <> xlSheetVisible Then
+        ws.Visible = originalVisibility
+    End If
+    
+    SaveDeckSheet = True
+    Exit Function
+    
+ErrorHandler:
+    ' ========== 错误处理 ==========
+    SaveDeckSheet = False
+    ' 错误处理中也要恢复可见状态
+    On Error Resume Next
+    If Not ws Is Nothing And originalVisibility <> xlSheetVisible Then
+        ws.Visible = originalVisibility
+    End If
+    Application.DisplayAlerts = True
+End Function
+
+' ==================================================
+' 函数功能：读取游戏存档和Deck工作表
+' 返回：String - 读取的游戏数据或错误信息
+' 说明：从文档文件夹读取保存的游戏数据和Deck工作表
+' ==================================================
+Function LoadGame() As String
+    ' ========== 应用程序状态保存 ==========
+    Dim screenUpdatingState As Boolean
+    Dim eventsState As Boolean
+    Dim calculationState As XlCalculation
+    Dim displayAlertsState As Boolean
+    
+    screenUpdatingState = Application.ScreenUpdating
+    eventsState = Application.EnableEvents
+    calculationState = Application.Calculation
+    displayAlertsState = Application.DisplayAlerts
+    
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    On Error GoTo ErrorHandler
+    
+    ' ========== 多路径查找策略 ==========
+    ' 定义多个备用查找路径（与SaveGame保持一致）
+    Dim savePaths(1 To 3) As String
+    Dim currentPath As String
+    Dim i As Integer
+    
+    ' 主路径：用户文档文件夹
+    savePaths(1) = Environ("USERPROFILE") & "\Documents\GameSaves\"
+    
+    ' 备用路径1：应用程序所在目录
+    savePaths(2) = Environ("TEMP") & "\GameSaves\"
+    
+    ' 备用路径2：临时文件夹
+    savePaths(3) = ThisWorkbook.Path & "\GameSaves\"
+    
+    Dim filePath As String
+    Dim fileFound As Boolean
+    fileFound = False
+    
+    ' 在多个路径中查找存档文件
+    For i = 1 To 3
+        currentPath = savePaths(i)
+        
+        ' 跳过无效路径
+        If currentPath = "\GameSaves\" Then GoTo NextPath
+        
+        filePath = currentPath & "szb_cloud.txt"
+        
+        ' 检查文件是否存在
+        If Dir(filePath) <> "" Then
+            fileFound = True
+            Exit For  ' 找到文件，退出循环
+        End If
+        
+NextPath:
+    Next i
+    
+    ' ========== 文件存在性检查 ==========
+    If Not fileFound Then
+        LoadGame = "可以去群内下载卡包zip，解压后将路径输入到这里，之后就可以查询图片"
+        GoTo CleanUp
+    End If
+    
+    ' ========== 游戏数据读取 ==========
+    Dim fileNumber As Integer
+    Dim fileContent As String
+    Dim lineData As String
+    
+    fileNumber = FreeFile
+    fileContent = ""
+    
+    Open filePath For Input As fileNumber
+    Do Until EOF(fileNumber)
+        Line Input #fileNumber, lineData
+        fileContent = fileContent & lineData
+        If Not EOF(fileNumber) Then fileContent = fileContent & vbCrLf
+    Loop
+    Close fileNumber
+    
+    ' ========== Deck工作表读取 ==========
+    ' 从找到文件的同一目录加载Deck数据
+    Dim deckLoaded As Boolean
+    deckLoaded = LoadDeckSheet(currentPath)
+    
+    LoadGame = fileContent
+
+CleanUp:
+    ' ========== 应用程序状态恢复 ==========
+    Application.ScreenUpdating = screenUpdatingState
+    Application.EnableEvents = eventsState
+    Application.Calculation = calculationState
+    Application.DisplayAlerts = displayAlertsState
+    
+    Exit Function
+    
+ErrorHandler:
+    ' ========== 错误处理 ==========
+    LoadGame = "读取失败: " & Err.Description
+    GoTo CleanUp
+End Function
+
+' ==================================================
+' 函数功能：读取Deck工作表从CSV文件
+' 参数：savePath - 保存路径
+' 返回：Boolean - 读取是否成功
+' 说明：从CSV文件导入数据到Deck工作表
+' ==================================================
+Private Function LoadDeckSheet(savePath As String) As Boolean
+    On Error GoTo ErrorHandler
+    
+    Dim deckFile As String
+    deckFile = savePath & "szb_deck.csv"
+    
+    ' ========== 文件存在性检查 ==========
+    ' 检查CSV文件是否存在
+    If Dir(deckFile) = "" Then
+        ' CSV文件不存在，返回False但不显示错误
+        LoadDeckSheet = False
+        Exit Function
+    End If
+    
+    ' ========== 工作表准备 ==========
+    ' 禁用警告提示
+    Application.DisplayAlerts = False
+    
+    ' 获取或创建Deck工作表
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("Deck")
+    On Error GoTo ErrorHandler
+    
+    If ws Is Nothing Then
+        ' 如果Deck工作表不存在，则创建
+        Set ws = ThisWorkbook.Sheets.Add
+        ws.Name = "Deck"
+    Else
+        ' 清空现有数据
+        ws.Cells.Clear
+    End If
+    
+    ' ========== 数据导入处理 ==========
+    ' 打开CSV文件并读取数据
+    Dim csvWorkbook As Workbook
+    Set csvWorkbook = Workbooks.Open(deckFile, ReadOnly:=True)
+    
+    ' 将数据复制到Deck工作表
+    csvWorkbook.Sheets(1).UsedRange.Copy ws.Range("A1")
+    
+    ' 关闭CSV工作簿而不保存
+    csvWorkbook.Close SaveChanges:=False
+    
+    LoadDeckSheet = True
+    Exit Function
+    
+ErrorHandler:
+    ' ========== 错误处理 ==========
+    LoadDeckSheet = False
+    On Error Resume Next
+    If Not csvWorkbook Is Nothing Then csvWorkbook.Close SaveChanges:=False
+    Application.DisplayAlerts = True
+End Function

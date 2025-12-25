@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Linq; // Added for LINQ operations
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
 using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
@@ -18,116 +18,28 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
     public class ValueSourceResolver : IValueSourceResolver
     {
         private readonly ILogger<ValueSourceResolver> _logger;
-        private readonly DslEvaluator _dslEvaluator;
-        private readonly DslExpressionParser _dslParser;
+        private readonly IDslCompiler _dslCompiler;
         public ValueSourceResolver(
             ILogger<ValueSourceResolver> logger,
-            DslEvaluator dslEvaluator,
-            DslExpressionParser dslParser)
+            IDslCompiler dslCompiler)
         {
             _logger = logger;
-            _dslEvaluator = dslEvaluator;
-            _dslParser = dslParser;
+            _dslCompiler = dslCompiler;
         }
 
         /// <summary>
         /// 解析值源
         /// </summary>
-        public async Task<object> ResolveAsync(ValueConfig valueConfig, GameContext context)
+        public object? Resolve(ValueConfig valueConfig, GameContext context)
         {
-            try
-            {
-                return valueConfig.Type switch
-                {
-                    Common.ValueType.Static => ResolveStaticValue(valueConfig),
-                    Common.ValueType.Dynamic => await ResolveDynamicValue(valueConfig, context),
-                    Common.ValueType.Formula => await ResolveFormulaValue(valueConfig, context),
-                    Common.ValueType.Variable => ResolveVariableValue(valueConfig, context),
-                    _ => throw new NotSupportedException($"Value type {valueConfig.Type} is not supported")
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error resolving value: {ValueConfig}", JsonSerializer.Serialize(valueConfig));
-                // 【修复】保持原始值，不要强制转换为0
-                return valueConfig.StaticValue ?? new object();
-            }
+            // The main responsibility is now delegated!
+            return valueConfig.Resolve(context, this);
         }
 
-        /// <summary>
-        /// 解析为整数
-        /// </summary>
-        public async Task<int> ResolveAsIntAsync(ValueConfig valueConfig, GameContext context)
+
+        // This method is now the core logic for any non-static value.
+        public object? ResolveFormulaValue(string formula, GameContext context)
         {
-            var value = await ResolveAsync(valueConfig, context);
-            return ConvertToInt(value);
-        }
-
-        /// <summary>
-        /// 解析为字符串
-        /// </summary>
-        public async Task<string> ResolveAsStringAsync(ValueConfig valueConfig, GameContext context)
-        {
-            var value = await ResolveAsync(valueConfig, context);
-            return value?.ToString() ?? string.Empty;
-        }
-
-        /// <summary>
-        /// 解析为布尔值
-        /// </summary>
-        public async Task<bool> ResolveAsBoolAsync(ValueConfig valueConfig, GameContext context)
-        {
-            var value = await ResolveAsync(valueConfig, context);
-            return ConvertToBool(value);
-        }
-
-        /// <summary>
-        /// 解析静态值
-        /// </summary>
-        private object ResolveStaticValue(ValueConfig valueConfig)
-        {
-            // 【修复】保持null值，不要自动转换为0
-            // 这样可以正确处理Guid?等可空类型
-            return valueConfig.StaticValue ?? new object();
-        }
-
-        /// <summary>
-        /// 解析动态值
-        /// </summary>
-        private async Task<object> ResolveDynamicValue(ValueConfig valueConfig, GameContext context)
-        {
-            var source = valueConfig.DynamicSource;
-
-            if (string.IsNullOrEmpty(source))
-                return 0;
-
-            // 解析动态源路径，如 "source.attack", "target.health", "player.pp" 等
-            var parts = source.Split('.');
-            if (parts.Length < 2)
-                return 0;
-
-            var objectType = parts[0].ToLower();
-            var property = parts[1].ToLower();
-
-            return objectType switch
-            {
-                "source" => GetCardProperty(context.SourceCard, property),
-                /// TODO: Target应该是列表，不能直接使用GetCardProperty
-                "target" => GetCardProperty(context.CurrentItem as CardInstance, property), // Use CurrentItem as target
-                "player" => await GetPlayerProperty(context, property),
-                "game" => await GetGameProperty(context, property),
-                "event" => GetEventProperty(context.TriggeringEvent, property),
-                _ => 0
-            };
-        }
-
-        /// <summary>
-        /// 解析公式值 - 使用DSL求值器
-        /// </summary>
-        private async Task<object> ResolveFormulaValue(ValueConfig valueConfig, GameContext context)
-        {
-            var formula = valueConfig.Formula;
-
             if (string.IsNullOrEmpty(formula))
             {
                 return 0;
@@ -135,162 +47,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 
             try
             {
-                // 解析DSL表达式
-                var expressionAst = _dslParser.ParseExpression(formula);
-                if (expressionAst == null)
-                {
-                    _logger.LogWarning("Failed to parse DSL formula: {Formula}", formula);
-                    return 0;
-                }
+                // Compile the formula into a reusable delegate.
+                // The cache is handled internally by the DslCompiler.
+                var getter = _dslCompiler.CompileGetter<object>(formula);
 
-                // 直接使用DslEvaluator的GameContext重载方法
-                var result = await _dslEvaluator.EvaluateAsync(expressionAst, context);
+                // For value resolution, the 'self' context is often not applicable,
+                // as the value is derived from the global game state (e.g., "player.Hand.Count").
+                // We pass `null` as the item context (`self`).
+                var value = getter(null!, context);
 
-                if (result.IsSuccess)
-                {
-                    _logger.LogDebug("DSL formula '{Formula}' evaluated successfully to: {Result}",
-                        formula, result.Value);
-                    return result.Value ?? 0;
-                }
-                else
-                {
-                    _logger.LogWarning("DSL formula evaluation failed: {Formula}, Errors: {Errors}",
-                        formula, string.Join("; ", result.Errors));
-                    return 0;
-                }
+                _logger.LogDebug("DSL formula '{Formula}' resolved to: {Value}", formula, value);
+                return value;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error evaluating DSL formula: {Formula}", formula);
-                return 0;
+                _logger.LogError(ex, "Error resolving DSL formula: {Formula}", formula);
+                return null; // Return null on error to let the caller decide the default.
             }
         }
 
-
-
-        /// <summary>
-        /// 解析变量值
-        /// </summary>
-        private object ResolveVariableValue(ValueConfig valueConfig, GameContext context)
-        {
-            var variableName = valueConfig.DynamicSource;
-
-            if (string.IsNullOrEmpty(variableName))
-                return 0;
-
-            // Use TryGetValue for dictionary access from TemporaryVariables
-            return context.TemporaryVariables.TryGetValue(variableName, out var value) ? value : 0;
-        }
-
-        /// <summary>
-        /// 获取卡牌属性
-        /// </summary>
-        private object GetCardProperty(CardInstance? card, string property)
-        {
-            if (card == null)
-                return 0;
-
-            return property.ToLower() switch
-            {
-                "attack" => card.CurrentAttack,
-                "health" => card.CurrentHealth,
-                "maxhealth" => card.MaxHealth,
-                "cost" => card.CurrentCost,
-                "id" => card.InstanceId,
-                "definitionid" => card.DefinitionId,
-                "ownerid" => card.OwnerPlayerId,
-                _ => 0
-            };
-        }
-
-        /// <summary>
-        /// 获取玩家属性
-        /// </summary>
-        private async Task<object> GetPlayerProperty(GameContext context, string property)
-        {
-            var player = context.RequestingPlayerId == context.CurrentGameState.Player1.PlayerId
-                ? context.CurrentGameState.Player1
-                : context.CurrentGameState.Player2;
-
-            return property.ToLower() switch
-            {
-                "pp" => player.CurrentPlayPoints,
-                "maxpp" => player.MaxPlayPoints,
-                "ep" => player.CurrentEvolutionPoints,
-                "maxep" => player.MaxEvolutionPoints,
-                "handcount" => player.Hand.Count,
-                "deckcount" => player.Deck.Count,
-                "fieldcount" => player.Field.Count,
-                "graveyardcount" => player.Graveyard.Count,
-                _ => await Task.FromResult(0)
-            };
-        }
-
-        /// <summary>
-        /// 获取游戏属性
-        /// 【架构重构】使用当前玩家的回合数而不是全局回合数
-        /// </summary>
-        private Task<object> GetGameProperty(GameContext context, string property)
-        {
-            if (string.IsNullOrEmpty(property))
-                return Task.FromResult<object>(0);
-
-            return Task.FromResult(property.ToLower() switch
-            {
-                "turn" => (object)(context.CurrentGameState.GetPlayerState(context.CurrentGameState.CurrentPlayerId ?? Guid.Empty)?.TurnNumber ?? 0),
-                "currentplayerid" => (object)(context.CurrentGameState.CurrentPlayerId ?? Guid.Empty),
-                "phase" => (object)context.CurrentGameState.Phase.ToString(),
-                "status" => (object)context.CurrentGameState.Status.ToString(),
-                _ => (object)0
-            });
-        }
-
-        /// <summary>
-        /// 获取事件属性
-        /// </summary>
-        private object GetEventProperty(object? eventObj, string property)
-        {
-            if (eventObj == null)
-                return 0;
-
-            // TODO: 根据事件类型解析属性
-            // 根据路径名解析Effect中的参数即可，效果参数放置在GameContext中的ResolvedParameters字典下
-            // 这里需要根据具体的事件类型来实现
-            return 0;
-        }
-
-        /// <summary>
-        /// 转换为整数
-        /// </summary>
-        private int ConvertToInt(object value)
-        {
-            return value switch
-            {
-                int i => i,
-                long l => (int)l,
-                float f => (int)f,
-                double d => (int)d,
-                string s when int.TryParse(s, out var result) => result,
-                bool b => b ? 1 : 0,
-                _ => 0
-            };
-        }
-
-        /// <summary>
-        /// 转换为布尔值
-        /// </summary>
-        private bool ConvertToBool(object value)
-        {
-            return value switch
-            {
-                bool b => b,
-                int i => i != 0,
-                long l => l != 0,
-                float f => f != 0,
-                double d => d != 0,
-                string s => !string.IsNullOrEmpty(s) && s.ToLower() != "false" && s != "0",
-                _ => false
-            };
-        }
     }
 }

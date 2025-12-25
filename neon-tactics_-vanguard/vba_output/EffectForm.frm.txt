@@ -1,0 +1,113 @@
+Attribute VB_Name = "EffectForm"
+Attribute VB_Base = "0{E29AAC31-9755-43E9-8BBB-DAA4437F6CCD}{44392CC1-14F1-4381-B440-C7671F0C69E9}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ==================================================
+' 窗体名称: EffectForm
+' 功能：卡牌效果查看和编辑窗体
+' 说明：显示卡牌详细信息，支持动态高度调整
+' ==================================================
+
+' ========== 窗体激活事件 ==========
+' 说明：窗体激活时自动设置卡牌名称
+Private Sub UserForm_Activate()
+    ' ========== 卡牌名称设置 ==========
+    ' 使用窗体标题作为卡牌名称初始值
+    CardName.Value = EffectForm.Caption
+End Sub
+
+' ==================================================
+' 事件功能：卡牌名称变更检测
+' 说明：当卡牌名称改变时，自动查询并显示对应卡牌的详细信息
+' ==================================================
+Private Sub CardName_Change()
+    ' ========== 卡牌ID查询 ==========
+    ' 根据卡牌名称查询对应的卡牌ID
+    Dim StrID As String
+    StrID = IDByName(CardName.Value)
+    
+    ' ========== 卡牌信息显示 ==========
+    ' 如果查询到已有此卡牌，则显示详细信息
+    If Val(StrID) > 0 Then
+        ' ========== 效果文本更新 ==========
+        ' 遍历所有效果控件并更新显示内容
+        For Each ctrl In Me.Controls
+            If ctrl.Tag = "Effect" Then
+                If DownByID(StrID, ctrl.Name) <> "" Then ctrl.Caption = SentenceTranslate(DownByID(StrID, ctrl.Name))
+            End If
+        Next ctrl
+        
+        ' ========== 基础属性显示 ==========
+        ' 继承职业、种类、稀有度信息
+        ClassBtn.Caption = Translate(DownByID(StrID, "Class"))
+        TypeBtn.Caption = Translate(DownByID(StrID, "Type"))
+        RarityBtn.Caption = Translate(DownByID(StrID, "Rarity"))
+        
+        ' ========== 数值属性显示 ==========
+        ' 显示费用/攻击力/生命值/吟唱等数值
+        Cost.Value = DownByID(StrID, "Cost")
+        Attack.Value = DownByID(StrID, "Attack")
+        Defense.Value = DownByID(StrID, "Defense")
+        Countdown.Value = DownByID(StrID, "Countdown")
+        
+        ' ========== 扩展属性显示 ==========
+        ' 显示卡包/类型/附属卡牌信息
+        CardSet.Value = DownByID(StrID, "CardSet")
+        Trait.Value = DownByID(StrID, "Trait")
+        
+        ' ========== 令牌标识设置 ==========
+        ' 根据ID格式判断是否为令牌卡牌
+        If Mid(StrID, 4, 1) = "1" Then IsToken = False Else IsToken = True
+        
+        ' ========== 效果区域高度调整 ==========
+        ' 根据效果文本长度调整控件高度
+        Call EffectHeight
+    End If
+End Sub
+
+' ==================================================
+' 函数功能：效果区域高度调整
+' 说明：根据效果文本的长度动态调整效果控件的高度
+' 返回：无
+' ==================================================
+Function EffectHeight()
+    ' ========== 变量声明 ==========
+    Dim i%, j%
+    Dim Height%
+    
+    ' ========== 效果控件遍历 ==========
+    ' 遍历9个效果控件，逐个调整高度
+    For i = 1 To 9
+        ' ========== 控件查找 ==========
+        ' 查找对应的效果控件
+        For Each ctrl In Me.Controls
+            If ctrl.Name = "Effect" & i Then Exit For
+        Next ctrl
+        
+        ' ========== 高度计算 ==========
+        ' 根据文本长度计算需要调整的高度
+        Height = Int(Len(ctrl.Caption) / 50) * 10 + 10 - ctrl.Height
+        
+        ' ========== 高度调整 ==========
+        ' 如果计算出的高度变化不为零，则进行调整
+        If Height <> 0 Then
+            ' 调整当前效果控件的高度
+            ctrl.Height = ctrl.Height + Height
+            
+            ' ========== 相关控件位置调整 ==========
+            ' 调整效果框架控件的位置和高度
+            For Each ctrl In Me.Controls
+                If ctrl.Tag = "EffectFrame" Then
+                    ' 调整后续效果框架的位置
+                    If Val(Mid(ctrl.Name, Len("EffectFrame") + 1, 10)) > i Then ctrl.Top = ctrl.Top + Height
+                    ' 调整当前效果框架的高度
+                    If Val(Mid(ctrl.Name, Len("EffectFrame") + 1, 10)) = i Then ctrl.Height = ctrl.Height + Height
+                End If
+            Next ctrl
+        End If
+    Next i
+End Function

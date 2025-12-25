@@ -7,6 +7,10 @@ using System.Collections.Generic;
 using System.Linq; // Added for FirstOrDefault
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For DomainOperationResult
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
+using ShadowverseBeyond.Server.Domain.Identifiers;
 
 using System.Collections.Concurrent; // Added for ConcurrentDictionary
 
@@ -20,26 +24,94 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     /// Represents the complete state of a single game instance.
     /// This is the core domain entity used for game logic processing.
     /// </summary>
+    [DslExposable("游戏状态", Description = "代表整个游戏实例的完整状态")]
     public class GameState
     {
         private readonly ConcurrentDictionary<Guid, CardInstance> _allCardInstancesById = new();
 
+        public InGameIdRegistry InGameIds { get; } = new();
+
         public string GameId { get; set; }
+
         public GameStatus Status { get; set; } = GameStatus.Starting;
+
         public GamePhase Phase { get; set; } = GamePhase.Mulligan;
+
+        public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
+
+        public long StateRevision { get; private set; } = 0;
+        public long BuffRevision { get; private set; } = 0;
+        public long RefreshCycleId { get; private set; } = 0;
 
         // 【架构重构】已删除全局TurnNumber，使用PlayerState.TurnNumber管理每个玩家的回合数
         public Guid? CurrentPlayerId { get; set; } // Changed from string? to Guid?
+
         public Guid? FirstPlayerId { get; set; } // Changed from string? to Guid?
+
         public Guid? WinnerId { get; set; } // Changed from string? to Guid?
+
         public string? GameMessage { get; set; } // Added
 
         // Keep direct references to players for easier access in game logic
+        [DslExposable("玩家1", Description = "游戏中的第一个玩家")]
         public PlayerState Player1 { get; set; }
+
+        [DslExposable("玩家2", Description = "游戏中的第二个玩家")]
         public PlayerState Player2 { get; set; }
+
+        [DslExposable("先手玩家", Description = "游戏中先行动的玩家")]
+        public PlayerState FirstPlayer => Player1.IsFirst ? Player1 : Player2;
+
+        [DslExposable("当前玩家", Description = "目前进行回合的玩家")]
+        public PlayerState CurrentPlayer => GetPlayerState(CurrentPlayerId.Value);
+
+        // --- Core Game State Managers ---
+        // These are initialized externally by the GameService to keep the domain model clean.
+        public IAbilityManager AbilityManager { get; set; } = null!;
+        public IBuffManager BuffManager { get; set; } = null!;
 
         // Derived property for convenience, especially for DTO mapping
         public bool IsGameOver => Status == GameStatus.Finished;
+
+        // --- Aggregate Properties for DSL Queries ---
+        [DslExposable("所有战场", Description = "双方玩家战场上的所有卡牌")]
+        public List<CardInstance> AllField => Player1.Field.Concat(Player2.Field).ToList();
+
+        [DslExposable("所有手牌", Description = "双方玩家手中的所有卡牌")]
+        public List<CardInstance> AllHand => Player1.Hand.Concat(Player2.Hand).ToList();
+
+        [DslExposable("所有牌库", Description = "双方玩家牌库中的所有卡牌")]
+        public List<CardInstance> AllDeck => Player1.Deck.Concat(Player2.Deck).ToList();
+
+        [DslExposable("所有墓地", Description = "双方玩家墓地中的所有卡牌")]
+        public List<CardInstance> AllGraveyard => Player1.Graveyard.Concat(Player2.Graveyard).ToList();
+
+        [DslExposable("所有额外区", Description = "双方玩家额外区域中的所有卡牌")]
+        public List<CardInstance> AllExtra => Player1.Extra.Concat(Player2.Extra).ToList();
+
+        [DslExposable("所有纹章区", Description = "双方玩家纹章区域中的所有卡牌")]
+        public List<CardInstance> AllEmblem => Player1.Emblem.Concat(Player2.Emblem).ToList();
+
+        [DslExposable("所有主战者", Description = "双方玩家的主战者卡牌")]
+        public List<CardInstance> AllLeaders
+        {
+            get
+            {
+                var leaders = new List<CardInstance>();
+                if (Player1.Leader != null) leaders.Add(Player1.Leader);
+                if (Player2.Leader != null) leaders.Add(Player2.Leader);
+                return leaders;
+            }
+        }
+
+        [DslExposable("所有卡牌", Description = "游戏中的所有卡牌（包括所有区域）")]
+        public List<CardInstance> AllCards => AllField
+            .Concat(AllHand)
+            .Concat(AllDeck)
+            .Concat(AllGraveyard)
+            .Concat(AllExtra)
+            .Concat(AllEmblem)
+            .ToList();
 
         /// <summary>
         /// Constructor requiring essential game setup information.
@@ -53,7 +125,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             CurrentPlayerId = firstPlayerId; // Assign Guid directly
             Status = GameStatus.Starting; // Initial status
             Phase = GamePhase.Mulligan;   // Initial phase
+            StartedAtUtc = DateTime.UtcNow;
             // 【架构重构】不再初始化全局TurnNumber，使用PlayerState.TurnNumber
+
+            // Assign readable ids early for debugging/logs.
+            InGameIds.GetOrCreate(InGameIdKind.Player, Player1.PlayerId);
+            InGameIds.GetOrCreate(InGameIdKind.Player, Player2.PlayerId);
         }
 
         // Parameterless constructor might be needed for ORMs or specific deserialization scenarios.
@@ -66,6 +143,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Use the public constructor with new Guids for default initialization.
             Player1 = new PlayerState(Guid.NewGuid()); // Use Guid constructor
             Player2 = new PlayerState(Guid.NewGuid()); // Use Guid constructor
+            StartedAtUtc = DateTime.UtcNow;
         }
 
 
@@ -94,22 +172,17 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (Player2?.PlayerId == playerId) return Player1;
             return null; // Or throw if playerId doesn't match either player
         }
-        /// &lt;summary&gt;
+
+        /// <summary>
         /// Finds a card instance by its ID within a specific zone or across player leaders.
-        /// &lt;/summary&gt;
-        /// &lt;param name="cardId"&gt;The instance ID of the card to find.&lt;/param&gt;
-        /// &lt;param name="zone"&gt;The zone to search in. Defaults to CardZone.Field.&lt;/param&gt;
-        /// &lt;returns&gt;The found CardInstance, or null if not found.&lt;/returns&gt;
+        /// </summary>
+        /// <param name="cardId">The instance ID of the card to find.</param>
+        /// <param name="zone">The zone to search in. Defaults to CardZone.Field.</param>
+        /// <returns>The found CardInstance, or null if not found.</returns>
         public CardInstance? FindCardInstance(Guid cardId, CardZone zone = CardZone.Field)
         {
             if (cardId == Guid.Empty) return null;
 
-            if (zone == CardZone.Leader)
-            {
-                if (Player1?.Leader?.InstanceId == cardId) return Player1.Leader;
-                if (Player2?.Leader?.InstanceId == cardId) return Player2.Leader;
-                return null;
-            }
 
             // Search in Player 1's specified zone
             var p1ZoneCards = Player1?.GetCardsInZone(zone);
@@ -132,7 +205,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// 根据实例ID高效查找游戏中的任意卡牌实例。
         /// </summary>
-        public CardInstance? FindCardInstanceById(Guid instanceId)
+        public CardInstance? FindCardInstance(Guid instanceId)
         {
             _allCardInstancesById.TryGetValue(instanceId, out var card);
             return card;
@@ -147,6 +220,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (card != null)
             {
                 _allCardInstancesById[card.InstanceId] = card;
+                InGameIds.GetOrCreate(InGameIdKind.Card, card.InstanceId);
             }
         }
 
@@ -246,6 +320,22 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public void ClearAllRegisteredCards()
         {
             _allCardInstancesById.Clear();
+        }
+
+        internal void IncrementStateRevision()
+        {
+            StateRevision++;
+        }
+
+        internal void IncrementBuffRevision()
+        {
+            BuffRevision++;
+        }
+
+        internal long AdvanceRefreshCycle()
+        {
+            RefreshCycleId++;
+            return RefreshCycleId;
         }
 
         // Removed ToDto() method as mapping is now handled by AutoMapper (GameStateProfile)

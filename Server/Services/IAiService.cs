@@ -1,9 +1,11 @@
 // Server/Services/IAiService.cs
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Dtos; // For GameStateDto
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // For Action DTOs
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using ShadowverseBeyond.Server.Models; // For GameActionContext
+using ShadowverseBeyond.Server.Models;
+using ShadowverseBeyond.Server.Services.Abstractions; // For GameActionContext
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -37,12 +39,12 @@ namespace ShadowverseBeyond.Server.Services
         Task<EvolveActionDto?> DecideEvolveAsync(GameStateDto gameState, Guid aiPlayerId);
 
         /// <summary>
-        /// Decides all attack actions the AI should perform this turn.
+        /// Decides the next single attack action the AI should perform.
         /// </summary>
         /// <param name="gameState">The current state of the game.</param>
         /// <param name="aiPlayerId">The ID of the AI player.</param>
-        /// <returns>A list of AttackActionDto representing the attacks to perform.</returns>
-        Task<List<AttackActionDto>> DecideAttacksAsync(GameStateDto gameState, Guid aiPlayerId);
+        /// <returns>An AttackActionDto for the next attack, or null if no more attacks are viable.</returns>
+        Task<AttackActionDto?> DecideNextAttackAsync(GameStateDto gameState, Guid aiPlayerId);
 
         /// <summary>
         /// Determines if the given player ID belongs to an AI player.
@@ -60,5 +62,13 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="aiPlayerId">轮到其行动的 AI 玩家 ID。</param>
         /// <returns>表示异步操作启动的任务。</returns>
         Task RequestAiActionAsync(string gameId, Guid aiPlayerId);
+
+        /// <summary>
+        /// Decides the target selection for an AI player based on a choice request.
+        /// </summary>
+        /// <param name="request">The choice request detailing what needs to be selected.</param>
+        /// <param name="gameState">The current state of the game.</param>
+        /// <returns>A PlayerChoiceResult representing the AI's decision.</returns>
+        Task<PlayerChoiceResult> DecideTargetChoiceAsync(PlayerChoiceRequest request, GameStateDto gameState);
     }
 }

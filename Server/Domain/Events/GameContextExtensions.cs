@@ -1,103 +1,85 @@
+// File: Server/Domain/Events/GameContextExtensions.cs
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
+using Microsoft.Extensions.DependencyInjection;
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
+    /// <summary>
+    /// Provides extension methods for the immutable GameContext record.
+    /// This keeps the GameContext as a pure data carrier, while providing convenient accessors for derived data.
+    /// </summary>
     public static class GameContextExtensions
     {
-
-        public static object? ResolveIdentifier(this GameContext context, List<string> path)
+        /// <summary>
+        /// Gets the PlayerState for the player who initiated the current action chain.
+        /// </summary>
+        /// <param name="context">The game context.</param>
+        /// <returns>The requesting player's state.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the player is not found in the game state.</exception>
+        public static PlayerState GetRequestingPlayer(this GameContext context)
         {
-            if (path == null || !path.Any()) return null;
-
-            if (context.TemporaryVariables.TryGetValue(path.First(), out var tempVariableValue) && path.Count == 1)
-            {
-                return tempVariableValue;
-            }
-
-            if (path.Count > 2 &&
-                (path[0].ToLowerInvariant() is "self" or "this" or "current") &&
-                path[1].ToLowerInvariant() == "state" &&
-                context.CurrentItem is CardInstance sourceCard)
-            {
-                string variableName = path[2];
-                if (sourceCard.AbilityState.TryGetValue(variableName, out var stateValue))
-                {
-                    if (path.Count == 3)
-                    {
-                        return stateValue;
-                    }
-                    else
-                    {
-                        return ResolvePathSegments(stateValue, path.Skip(3).ToList());
-                    }
-                }
-            }
-
-            object? rootObject = path.First().ToLowerInvariant() switch
-            {
-                "player" => context.RequestingPlayer,
-                "opponent" => context.OpponentPlayer,
-                "gamestate" => context.CurrentGameState,
-                "self" or "this" or "current" => context.CurrentItem,
-                _ => null
-            };
-
-            List<string> remainingPath = path.Skip(1).ToList();
-
-            if (rootObject != null)
-            {
-                return ResolvePathSegments(rootObject, remainingPath);
-            }
-            else if (path.First().ToLowerInvariant() is "self" or "this" or "current" && context.CurrentItem != null)
-            {
-                if (!remainingPath.Any()) return context.CurrentItem;
-
-                if (remainingPath.Count > 0 && remainingPath[0].ToLowerInvariant() == "state")
-                {
-                }
-                else
-                {
-                    return ResolvePathSegments(context.CurrentItem, remainingPath);
-                }
-            }
-
-            // Console.WriteLine($"Warning: Identifier not found or path invalid: {string.Join(".", path)}");
-            return null;
+            return context.CurrentGameState.GetPlayerState(context.RequestingPlayerId)
+                ?? throw new InvalidOperationException($"Requesting player with ID {context.RequestingPlayerId} not found in game state.");
         }
 
-        private static object? ResolvePathSegments(object? target, List<string> segments)
+        /// <summary>
+        /// Gets the PlayerState for the opponent of the player who initiated the current action chain.
+        /// </summary>
+        /// <param name="context">The game context.</param>
+        /// <returns>The opponent player's state.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the opponent is not found in the game state.</exception>
+        public static PlayerState GetOpponentPlayer(this GameContext context)
         {
-            object? currentTarget = target;
-            foreach (var segment in segments)
+            return context.CurrentGameState.GetOpponentPlayerState(context.RequestingPlayerId)
+                ?? throw new InvalidOperationException($"Opponent for player with ID {context.RequestingPlayerId} not found in game state.");
+        }
+
+        /// <summary>
+        /// Gets the ability instance that is the source of the current effect being processed.
+        /// </summary>
+        /// <param name="context">The game context.</param>
+        /// <returns>The source IAbility instance, or null if the effect has no source ability or cannot be found.</returns>
+        public static IAbility? GetCurrentAbility(this GameContext context)
+        {
+            if (context.CurrentEffect?.sourceAbilityId == null)
             {
-                if (currentTarget == null) return null;
-
-                if (segment.Equals("Count", StringComparison.OrdinalIgnoreCase) && currentTarget is System.Collections.ICollection collection)
-                {
-                    currentTarget = collection.Count;
-                    continue;
-                }
-                if (segment.Equals("IsEmpty", StringComparison.OrdinalIgnoreCase) && currentTarget is System.Collections.ICollection collectionIsEmpty)
-                {
-                    currentTarget = collectionIsEmpty.Count == 0;
-                    continue;
-                }
-
-                var propertyInfo = currentTarget.GetType().GetProperty(segment, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-
-                if (propertyInfo == null)
-                {
-                    // Console.WriteLine($"Warning: Property '{segment}' not found on type '{currentTarget.GetType().Name}'");
-                    return null;
-                }
-                currentTarget = propertyInfo.GetValue(currentTarget);
+                return null;
             }
-            return currentTarget;
+
+            var abilityManager = context.ServiceProvider.GetRequiredService<IAbilityManager>();
+            return abilityManager.GetAbilityByRuntimeId(context.CurrentEffect.sourceAbilityId.Value);
+        }
+
+        public static PlayerState GetSourceCardOwner(this GameContext context)
+        {
+            return context.CurrentGameState.GetPlayerState(context.SourceCard!.OwnerPlayerId)
+                ?? throw new InvalidOperationException($"Source card owner with ID {context.SourceCard.OwnerPlayerId} not found in game state.");
+        }
+    }
+    public static class DomainOperationResultExtensions
+    {
+        /// <summary>
+        /// Merges the contents of another DomainOperationResult into this one.
+        /// </summary>
+        /// <param name="source">The source result to merge into.</param>
+        /// <param name="other">The result to merge from.</param>
+        public static void Merge(this DomainOperationResult source, DomainOperationResult other)
+        {
+            if (!other.Success)
+            {
+                source.Success = false;
+                if (!string.IsNullOrEmpty(other.ErrorMessage))
+                {
+                    source.ErrorMessage = string.IsNullOrEmpty(source.ErrorMessage)
+                        ? other.ErrorMessage
+                        : $"{source.ErrorMessage}; {other.ErrorMessage}";
+                }
+            }
+            source.GeneratedEvents.AddRange(other.GeneratedEvents);
         }
     }
 }

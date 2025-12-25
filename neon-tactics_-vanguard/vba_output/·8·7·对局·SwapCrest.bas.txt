@@ -1,0 +1,56 @@
+Attribute VB_Name = "·8·7·对局·SwapCrest"
+Sub SwapCrest()
+    ' ========== 变量声明 ==========
+    Dim i%, j%
+    Dim Str As String
+    Dim Arr As Variant
+    Dim Brr As Variant
+    Dim AlliedMove As String
+    Dim EnemyMove As String
+    
+    ' ========== 先后手确定 ==========
+    ' 查询先后手并设置玩家标识
+    If Down("FirstMove") = "FirstMove" Then
+        AlliedMove = "F"
+        EnemyMove = "S"
+    Else
+        AlliedMove = "S"
+        EnemyMove = "F"
+    End If
+    
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    
+    ' ========== 纹章区域刷新 ==========
+    ' 下载纹章信息并格式化显示
+    If Sheets("Main").Shapes("CrestBtn").TextFrame.Characters.Text = "查看对手纹章" Then
+        Arr = Down("Crest", EnemyMove & "1000")
+        Sheets("Main").Shapes("CrestBtn").TextFrame.Characters.Text = "查看自己纹章"
+    Else
+        Arr = Down("Crest", AlliedMove & "1000")
+        Sheets("Main").Shapes("CrestBtn").TextFrame.Characters.Text = "查看对手纹章"
+    End If
+    
+    ReDim Brr(1 To 3, 1 To 5)
+    For i = 1 To UBound(Arr, 1)
+        Brr(1, i) = DownByID(CStr(Arr(i, 2)), "Name")
+        j = GetModel("Countdown", CStr(Arr(i, 2)), CStr(Arr(i, 5)))
+        If j > 0 Then
+            Brr(2, i) = Translate("Countdown") & j
+            Arr(i, 5) = Replace(Arr(i, 5), "Countdown&" & j & "||", "")
+        End If
+        Brr(3, i) = SentenceTranslate(CStr(Arr(i, 5)))
+    Next i
+    Call Up("Crest", Brr)
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub

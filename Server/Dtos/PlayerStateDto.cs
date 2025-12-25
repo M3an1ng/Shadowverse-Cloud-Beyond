@@ -20,6 +20,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public int CurrentEP { get; set; }
         public int MaxEP { get; set; }
         public bool CanEvolve { get; set; } // Whether the player can use an evolution point this turn
+        public int CurrentSEP { get; set; }
+        public int MaxSEP { get; set; }
+        public bool CanSuperEvolve { get; set; }
 
         // Leader Info
         // public int LeaderHealth { get; set; } // Removed: Use LeaderCard.CurrentHealth

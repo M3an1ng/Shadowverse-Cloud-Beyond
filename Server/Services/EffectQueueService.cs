@@ -54,7 +54,7 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             _logger.LogDebug("Enqueuing effect request {EffectType} for player {PlayerId} in game {GameId}",
-                effectRequest.EffectConfig?.Type ?? "unknown", effectRequest.RequestingPlayerId, gameId);
+                effectRequest.EffectConfig?.Type.ToString() ?? "unknown", effectRequest.RequestingPlayerId, gameId);
 
             var effectQueue = GetOrCreateEffectQueue(gameId);
             await effectQueue.EnqueueEffectAsync(effectRequest);
@@ -71,7 +71,7 @@ namespace ShadowverseBeyond.Server.Services
                 if (request != null)
                 {
                     _logger.LogDebug("Retrieved effect request {EffectType} for player {PlayerId} from game {GameId}",
-                        request.EffectConfig?.Type ?? "unknown", request.RequestingPlayerId, gameId);
+                        request.EffectConfig?.Type.ToString() ?? "unknown", request.RequestingPlayerId, gameId);
                 }
                 return request;
             }

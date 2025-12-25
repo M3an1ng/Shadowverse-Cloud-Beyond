@@ -11,7 +11,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Effects; // For TargetId
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 
 // Removed Placeholder Event Definitions as we will use existing ones from CoreGameEvents.cs
 
@@ -25,8 +27,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public Guid RuntimeId => _runtimeId;
         public long DefinitionId => GameConstants.SystemAbilityIds.EndTurnAbilityId;
         public string Name => "End Turn";
-        public string AbilityTag => "System";
+        public EffectKeyword AbilityTag => EffectKeyword.System;
         public AbilityType Type => AbilityType.Triggered;
+        public List<Target> Targets { get; } = new List<Target>();
 
         public TriggerConfig TriggerConfig
         {
@@ -39,7 +42,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             }
         }
 
+        public Guid? SourceCardId { get; set; }
+
         public CardInstance? SourceCard { get; set; }
+
+        public Guid? SourceBuffId => null; // System abilities are not granted by buffs.
 
         public EndTurnAbility(ILogger<EndTurnAbility> logger)
         {
@@ -63,38 +70,38 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             return Task.FromResult(true);
         }
 
-        public Task<bool> CheckConditionsAsync(GameContext context)
+        public bool CheckConditions(GameContext context)
         {
             if (context.TriggeringEvent is not EndTurnRequestedEvent requestEvent)
             {
                 _logger?.LogWarning("{AbilityName}: Triggering event is not EndTurnRequestedEvent. Event: {Event}", Name, context.TriggeringEvent?.GetType().Name);
-                return Task.FromResult(false);
+                return false;
             }
 
             if (requestEvent.PlayerId != context.CurrentGameState.CurrentPlayerId)
             {
                 _logger?.LogWarning("{AbilityName}: Player {RequestingPlayerId} attempted to end turn, but active player is {ActivePlayerId}.",
                     Name, requestEvent.PlayerId, context.CurrentGameState.CurrentPlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             if (context.CurrentGameState.IsGameOver)
             {
                 _logger?.LogInformation("{AbilityName}: Game is already over. Cannot end turn.", Name);
-                return Task.FromResult(false);
+                return false;
             }
 
             _logger?.LogInformation("{AbilityName}: Conditions met for player {PlayerId} to end turn.", Name, requestEvent.PlayerId);
-            return Task.FromResult(true);
+            return true;
         }
 
-        public Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
+        public Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false)
         {
             _logger?.LogInformation("{AbilityName}: System ability, typically no card targets.", Name);
-            return Task.FromResult(new List<TargetInfo>());
+            return Task.FromResult(new TargetResolutionResult { Status = ResolutionStatus.Completed, ResolvedTargets = new Dictionary<string, List<TargetInfo>>() });
         }
 
-        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, TargetResolutionResult targetResult)
         {
             var effects = new List<Effect>();
             var currentPlayerGuid = context.CurrentGameState.CurrentPlayerId;
@@ -126,11 +133,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             // Effect 1: End current player's turn
             var effectConfig1 = new EffectConfig
             {
-                Type = "turnend", // Corrected EffectConfig.Type
+                Type = EffectType.TurnEnd, // Corrected EffectConfig.Type
                 Parameters = new Dictionary<string, ValueConfig>
                 {
-                    { "EndingPlayerId", ValueConfig.Static(currentPlayerGuid.Value) },
-                    { "EndTurnReason", ValueConfig.Static("PlayerAction") }
+                    { "EndingPlayerId", new StaticValueConfig { Value = currentPlayerGuid.Value } },
+                    { "EndTurnReason", new StaticValueConfig { Value = "PlayerAction" } }
                 }
             };
             effects.Add(new Effect(
@@ -146,11 +153,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             // Effect 2: Start next player's turn
             var effectConfig2 = new EffectConfig
             {
-                Type = "turnstart", // Corrected EffectConfig.Type
+                Type = EffectType.TurnStart, // Corrected EffectConfig.Type
                 Parameters = new Dictionary<string, ValueConfig>
                 {
-                    { "StartingPlayerId", ValueConfig.Static(nextPlayerId) },
-                    { "StartTurnReason", ValueConfig.Static("TurnTransition") }
+                    { "StartingPlayerId", new StaticValueConfig { Value = nextPlayerId } },
+                    { "StartTurnReason", new StaticValueConfig { Value = "TurnTransition" } }
                 }
             };
             effects.Add(new Effect(

@@ -18,7 +18,6 @@ using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using AutoMapper; // Added for IMapper
-using ShadowverseBeyond.Server.Extensions; // 【修复】添加扩展方法命名空间
 using ShadowverseBeyond.Server.Services.Abstractions; // 【修复】添加IGameDataProvider
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
 
@@ -32,19 +31,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
     {
         private readonly Queue<IGameEvent> _eventQueue = new();
         private readonly ILogger<EventProcessor> _logger;
-        private readonly IAbilityTriggerService _abilityTriggerService;
-        private readonly AbilityManager _abilityManager;
         private readonly IMapper _mapper; // Added IMapper field
         private readonly IEffectExecutor _effectExecutor; // Added IEffectExecutor field
         private readonly IGameDataProvider _gameDataProvider; // 【修复】添加IGameDataProvider依赖
         private readonly IEventHistoryService _eventHistoryService; // Added for event history
         private readonly IServiceProvider _serviceProvider; // Added for service location
 
-        public EventProcessor(ILogger<EventProcessor> logger, IAbilityTriggerService abilityTriggerService, AbilityManager abilityManager, IMapper mapper, IEffectExecutor effectExecutor, IGameDataProvider gameDataProvider, IEventHistoryService eventHistoryService, IServiceProvider serviceProvider) // Inject IServiceProvider
+        public EventProcessor(ILogger<EventProcessor> logger, IMapper mapper, IEffectExecutor effectExecutor, IGameDataProvider gameDataProvider, IEventHistoryService eventHistoryService, IServiceProvider serviceProvider) // Inject IServiceProvider
         {
             _logger = logger;
-            _abilityTriggerService = abilityTriggerService;
-            _abilityManager = abilityManager;
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
             _effectExecutor = effectExecutor ?? throw new ArgumentNullException(nameof(effectExecutor)); // Store IEffectExecutor
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider)); // Store IGameDataProvider
@@ -59,83 +54,36 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <param name="initialEvent">The initial game event to process.</param>
         /// <param name="context">The current game context.</param>
         /// <returns>A tuple containing a list of new domain events generated, a list of DTOs for broadcasting, and a list of effect requests to be queued.</returns>
-        public async Task<(List<IGameEvent> NewDomainEvents, List<GameEventDto> ResultingDtos, List<GameFlow.EffectQueue.Effect> EffectRequests)> ProcessEventAsync(IGameEvent initialEvent, GameContext context)
+        public async Task<ProcessorResult> ProcessEventAsync(IGameEvent initialEvent, GameContext context)
         {
-            var resultingDtos = new List<GameEventDto>();
-            var newDomainEvents = new List<IGameEvent>();
-            var effectRequests = new List<GameFlow.EffectQueue.Effect>();
-
-            _logger.LogDebug("[EventProcessor] Processing single event: {EventType} (ID: {EventId})", initialEvent.EventType, initialEvent.EventId);
+            var result = new ProcessorResult();
+            var abilityManager = context.AbilityManager;
+            _logger.LogInformation("[EventProcessor] Identifying abilities for event {EventType}.", initialEvent.EventType);
 
             try
             {
-                // 【BUG修复】创建一个新的、包含正确触发事件的GameContext实例。
-                // 这是为了遵循GameContext的不可变性设计，同时确保下游服务能获取到正确的触发事件。
-                var processingContext = new GameContext(
-                    context.CurrentGameState,
-                    context.RequestingPlayerId,
-                    _mapper,
-                    _serviceProvider,
-                    triggeringEvent: initialEvent,
-                    sourceCard: context.SourceCard,
-                    currentAbility: context.CurrentAbility
-                );
+                var processingContext = context with { TriggeringEvent = initialEvent };
 
                 // 1. Generate DTO for the initial event
                 var initialEventDto = ConvertEventToDto(initialEvent, processingContext);
                 if (initialEventDto != null)
                 {
-                    resultingDtos.Add(initialEventDto);
+                    result.ResultingDtos.Add(initialEventDto);
                     _logger.LogTrace("[EventProcessor] Added DTO for initial event {EventType}", initialEvent.EventType);
                 }
 
-                // 2. Check for triggered abilities based on the initialEvent
-                var triggeredAbilities = await _abilityTriggerService.GetTriggeredAbilitiesAsync(initialEvent, processingContext);
-                if (triggeredAbilities.Any())
-                {
-                    _logger.LogDebug("[EventProcessor] Found {Count} triggered abilities for event {EventType}", triggeredAbilities.Count, initialEvent.EventType);
-
-                    foreach (var ability in triggeredAbilities)
-                    {
-                        try
-                        {
-                            // Create AbilityTriggeredEvent
-                            var abilityTriggeredDomainEvent = new AbilityTriggeredEvent(ability, initialEvent);
-                            newDomainEvents.Add(abilityTriggeredDomainEvent);
-                            _logger.LogTrace("[EventProcessor] Created AbilityTriggeredEvent for {AbilityTag} (RuntimeId: {RuntimeId}, DefinitionId: {DefinitionId}).",
-                                ability.AbilityTag, ability.RuntimeId, ability.DefinitionId);
-
-                            // Generate DTO for AbilityTriggeredEvent
-                            var abilityTriggeredDto = ConvertEventToDto(abilityTriggeredDomainEvent, processingContext);
-                            if (abilityTriggeredDto != null)
-                            {
-                                resultingDtos.Add(abilityTriggeredDto);
-                                _logger.LogTrace("[EventProcessor] Added DTO for AbilityTriggeredEvent from {AbilityTag}", ability.AbilityTag);
-                            }
-
-                            // Process the ability to get its effects
-                            // Note: ProcessAbilityAsync internally calls ability.CreateEffectsAsync
-                            var effectsFromAbility = await ProcessAbilityAsync(ability, initialEvent, processingContext);
-                            if (effectsFromAbility != null && effectsFromAbility.Any())
-                            {
-                                effectRequests.AddRange(effectsFromAbility);
-                                _logger.LogTrace("[EventProcessor] Ability {AbilityTag} created {Count} effect requests.", ability.AbilityTag, effectsFromAbility.Count);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "[EventProcessor] Error processing ability {AbilityTag} (RuntimeId: {RuntimeId}) triggered by event {EventType}",
-                                ability.AbilityTag, ability.RuntimeId, initialEvent.EventType);
-                        }
-                    }
-                }
-
-                // 3. Store the initial event to history
-                if (processingContext.CurrentGameState != null) // Ensure GameState exists
+                // 2. Store the initial event to history
+                if (processingContext.CurrentGameState != null)
                 {
                     await _eventHistoryService.StoreEventAsync(processingContext.CurrentGameState.GameId, initialEvent);
                     _logger.LogDebug("[EventProcessor] Stored event {EventType} (ID: {EventId}) to history for game {GameId}",
                         initialEvent.EventType, initialEvent.EventId, processingContext.CurrentGameState.GameId);
+
+                    if (initialEvent.EventType == EventType.GameEnd)
+                    {
+                        await _eventHistoryService.ClearHistoryForGameAsync(processingContext.CurrentGameState.GameId);
+                        _logger.LogInformation("[EventProcessor] Cleared event history for ended game {GameId}.", processingContext.CurrentGameState.GameId);
+                    }
                 }
                 else
                 {
@@ -146,14 +94,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[EventProcessor] Error processing event {EventType} (ID: {EventId}).", initialEvent.EventType, initialEvent.EventId);
-                // Optionally, add an ErrorOccurredEventDto to resultingDtos
-                resultingDtos.Add(new ErrorOccurredEventDto(context.RequestingPlayerId, $"Error processing event {initialEvent.EventType}: {ex.Message}"));
+                result.ResultingDtos.Add(new ErrorOccurredEventDto(context.RequestingPlayerId, $"Error processing event {initialEvent.EventType}: {ex.Message}"));
             }
 
-            _logger.LogDebug("[EventProcessor] Event processing completed. Generated {DomainEventCount} new domain events, {DtoCount} DTOs, and {EffectRequestCount} effect requests.",
-                newDomainEvents.Count, resultingDtos.Count, effectRequests.Count);
+            _logger.LogDebug("[EventProcessor] Event processing completed. Identified {AbilityCount} activated abilities and generated {DtoCount} DTOs.",
+                result.ActivatedAbilities.Count, result.ResultingDtos.Count);
 
-            return (newDomainEvents, resultingDtos, effectRequests);
+            return result;
         }
 
         // Removed _activeAbilities field and its management methods (RegisterAbility, UnregisterAbility, ClearAbilities)
@@ -164,31 +111,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         // will now be handled by corresponding system abilities registered in AbilityManager
         // and retrieved via _abilityTriggerService.GetTriggeredAbilitiesAsync.
 
-        /// <summary>
-        /// 确定攻击目标类型
-        /// </summary>
-        /// <param name="targetUid">目标UID</param>
-        /// <param name="gameState">游戏状态</param>
-        /// <returns>攻击目标类型</returns>
-        private AttackTargetType DetermineAttackTargetType(Guid targetUid, GameState gameState)
-        {
-            // 检查是否为玩家ID
-            if (gameState.Player1.PlayerId == targetUid || gameState.Player2.PlayerId == targetUid)
-            {
-                return AttackTargetType.Player;
-            }
-
-            // 检查是否为卡牌实例ID（在任一玩家的场上）
-            var allFieldCards = gameState.Player1.Field.Concat(gameState.Player2.Field);
-            if (allFieldCards.Any(card => card.InstanceId == targetUid))
-            {
-                return AttackTargetType.Unit;
-            }
-
-            // 默认为单位攻击（如果无法确定，通常是单位）
-            _logger.LogWarning("[EventProcessor] Cannot determine attack target type for UID {TargetUid}, defaulting to Unit", targetUid);
-            return AttackTargetType.Unit;
-        }
 
         /// <summary>
         /// Processes a single runtime ability, creating its effects.
@@ -197,28 +119,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <param name="triggerEvent">The event that triggered this ability.</param>
         /// <param name="context">The current game context.</param>
         /// <returns>A list of effects generated by the ability.</returns>
-        private async Task<List<Effect>> ProcessAbilityAsync(IAbility ability, IGameEvent triggerEvent, GameContext context)
-        {
-            try
-            {
-                // Record that the ability instance was triggered
-                ability.RecordTrigger(context);
-
-                // Delegate the entire execution process to the centralized service
-                var generatedEffects = await _abilityTriggerService.ProcessSingleAbilityAsync(ability, context);
-
-                _logger.LogDebug("[EventProcessor] Ability {AbilityTag} (RuntimeId: {RuntimeId}) processed via service, created {Count} effect(s) in response to event {TriggerEventType}",
-                    ability.AbilityTag, ability.RuntimeId, generatedEffects.Count, triggerEvent.EventType);
-
-                return generatedEffects;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[EventProcessor] Error processing ability {AbilityTag} (RuntimeId: {RuntimeId}) via service",
-                    ability.AbilityTag, ability.RuntimeId);
-                return new List<Effect>(); // Return an empty list if processing fails
-            }
-        }
 
         /// <summary>
         /// 将Event转换为DTO
@@ -238,14 +138,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.TurnStart => ConvertTurnStartEvent(gameEvent, context),
                     EventType.TurnEnd => ConvertTurnEndEvent(gameEvent, context),
                     EventType.AbilityTriggered => ConvertAbilityTriggeredEvent(gameEvent),
-                    EventType.BuffApplied => ConvertBuffAppliedEvent(gameEvent),
-                    EventType.BuffRemoved => ConvertBuffRemovedEvent(gameEvent),
+                    EventType.BuffApplied => ConvertBuffAppliedEvent(gameEvent, context),
+                    EventType.BuffRemoved => ConvertBuffRemovedEvent(gameEvent, context),
                     EventType.SilenceApplied => ConvertSilenceAppliedEvent(gameEvent),
                     EventType.SilenceRemoved => ConvertSilenceRemovedEvent(gameEvent),
                     EventType.MulliganCompleted => ConvertMulliganCompletedEvent(gameEvent),
                     EventType.HandUpdated => ConvertHandUpdatedEvent(gameEvent),
                     EventType.PpUpdated => ConvertPpUpdateEvent(gameEvent),
+                    EventType.PpMaxUpdated => ConvertPpMaxUpdateEvent(gameEvent),
+                    EventType.EpUpdated => ConvertEpUpdateEvent(gameEvent),
+                    EventType.EpMaxUpdated => ConvertEpMaxUpdateEvent(gameEvent),
+                    EventType.SepUpdated => ConvertSepUpdateEvent(gameEvent),
+                    EventType.SepMaxUpdated => ConvertSepMaxUpdateEvent(gameEvent),
                     EventType.GraveyardUpdated => ConvertGraveyardUpdatedEvent(gameEvent),
+                    EventType.GameEnd => ConvertGameEndEvent(gameEvent),
                     // 【重复伤害修复】Action Request Events - 不转换为DTO，避免重复广播
                     // 这些事件只是请求事件，不应该直接转换为DTO
                     // 它们会生成真正的领域事件（如HandUpdatedEvent、SummonEvent等），这些领域事件才应该转换为DTO
@@ -253,12 +159,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.AttackRequested => null,
                     EventType.EndTurnRequested => null,
                     EventType.EvolveRequested => null,
+                    EventType.SuperEvolveRequested => null,
                     EventType.PlayCardRequested => null,
                     // Keyword Events - 关键字事件转换
                     EventType.KeywordApplied => ConvertKeywordAddedEvent(gameEvent),
                     EventType.KeywordRemoved => ConvertKeywordRemovedEvent(gameEvent),
                     EventType.HealthChanged => ConvertHealthChangedEvent(gameEvent),
+                    EventType.StatChanged => ConvertStatChangedEvent(gameEvent),
                     EventType.AttackStateUpdated => ConvertAttackStateUpdatedEvent(gameEvent),
+                    EventType.ActStateUpdated => ConvertActStateUpdatedEvent(gameEvent),
+                    EventType.EvolveStateUpdated => ConvertEvolveStateUpdatedEvent(gameEvent),
+                    EventType.SuperEvolveStateUpdated => ConvertSuperEvolveStateUpdatedEvent(gameEvent),
+                    EventType.CardRevealed => ConvertCardRevealedEvent(gameEvent),
+                    EventType.CardsFused => ConvertCardsFusedEvent(gameEvent),
                     _ => null
                 };
             }
@@ -274,8 +187,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         // DTO转换方法（简化实现）
         private GameEventDto? ConvertPlayCardEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not PlayCardEvent e || e.Source?.Player == null) return null;
-            var cardDto = e.Card.ToCompleteDto(_gameDataProvider, _mapper);
+            if (gameEvent is not PlayCardEvent e || e.Source?.Player == null || e.Target.FirstOrDefault()?.Card == null) return null;
+            var cardDto = _mapper.Map<CardInstanceDto>(e.Target.FirstOrDefault().Card);
 
             // The CardPlayedEventDto constructor only accepts the player and the card.
             // The target information is not part of this DTO.
@@ -284,8 +197,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private GameEventDto? ConvertSummonEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not SummonEvent e || e.Source?.Player == null) return null;
-            var cardDto = e.Card.ToCompleteDto(_gameDataProvider, _mapper);
+            if (gameEvent is not SummonEvent e || e.Source?.Player == null || e.Target.FirstOrDefault()?.Card == null) return null;
+            var cardDto = _mapper.Map<CardInstanceDto>(e.Target.FirstOrDefault()!.Card);
 
             if (cardDto == null)
             {
@@ -302,14 +215,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private GameEventDto? ConvertDamageEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not DamageEvent e) return null;
-            var sourcePlayerId = e.Source?.Player?.PlayerId ?? e.Target.OwnerPlayerId;
+            if (gameEvent is not DamageEvent e || e.Target.FirstOrDefault()?.Card == null) return null;
+            var targetCard = e.Target.FirstOrDefault()!.Card;
+            var sourcePlayerId = e.Source?.Player?.PlayerId ?? targetCard.OwnerPlayerId;
 
             return new DamageDealtEventDto(
                 sourcePlayerId,
-                e.Target.InstanceId,
+                targetCard.InstanceId,
                 e.Damage,
-                e.Target.OwnerPlayerId,
+                targetCard.OwnerPlayerId,
                 e.Source?.Card?.InstanceId,
                 "Effect" // TODO: The source of damage (e.g., "Attack", "Effect") should come from the event.
             );
@@ -317,11 +231,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private GameEventDto? ConvertCardDestroyedEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not CardDestroyedEvent e) return null;
+            if (gameEvent is not DestroyEvent e || e.Target.FirstOrDefault()?.Card == null) return null;
+            var targetCard = e.Target.FirstOrDefault()!.Card;
             return new UnitDestroyedEventDto(
-                e.Target.OwnerPlayerId, // The owner of the card that was destroyed
-                e.Target.InstanceId,
-                e.Target.OwnerPlayerId,
+                targetCard.OwnerPlayerId, // The owner of the card that was destroyed
+                targetCard.InstanceId,
+                targetCard.OwnerPlayerId,
                 e.Reason ?? "Destroyed"
             );
         }
@@ -330,7 +245,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             if (gameEvent is not EvolveEvent e) return null;
             if (e.Source?.Card == null) return null;
-            var cardDto = e.Source.Card.ToCompleteDto(_gameDataProvider, _mapper);
+            var cardDto = _mapper.Map<CardInstanceDto>(e.Source.Card);
             if (cardDto == null)
             {
                 return new ErrorOccurredEventDto(e.Source.Card.OwnerPlayerId, "Cannot convert EvolveEvent to DTO: EvolvedCard could not be mapped.");
@@ -355,31 +270,32 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return null;
             }
 
-            var cardInstance = context.CurrentGameState.FindCardInstanceById(firstCardId);
+            var cardInstance = context.CurrentGameState.FindCardInstance(firstCardId);
             if (cardInstance == null)
             {
                 _logger.LogWarning("Could not find drawn card with instance ID {CardId} in game state.", firstCardId);
                 return null;
             }
 
+            if (e.Source?.Player == null) return null;
             return new CardDrawnEventDto(
                 e.Source.Player.PlayerId,
                 firstCardId.ToString(),
-                cardInstance.DefinitionId.ToString()
+                cardInstance.CurrentDefinitionId.ToString()
             );
         }
 
         private GameEventDto? ConvertTurnStartEvent(IGameEvent gameEvent, GameContext context)
         {
-            if (gameEvent is not TurnStartEvent turnStartEvent)
+            if (gameEvent is not TurnStartEvent turnStartEvent || turnStartEvent.Source?.Player == null)
             {
-                _logger.LogError("ConvertTurnStartEvent called with incorrect event type: {EventType}", gameEvent.EventType);
+                _logger.LogError("ConvertTurnStartEvent called with incorrect event type or null source player: {EventType}", gameEvent.EventType);
                 return new ErrorOccurredEventDto(context.RequestingPlayerId, "Internal server error: Invalid event type for TurnStart conversion.");
             }
 
             // The most reliable source for the game state is the context, which holds the state
             // at the point of event processing.
-            var gameStateSnapshot = context.CreateSnapshot();
+            var gameStateSnapshot = _mapper.Map<GameStateDto>(context.CurrentGameState);
 
             return new TurnStartedEventDto(
                 gameStateSnapshot,
@@ -428,19 +344,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
             );
         }
 
-        private GameEventDto? ConvertBuffAppliedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertBuffAppliedEvent(IGameEvent gameEvent, GameContext context)
         {
             if (gameEvent is Events.BuffAppliedEvent buffAppliedEvent)
             {
                 var buff = buffAppliedEvent.AppliedBuff;
-                // Convert Guid? to string? then use ??
-                var sourcePlayerId = buff.SourceAbility?.SourceCard?.OwnerPlayerId ?? Guid.Empty;
+                var sourceAbility = ResolveSourceAbility(context, buff.SourceAbilityId);
+                var sourceCard = sourceAbility?.SourceCard;
+                var sourcePlayerId = sourceCard?.OwnerPlayerId ?? Guid.Empty;
 
                 return new BuffAppliedEventDto(
-                    sourcePlayerId, // Now a string
+                    sourcePlayerId,
                     buff.Id,
                     buff.TargetCardInstanceId,
-                    buff.SourceAbility?.SourceCard?.InstanceId,
+                    sourceAbility?.SourceCardId,
                     buff.DefinitionId,
                     ExtractBuffType(buff),
                     buff.DurationType.ToString(),
@@ -455,20 +372,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return null;
         }
 
-        private GameEventDto? ConvertBuffRemovedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertBuffRemovedEvent(IGameEvent gameEvent, GameContext context)
         {
             if (gameEvent is Events.BuffRemovedEvent buffRemovedEvent)
             {
                 var buff = buffRemovedEvent.RemovedBuff;
-                // Convert Guid? to string? then use ??
-                var sourcePlayerId = buff.SourceAbility?.SourceCard?.OwnerPlayerId ?? Guid.Empty;
+                var sourceAbility = ResolveSourceAbility(context, buff.SourceAbilityId);
+                var sourceCard = sourceAbility?.SourceCard;
+                var sourcePlayerId = sourceCard?.OwnerPlayerId ?? Guid.Empty;
 
                 return new BuffRemovedEventDto(
-                    sourcePlayerId, // Now a string
+                    sourcePlayerId,
                     buff.Id,
                     buff.TargetCardInstanceId,
                     buffRemovedEvent.RemovalReason,
-                    buff.SourceAbility?.SourceCard?.InstanceId,
+                    sourceAbility?.SourceCardId,
                     buff.DefinitionId,
                     ExtractBuffType(buff),
                     buff.IsNonStackable
@@ -480,12 +398,22 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return null;
         }
 
+        private static IAbility? ResolveSourceAbility(GameContext context, Guid sourceAbilityId)
+        {
+            if (sourceAbilityId == Guid.Empty)
+            {
+                return null;
+            }
+
+            return context.AbilityManager.GetAbilityByRuntimeId(sourceAbilityId);
+        }
+
         /// <summary>
         /// 从Buff的Effects中提取Buff类型
         /// </summary>
         /// <param name="buff">要分析的Buff实例</param>
         /// <returns>Buff类型字符串</returns>
-        private static string ExtractBuffType(BuffConfig buff)
+        private static string ExtractBuffType(Buff buff)
         {
             if (buff.Effects == null || buff.Effects.Count == 0)
                 return "Unknown";
@@ -525,15 +453,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             if (gameEvent is SilenceAppliedEvent silenceAppliedEvent)
             {
-                var target = silenceAppliedEvent.Target;
-                var sourceCard = silenceAppliedEvent.SourceAbility?.SourceCard;
-                var sourcePlayerId = sourceCard?.OwnerPlayerId ?? target.OwnerPlayerId; // Fallback to target's owner if source is unknown
+                var targetCard = silenceAppliedEvent.Target.FirstOrDefault()?.Card;
+                if (targetCard == null) return null;
+                var sourceAbility = silenceAppliedEvent.SourceAbility;
+                var sourceCard = sourceAbility?.SourceCard;
+                var sourcePlayerId = sourceCard?.OwnerPlayerId ?? targetCard.OwnerPlayerId; // Fallback to target's owner if source is unknown
 
                 return new SilenceAppliedEventDto(
                     sourcePlayerId,
-                    target.InstanceId,
+                    targetCard.InstanceId,
                     sourceCard?.InstanceId,
-                    silenceAppliedEvent.SourceAbility?.DefinitionId,
+                    sourceAbility?.DefinitionId ?? 0,
                     0 // TODO: Extract removed buff count from event parameters
                 );
             }
@@ -546,12 +476,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             if (gameEvent is Events.SilenceRemovedEvent silenceRemovedEvent)
             {
-                var target = silenceRemovedEvent.Target;
-                var sourcePlayerId = target.OwnerPlayerId; // Convert Guid to string
+                var targetCard = silenceRemovedEvent.Target.FirstOrDefault()?.Card;
+                if (targetCard == null) return null;
+                var sourcePlayerId = targetCard.OwnerPlayerId; // Convert Guid to string
 
                 return new SilenceRemovedEventDto(
                     sourcePlayerId, // Now a string
-                    target.InstanceId
+                    targetCard.InstanceId
                 );
             }
 
@@ -569,49 +500,128 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private GameEventDto? ConvertHandUpdatedEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is Events.HandUpdatedEvent handUpdatedEvent)
-            {
-                if (handUpdatedEvent.Source?.Player == null) return null;
-                var playerId = handUpdatedEvent.Source.Player.PlayerId;
-                var updatedHand = handUpdatedEvent.UpdatedHand;
+            if (gameEvent is not HandUpdatedEvent e) return null;
+            if (e.Source?.Player == null) return null;
 
-                // 【修复】Convert CardInstance list to CardInstanceDto list using complete mapping
-                var handDtos = updatedHand.Select(card => card.ToCompleteDto(_gameDataProvider, _mapper)).ToList();
+            var playerId = e.Source.Player.PlayerId;
+            var updatedHand = e.UpdatedHand;
 
-                return new HandUpdatedEventDto(playerId, handDtos);
-            }
+            // 【修复】Convert CardInstance list to CardInstanceDto list using complete mapping
+            var handDtos = _mapper.Map<List<CardInstanceDto>>(updatedHand);
 
-            // Fallback for generic event
-            var playerIdFromParams = (Guid)(gameEvent.Parameters.GetValueOrDefault("playerId") ?? Guid.Empty);
-
-            return new HandUpdatedEventDto(playerIdFromParams, new List<CardInstanceDto>());
+            return new HandUpdatedEventDto(playerId, handDtos);
         }
 
         private GameEventDto? ConvertPpUpdateEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not PpUpdateEvent e) return null;
-            if (e.Source?.Player == null) return null;
+            var player = gameEvent.Source?.Player;
+            if (player == null) return null;
             return new PpUpdateEventDto(
-                e.Source.Player.PlayerId,
-                e.Source.Player.CurrentPlayPoints,
-                e.Source.Player.MaxPlayPoints
+                player.PlayerId,
+                player.CurrentPlayPoints,
+                player.MaxPlayPoints
+            );
+        }
+
+        private GameEventDto? ConvertPpMaxUpdateEvent(IGameEvent gameEvent)
+        {
+            var player = gameEvent.Source?.Player;
+            if (player == null) return null;
+            return new PpMaxUpdateEventDto(
+                player.PlayerId,
+                player.CurrentPlayPoints,
+                player.MaxPlayPoints
+            );
+        }
+
+        private GameEventDto? ConvertEpMaxUpdateEvent(IGameEvent gameEvent)
+        {
+            var player = gameEvent.Source?.Player;
+            if (player == null) return null;
+            return new EpMaxUpdateEventDto(
+                player.PlayerId,
+                player.CurrentEvolutionPoints,
+                player.MaxEvolutionPoints
+            );
+        }
+
+
+
+        private GameEventDto? ConvertEpUpdateEvent(IGameEvent gameEvent)
+        {
+            var player = gameEvent.Source?.Player;
+            if (player == null) return null;
+            return new EpUpdateEventDto(
+                player.PlayerId,
+                player.CurrentEvolutionPoints,
+                player.MaxEvolutionPoints
+            );
+        }
+
+        private GameEventDto? ConvertSepUpdateEvent(IGameEvent gameEvent)
+        {
+            var player = gameEvent.Source?.Player;
+            if (player == null) return null;
+            return new SepUpdateEventDto(
+                player.PlayerId,
+                player.CurrentSuperEvolutionPoints,
+                player.MaxSuperEvolutionPoints
+            );
+        }
+
+        private GameEventDto? ConvertSepMaxUpdateEvent(IGameEvent gameEvent)
+        {
+            var player = gameEvent.Source?.Player;
+            if (player == null) return null;
+            return new SepMaxUpdateEventDto(
+                player.PlayerId,
+                player.CurrentSuperEvolutionPoints,
+                player.MaxSuperEvolutionPoints
+            );
+        }
+
+        private GameEventDto? ConvertEvolveStateUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not EvolveStateUpdatedEvent e) return null;
+            var player = e.Source?.Player;
+            if (player == null) return null;
+            return new EvolveStateUpdatedEventDto(
+                player.PlayerId,
+                e.CanEvolve
+            );
+        }
+
+        private GameEventDto? ConvertSuperEvolveStateUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not SuperEvolveStateUpdatedEvent e) return null;
+            var player = e.Source?.Player;
+            if (player == null) return null;
+            return new SuperEvolveStateUpdatedEventDto(
+                player.PlayerId,
+                e.CanSuperEvolve
             );
         }
 
         private GameEventDto? ConvertKeywordAddedEvent(IGameEvent gameEvent)
         {
-            // TODO: The KeywordAddedEvent is missing the target card instance.
-            // This needs to be added to the event definition for this to be properly converted.
-            _logger.LogWarning("KeywordAddedEvent cannot be converted to a DTO because it lacks a target card context.");
-            return null;
+            if (gameEvent is not KeywordAddedEvent e) return null;
+            if (e.TargetCard == null) return null;
+
+            return new Dtos.SignalR.Events.KeywordAddedEventDto(
+                sourcePlayerId: e.TargetCard.OwnerPlayerId,
+                cardInstanceId: e.TargetCard.InstanceId,
+                keyword: e.KeywordAdded);
         }
 
         private GameEventDto? ConvertKeywordRemovedEvent(IGameEvent gameEvent)
         {
-            // TODO: The KeywordRemovedEvent is missing the target card instance.
-            // This needs to be added to the event definition for this to be properly converted.
-            _logger.LogWarning("KeywordRemovedEvent cannot be converted to a DTO because it lacks a target card context.");
-            return null;
+            if (gameEvent is not KeywordRemovedEvent e) return null;
+            if (e.Source?.Card == null) return null;
+
+            return new Dtos.SignalR.Events.KeywordRemovedEventDto(
+                sourcePlayerId: e.Source.Card.OwnerPlayerId,
+                cardInstanceId: e.Source.Card.InstanceId,
+                keyword: e.Keyword);
         }
 
         private GameEventDto? ConvertHealthChangedEvent(IGameEvent gameEvent)
@@ -620,10 +630,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (e.Source?.Card == null)
             {
-                _logger.LogWarning("[EventProcessor] HealthChangedEvent is missing a source card. Cannot determine source player ID.");
+                _logger.LogWarning("[EventProcessor] HealthChangedEvent is missing a source card. Cannot create DTO.");
                 return null;
             }
-            var sourcePlayerId = e.Source.Card.OwnerPlayerId;
+
+            var targetCard = e.Source.Card;
+            var sourcePlayerId = targetCard.OwnerPlayerId;
 
             // DamageTaken should be a positive value representing damage.
             // ChangeAmount is negative for damage, positive for heal.
@@ -631,9 +643,24 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             return new Dtos.SignalR.Events.HealthChangedEventDto(
                 sourcePlayerId,
-                e.Target.InstanceId,
+                targetCard.InstanceId,
                 e.NewHealth,
                 damageTaken
+            );
+        }
+
+        private GameEventDto? ConvertStatChangedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not StatChangedEvent e) return null;
+            if (e.TargetCard == null) return null;
+
+            var targetCard = e.TargetCard;
+            return new StatChangeEventDto(
+                sourcePlayerId: targetCard.OwnerPlayerId,
+                targetEntityUid: targetCard.InstanceId,
+                newAttack: targetCard.CurrentAttack,
+                newCurrentHealth: targetCard.CurrentHealth,
+                newMaxHealth: targetCard.MaxHealth
             );
         }
 
@@ -661,6 +688,49 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 e.Source.Card.InstanceId,
                 e.CanAttack
             );
+        }
+
+        private GameEventDto? ConvertActStateUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not ActStateUpdatedEvent e) return null;
+            if (e.Source?.Card == null) return null;
+
+            return new ActStateUpdatedEventDto(
+                e.Source.Card.OwnerPlayerId,
+                e.Source.Card.InstanceId,
+                e.ActLastUsedTurnNumber
+            );
+        }
+
+        private GameEventDto? ConvertCardsFusedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not CardsFusedEvent e) return null;
+            if (e.Source?.Player == null) return null;
+
+            return new CardsFusedEventDto(
+                e.Source.Player.PlayerId,
+                e.FusedCardInstanceIds.ToList());
+        }
+
+        private GameEventDto? ConvertCardRevealedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not CardRevealedEvent e) return null;
+            var revealingPlayerId = e.Source?.Player?.PlayerId;
+            var card = e.RevealedCard;
+            if (!revealingPlayerId.HasValue || card == null) return null;
+
+            var cardDto = _mapper.Map<CardInstanceDto>(card);
+            return new CardRevealedEventDto(
+                sourcePlayerId: revealingPlayerId.Value,
+                revealingPlayerId: revealingPlayerId.Value,
+                revealedCardInstanceId: card.InstanceId,
+                revealedCard: cardDto);
+        }
+
+        private static GameEventDto? ConvertGameEndEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not GameEndEvent e) return null;
+            return new GameOverEventDto(e.WinnerId, e.WinnerId, e.LoserId, e.Reason);
         }
     }
 }

@@ -30,7 +30,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="useAiFallback">When true and guestPlayerId is null, create an AI opponent.</param>
         /// <param name="scopeServiceProvider">Scope service provider (from HttpContext) for dependency resolution.</param>
         /// <returns>The GameState domain entity for the game, or null if creation failed unexpectedly.</returns>
-        GameState? GetOrCreateGameState(string gameId, Guid? hostPlayerId, Guid? guestPlayerId, bool useAiFallback, IServiceProvider scopeServiceProvider); // Return Domain Entity
+        Task<GameState?> GetOrCreateGameStateAsync(string gameId, Guid? hostPlayerId, Guid? guestPlayerId, bool useAiFallback, IServiceProvider scopeServiceProvider); // Return Domain Entity
 
         /// <summary>
         /// Retrieves the current game state for the specified game ID.

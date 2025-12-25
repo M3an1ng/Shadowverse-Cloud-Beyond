@@ -1,6 +1,7 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
+using ShadowverseBeyond.Server.Domain.Effects;
 using System.Collections.Generic;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
@@ -14,24 +15,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 效果唯一标识
         /// </summary>
-        public string Id { get; set; } = string.Empty;
+        //public string Id { get; set; } = string.Empty;
 
         /// <summary>
         /// 效果名称
         /// </summary>
-        public string Name { get; set; } = string.Empty;
+        //public string Name { get; set; } = string.Empty;
 
         /// <summary>
         /// 效果类型
-        /// TODO: 由string改为枚举类
+        /// 效果类型
         /// </summary>
-        public string Type { get; set; } = string.Empty;
-
-        /// <summary>
-        /// 效果目标配置
-        /// TODO: 这里的目标配置应该是对于从Target处继承下来的上下文中的目标列表的进一步选择，而非TargetConfig，需要修改
-        /// </summary>
-        public TargetConfig Target { get; set; } = new(); // Changed TargetConfig to TargetConfig
+        public EffectType Type { get; set; }
 
         /// <summary>
         /// <summary>
@@ -43,7 +38,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 
         /// 效果数值
         /// </summary>
-        public ValueConfig Amount { get; set; } = new();
+        //public ValueConfig Amount { get; set; } = new();
 
         /// <summary>
         /// 效果参数
@@ -52,35 +47,44 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         public Dictionary<string, ValueConfig> Parameters { get; set; } = new();
 
         /// <summary>
+        /// 一个DSL查询字符串，用于从父级能力已解析的目标池(ResolvedTargets)中，为当前效果选择其自己的目标。
+        /// 这允许效果对已选定的目标进行二次筛选和组合。
+        /// 例如: "ResolvedTargets.primary" 或 "Filter(ResolvedTargets.secondary, c => c.Attack > 3)"
+        /// 如果为空，则默认使用父能力的所有已解析目标。
+        /// </summary>
+        public string TargetSelector { get; set; } = string.Empty;
+
+        /// <summary>
         /// 失败时的处理策略
         /// </summary>
-        public FailureStrategy OnFailure { get; set; } = FailureStrategy.Continue;
+        //public FailureStrategy OnFailure { get; set; } = FailureStrategy.Continue;
 
         /// <summary>
         /// 效果表达式（DSL语法）
         /// 例如: "damage(target, self.attack * 2)"
         /// </summary>
-        public string Expression { get; set; } = string.Empty;
+        //public string Expression { get; set; } = string.Empty;
 
         /// <summary>
         /// 子效果列表（用于复合效果）
         /// </summary>
-        public List<EffectConfig> SubEffects { get; set; } = new();
+        //public List<EffectConfig> SubEffects { get; set; } = new();
 
         /// <summary>
         /// 是否可以被取消
         /// </summary>
-        public bool CanBeCanceled { get; set; } = false;
+        //public bool CanBeCanceled { get; set; } = false;
 
         /// <summary>
         /// 取消条件
         /// </summary>
-        public List<ConditionConfig> CancelConditions { get; set; } = new();
+        //public List<ConditionConfig> CancelConditions { get; set; } = new();
+
 
         /// <summary>
         /// 是否启用
         /// </summary>
-        public bool IsEnabled { get; set; } = true;
+        //public bool IsEnabled { get; set; } = true;
 
         /// <summary>
         /// 定义当此效果成功执行后，如何构建 EffectCompletedEvent.ExecutionResults 的内容。

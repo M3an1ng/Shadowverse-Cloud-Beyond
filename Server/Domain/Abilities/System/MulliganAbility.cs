@@ -13,7 +13,9 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Dtos.Enums; // For GamePhase
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // For MulliganEffectParams
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Effects; // For MulliganEffectParams
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.System
 {
@@ -21,13 +23,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
     {
         private static readonly Guid _runtimeId = Guid.NewGuid();
         private readonly ILogger<MulliganAbility> _logger;
-        private readonly CheckMulliganCompletionAbility _checkMulliganCompletionAbility;
 
         public Guid RuntimeId => _runtimeId;
         public long DefinitionId => GameConstants.SystemAbilityIds.MulliganAbilityId;
         public string Name => "Mulligan";
-        public string AbilityTag => "System";
+        public EffectKeyword AbilityTag => EffectKeyword.System;
         public AbilityType Type => AbilityType.Triggered;
+        public List<Target> Targets { get; } = new List<Target>();
 
         public TriggerConfig TriggerConfig
         {
@@ -40,12 +42,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             }
         }
 
+        public Guid? SourceCardId { get; set; }
+
         public CardInstance? SourceCard { get; set; }
 
-        public MulliganAbility(ILogger<MulliganAbility> logger, CheckMulliganCompletionAbility checkMulliganCompletionAbility)
+        public Guid? SourceBuffId => null; // System abilities are not granted by buffs.
+
+        public MulliganAbility(ILogger<MulliganAbility> logger)
         {
             _logger = logger;
-            _checkMulliganCompletionAbility = checkMulliganCompletionAbility;
         }
 
 
@@ -57,12 +62,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             return Task.FromResult(true);
         }
 
-        public Task<bool> CheckConditionsAsync(GameContext context)
+        public bool CheckConditions(GameContext context)
         {
             if (context.TriggeringEvent is not MulliganSubmittedEvent requestEvent)
             {
                 _logger?.LogWarning("{AbilityName}: Triggering event is not MulliganSubmittedEvent. Event: {Event}", Name, context.TriggeringEvent?.GetType().Name);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Check if the game is in the Mulligan phase
@@ -70,36 +75,36 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: MulliganSubmittedEvent received but game is not in Mulligan phase (Current: {GamePhase}).",
                     Name, context.CurrentGameState.Phase);
-                return Task.FromResult(false);
+                return false;
             }
 
             PlayerState? playerState = context.CurrentGameState.GetPlayerState(requestEvent.PlayerId);
             if (playerState == null)
             {
                 _logger?.LogError("{AbilityName}: Could not find player state for PlayerId {PlayerId}.", Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Check if the player has already completed mulligan
             if (playerState.HasCompletedMulligan)
             {
                 _logger?.LogWarning("{AbilityName}: Player {PlayerId} has already completed mulligan.", Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             _logger?.LogInformation("{AbilityName}: Conditions met for player {PlayerId} to submit mulligan.", Name, requestEvent.PlayerId);
-            return Task.FromResult(true);
+            return true;
         }
 
-        public Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
+        public Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false)
         {
             // Mulligan targets the player themselves and their hand/deck.
             // The specific cards to replace are in the MulliganSubmittedEvent.
             _logger?.LogInformation("{AbilityName}: Mulligan targets are implicit from the event.", Name);
-            return Task.FromResult(new List<TargetInfo>());
+            return Task.FromResult(new TargetResolutionResult { Status = ResolutionStatus.Completed, ResolvedTargets = new Dictionary<string, List<TargetInfo>>() });
         }
 
-        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, TargetResolutionResult targetResult)
         {
             var effects = new List<Effect>();
 
@@ -117,11 +122,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
 
             var effectConfig = new EffectConfig
             {
-                Type = "mulligan", // Corresponds to MulliganEffectHandler
+                Type = EffectType.Mulligan, // Corresponds to MulliganEffectHandler
                 Parameters = new Dictionary<string, ValueConfig>
                 {
-                    { nameof(MulliganEffectParams.CardUidsToReplace), ValueConfig.Static(mulliganParams.CardUidsToReplace) },
-                    { nameof(MulliganEffectParams.MulliganReason), ValueConfig.Static(mulliganParams.MulliganReason) }
+                    { nameof(MulliganEffectParams.CardUidsToReplace), new StaticValueConfig { Value = mulliganParams.CardUidsToReplace } },
+                    { nameof(MulliganEffectParams.MulliganReason), new StaticValueConfig { Value = mulliganParams.MulliganReason } }
                 }
             };
 
@@ -143,7 +148,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             );
 
             // Directly chain the hard-coded system ability instance
-            mulliganEffect.ChainedAbilities.Add(_checkMulliganCompletionAbility);
 
             effects.Add(mulliganEffect);
             _logger?.LogInformation("{AbilityName}: Added 'mulligan' effect for Player {PlayerId}, replacing {Count} cards.",

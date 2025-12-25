@@ -82,6 +82,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             }
         }
 
+        /*
         /// <summary>
         /// 解析目标表达式 (用于 TargetConfig.SourcePoolExpression 等)
         /// 语法: source_pool_expression [where filter_expression] [order by ordering_clause] [take selection_clause]
@@ -185,11 +186,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             }
         }
 
-        /// &lt;summary&gt;
+        /// <summary>
         /// 解析完整的能力定义 (顶级入口)
-        /// 语法: ABILITY &lt;name&gt; [TAG &lt;tag&gt;] [TYPE &lt;type&gt;] [TRIGGER ...] [CONDITION ...] [TARGET ...] [EFFECT ...] [PROPERTY ...] END_ABILITY
-        /// &lt;/summary&gt;
-        /// &lt;returns&gt;能力的AST根节点，如果解析失败则返回 null&lt;/returns&gt;
+        /// 语法: ABILITY <name> [TAG <tag>] [TYPE <type>] [TRIGGER ...] [CONDITION ...] [TARGET ...] [EFFECT ...] [PROPERTY ...] END_ABILITY
+        /// </summary>
+        /// <returns>能力的AST根节点，如果解析失败则返回 null</returns>
         public AbilityNode? ParseAbility()
         {
             Errors.Clear(); // Clear errors for new parse run
@@ -198,14 +199,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             try
             {
                 Expect(TokenType.AbilityKeyword); // Expect ABILITY keyword
-                var abilityNameToken = ExpectIdentifier("Expected ability name after ABILITY keyword.");
+                var abilityNameToken = ExpectIdentifierWithMessage("Expected ability name after ABILITY keyword.");
                 var abilityNode = new AbilityNode { Name = abilityNameToken.Value };
                 abilityNode.Location = ConvertPosition(abilityNameToken.Position); // Initial location
 
                 // Optional TAG
                 if (Match(TokenType.TagKeyword))
                 {
-                    var tagToken = ExpectIdentifier("Expected tag name after TAG keyword.");
+                    var tagToken = ExpectIdentifierWithMessage("Expected tag name after TAG keyword.");
                     abilityNode.Tag = tagToken.Value;
                     // TODO: Update end location
                 }
@@ -213,7 +214,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 // Optional TYPE
                 if (Match(TokenType.TypeKeyword))
                 {
-                    var typeToken = ExpectIdentifier("Expected type name after TYPE keyword.");
+                    var typeToken = ExpectIdentifierWithMessage("Expected type name after TYPE keyword.");
                     abilityNode.Type = typeToken.Value;
                     // TODO: Update end location
                 }
@@ -517,83 +518,62 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
 
         private SelectionTerm ParseSelectionClause()
         {
-            /// <summary>
-            /// 解析 take 子句的内容
-            /// 语法: (first | last | random | all) [count_expression]
-            /// </summary>
             var startPosition = CurrentToken?.Position ?? new TokenPosition(1, 1, 0);
-            var strategy = SelectionStrategy.All; // Default if no keyword is matched initially
+            var strategy = SelectionStrategy.All;
             ExpressionNode? countExpr = null;
-            Token? strategyToken = null; // Keep track of the strategy token for location
 
-            if (Match(TokenType.First))
+            var strategyToken = ExpectIdentifierWithMessage("Expected selection strategy (first, last, random, all) after 'take'.");
+            var strategyWord = strategyToken.Value.ToLowerInvariant();
+
+            switch (strategyWord)
             {
-                strategy = SelectionStrategy.First;
-                strategyToken = Previous();
-                countExpr = ParseExpression(); // 'first' requires a count
-            }
-            else if (Match(TokenType.Last))
-            {
-                strategy = SelectionStrategy.Last;
-                strategyToken = Previous();
-                countExpr = ParseExpression(); // 'last' requires a count
-            }
-            else if (Match(TokenType.Random))
-            {
-                strategy = SelectionStrategy.Random;
-                strategyToken = Previous();
-                countExpr = ParseExpression(); // 'random' requires a count
-            }
-            else if (Match(TokenType.All))
-            {
-                strategy = SelectionStrategy.All;
-                strategyToken = Previous();
-                // 'all' does not take a count expression, but we check if one is provided erroneously
-                if (!IsAtEnd && !IsNextTokenAClauseKeyword()) // Check if something follows 'all' that isn't EOF or another clause keyword
-                {
-                    // Attempt to parse to see if it's a valid expression, but report error
-                    int currentPosBeforeAttempt = _current; // Declare before try block
-                    try
+                case "first":
+                    strategy = SelectionStrategy.First;
+                    countExpr = ParseExpression();
+                    break;
+                case "last":
+                    strategy = SelectionStrategy.Last;
+                    countExpr = ParseExpression();
+                    break;
+                case "random":
+                    strategy = SelectionStrategy.Random;
+                    countExpr = ParseExpression();
+                    break;
+                case "all":
+                    strategy = SelectionStrategy.All;
+                    if (!IsAtEnd && !IsNextTokenAClauseKeyword())
                     {
-                        var extraExpr = ParseExpression(); // Try parsing to consume tokens
-                                                           // If ParseExpression succeeded without error, it's unexpected content
-                        AddError($"Unexpected expression after 'take all'. 'all' does not take a count.", CurrentToken?.Position ?? startPosition); // Use CurrentToken.Position or startPosition
+                        var currentPosBeforeAttempt = _current;
+                        try
+                        {
+                            ParseExpression();
+                            AddError("Unexpected expression after 'take all'. 'all' does not take a count.", Previous().Position);
+                        }
+                        catch (ParseException)
+                        {
+                            _current = currentPosBeforeAttempt;
+                        }
                     }
-                    catch (ParseException)
-                    {
-                        // If parsing fails immediately, the token is likely unexpected anyway. Reset position.
-                        _current = currentPosBeforeAttempt; // Backtrack
-                        AddError($"Unexpected token '{CurrentToken?.Type}' after 'take all'. 'all' does not take a count.", CurrentToken?.Position ?? startPosition);
-                    }
-                }
-            }
-            else
-            {
-                // If 'take' was matched but no valid strategy keyword follows
-                AddError($"Expected selection strategy (first, last, random, all) after 'take', but got '{CurrentToken?.Type}'.", CurrentToken?.Position ?? startPosition);
-                // Create a default 'all' node to allow parsing to potentially continue, but with errors reported
-                strategy = SelectionStrategy.All;
-                // Use a default literal 1 for count in case of error, though it won't be used for 'all'
-                countExpr = new LiteralNode { Value = 1, DataType = "number", Location = ConvertPosition(startPosition) };
-                // This path should still return a valid (though default) SelectionTerm
+                    break;
+                default:
+                    AddError($"Unknown selection strategy '{strategyWord}'. Expected first, last, random, or all.", strategyToken.Position);
+                    strategy = SelectionStrategy.All;
+                    break;
             }
 
-            // Validation for strategies requiring a count
             if (strategy != SelectionStrategy.All && countExpr == null)
             {
-                AddError($"Selection strategy '{strategy.ToString().ToLower()}' requires a count expression.", strategyToken?.Position ?? startPosition);
-                // Provide a default count expression in case of error to prevent null issues downstream
-                countExpr = new LiteralNode { Value = 1, DataType = "number", Location = ConvertPosition(strategyToken?.Position ?? startPosition) };
+                AddError($"Selection strategy '{strategy.ToString().ToLower()}' requires a count expression.", strategyToken.Position);
+                countExpr = new LiteralNode { Value = 1, DataType = "number", Location = ConvertPosition(strategyToken.Position) };
             }
 
-
-            var endLocation = countExpr?.Location ?? ConvertPosition(strategyToken?.Position ?? startPosition);
+            var endLocation = countExpr?.Location ?? ConvertPosition(strategyToken.Position);
 
             return new SelectionTerm
             {
                 Strategy = strategy,
-                CountExpression = countExpr, // Can be null only if strategy is All and no erroneous expression was provided
-                Location = MergeLocations(ConvertPosition(startPosition), endLocation) // Location spans from 'take' to end of count (or strategy keyword)
+                CountExpression = countExpr,
+                Location = MergeLocations(ConvertPosition(startPosition), endLocation)
             };
         }
 
@@ -620,6 +600,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             if (IsAtEnd) return false; // No token means no clause keyword
             return Check(TokenType.Where, TokenType.Order, TokenType.Take);
         }
+        */
         /// <summary>
         /// 解析表达式
         /// </summary>
@@ -644,7 +625,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
-                    Location = MergeLocations(expr.Location, ConvertPosition(opToken.Position)) // Update location
+
                 };
             }
 
@@ -667,7 +648,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
-                    Location = MergeLocations(expr.Location, ConvertPosition(opToken.Position)) // Update location
+
                 };
             }
 
@@ -690,7 +671,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
-                    Location = MergeLocations(expr.Location, ConvertPosition(opToken.Position)) // Update location
+
                 };
             }
 
@@ -714,7 +695,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
-                    Location = MergeLocations(expr.Location, ConvertPosition(opToken.Position)) // Update location
+
                 };
             }
 
@@ -737,7 +718,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
-                    Location = MergeLocations(expr.Location, ConvertPosition(opToken.Position)) // Update location
+
                 };
             }
 
@@ -760,7 +741,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
-                    Location = MergeLocations(expr.Location, ConvertPosition(opToken.Position)) // Update location
+
                 };
             }
 
@@ -781,7 +762,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     Operator = opToken.Type, // Assign TokenType
                     Operand = right,
                     IsPrefix = true,
-                    Location = MergeLocations(ConvertPosition(opToken.Position), right.Location) // Update location
+
                 };
             }
 
@@ -803,21 +784,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 }
                 else if (Match(TokenType.Dot))
                 {
-                    var name = ExpectIdentifier("Expected property name after '.'").Value;
+                    var nameToken = ExpectIdentifierWithMessage("Expected property name after '.'");
+                    var memberIdentifier = new IdentifierNode { Name = nameToken.Value, Path = new List<string>(), Location = ConvertPosition(nameToken.Position) };
+                    memberIdentifier.Path.Add(nameToken.Value); // Keep the path consistent for now, although it's just one segment.
 
-                    if (expr is IdentifierNode identifier)
+                    expr = new MemberAccessNode
                     {
-                        identifier.Path.Add(name);
-                    }
-                    else
-                    {
-                        // 创建新的标识符节点
-                        expr = new IdentifierNode
-                        {
-                            Name = name,
-                            Path = new List<string> { name }
-                        };
-                    }
+                        Target = expr,
+                        Member = memberIdentifier,
+                    };
                 }
                 else
                 {
@@ -922,6 +897,31 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         }
 
         // 辅助方法
+        private bool Match(TokenType type, string value)
+        {
+            if (Check(type) && CurrentToken!.Value.Equals(value, StringComparison.InvariantCultureIgnoreCase))
+            {
+                Advance();
+                return true;
+            }
+            return false;
+        }
+
+        private bool CheckIdentifier(string value)
+        {
+            if (IsAtEnd) return false;
+            return CurrentToken!.Type == TokenType.Identifier && CurrentToken.Value.Equals(value, StringComparison.InvariantCultureIgnoreCase);
+        }
+
+        private Token ExpectIdentifier(string value)
+        {
+            if (CheckIdentifier(value))
+            {
+                return Advance();
+            }
+
+            throw new ParseException($"Expected identifier '{value}', but got '{CurrentToken?.Value ?? "EOF"}'");
+        }
         private bool Match(params TokenType[] types)
         {
             foreach (var type in types)
@@ -962,7 +962,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             throw new ParseException($"Expected {type}, but got {CurrentToken?.Type.ToString() ?? "EOF"}");
         }
 
-        private Token ExpectIdentifier(string message)
+        private Token ExpectIdentifierWithMessage(string message)
         {
             if (Check(TokenType.Identifier))
             {

@@ -65,7 +65,7 @@ namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
             {
                 _effectQueue.Enqueue(request, request.Priority);
                 _logger.LogDebug("Enqueued effect request: {EffectType} for player {PlayerId} with Priority {Priority} and ID {RequestId}",
-                    request.EffectConfig?.Type ?? "unknown", request.RequestingPlayerId, request.Priority, request.Id);
+                    request.EffectConfig?.Type.ToString() ?? "unknown", request.RequestingPlayerId, request.Priority, request.Id);
             }
 
             return Task.CompletedTask;
@@ -99,7 +99,7 @@ namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
                 if (_effectQueue.TryDequeue(out var effectRequest, out var priority))
                 {
                     _logger.LogDebug("Dequeued effect request: {EffectType} with Priority {Priority} for player {PlayerId}",
-                        effectRequest.EffectConfig?.Type ?? "unknown", priority, effectRequest.RequestingPlayerId);
+                        effectRequest.EffectConfig?.Type.ToString() ?? "unknown", priority, effectRequest.RequestingPlayerId);
                     return effectRequest;
                 }
             }

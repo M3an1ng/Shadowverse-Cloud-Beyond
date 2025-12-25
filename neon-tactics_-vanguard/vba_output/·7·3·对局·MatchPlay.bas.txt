@@ -1,0 +1,200 @@
+Attribute VB_Name = "·7·3·对局·MatchPlay"
+' ==================================================
+' 子过程功能：处理卡牌使用操作
+' 说明：检查条件并执行卡牌使用逻辑
+' ==================================================
+Sub MatchPlay()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim Arr As Variant           ' 临时数组
+    Dim MatchID As String        ' 卡牌匹配ID
+
+    ' ========== 回合权限检查 ==========
+    ' 如果不是自己的回合直接退出
+    If Left(Down("Turn"), 1) <> Left(Down("FirstMove"), 1) Then Exit Sub
+
+    ' ========== 选择检查 ==========
+    ' 检查是否选择了手牌区域
+    Arr = IsSelected("Hand")
+    If IsEmpty(Arr) Then
+        Arr = IsSelected("AlliedField")
+        If Not IsEmpty(Arr) Then Call MatchStrike
+        GoTo CleanUp
+    End If
+
+    ' ========== 获取选中卡牌 ==========
+    ' 下载当前玩家的手牌数据
+    Arr = Down("Hand", Left(Down("FirstMove"), 1) & 1000)
+    ' 检查选择是否有效
+    If Selection.Column > UBound(Arr, 1) Or Arr(1, 1) = Empty Then
+        Call UIRefresh
+        Exit Sub
+    End If
+    MatchID = Arr(Selection.Column, 1)   ' 获取选中卡牌的MatchID
+    
+    ' ========== 执行使用功能 ==========
+    Arr = PlayFunction(MatchID)
+    If Not Arr Then GoTo CleanUp
+    
+    ' ========== 战场信息获取 ==========
+    ' 下载战场信息
+    Arr = Down("Field", Left(Down("FirstMove"), 1) & 1000)
+    ' 选择最新的单位
+    Sheets("Main").Activate
+    Sheets("Main").Cells(10, UBound(Arr, 1) + 2).Activate
+
+    ' ========== 界面刷新 ==========
+    Call UIRefresh
+    Call UpStepsArea
+
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+' ==================================================
+' 函数功能：执行卡牌使用逻辑
+' 参数：MatchID - 卡牌匹配ID
+' 说明：处理卡牌使用的完整流程，包括费用检查、效果触发等
+' ==================================================
+Function PlayFunction(MatchID As String) As Boolean
+    ' ========== 变量声明 ==========
+    Dim i%, j%                           ' 循环计数器
+    Dim Arr As Variant                   ' 临时数组
+    Dim Flag As Boolean                  ' 执行标志
+    Dim ID As String                     ' 卡牌原型ID
+    Dim Cost As Integer                  ' 使用费用
+    Dim AlliedPP As Integer              ' 当前能量点
+    Dim CardType As String               ' 卡牌类型
+    Dim Effect As String                 ' 单个效果
+    Dim MatchEffect As String            ' 卡牌当前效果
+    Dim FanfareFlag As Boolean           ' 入场曲标志
+    Dim EnhanceFlag As Boolean           ' 爆能强化标志
+    Dim Effectrr() As String             ' 效果数组
+    PlayFunction = True
+    
+    ' ========== 初始化队列 ==========
+    ' 清空能力队列
+    QueueAbility = Empty
+    QueueMatchID = Empty
+
+    ' ========== 获取卡牌基本信息 ==========
+    ID = DownByMatchID(MatchID, "ID")                    ' 卡牌原型ID
+    MatchEffect = DownByMatchID(MatchID, "Effect")       ' 卡牌当前效果
+    Cost = GetModel("Cost", ID, MatchEffect)             ' 计算当前费用
+    AlliedPP = Down("PP", MatchID)                       ' 当前能量点
+    CardType = DownByID(ID, "Type")                      ' 卡牌类型
+
+    ' ========== 战场格子检查 ==========
+    ' 检查战场是否已满（法术卡不受此限制）
+    Arr = Down("Field", MatchID)
+    If UBound(Arr, 1) = 5 And CardType <> "Spell" Then Exit Function
+
+    ' ========== 费用检查 ==========
+    ' 检查能量点是否足够
+    If AlliedPP < Cost Then
+        MsgBox "能量点不足", vbExclamation
+        PlayFunction = False
+        Exit Function
+    End If
+
+    ' ========== 连击计数 ==========
+    ' 提前增加连击计数
+    Call Up("Combo", Down("Combo", MatchID) + 1, MatchID) '连击+1
+    Call UpSteps("Play", MatchID, DownByID(ID, "Name"))
+
+    ' ========== 效果遍历处理 ==========
+    Flag = True
+    Effectrr = GetEffect(MatchID)
+    For i = 1 To UBound(Effectrr)
+        Effect = Effectrr(i)
+        
+        ' ========== 爆能强化条件检查 ==========
+        ' 处理Change类型的爆能强化效果
+        If InStr(Effect, "Change|Enhance&") > 0 Then
+            j = InStr(Effect, "Change|Enhance&")
+            j = Val(Mid(Effect, j + Len("Change|Enhance&"), 10))
+            ' 检查能量点是否满足爆能强化条件
+            If AlliedPP >= j Then
+                If j > Cost Then Cost = j                ' 更新费用为爆能强化费用
+                Flag = GetTimePoint(Effect, MatchID, "Enhance")  ' 执行爆能强化效果
+                EnhanceFlag = True                       ' 标记使用了爆能强化
+                FanfareFlag = True
+            Else
+                Flag = GetTimePoint(Effect, MatchID, "Fanfare")  ' 执行爆能强化效果
+                FanfareFlag = True
+            End If
+        
+        ' ========== 使用时效果 ==========
+        ElseIf Left(Effect, Len("Play")) = "Play" Then
+            Flag = GetTimePoint(Effect, MatchID)         ' 执行使用时效果
+        
+        ' ========== 入场曲效果 ==========
+        ElseIf Left(Effect, Len("Fanfare")) = "Fanfare" And InStr(MatchEffect, "Remove|Fanfare") = 0 Then
+            Flag = GetTimePoint(Effect, MatchID)         ' 执行入场曲效果
+            FanfareFlag = True                           ' 标记触发了入场曲
+        
+        ' ========== 爆能强化效果 ==========
+        ElseIf Left(Effect, Len("Enhance")) = "Enhance" And InStr(MatchEffect, "Remove|Enhance") = 0 Then
+            j = Val(Mid(Effect, Len("Enhance&") + 1, 10))
+            ' 检查能量点是否满足爆能强化条件
+            If AlliedPP >= j Then
+                If j > Cost Then Cost = j                ' 更新费用为爆能强化费用
+                Flag = GetTimePoint(Effect, MatchID, "Enhance")  ' 执行爆能强化效果
+                EnhanceFlag = True                       ' 标记使用了爆能强化
+            End If
+        
+        ' ========== 禁止使用效果 ==========
+        ElseIf Effect = "CantPlay" Then
+            Flag = False                                 ' 标记不能使用
+        End If
+        
+        ' ========== 执行中断检查 ==========
+        ' 如果选择未成功，立即退出并恢复状态
+        If Not Flag Then
+            QueueAbility = Empty                         ' 清空队列
+            QueueMatchID = Empty
+            Call Up("Combo", Down("Combo", MatchID) - 1, MatchID) '连击-1
+            Call EraseSteps("Play")
+            
+            PlayFunction = False
+            Exit Function
+        End If
+    Next i
+
+    ' ========== 费用消耗 ==========
+    Call Up("PP", AlliedPP - Cost, MatchID)
+
+    ' ========== 区域变更处理 ==========
+    If CardType = "Spell" Then
+        ' 法术卡：移动到使用区域
+        Call UpByMatchID(MatchID, "Area", "Play")
+        Call Up("Shadows", Down("Shadows", MatchID) + 1, MatchID) '墓场+1
+        Call GetAbility("||Spellboost|Hand-Card|1", MatchID) '立刻魔力增幅
+    Else
+        ' 从者/护符卡：移动到战场区域
+        Call UpByMatchID(MatchID, "Area", "Field")
+        If CardType = "Follower" Then Call Up("Rally", Down("Rally", MatchID) + 1, MatchID) '协作+1
+    End If
+
+    ' ========== 入场处理 ==========
+    ' 非法术卡触发入场效果
+    If CardType <> "Spell" Then Call GetAction("EnterField", MatchID, True)
+
+    ' ========== 其他卡牌响应 ==========
+    Call GetAction("Play", MatchID, "")         ' 使用卡牌响应
+    If CardType <> "Spell" Then Call GetAction("EnterField", MatchID, DownByID(ID, "Name"))  ' 入场响应
+    If FanfareFlag Then Call GetAction("Keyword&Fanfare", MatchID) ' 入场曲响应
+    If EnhanceFlag Then Call GetAction("Keyword&Enhance", MatchID) ' 爆能强化响应
+
+    ' ========== 队列处理 ==========
+    Call EraseQueue
+End Function

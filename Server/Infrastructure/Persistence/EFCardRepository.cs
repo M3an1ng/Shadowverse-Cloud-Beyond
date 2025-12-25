@@ -65,5 +65,22 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
             // Use FindAsync for querying by primary key - it's optimized for single entity retrieval
             return await _context.CardDefinitions.FindAsync(id);
         }
+
+        public async Task<CardDefinition> AddAsync(CardDefinition definition)
+        {
+            _context.CardDefinitions.Add(definition);
+            await _context.SaveChangesAsync();
+            return definition;
+        }
+
+        public async Task<CardDefinition?> UpdateAsync(CardDefinition definition)
+        {
+            var existing = await _context.CardDefinitions.FindAsync(definition.Id);
+            if (existing == null) return null;
+
+            _context.Entry(existing).CurrentValues.SetValues(definition);
+            await _context.SaveChangesAsync();
+            return existing;
+        }
     }
 }

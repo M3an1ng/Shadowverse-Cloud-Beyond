@@ -6,7 +6,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Processing;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 {
@@ -25,9 +24,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             // 注册函数注册表（单例）
             services.AddSingleton<IFunctionRegistry, FunctionRegistry>();
 
-            // 注册DSL解析器和求值器
-            services.AddScoped<DslExpressionParser>();
-            services.AddScoped<DslEvaluator>();
+            // 注册DSL求值器
+            // services.AddSingleton<DslEvaluator>(); // Obsolete, replaced by DslCompiler
 
             return services;
         }
@@ -39,7 +37,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// <param name="customFunctions">自定义函数列表</param>
         /// <returns>服务集合</returns>
         public static IServiceCollection AddCustomDslFunctions(
-            this IServiceCollection services, 
+            this IServiceCollection services,
             params IFunctionDefinition[] customFunctions)
         {
             // 注册自定义函数到服务容器

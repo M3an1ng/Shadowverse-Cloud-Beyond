@@ -1,0 +1,1 @@
+import{u as t,v as n}from"./SpinnerAugment-BY2Lraps.js";function a(){const o=t("chatModel");return o||console.warn("ChatModel not found in context"),o}function r(o){return n("chatModel",o),o}export{a as g,r as s};

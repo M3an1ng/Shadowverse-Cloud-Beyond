@@ -1,0 +1,80 @@
+using AutoMapper;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
+using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions;
+using System;
+using System.Collections.Generic;
+using Xunit;
+
+namespace ShadowverseBeyond.Server.Tests
+{
+    public class StatChangedEventSystemBuffTests
+    {
+        [Fact]
+        public void StatChanged_without_ability_context_creates_no_source_buff()
+        {
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+            var player1 = new PlayerState(player1Id);
+            var player2 = new PlayerState(player2Id);
+
+            var gameState = new GameState("stat-buff-test", player1, player2, player1Id)
+            {
+                AbilityManager = Mock.Of<IAbilityManager>(),
+                BuffManager = Mock.Of<IBuffManager>()
+            };
+
+            var target = new CardInstance(Guid.NewGuid(), 1001, player1Id) { CurrentZone = CardZone.Field };
+            player1.Field.Add(target);
+            gameState.RegisterCardInstance(target);
+
+            var buffManager = new Mock<IBuffManager>();
+            buffManager.Setup(m => m.GetBuffsForCard(It.IsAny<Guid>())).Returns(new List<Buff>());
+            gameState.BuffManager = buffManager.Object;
+
+            var services = new ServiceCollection();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffFactory>(new BuffFactory(NullLogger<BuffFactory>.Instance));
+            services.AddSingleton(Mock.Of<IConditionEvaluator>());
+            services.AddSingleton<IBuffEvaluator>(sp =>
+                new BuffEvaluator(sp.GetRequiredService<IConditionEvaluator>(), NullLogger<BuffEvaluator>.Instance));
+            services.AddSingleton(new BuffStackingEngine(NullLogger<BuffStackingEngine>.Instance));
+            services.AddSingleton<IBuffService>(sp =>
+                new BuffService(
+                    buffManager.Object,
+                    sp.GetRequiredService<IBuffEvaluator>(),
+                    sp.GetRequiredService<IBuffFactory>(),
+                    NullLogger<BuffService>.Instance,
+                    sp.GetRequiredService<BuffStackingEngine>()));
+
+            var sp = services.BuildServiceProvider();
+
+            using var ctx = new GameContext(
+                sp,
+                Mock.Of<IMapper>(),
+                sp.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                requestingPlayerId: player1Id,
+                triggeringEvent: null,
+                sourceCard: null,
+                currentEffect: null);
+
+            var ev = new StatChangedEvent(target, attackModifier: 1, healthModifier: 0, costModifier: 0);
+            var result = ev.Commit(ctx);
+
+            Assert.True(result.Success);
+            var applied = Assert.Single(result.GeneratedEvents, e => e is BuffAppliedEvent) as BuffAppliedEvent;
+            Assert.NotNull(applied);
+            Assert.Equal(Guid.Empty, applied!.AppliedBuff.SourceAbilityId);
+            Assert.Null(applied.BuffSource);
+        }
+    }
+}

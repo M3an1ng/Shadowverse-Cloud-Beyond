@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace ShadowverseBeyond.Server.Domain.Abilities.Common
 {
     /// <summary>
@@ -24,23 +26,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// 关键字能力（如Rush, Taunt, Ward等）
         /// </summary>
         Keyword
-    }
-
-    /// <summary>
-    /// 比较操作符枚举
-    /// </summary>
-    public enum ComparisonOperator
-    {
-        Equals,
-        NotEquals,
-        GreaterThan,
-        LessThan,
-        GreaterThanOrEqual,
-        LessThanOrEqual,
-        Contains,
-        NotContains,
-        In,
-        NotIn
     }
 
     /// <summary>
@@ -120,10 +105,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// </summary>
         Variable,
 
-        /// <summary>
-        /// 随机值
-        /// </summary>
-        Random
     }
 
     /// <summary>
@@ -170,22 +151,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary>
         /// 事件发生前
         /// </summary>
-        Immediate,
+        [Description("之前")]
+        Before,
 
         /// <summary>
         /// 事件发生时
         /// </summary>
+        [Description("时")]
         On,
 
         /// <summary>
         /// 事件发生后
         /// </summary>
+        [Description("之后")]
         After,
-
-        /// <summary>
-        /// 事件中断
-        /// </summary>
-        Intercept
     }
 
     /// <summary>
@@ -256,9 +235,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
 
     public enum SelectorType
     {
-        Self,
         Filtered,
-        TriggeringEventData,
         PlayerChoice,
         Composite
     }
@@ -354,4 +331,41 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary> Removed based on a TriggerConfig and optional ConditionConfig. </summary>
         ConditionalRemoval
     }
+}
+/// <summary>
+/// Defines the relationship between the ability's owner and the event's participants (Source/Target)
+/// required for the ability to trigger.
+/// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+public enum TriggerRelationType
+{
+    /// <summary>
+    /// The trigger condition is met regardless of the source or target. (Default)
+    /// </summary>
+    [Description("任意")]
+    Any,
+
+    /// <summary>
+    /// Triggers if the ability's owner is the source of the event.
+    /// </summary>
+    [Description("仅限自己为事件源时")]
+    SourceSelf,
+
+    /// <summary>
+    /// Triggers if the source of the event is any entity other than the ability's owner.
+    /// </summary>
+    [Description("仅限自己不是事件源时")]
+    SourceOther,
+
+    /// <summary>
+    /// Triggers if the ability's owner is the target of the event.
+    /// </summary>
+    [Description("仅限自己为事件目标时")]
+    TargetSelf,
+
+    /// <summary>
+    /// Triggers if the target of the event is any entity other than the ability's owner.
+    /// </summary>
+    [Description("仅限自己不是事件目标时")]
+    TargetOther
 }

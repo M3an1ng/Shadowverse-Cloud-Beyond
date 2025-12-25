@@ -1,0 +1,217 @@
+Attribute VB_Name = "·3·1·牌组·SearchCard"
+' ==================================================
+' 过程功能：职业卡筛选主过程
+' 说明：根据选择的卡包筛选指定职业的卡牌，并按稀有度分类显示
+' ==================================================
+Sub SearchClassCard()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim result As Variant       ' 筛选结果数组
+    Dim Arr As Variant          ' 临时数组
+    Dim Rarity() As String      ' 稀有度数组
+    Dim i As Integer            ' 循环计数器
+    
+    ' ========== 卡包选择对话框 ==========
+    Dim options() As String
+    ' 构建选择选项：选择 + 卡包 + 卡包列表
+    options = Split(Translate("Select") & Translate("CardSet") & "、" & Down("CardSet"), "、")
+    i = Val(ShowChoice(options, 90, 5))   ' 显示选择对话框，按钮宽度90，5列
+    
+    ' ========== 获取筛选结果 ==========
+    ' 根据选择的卡包和当前职业获取卡牌名称
+    result = GetNamesByCardSet(options(i), Translate(Down("Class")))
+    
+    ' ========== 稀有度分类处理 ==========
+    Rarity = Split("|Legendary|Gold|Silver|Bronze", "|")   ' 定义稀有度顺序
+    
+    ' 遍历四种稀有度，更新到对应界面区域
+    For i = 1 To 4
+        Arr = result(i)                    ' 获取当前稀有度的卡牌数组
+        ReDim Preserve Arr(1 To 6)         ' 统一调整为6个元素
+        Call Up(Rarity(i), Application.Transpose(Arr))   ' 转置后更新到界面
+    Next i
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+' ==================================================
+' 过程功能：中立卡筛选主过程
+' 说明：根据选择的卡包筛选中立职业卡牌，并按稀有度分类显示
+' ==================================================
+Sub SearchNeutralCard()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim result As Variant       ' 筛选结果数组
+    Dim Arr As Variant          ' 临时数组
+    Dim Rarity() As String      ' 稀有度数组
+    Dim i As Integer            ' 循环计数器
+    
+    ' ========== 卡包选择对话框 ==========
+    Dim options() As String
+    ' 构建选择选项：选择 + 卡包 + 卡包列表
+    options = Split(Translate("Select") & Translate("CardSet") & "、" & Down("CardSet"), "、")
+    i = Val(ShowChoice(options, 90, 5))   ' 显示选择对话框，按钮宽度90，5列
+    
+    ' ========== 获取筛选结果 ==========
+    ' 根据选择的卡包和中立职业获取卡牌名称
+    result = GetNamesByCardSet(options(i), "Neutral")
+    
+    ' ========== 稀有度分类处理 ==========
+    Rarity = Split("|Legendary|Gold|Silver|Bronze", "|")   ' 定义稀有度顺序
+    
+    ' 遍历四种稀有度，更新到对应界面区域
+    For i = 1 To 4
+        Arr = result(i)                    ' 获取当前稀有度的卡牌数组
+        ReDim Preserve Arr(1 To 6)         ' 统一调整为6个元素
+        Call Up(Rarity(i), Application.Transpose(Arr))   ' 转置后更新到界面
+    Next i
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+' ==================================================
+' 函数功能：根据卡包和职业获取卡牌名称
+' 参数：searchString - 卡包名称
+'        Class - 职业名称
+' 返回：Variant - 四层数组，分别对应四种稀有度的卡牌名称
+' 说明：从Effect工作表中筛选指定卡包和职业的可构筑卡牌
+' ==================================================
+Function GetNamesByCardSet(searchString As String, Class As String) As Variant
+    ' ========== 变量声明 ==========
+    Dim ws As Worksheet                    ' 工作表对象
+    Dim headerRow As Range                 ' 标题行范围
+    Dim idCol As Long, cardSetCol As Long  ' 列索引变量
+    Dim rarityCol As Long, nameCol As Long, classCol As Long
+    Dim lastRow As Long                    ' 最后数据行号
+    Dim i As Long                          ' 循环计数器
+    Dim ID As String                       ' 卡牌ID
+    Dim Rarity As String                   ' 卡牌稀有度
+    Dim nameValue As String                ' 卡牌名称
+    
+    ' 稀有度分类集合
+    Dim legendaryNames As Collection, goldNames As Collection
+    Dim silverNames As Collection, bronzeNames As Collection
+    
+    ' ========== 工作表初始化 ==========
+    Set ws = ThisWorkbook.Sheets("Effect")   ' 设置Effect工作表
+    Set headerRow = ws.rows(1)               ' 设置标题行
+    
+    ' ========== 列索引获取 ==========
+    idCol = GetColumnIndex(headerRow, "ID")           ' 获取ID列索引
+    cardSetCol = GetColumnIndex(headerRow, "CardSet") ' 获取卡包列索引
+    rarityCol = GetColumnIndex(headerRow, "Rarity")   ' 获取稀有度列索引
+    nameCol = GetColumnIndex(headerRow, "Name")       ' 获取名称列索引
+    classCol = GetColumnIndex(headerRow, "Class")     ' 获取职业列索引
+    
+    ' 验证必要列是否存在
+    If idCol = 0 Or cardSetCol = 0 Or rarityCol = 0 Or nameCol = 0 Then
+        GetNamesByCardSet = Array(Array(), Array(), Array(), Array())   ' 返回空数组
+        Exit Function
+    End If
+    
+    ' ========== 数据范围确定 ==========
+    lastRow = ws.Cells(ws.rows.count, idCol).End(xlUp).Row   ' 获取ID列最后一行
+    
+    ' ========== 稀有度集合初始化 ==========
+    Set legendaryNames = New Collection   ' 传说卡牌集合
+    Set goldNames = New Collection        ' 黄金卡牌集合
+    Set silverNames = New Collection      ' 白银卡牌集合
+    Set bronzeNames = New Collection      ' 青铜卡牌集合
+    
+    ' ========== 数据遍历筛选 ==========
+    For i = 2 To lastRow   ' 从第2行开始（跳过表头）
+        ' 检查卡包是否匹配
+        If ws.Cells(i, cardSetCol).Value = searchString Then
+            ID = CStr(ws.Cells(i, idCol).Value)   ' 获取卡牌ID
+            
+            ' 检查是否为可构筑卡牌（ID第4位为1）且职业匹配
+            If Len(ID) = 7 And Mid(ID, 4, 1) = "1" And ws.Cells(i, classCol).Value = Class Then
+                Rarity = ws.Cells(i, rarityCol).Value     ' 获取稀有度
+                nameValue = ws.Cells(i, nameCol).Value    ' 获取卡牌名称
+                
+                ' 根据稀有度分类存储卡牌名称
+                Select Case Rarity
+                    Case "Legendary"
+                        legendaryNames.Add nameValue   ' 添加到传说集合
+                    Case "Gold"
+                        goldNames.Add nameValue        ' 添加到黄金集合
+                    Case "Silver"
+                        silverNames.Add nameValue      ' 添加到白银集合
+                    Case "Bronze"
+                        bronzeNames.Add nameValue      ' 添加到青铜集合
+                End Select
+            End If
+        End If
+    Next i
+    
+    ' ========== 结果数组构建 ==========
+    Dim result(1 To 4) As Variant
+    result(1) = CollectionToArray(legendaryNames)   ' 传说卡牌数组
+    result(2) = CollectionToArray(goldNames)        ' 黄金卡牌数组
+    result(3) = CollectionToArray(silverNames)      ' 白银卡牌数组
+    result(4) = CollectionToArray(bronzeNames)      ' 青铜卡牌数组
+    
+    GetNamesByCardSet = result   ' 返回分类结果
+End Function
+
+' ==================================================
+' 函数功能：根据表头名称获取列索引
+' 参数：headerRow - 标题行范围
+'        HeaderName - 要查找的列标题名称
+' 返回：Long - 列索引号，未找到返回0
+' ==================================================
+Function GetColumnIndex(headerRow As Range, HeaderName As String) As Long
+    Dim cell As Range   ' 单元格循环变量
+    
+    ' 遍历标题行查找匹配的列标题
+    For Each cell In headerRow.Cells
+        If cell.Value = HeaderName Then
+            GetColumnIndex = cell.Column   ' 返回列索引
+            Exit Function
+        End If
+    Next cell
+    
+    GetColumnIndex = 0   ' 未找到返回0
+End Function
+
+' ==================================================
+' 函数功能：将集合转换为数组
+' 参数：col - 要转换的集合对象
+' 返回：Variant - 转换后的数组，空集合返回空数组
+' ==================================================
+Function CollectionToArray(col As Collection) As Variant
+    ' 处理空集合情况
+    If col.count = 0 Then
+        CollectionToArray = Array()   ' 返回空数组
+    Else
+        Dim Arr() As Variant
+        ReDim Arr(1 To col.count)    ' 根据集合大小重定义数组
+        
+        Dim i As Long
+        For i = 1 To col.count
+            Arr(i) = col(i)          ' 将集合元素复制到数组
+        Next i
+        
+        CollectionToArray = Arr      ' 返回填充后的数组
+    End If
+End Function

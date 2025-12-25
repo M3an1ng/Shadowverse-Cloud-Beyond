@@ -1,0 +1,21 @@
+Attribute VB_Name = "·0·0·公共变量"
+Public FatherEffect As String
+Public CardEffect As String
+
+Public TimePoint As String
+Public IfEffect As String
+Public Ability As String
+Public Goal As String
+Public XEffect As String
+Public Action As String
+
+Public PreviousGoal As String
+Public QueueAbility As String
+Public QueueMatchID As String
+Public MatchX As Integer
+Public MatchY As Integer
+Public MatchZ As Integer
+Public StrikeMatchID As String
+Public ClashMatchID As String
+
+Public QueueAction As String

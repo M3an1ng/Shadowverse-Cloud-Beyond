@@ -12,6 +12,7 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         MatchOperationResult Create(Guid? hostPlayerId = null, bool useAiFallback = false, TimeSpan? ttl = null);
         MatchOperationResult TryJoin(string gameId, string joinCode);
         MatchOperationResult MarkReady(string gameId, Guid playerId);
+        MatchOperationResult SubmitDeckSelection(string gameId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null);
         MatchOperationResult Start(string gameId, Guid playerId);
         MatchOperationResult Get(string gameId);
         MatchOperationResult ValidateConnection(string gameId, Guid playerId, string token);
@@ -30,7 +31,8 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         Expired = 6,
         NotParticipant = 7,
         NotReady = 8,
-        Forbidden = 9
+        Forbidden = 9,
+        MissingDeckSelection = 10
     }
 
     public class MatchOperationResult

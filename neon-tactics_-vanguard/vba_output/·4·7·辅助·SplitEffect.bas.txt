@@ -1,0 +1,79 @@
+Attribute VB_Name = "·4·7·辅助·SplitEffect"
+' ==================================================
+' 函数功能：效果字符串分割器
+' 参数：InputString - 输入的效果字符串
+' 返回：String() - 分割后的字符串数组
+' 说明：使用"||"作为分隔符分割字符串，但将{}内的内容视为一个整体不分割
+' 支持嵌套花括号处理，保持复杂效果结构的完整性
+' ==================================================
+Function SplitEffect(ByVal InputString As String) As String()
+    ' ========== 变量声明 ==========
+    Dim Results() As String     ' 结果数组
+    Dim i As Long, j As Long    ' 循环计数器和数组索引
+    Dim InBrackets As Boolean   ' 标记是否在花括号内
+    Dim CurrentPart As String   ' 当前正在构建的部分字符串
+    Dim BraceLevel As Integer   ' 嵌套花括号层级计数器
+    Dim CurrentChar As String   ' 当前处理的字符
+    
+    ' ========== 变量初始化 ==========
+    ReDim Results(0)            ' 初始化为一个空元素
+    InBrackets = False          ' 初始不在花括号内
+    BraceLevel = 0              ' 初始嵌套层级为0
+    CurrentPart = ""            ' 初始当前部分为空
+    j = 0                       ' 结果数组索引初始化为0
+    
+    ' ========== 字符遍历处理 ==========
+    ' 逐个字符遍历输入字符串
+    For i = 1 To Len(InputString)
+        CurrentChar = Mid(InputString, i, 1)   ' 获取当前字符
+        
+        ' ========== 花括号处理 ==========
+        ' 处理左花括号 {
+        If CurrentChar = "{" Then
+            BraceLevel = BraceLevel + 1        ' 增加嵌套层级
+            InBrackets = (BraceLevel > 0)      ' 更新花括号内状态
+            CurrentPart = CurrentPart & CurrentChar   ' 将{添加到当前部分
+            
+        ' 处理右花括号 }
+        ElseIf CurrentChar = "}" Then
+            If BraceLevel > 0 Then
+                BraceLevel = BraceLevel - 1    ' 减少嵌套层级
+            End If
+            InBrackets = (BraceLevel > 0)      ' 更新花括号内状态
+            CurrentPart = CurrentPart & CurrentChar   ' 将}添加到当前部分
+            
+        ' ========== 分隔符处理 ==========
+        ' 处理分隔符"||"（仅在花括号外处理）
+        ElseIf Not InBrackets And CurrentChar = "|" And i < Len(InputString) Then
+            ' 检查是否是双竖线分隔符"||"
+            If Mid(InputString, i, 2) = "||" Then
+                ' 将当前部分添加到结果数组
+                If CurrentPart <> "" Then
+                    ReDim Preserve Results(j)   ' 扩展数组大小
+                    Results(j) = CurrentPart    ' 存储当前部分
+                    j = j + 1                   ' 移动到下一个数组位置
+                    CurrentPart = ""            ' 重置当前部分
+                End If
+                i = i + 1   ' 跳过下一个'|'字符
+            Else
+                ' 单个|字符，作为普通字符处理
+                CurrentPart = CurrentPart & CurrentChar
+            End If
+            
+        ' ========== 普通字符处理 ==========
+        Else
+            ' 将普通字符添加到当前部分
+            CurrentPart = CurrentPart & CurrentChar
+        End If
+    Next i
+    
+    ' ========== 最后部分处理 ==========
+    ' 处理字符串末尾的剩余内容
+    If CurrentPart <> "" Then
+        ReDim Preserve Results(j)   ' 扩展数组大小
+        Results(j) = CurrentPart    ' 存储最后的部分
+    End If
+    
+    ' ========== 返回结果 ==========
+    SplitEffect = Results   ' 返回分割后的数组
+End Function

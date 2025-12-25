@@ -1,0 +1,472 @@
+Attribute VB_Name = "EnterCard·2·If"
+Attribute VB_Base = "0{E8354EF5-0809-4DC1-BB94-CF4E736016B4}{1C18AD37-85DE-41C6-BA17-4C1DFD5F0C58}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ==================================================
+' 窗体名称: EnterCard·2·If (条件设置窗体)
+' 功能：设置卡牌效果触发的各种条件
+' 说明：提供回合条件、比较条件、职业条件等多种条件设置
+' ==================================================
+
+' ==================================================
+' 事件功能：回合条件处理 - 回合期间
+' 说明：设置效果在特定玩家回合期间触发的条件
+' ==================================================
+Private Sub DuringTurn_Click()
+    ' ========== 互斥逻辑处理 ==========
+    ' 与解锁回合条件互斥
+    If DuringTurn.Value Then UnlockTurn.Value = False
+    
+    ' ========== 玩家选择 ==========
+    ' 询问自己或对手，并记录在按钮名称上
+    If DuringTurn.Caption = Translate("DuringTurnButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("DuringTurnButton|Allied|Enemy"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 50, 2))
+        
+        DuringTurn.Caption = options(i) & "-" & Translate("Turn")
+    End If
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not DuringTurn.Value Then DuringTurn.Caption = Translate("DuringTurnButton")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：回合条件处理 - 解锁回合
+' 说明：设置效果在进化或超进化回合触发的条件
+' ==================================================
+Private Sub UnlockTurn_Click()
+    ' ========== 互斥逻辑处理 ==========
+    ' 与回合期间条件互斥
+    If UnlockTurn.Value Then DuringTurn.Value = False
+    
+    ' ========== 进化类型选择 ==========
+    ' 询问进化或超进化，并记录在按钮名称上
+    If UnlockTurn.Caption = Translate("UnlockTurnButton") Then
+        Dim options() As String
+        options = Split(SentenceTranslate("UnlockTurnButton|Evolve|SuperEvolve"), "|")
+        Dim i%
+        i = Val(ShowChoice(options, 50, 2))
+        
+        UnlockTurn.Caption = SentenceTranslate("Unlock") & "-" & options(i)
+    End If
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not UnlockTurn.Value Then UnlockTurn.Caption = Translate("UnlockTurnButton")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：触发次数限制
+' 说明：设置每回合中效果可触发的最大次数
+' ==================================================
+Private Sub Times_Click()
+    ' ========== 次数输入 ==========
+    ' 询问次数，并记录在按钮名称上
+    If Times.Caption = Translate("TimesPerTurn") Then _
+        Times.Caption = Translate("TimesPerTurn") & "&" & NumInputBox(Translate("TimesPerTurn"), "Engage")
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not Times.Value Then Times.Caption = Translate("TimesPerTurn")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 设置X变量
+' 说明：设置比较条件的第一个变量X
+' ==================================================
+Private Sub SetX_Click()
+    ' ========== X变量输入 ==========
+    ' 打开X变量设置窗体
+    XEffect = Empty
+    EnterCard·5·X.Show
+    
+    ' ========== 按钮文本更新 ==========
+    SetX.Caption = SentenceTranslate("{" & XEffect & "}")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 等于
+' 说明：设置等于比较条件
+' ==================================================
+Private Sub Equal_Click()
+    ' ========== 互斥逻辑处理 ==========
+    ' 与其他比较运算符互斥
+    If Equal.Value Then
+        Less.Value = False
+        More.Value = False
+        UnEqual.Value = False
+    End If
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 小于
+' 说明：设置小于比较条件
+' ==================================================
+Private Sub Less_Click()
+    ' ========== 互斥逻辑处理 ==========
+    ' 与其他比较运算符互斥
+    If Less.Value Then
+        Equal.Value = False
+        More.Value = False
+        UnEqual.Value = False
+    End If
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 大于
+' 说明：设置大于比较条件
+' ==================================================
+Private Sub More_Click()
+    ' ========== 互斥逻辑处理 ==========
+    ' 与其他比较运算符互斥
+    If More.Value Then
+        Equal.Value = False
+        Less.Value = False
+        UnEqual.Value = False
+    End If
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 不等于
+' 说明：设置不等于比较条件
+' ==================================================
+Private Sub UnEqual_Click()
+    ' ========== 互斥逻辑处理 ==========
+    ' 与其他比较运算符互斥
+    If UnEqual.Value Then
+        Equal.Value = False
+        Less.Value = False
+        More.Value = False
+    End If
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 设置常量
+' 说明：设置比较条件的常量值
+' ==================================================
+Private Sub SetConst_Click()
+    ' ========== 常量输入 ==========
+    ' 询问数值，并记录在按钮名称上
+    If SetConst.Caption = Translate("Const") Then _
+        SetConst.Caption = NumInputBox(Translate("Const"), "Engage")
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not SetConst.Value Then SetConst.Caption = Translate("Const")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 设置Y变量
+' 说明：设置比较条件的第二个变量Y
+' ==================================================
+Private Sub SetY_Click()
+    ' ========== Y变量输入 ==========
+    ' 打开X变量设置窗体（复用）
+    XEffect = Empty
+    EnterCard·5·X.Show
+    
+    ' ========== 按钮文本更新 ==========
+    SetY.Caption = SentenceTranslate("{" & XEffect & "}")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：比较条件处理 - 确认比较
+' 说明：确认并生成完整的比较条件表达式
+' ==================================================
+Private Sub Compare_Click()
+    ' ========== 条件验证 ==========
+    ' 检查必要的条件是否已设置
+    If SetX.Caption = Translate("ClickToInput") Or _
+        (Equal.Value = False And Less.Value = False And More.Value = False And UnEqual.Value = False) Or _
+        (SetConst.Value = False And SetY.Caption = Translate("ClickToInput")) Then
+        Compare.Value = False
+        Exit Sub
+    End If
+    
+    ' ========== 比较表达式生成 ==========
+    ' 生成比较条件字符串
+    If Compare.Caption = Translate("CompareButton") Then
+        Dim Str As String
+        Compare.Caption = Empty
+        
+        ' 获取比较运算符
+        If Equal.Value Then Str = "="
+        If Less.Value Then Str = "<"
+        If More.Value Then Str = ">"
+        If UnEqual.Value Then Str = "<>"
+        
+        ' 构建比较表达式
+        If Str <> "" And SetX.Caption <> Translate("ClickToInput") Then
+            If SetConst.Value Then
+                Compare.Caption = Compare.Caption & SetX.Caption & Str & SetConst.Caption & "|"
+            ElseIf SetY.Caption <> Translate("ClickToInput") Then
+                Compare.Caption = Compare.Caption & SetX.Caption & Str & SetY.Caption & "|"
+            End If
+        End If
+        
+        ' ========== 状态重置 ==========
+        ' 生成后重置所有比较条件状态
+        SetX.Caption = Translate("ClickToInput")
+        SetY.Caption = Translate("ClickToInput")
+        SetConst.Value = False
+        Equal.Value = False
+        Less.Value = False
+        More.Value = False
+        UnEqual.Value = False
+    End If
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not Compare.Value Then Compare.Caption = Translate("CompareButton")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：职业条件处理 - 连击
+' 说明：设置精灵职业的连击条件
+' ==================================================
+Private Sub Combo_Click()
+    ' ========== 连击次数输入 ==========
+    ' 询问次数，并记录在按钮名称上
+    If Combo.Caption = Translate("Combo") Then _
+        Combo.Caption = Translate("Combo") & "&" & NumInputBox(Translate("Combo"), Empty)
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not Combo.Value Then Combo.Caption = Translate("Combo")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：职业条件处理 - 集结
+' 说明：设置皇家职业的集结条件
+' ==================================================
+Private Sub Rally_Click()
+    ' ========== 集结次数输入 ==========
+    ' 询问次数，并记录在按钮名称上
+    If Rally.Caption = Translate("Rally") Then _
+        Rally.Caption = Translate("Rally") & "&" & NumInputBox(Translate("Rally"), Empty)
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not Rally.Value Then Rally.Caption = Translate("Rally")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：职业条件处理 - 土之秘术
+' 说明：设置巫师职业的土之秘术条件
+' ==================================================
+Private Sub EarthRite_Click()
+    ' ========== 土之秘术次数输入 ==========
+    ' 询问次数，并记录在按钮名称上
+    If EarthRite.Caption = Translate("EarthRite") Then _
+        EarthRite.Caption = Translate("EarthRite") & "&" & NumInputBox(Translate("EarthRite"), Empty)
+
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not EarthRite.Value Then EarthRite.Caption = Translate("EarthRite")
+
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：职业条件处理 - 溢血
+' 说明：设置龙族职业的溢血条件
+' ==================================================
+Private Sub Overflow_Click()
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+' ==================================================
+' 事件功能：职业条件处理 - 死灵术
+' 说明：设置死灵职业的死灵术条件
+' ==================================================
+Private Sub Necromancy_Click()
+    ' ========== 死灵术次数输入 ==========
+    ' 询问次数，并记录在按钮名称上
+    If Necromancy.Caption = Translate("Necromancy") Then _
+        Necromancy.Caption = Translate("Necromancy") & "&" & NumInputBox(Translate("Necromancy"), Empty)
+
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not Necromancy.Value Then Necromancy.Caption = Translate("Necromancy")
+
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+Private Sub Sacrifice_Click()
+    ' ========== 死灵术次数输入 ==========
+    ' 询问次数，并记录在按钮名称上
+    If Sacrifice.Caption = Translate("Sacrifice") Then _
+        Sacrifice.Caption = Translate("Sacrifice") & "&" & NumInputBox(Translate("Sacrifice"), Empty)
+
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not Sacrifice.Value Then Sacrifice.Caption = Translate("Sacrifice")
+
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+
+' ==================================================
+' 事件功能：职业条件处理 - 同名卡限制
+' 说明：设置超越者职业的同名卡限制条件
+' ==================================================
+Private Sub NoDuplicates_Click()
+    ' ========== 目标选择 ==========
+    ' 询问同名卡限制的目标类型
+    If NoDuplicates.Caption = Translate("NoDuplicatesButton") Then
+        ' 打开目标选择窗体
+        EnterCard·4·Goal.Tag = "All|||Follower&Spell&Amulet"
+        EnterCard·4·Goal.Show
+        
+        NoDuplicates.Caption = SentenceTranslate("NoDuplicates-" & Goal)
+    End If
+    
+    ' ========== 状态恢复 ==========
+    ' 如果未按下，则按钮名称恢复默认
+    If Not NoDuplicates.Value Then NoDuplicates.Caption = Translate("NoDuplicatesButton")
+    
+    ' ========== 效果预览更新 ==========
+    Call EffectPreview
+End Sub
+
+Private Sub Skybound_Click()
+    Call EffectPreview
+End Sub
+
+Private Sub SuperSkybound_Click()
+    Call EffectPreview
+End Sub
+
+' ========== 分割线：窗体初始化和工具函数 ==========
+
+' ==================================================
+' 事件功能：窗体激活初始化
+' 说明：窗体显示时初始化条件字符串
+' ==================================================
+Private Sub UserForm_Activate()
+    ' ========== 变量初始化 ==========
+    ' 清空条件字符串并添加"If"前缀
+    IfEffect = Translate("If") & "|"
+    
+    If CardEffect <> "" Then EnterCard·2·If.Caption = SentenceTranslate(CardEffect)
+End Sub
+
+' ==================================================
+' 事件功能：录入完成处理
+' 说明：点击完成按钮时保存条件设置并关闭窗体
+' ==================================================
+Private Sub Finish_Click()
+    ' ========== 条件记录 ==========
+    ' 更新效果预览
+    Call EffectPreview
+    
+    ' ========== 窗体关闭 ==========
+    Unload EnterCard·2·If
+End Sub
+
+' ==================================================
+' 函数功能：效果预览生成
+' 说明：根据当前设置的条件生成预览字符串
+' ==================================================
+Function EffectPreview()
+    ' ========== 条件字符串初始化 ==========
+    IfEffect = Translate("If") & "|"
+    
+    ' ========== 回合条件添加 ==========
+    If DuringTurn.Value Then IfEffect = IfEffect & DuringTurn.Caption & "|"
+    If UnlockTurn.Value Then IfEffect = IfEffect & UnlockTurn.Caption & "|"
+    
+    ' ========== 触发次数条件添加 ==========
+    If Times.Value Then IfEffect = IfEffect & Times.Caption & "|"
+    
+    ' ========== 比较条件添加 ==========
+    If Compare.Value Then IfEffect = IfEffect & Compare.Caption
+    
+    ' ========== 直接比较条件处理 ==========
+    ' 处理尚未确认的比较条件
+    Dim Str As String
+    If Equal.Value Then Str = "="
+    If Less.Value Then Str = "<"
+    If More.Value Then Str = ">"
+    If UnEqual.Value Then Str = "<>"
+    
+    If Str <> "" And SetX.Caption <> Translate("ClickToInput") Then
+        If SetConst.Value Then
+            IfEffect = IfEffect & SetX.Caption & Str & SetConst.Caption & "|"
+        ElseIf SetY.Caption <> Translate("ClickToInput") Then
+            IfEffect = IfEffect & SetX.Caption & Str & SetY.Caption & "|"
+        End If
+    End If
+    
+    ' ========== 职业条件添加 ==========
+    If Combo.Value Then IfEffect = IfEffect & Combo.Caption & "|"
+    If Rally.Value Then IfEffect = IfEffect & Rally.Caption & "|"
+    If EarthRite.Value Then IfEffect = IfEffect & EarthRite.Caption & "|"
+    If Overflow.Value Then IfEffect = IfEffect & Overflow.Caption & "|"
+    If Skybound.Value Then IfEffect = IfEffect & Skybound.Caption & "|"
+    If SuperSkybound.Value Then IfEffect = IfEffect & SuperSkybound.Caption & "|"
+    If Necromancy.Value Then IfEffect = IfEffect & Necromancy.Caption & "|"
+    If Sacrifice.Value Then IfEffect = IfEffect & Sacrifice.Caption & "|"
+    If NoDuplicates.Value Then IfEffect = IfEffect & NoDuplicates.Caption & "|"
+    
+    ' ========== 字符串格式处理 ==========
+    ' 删去末尾分隔符
+    If Len(IfEffect) = 0 Then IfEffect = "|"
+    IfEffect = Left(IfEffect, Len(IfEffect) - 1)
+    
+    ' ========== 效果翻译和显示 ==========
+    ' 翻译条件字符串并更新显示
+    Effect.Caption = IfEffect
+    IfEffect = SentenceTranslate(IfEffect)
+End Function
+

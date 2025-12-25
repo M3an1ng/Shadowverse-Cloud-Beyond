@@ -35,7 +35,7 @@ public class CardDefinition
     /// <summary>
     /// 卡牌稀有度
     /// </summary>
-    public string Rarity { get; set; } = "Common"; // Default to Common
+    public CardRarity Rarity { get; set; } = CardRarity.Bronze; // Default to Bronze
 
     /// <summary>
     /// 卡牌所属卡包
@@ -98,7 +98,7 @@ public class CardDefinition
     /// <summary>
     /// 卡牌职业
     /// </summary>
-    public string Class { get; set; } = "Neutral"; // Default to Neutral
+    public CardClass Class { get; set; } = CardClass.Neutral; // Default to Neutral
 
     // Removed Effects property - effects are now managed through the ability system
 

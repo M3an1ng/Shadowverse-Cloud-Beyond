@@ -1,0 +1,80 @@
+Attribute VB_Name = "·2·6·录卡·DownByID"
+' ==================================================
+' 函数功能：根据ID和列标题获取对应的属性值
+' 参数：idValue - 卡牌ID
+'        HeaderName - 属性列标题名称
+' 返回：Variant - 属性值或错误信息
+' 说明：使用数组读取优化性能，支持快速查找Effect工作表中的数据
+' ==================================================
+Function DownByID(idValue As String, HeaderName As String) As Variant
+    On Error GoTo ErrorHandler
+    
+    ' ========== 常量定义 ==========
+    Const SHEET_NAME As String = "Effect"      ' 效果数据工作表名称
+    Const ID_HEADER As String = "ID"           ' ID列标题名称
+    
+    ' ========== 变量声明 ==========
+    Dim ws As Worksheet           ' 工作表对象
+    Dim dataRange As Range        ' 数据范围对象
+    Dim dataArray As Variant      ' 数据数组（用于快速读取）
+    Dim headerRow As Range        ' 标题行范围
+    Dim idColIndex As Long        ' ID列索引号
+    Dim headerColIndex As Long    ' 目标属性列索引号
+    Dim i As Long                 ' 循环计数器
+    Dim idCell As Range           ' ID列标题单元格
+    Dim headerCell As Range       ' 目标属性列标题单元格
+    Dim lastRow As Long           ' 最后数据行号
+    
+    ' ========== 工作表初始化 ==========
+    Set ws = ThisWorkbook.Sheets(SHEET_NAME)   ' 设置Effect工作表
+    Set headerRow = ws.rows(1)                 ' 设置标题行（第一行）
+    
+    ' ========== 列标题查找与验证 ==========
+    With headerRow
+        ' 查找ID列位置
+        Set idCell = .Find(What:=ID_HEADER, LookAt:=xlWhole, MatchCase:=False)
+        If idCell Is Nothing Then
+            MsgBox "错误：未找到ID列标题", vbExclamation
+            DownByID = CVErr(xlErrNA)   ' 返回#N/A错误
+            Exit Function
+        End If
+        idColIndex = idCell.Column   ' 获取ID列索引
+        
+        ' 查找目标属性列位置
+        Set headerCell = .Find(What:=HeaderName, LookAt:=xlWhole, MatchCase:=False)
+        If headerCell Is Nothing Then
+            MsgBox "错误：未找到表头'" & HeaderName & "'", vbExclamation
+            DownByID = CVErr(xlErrNA)   ' 返回#N/A错误
+            Exit Function
+        End If
+        headerColIndex = headerCell.Column   ' 获取目标属性列索引
+    End With
+    
+    ' ========== 数据读取优化 ==========
+    ' 获取ID列最后一行数据位置
+    lastRow = ws.Cells(ws.rows.count, idColIndex).End(xlUp).Row
+    
+    ' 一次性读取相关列数据到数组（性能优化）
+    Set dataRange = ws.Range(ws.Cells(1, idColIndex), ws.Cells(lastRow, headerColIndex))
+    dataArray = dataRange.Value   ' 将单元格数据读取到内存数组
+    
+    ' ========== 数组遍历查找 ==========
+    ' 从第2行开始遍历（跳过表头行）
+    For i = 2 To UBound(dataArray, 1)
+        ' 检查当前行ID是否匹配目标ID
+        If dataArray(i, 1) = idValue Then
+            ' 计算目标属性在数组中的列位置
+            DownByID = dataArray(i, headerColIndex - idColIndex + 1)
+            Exit Function
+        End If
+    Next i
+    
+    ' ========== 未找到ID处理 ==========
+    DownByID = ""   ' 返回空字符串表示未找到
+    Exit Function
+
+ErrorHandler:
+    ' ========== 错误处理 ==========
+    DownByID = CVErr(xlErrValue)   ' 返回#VALUE!错误
+    MsgBox "获取数据时出错: " & Err.Description, vbCritical   ' 显示错误信息
+End Function

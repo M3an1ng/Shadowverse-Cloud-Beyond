@@ -151,7 +151,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                 new AbsFunction(),
                 new IfFunction(),
                 new ContainsFunction(),
-                new IsEmptyFunction()
+                new IsEmptyFunction(),
+                new EventIntFunction(),
+                new EventBoolFunction(),
+                new EventStringFunction(),
+                new EventGuidFunction(),
+                new EventGuidListFunction()
             };
 
             RegisterFunctions(coreFunctions);

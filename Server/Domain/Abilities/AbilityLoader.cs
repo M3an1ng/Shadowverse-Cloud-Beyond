@@ -4,26 +4,27 @@
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 // - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
 //
-using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
+using DomainKeywords = ShadowverseBeyond.Server.Domain.Constants.Keywords;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
     /// <summary>
-    /// 负责从数据库或缓存加载能力配置并构建运行时AbilityConfig对象
-    /// 支持DSL、JSON和混合格式的能力配置
-    /// 支持从GameDataProvider缓存或直接数据库访问两种模式
+    /// 负责从数据库加载能力配置并构建运行时AbilityConfig对象
     /// </summary>
     public class AbilityLoader
     {
-        private readonly ApplicationDbContext? _context;
-        private readonly IGameDataProvider? _gameDataProvider;
+        private readonly ApplicationDbContext _context;
         private readonly ILogger<AbilityLoader> _logger;
 
         /// <summary>
@@ -34,49 +35,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             ILogger<AbilityLoader> logger)
         {
             _context = context;
-            _gameDataProvider = null;
             _logger = logger;
-        }
-
-        /// <summary>
-        /// 构造函数：使用GameDataProvider缓存模式（推荐）
-        /// </summary>
-        public AbilityLoader(
-            IGameDataProvider gameDataProvider,
-            ILogger<AbilityLoader> logger)
-        {
-            _context = null;
-            _gameDataProvider = gameDataProvider;
-            _logger = logger;
-        }
-
-        /// <summary>
-        /// 从缓存加载指定卡牌的所有能力配置（推荐方法）
-        /// </summary>
-        /// <param name="cardId">卡牌ID</param>
-        /// <returns>能力配置列表</returns>
-        public List<AbilityConfig> LoadAbilitiesFromCache(int cardId)
-        {
-            if (_gameDataProvider == null)
-            {
-                _logger.LogError("GameDataProvider is not available. Use LoadAbilitiesForCardAsync for database access.");
-                return [];
-            }
-
-            try
-            {
-                _logger.LogDebug("Loading abilities for card {CardId} from cache", cardId);
-
-                var configs = _gameDataProvider.GetAbilityConfigs(cardId);
-
-                _logger.LogDebug("Loaded {Count} abilities for card {CardId} from cache", configs.Count, cardId);
-                return configs;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load abilities for card {CardId} from cache", cardId);
-                return [];
-            }
         }
 
         /// <summary>
@@ -86,22 +45,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>能力配置列表</returns>
         public async Task<List<AbilityConfig>> LoadAbilitiesForCardAsync(int cardId)
         {
-            // 优先使用缓存模式
-            if (_gameDataProvider != null)
-            {
-                return LoadAbilitiesFromCache(cardId);
-            }
-
             if (_context == null)
             {
-                _logger.LogError("Neither GameDataProvider nor ApplicationDbContext is available.");
+                // In a real application, you'd want more robust error handling.
                 return [];
             }
 
             try
             {
-                _logger.LogDebug("Loading abilities for card {CardId} from database", cardId);
-
                 var cardAbilities = await _context.Set<AbilityDefinition>()
                     .Where(ca => ca.CardId == cardId && ca.IsActive)
                     .OrderBy(ca => ca.Priority)
@@ -111,12 +62,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
                 ProcessCardAbilities(cardAbilities, configs);
 
-                _logger.LogDebug("Loaded {Count} abilities for card {CardId} from database", configs.Count, cardId);
                 return configs;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                _logger.LogError(ex, "Failed to load abilities for card {CardId} from database", cardId);
+                // In a real application, you'd want more robust error handling.
                 return [];
             }
         }
@@ -128,56 +78,27 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>能力配置，如果不存在则返回null</returns>
         public async Task<AbilityConfig?> LoadAbilityByIdAsync(long abilityId)
         {
-            // 优先使用缓存模式
-            if (_gameDataProvider != null)
-            {
-                try
-                {
-                    _logger.LogDebug("Loading ability {AbilityId} from cache", abilityId);
-
-                    // 从缓存中查找能力配置
-                    var allConfigs = _gameDataProvider.GetAllAbilityConfigs();
-                    var config = allConfigs.Values.SelectMany(configs => configs)
-                        .FirstOrDefault(c => c.Id == abilityId);
-
-                    if (config == null)
-                    {
-                        _logger.LogWarning("Ability {AbilityId} not found in cache", abilityId);
-                    }
-
-                    return config;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to load ability {AbilityId} from cache", abilityId);
-                    return null;
-                }
-            }
-
             if (_context == null)
             {
-                _logger.LogError("Neither GameDataProvider nor ApplicationDbContext is available.");
+                // In a real application, you'd want more robust error handling.
                 return null;
             }
 
             try
             {
-                _logger.LogDebug("Loading ability {AbilityId} from database", abilityId);
-
                 var cardAbility = await _context.Set<AbilityDefinition>()
                     .FirstOrDefaultAsync(ca => ca.Id == abilityId && ca.IsActive);
 
                 if (cardAbility == null)
                 {
-                    _logger.LogWarning("Ability {AbilityId} not found or inactive in database", abilityId);
                     return null;
                 }
 
                 return ConvertToAbilityConfig(cardAbility);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                _logger.LogError(ex, "Failed to load ability {AbilityId} from database", abilityId);
+                // In a real application, you'd want more robust error handling.
                 return null;
             }
         }
@@ -188,36 +109,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>所有能力配置列表</returns>
         public async Task<List<AbilityConfig>> LoadAllAbilitiesAsync()
         {
-            // 优先使用缓存模式
-            if (_gameDataProvider != null)
-            {
-                try
-                {
-                    _logger.LogDebug("Loading all active abilities from cache");
-
-                    var allConfigs = _gameDataProvider.GetAllAbilityConfigs();
-                    var configs = allConfigs.Values.SelectMany(configs => configs).ToList();
-
-                    _logger.LogDebug("Loaded {Count} abilities total from cache", configs.Count);
-                    return configs;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to load all abilities from cache");
-                    return [];
-                }
-            }
-
             if (_context == null)
             {
-                _logger.LogError("Neither GameDataProvider nor ApplicationDbContext is available.");
+                // In a real application, you'd want more robust error handling.
                 return [];
             }
 
             try
             {
-                _logger.LogDebug("Loading all active abilities from database");
-
                 var cardAbilities = await _context.Set<AbilityDefinition>()
                     .Where(ca => ca.IsActive)
                     .OrderBy(ca => ca.CardId)
@@ -228,12 +127,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
                 ProcessCardAbilities(cardAbilities, configs);
 
-                _logger.LogDebug("Loaded {Count} abilities total from database", configs.Count);
                 return configs;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                _logger.LogError(ex, "Failed to load all abilities from database");
+                // In a real application, you'd want more robust error handling.
                 return [];
             }
         }
@@ -257,7 +155,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to convert CardAbility {AbilityId} to AbilityConfig", cardAbility.Id);
+                    _logger.LogError(ex, "Failed to convert AbilityDefinition with ID {AbilityId} for CardId {CardId}.", cardAbility.Id, cardAbility.CardId);
                 }
             }
         }
@@ -272,16 +170,26 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             try
             {
                 // 目前只支持JSON配置格式
-                if (string.IsNullOrEmpty(cardAbility.JsonConfig))
+                var isJsonConfigNullOrEmpty = string.IsNullOrEmpty(cardAbility.JsonConfig);
+                _logger.LogTrace("Is JsonConfig null or empty for AbilityDefinition Id {AbilityId}? {Result}", cardAbility.Id, isJsonConfigNullOrEmpty);
+
+                if (isJsonConfigNullOrEmpty)
                 {
-                    _logger.LogWarning("JSON config is empty for ability {AbilityId}", cardAbility.Id);
+                    _logger.LogWarning("JsonConfig is null or empty for AbilityDefinition Id: {AbilityId}. Skipping conversion.", cardAbility.Id);
                     return null;
                 }
 
-                var config = JsonSerializer.Deserialize<AbilityConfig>(cardAbility.JsonConfig);
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase, // Handle camelCase from JSON
+                    // Allow case-insensitive matching for enums by not specifying a naming policy for the converter.
+                    // This will correctly map "Fixed" to ValueType.Fixed and "Passive" to AbilityType.Passive.
+                    Converters = { new LenientEffectKeywordConverter(), new JsonStringEnumConverter() }
+                };
+
+                var config = JsonSerializer.Deserialize<AbilityConfig>(cardAbility.JsonConfig!, options);
                 if (config == null)
                 {
-                    _logger.LogWarning("Failed to deserialize JSON config for ability {AbilityId}", cardAbility.Id);
                     return null;
                 }
 
@@ -289,21 +197,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 config.Id = cardAbility.Id;
                 config.CardId = cardAbility.CardId; // Populate CardId
                 config.Name = cardAbility.Name;
-                config.Description = cardAbility.Description;
-                config.AbilityTag = cardAbility.AbilityTag;
+                config.Description = cardAbility.Description ?? string.Empty;
+                config.AbilityTag = DomainKeywords.ParseEffectKeywordOrDefault(cardAbility.AbilityTag);
                 config.IsActive = cardAbility.IsActive;
 
                 return config;
             }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogError(jsonEx, "JSON deserialization failed for AbilityDefinition ID {AbilityId}. JsonConfig: {JsonConfig}", cardAbility.Id, cardAbility.JsonConfig);
+                return null;
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to convert CardAbility {AbilityId} to AbilityConfig", cardAbility.Id);
+                _logger.LogError(ex, "An unexpected error occurred while converting AbilityDefinition ID {AbilityId}.", cardAbility.Id);
                 return null;
             }
         }
-
-
-
-
     }
 }

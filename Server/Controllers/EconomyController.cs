@@ -102,6 +102,30 @@ public class EconomyController : ControllerBase
 
     #endregion
 
+    #region 元进度（聚合状态）
+
+    /// <summary>
+    /// 获取用户元进度状态（金币/任务/排行/每日奖励）
+    /// </summary>
+    /// <param name="userId">用户ID</param>
+    /// <returns>元进度状态</returns>
+    [HttpGet("state/{userId}")]
+    public async Task<ActionResult<MetaProgressionStateDto>> GetMetaProgressionState(Guid userId)
+    {
+        try
+        {
+            var state = await _economyService.GetMetaProgressionStateAsync(userId);
+            return Ok(state);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "获取元进度状态失败: UserId={UserId}", userId);
+            return StatusCode(500, "获取元进度状态失败");
+        }
+    }
+
+    #endregion
+
     #region 卡包系统
 
     /// <summary>
@@ -309,6 +333,32 @@ public class EconomyController : ControllerBase
         {
             _logger.LogError(ex, "更新任务进度失败: UserId={UserId}, Type={Type}", userId, type);
             return StatusCode(500, "更新任务进度失败");
+        }
+    }
+
+    /// <summary>
+    /// 领取任务奖励
+    /// </summary>
+    /// <param name="userId">用户ID</param>
+    /// <param name="userQuestId">用户任务ID</param>
+    /// <returns>领取结果</returns>
+    [HttpPost("quests/{userId}/{userQuestId}/claim")]
+    public async Task<ActionResult<QuestRewardClaimDto>> ClaimQuestReward(Guid userId, Guid userQuestId)
+    {
+        try
+        {
+            var result = await _economyService.ClaimQuestRewardAsync(userId, userQuestId);
+            if (result == null)
+            {
+                return BadRequest("任务奖励不可领取或已领取");
+            }
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "领取任务奖励失败: UserId={UserId}, UserQuestId={UserQuestId}", userId, userQuestId);
+            return StatusCode(500, "领取任务奖励失败");
         }
     }
 

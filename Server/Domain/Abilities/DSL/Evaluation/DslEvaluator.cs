@@ -26,7 +26,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
         }
 
-        public async Task<EvaluationResult> EvaluateAsync(ExpressionNode astNode, GameContext context)
+        public EvaluationResult Evaluate(ExpressionNode astNode, GameContext context)
         {
             if (astNode == null)
             {
@@ -42,7 +42,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             _logger.LogTrace("Starting evaluation for AST node type: {NodeType}", astNode.GetType().Name);
             try
             {
-                return await VisitNodeAsync(astNode, context);
+                return VisitNode(astNode, context);
             }
             catch (Exception ex)
             {
@@ -51,17 +51,59 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
         }
 
-        private async Task<EvaluationResult> VisitNodeAsync(ExpressionNode node, GameContext context)
+        private EvaluationResult VisitNode(ExpressionNode node, GameContext context)
         {
             return node switch
             {
                 LiteralNode literal => VisitLiteral(literal, context),
-                IdentifierNode identifier => await VisitIdentifierAsync(identifier, context),
-                BinaryOperationNode binaryOp => await VisitBinaryOperatorAsync(binaryOp, context),
-                UnaryOperationNode unaryOp => await VisitUnaryOperatorAsync(unaryOp, context),
-                FunctionCallNode funcCall => await VisitFunctionCallAsync(funcCall, context),
+                IdentifierNode identifier => VisitIdentifier(identifier, context),
+                BinaryOperationNode binaryOp => VisitBinaryOperator(binaryOp, context),
+                UnaryOperationNode unaryOp => VisitUnaryOperator(unaryOp, context),
+                FunctionCallNode funcCall => VisitFunctionCall(funcCall, context),
+                MemberAccessNode memberAccess => VisitMemberAccess(memberAccess, context),
                 _ => HandleUnsupportedNode(node)
             };
+        }
+
+        private EvaluationResult VisitMemberAccess(MemberAccessNode node, GameContext context)
+        {
+            _logger.LogTrace("Visiting MemberAccessNode. Target: {Target}, Member: {Member}", node.Target, node.Member.Name);
+
+            // 1. Evaluate the target object first
+            var targetResult = VisitNode(node.Target, context);
+            if (!targetResult.IsSuccess)
+            {
+                _logger.LogWarning("Failed to evaluate target of member access: {Target}", node.Target);
+                return targetResult; // Propagate failure
+            }
+
+            object? targetObject = targetResult.Value;
+            if (targetObject == null)
+            {
+                _logger.LogWarning("Target of member access '{Member}' evaluated to null.", node.Member.Name);
+                return EvaluationResult.Failure($"Cannot access member '{node.Member.Name}' on a null object.");
+            }
+
+            // 2. Resolve the member on the target object using the existing reflection logic
+            var memberName = node.Member.Name;
+            object? resolvedValue = ResolvePathSegments(targetObject, new List<string> { memberName });
+
+            if (resolvedValue != null)
+            {
+                _logger.LogTrace("Member '{Member}' on target '{Target}' resolved successfully. Value: {Value}", memberName, node.Target, resolvedValue);
+                return EvaluationResult.Success(resolvedValue);
+            }
+
+            // Special handling for CardInstance.AbilityState, mimicking logic from ResolveIdentifier
+            if (targetObject is CardInstance sourceCard &&
+                memberName.Equals("state", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Accessing '.state' directly is ambiguous. Use state variables directly on 'self', e.g., 'self.myVar'.");
+                return EvaluationResult.Failure("Direct access to '.state' is not recommended. Access state variables directly on the card.");
+            }
+
+            _logger.LogWarning("Member '{Member}' not found on target type '{TargetType}'.", memberName, targetObject.GetType().Name);
+            return EvaluationResult.Failure($"Member '{memberName}' not found on target of type '{targetObject.GetType().Name}'.");
         }
 
         private EvaluationResult VisitLiteral(LiteralNode node, GameContext context)
@@ -70,7 +112,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             return EvaluationResult.Success(node.Value);
         }
 
-        private Task<EvaluationResult> VisitIdentifierAsync(IdentifierNode node, GameContext context)
+        private EvaluationResult VisitIdentifier(IdentifierNode node, GameContext context)
         {
             _logger.LogTrace("Visiting IdentifierNode. Path: {Path}", string.Join(".", node.Path));
             object? resolvedValue = ResolveIdentifier(node.Path, context);
@@ -78,22 +120,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             if (resolvedValue != null)
             {
                 _logger.LogTrace("Identifier '{Path}' resolved successfully. Value: {Value}", string.Join(".", node.Path), resolvedValue);
-                return Task.FromResult(EvaluationResult.Success(resolvedValue));
+                return EvaluationResult.Success(resolvedValue);
             }
             else
             {
                 _logger.LogWarning("Identifier not found or path invalid: {Path}", string.Join(".", node.Path));
-                return Task.FromResult(EvaluationResult.Failure($"Identifier not found or path invalid: {string.Join(".", node.Path)}"));
+                return EvaluationResult.Failure($"Identifier not found or path invalid: {string.Join(".", node.Path)}");
             }
         }
 
-        private async Task<EvaluationResult> VisitBinaryOperatorAsync(BinaryOperationNode node, GameContext context)
+        private EvaluationResult VisitBinaryOperator(BinaryOperationNode node, GameContext context)
         {
             _logger.LogTrace("Visiting BinaryOperationNode. Operator: {Operator}", node.Operator);
-            var leftResult = await VisitNodeAsync(node.Left, context);
+            var leftResult = VisitNode(node.Left, context);
             if (!leftResult.IsSuccess) return leftResult;
 
-            var rightResult = await VisitNodeAsync(node.Right, context);
+            var rightResult = VisitNode(node.Right, context);
             if (!rightResult.IsSuccess) return rightResult;
 
             try
@@ -111,10 +153,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
         }
 
-        private async Task<EvaluationResult> VisitUnaryOperatorAsync(UnaryOperationNode node, GameContext context)
+        private EvaluationResult VisitUnaryOperator(UnaryOperationNode node, GameContext context)
         {
             _logger.LogTrace("Visiting UnaryOperationNode. Operator: {Operator}", node.Operator);
-            var operandResult = await VisitNodeAsync(node.Operand, context);
+            var operandResult = VisitNode(node.Operand, context);
             if (!operandResult.IsSuccess) return operandResult;
 
             try
@@ -131,7 +173,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
         }
 
-        private async Task<EvaluationResult> VisitFunctionCallAsync(FunctionCallNode node, GameContext context)
+        private EvaluationResult VisitFunctionCall(FunctionCallNode node, GameContext context)
         {
             _logger.LogTrace("Visiting FunctionCallNode. Function: {FunctionName}, Args: {ArgCount}", node.FunctionName, node.Arguments.Count);
             var function = FindFunction(node.FunctionName, context);
@@ -144,7 +186,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var evaluatedArgs = new List<object?>();
             foreach (var argNode in node.Arguments)
             {
-                var argResult = await VisitNodeAsync(argNode, context);
+                var argResult = VisitNode(argNode, context);
                 if (!argResult.IsSuccess)
                 {
                     _logger.LogWarning("Argument evaluation failed for function '{FunctionName}'. Error: {Error}", node.FunctionName, string.Join("; ", argResult.Errors));
@@ -162,7 +204,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
             try
             {
-                object? resultValue = await function.ExecuteAsync(evaluatedArgs, context);
+                object? resultValue = function.Execute(evaluatedArgs, context);
                 _logger.LogTrace("Function '{FunctionName}' executed successfully. Result: {Result}", node.FunctionName, resultValue ?? "null");
                 return EvaluationResult.Success(resultValue);
             }
@@ -251,12 +293,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             switch (firstSegmentLower)
             {
                 case "player":
-                    baseObjectForPathResolution = context.RequestingPlayer;
+                    baseObjectForPathResolution = context.GetRequestingPlayer();
                     pathSegmentsToResolve = path.Skip(1).ToList();
                     _logger.LogTrace("Resolved '{Segment}' to RequestingPlayer.", firstSegment);
                     break;
                 case "opponent":
-                    baseObjectForPathResolution = context.OpponentPlayer;
+                    baseObjectForPathResolution = context.GetOpponentPlayer();
                     pathSegmentsToResolve = path.Skip(1).ToList();
                     _logger.LogTrace("Resolved '{Segment}' to OpponentPlayer.", firstSegment);
                     break;
@@ -268,7 +310,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 case "self":
                 case "this":
                 case "current":
-                    baseObjectForPathResolution = context.CurrentItem;
+                    baseObjectForPathResolution = context.SourceCard; // Replaced CurrentItem with SourceCard
                     pathSegmentsToResolve = path.Skip(1).ToList();
                     _logger.LogTrace("Resolved '{Segment}' to CurrentItem.", firstSegment);
                     if (!pathSegmentsToResolve.Any() && path.Count == 1) // If path is just "self", "this", or "current"
@@ -279,11 +321,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 default:
                     // Path does not start with a known top-level keyword
                     // Priority 2: Temporary variables (if path is a single segment)
-                    if (path.Count == 1 && context.TemporaryVariables.TryGetValue(firstSegment, out var tempValue))
-                    {
-                        _logger.LogTrace("Resolved '{Segment}' from TemporaryVariables.", firstSegment);
-                        return tempValue;
-                    }
+                    // TODO: Refactor TemporaryVariables
+                    // if (path.Count == 1 && context.TemporaryVariables.TryGetValue(firstSegment, out var tempValue))
+                    // {
+                    //     _logger.LogTrace("Resolved '{Segment}' from TemporaryVariables.", firstSegment);
+                    //     return tempValue;
+                    // }
 
                     // Priority 3: Assume the path starts with a property of GameContext itself (implicit root)
                     // For example, "TriggeringEvent.SourceCard" or "GeneratedEvents.Count"
@@ -302,7 +345,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             // This specific structure was handled separately in the original code.
             if ((firstSegmentLower is "self" or "this" or "current") &&
                 path.Count > 2 && path[1].ToLowerInvariant() == "state" &&
-                context.CurrentItem is CardInstance sourceCard)
+                context.SourceCard is CardInstance sourceCard) // Replaced CurrentItem with SourceCard
             {
                 string variableName = path[2];
                 if (sourceCard.AbilityState.TryGetValue(variableName, out var stateValue))

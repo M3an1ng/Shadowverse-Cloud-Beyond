@@ -7,6 +7,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using System.Collections.Generic;
 using System.Linq;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 // Removed using for DSL.Parser, DSL.Evaluation, and Reflection as they are no longer needed here.
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases
@@ -25,37 +26,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases
         }
 
         /// <summary>
-        /// Executes the effect. This method orchestrates parameter validation
-        /// and calls the specific Apply implementation.
-        /// </summary>
-        /// <param name="parameters">The effect parameters (already resolved).</param>
-        /// <param name="context">The game context.</param>
-        /// <returns>The result of the game state action.</returns>
-        public GameStateActionResult Execute(TParams parameters, GameContext context) // Removed EffectConfig
-        {
-            // EffectConfig validation (if needed) would be done by the caller (EffectExecutor)
-            if (parameters == null)
-            {
-                Logger.LogError("Execute called with null parameters for handler {HandlerType}.", this.GetType().Name);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Effect parameters cannot be null." };
-            }
-            if (context == null)
-            {
-                Logger.LogError("Execute called with null context for handler {HandlerType}.", this.GetType().Name);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Game context cannot be null." };
-            }
-
-            return Apply(context, parameters); // Call Apply without EffectConfig
-        }
-
-        /// <summary>
         /// Abstract method to be implemented by specific effect handlers
         /// containing the core logic for applying the effect.
         /// </summary>
+        /// <param name="effect">The effect DTO containing dynamic data like selected targets.</param>
         /// <param name="context">The game context.</param>
         /// <param name="parameters">The validated and resolved effect parameters.</param>
         /// <returns>The result of the game state action.</returns>
-        public abstract GameStateActionResult Apply(GameContext context, TParams parameters); // Removed EffectConfig
+        public abstract GameStateActionResult Apply(Effect effect, GameContext context, TParams parameters);
 
         // CreateEffectCompletedEvent method is removed as this responsibility moves to EffectExecutor.
     }
@@ -70,10 +48,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases
         /// <summary>
         /// Applies the effect using the provided context and strongly-typed parameters.
         /// </summary>
+        /// <param name="effect">The effect DTO containing dynamic data like selected targets.</param>
         /// <param name="context">The current game context.</param>
         /// <param name="parameters">The strongly-typed parameters specific to this effect (already resolved).</param>
         /// <returns>The result of the effect application.</returns>
-        GameStateActionResult Apply(GameContext context, TParams parameters); // Removed EffectConfig
+        GameStateActionResult Apply(Effect effect, GameContext context, TParams parameters);
 
         // Execute is typically part of the base class for orchestration.
         // If handlers are resolved directly via IEffectHandler and need Execute,

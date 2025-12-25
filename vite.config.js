@@ -3,6 +3,18 @@ import { defineConfig } from 'vite';
 // https://vitejs.dev/config/
 export default defineConfig({
   server: {
+    watch: {
+      // Prevent frequent full reloads caused by backend/log file writes under the monorepo root.
+      ignored: [
+        '**/*.log',
+        '**/Server/Logs/**',
+        '**/Server/bin/**',
+        '**/Server/obj/**',
+        '**/Server.Tests/bin/**',
+        '**/Server.Tests/obj/**',
+        '**/openspec/**',
+      ],
+    },
     proxy: {
       // 将所有以 /api 开头的请求代理到后端 API 服务器
       '/api': {

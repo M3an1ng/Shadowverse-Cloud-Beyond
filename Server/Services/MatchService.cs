@@ -20,6 +20,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, MatchRoom> _rooms = new();
         private readonly ConcurrentDictionary<string, object> _locks = new();
         private readonly TimeSpan _defaultTtl = TimeSpan.FromMinutes(30);
+        private readonly TimeSpan _closedRetention = TimeSpan.FromMinutes(2);
         private readonly ILogger<MatchService> _logger;
 
         public MatchService(ILogger<MatchService> logger)
@@ -142,6 +143,53 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        public MatchOperationResult SubmitDeckSelection(string gameId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null)
+        {
+            if (!_rooms.TryGetValue(gameId, out var room))
+            {
+                return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
+            }
+
+            lock (GetLock(gameId))
+            {
+                if (IsExpired(room))
+                {
+                    CloseInternal(gameId, "房间已过期");
+                    return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
+                }
+
+                if (!IsParticipant(room, playerId))
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.NotParticipant, "玩家不在房间内。");
+                }
+
+                if (room.Status == MatchStatus.Closed)
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.AlreadyClosed, room.ClosedReason ?? "房间已关闭。");
+                }
+
+                if (room.Status == MatchStatus.Started)
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.AlreadyStarted, "房间已开始。");
+                }
+
+                if (playerId == room.HostPlayerId)
+                {
+                    room.HostDeckSelection = selection;
+                    if (aiSelection != null)
+                    {
+                        room.AiDeckSelection = aiSelection;
+                    }
+                }
+                else if (room.GuestPlayerId.HasValue && playerId == room.GuestPlayerId.Value)
+                {
+                    room.GuestDeckSelection = selection;
+                }
+
+                return MatchOperationResult.Ok(Clone(room));
+            }
+        }
+
         public MatchOperationResult Start(string gameId, Guid playerId)
         {
             if (!_rooms.TryGetValue(gameId, out var room))
@@ -171,6 +219,11 @@ namespace ShadowverseBeyond.Server.Services
                 if (!(room.HostReady && guestReady))
                 {
                     return MatchOperationResult.Fail(MatchOperationError.NotReady, "双方未准备完成。");
+                }
+
+                if (!AreDecksReady(room))
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.MissingDeckSelection, "卡组尚未选择完成。");
                 }
 
                 room.Status = MatchStatus.Started;
@@ -219,6 +272,14 @@ namespace ShadowverseBeyond.Server.Services
                 return MatchOperationResult.Fail(MatchOperationError.Forbidden, "Token 无效或不属于该房间。");
             }
 
+            if (room.Status == MatchStatus.Closed)
+            {
+                return MatchOperationResult.Fail(
+                    MatchOperationError.AlreadyClosed,
+                    room.ClosedReason ?? "房间已关闭。",
+                    Clone(room));
+            }
+
             return MatchOperationResult.Ok(Clone(room));
         }
 
@@ -234,7 +295,15 @@ namespace ShadowverseBeyond.Server.Services
                 var room = kvp.Value;
                 if (IsExpired(room))
                 {
-                    CloseInternal(kvp.Key, "房间已过期");
+                    if (room.Status == MatchStatus.Closed)
+                    {
+                        _rooms.TryRemove(kvp.Key, out _);
+                        _locks.TryRemove(kvp.Key, out _);
+                    }
+                    else
+                    {
+                        CloseInternal(kvp.Key, "房间已过期");
+                    }
                 }
             }
         }
@@ -252,7 +321,7 @@ namespace ShadowverseBeyond.Server.Services
                 room.ClosedReason = reason;
                 room.HostReady = false;
                 room.GuestReady = false;
-                _rooms.TryRemove(gameId, out _);
+                room.ExpiresAt = DateTime.UtcNow.Add(_closedRetention);
                 _logger.LogInformation("[MatchService] Room {GameId} closed: {Reason}", gameId, reason);
             }
         }
@@ -264,6 +333,21 @@ namespace ShadowverseBeyond.Server.Services
         private static bool IsParticipant(MatchRoom room, Guid playerId)
         {
             return playerId == room.HostPlayerId || (room.GuestPlayerId.HasValue && room.GuestPlayerId.Value == playerId);
+        }
+
+        private static bool AreDecksReady(MatchRoom room)
+        {
+            if (!room.HostDeckSelection.HasSelection)
+            {
+                return false;
+            }
+
+            if (room.GuestPlayerId.HasValue)
+            {
+                return room.GuestDeckSelection.HasSelection;
+            }
+
+            return room.UseAiFallback && room.AiDeckSelection.HasSelection;
         }
 
         private static string GenerateJoinCode()
@@ -307,7 +391,21 @@ namespace ShadowverseBeyond.Server.Services
                 UseAiFallback = source.UseAiFallback,
                 CreatedAt = source.CreatedAt,
                 ExpiresAt = source.ExpiresAt,
-                ClosedReason = source.ClosedReason
+                ClosedReason = source.ClosedReason,
+                HostDeckSelection = CloneSelection(source.HostDeckSelection),
+                GuestDeckSelection = CloneSelection(source.GuestDeckSelection),
+                AiDeckSelection = CloneSelection(source.AiDeckSelection)
+            };
+        }
+
+        private static MatchDeckSelection CloneSelection(MatchDeckSelection selection)
+        {
+            return new MatchDeckSelection
+            {
+                UserId = selection.UserId,
+                GuestId = selection.GuestId,
+                DeckId = selection.DeckId,
+                DeckCode = selection.DeckCode
             };
         }
     }

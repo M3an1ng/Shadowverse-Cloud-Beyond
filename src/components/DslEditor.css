@@ -1,0 +1,276 @@
+/* DSL编辑器样式文件 */
+
+/* 主容器样式 */
+.dsl-editor {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #2c3e50;
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 12px;
+    min-height: 60px;
+}
+
+/* 节点容器 */
+.dsl-nodes-container {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+/* 节点样式 */
+.dsl-node {
+    color: #2c3e50;
+    font-weight: 500;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background: #f8f9fa;
+}
+
+/* 占位符样式 */
+.dsl-placeholder {
+    color: #6c757d;
+    font-size: 12px;
+    font-weight: 500;
+    font-style: italic;
+}
+
+/* 按钮样式 */
+.dsl-add-btn, .dsl-back-btn {
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.dsl-add-btn:hover {
+    background: #2980b9;
+}
+
+.dsl-back-btn {
+    background: #e74c3c;
+}
+
+.dsl-back-btn:hover {
+    background: #c0392b;
+}
+
+/* 菜单样式 */
+.dsl-options-dropdown {
+    position: fixed;
+    background: #ffffff;
+    border: 1px solid #bdc3c7;
+    border-radius: 6px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+    z-index: 1000;
+    min-width: 200px;
+    max-width: 300px;
+    font-size: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* 菜单分组样式 */
+.dsl-option-group {
+    position: relative;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid #e9ecef;
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background-color 0.2s ease;
+}
+
+.dsl-option-group:hover {
+    background: #e9ecef;
+}
+
+.dsl-option-group:last-child {
+    border-bottom: none;
+}
+
+/* 菜单选项样式 */
+.dsl-option {
+    padding: 10px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f3f4;
+    transition: background-color 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dsl-option:hover {
+    background: #f8f9fa;
+}
+
+.dsl-option:last-child {
+    border-bottom: none;
+}
+
+.dsl-option-label {
+    font-weight: 500;
+    color: #2c3e50;
+    font-size: 14px;
+}
+
+.dsl-option-description {
+    font-size: 12px;
+    color: #6c757d;
+    line-height: 1.3;
+}
+
+/* 子编辑器样式 */
+.dsl-sub-editor {
+    margin-left: 20px;
+    margin-top: 8px;
+    padding: 8px;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    background: #f8f9fa;
+}
+
+/* 静态值输入样式 */
+.dsl-static-value-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 8px;
+    padding: 4px 8px;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    background: #f8f9fa;
+}
+
+.dsl-static-value-input input,
+.dsl-static-value-input select {
+    padding: 2px 6px;
+    border: 1px solid #ced4da;
+    border-radius: 3px;
+    font-size: 12px;
+}
+
+/* 表达式预览样式 */
+.expression-preview {
+    margin-top: 8px;
+    padding: 8px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.expression-preview label {
+    font-size: 12px;
+    color: #2c3e50;
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.expression-preview code {
+    font-size: 12px;
+    color: #495057;
+    background: #f8f9fa;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+/* 输入控件样式 */
+.dsl-input-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 8px;
+    padding: 4px 8px;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    background: #f8f9fa;
+}
+
+.dsl-input-container label {
+    font-size: 12px;
+    color: #2c3e50;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dsl-input-container input,
+.dsl-input-container select {
+    padding: 2px 6px;
+    border: 1px solid #ced4da;
+    border-radius: 3px;
+    font-size: 12px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .dsl-editor {
+        padding: 8px;
+        font-size: 13px;
+    }
+    
+    .dsl-options-dropdown {
+        min-width: 180px;
+        max-width: 280px;
+    }
+    
+    .dsl-option {
+        padding: 8px 12px;
+    }
+    
+    .dsl-option-group {
+        padding: 10px 12px;
+    }
+}
+
+/* 自定义滚动条样式 */
+.dsl-options-dropdown::-webkit-scrollbar {
+    width: 8px;
+}
+
+.dsl-options-dropdown::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.dsl-options-dropdown::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.dsl-options-dropdown::-webkit-scrollbar-thumb:hover {
+    background: #a1a1a1;
+}
+
+/* Firefox滚动条样式 */
+.dsl-options-dropdown {
+    scrollbar-width: thin;
+    scrollbar-color: #c1c1c1 #f1f1f1;
+}
+
+/* 动画效果 */
+.dsl-option, .dsl-option-group, .dsl-add-btn, .dsl-back-btn {
+    transition: all 0.2s ease;
+}
+
+/* 焦点样式 */
+.dsl-add-btn:focus,
+.dsl-back-btn:focus,
+.dsl-static-value-input input:focus,
+.dsl-static-value-input select:focus {
+    outline: 2px solid #3498db;
+    outline-offset: 1px;
+}

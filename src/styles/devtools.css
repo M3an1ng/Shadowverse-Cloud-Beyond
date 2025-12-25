@@ -1,0 +1,156 @@
+/* 
+ * Developer Tools Styles
+ * Specific styling for the debug console and tools.
+ */
+
+#dev-tools-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    height: 100%;
+    overflow-y: auto;
+}
+
+.dev-tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--space-4);
+}
+
+.tool-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    transition: border-color var(--transition-fast);
+}
+
+.tool-card:hover {
+    border-color: var(--color-primary);
+}
+
+.tool-card h3 {
+    font-size: var(--text-lg);
+    color: var(--color-primary);
+}
+
+.tool-card p {
+    font-size: var(--text-sm);
+    color: var(--color-secondary);
+    flex-grow: 1;
+}
+
+.tool-button {
+    margin-top: var(--space-2);
+    padding: var(--space-2);
+    background-color: var(--color-surface-highlight);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    transition: all var(--transition-fast);
+}
+
+.tool-button:hover {
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    border-color: var(--color-primary);
+}
+
+/* --- Console Overlay --- */
+#dev-console {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 300px;
+    background-color: rgba(10, 10, 10, 0.95);
+    border-top: 1px solid var(--color-primary);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    transform: translateY(100%);
+    transition: transform var(--transition-normal);
+}
+
+#dev-console.open {
+    transform: translateY(0);
+}
+
+.console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) var(--space-4);
+    background-color: var(--color-surface-highlight);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.console-title {
+    font-weight: bold;
+    color: var(--color-primary);
+}
+
+.console-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.console-btn {
+    background: none;
+    border: none;
+    color: var(--color-secondary);
+    cursor: pointer;
+    font-size: var(--text-xs);
+}
+
+.console-btn:hover {
+    color: var(--color-text);
+}
+
+.console-output {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: var(--space-2);
+    color: #d4d4d4;
+}
+
+.log-entry {
+    margin-bottom: 2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 2px 0;
+}
+
+.log-info { color: #60a5fa; }
+.log-warn { color: #fbbf24; }
+.log-error { color: #ef4444; }
+.log-success { color: #34d399; }
+
+.console-input-area {
+    display: flex;
+    padding: var(--space-2);
+    border-top: 1px solid var(--color-border);
+    background-color: var(--color-surface);
+}
+
+.console-prompt {
+    color: var(--color-primary);
+    margin-right: var(--space-2);
+}
+
+#console-input {
+    flex-grow: 1;
+    background: transparent;
+    border: none;
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    outline: none;
+}

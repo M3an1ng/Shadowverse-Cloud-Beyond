@@ -1,10 +1,20 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For ValueConfig
+using ShadowverseBeyond.Server.Domain.Query.Metadata;
+
 namespace ShadowverseBeyond.Server.Domain.Query
 {
     /// <summary>
     /// Marker interface for query pipeline operations.
+    /// This interface is configured for polymorphic deserialization using System.Text.Json.
+    /// Each derived type is registered with a unique type discriminator, which corresponds
+    /// to the value of the "$type" property in the JSON payload.
     /// </summary>
+    [JsonDerivedType(typeof(FilterOperation), typeDiscriminator: "FilterOperation")]
+    [JsonDerivedType(typeof(SortOperation), typeDiscriminator: "SortOperation")]
+    [JsonDerivedType(typeof(SelectionOperation), typeDiscriminator: "SelectionOperation")]
+    [JsonDerivedType(typeof(PostProcessingOperation), typeDiscriminator: "PostProcessingOperation")]
     public interface IQueryOperation
     {
     }
@@ -36,6 +46,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
     /// Assumes conditions are combined with logical AND.
     /// </summary>
     /// <param name="Filters">A list of filter conditions to apply.</param>
+    [QueryOperationMetadata("Filter", "Apply a set of conditions to filter the card list.")]
     public record FilterOperation(
         List<FilterConfig> Filters
     ) : IQueryOperation;
@@ -44,6 +55,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
     /// Represents a sorting step in the query pipeline, containing one or more sorting criteria.
     /// </summary>
     /// <param name="Ordering">A list of ordering criteria to apply sequentially.</param>
+    [QueryOperationMetadata("Sort", "Sort the card list based on one or more criteria.")]
     public record SortOperation(
         List<OrderingConfig> Ordering
     ) : IQueryOperation;
@@ -53,6 +65,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
     /// </summary>
     /// <param name="Strategy">The selection strategy to use.</param>
     /// <param name="CountSource">The source defining how many items to select.</param>
+    [QueryOperationMetadata("Select", "Select a subset of the card list (e.g., first, last, random).")]
     public record SelectionOperation(
         SelectionStrategy Strategy = SelectionStrategy.First,
         ValueConfig? CountSource = null // Use ValueConfig for dynamic count
@@ -83,6 +96,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
     /// </summary>
     /// <param name="Type">The type of post-processing to apply.</param>
     /// <param name="Parameters">Optional parameters for the post-processing step.</param>
+    [QueryOperationMetadata("Post-process", "Apply a transformation to the final result set (e.g., convert to DTOs).")]
     public record PostProcessingOperation(
         PostProcessingType Type,
         Dictionary<string, object>? Parameters = null // Corrected generic syntax

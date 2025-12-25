@@ -9,11 +9,12 @@
 //
 
 import { createPlayer } from "./player.js"; // 正确导入
-import { getCardDefinition, createCardInstance } from "./cardManager.js"; // ADDED: createCardInstance for hydration
-import { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, updateSingleCardHighlight } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus + updateSingleCardHighlight
+import { createCardInstance } from "./cardManager.js";
+import { renderGame, renderGameLog, showDamageNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, updateSingleCardHighlight } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus + updateSingleCardHighlight
 
 // --- Constants ---
 const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
+const GAME_LOG_LIMIT = 200; // Prevent unbounded growth in UI log
 
 // console.log("gameManager.js loaded");
 // --- SignalR Connection ---
@@ -39,7 +40,40 @@ export let gameState = {
     // 稍后可能添加: eventLog, effectQueue 等
     lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
     playabilityCache: {}, // NEW: Cache for card playability check results { cardUid: PlayabilityResultDto }
+    gameLog: [], // Local rolling log for UI display
+    isSpectator: false, // Spectator mode disables actions
 };
+
+function resolvePlayModeSelection(playModes, preferredMode) {
+    if (!Array.isArray(playModes) || playModes.length === 0) {
+        return { mode: preferredMode ?? null, cost: null };
+    }
+
+    let selected = null;
+    if (preferredMode) {
+        selected = playModes.find(mode => mode.mode === preferredMode && mode.isAvailable) || null;
+    }
+
+    if (!selected) {
+        const enhanceModes = playModes
+            .filter(mode => mode.isAvailable && mode.mode === "Enhance")
+            .sort((a, b) => b.effectiveCost - a.effectiveCost);
+        selected = enhanceModes[0] || playModes.find(mode => mode.isAvailable) || null;
+    }
+
+    return {
+        mode: selected ? selected.mode : null,
+        cost: selected ? selected.effectiveCost : null
+    };
+}
+
+function extractAnnouncement(payload) {
+    if (payload === undefined || payload === null) return null;
+    if (typeof payload === 'string') return payload;
+    if (typeof payload !== 'object') return null;
+
+    return payload.Announcement || payload.announcement || null;
+}
 // 初始化游戏 (已实现版本)
 /**
  * Receives the SignalR connection object from main.js.
@@ -61,6 +95,7 @@ export function initializeGame(idOfGame, idOfPlayer) {
     // Primarily, store the IDs for context.
     gameState.gameId = idOfGame; // Use properties added earlier
     gameState.localPlayerId = idOfPlayer; // Use properties added earlier
+    gameState.isSpectator = false;
 
     // Clear out potentially stale complex objects from previous local games
     gameState.players = []; // Server will populate this via ReceiveGameState
@@ -72,8 +107,50 @@ export function initializeGame(idOfGame, idOfPlayer) {
     gameState.winner = null;
     gameState.selectedCardUid = null;
     gameState.selectedAttackerUid = null;
+    gameState.gameLog = []; // Reset log on new session
 
 } // Closing brace for initializeGame
+
+export function initializeSpectator(gameId) {
+    console.log(`GAME MANAGER: Initializing SPECTATOR mode for GameID=${gameId}. Waiting for server state...`);
+    gameState.gameId = gameId;
+    gameState.localPlayerId = null;
+    gameState.isSpectator = true;
+
+    gameState.players = [];
+    gameState.activePlayer = null;
+    gameState.opponentPlayer = null;
+    gameState.turnNumber = 0;
+    gameState.phase = "Connecting";
+    gameState.gameOver = false;
+    gameState.winner = null;
+    gameState.selectedCardUid = null;
+    gameState.selectedAttackerUid = null;
+    gameState.gameLog = [];
+}
+
+// --- Game Log Helpers ---
+export function appendGameLog(eventName, payload) {
+    const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const announcement = extractAnnouncement(payload);
+    if (!announcement) return;
+    const entry = `[${ts}] ${announcement}`;
+
+    gameState.gameLog.push(entry);
+    if (gameState.gameLog.length > GAME_LOG_LIMIT) {
+        gameState.gameLog.shift();
+    }
+
+    // Keep console output consistent and structured
+    console.log(
+        `%cGAME EVENT%c ${eventName}`,
+        'background:#1c1c1c;color:#0ff;padding:2px 4px;border-radius:3px',
+        'color:#e5e5e5;font-weight:bold;',
+        payload
+    );
+
+    renderGameLog(gameState.gameLog);
+}
 // --- Mulligan Phase Logic ---
 
 // 新增：根据 UID 查找卡牌实例 (手牌或战场)
@@ -194,6 +271,10 @@ export function isValidSpellTarget(
     return false; // If no criteria matched
 }
 export async function playCard(cardUid, targetUid = null) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
     if (gameState.gameOver) {
         console.warn("GM: Cannot play card - Game is over.");
         alert("游戏已经结束，无法出牌！"); // User feedback
@@ -229,6 +310,11 @@ export async function playCard(cardUid, targetUid = null) {
         return;
     }
 
+    const playabilityInfo = gameState.playabilityCache[cardUid];
+    const selection = resolvePlayModeSelection(playabilityInfo?.playModes, playabilityInfo?.selectedPlayMode);
+    const selectedPlayMode = selection.mode;
+    const effectiveCost = selection.cost ?? cardInstance.cost;
+
     // --- Pre-condition Checks (Client-side) ---
     // IMPORTANT: Ensure we check against localPlayerId provided during initGame
     if (
@@ -248,9 +334,9 @@ export async function playCard(cardUid, targetUid = null) {
         alert("只能在你的回合主阶段出牌！");
         return;
     }
-    if (playerState.pp < cardInstance.cost) {
+    if (playerState.pp < effectiveCost) {
         console.warn(
-            `GM: PlayCard rejected - Not enough PP for ${cardInstance.name} (Cost: ${cardInstance.cost}, Have: ${playerState.pp}).`
+            `GM: PlayCard rejected - Not enough PP for ${cardInstance.name} (Cost: ${effectiveCost}, Have: ${playerState.pp}).`
         );
         alert("PP不足！"); // UI should prevent this, but double check.
         return;
@@ -272,10 +358,10 @@ export async function playCard(cardUid, targetUid = null) {
     // NOTE: This check might be better handled server-side for consistency,
     // but a basic client-side check can provide faster feedback.
     // We need access to card definitions here, assuming getCardDefinition is available.
-    const cardData = getCardDefinition(cardInstance.id); // FIX: Use lowercase 'id' property
+    // The 'requires_target' property should now exist directly on the cardInstance
     if (
         cardInstance.type === "Spell" &&
-        cardData?.requires_target &&
+        cardInstance.requires_target && // Check the instance directly
         !targetUid
     ) {
         console.warn(
@@ -306,9 +392,13 @@ export async function playCard(cardUid, targetUid = null) {
         // and handle the actual game logic.
         // Construct the DTO object expected by the server Hub method (PascalCase)
         const actionDto = {
-            CardUid: cardUid, // Use PascalCase
-            TargetUid: targetUid // Use PascalCase
+            CardUid: cardUid,
+            TargetUids: targetUid ? [targetUid] : []
         };
+        if (selectedPlayMode) {
+            actionDto.PlayMode = selectedPlayMode;
+            actionDto.PaidCost = effectiveCost;
+        }
         // Invoke with the single DTO object
         // BUG-016: Store UID before invoking, so PpUpdate can remove it from hand
         gameState.lastPlayedCardInstanceId = cardUid;
@@ -414,6 +504,10 @@ export function initiateAttack(attackerUid) {
 
 // 选择攻击目标 (敌方随从或英雄)
 export async function selectAttackTarget(targetUid) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
     const attackerUid = gameState.selectedAttackerUid;
 
     // Validation 1: Check if an attacker is selected
@@ -511,8 +605,24 @@ export async function selectAttackTarget(targetUid) {
         );
     }
     // If opponent does NOT have Ward, any valid target (follower or leader, respecting other rules) is fine.
+    else if (targetInstance.type === 'Leader') {
+        // If target is the leader and there's no Ward, check Rush/Storm rules
+        const hasStorm = attackerInstance.keywords?.includes("Storm");
+        const hasRush = attackerInstance.keywords?.includes("Rush");
+        const isSummoningSick = attackerInstance.fieldTurn === 0 && !attackerInstance.isEvolved;
 
-    // All validations passed (including Ward check)
+        // Can attack leader if: has Storm OR is not summoning sick.
+        // Rush alone is not enough on the first turn.
+        if (!hasStorm && isSummoningSick) {
+             console.warn(
+                `GM: SelectTarget failed - Attacker ${attackerInstance.name} has Rush or no keyword and cannot attack the leader on the turn it enters play.`
+            );
+            alert("该随从本回合无法攻击敌方主战者！");
+            return;
+        }
+    }
+
+    // All validations passed (including Ward and Rush/Storm checks)
     console.log(
         `GM: Attack target selected - ${attackerInstance.name} (${attackerUid}) will attack ${targetInstance.name} (${targetUid})`
     );
@@ -636,6 +746,10 @@ export function cancelSelection() {
 // 进化随从
 // 进化随从 (Implemented Version)
 export async function evolveCard(cardUid) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
     if (gameState.gameOver) {
         console.warn("GM: Cannot evolve card - Game is over.");
         alert("游戏已经结束，无法进化！");
@@ -645,12 +759,12 @@ export async function evolveCard(cardUid) {
 
     const playerState = getPlayerState(gameState.currentPlayerId);
     const cardInstance = findCardInstanceByUid(cardUid);
-    const cardData = cardInstance ? getCardDefinition(cardInstance.id) : null; // Base data
+    // cardData is no longer needed, we check properties on the instance itself.
 
     // --- Basic Client-Side Validations ---
-    if (!playerState || !cardInstance || !cardData) {
+    if (!playerState || !cardInstance) {
         console.error(
-            `GM: EvolveCard failed - Missing player state, card instance, or card definition for UID ${cardUid}.`
+            `GM: EvolveCard failed - Missing player state or card instance for UID ${cardUid}.`
         );
         alert("内部错误：无法找到进化所需信息。");
         return;
@@ -699,11 +813,8 @@ export async function evolveCard(cardUid) {
         alert("该随从已经进化！");
         return;
     }
-    if (
-        cardData.can_evolve !== true ||
-        !cardData.evolves_into ||
-        cardData.evolves_into.length === 0
-    ) {
+    // Check the canEvolve property directly on the instance, which is hydrated from the DTO.
+    if (cardInstance.canEvolve !== true) {
         console.warn(
             "GM: EvolveCard rejected - Card definition does not allow evolution or lacks target."
         );
@@ -746,6 +857,148 @@ export async function evolveCard(cardUid) {
         // No state change locally on error
     }
 }
+
+// 超进化随从
+export async function superEvolveCard(cardUid) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
+    if (gameState.gameOver) {
+        console.warn("GM: Cannot super evolve card - Game is over.");
+        alert("游戏已经结束，无法超进化！");
+        return;
+    }
+    console.log(`GM: Attempting to super evolve card UID: ${cardUid}`);
+
+    const playerState = getPlayerState(gameState.currentPlayerId);
+    const cardInstance = findCardInstanceByUid(cardUid);
+
+    if (!playerState || !cardInstance) {
+        console.error(`GM: SuperEvolveCard failed - Missing player state or card instance for UID ${cardUid}.`);
+        alert("内部错误：无法找到超进化所需信息。");
+        return;
+    }
+
+    if (
+        playerState.id !== gameState.localPlayerId ||
+        playerState.id !== gameState.currentPlayerId
+    ) {
+        console.warn(`GM: SuperEvolveCard rejected - Not local player's turn.`);
+        alert("现在不是你的回合！");
+        return;
+    }
+    if (gameState.phase !== "Main") {
+        console.warn(`GM: SuperEvolveCard rejected - Cannot super evolve outside Main phase.`);
+        alert("只能在你的回合主阶段超进化！");
+        return;
+    }
+    if (!playerState.canSuperEvolve) {
+        console.warn("GM: SuperEvolveCard rejected - Local state indicates super evolution already used or unavailable.");
+        alert("本回合已使用过超进化点或无法超进化。");
+        return;
+    }
+    if (playerState.sep < 1) {
+        console.warn("GM: SuperEvolveCard rejected - Local state shows insufficient SEP.");
+        alert("超进化点不足！");
+        return;
+    }
+    if (cardInstance.zone !== "Field") {
+        console.warn(`GM: SuperEvolveCard rejected - Card not on field.`);
+        alert("只能超进化场上的随从！");
+        return;
+    }
+    if (cardInstance.type !== "Follower") {
+        console.warn(`GM: SuperEvolveCard rejected - Cannot super evolve non-Follower.`);
+        alert("只能超进化随从！");
+        return;
+    }
+    if (cardInstance.isEvolved === true) {
+        console.warn(`GM: SuperEvolveCard rejected - Card is already evolved.`);
+        alert("该随从已经进化！");
+        return;
+    }
+    if (cardInstance.canEvolve !== true) {
+        console.warn("GM: SuperEvolveCard rejected - Card definition does not allow evolution or lacks target.");
+        alert("该随从无法超进化！");
+        return;
+    }
+
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: SuperEvolveCard failed - SignalR connection not available.");
+        alert("与服务器连接丢失，无法超进化！");
+        return;
+    }
+
+    console.log(`GM: Invoking SignalR Hub method 'PerformSuperEvolve'. GameID: ${gameState.gameId}, CardUID: ${cardUid}`);
+    try {
+        const actionDto = { UnitUid: cardUid };
+        await signalRConnection.invoke("PerformSuperEvolve", actionDto);
+        console.log(`GM: SuperEvolve request sent for UID: ${cardUid}`);
+    } catch (error) {
+        console.error("GM: Error invoking PerformSuperEvolve:", error);
+        alert("超进化请求失败，请稍后再试。");
+    }
+}
+
+// Act (Activated ability) request for a field card
+export async function requestAct(cardUid) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
+    if (gameState.gameOver) {
+        console.warn("GM: Cannot use Act - Game is over.");
+        return;
+    }
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: RequestAct failed - SignalR connection not available or not connected.");
+        alert("与服务器连接丢失，无法启动！");
+        return;
+    }
+
+    const playerState = getPlayerState(gameState.currentPlayerId);
+    const cardInstance = findCardInstanceByUid(cardUid);
+
+    if (!playerState || !cardInstance) {
+        console.error(`GM: RequestAct failed - Missing player/card state for UID ${cardUid}.`);
+        return;
+    }
+
+    if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
+        alert("现在不是你的回合！");
+        return;
+    }
+
+    if (gameState.phase !== "Main") {
+        alert("只能在主阶段启动！");
+        return;
+    }
+
+    if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Field") {
+        alert("只能启动自己场上的卡牌！");
+        return;
+    }
+
+    if (cardInstance.hasActAbility !== true) {
+        alert("该卡牌没有启动能力。");
+        return;
+    }
+
+    const lastUsed = cardInstance.actLastUsedTurnNumber ?? null;
+    if (lastUsed !== null && lastUsed === (playerState.turnNumber ?? 0)) {
+        alert("该卡牌本回合已启动过。");
+        return;
+    }
+
+    try {
+        const actionDto = { CardUid: cardUid };
+        await signalRConnection.invoke("RequestAct", actionDto);
+    } catch (err) {
+        console.error("GM: SignalR 'RequestAct' invocation failed:", err);
+        alert(`启动失败：${err?.message || "服务器通信错误"}`);
+    }
+}
 // Duplicate evolveCard function removed to fix SyntaxError
 // --- SignalR Hub Invocation Wrappers ---
 
@@ -754,6 +1007,10 @@ export async function evolveCard(cardUid) {
  * @param {string[]} cardUidsToReplace - An array of card UIDs the player wishes to replace.
  */
 export async function submitMulligan(cardUidsToReplace = []) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
     if (!signalRConnection || signalRConnection.state !== "Connected") {
         console.error(
             "GM: SubmitMulligan failed - SignalR connection not available."
@@ -799,6 +1056,10 @@ export async function endTurnRequest() {
     const timestamp = new Date().toISOString();
     console.log(`[${timestamp}] GM_DBG: Entered endTurnRequest() function.`); // ADDED: Log function entry
     // --- Proceed with checks ---
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
     if (!signalRConnection || signalRConnection.state !== "Connected") {
         console.error(
             "GM: EndTurnRequest failed - SignalR connection not available."
@@ -921,57 +1182,6 @@ export async function sendGameAction(actionData) {
     }
 } // Closing brace for sendGameAction function
 /**
- * Requests the server to check the playability of a specific card in hand.
- * @param {string} cardUid - The unique identifier of the card instance in hand.
- */
-export async function requestPlayabilityCheck(cardUid) {
-    if (!cardUid) {
-        console.warn("GM: requestPlayabilityCheck called with no cardUid.");
-        return;
-    }
-    if (!signalRConnection || signalRConnection.state !== "Connected") {
-        console.error("GM: requestPlayabilityCheck failed - SignalR connection not available.");
-        // Optionally alert the user or handle reconnection
-        return;
-    }
-    // 【修复】允许在玩家回合的任何阶段检查可玩性，不仅限于Main阶段
-    // 这样可以避免缓存过早清理导致的问题
-    if (gameState.localPlayerId !== gameState.currentPlayerId) {
-        console.log("GM: Skipping playability check (not local player's turn).");
-        return;
-    }
-
-    // 【修复】不在这里清理缓存，让缓存在回合开始时统一清理
-    // 避免因阶段变化导致的缓存丢失
-    // Optional: Check cache before sending request?
-    // if (gameState.playabilityCache[cardUid]) {
-    //     console.log(`GM: Playability check for ${cardUid} already cached. Skipping request.`);
-    //     // Ensure UI reflects cached state if needed
-    //     return;
-    // }
-
-    console.log(`GM: Invoking SignalR Hub method 'CheckCardPlayability'. CardUID: ${cardUid}`);
-    try {
-        // Server expects the card instance UID as a string argument
-        await signalRConnection.invoke("CheckCardPlayability", cardUid);
-        // No need to do anything here, wait for ReceivePlayabilityResult event
-        console.log(`GM: 'CheckCardPlayability' for ${cardUid} invoked successfully.`);
-    } catch (err) {
-        console.error(`GM: SignalR 'CheckCardPlayability' invocation for ${cardUid} failed:`, err);
-        // Optionally clear cache entry on error?
-        delete gameState.playabilityCache[cardUid];
-        // Optionally alert the user
-        // alert(`无法检查卡牌 ${cardUid} 的可玩性：服务器错误`);
-    }
-}
-/**
- * Handles the playability check result received from the server.
- * Stores the result in the cache and potentially triggers a UI update.
- * @param {object} result - The PlayabilityResultDto object from the server.
- *                          Expected properties: CardUid, IsPlayable, RequiresTargetSelection,
- *                                               HasValidTargets, CanPlayWithoutTarget, FailureReason, ValidTargetIds
- */
-/**
  * 【新增】处理服务器主动推送的手牌可玩性更新
  * @param {Object} updateDto - HandPlayabilityUpdateDto from server
  */
@@ -980,6 +1190,17 @@ export function handleHandPlayabilityUpdate(updateDto) {
         console.warn("GM: Received invalid hand playability update:", updateDto);
         return;
     }
+
+    // 【临时调试日志】打印收到的原始DTO和当前敌方单位状态
+    console.log('%c[DEBUG_PLAYABILITY] Received HandPlayabilityUpdate DTO:', 'color: red; font-weight: bold;', JSON.parse(JSON.stringify(updateDto)));
+    const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
+    if (opponentPlayer) {
+        console.log('%c[DEBUG_PLAYABILITY] Current opponent field state:', 'color: red; font-weight: bold;', JSON.parse(JSON.stringify(opponentPlayer.field)));
+        if(opponentPlayer.leaderCard) {
+             console.log('%c[DEBUG_PLAYABILITY] Current opponent leader state:', 'color: red; font-weight: bold;', JSON.parse(JSON.stringify(opponentPlayer.leaderCard)));
+        }
+    }
+    // --- 结束临时调试日志 ---
 
     // 只处理本地玩家的可玩性更新
     if (updateDto.PlayerId !== gameState.localPlayerId) {
@@ -999,6 +1220,13 @@ export function handleHandPlayabilityUpdate(updateDto) {
             if (cardInstance) {
                 // 使用统一的UID作为缓存键
                 const cardUid = cardInstance.uid ?? cardInstance.InstanceId;
+                const playModes = (playabilityResult.PlayModes || []).map(mode => ({
+                    mode: mode.Mode,
+                    effectiveCost: mode.EffectiveCost,
+                    isAvailable: mode.IsAvailable
+                }));
+                const selection = resolvePlayModeSelection(playModes, playabilityResult.SelectedPlayMode);
+
                 gameState.playabilityCache[cardUid] = {
                     cardUid: cardUid,
                     isPlayable: playabilityResult.IsPlayable,
@@ -1006,13 +1234,21 @@ export function handleHandPlayabilityUpdate(updateDto) {
                     hasValidTargets: playabilityResult.HasValidTargets,
                     canPlayWithoutTarget: playabilityResult.CanPlayWithoutTarget,
                     failureReason: playabilityResult.FailureReason,
-                    validTargetIds: playabilityResult.ValidTargetIds || []
+                    validTargetIds: playabilityResult.ValidTargetIds || [],
+                    playModes: playModes,
+                    selectedPlayMode: selection.mode,
+                    selectedPlayCost: selection.cost
                 };
             } else {
                 console.warn(`GM: Could not find card instance with UID ${instanceId} in local player's hand`);
             }
         }
     });
+
+    // 可玩性高亮只在主流程阶段需要；Mulligan 阶段频繁重渲染会打断本地交互（如调度选牌）。
+    if (gameState.phase === 'Mulligan' || gameState.phase === 'GameOver') {
+        return;
+    }
 
     // 触发UI更新以反映新的可玩性状态
     try {
@@ -1026,33 +1262,6 @@ export function handleHandPlayabilityUpdate(updateDto) {
     }
 }
 
-/**
- * 【废弃】旧的单卡可玩性结果处理函数
- */
-export function handlePlayabilityResult(result) {
-    if (!result || !result.cardUid) {
-        console.warn("GM: Received invalid playability result:", result);
-        return;
-    }
-
-    // 【修复】添加详细的调试日志
-
-    // Store the result in the cache, keyed by card UID
-    gameState.playabilityCache[result.cardUid] = result;
-
-    // --- Trigger Specific UI Update ---
-    // Call the dedicated function in ui.js to update only the affected card's highlight.
-    // Ensure updateSingleCardHighlight is imported at the top of gameManager.js
-    try {
-        // console.log(`%c[UI_TRIGGER] Calling updateSingleCardHighlight for card ${result.cardUid}`, 'color: blue; font-weight: bold;');
-        updateSingleCardHighlight(result.cardUid, result); // Call the specific UI update function
-    } catch (error) {
-        console.error(`GM: Error calling updateSingleCardHighlight for card ${result.cardUid}:`, error);
-        // Fallback to full render if specific update fails? Or just log?
-        // console.log("%c[UI_TRIGGER] Fallback: Triggering renderGame due to updateSingleCardHighlight error.", 'color: red; font-weight: bold;');
-        // renderGame(gameState);
-    }
-}
 
 // Export the necessary functions/variables
 // REMOVED export block - functions are now exported directly at definition.
@@ -1071,13 +1280,18 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
     playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
     playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
+    playerInstance.sep = playerDto.CurrentSEP ?? 0;
+    playerInstance.maxSEP = playerDto.MaxSEP ?? 0;
     // FIXED: Backend sends CanEvolve, not CanEvolveThisTurn
     playerInstance.canEvolve = playerDto.CanEvolve ?? false; // PascalCase - Fixed property name
+    playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? false;
     playerInstance.hasUnlockedEvolution = playerDto.HasUnlockedEvolution ?? false; // PascalCase
     playerInstance.turnNumber = playerDto.TurnNumber ?? 0; // 【架构重构】使用turnNumber属性名保持一致性
     playerInstance.deckCount = playerDto.DeckCount ?? (Array.isArray(playerDto.Deck) ? playerDto.Deck.length : 0); // PascalCase (x2)
     // Keep deck as simple array of IDs/DTOs from server if no methods needed client-side
     playerInstance.deck = Array.isArray(playerDto.Deck) ? [...playerDto.Deck] : []; // PascalCase (x2)
+    // Mulligan
+    playerInstance.hasCompletedMulligan = playerDto.HasCompletedMulligan ?? false; // PascalCase
 
 
 }
@@ -1132,6 +1346,7 @@ function _hydrateCardZone(zoneDtoArray, ownerId, zoneName) {
                 cardInstance.currentAttack = cardDto.CurrentAttack ?? cardInstance.attack; // PascalCase
                 cardInstance.currentHealth = cardDto.CurrentHealth ?? cardInstance.health; // PascalCase
                 cardInstance.isEvolved = cardDto.IsEvolved ?? false; // PascalCase
+                cardInstance.fieldTurn = cardDto.FieldTurn ?? 0; // Hydrate FieldTurn
                 // ADDED: Hydrate keywords (Ensure DTO has 'Keywords' property as an array)
                 cardInstance.keywords = Array.isArray(cardDto.Keywords) ? [...cardDto.Keywords] : []; // PascalCase
                 // console.log(`GM HYDRATION DBG: Hydrated keywords for ${cardInstance.name} (UID: ${cardInstance.uid}):`, cardInstance.keywords); // Optional Debug
@@ -1183,15 +1398,36 @@ export function updateFullGameState(serverState) {
     console.log("GM HYDRATION: Starting Smart Hydration process...");
     // Use PascalCase: GameId
     gameState.gameId = serverState.GameId; // PascalCase
-    // Update localPlayerId to match the actual player ID from server state
-    // The server determines which player the client represents based on connection
-    if (serverState.Players && serverState.Players.length > 0) {
-        // Find the human player (non-AI) as the local player
-        const humanPlayer = serverState.Players.find(p => p.IsAI === false);
-        if (humanPlayer) {
-            gameState.localPlayerId = humanPlayer.PlayerId;
-        } else {
-            console.warn("GM HYDRATION: No human player found in server state, keeping existing localPlayerId");
+    // IMPORTANT:
+    // - In PVP, localPlayerId MUST come from the lobby handshake (initializeGame), and MUST NOT be inferred here.
+    // - In VS-AI, localPlayerId may be inferred as the only non-AI player if the handshake is missing.
+    if (Array.isArray(serverState.Players) && serverState.Players.length > 0) {
+        const serverPlayerIds = serverState.Players.map(p => p?.PlayerId).filter(Boolean);
+        const existingLocalPlayerId = gameState.localPlayerId;
+
+        const localPlayerIdIsValid =
+            !!existingLocalPlayerId && serverPlayerIds.includes(existingLocalPlayerId);
+
+        if (!localPlayerIdIsValid) {
+            if (gameState.isSpectator) {
+                gameState.localPlayerId = serverPlayerIds[0] || null;
+            }
+
+            const nonAiPlayers = serverState.Players.filter(p => p?.PlayerId && p.IsAI === false);
+
+            if (nonAiPlayers.length === 1) {
+                gameState.localPlayerId = nonAiPlayers[0].PlayerId;
+                console.warn(
+                    `GM HYDRATION: localPlayerId was missing/invalid; inferred non-AI player ${gameState.localPlayerId} for VS-AI.`
+                );
+            } else {
+                if (!gameState.isSpectator) {
+                    console.error(
+                        "GM HYDRATION: localPlayerId is missing/invalid and cannot be inferred safely for PVP.",
+                        { existingLocalPlayerId, serverPlayerIds }
+                    );
+                }
+            }
         }
     }
     // Use PascalCase: CurrentPlayerId
@@ -1510,6 +1746,109 @@ export function handleEpUpdate(eventData) {
     }
 }
 
+export function handleSepUpdate(eventData) {
+    console.log(`%cGM HANDLE: handleSepUpdate`, 'color: #e11d48; font-weight: bold;', eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.CurrentSep === undefined || eventData.MaxSep === undefined) {
+        console.error("GM Error: Invalid data in handleSepUpdate (expected SourcePlayerId, CurrentSep, MaxSep):", eventData);
+        return;
+    }
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (playerToUpdate) {
+        playerToUpdate.sep = eventData.CurrentSep;
+        playerToUpdate.maxSEP = eventData.MaxSep;
+        playerToUpdate.canSuperEvolve = playerToUpdate.maxSEP > 0 && playerToUpdate.sep > 0;
+
+        updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
+        if (typeof renderGame === "function") {
+            renderGame(gameState);
+        }
+    } else {
+        console.warn(`GM: SepUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
+    }
+}
+
+// 新增：仅处理 PP 最大值更新事件
+export function handlePpMaxUpdate(eventData) {
+    console.log('%c[EVENT RECEIVED] handlePpMaxUpdate:', 'background: #6f42c1; color: #ffffff; font-weight: bold;', eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.MaxPp === undefined) {
+        console.error("GM Error: Invalid data in handlePpMaxUpdate (expected SourcePlayerId, MaxPp):", eventData);
+        return;
+    }
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (!playerToUpdate) {
+        console.warn(`GM: PpMaxUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
+        return;
+    }
+
+    // 更新最大值；如果事件同时携带当前值，则一并更新（由后端下修保障一致性）
+    playerToUpdate.maxPP = eventData.MaxPp;
+    if (eventData.CurrentPp !== undefined && eventData.CurrentPp !== null) {
+        playerToUpdate.pp = eventData.CurrentPp;
+    } else if (playerToUpdate.pp > playerToUpdate.maxPP) {
+        // 兜底：若当前值超过最大值，进行下修
+        playerToUpdate.pp = playerToUpdate.maxPP;
+    }
+
+    updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP);
+}
+
+// 新增：仅处理 EP 最大值更新事件
+export function handleEpMaxUpdate(eventData) {
+    console.log('%c[EVENT RECEIVED] handleEpMaxUpdate:', 'background: #20c997; color: #000; font-weight: bold;', eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.MaxEp === undefined) {
+        console.error("GM Error: Invalid data in handleEpMaxUpdate (expected SourcePlayerId, MaxEp):", eventData);
+        return;
+    }
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (!playerToUpdate) {
+        console.warn(`GM: EpMaxUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
+        return;
+    }
+
+    playerToUpdate.maxEP = eventData.MaxEp;
+    if (eventData.CurrentEp !== undefined && eventData.CurrentEp !== null) {
+        playerToUpdate.ep = eventData.CurrentEp;
+    } else if (playerToUpdate.ep > playerToUpdate.maxEP) {
+        playerToUpdate.ep = playerToUpdate.maxEP;
+    }
+
+    // canEvolve 规则：有上限且当前>0
+    playerToUpdate.canEvolve = playerToUpdate.maxEP > 0 && playerToUpdate.ep > 0;
+
+    updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
+    if (typeof renderGame === "function") {
+        renderGame(gameState);
+    }
+}
+
+export function handleSepMaxUpdate(eventData) {
+    console.log('%c[EVENT RECEIVED] handleSepMaxUpdate:', 'background: #fb7185; color: #000; font-weight: bold;', eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.MaxSep === undefined) {
+        console.error("GM Error: Invalid data in handleSepMaxUpdate (expected SourcePlayerId, MaxSep):", eventData);
+        return;
+    }
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (!playerToUpdate) {
+        console.warn(`GM: SepMaxUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
+        return;
+    }
+
+    playerToUpdate.maxSEP = eventData.MaxSep;
+    if (eventData.CurrentSep !== undefined && eventData.CurrentSep !== null) {
+        playerToUpdate.sep = eventData.CurrentSep;
+    } else if (playerToUpdate.sep > playerToUpdate.maxSEP) {
+        playerToUpdate.sep = playerToUpdate.maxSEP;
+    }
+
+    playerToUpdate.canSuperEvolve = playerToUpdate.maxSEP > 0 && playerToUpdate.sep > 0;
+
+    updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
+    if (typeof renderGame === "function") {
+        renderGame(gameState);
+    }
+}
+
+
 /**
  * Handles HandUpdated events from the server.
  * This event is sent when a player's hand is completely updated (e.g., after mulligan).
@@ -1541,9 +1880,8 @@ export function handleHandUpdated(eventData) {
     updateHandDisplay(playerToUpdate.id, playerToUpdate.hand);
 
     // Clear any mulligan selection state since hand was updated
-    // Import clearSelectionHighlights from ui.js to clear mulligan selections
-    if (typeof clearSelectionHighlights === 'function') {
-        clearSelectionHighlights();
+    if (typeof resetMulliganSelection === 'function' && playerToUpdate.id === gameState.localPlayerId) {
+        resetMulliganSelection();
     }
 }
 
@@ -1615,50 +1953,73 @@ export function handleUnitEvolved(eventData) {
 
     let updated = false;
 
-    if (unit && eventData.EvolvedUnitState) { // PascalCase
-        // HYDRATION: Update specific properties from EvolvedUnitState DTO
-        unit.isEvolved = eventData.EvolvedUnitState.IsEvolved ?? true; // PascalCase (nested) // Assume true if state provided
-        unit.currentAttack = eventData.EvolvedUnitState.CurrentAttack ?? unit.currentAttack; // PascalCase (nested)
-        unit.currentHealth = eventData.EvolvedUnitState.CurrentHealth ?? unit.currentHealth; // PascalCase (nested)
-        unit.maxHealth = eventData.EvolvedUnitState.MaxHealth ?? unit.maxHealth; // PascalCase (nested) // Update max health too
-        unit.canAttack = eventData.EvolvedUnitState.CanAttack ?? unit.canAttack; // PascalCase (nested) // Update canAttack status (Rush on evolve)
+    if (unit && eventData.EvolvedUnitState) {
+        const ownerPlayer = getPlayerState(unit.ownerId);
+        if (ownerPlayer) {
+            const unitIndex = ownerPlayer.field.findIndex(u => u && u.uid === unitUid);
+            if (unitIndex !== -1) {
+                // Create a new, fully hydrated instance from the DTO
+                const evolvedUnitInstance = createCardInstance(eventData.EvolvedUnitState);
+                evolvedUnitInstance.ownerId = ownerPlayer.id;
+                evolvedUnitInstance.zone = 'Field';
 
-        // Update card type to evolved version if needed
-        if (unit.type === 'Follower' && unit.isEvolved) {
-            unit.type = 'Follower_Evolved';
+                // Replace the old instance with the new one in the game state
+                ownerPlayer.field[unitIndex] = evolvedUnitInstance;
+
+                console.log(`GM: Unit ${evolvedUnitInstance.name} (UID: ${unitUid}) fully updated after evolution. New State:`, evolvedUnitInstance);
+                updated = true;
+            } else {
+                 console.warn(`GM: Could not find unit with UID ${unitUid} on player ${ownerPlayer.id}'s field to apply evolution.`);
+            }
+        } else {
+            console.warn(`GM: Could not find owner player for unit UID: ${unitUid}`);
         }
-
-        console.log(`GM: Unit ${unit.name} evolved. New State: Atk=${unit.currentAttack}, HP=${unit.currentHealth}/${unit.maxHealth}, Evolved=${unit.isEvolved}, CanAttack=${unit.canAttack}`);
-        updated = true;
     } else {
-        console.warn(`GM: UnitEvolved event received for invalid unit UID: ${unitUid}`); // PascalCase
+        console.warn(`GM: UnitEvolved event received for invalid unit UID or missing DTO: ${unitUid}`);
     }
 
     if (updated) {
-        // Re-render specifically the unit (EP display will be updated by separate EpUpdateEvent)
-        updateUnitDisplay(unit);
+        const updatedUnit = findCardInstanceByUid(unitUid);
+        if (updatedUnit) {
+            // Re-render specifically the unit (EP display will be updated by separate EpUpdateEvent)
+            updateUnitDisplay(updatedUnit);
+            updateHealthDisplay(updatedUnit);
+        }
     }
 }
 
 export function handleStatChange(eventData) {
-    // DTO: StatChangeEventDto { string UnitId, int NewAttack, int NewHealth }
+    // DTO: StatChangeEventDto { TargetEntityUid, NewAttack, NewCurrentHealth, NewMaxHealth }
     console.log('%c[EVENT RECEIVED] handleStatChange:', 'background: #fd7e14; color: #ffffff; font-weight: bold;', eventData);
-    // Note: DTO uses UnitId
-    if (!eventData || !eventData.UnitId || eventData.NewAttack === undefined || eventData.NewHealth === undefined) { // PascalCase
-        console.error("GM Error: Invalid data in handleStatChange:", eventData);
+    const targetUid = eventData?.UnitId ?? eventData?.TargetEntityUid;
+    const newAttack = eventData?.NewAttack;
+    const newCurrentHealth = eventData?.NewHealth ?? eventData?.NewCurrentHealth;
+    const newMaxHealth = eventData?.NewMaxHealth;
+
+    if (!targetUid) {
+        console.error("GM Error: Invalid data in handleStatChange (missing TargetEntityUid/UnitId):", eventData);
         return;
     }
-    const unit = findCardInstanceByUid(eventData.UnitId); // PascalCase // Use UnitId from DTO
+
+    const unit = findCardInstanceByUid(targetUid); // PascalCase // Use TargetEntityUid from DTO
     if (unit) {
         // Update base and current stats for consistency unless server logic differs
-        unit.attack = eventData.NewAttack; // PascalCase
-        unit.health = eventData.NewHealth; // PascalCase
-        unit.currentAttack = eventData.NewAttack; // PascalCase // Reflect change in current stats too
-        unit.currentHealth = eventData.NewHealth; // PascalCase // Reflect change in current stats too
-        console.log(`GM: Unit ${unit.name} (UID: ${unit.uid}) stats changed to A:${unit.attack}/H:${unit.health}`);
+        if (newAttack !== undefined && newAttack !== null) {
+            unit.attack = newAttack; // PascalCase
+            unit.currentAttack = newAttack; // PascalCase // Reflect change in current stats too
+        }
+        if (newCurrentHealth !== undefined && newCurrentHealth !== null) {
+            unit.health = newCurrentHealth; // PascalCase
+            unit.currentHealth = newCurrentHealth; // PascalCase // Reflect change in current stats too
+        }
+        if (newMaxHealth !== undefined && newMaxHealth !== null) {
+            unit.maxHealth = newMaxHealth; // PascalCase
+        }
+        console.log(`GM: Unit ${unit.name} (UID: ${unit.uid}) stats changed to A:${unit.currentAttack}/H:${unit.currentHealth}`);
         updateUnitDisplay(unit); // Use specific UI update instead of full render
+        updateHealthDisplay(unit);
     } else {
-        console.warn(`GM: StatChange event received for invalid unit ID: ${eventData.UnitId}`); // PascalCase
+        console.warn(`GM: StatChange event received for invalid unit ID: ${targetUid}`); // PascalCase
     }
 }
 
@@ -1806,6 +2167,7 @@ export function handlePlayerMulliganCompleted(eventData) {
     const player = getPlayerState(completedPlayerId);
 
     if (player) {
+        player.hasCompletedMulligan = true;
         // 状态更新应由完整的GameState同步，这里只调用UI更新
         console.log(`GM: Player ${completedPlayerId} completed mulligan. Triggering UI update.`);
         updateMulliganStatus(completedPlayerId, true);
@@ -1967,9 +2329,43 @@ export function handleGameOver(eventData) {
     console.log(`GM: Game over! Winner: ${gameState.winner}. Reason: ${eventData.Reason || 'N/A'}`); // PascalCase
     // Use PascalCase: Reason
     alert(`游戏结束！ 玩家 ${gameState.winner} 获胜！ (${eventData.Reason || "原因未知"})`); // PascalCase
+
+    appendSystemLog('提示：结算完成后，可返回主菜单右上角「元进度」面板刷新查看金币/任务。');
+    const maybeUserId = gameState.localPlayerId;
+    if (looksLikeGuid(maybeUserId)) {
+        tryFetchMetaProgressionState(maybeUserId).catch(() => { });
+    }
     renderGame(gameState); // Render final game over state
     // Consider disabling all further interactions more forcefully
     // disablePlayerInteractions(); // REMOVED: Relying on existing logic per user preference
+}
+
+function appendSystemLog(message) {
+    if (!message) return;
+    const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+    gameState.gameLog.push(`[${ts}] ${message}`);
+    if (gameState.gameLog.length > GAME_LOG_LIMIT) {
+        gameState.gameLog.shift();
+    }
+    renderGameLog(gameState.gameLog);
+}
+
+function looksLikeGuid(value) {
+    if (!value || typeof value !== 'string') return false;
+    const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return guidRegex.test(value);
+}
+
+async function tryFetchMetaProgressionState(userId) {
+    const response = await fetch(`/api/economy/state/${userId}`, { method: 'GET' });
+    if (!response.ok) return;
+    const state = await response.json();
+
+    const coins = state?.rank?.coins ?? 0;
+    const quests = Array.isArray(state?.quests) ? state.quests : [];
+    const claimable = quests.filter(q => q?.isCompleted && !q?.isRewardClaimed && !q?.isExpired).length;
+
+    appendSystemLog(`结算落库：Coins=${coins}，可领取任务=${claimable}`);
 }
 
 export function handlePlayerActionError(eventData) {
@@ -2016,4 +2412,200 @@ export function handleAttackStateUpdated(eventData) {
         console.warn(`GM: AttackStateUpdated event received for invalid unit UID: ${eventData.TargetCardInstanceId}`);
     }
 }
+
+export function handleActStateUpdated(eventData) {
+    // DTO: ActStateUpdatedEventDto { TargetCardInstanceId: string, ActLastUsedTurnNumber: number }
+    console.log('%c[EVENT RECEIVED] handleActStateUpdated:', 'background: #0dcaf0; color: #000000; font-weight: bold;', eventData);
+
+    if (!eventData || !eventData.TargetCardInstanceId) {
+        console.error("GM Error: Invalid data in handleActStateUpdated:", eventData);
+        return;
+    }
+
+    const unit = findCardInstanceByUid(eventData.TargetCardInstanceId);
+    if (!unit) {
+        console.warn(`GM: ActStateUpdated event received for invalid card UID: ${eventData.TargetCardInstanceId}`);
+        return;
+    }
+
+    unit.actLastUsedTurnNumber = eventData.ActLastUsedTurnNumber ?? unit.actLastUsedTurnNumber ?? null;
+
+    // Re-render to update Act buttons (similar rationale to EvolveStateUpdated).
+    renderGame(gameState);
+}
+
+export function handleEvolveStateUpdated(eventData) {
+    // DTO: PlayerEvolvedEventDto { PlayerId: string }
+    console.log('%c[EVENT RECEIVED] handleEvolveStateUpdated:', 'background: #6f42c1; color: #ffffff; font-weight: bold;', eventData); // Violet color
+
+    if (!eventData || !eventData.SourcePlayerId) {
+        console.error("GM Error: Invalid data in handleEvolveStateUpdated:", eventData);
+        return;
+    }
+
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (playerToUpdate) {
+        playerToUpdate.canEvolve = eventData.CanEvolve ?? false;
+        console.log(`GM: Player ${playerToUpdate.id} evolve state updated: ${playerToUpdate.canEvolve}`);
+
+        // A full re-render is necessary to update the state of all evolve buttons on the field.
+        renderGame(gameState);
+    } else {
+        console.warn(`GM: EvolveStateUpdated event received for invalid player: ${eventData.SourcePlayerId}`);
+    }
+}
+
+export function handleSuperEvolveStateUpdated(eventData) {
+    console.log('%c[EVENT RECEIVED] handleSuperEvolveStateUpdated:', 'background: #fb7185; color: #111827; font-weight: bold;', eventData);
+
+    if (!eventData || !eventData.SourcePlayerId) {
+        console.error("GM Error: Invalid data in handleSuperEvolveStateUpdated:", eventData);
+        return;
+    }
+
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (playerToUpdate) {
+        playerToUpdate.canSuperEvolve = eventData.CanSuperEvolve ?? false;
+        renderGame(gameState);
+    } else {
+        console.warn(`GM: SuperEvolveStateUpdated event received for invalid player: ${eventData.SourcePlayerId}`);
+    }
+}
 // --- END NEW Specific Event Handlers --- (Placeholder comment for structure)
+
+/**
+ * Handles the PlayerChoiceRequested event from the server.
+ * This event pauses the game flow and asks the client to make a selection.
+ * @param {object} eventData - The PlayerChoiceRequestDto from the server.
+ *                           - SourceCardUid: The card initiating the choice.
+ *                           - SelectableTargets: An array of UIDs that are valid choices.
+ *                           - PromptMessage: A message to display to the user.
+ */
+export function handlePlayerChoiceRequested(eventData) {
+    console.log('%c[EVENT RECEIVED] handlePlayerChoiceRequested:', 'background: #007bff; color: #ffffff; font-weight: bold;', eventData);
+
+    // BUG-FIX: The actual choice data is nested inside the 'choiceRequest' property.
+    // C# PascalCase becomes camelCase in JS, so we look for 'choiceRequest'.
+    // BUG-FIX: C# DTOs use PascalCase. Access the correct property from the event data.
+    const choiceRequest = eventData.ChoiceRequest;
+
+    // Further validation using PascalCase properties
+    if (!choiceRequest || !choiceRequest.SourceAbilityRuntimeId || !choiceRequest.SelectableTargetIds) {
+        console.error("GM Error: Invalid data in handlePlayerChoiceRequested. Missing nested ChoiceRequest object or its properties (SourceAbilityRuntimeId, SelectableTargetIds).", eventData);
+        return;
+    }
+
+    // The primary role of this handler is to pass the choice request to the UI module.
+    try {
+        import('./ui.js').then(uiModule => {
+            if (uiModule.showPlayerChoiceUI) {
+                // Pass the nested choiceRequest object to the UI function.
+                uiModule.showPlayerChoiceUI(choiceRequest);
+            } else {
+                console.error("GM Error: ui.js module does not have showPlayerChoiceUI function.");
+            }
+        });
+    } catch (error) {
+        console.error("GM Error: Failed to load or call ui.js for PlayerChoiceRequested:", error);
+    }
+}
+
+/**
+ * Handles the CardRevealed event from the server.
+ * This event is purely informational/visual and MUST NOT mutate hidden-zone sizes.
+ */
+export function handleCardRevealed(eventData) {
+    console.log(`%cGM HANDLE: handleCardRevealed`, 'color: #f59e0b; font-weight: bold;', eventData);
+
+    const revealedCard = eventData?.RevealedCard ?? null;
+    if (!revealedCard) {
+        console.warn("GM: CardRevealed event missing RevealedCard payload.");
+        return;
+    }
+
+    // Show a transient overlay; do not modify authoritative state.
+    try {
+        import('./ui.js').then(uiModule => {
+            if (uiModule.showRevealOverlay) {
+                uiModule.showRevealOverlay(revealedCard);
+            }
+        });
+    } catch (error) {
+        console.error("GM Error: Failed to show reveal overlay:", error);
+    }
+
+    // Best-effort log entry.
+    const name = revealedCard.Name ?? 'Unknown';
+    const cost = Number.isFinite(revealedCard.Cost) ? revealedCard.Cost : '?';
+    appendGameLog("Reveal", { name, cost, instanceId: revealedCard.InstanceId, cardId: revealedCard.CardId });
+}
+
+export function handleCardsFused(eventData) {
+    // DTO: CardsFusedEventDto { SourcePlayerId, FusedCount, FusedCardInstanceIds }
+    console.log(`%cGM HANDLE: handleCardsFused`, 'color: #a855f7; font-weight: bold;', eventData);
+
+    const sourcePlayerId = eventData?.SourcePlayerId ?? null;
+    const fusedIds = Array.isArray(eventData?.FusedCardInstanceIds) ? eventData.FusedCardInstanceIds : [];
+    const fusedCount = Number.isFinite(eventData?.FusedCount) ? eventData.FusedCount : fusedIds.length;
+
+    if (!sourcePlayerId || fusedCount <= 0) return;
+
+    const who = sourcePlayerId === gameState.localPlayerId ? '你' : '对手';
+    appendSystemLog(`${who}融合了${fusedCount}张卡`);
+
+    try {
+        import('./ui.js').then(uiModule => {
+            if (uiModule.showFusionAnimation) {
+                uiModule.showFusionAnimation(sourcePlayerId, fusedIds);
+            }
+        });
+    } catch (error) {
+        console.error("GM Error: Failed to show fusion animation:", error);
+    }
+}
+
+/**
+ * Submits the player's choice back to the server.
+ * @param {string} choiceId - The UID of the selected target.
+ * @param {string} sourceCardUid - The UID of the card that initiated the choice.
+ */
+export async function submitPlayerChoice(pendingChoiceId, chosenTargetIds, sourceAbilityRuntimeId, wasCancelled = false) {
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: SubmitPlayerChoice failed - SignalR connection not available.");
+        alert("与服务器连接丢失，无法提交选择！");
+        return false;
+    }
+
+    // Ensure chosenTargetIds is always an array
+    const targetIds = Array.isArray(chosenTargetIds) ? chosenTargetIds : (chosenTargetIds ? [chosenTargetIds] : []);
+
+    const choiceDto = {
+        PendingChoiceId: pendingChoiceId,
+        SourceAbilityRuntimeId: sourceAbilityRuntimeId,
+        ChosenTargetIds: targetIds,
+        WasCancelled: wasCancelled // Add the new property
+    };
+
+    // --- DIAGNOSTIC LOGGING ---
+    console.log("[CHOICE_DEBUG] GameManager: Invoking 'SubmitTargetChoice' on Hub. DTO:", choiceDto);
+    try {
+        await signalRConnection.invoke("SubmitTargetChoice", choiceDto);
+        console.log("[CHOICE_DEBUG] GameManager: 'SubmitTargetChoice' invocation successful.");
+        return true;
+    } catch (err) {
+        console.error("[CHOICE_DEBUG] GameManager: 'SubmitTargetChoice' invocation FAILED.", err);
+        alert(`提交选择失败：${err.message}`);
+        return false;
+    }
+    // --- END DIAGNOSTIC LOGGING ---
+}
+
+/**
+ * Sends a cancellation for the current player choice request to the server.
+ * @param {string} sourceAbilityRuntimeId - The runtime ID of the ability that initiated the choice.
+ */
+export async function cancelPlayerChoice(pendingChoiceId, sourceAbilityRuntimeId) {
+    console.log(`[CHOICE_DEBUG] GameManager: Cancelling player choice for ability ${sourceAbilityRuntimeId} with PendingChoiceId ${pendingChoiceId}.`);
+    // To cancel, we submit a choice with the correct PendingChoiceId, an empty target array, and the WasCancelled flag set to true.
+    return await submitPlayerChoice(pendingChoiceId, [], sourceAbilityRuntimeId, true);
+}

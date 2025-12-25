@@ -1,5 +1,7 @@
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
@@ -34,7 +36,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary>
         /// Gets a tag or category for the ability, used for grouping or specific interactions.
         /// </summary>
-        string AbilityTag { get; }
+        EffectKeyword AbilityTag { get; }
 
         /// <summary>
         /// Gets the type of the ability (e.g., Spell, FollowerEffect, System).
@@ -47,10 +49,26 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         TriggerConfig TriggerConfig { get; }
 
         /// <summary>
-        /// Gets or sets the card instance that is the source of this ability, if applicable.
+        /// Gets the ID of the card instance that is the source of this ability, if applicable.
         /// Null if the ability is not sourced from a specific card (e.g., system abilities).
         /// </summary>
-        CardInstance? SourceCard { get; set; }
+        Guid? SourceCardId { get; }
+
+        /// <summary>
+        /// Gets the card instance that is the source of this ability by looking it up in the current game context.
+        /// This is a computed property and may be null if the card is not found or if SourceCardId is null.
+        /// </summary>
+        CardInstance? SourceCard { get; }
+        /// <summary>
+        /// Gets the ID of the buff instance that is the source of this ability, if applicable.
+        /// Null if the ability is not granted by a buff.
+        /// </summary>
+        Guid? SourceBuffId { get; }
+
+        /// <summary>
+        /// Gets the runtime list of targets associated with this ability.
+        /// </summary>
+        List<Target> Targets { get; }
 
         /// <summary>
         /// Checks if the ability's trigger conditions are met by the given game event.
@@ -64,28 +82,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// Checks if the conditions for this ability to trigger or resolve are met.
         /// </summary>
         /// <param name="context">The current game context.</param>
-        /// <returns>A task that represents the asynchronous operation. The task result contains true if conditions are met; otherwise, false.</returns>
-        Task<bool> CheckConditionsAsync(GameContext context);
+        /// <returns>True if conditions are met; otherwise, false.</returns>
+        bool CheckConditions(GameContext context);
 
         /// <summary>
-        /// Resolves the targets for this ability based on its target configuration and the game state.
-        /// This method is responsible for all target-finding logic.
+        /// Resolves all targets for this ability, handling dependencies and player choices atomically.
         /// </summary>
-        /// <param name="context">The current game context, providing access to the game state.</param>
+        /// <param name="context">The current game context.</param>
         /// <returns>
-        /// A task that represents the asynchronous operation. The task result contains a list
-        /// of <see cref="TargetInfo"/> objects representing the resolved targets.
+        /// A task that represents the asynchronous operation. The task result contains a
+        /// <see cref="TargetResolutionResult"/>, which indicates success, contains all resolved
+        /// targets, and specifies if further player interaction is required.
         /// </returns>
-        Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context);
+        /// <param name="isCancellable">Indicates if the player choice initiated by this resolution can be cancelled.</param>
+        Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false);
 
         /// <summary>
-        /// Creates the list of effects that this ability will produce, using the pre-resolved targets.
+        /// Creates the list of effects that this ability will produce, using the completed target resolution result.
         /// This method acts as an "Effect Factory".
         /// </summary>
         /// <param name="context">The current game context.</param>
-        /// <param name="resolvedTargets">The list of targets that have already been resolved by <see cref="ResolveTargetsAsync"/>.</param>
+        /// <param name="targetResult">The full result from the target resolution phase, containing all named target lists.</param>
         /// <returns>A task that represents the asynchronous operation. The task result contains a list of effects to be queued.</returns>
-        Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets);
+        Task<List<Effect>> CreateEffectsAsync(GameContext context, TargetResolutionResult targetResult);
 
         /// <summary>
         /// Records that this ability has been triggered.

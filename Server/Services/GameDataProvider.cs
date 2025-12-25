@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -25,6 +26,9 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<long, AbilityConfig> _abilityConfigsById = new();
         private readonly ConcurrentDictionary<string, BuffDefinition> _buffDefinitions = new();
 
+        // 静态实例，用于全局访问
+        public static IGameDataProvider Instance { get; private set; } = null!;
+
         // 缓存状态
         private volatile bool _isInitialized = false;
         private readonly SemaphoreSlim _initializationLock = new(1, 1);
@@ -43,6 +47,17 @@ namespace ShadowverseBeyond.Server.Services
         {
             _scopeFactory = scopeFactory;
             _logger = logger;
+            _logger.LogInformation("[GameDataProvider] Instance created. HashCode: {HashCode}", this.GetHashCode());
+            // 设置静态实例
+            if (Instance == null)
+            {
+                Instance = this;
+            }
+            else
+            {
+                _logger.LogWarning("GameDataProvider singleton instance is being recreated. This might indicate an issue with the dependency injection container configuration. New instance hash: {NewHash}, Old instance hash: {OldHash}", this.GetHashCode(), Instance.GetHashCode());
+                Instance = this;
+            }
         }
 
         /// <inheritdoc />
@@ -55,7 +70,6 @@ namespace ShadowverseBeyond.Server.Services
             {
                 if (_isInitialized) return;
 
-                _logger.LogInformation("开始初始化GameDataProvider缓存...");
                 var startTime = DateTime.UtcNow;
 
                 await LoadCardDefinitionsAsync();
@@ -84,6 +98,16 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        /// <summary>
+        /// [TEST ONLY] Sets the singleton instance to a mock or specific implementation for testing purposes.
+        /// This method should only be used in test projects.
+        /// </summary>
+        /// <param name="instance">The IGameDataProvider instance to set.</param>
+        public static void SetInstanceForTesting(IGameDataProvider instance)
+        {
+            Instance = instance;
+        }
+
         /// <inheritdoc />
         public CardDefinition? GetCardDefinition(int cardId)
         {
@@ -101,7 +125,10 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             Interlocked.Increment(ref _cacheMissCount);
-            _logger.LogDebug("未找到卡牌定义 {CardId}", cardId);
+            _logger.LogWarning("Cache miss for CardDefinition {CardId}. Current provider instance is {InstanceType}, Hash: {HashCode}",
+                cardId,
+                Instance?.GetType().FullName ?? "null",
+                Instance?.GetHashCode());
             return null;
         }
 
@@ -116,6 +143,9 @@ namespace ShadowverseBeyond.Server.Services
 
             return _cardDefinitions.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         }
+
+        /// <inheritdoc />
+        public IReadOnlyCollection<CardDefinition> Cards => _cardDefinitions.Values.ToList();
 
         /// <inheritdoc />
         public List<AbilityConfig> GetAbilityConfigs(int cardId)
@@ -134,7 +164,6 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             Interlocked.Increment(ref _cacheMissCount);
-            _logger.LogDebug("未找到卡牌 {CardId} 的能力配置", cardId);
             return new List<AbilityConfig>();
         }
 
@@ -267,10 +296,12 @@ namespace ShadowverseBeyond.Server.Services
             try
             {
                 using var scope = _scopeFactory.CreateScope();
-                // Use the registered AbilityLoader service instead of creating new instance
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<AbilityLoader>>();
+                // Resolve AbilityLoader from the scope to ensure its dependencies (like IAbilityFactory) are injected.
+                // This is the correct way to use services within a singleton that depend on scoped services.
                 var abilityLoader = scope.ServiceProvider.GetRequiredService<AbilityLoader>();
 
-                _logger.LogInformation("开始加载能力配置...");
                 var allAbilities = await abilityLoader.LoadAllAbilitiesAsync();
 
                 _abilityConfigsByCard.Clear();
@@ -300,10 +331,27 @@ namespace ShadowverseBeyond.Server.Services
 
         private async Task LoadBuffDefinitionsAsync()
         {
-            // TODO: 实现BuffDefinition的数据库加载
-            // 当前为占位符实现
-            _logger.LogDebug("BuffDefinition加载暂未实现，跳过");
-            await Task.CompletedTask;
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                _logger.LogInformation("开始加载Buff定义...");
+                var allBuffs = await dbContext.BuffDefinitions.AsNoTracking().ToListAsync();
+
+                _buffDefinitions.Clear();
+                foreach (var buff in allBuffs)
+                {
+                    _buffDefinitions[buff.Id] = buff;
+                }
+
+                _logger.LogInformation("加载了 {Count} 个Buff定义", allBuffs.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "加载Buff定义时发生错误");
+                throw;
+            }
         }
 
         private long EstimateMemoryUsage()

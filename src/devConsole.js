@@ -11,13 +11,28 @@ import { gameState } from './gameManager.js';
 import { connection } from './main.js';
 
 class DevConsole {
-    constructor() {
+    constructor(autoShow = false) {
         this.isVisible = false;
         this.commandHistory = [];
         this.historyIndex = -1;
         this.commands = new Map();
         this.eventMonitoring = false;
         this.eventHandlers = new Map();
+        this.autoShow = autoShow;
+        this.debugCommandSchemas = {
+            damage: { required: ['target', 'amount'], optional: ['source'] },
+            heal: { required: ['target', 'amount'], optional: ['source'] },
+            'damage-target': { required: ['target', 'amount'], optional: [] },
+            destroy: { required: ['target'], optional: ['source'] },
+            vanish: { required: ['target'], optional: [] },
+            return: { required: ['target'], optional: [] },
+            draw: { required: ['player', 'count'], optional: [] },
+            mana: { required: ['player', 'delta'], optional: [] },
+            pp: { required: ['player', 'current'], optional: ['max'] },
+            ep: { required: ['player', 'current'], optional: ['max'] },
+            'add-card': { required: ['player', 'card', 'location'], optional: [] },
+            event: { required: ['name'], optional: ['payload'] },
+        };
         this.initCommands();
         this.createConsoleUI();
         this.bindEvents();
@@ -26,90 +41,35 @@ class DevConsole {
 
     // 初始化命令
     initCommands() {
-        this.commands.set('help', {
-            description: '显示所有可用命令',
-            execute: () => this.showHelp()
-        });
+        const legacy = (handler) => (ctx) => handler(ctx.positional || []);
 
-        this.commands.set('clear', {
-            description: '清空控制台',
-            execute: () => this.clearOutput()
-        });
+        this.commands.set('help', { description: '显示所有可用命令', execute: () => this.showHelp() });
+        this.commands.set('clear', { description: '清空控制台', execute: () => this.clearOutput() });
+        this.commands.set('gamestate', { description: '显示当前游戏状态', execute: () => this.showGameState() });
+        this.commands.set('status', { description: '显示状态摘要 (status [player=p1|p2])', execute: (ctx) => this.showStatus(ctx) });
+        this.commands.set('connection', { description: '检查SignalR连接状态', execute: () => this.checkConnectionStatus() });
 
-        this.commands.set('gamestate', {
-            description: '显示当前游戏状态',
-            execute: () => this.showGameState()
-        });
+        // 游戏操作（沿用旧接口）
+        this.commands.set('play', { description: '出牌 - 用法: play <cardId> [targetUid]', execute: legacy((args) => this.playCard(args)) });
+        this.commands.set('attack', { description: '攻击 - 用法: attack <attackerUid> <targetUid>', execute: legacy((args) => this.attack(args)) });
+        this.commands.set('evolve', { description: '进化 - 用法: evolve <unitUid>', execute: legacy((args) => this.evolve(args)) });
+        this.commands.set('endturn', { description: '结束回合', execute: () => this.endTurn() });
 
-        this.commands.set('play', {
-            description: '出牌 - 用法: play <cardId> [targetUid]',
-            execute: (args) => this.playCard(args)
-        });
+        // 事件注入/调试指令（KV 语法）
+        this.commands.set('damage', { description: 'damage target=<cardId> amount=<int> [source=<cardId|p1|p2>]', execute: (ctx) => this.sendDebugCommand('damage', ctx) });
+        this.commands.set('heal', { description: 'heal target=<cardId> amount=<int> [source=<cardId|p1|p2>]', execute: (ctx) => this.sendDebugCommand('heal', ctx) });
+        this.commands.set('kill', { description: 'kill target=<cardId>', execute: (ctx) => this.sendDebugCommand('kill', ctx) });
+        this.commands.set('destroy', { description: 'destroy target=<cardId>', execute: (ctx) => this.sendDebugCommand('destroy', ctx) });
+        this.commands.set('vanish', { description: 'vanish target=<cardId>', execute: (ctx) => this.sendDebugCommand('vanish', ctx) });
+        this.commands.set('return', { description: 'return target=<cardId>', execute: (ctx) => this.sendDebugCommand('return', ctx) });
+        this.commands.set('draw', { description: 'draw player=<p1|p2> count=<int>', execute: (ctx) => this.sendDebugCommand('draw', ctx) });
+        this.commands.set('mana', { description: 'mana player=<p1|p2> delta=<int>', execute: (ctx) => this.sendDebugCommand('mana', ctx) });
+        this.commands.set('add-card', { description: 'add-card player=<p1|p2> card=<cardDefId> location=hand|board', execute: (ctx) => this.sendDebugCommand('add-card', ctx) });
+        this.commands.set('event', { description: 'event name=<EventType> payload=<json>', execute: (ctx) => this.sendDebugCommand('event', ctx) });
 
-        this.commands.set('attack', {
-            description: '攻击 - 用法: attack <attackerUid> <targetUid>',
-            execute: (args) => this.attack(args)
-        });
-
-        this.commands.set('evolve', {
-            description: '进化 - 用法: evolve <unitUid>',
-            execute: (args) => this.evolve(args)
-        });
-
-        this.commands.set('endturn', {
-            description: '结束回合',
-            execute: () => this.endTurn()
-        });
-
-        this.commands.set('addcard', {
-            description: '添加卡牌到手牌 - 用法: addcard <cardId>',
-            execute: (args) => this.addCard(args)
-        });
-
-        this.commands.set('setpp', {
-            description: '设置PP - 用法: setpp <amount>',
-            execute: (args) => this.setPP(args)
-        });
-
-        this.commands.set('setep', {
-            description: '设置EP - 用法: setep <amount>',
-            execute: (args) => this.setEP(args)
-        });
-
-        this.commands.set('damage', {
-            description: '对目标造成伤害 - 用法: damage <targetUid> <amount>',
-            execute: (args) => this.dealDamage(args)
-        });
-
-        this.commands.set('heal', {
-            description: '治疗目标 - 用法: heal <targetUid> <amount>',
-            execute: (args) => this.heal(args)
-        });
-
-        this.commands.set('skip', {
-            description: '跳到指定回合 - 用法: skip <turnNumber>',
-            execute: (args) => this.skipToTurn(args)
-        });
-
-        this.commands.set('ai', {
-            description: 'AI操作 - 用法: ai <action> (action: play, attack, evolve, endturn)',
-            execute: (args) => this.aiAction(args)
-        });
-
-        this.commands.set('events', {
-            description: '显示事件监听状态',
-            execute: () => this.showEventStatus()
-        });
-
-        this.commands.set('monitor', {
-            description: '开启/关闭事件监听 - 用法: monitor <on|off>',
-            execute: (args) => this.toggleEventMonitoring(args)
-        });
-
-        this.commands.set('connection', {
-            description: '检查SignalR连接状态',
-            execute: () => this.checkConnectionStatus()
-        });
+        // 事件监听
+        this.commands.set('events', { description: '显示事件监听状态', execute: () => this.showEventStatus() });
+        this.commands.set('monitor', { description: '开启/关闭事件监听 - 用法: monitor <on|off>', execute: (ctx) => this.toggleEventMonitoring(ctx.positional || []) });
     }
 
     // 创建控制台UI
@@ -130,7 +90,6 @@ class DevConsole {
                     <input type="text" id="console-input" class="console-input" placeholder="输入命令...">
                 </div>
             </div>
-            <button id="console-toggle" class="console-toggle">🛠️</button>
         `;
 
         document.body.insertAdjacentHTML('beforeend', consoleHTML);
@@ -138,22 +97,32 @@ class DevConsole {
         // 添加CSS样式
         const style = document.createElement('style');
         style.textContent = `
-            .dev-console {
+            /* Override global devtools.css (#dev-console) to keep a compact centered console */
+            #dev-console {
                 position: fixed;
-                top: 10px;
-                right: 10px;
-                width: 400px;
-                height: 300px;
-                background: rgba(0, 0, 0, 0.9);
+                left: 50%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+                width: min(1100px, calc(100vw - 24px));
+                height: 320px;
+                background: rgba(0, 0, 0, 0.92);
                 border: 1px solid #333;
-                border-radius: 8px;
+                border-radius: 10px;
                 color: #00ff00;
                 font-family: 'Courier New', monospace;
                 font-size: 12px;
                 z-index: 10000;
                 display: flex;
                 flex-direction: column;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+                box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+            }
+
+            #dev-console.hidden {
+                display: none;
+            }
+
+            .dev-console {
+                /* keep class for other selectors; layout is driven by #dev-console above */
             }
 
             .dev-console.hidden {
@@ -280,26 +249,81 @@ class DevConsole {
 
             /* 响应式设计 */
             @media (max-width: 768px) {
-                .dev-console {
-                    width: calc(100vw - 20px);
-                    height: 250px;
-                    top: 10px;
-                    right: 10px;
-                    left: 10px;
+                #dev-console {
+                    width: calc(100vw - 16px);
+                    height: 280px;
+                    top: 50%;
                 }
             }
         `;
         document.head.appendChild(style);
     }
 
+    getCommandUsage(commandName) {
+        const cmd = this.commands.get(commandName);
+        return cmd?.description ? `用法: ${cmd.description}` : null;
+    }
+
+    validateDebugCommand(commandName, ctx) {
+        const schema = this.debugCommandSchemas[commandName];
+        if (!schema) {
+            return { ok: false, message: `未支持的调试指令: ${commandName}` };
+        }
+
+        const positional = ctx?.positional || [];
+        if (positional.length > 0) {
+            return { ok: false, message: `不支持位置参数: ${positional.join(' ')}` };
+        }
+
+        const kv = ctx?.kv || {};
+        const keys = Object.keys(kv);
+        const allowed = new Set([...(schema.required || []), ...(schema.optional || [])]);
+        const unknown = keys.find(k => !allowed.has(k));
+        if (unknown) {
+            return { ok: false, message: `不支持参数: ${unknown}` };
+        }
+
+        const missing = (schema.required || []).find(k => !kv[k] || String(kv[k]).trim() === '');
+        if (missing) {
+            return { ok: false, message: `缺少参数: ${missing}` };
+        }
+
+        const validateGuid = (value) => this.isValidGuid(String(value || '').trim());
+        const validateInt = (value) => /^[-+]?\d+$/.test(String(value || '').trim());
+        const validatePlayerToken = (value) => {
+            const v = String(value || '').trim().toLowerCase();
+            return v === 'p1' || v === 'p2';
+        };
+        const validateSourceToken = (value) => {
+            const v = String(value || '').trim().toLowerCase();
+            return v === 'p1' || v === 'p2' || validateGuid(v);
+        };
+
+        if (kv.target && !validateGuid(kv.target)) return { ok: false, message: 'target 必须是有效 GUID' };
+        if (kv.amount && !validateInt(kv.amount)) return { ok: false, message: 'amount 必须是整数' };
+        if (kv.count && !validateInt(kv.count)) return { ok: false, message: 'count 必须是整数' };
+        if (kv.delta && !validateInt(kv.delta)) return { ok: false, message: 'delta 必须是整数' };
+        if (kv.current && !validateInt(kv.current)) return { ok: false, message: 'current 必须是整数' };
+        if (kv.max && !validateInt(kv.max)) return { ok: false, message: 'max 必须是整数' };
+        if (kv.player && !validatePlayerToken(kv.player)) return { ok: false, message: 'player 仅支持 p1 或 p2' };
+        if (kv.source && !validateSourceToken(kv.source)) return { ok: false, message: 'source 仅支持 p1/p2 或 GUID' };
+        if (kv.card && !validateInt(kv.card)) return { ok: false, message: 'card 必须是整数卡牌定义ID' };
+        if (kv.location) {
+            const loc = String(kv.location || '').trim().toLowerCase();
+            if (!['hand', 'board', 'field', 'deck'].includes(loc)) return { ok: false, message: 'location 仅支持 hand/board/field/deck' };
+        }
+
+        return { ok: true };
+    }
+
     // 绑定事件
     bindEvents() {
-        const toggleBtn = document.getElementById('console-toggle');
         const closeBtn = document.getElementById('console-close');
         const input = document.getElementById('console-input');
 
-        toggleBtn.addEventListener('click', () => this.toggle());
-        closeBtn.addEventListener('click', () => this.hide());
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.hide());
+        }
 
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
@@ -327,22 +351,30 @@ class DevConsole {
     toggle() {
         this.isVisible = !this.isVisible;
         const console = document.getElementById('dev-console');
-        const toggleBtn = document.getElementById('console-toggle');
         
         if (this.isVisible) {
             console.classList.remove('hidden');
-            toggleBtn.style.display = 'none';
-            document.getElementById('console-input').focus();
+            const input = document.getElementById('console-input');
+            if (input) input.focus();
         } else {
             console.classList.add('hidden');
-            toggleBtn.style.display = 'block';
         }
     }
 
     hide() {
         this.isVisible = false;
-        document.getElementById('dev-console').classList.add('hidden');
-        document.getElementById('console-toggle').style.display = 'block';
+        const console = document.getElementById('dev-console');
+        if (console) console.classList.add('hidden');
+    }
+
+    show() {
+        this.isVisible = true;
+        const consoleEl = document.getElementById('dev-console');
+        if (consoleEl) {
+            consoleEl.classList.remove('hidden');
+        }
+        const input = document.getElementById('console-input');
+        if (input) input.focus();
     }
 
     // 输出文本到控制台
@@ -370,18 +402,64 @@ class DevConsole {
 
         this.output(`> ${commandLine}`, 'command');
 
-        const [command, ...args] = commandLine.split(' ');
-        const cmd = this.commands.get(command.toLowerCase());
+        const parsed = this.parseCommandLine(commandLine);
+        const cmd = parsed && parsed.name ? this.commands.get(parsed.name) : null;
 
         if (cmd) {
             try {
-                cmd.execute(args);
+                cmd.execute(parsed);
             } catch (error) {
                 this.output(`错误: ${error.message}`, 'error');
             }
         } else {
-            this.output(`未知命令: ${command}。输入 'help' 查看可用命令。`, 'error');
+            this.output(`未知命令: ${parsed.name || '(空)'}。输入 'help' 查看可用命令。`, 'error');
         }
+    }
+
+    parseCommandLine(commandLine) {
+        const tokens = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < commandLine.length; i++) {
+            const ch = commandLine[i];
+            if (ch === '"') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (ch === ' ' && !inQuotes) {
+                if (current.length > 0) {
+                    tokens.push(current);
+                    current = '';
+                }
+            } else {
+                current += ch;
+            }
+        }
+        if (current.length > 0) tokens.push(current);
+
+        if (tokens.length === 0) {
+            return { name: '', kv: {}, positional: [], raw: [] };
+        }
+
+        const name = tokens.shift().toLowerCase();
+        const kv = {};
+        const positional = [];
+
+        tokens.forEach(tok => {
+            const eq = tok.indexOf('=');
+            if (eq > 0) {
+                const key = tok.slice(0, eq).toLowerCase();
+                let value = tok.slice(eq + 1);
+                if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+                    value = value.slice(1, -1);
+                }
+                kv[key] = value;
+            } else {
+                positional.push(tok);
+            }
+        });
+
+        return { name, kv, positional, raw: tokens };
     }
 
     // 命令历史导航
@@ -410,14 +488,26 @@ class DevConsole {
         this.output('  help - 显示此帮助信息', 'output');
         this.output('  clear - 清空控制台输出', 'output');
         this.output('  connection - 检查SignalR连接状态', 'output');
-        this.output('  gamestate - 显示当前游戏状态', 'output');
+        this.output('  gamestate/status - 显示当前游戏状态', 'output');
         this.output('', 'output');
 
-        this.output('🎮 游戏操作:', 'info');
+        this.output('🎮 游戏操作 (旧接口):', 'info');
         this.output('  play <cardUid> [targetUid] - 出牌', 'output');
         this.output('  attack <attackerUid> <targetUid> - 攻击', 'output');
         this.output('  evolve <unitUid> - 进化单位', 'output');
         this.output('  endturn - 结束当前回合', 'output');
+        this.output('', 'output');
+
+        this.output('🧪 事件调试 (KV 语法):', 'info');
+        this.output('  damage target=<cardId> amount=<int> [source=<cardId|p1|p2>]', 'output');
+        this.output('  heal target=<cardId> amount=<int> [source=<cardId|p1|p2>]', 'output');
+        this.output('  kill|destroy target=<cardId>', 'output');
+        this.output('  vanish target=<cardId>', 'output');
+        this.output('  return target=<cardId>', 'output');
+        this.output('  draw player=<p1|p2> count=<int>', 'output');
+        this.output('  mana player=<p1|p2> delta=<int>', 'output');
+        this.output('  add-card player=<p1|p2> card=<cardDefId> location=hand|board', 'output');
+        this.output('  event name=<EventType> payload=<json>', 'output');
         this.output('', 'output');
 
         this.output('🔍 调试工具:', 'info');
@@ -432,7 +522,7 @@ class DevConsole {
 
         this.output('💡 使用提示:', 'info');
         this.output('  1. 首先运行 "connection" 检查连接状态', 'output');
-        this.output('  2. 使用 "gamestate" 查看当前游戏信息', 'output');
+        this.output('  2. 使用 "gamestate" 或 "status" 查看当前游戏信息', 'output');
         this.output('  3. 使用 "monitor on" 开启事件监听以调试', 'output');
     }
 
@@ -450,6 +540,30 @@ class DevConsole {
             this.output(`场上单位: ${gameState.activePlayer.field?.length || 0}`, 'output');
             this.output(`当前PP: ${gameState.activePlayer.currentPP || 0}/${gameState.activePlayer.maxPP || 0}`, 'output');
             this.output(`当前EP: ${gameState.activePlayer.currentEP || 0}/${gameState.activePlayer.maxEP || 0}`, 'output');
+        }
+    }
+
+    showStatus(ctx) {
+        const player = ctx.kv.player;
+        this.output('=== 状态摘要 ===', 'info');
+        const players = gameState.players || [];
+        const maybePrint = (p, label) => {
+            if (!p) {
+                this.output(`${label}: 未知`, 'output');
+                return;
+            }
+            const hand = Array.isArray(p.hand) ? p.hand.length : 0;
+            const field = Array.isArray(p.field) ? p.field.length : 0;
+            const pp = `${p.currentPP ?? '-'} / ${p.maxPP ?? '-'}`;
+            const ep = `${p.currentEP ?? '-'} / ${p.maxEP ?? '-'}`;
+            this.output(`${label}: 手牌=${hand}, 场上=${field}, PP=${pp}, EP=${ep}`, 'output');
+        };
+
+        if (!player || player === 'p1') {
+            maybePrint(players[0], '[P1]');
+        }
+        if (!player || player === 'p2') {
+            maybePrint(players[1], '[P2]');
         }
     }
 
@@ -569,33 +683,33 @@ class DevConsole {
         }
     }
 
-    // 其他命令的占位符实现
-    addCard(args) {
-        this.output('addcard 命令暂未实现', 'info');
-    }
+    // 调试指令统一入口（需要后端支持 ExecuteDebugCommand）
+    async sendDebugCommand(commandName, ctx) {
+        if (!ctx || !ctx.kv) {
+            this.output('无效的命令参数', 'error');
+            return;
+        }
 
-    setPP(args) {
-        this.output('setpp 命令暂未实现', 'info');
-    }
+        const validation = this.validateDebugCommand(commandName, ctx);
+        if (!validation.ok) {
+            this.output(`参数错误: ${validation.message}`, 'error');
+            const usage = this.getCommandUsage(commandName);
+            if (usage) this.output(usage, 'info');
+            return;
+        }
 
-    setEP(args) {
-        this.output('setep 命令暂未实现', 'info');
-    }
+        if (!connection || connection.state !== 'Connected') {
+            this.output('未连接到服务器，无法发送调试指令', 'error');
+            return;
+        }
 
-    dealDamage(args) {
-        this.output('damage 命令暂未实现', 'info');
-    }
-
-    heal(args) {
-        this.output('heal 命令暂未实现', 'info');
-    }
-
-    skipToTurn(args) {
-        this.output('skip 命令暂未实现', 'info');
-    }
-
-    aiAction(args) {
-        this.output('ai 命令暂未实现', 'info');
+        const payload = { Command: commandName, Args: ctx.kv };
+        try {
+            await connection.invoke('ExecuteDebugCommand', payload);
+            this.output(`已发送调试指令: ${commandName} ${JSON.stringify(ctx.kv)}`, 'success');
+        } catch (err) {
+            this.output(`调试指令执行失败或未实现: ${err.message}`, 'error');
+        }
     }
 
     // Helper functions
@@ -747,9 +861,14 @@ class DevConsole {
 let devConsole = null;
 
 // 初始化开发者控制台
-export function initDevConsole() {
+export function initDevConsole(enable = false, autoShow = false) {
+    if (!enable) {
+        console.log('Dev console init skipped (DEBUG disabled).');
+        return null;
+    }
+
     if (!devConsole) {
-        devConsole = new DevConsole();
+        devConsole = new DevConsole(autoShow);
         
         // 添加到全局作用域以便在浏览器控制台中访问
         window.devConsole = devConsole;

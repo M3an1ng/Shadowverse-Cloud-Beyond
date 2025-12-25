@@ -27,14 +27,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
         /// </summary>
         public GameStateActionResult ProcessTargets(
             GameContext context,
-            Func<PlayerState, GameContext, DomainOperationResult>? playerAction,
-            Func<CardInstance, GameContext, DomainOperationResult>? cardAction,
+            IReadOnlyList<TargetInfo> targets,
+            Func<TargetInfo, GameContext, DomainOperationResult> action,
             string effectName)
         {
-            if (context.SelectedTargets == null)
+            if (targets == null)
             {
-                _logger.LogWarning("{EffectName}: SelectedTargets is null in the current context.", effectName);
-                return new GameStateActionResult { Success = false, ErrorMessage = "No targets selected." };
+                _logger.LogWarning("{EffectName}: Targets list is null.", effectName);
+                return new GameStateActionResult { Success = false, ErrorMessage = "No targets provided." };
             }
 
             var allResults = new List<DomainOperationResult>();
@@ -42,47 +42,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
             bool overallSuccess = true;
             string? firstErrorMessage = null;
 
-            foreach (var targetInfo in context.SelectedTargets)
+            foreach (var targetInfo in targets)
             {
                 _logger.LogTrace("{EffectName}: Processing target: Type={TargetType}, ID={TargetId}",
-                                 effectName, targetInfo.Type, targetInfo.Id);
+                                 effectName, targetInfo.Type, targetInfo.InstanceId);
                 DomainOperationResult domainResult;
 
                 try
                 {
-                    if (targetInfo.Type == Common.TargetType.Player && playerAction != null)
-                    {
-                        if (targetInfo.Player != null)
-                        {
-                            domainResult = playerAction(targetInfo.Player, context);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("{EffectName}: TargetInfo of type Player has a null Player object. ID: {PlayerId}", effectName, targetInfo.Id);
-                            domainResult = new DomainOperationResult { Success = false, ErrorMessage = "Target player data is missing." };
-                        }
-                    }
-                    else if (targetInfo.Type == Common.TargetType.Card && cardAction != null)
-                    {
-                        if (targetInfo.Card != null)
-                        {
-                            domainResult = cardAction(targetInfo.Card, context);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("{EffectName}: TargetInfo of type Card has a null Card object. ID: {CardId}", effectName, targetInfo.Id);
-                            domainResult = new DomainOperationResult { Success = false, ErrorMessage = "Target card data is missing." };
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("{EffectName}: No appropriate action provided for target type {TargetType} or action was null.", effectName, targetInfo.Type);
-                        domainResult = new DomainOperationResult { Success = true };
-                    }
+                    // Directly invoke the unified action
+                    domainResult = action(targetInfo, context);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "{EffectName}: Exception occurred while processing target {TargetId} ({TargetType}).", effectName, targetInfo.Id, targetInfo.Type);
+                    _logger.LogError(ex, "{EffectName}: Exception occurred while processing target {TargetId} ({TargetType}).", effectName, targetInfo.InstanceId, targetInfo.Type);
                     domainResult = new DomainOperationResult { Success = false, ErrorMessage = $"Exception: {ex.Message}" };
                 }
 
@@ -100,7 +73,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
             }
 
             _logger.LogInformation("{EffectName} completed processing {TargetCount} targets. Overall Success: {Success}",
-                               effectName, context.SelectedTargets.Count, overallSuccess);
+                               effectName, targets.Count, overallSuccess);
 
             return new GameStateActionResult
             {

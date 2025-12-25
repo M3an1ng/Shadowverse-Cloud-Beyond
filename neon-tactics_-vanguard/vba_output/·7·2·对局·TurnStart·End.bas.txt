@@ -1,0 +1,596 @@
+Attribute VB_Name = "·7·2·对局·TurnStart·End"
+' ==================================================
+' 子过程功能：切换至对手回合
+' 说明：处理回合切换逻辑，执行回合结束和开始效果
+' ==================================================
+Sub TurnStart()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ThisWorkbook.Save
+    
+    ' ========== 变量声明 ==========
+    Dim Turn As String
+
+    ' ========== 自战模式检查 ==========
+    ' 如果是左右互搏模式，直接退出
+    If Down("BattleYourself") Then GoTo CleanUp
+
+    ' ========== 回合权限检查 ==========
+    ' 如果是自己的回合，退出（防止重复操作）
+    Turn = Down("Turn")
+    'If Left(Turn, 1) = Left(Down("FirstMove"), 1) Then GoTo CleanUp
+    
+    ' ========== 回合交换 ==========
+    ' 切换回合标识（F/S交替）
+    If Left(Turn, 1) = "F" Then
+        Turn = "S" & Val(Mid(Turn, 2, 10))
+    Else
+        Turn = "F" & Val(Mid(Turn, 2, 10)) + 1
+    End If
+    Call Up("Turn", Turn)
+    
+    ' ========== 获取对手步骤 ==========
+    Dim inputForm As UserInput
+    Set inputForm = New UserInput
+    
+    ' 设置窗体属性
+    'inputForm.Caption = "回合开始"
+    'inputForm.TextBox1.Text = "请在此粘贴对手提供的信息"
+    
+InputAgain:
+    inputForm.Show
+    
+    If inputForm.Cancelled Then
+        ' 用户取消，回退回合
+        If Left(Turn, 1) = "F" Then
+            Turn = "S" & Val(Mid(Turn, 2, 10)) - 1
+        Else
+            Turn = "F" & Val(Mid(Turn, 2, 10))
+        End If
+        Call Up("Turn", Turn)
+        GoTo CleanUp
+    Else
+        QueueAction = inputForm.UserInput
+        If Right(QueueAction, Len("TurnEnd")) <> "TurnEnd" Then
+            MsgBox "信息有误，请确保包含完整的TurnEnd结尾"
+            GoTo InputAgain
+        End If
+    End If
+'InputAgain:
+'    QueueAction = InputBox("「粘贴」对手提供的信息，然后确定", "回合开始")
+'    If QueueAction = "" Then
+'        If Left(Turn, 1) = "F" Then
+'            Turn = "S" & Val(Mid(Turn, 2, 10))
+'        Else
+'            Turn = "F" & Val(Mid(Turn, 2, 10)) + 1
+'        End If
+'        Call Up("Turn", Turn)
+'
+'        GoTo CleanUp
+'    ElseIf Right(QueueAction, Len("TurnEnd")) <> "TurnEnd" Then
+'        MsgBox ("信息有误")
+'        GoTo InputAgain
+'    End If
+
+    ' ========== 对手回合开始记录 ==========
+    Call TurnStartFunction
+    Call Up("StepsArea", Empty)
+    Call UpSteps("TurnStart", Left(Turn, 1) & 1000)
+    
+    ' ========== 获取对手步骤 ==========
+    Call InputSteps
+
+    ' ========== 回合结束处理 ==========
+    ' 结算对手回合结束效果
+    Call UpSteps("TurnEnd", Turn)
+    Call TurnEndFunction
+    
+    ' ========== 回合交换 ==========
+    ' 切换回合标识（F/S交替）
+    If Left(Turn, 1) = "F" Then
+        Turn = "S" & Val(Mid(Turn, 2, 10))
+    Else
+        Turn = "F" & Val(Mid(Turn, 2, 10)) + 1
+    End If
+    Call Up("Turn", Turn)
+
+    ' ========== 新回合开始处理 ==========
+    ' 结算新回合开始效果
+    Call Up("StepsArea", Empty)
+    Call UpSteps("TurnStart", Left(Turn, 1) & 1000)
+    Call TurnStartFunction
+
+    ' ========== 界面刷新 ==========
+    ' 更新回合标题和界面显示
+    If Left(Turn, 1) = "F" Then
+        Call Up("Head", "先手第" & Mid(Turn, 2, 10) & "回合")
+    Else
+        Call Up("Head", "后手第" & Mid(Turn, 2, 10) & "回合")
+    End If
+    Call UIRefresh
+    Call UpStepsArea
+
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+' ==================================================
+' 子过程功能：结束当前回合
+' 说明：处理回合结束逻辑，执行回合结束效果并切换到下一回合
+' ==================================================
+Sub TurnEnd()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim i%, j%
+    Dim Turn As String
+
+    ' ========== 回合权限检查 ==========
+    ' 如果不是自己的回合，退出
+    Turn = Down("Turn")
+    If Left(Turn, 1) <> Left(Down("FirstMove"), 1) Then GoTo CleanUp
+    If SearchSteps(Left(Turn, 1) & 1000, "TurnEnd", Turn) Then
+        Call OutputSteps
+        GoTo CleanUp
+    End If
+
+    ' ========== 回合结束处理 ==========
+    ' 结算当前回合结束效果
+    Call UpSteps("TurnEnd", Left(Turn, 1) & 1000)
+    Call TurnEndFunction
+
+    ' ========== 自战模式特殊处理 ==========
+    ' 左右互搏模式下的状态交换
+    If Down("BattleYourself") Then
+        ' 切换回合标识
+        If Left(Turn, 1) = "F" Then
+            Turn = "S" & Val(Mid(Turn, 2, 10))
+        Else
+            Turn = "F" & Val(Mid(Turn, 2, 10)) + 1
+        End If
+        Call Up("Turn", Turn)
+    
+        ' 交换先后手标识
+        If Left(Turn, 1) = "F" Then
+            Call Up("FirstMove", "FirstMove")
+        Else
+            Call Up("FirstMove", "SecondMove")
+        End If
+        
+        ' 交换生命值状态
+        i = Down("Defense", "F1000")
+        j = Down("MaxDefense", "F1000")
+        Call Up("Defense", Down("Defense", "S1000"), "F1000")
+        Call Up("MaxDefense", Down("MaxDefense", "S1000"), "F1000")
+        Call Up("Defense", i, "S1000")
+        Call Up("MaxDefense", j, "S1000")
+        
+        ' 交换能量点状态
+        i = Val(Down("PP", "F1000"))
+        j = Val(Down("MaxPP", "F1000"))
+        Call Up("PP", Down("PP", "S1000"), "F1000")
+        Call Up("MaxPP", Down("MaxPP", "S1000"), "F1000")
+        Call Up("PP", i, "S1000")
+        Call Up("MaxPP", j, "S1000")
+        
+        ' 交换进化点状态
+        i = Down("EP", "F1000")
+        j = Down("SEP", "F1000")
+        Call Up("EP", Down("EP", "S1000"), "F1000")
+        Call Up("SEP", Down("SEP", "S1000"), "F1000")
+        Call Up("EP", i, "S1000")
+        Call Up("SEP", j, "S1000")
+        
+        ' 清空步骤记录区域
+        Call Up("StepsArea", Empty)
+        Call UpSteps("TurnStart", Left(Turn, 1) & 1000)
+
+        ' ========== 新回合开始处理 ==========
+        Call TurnStartFunction
+    
+    ' ========== 输出自己步骤 ==========
+    Else
+        Call OutputSteps
+    End If
+    
+    ' ========== 界面刷新 ==========
+    ' 更新回合标题和界面显示
+    If Left(Turn, 1) = "F" Then
+        Call Up("Head", "先手第" & Mid(Turn, 2, 10) & "回合")
+    Else
+        Call Up("Head", "后手第" & Mid(Turn, 2, 10) & "回合")
+    End If
+    Call UIRefresh
+    Call UpStepsArea
+
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+' ==================================================
+' 函数功能：回合开始效果处理
+' 说明：执行回合开始时的各种状态更新和效果触发
+' ==================================================
+Function TurnStartFunction()
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%, m%                   ' 循环计数器
+    Dim Arr As Variant                   ' 临时数组
+    Dim Turn As String                   ' 当前回合
+    Dim Enemy As String                  ' 对手标识
+    Dim Effectrr() As String             ' 效果数组
+    Dim EffectSplit() As String          ' 效果分割数组
+
+    ' ========== 初始化回合信息 ==========
+    Turn = Down("Turn")
+    If Left(Turn, 1) = "F" Then
+        Enemy = "S1000"
+    Else
+        Enemy = "F1000"
+    End If
+
+    ' ========== 能量点更新 ==========
+    ' 每回合增加1点最大PP和当前PP
+    i = Val(Down("MaxPP", Turn)) + 1
+    If i > 10 Then i = 10                ' PP上限为10
+    Call Up("PP", i, Turn)
+    Call Up("MaxPP", i, Turn)
+
+    ' ========== 连击计数清空 ==========
+    Call Up("Combo", 0, Turn)
+
+    ' ========== 进化点更新 ==========
+    ' 在特定回合给予EP和SEP
+    If Turn = "S4" Then Call Up("EP", 2, Turn)      ' 后手第4回合获得EP
+    If Turn = "S6" Then Call Up("SEP", 2, Turn)     ' 后手第6回合获得SEP
+    If Turn = "F5" Then Call Up("EP", 2, Turn)      ' 先手第5回合获得EP
+    If Turn = "F7" Then Call Up("SEP", 2, Turn)     ' 先手第7回合获得SEP
+
+    ' ========== 重置攻击和启动状态 ==========
+    ' 重置场上单位的攻击状态和启动状态
+    Arr = Down("Field", Turn)
+    For i = 1 To UBound(Arr, 1)
+        ' 检查是否有攻击或启动状态
+        If InStr(Arr(i, 5), "Striked&") > 0 Or InStr(Arr(i, 5), "Engaged") > 0 Then
+            EffectSplit = SplitEffect(Arr(i, 5))
+            ' 查找攻击或启动状态标记
+            For j = 0 To UBound(EffectSplit)
+                If Left(EffectSplit(j), Len("Striked&")) = "Striked&" Or EffectSplit(j) = "Engaged" Then Exit For
+            Next j
+            ' 移除状态标记
+            If j <= UBound(EffectSplit) Then
+                EffectSplit(j) = "\"
+                Arr(i, 5) = Join(EffectSplit, "||") & "||"
+                Arr(i, 5) = Replace(Arr(i, 5), "\||", "")
+                Call UpByMatchID(CStr(Arr(i, 1)), "Effect", Arr(i, 5))
+            End If
+        End If
+    Next i
+
+    ' ========== 重置融合状态 ==========
+    ' 重置手牌中卡牌的融合状态
+    Arr = Down("Hand", Turn)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "Fused") > 0 Then
+            EffectSplit = SplitEffect(Arr(i, 5))
+            ' 查找融合状态标记
+            For j = 0 To UBound(EffectSplit)
+                If EffectSplit(j) = "HaveFused" Then Exit For
+            Next j
+            ' 移除融合状态标记
+            If j <= UBound(EffectSplit) Then
+                EffectSplit(j) = "\"
+                Arr(i, 5) = Join(EffectSplit, "||") & "||"
+                Arr(i, 5) = Replace(Arr(i, 5), "\||", "")
+                Call UpByMatchID(CStr(Arr(i, 1)), "Effect", Arr(i, 5))
+            End If
+        End If
+    Next i
+
+    ' ========== 重置进化按钮状态 ==========
+    Sheets("Main").Shapes("EvolveBtn").TextFrame.Characters.Text = Translate("Evolve")
+    Sheets("Main").Shapes("SuperEvolveBtn").TextFrame.Characters.Text = Translate("SuperEvolve")
+
+    ' ========== 幸运币按钮状态 ==========
+    ' 在后手特定回合启用幸运币按钮
+    If Turn = "S1" Then Call Up("GetPP", "能量值+1")
+    If Turn = "S6" Then Call Up("GetPP", "能量值+1")
+    If Left(Turn, 1) = "F" Then
+        Sheets("Main").Shapes("PPBtn").TextFrame.Characters.Text = "无法使用"
+    Else
+        Sheets("Main").Shapes("PPBtn").TextFrame.Characters.Text = Down("GetPP")
+    End If
+
+    ' ========== 手牌回合开始效果触发 ==========
+    ' 处理自己手牌的回合开始效果
+    Arr = Down("Hand", Turn)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "ActivateInHand-When||") > 0 Or InStr(Arr(i, 5), "{ActivateInHand-When|") > 0 Then
+            Effectrr = GetEffect(CStr(Arr(i, 1)))
+            ' 查找并触发回合开始效果
+            For k = 1 To UBound(Effectrr)
+                If Left(Effectrr(k), Len("ActivateInHand-When|Allied-Turn-Start")) = "ActivateInHand-When|Allied-Turn-Start" Or _
+                Left(Effectrr(k), Len("ActivateInHand-When|Turn-Start")) = "ActivateInHand-When|Turn-Start" Then
+                    Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                End If
+            Next k
+        End If
+    Next i
+
+    ' 处理对手手牌的回合开始效果
+    Arr = Down("Hand", Enemy)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "ActivateInHand-When||") > 0 Or InStr(Arr(i, 5), "{ActivateInHand-When|") > 0 Then
+            Effectrr = GetEffect(CStr(Arr(i, 1)))
+            ' 查找并触发回合开始效果
+            For k = 1 To UBound(Effectrr)
+                If Left(Effectrr(k), Len("ActivateInHand-When|Enemy-Turn-Start")) = "ActivateInHand-When|Enemy-Turn-Start" Or _
+                Left(Effectrr(k), Len("ActivateInHand-When|Turn-Start")) = "ActivateInHand-When|Turn-Start" Then
+                    Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                End If
+            Next k
+        End If
+    Next i
+
+    ' ========== 纹章和战场回合开始效果触发 ==========
+    ' 处理自己纹章和战场的回合开始效果
+    For m = 1 To 2
+        If m = 1 Then
+            Arr = Down("Crest", Turn)    ' 纹章区域
+        Else
+            Arr = Down("Field", Turn)    ' 战场区域
+        End If
+        
+        For i = 1 To UBound(Arr, 1)
+            If InStr(Arr(i, 5), "When||") > 0 Or InStr(Arr(i, 5), "{When|") > 0 Or InStr(Arr(i, 5), "Countdown&") > 0 Then
+                EffectSplit = SplitEffect(CStr(Arr(i, 5)))
+                For j = 0 To UBound(EffectSplit)
+                    ' 处理When效果触发
+                    If EffectSplit(j) = "When" Then
+                        Effectrr = GetEffect(CStr(Arr(i, 1)))
+                        For k = 1 To UBound(Effectrr)
+                            If Left(Effectrr(k), Len("When|Allied-Turn-Start")) = "When|Allied-Turn-Start" Or _
+                            Left(Effectrr(k), Len("When|Turn-Start")) = "When|Turn-Start" Then
+                                Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                            End If
+                        Next k
+                    ' 处理倒数减少
+                    ElseIf Left(EffectSplit(j), Len("Countdown&")) = "Countdown&" Then
+                        Call GetTimePoint("When|Allied-Turn-Start||Countdown-1|ThisCard", CStr(Arr(i, 1)))
+                    End If
+                Next j
+            End If
+        Next i
+    Next m
+
+    ' 处理对手纹章和战场的回合开始效果
+    For m = 1 To 2
+        If m = 1 Then
+            Arr = Down("Crest", Enemy)   ' 对手纹章区域
+        Else
+            Arr = Down("Field", Enemy)   ' 对手战场区域
+        End If
+        
+        For i = 1 To UBound(Arr, 1)
+            If InStr(Arr(i, 5), "When||") > 0 Or InStr(Arr(i, 5), "{When|") > 0 Then
+                Effectrr = GetEffect(CStr(Arr(i, 1)))
+                For k = 1 To UBound(Effectrr)
+                    If Left(Effectrr(k), Len("When|Enemy-Turn-Start")) = "When|Enemy-Turn-Start" Or _
+                    Left(Effectrr(k), Len("When|Turn-Start")) = "When|Turn-Start" Then
+                        Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                    End If
+                Next k
+            End If
+        Next i
+    Next m
+
+    ' ========== 牌组回合开始效果触发 ==========
+    ' 处理自己牌组的回合开始效果
+    Arr = Down("Deck", Turn)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "ActivateInDeck-When||") > 0 Or InStr(Arr(i, 5), "{ActivateInDeck-When|") > 0 Then
+            Effectrr = GetEffect(CStr(Arr(i, 1)))
+            ' 查找并触发回合开始效果
+            For k = 1 To UBound(Effectrr)
+                If Left(Effectrr(k), Len("ActivateInDeck-When|Allied-Turn-Start")) = "ActivateInDeck-When|Allied-Turn-Start" Or _
+                Left(Effectrr(k), Len("ActivateInDeck-When|Turn-Start")) = "ActivateInDeck-When|Turn-Start" Then
+                    Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                End If
+            Next k
+        End If
+    Next i
+
+    ' 处理对手牌组的回合开始效果
+    Arr = Down("Deck", Enemy)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "ActivateInDeck-When||") > 0 Or InStr(Arr(i, 5), "{ActivateInDeck-When|") > 0 Then
+            Effectrr = GetEffect(CStr(Arr(i, 1)))
+            ' 查找并触发回合开始效果
+            For k = 1 To UBound(Effectrr)
+                If Left(Effectrr(k), Len("ActivateInDeck-When|Enemy-Turn-Start")) = "ActivateInDeck-When|Enemy-Turn-Start" Or _
+                Left(Effectrr(k), Len("ActivateInDeck-When|Turn-Start")) = "ActivateInDeck-When|Turn-Start" Then
+                    Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                End If
+            Next k
+        End If
+    Next i
+
+    ' ========== 清空持续效果 ==========
+    ' 移除回合开始到期的持续效果
+    Arr = Down("Data")
+    For i = 1 To UBound(Arr, 1)
+        If Arr(i, 1) = "" Then
+            Exit For
+        ElseIf InStr(CStr(Arr(i, 5)), "-Until") > 0 Then
+            EffectSplit = SplitEffect(CStr(Arr(i, 5)))
+            For j = 0 To UBound(EffectSplit)
+                Effectrr = Split(EffectSplit(j), "|")
+                ' 根据所属方移除对应的持续效果
+                If Left(Arr(i, 1), 1) = Left(Turn, 1) Then
+                    If Effectrr(0) = "Allied-Turn-Start-Until" Or Effectrr(0) = "Turn-Start-Until" Then EffectSplit(j) = "\"
+                Else
+                    If Effectrr(0) = "Enemy-Turn-Start-Until" Or Effectrr(0) = "Turn-Start-Until" Then EffectSplit(j) = "\"
+                End If
+            Next j
+            Arr(i, 5) = Join(EffectSplit, "||") & "||"
+            Arr(i, 5) = Replace(Arr(i, 5), "\||", "")
+            Call UpByMatchID(CStr(Arr(i, 1)), "Effect", Arr(i, 5))
+        End If
+    Next i
+
+    ' ========== 清空能力队列 ==========
+    Call EraseQueue
+
+    ' ========== 回合开始抽牌 ==========
+    Call GetAbility("||Draw|1", Turn)
+End Function
+
+' ==================================================
+' 函数功能：回合结束效果处理
+' 说明：执行回合结束时的各种状态更新和效果触发
+' ==================================================
+Function TurnEndFunction()
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%, m%                   ' 循环计数器
+    Dim Arr As Variant                   ' 临时数组
+    Dim Effectrr() As String             ' 效果数组
+    Dim EffectSplit() As String          ' 效果分割数组
+    Dim Turn As String                   ' 当前回合
+    Dim Enemy As String                  ' 对手标识
+
+    ' ========== 初始化回合信息 ==========
+    Turn = Down("Turn")
+    If Left(Turn, 1) = "F" Then
+        Enemy = "S1000"
+    Else
+        Enemy = "F1000"
+    End If
+
+    ' ========== 手牌回合结束效果触发 ==========
+    ' 处理自己手牌的回合结束效果
+    Arr = Down("Hand", Turn)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "ActivateInHand-When||") > 0 Or InStr(Arr(i, 5), "{ActivateInHand-When|") > 0 Then
+            Effectrr = GetEffect(CStr(Arr(i, 1)))
+            For k = 1 To UBound(Effectrr)
+                If Left(Effectrr(k), Len("ActivateInHand-When|Allied-Turn-End")) = "ActivateInHand-When|Allied-Turn-End" Or _
+                Left(Effectrr(k), Len("ActivateInHand-When|Turn-End")) = "ActivateInHand-When|Turn-End" Then
+                    Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                End If
+            Next k
+        End If
+    Next i
+
+    ' 处理对手手牌的回合结束效果
+    Arr = Down("Hand", Enemy)
+    For i = 1 To UBound(Arr, 1)
+        If InStr(Arr(i, 5), "ActivateInHand-When||") > 0 Or InStr(Arr(i, 5), "{ActivateInHand-When|") > 0 Then
+            Effectrr = GetEffect(CStr(Arr(i, 1)))
+            For k = 1 To UBound(Effectrr)
+                If Left(Effectrr(k), Len("ActivateInHand-When|Enemy-Turn-End")) = "ActivateInHand-When|Enemy-Turn-End" Or _
+                Left(Effectrr(k), Len("ActivateInHand-When|Turn-End")) = "ActivateInHand-When|Turn-End" Then
+                    Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                End If
+            Next k
+        End If
+    Next i
+
+    ' ========== 纹章和战场回合结束效果触发 ==========
+    ' 处理自己纹章和战场的回合结束效果
+    For m = 1 To 2
+        If m = 1 Then
+            Arr = Down("Crest", Turn)    ' 纹章区域
+        Else
+            Arr = Down("Field", Turn)    ' 战场区域
+        End If
+        
+        For i = 1 To UBound(Arr, 1)
+            If InStr(Arr(i, 5), "When||") > 0 Or InStr(Arr(i, 5), "{When|") > 0 Then
+                Effectrr = GetEffect(CStr(Arr(i, 1)))
+                For k = 1 To UBound(Effectrr)
+                    If Left(Effectrr(k), Len("When|Allied-Turn-End")) = "When|Allied-Turn-End" Or _
+                    Left(Effectrr(k), Len("When|Turn-End")) = "When|Turn-End" Then
+                        Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                    End If
+                Next k
+            End If
+        Next i
+    Next m
+
+    ' 处理对手纹章和战场的回合结束效果
+    For m = 1 To 2
+        If m = 1 Then
+            Arr = Down("Crest", Enemy)   ' 对手纹章区域
+        Else
+            Arr = Down("Field", Enemy)   ' 对手战场区域
+        End If
+        
+        For i = 1 To UBound(Arr, 1)
+            If InStr(Arr(i, 5), "When||") > 0 Or InStr(Arr(i, 5), "{When|") > 0 Then
+                Effectrr = GetEffect(CStr(Arr(i, 1)))
+                For k = 1 To UBound(Effectrr)
+                    If Left(Effectrr(k), Len("When|Enemy-Turn-End")) = "When|Enemy-Turn-End" Or _
+                    Left(Effectrr(k), Len("When|Turn-End")) = "When|Turn-End" Then
+                        Call GetTimePoint(Effectrr(k), CStr(Arr(i, 1)))
+                    End If
+                Next k
+            End If
+        Next i
+    Next m
+
+    ' ========== 清空持续效果 ==========
+    ' 移除回合结束到期的持续效果
+    Arr = Down("Data")
+    For i = 1 To UBound(Arr, 1)
+        If Arr(i, 1) = "" Then
+            Exit For
+        End If
+        
+        ' 处理Until类型的持续效果
+        If InStr(CStr(Arr(i, 5)), "-Until") > 0 Then
+            EffectSplit = SplitEffect(CStr(Arr(i, 5)))
+            For j = 0 To UBound(EffectSplit)
+                Effectrr = Split(EffectSplit(j), "|")
+                ' 根据所属方移除对应的持续效果
+                If Left(Arr(i, 1), 1) = Left(Turn, 1) Then
+                    If Effectrr(0) = "Allied-Turn-End-Until" Or Effectrr(0) = "Turn-End-Until" Then EffectSplit(j) = "\"
+                Else
+                    If Effectrr(0) = "Enemy-Turn-End-Until" Or Effectrr(0) = "Turn-End-Until" Then EffectSplit(j) = "\"
+                End If
+            Next j
+            Arr(i, 5) = Join(EffectSplit, "||") & "||"
+            Arr(i, 5) = Replace(Arr(i, 5), "\||", "")
+            Call UpByMatchID(CStr(Arr(i, 1)), "Effect", Arr(i, 5))
+        End If
+        
+        ' 处理每回合次数限制效果
+        If InStr(CStr(Arr(i, 5)), "TimesPerTurn&") > 0 Then
+            EffectSplit = SplitEffect(CStr(Arr(i, 5)))
+            For j = 0 To UBound(EffectSplit)
+                If Left(EffectSplit(j), Len("TimesPerTurn&")) = "TimesPerTurn&" Then EffectSplit(j) = "\"
+            Next j
+            Arr(i, 5) = Join(EffectSplit, "||") & "||"
+            Arr(i, 5) = Replace(Arr(i, 5), "\||", "")
+            Call UpByMatchID(CStr(Arr(i, 1)), "Effect", Arr(i, 5))
+        End If
+    Next i
+
+    ' ========== 清空能力队列 ==========
+    Call EraseQueue
+End Function
+

@@ -8,9 +8,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Add using for ICo
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Add using for IEffectExecutor
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
+using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Dtos.SignalR;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Concurrent;
@@ -18,7 +18,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
-using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // Added for IAbility
+using ShadowverseBeyond.Server.Exceptions;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Factories;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Constants; // Added for IAbility
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -26,27 +30,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     /// 配置驱动的能力管理器，负责管理和协调所有卡片能力
     /// 基于最新Event驱动架构设计
     /// </summary>
-    public class AbilityManager : IAbilityTriggerService
+    public class AbilityManager : IAbilityManager
     {
         private readonly ConcurrentDictionary<string, List<IAbility>> _abilitiesByEventType = new();
         private readonly ConcurrentDictionary<Guid, List<IAbility>> _abilitiesByCardId = new();
         private readonly List<IAbility> _allAbilities = new();
         private readonly ConcurrentDictionary<Guid, IAbility> _abilitiesByRuntimeId = new(); // 新增：按RuntimeId索引能力
+        private readonly ConcurrentDictionary<Guid, List<Guid>> _abilityRuntimeIdsByBuffId = new(); // 新增：按BuffId索引能力运行时ID
         private readonly ILogger<AbilityManager>? _logger;
-        private readonly IConditionFactory _conditionFactory; // Inject Condition Factory
-        private readonly IServiceScopeFactory _serviceScopeFactory; // Use IServiceScopeFactory to get scoped IEffectExecutor
+        private readonly IAbilityFactory _abilityFactory;
         // Removed: _eventProcessor to break circular dependency
         // Removed: _buffManager, _cardRepository, _functionRegistry
 
         public AbilityManager(
             ILogger<AbilityManager>? logger,
-            IConditionFactory conditionFactory,
-            IServiceScopeFactory serviceScopeFactory,
+            IAbilityFactory abilityFactory,
             IEnumerable<IAbility> systemAbilities) // Added systemAbilities
         {
             _logger = logger;
-            _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory));
-            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+            _abilityFactory = abilityFactory ?? throw new ArgumentNullException(nameof(abilityFactory));
 
             if (systemAbilities != null)
             {
@@ -54,7 +56,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 {
                     RegisterAbility(systemAbility);
                 }
-                _logger?.LogInformation("[AbilityManager] Registered {Count} system abilities.", systemAbilities.Count());
             }
         }
 
@@ -64,59 +65,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <param name="cardInstance">卡片实例</param>
         /// <param name="abilityConfigs">能力配置列表</param>
         /// <returns>创建的能力列表</returns>
-        public List<Ability> CreateAbilitiesForCard(CardInstance cardInstance, List<AbilityConfig> abilityConfigs)
+        public List<Ability> CreateAbilitiesForCard(CardInstance cardInstance, List<AbilityConfig> abilityConfigs, Guid? sourceBuffId = null)
         {
-            var abilities = new List<Ability>();
+            // 1. Use the factory to create the list of abilities, passing the optional sourceBuffId
+            var abilities = _abilityFactory.CreateAbilities(cardInstance, abilityConfigs, sourceBuffId);
 
-            foreach (var config in abilityConfigs)
+            // 2. Iterate and register each ability
+            foreach (var ability in abilities)
             {
-                var ability = CreateAbilityFromConfig(config, cardInstance);
-                if (ability != null)
-                {
-                    abilities.Add(ability);
-                    RegisterAbility(ability);
-                }
+                RegisterAbility(ability);
             }
 
-            _logger?.LogDebug("[AbilityManager] Created {Count} abilities for card {CardId}",
-                abilities.Count, cardInstance.InstanceId);
+            _logger?.LogInformation("[AbilityManager] Created and registered {Count} abilities for card {CardName} ({CardId}) from source BuffId {BuffId}. Total Abilities: {TotalCount}",
+                abilities.Count, cardInstance.Name, cardInstance.InstanceId, sourceBuffId ?? Guid.Empty, _allAbilities.Count);
 
+            // 3. Return the list of abilities created by the factory
             return abilities;
-        }
-
-        /// <summary>
-        /// 从配置创建单个能力
-        /// </summary>
-        /// <param name="config">能力配置</param>
-        /// <param name="cardInstance">卡片实例</param>
-        /// <returns>创建的能力</returns>
-        public Ability? CreateAbilityFromConfig(AbilityConfig config, CardInstance cardInstance)
-        {
-            try
-            {
-                // Create a factory function that creates a scope and gets IEffectExecutor
-                Func<IEffectExecutor> effectExecutorFactory = () =>
-                {
-                    var scope = _serviceScopeFactory.CreateScope();
-                    return scope.ServiceProvider.GetRequiredService<IEffectExecutor>();
-                };
-
-                // Pass all required dependencies to the Ability constructor
-                var ability = new Ability(
-                    config,
-                    _conditionFactory, // Pass injected factory
-                    cardInstance);
-
-                // ability.Activate(); // Activate() 方法已移除
-
-                return ability;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "[AbilityManager] Error creating ability from config for card {CardId}",
-                    cardInstance.InstanceId);
-                return null;
-            }
         }
 
         /// <summary>
@@ -159,14 +123,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // 按卡片ID索引能力 (Only if SourceCard is not null)
             if (ability.SourceCard != null)
             {
-                _abilitiesByCardId.AddOrUpdate(
-                    ability.SourceCard.InstanceId,
-                    new List<IAbility> { ability },
-                    (key, existingList) =>
-                    {
-                        existingList.Add(ability);
-                        return existingList;
-                    });
+                if (ability.SourceCardId.HasValue)
+                {
+                    _abilitiesByCardId.AddOrUpdate(
+                        ability.SourceCardId.Value,
+                        new List<IAbility> { ability },
+                        (key, existingList) =>
+                        {
+                            existingList.Add(ability);
+                            return existingList;
+                        });
+                }
 
                 // 新增：更新CardInstance的能力列表（双向绑定）
                 UpdateCardInstanceAbilities(ability.SourceCard);
@@ -176,9 +143,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // IAbility 保证了 RuntimeId 的存在 (Ability.cs 中初始化)
             _abilitiesByRuntimeId.TryAdd(ability.RuntimeId, ability);
 
+            // 新增：如果能力来自Buff，则更新Buff到能力ID的映射
+            if (ability is Ability abilityInstance && abilityInstance.SourceBuffId.HasValue)
+            {
+                var buffId = abilityInstance.SourceBuffId.Value;
+                _abilityRuntimeIdsByBuffId.AddOrUpdate(
+                    buffId,
+                    new List<Guid> { ability.RuntimeId },
+                    (key, existingList) =>
+                    {
+                        existingList.Add(ability.RuntimeId);
+                        return existingList;
+                    });
+            }
 
-            _logger?.LogDebug("[AbilityManager] Registered ability: {AbilityTag} (Type: {AbilityType}, RuntimeId: {RuntimeId}) for card {CardId}",
-                ability.AbilityTag, ability.Type, ability.RuntimeId, ability.SourceCard?.InstanceId);
+
+            // Use structured logging for better querying
+            _logger?.LogDebug("Registered ability {AbilityName} (RuntimeId: {RuntimeId}) for CardId: {CardId}, BuffId: {BuffId}",
+                ability.Name, ability.RuntimeId, ability.SourceCardId, ability.SourceBuffId);
         }
 
         /// <summary>
@@ -214,23 +196,45 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // 从卡片ID索引中移除 (Only if SourceCard is not null)
             if (ability.SourceCard != null)
             {
-                if (_abilitiesByCardId.TryGetValue(ability.SourceCard.InstanceId, out var cardAbilities))
+                if (ability.SourceCardId.HasValue && _abilitiesByCardId.TryGetValue(ability.SourceCardId.Value, out var cardAbilities))
                 {
+                    _logger?.LogDebug("Before removing {AbilityName}, CardId {CardId} has abilities: {AbilityNames}", ability.Name, ability.SourceCardId.Value, string.Join(", ", cardAbilities.Select(a => a.Name)));
                     cardAbilities.Remove(ability);
+                    _logger?.LogDebug("After removing {AbilityName}, CardId {CardId} has abilities: {AbilityNames}", ability.Name, ability.SourceCardId.Value, string.Join(", ", cardAbilities.Select(a => a.Name)));
                     if (cardAbilities.Count == 0)
                     {
-                        _abilitiesByCardId.TryRemove(ability.SourceCard.InstanceId, out _);
+                        _logger?.LogDebug("No abilities left for CardId {CardId}. Removing from dictionary.", ability.SourceCardId.Value);
+                        _abilitiesByCardId.TryRemove(ability.SourceCardId.Value, out _);
                     }
                 }
                 // 新增：更新CardInstance的能力列表（双向绑定）
                 UpdateCardInstanceAbilities(ability.SourceCard);
             }
+            else
+            {
+                _logger?.LogWarning("Ability {AbilityName} (RuntimeId: {RuntimeId}) has SourceCardId {CardId} but SourceCard object is null. Card-specific ability list will not be updated.",
+                    ability.Name, ability.RuntimeId, ability.SourceCardId);
+            }
 
             // 新增：从 _abilitiesByRuntimeId 字典中移除
             _abilitiesByRuntimeId.TryRemove(ability.RuntimeId, out _);
 
-            _logger?.LogDebug("[AbilityManager] Unregistered ability: {AbilityTag} (Type: {AbilityType}, RuntimeId: {RuntimeId}) for card {CardId}",
-                ability.AbilityTag, ability.Type, ability.RuntimeId, ability.SourceCard?.InstanceId);
+            // 新增：如果能力来自Buff，则从Buff到能力ID的映射中移除
+            if (ability is Ability abilityInstance && abilityInstance.SourceBuffId.HasValue)
+            {
+                var buffId = abilityInstance.SourceBuffId.Value;
+                if (_abilityRuntimeIdsByBuffId.TryGetValue(buffId, out var abilityIds))
+                {
+                    abilityIds.Remove(ability.RuntimeId);
+                    if (abilityIds.Count == 0)
+                    {
+                        _abilityRuntimeIdsByBuffId.TryRemove(buffId, out _);
+                    }
+                }
+            }
+
+            _logger?.LogDebug("Unregistered ability {AbilityName} (RuntimeId: {RuntimeId}) from CardId: {CardId}, BuffId: {BuffId}",
+                ability.Name, ability.RuntimeId, ability.SourceCardId, ability.SourceBuffId);
         }
 
         /// <summary>
@@ -274,35 +278,61 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         }
 
         /// <summary>
+        /// 注销由特定Buff赋予的所有能力。
+        /// </summary>
+        /// <param name="buffId">源Buff的ID。</param>
+        public void UnregisterAbilitiesFromBuff(Guid buffId)
+        {
+            _logger?.LogDebug("Attempting to unregister abilities for BuffId: {BuffId}", buffId);
+            if (_abilityRuntimeIdsByBuffId.TryRemove(buffId, out var abilityRuntimeIds))
+            {
+                _logger?.LogDebug("Found {Count} abilities to unregister for BuffId {BuffId}: {RuntimeIds}",
+                    abilityRuntimeIds.Count, buffId, string.Join(", ", abilityRuntimeIds));
+
+                // Create a copy for safe iteration, as UnregisterAbility might modify the source collection indirectly
+                var runtimeIdsCopy = abilityRuntimeIds.ToList();
+
+                foreach (var runtimeId in runtimeIdsCopy)
+                {
+                    if (_abilitiesByRuntimeId.TryGetValue(runtimeId, out var abilityToUnregister))
+                    {
+                        UnregisterAbility(abilityToUnregister);
+                    }
+                    else
+                    {
+                        _logger?.LogWarning("Could not find ability with RuntimeId {RuntimeId} in _abilitiesByRuntimeId dictionary while unregistering for BuffId {BuffId}.", runtimeId, buffId);
+                    }
+                }
+                _logger?.LogInformation("Unregistered {Count} abilities for BuffId {BuffId}", runtimeIdsCopy.Count, buffId);
+            }
+            else
+            {
+                _logger?.LogDebug("No abilities found to unregister for BuffId: {BuffId}", buffId);
+            }
+        }
+
+        /// <summary>
         /// 获取指定事件触发的能力列表
         /// 注意：此方法不再处理事件，只返回相关能力。事件处理应通过EventProcessor进行。
         /// </summary>
         /// <param name="gameEvent">触发的游戏事件</param>
         /// <param name="context">游戏上下文</param>
         /// <returns>触发的能力列表</returns>
-        public async Task<List<IAbility>> GetTriggeredAbilitiesAsync(IGameEvent gameEvent, GameContext context)
+        public async Task<List<IAbility>> GetTriggeredAbilitiesAsync(IGameEvent gameEvent, GameContext context, TriggerTiming timing)
         {
             var triggeredAbilities = new List<IAbility>();
             var eventTypeString = gameEvent.EventType.ToString();
 
-            // 获取监听此事件类型的能力
             var relevantAbilities = GetAbilitiesForEvent(eventTypeString);
 
             foreach (var ability in relevantAbilities)
             {
                 try
                 {
-                    // Use the CanTrigger method from IAbility
-                    // IsActive 检查已移除，激活状态由外部管理
-                    if (await ability.CanTrigger(gameEvent, context)) // 传递 context
+                    // Filter by the specified timing first
+                    if (ability.TriggerConfig.Timing == timing && await ability.CanTrigger(gameEvent, context))
                     {
-                        // 检查条件是否满足
-                        if (await ability.CheckConditionsAsync(context))
-                        {
-                            triggeredAbilities.Add(ability);
-                            _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} (Type: {AbilityType}) triggered by event {EventType}",
-                                ability.AbilityTag, ability.Type, gameEvent.EventType);
-                        }
+                        triggeredAbilities.Add(ability);
                     }
                 }
                 catch (Exception ex)
@@ -312,7 +342,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 }
             }
 
-            return triggeredAbilities;
+            if (!triggeredAbilities.Any())
+            {
+                return triggeredAbilities; // Return empty list early
+            }
+
+            // --- NEW SORTING LOGIC ---
+            var sortedAbilities = triggeredAbilities
+                .OrderBy(ability =>
+                {
+                    // Rule 1: The event's source ability itself has the highest priority (e.g., Fanfare)
+                    if (gameEvent.Source?.Card != null && ability.SourceCard?.InstanceId == gameEvent.Source.Card.InstanceId)
+                    {
+                        return 0;
+                    }
+                    // Rule 2: System abilities without a source card have lower priority
+                    if (ability.SourceCard == null)
+                    {
+                        return 100;
+                    }
+                    // Rule 3: Sort by zone and ownership
+                    var card = ability.SourceCard;
+                    var activePlayerId = context.CurrentGameState.CurrentPlayerId;
+                    bool isMyTurn = card.OwnerPlayerId == activePlayerId;
+                    return GameConstants.AbilityTrigger.GetZonePriority(card.CurrentZone, isMyTurn);
+                })
+                .ToList();
+
+            _logger?.LogDebug("Triggered and sorted {Count} abilities for event {EventType} at timing {Timing}.",
+                sortedAbilities.Count, gameEvent.EventType, timing);
+
+            return sortedAbilities;
         }
 
         /// <summary>
@@ -334,9 +394,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>卡片能力列表</returns>
         public List<IAbility> GetAbilitiesForCard(Guid cardInstanceId)
         {
-            return _abilitiesByCardId.TryGetValue(cardInstanceId, out var abilities)
+            var result = _abilitiesByCardId.TryGetValue(cardInstanceId, out var abilities)
                 ? abilities.ToList() // ToList creates a copy
                 : new List<IAbility>();
+
+            _logger?.LogDebug("GetAbilitiesForCard for CardId {CardId} is returning {Count} abilities: {AbilityNames}",
+                cardInstanceId, result.Count, string.Join(", ", result.Select(a => a.Name)));
+
+            return result;
         }
 
         /// <summary>
@@ -360,6 +425,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             _abilitiesByEventType.Clear();
             _abilitiesByCardId.Clear();
             _abilitiesByRuntimeId.Clear(); // 新增：清空RuntimeId字典
+            _abilityRuntimeIdsByBuffId.Clear(); // 新增：清空BuffId字典
 
             _logger?.LogDebug("[AbilityManager] Cleared {Count} abilities from all collections.", count);
         }
@@ -407,17 +473,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <param name="cardInstance">要更新的卡牌实例</param>
         private void UpdateCardInstanceAbilities(CardInstance cardInstance)
         {
-            if (cardInstance == null) return;
+            if (cardInstance == null)
+            {
+                _logger?.LogWarning("UpdateCardInstanceAbilities called with a null cardInstance.");
+                return;
+            }
 
+            _logger?.LogDebug("Updating abilities for CardInstance {CardName} (InstanceId: {InstanceId})", cardInstance.Name, cardInstance.InstanceId);
             var abilitiesForCard = GetAbilitiesForCard(cardInstance.InstanceId);
-            // CardInstance.SetAbilities expects IReadOnlyList<Ability>.
-            // We need to filter only Ability instances and cast them.
-            // This assumes that system abilities (not of type Ability) should not be set on CardInstance.Abilities.
             var cardSpecificAbilities = abilitiesForCard.OfType<Ability>().ToList();
             cardInstance.SetAbilities(cardSpecificAbilities.AsReadOnly());
-
-            _logger?.LogDebug("[AbilityManager] Updated abilities for card {CardId}: {Count} abilities",
-                cardInstance.InstanceId, cardSpecificAbilities.Count);
+            _logger?.LogDebug("Successfully set {Count} abilities on CardInstance {CardName}: {AbilityNames}",
+                cardSpecificAbilities.Count, cardInstance.Name, string.Join(", ", cardSpecificAbilities.Select(a => a.Name)));
         }
 
         /// <summary>
@@ -471,9 +538,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 EventType.AbilityTriggered => new AbilityTriggeredEventDto(
                     gameEvent.Source?.Player?.PlayerId ?? Guid.Empty,
                     gameEvent.Source?.Card?.InstanceId ?? Guid.Empty,
-                    (string)(gameEvent.Parameters.GetValueOrDefault("ability_tag") ?? string.Empty),
-                    (string)(gameEvent.Parameters.GetValueOrDefault("trigger_event_type") ?? string.Empty),
-                    gameEvent.Parameters
+                    (gameEvent as AbilityTriggeredEvent)?.AbilityTag ?? string.Empty,
+                    (gameEvent as AbilityTriggeredEvent)?.TriggeringEvent.EventType.ToString() ?? string.Empty,
+                    new Dictionary<string, object>()
                 ),
                 _ => null
             };
@@ -483,22 +550,57 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// Implements the new interface method to process a single ability.
         /// This centralizes the logic for checking conditions, resolving targets, and creating effects.
         /// </summary>
-        public async Task<List<Effect>> ProcessSingleAbilityAsync(IAbility ability, GameContext context)
+        public async Task<AbilityProcessResult> ProcessSingleAbilityAsync(IAbility ability, GameContext context, bool isCancellable)
         {
-            if (!await ability.CheckConditionsAsync(context))
+            context = context with { IsCancellable = isCancellable };
+
+            // The partialResult logic is now removed. The process is always "start or continue".
+            // The state is held within the Target objects themselves.
+
+            // 1. Check initial conditions. This is always done.
+            // If an ability was paused, its conditions were already met, but re-checking is safe and handles edge cases.
+            if (!ability.CheckConditions(context))
             {
-                _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} (RuntimeId: {RuntimeId}) conditions not met. Skipping effect creation.",
+                _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} (RuntimeId: {RuntimeId}) conditions not met. Skipping.",
                     ability.AbilityTag, ability.RuntimeId);
-                return new List<Effect>(); // Return empty list if conditions fail
+                return AbilityProcessResult.Success(new List<Effect>()); // Return a successful result with no effects.
             }
 
-            var resolvedTargets = await ability.ResolveTargetsAsync(context);
-            var effects = await ability.CreateEffectsAsync(context, resolvedTargets);
+            // 2. Resolve targets. This method now internally handles resuming from a specific point.
+            var targetResult = await ability.ResolveTargetsAsync(context, isCancellable);
+
+            // 3. Handle the result from the target resolution process.
+            if (targetResult.Status == ResolutionStatus.Failed)
+            {
+                _logger?.LogError("[AbilityManager] Target resolution failed for ability {AbilityTag} (RuntimeId: {RuntimeId}): {ErrorMessage}",
+                    ability.AbilityTag, ability.RuntimeId, targetResult.ErrorMessage);
+                return AbilityProcessResult.Failure(targetResult.ErrorMessage ?? "Target resolution failed.");
+            }
+
+            // This block is no longer needed.
+            // The new architecture with async/await means that ResolveTargetsAsync will not return
+            // a "PendingPlayerChoice" status. Instead, it will internally await the player's
+            // choice, and the entire ProcessSingleAbilityAsync task will simply not complete until
+            // the choice is made. This naturally pauses the EffectQueueProcessor without any
+            // explicit "Paused" state.
+
+            // 4. If resolution is complete, create the effects.
+            List<Effect> effects;
+            try
+            {
+                effects = await ability.CreateEffectsAsync(context, targetResult);
+            }
+            catch (GameLogicException ex)
+            {
+                _logger?.LogInformation(ex, "[AbilityManager] Ability {AbilityTag} (RuntimeId: {RuntimeId}) aborted by game logic: {Message}",
+                    ability.AbilityTag, ability.RuntimeId, ex.Message);
+                return AbilityProcessResult.Failure(ex.Message);
+            }
 
             _logger?.LogDebug("[AbilityManager] Processed ability {AbilityTag} (RuntimeId: {RuntimeId}) and created {EffectCount} effects.",
                 ability.AbilityTag, ability.RuntimeId, effects.Count);
 
-            return effects;
+            return AbilityProcessResult.Success(effects);
         }
     }
 } // Closing brace for namespace ShadowverseBeyond.Server.Domain.Abilities

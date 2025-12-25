@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Domain.Effects
     /// ⚠️ = 需要额外系统支持
     /// ❓ = 功能不明确，需要确认
     /// </summary>
-    public enum EffectAbility
+    public enum EffectType
     {
         // ==================== 基础控制效果 (0-20) ====================
 
@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// <summary>
         /// 调度卡牌 - 系统操作
         /// </summary>
-        KeepCard = 2,
+        Mulligan = 2,
 
         /// <summary>
         /// 回合开始 - 系统操作
@@ -109,7 +109,7 @@ namespace ShadowverseBeyond.Server.Domain.Effects
 
         /// <summary>
         /// 设置关键字 - 为卡牌添加或移除关键字能力
-        /// ✅ 已实现：AddKeywordEffectHandler, RemoveKeywordEffectHandler
+        /// ✅ 已实现：SetKeywordEffectHandler
         /// </summary>
         SetKeyword = 100,
 
@@ -296,6 +296,12 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// ✅ 已实现：ModifyEPEffectHandler（可扩展为直接设置）
         /// </summary>
         SetEP = 130,
+
+        /// <summary>
+        /// 设置EP上限 - 修改玩家最大EP值
+        /// ✅ 已实现：ModifyEPMaxEffectHandler
+        /// </summary>
+        SetEPMax = 135,
 
         /// <summary>
         /// 设置充能 - 修改单位的充能状态或数值

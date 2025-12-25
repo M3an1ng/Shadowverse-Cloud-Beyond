@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSL元数据查看器</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .content {
+            padding: 20px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+        .object-card, .function-card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        .card-header {
+            background: #667eea;
+            color: white;
+            padding: 12px 15px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-content {
+            padding: 15px;
+            display: none;
+        }
+        .card-content.active {
+            display: block;
+        }
+        .property-item, .param-item {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        .property-name, .param-name {
+            font-weight: bold;
+            color: #495057;
+        }
+        .property-type, .param-type {
+            color: #6c757d;
+            font-style: italic;
+        }
+        .description {
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .toggle-icon {
+            transition: transform 0.3s;
+        }
+        .toggle-icon.rotated {
+            transform: rotate(180deg);
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            background: #e9ecef;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .stat-label {
+            color: #6c757d;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 DSL元数据查看器</h1>
+            <p>Shadowverse Beyond - 可视化DSL编辑器元数据</p>
+        </div>
+        
+        <div class="content">
+            <div id="loading" class="loading">
+                正在加载DSL元数据...
+            </div>
+            
+            <div id="error" class="error" style="display: none;">
+            </div>
+            
+            <div id="content" style="display: none;">
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-number" id="objectCount">0</div>
+                        <div class="stat-label">上下文对象</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="propertyCount">0</div>
+                        <div class="stat-label">属性总数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="functionCount">0</div>
+                        <div class="stat-label">DSL函数</div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">🏗️ 上下文对象</div>
+                    <div id="contextObjects"></div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">⚡ DSL函数</div>
+                    <div id="functions"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API基础URL
+        const API_BASE = 'http://localhost:5000/api';
+        
+        // 加载DSL元数据
+        async function loadDslMetadata() {
+            try {
+                const response = await fetch(`${API_BASE}/dslmetadata`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const metadata = await response.json();
+                displayMetadata(metadata);
+                
+            } catch (error) {
+                console.error('加载DSL元数据失败:', error);
+                showError(`加载失败: ${error.message}`);
+            }
+        }
+        
+        // 显示元数据
+        function displayMetadata(metadata) {
+            // 隐藏加载提示
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+            
+            // 更新统计信息
+            const totalProperties = metadata.contextObjects.reduce((sum, obj) => sum + obj.properties.length, 0);
+            document.getElementById('objectCount').textContent = metadata.contextObjects.length;
+            document.getElementById('propertyCount').textContent = totalProperties;
+            document.getElementById('functionCount').textContent = metadata.functions.length;
+            
+            // 显示上下文对象
+            displayContextObjects(metadata.contextObjects);
+            
+            // 显示函数
+            displayFunctions(metadata.functions);
+        }
+        
+        // 显示上下文对象
+        function displayContextObjects(objects) {
+            const container = document.getElementById('contextObjects');
+            container.innerHTML = '';
+            
+            objects.forEach(obj => {
+                const card = createObjectCard(obj);
+                container.appendChild(card);
+            });
+        }
+        
+        // 创建对象卡片
+        function createObjectCard(obj) {
+            const card = document.createElement('div');
+            card.className = 'object-card';
+            
+            const header = document.createElement('div');
+            header.className = 'card-header';
+            header.innerHTML = `
+                <span>${obj.name} (${obj.displayName}) - ${obj.properties.length}个属性</span>
+                <span class="toggle-icon">▼</span>
+            `;
+            
+            const content = document.createElement('div');
+            content.className = 'card-content';
+            content.innerHTML = `
+                <div class="description">${obj.description}</div>
+                <div style="margin-top: 15px;">
+                    <strong>类型:</strong> ${obj.typeName}
+                </div>
+                <div style="margin-top: 15px;">
+                    <strong>属性列表:</strong>
+                    <div style="margin-top: 10px;">
+                        ${obj.properties.map(prop => `
+                            <div class="property-item">
+                                <div class="property-name">${prop.name} (${prop.displayName})</div>
+                                <div class="property-type">类型: ${prop.typeName}</div>
+                                <div class="description">${prop.description}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            
+            // 添加点击事件
+            header.addEventListener('click', () => {
+                const isActive = content.classList.contains('active');
+                content.classList.toggle('active');
+                const icon = header.querySelector('.toggle-icon');
+                icon.classList.toggle('rotated');
+            });
+            
+            card.appendChild(header);
+            card.appendChild(content);
+            
+            return card;
+        }
+        
+        // 显示函数
+        function displayFunctions(functions) {
+            const container = document.getElementById('functions');
+            container.innerHTML = '';
+            
+            functions.forEach(func => {
+                const card = createFunctionCard(func);
+                container.appendChild(card);
+            });
+        }
+        
+        // 创建函数卡片
+        function createFunctionCard(func) {
+            const card = document.createElement('div');
+            card.className = 'function-card';
+            
+            const header = document.createElement('div');
+            header.className = 'card-header';
+            header.innerHTML = `
+                <span>${func.name} - ${func.parameters.length}个参数</span>
+                <span class="toggle-icon">▼</span>
+            `;
+            
+            const content = document.createElement('div');
+            content.className = 'card-content';
+            content.innerHTML = `
+                <div class="description">${func.description}</div>
+                <div style="margin-top: 15px;">
+                    <strong>返回类型:</strong> ${func.returnTypeName}
+                </div>
+                <div style="margin-top: 15px;">
+                    <strong>参数列表:</strong>
+                    <div style="margin-top: 10px;">
+                        ${func.parameters.map(param => `
+                            <div class="param-item">
+                                <div class="param-name">${param.name}${param.isOptional ? ' (可选)' : ''}</div>
+                                <div class="param-type">类型: ${param.typeName}</div>
+                                <div class="description">${param.description}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            
+            // 添加点击事件
+            header.addEventListener('click', () => {
+                const isActive = content.classList.contains('active');
+                content.classList.toggle('active');
+                const icon = header.querySelector('.toggle-icon');
+                icon.classList.toggle('rotated');
+            });
+            
+            card.appendChild(header);
+            card.appendChild(content);
+            
+            return card;
+        }
+        
+        // 显示错误
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+        
+        // 页面加载完成后开始加载数据
+        document.addEventListener('DOMContentLoaded', loadDslMetadata);
+    </script>
+</body>
+</html>

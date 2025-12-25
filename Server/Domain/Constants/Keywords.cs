@@ -5,43 +5,98 @@
 // - 动态效果与Buff系统: 文档/05-游戏系统/10-动态效果与Buff系统.md
 //
 
+using System.ComponentModel;
+using System;
+
 namespace ShadowverseBeyond.Server.Domain.Constants
 {
     public enum CardKeyword
     {
-        None = 0, Storm = 1, Ward = 2, Bane = 3, Rush = 4, Ambush = 5, Drain = 6,
-        Countdown = 7, Aura = 8, Pressure = 9, Freeze = 10, Shield = 11, Charge = 12,
+        [Description("无")]
+        None = 0,
+        [Description("疾馳")]
+        Storm = 1,
+        [Description("守护")]
+        Ward = 2,
+        [Description("必杀")]
+        Bane = 3,
+        [Description("突进")]
+        Rush = 4,
+        [Description("潜行")]
+        Ambush = 5,
+        [Description("吸血")]
+        Drain = 6,
+        [Description("倒数")]
+        Countdown = 7,
+        [Description("灵气")]
+        Aura = 8,
+        [Description("威懾")]
+        Pressure = 9,
+        [Description("無法攻擊")]
+        Shackle = 10,
+        [Description("屏障")]
+        Shield = 11,
+        [Description("无法被破坏")]
         DestroyResist = 20,
+        [Description("无法被消失")]
         VanishResist = 21,
+        [Description("免费进化")]
         FreeEvolve = 22,
+        [Description("无法进化")]
         BanEvolve = 23,
     }
 
     public enum EffectKeyword
     {
+        [Description("无")]
         None = 0,
+        [Description("系统")]
+        System = 1,
+        [Description("入场曲")]
         Fanfare = 101,
+        [Description("谢幕曲")]
         Lastword = 102,
+        [Description("攻击时")]
         AttackEffect = 103,
+        [Description("交战时")]
         FightEffect = 104,
+        [Description("进化时")]
         EvolveEffect = 105,
+        [Description("连击")]
         Combo = 106,
+        [Description("协作")]
         Rally = 107,
+        [Description("魔力增幅")]
         SpellBoost = 108,
+        [Description("觉醒")]
         Awake = 109,
+        [Description("死灵术")]
         Necromance = 110,
+        [Description("复仇")]
         Venge = 111,
+        [Description("共鸣")]
         Reson = 112,
+        [Description("渴望")]
         Eager = 113,
+        [Description("土之秘术")]
         EarthRitual = 114,
+        [Description("爆能强化")]
         Enhance = 115,
+        [Description("葬送")]
         Bury = 116,
+        [Description("亡者召还")]
         Reanimate = 117,
+        [Description("激奏")]
         Accelerate = 118,
+        [Description("结晶")]
         Crystalize = 119,
+        [Description("漫游")]
         Travel = 120,
+        [Description("间奏")]
         Intromezzo = 121,
+        [Description("狂乱")]
         Wrath = 122,
+        [Description("抉择")]
         Choose = 123
     }
 
@@ -52,6 +107,18 @@ namespace ShadowverseBeyond.Server.Domain.Constants
     public static class Keywords
     {
         // 字符串常量已移除，请使用 CardKeyword 和 EffectKeyword 枚举
+
+        public static EffectKeyword ParseEffectKeywordOrDefault(string? keyword, EffectKeyword defaultValue = EffectKeyword.None)
+        {
+            if (string.IsNullOrWhiteSpace(keyword))
+            {
+                return defaultValue;
+            }
+
+            return Enum.TryParse<EffectKeyword>(keyword, ignoreCase: true, out var parsed)
+                ? parsed
+                : defaultValue;
+        }
 
         /// <summary>
         /// 检查卡牌关键字是否为防御相关关键字

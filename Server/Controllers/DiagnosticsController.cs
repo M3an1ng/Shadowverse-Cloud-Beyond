@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
-using ShadowverseBeyond.Server.Services.Abstractions;
+using ShadowverseBeyond.Server.Services;
+using System;
+using System.Collections.Generic;
+using ShadowverseBeyond.Server.Domain.Abilities;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -10,15 +13,29 @@ namespace ShadowverseBeyond.Server.Controllers
     [Route("api/[controller]")]
     public class DiagnosticsController : ControllerBase
     {
-        private readonly IGameDataProvider _gameDataProvider;
         private readonly ILogger<DiagnosticsController> _logger;
-
-        public DiagnosticsController(
-            IGameDataProvider gameDataProvider,
-            ILogger<DiagnosticsController> logger)
+        public DiagnosticsController(ILogger<DiagnosticsController> logger)
         {
-            _gameDataProvider = gameDataProvider;
             _logger = logger;
+        }
+
+        /// <summary>
+        /// 获取所有运行时能力配置
+        /// </summary>
+        /// <returns>所有运行时能力配置的字典</returns>
+        [HttpGet("abilities")]
+        public ActionResult<IReadOnlyDictionary<int, List<AbilityConfig>>> GetAllAbilities()
+        {
+            try
+            {
+                var abilities = GameDataProvider.Instance.GetAllAbilityConfigs();
+                return Ok(abilities);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving all ability configs");
+                return StatusCode(500, new { error = "Failed to retrieve ability configs" });
+            }
         }
 
         /// <summary>
@@ -30,11 +47,11 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             try
             {
-                var stats = _gameDataProvider.GetCacheStatistics();
-                
+                var stats = GameDataProvider.Instance.GetCacheStatistics();
+
                 var result = new
                 {
-                    IsInitialized = _gameDataProvider.IsInitialized,
+                    IsInitialized = GameDataProvider.Instance.IsInitialized,
                     CardDefinitionCount = stats.CardDefinitionCount,
                     AbilityConfigCount = stats.AbilityConfigCount,
                     BuffDefinitionCount = stats.BuffDefinitionCount,
@@ -47,7 +64,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     CacheHitRatio = Math.Round(stats.CacheHitRatio * 100, 2),
                     Performance = new
                     {
-                        Status = _gameDataProvider.IsInitialized ? "Optimized" : "Not Initialized",
+                        Status = GameDataProvider.Instance.IsInitialized ? "Optimized" : "Not Initialized",
                         DatabaseQueriesEliminated = "All runtime card definition and ability config queries",
                         ExpectedPerformanceGain = "Significant reduction in I/O latency"
                     }
@@ -75,10 +92,10 @@ namespace ShadowverseBeyond.Server.Controllers
             try
             {
                 var startTime = DateTime.UtcNow;
-                await _gameDataProvider.RefreshCacheAsync();
+                await GameDataProvider.Instance.RefreshCacheAsync();
                 var duration = DateTime.UtcNow - startTime;
 
-                var stats = _gameDataProvider.GetCacheStatistics();
+                var stats = GameDataProvider.Instance.GetCacheStatistics();
 
                 var result = new
                 {
@@ -112,17 +129,17 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             try
             {
-                var stats = _gameDataProvider.GetCacheStatistics();
-                
+                var stats = GameDataProvider.Instance.GetCacheStatistics();
+
                 var result = new
                 {
-                    OptimizationEnabled = _gameDataProvider.IsInitialized,
+                    OptimizationEnabled = GameDataProvider.Instance.IsInitialized,
                     OptimizationDetails = new
                     {
                         DatabaseQueriesEliminated = new[]
                         {
                             "CardDefinition loading in GameService.CreateGameAsync",
-                            "CardDefinition loading in GameService.CheckPlayabilityAsync", 
+                            "CardDefinition loading in GameService.CheckPlayabilityAsync",
                             "CardDefinition loading in GameService.FetchCardDataAsync",
                             "AbilityConfig loading in GameService.ProcessCardPlayAbilitiesAsync",
                             "AbilityConfig loading in GameService.CheckPlayabilityAsync",

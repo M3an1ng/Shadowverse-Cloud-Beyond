@@ -11,11 +11,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
     public interface IConditionEvaluator
     {
         /// <summary>
-        /// Asynchronously evaluates a condition based on the provided configuration and context.
+        /// Synchronously evaluates a condition based on the provided configuration and context.
         /// </summary>
         /// <param name="config">The static configuration defining the condition to evaluate.</param>
         /// <param name="context">The unified game context containing game state, triggering event, source card, etc.</param>
         /// <returns>True if the condition is met, false otherwise.</returns>
-        Task<bool> EvaluateAsync(ConditionConfig config, GameContext context);
+        bool Evaluate(ConditionConfig config, GameContext context);
     }
 }

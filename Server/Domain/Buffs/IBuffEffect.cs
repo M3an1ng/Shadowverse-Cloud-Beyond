@@ -1,5 +1,6 @@
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For StatType, ModifierLayer etc. if defined there
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities; // For CardInstance etc.
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
@@ -35,10 +36,10 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     /// </summary>
     public class KeywordBuffEffect : IBuffEffect
     {
-        public List<string> GrantedKeywords { get; init; } = new();
+        public List<CardKeyword> GrantedKeywords { get; init; } = new();
         // public List<string> RemovedKeywords { get; init; } = new(); // Optional: If buffs can remove keywords
 
-        public KeywordBuffEffect(List<string> grantedKeywords)
+        public KeywordBuffEffect(List<CardKeyword> grantedKeywords)
         {
             GrantedKeywords = grantedKeywords ?? throw new ArgumentNullException(nameof(grantedKeywords));
         }
@@ -58,6 +59,24 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public AbilityBuffEffect(List<AbilityConfig> grantedAbilityConfigs)
         {
             GrantedAbilityConfigs = grantedAbilityConfigs ?? throw new ArgumentNullException(nameof(grantedAbilityConfigs));
+        }
+    }
+
+
+    /// <summary>
+    /// A buff effect that removes (suppresses) specific keywords from a card.
+    /// This effect does not grant stats or keywords; it only negates them.
+    /// </summary>
+    public class RemoveKeywordBuffEffect : IBuffEffect
+    {
+        /// <summary>
+        /// A list of keywords that this effect will remove or suppress.
+        /// </summary>
+        public IReadOnlyList<CardKeyword> KeywordsToRemove { get; }
+
+        public RemoveKeywordBuffEffect(IEnumerable<CardKeyword> keywordsToRemove)
+        {
+            KeywordsToRemove = keywordsToRemove?.ToList().AsReadOnly() ?? new List<CardKeyword>().AsReadOnly();
         }
     }
 

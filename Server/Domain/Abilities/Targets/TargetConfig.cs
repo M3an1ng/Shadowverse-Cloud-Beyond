@@ -12,21 +12,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
     public class TargetConfig
     {
         /// <summary>
-        /// 选择器类型
-        /// </summary>
-        public SelectorType SelectorType { get; set; } = SelectorType.Self; // Default might change
-
-        /// <summary>
         /// 选择器描述
         /// </summary>
-        public string Description { get; set; } = string.Empty;
+        //public string Description { get; set; } = string.Empty;
 
         /// <summary>
         /// 卡牌查询配置，用于定义目标池、筛选、排序和数量限制。
-        /// 主要用于 SelectorType.Self (隐式查询) 或其他需要查询的类型。
-        /// PlayerChoice 类型也可能使用它来定义可选的目标池。
         /// </summary>
-        public CardQueryConfig Query { get; set; } = new();
+        public QueryConfig Query { get; set; } = new();
 
         // Removed TargetPool, Filters, Count, Ordering properties as their functionality
         // is now handled by the embedded CardQueryConfig 'Query'.
@@ -37,17 +30,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public FailureHandling OnFailure { get; set; } = FailureHandling.AbortAbility;
 
         /// <summary>
-        /// 子选择器列表（用于Composite类型）
+        /// 指示在可玩性检查期间，是否必须至少存在一个有效的目标。
+        /// 如果为 true，且找不到任何有效目标，则拥有此能力（且需要满足此目标）的卡牌将被视为不可用。
         /// </summary>
-        public List<TargetConfig> SubSelectors { get; set; } = new();
+        public bool RequireValidTarget { get; set; } = false;
 
         /// <summary>
-        /// 变量名（用于FromVariable类型）
-        /// </summary>
-        public string? VariableName { get; set; }
-
-        /// <summary>
-        /// 玩家选择的具体配置（仅当 SelectorType 为 PlayerChoice 时有效）
+        /// 玩家选择的具体配置
         /// </summary>
         public PlayerChoiceConfig? PlayerChoiceOptions { get; set; }
     }
@@ -78,7 +67,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// <summary>
         /// 是否自动选择
         /// </summary>
-        public bool AutoSelect { get; set; } = true;
+        public bool AutoSelect { get; set; } = false;
 
         /// <summary>
         /// 玩家选择的最小数量限制
@@ -87,8 +76,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
         /// <summary>
         /// 玩家选择的最大数量限制
-        /// 如果为null，则使用Query.SelectionOperation中的CountSource作为上限
         /// </summary>
-        public int? MaxCount { get; set; } = null;
+        public int MaxCount { get; set; } = 1;
     }
 }

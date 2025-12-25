@@ -10,64 +10,55 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Interfaces;
-using ShadowverseBeyond.Server.Services.Abstractions;
+using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
+    [EffectHandler(EffectType.Evolve)]
     public class EvolveEffectHandler : EffectHandlerBase<EvolveEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
-        private readonly IGameDataProvider _gameDataProvider;
-
         public EvolveEffectHandler(
             ILogger<EvolveEffectHandler> logger,
-            ITargetProcessingService targetProcessingService,
-            IGameDataProvider gameDataProvider)
+            ITargetProcessingService targetProcessingService)
             : base(logger)
         {
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
-            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, EvolveEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, EvolveEffectParams parameters)
         {
             const string effectName = "EvolveEffect";
-            Logger.LogDebug("{EffectName}: Starting pure evolution transformation.", effectName);
+            Logger.LogDebug("{EffectName}: Starting evolution effect processing.", effectName);
 
-            Func<CardInstance, GameContext, Task<DomainOperationResult>> evolveAction =
-                (card, ctx) =>
+            Func<TargetInfo, GameContext, DomainOperationResult> createEvolveActionEventAction =
+                (targetInfo, ctx) =>
                 {
-                    var ownerPlayer = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
+                    var result = new DomainOperationResult();
+                    if (targetInfo.Card == null)
+                    {
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Evolve target is not a valid card." };
+                    }
+
+                    var cardToEvolve = targetInfo.Card;
+                    var ownerPlayer = ctx.CurrentGameState.GetPlayerState(cardToEvolve.OwnerPlayerId);
                     if (ownerPlayer == null)
                     {
-                        Logger.LogError("{EffectName}: Could not find owner PlayerState for card {CardId}.", effectName, card.InstanceId);
-                        return Task.FromResult(new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found." });
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found for target card." };
                     }
 
-                    // 1. Intrinsic Card Validation (using the new pure method)
-                    if (!card.CanEvolve())
-                    {
-                        return Task.FromResult(new DomainOperationResult { Success = false, ErrorMessage = "Card cannot evolve (is already evolved or has no evolution form)." });
-                    }
-
-                    // 2. Data Fetching (Handler's responsibility)
-                    // EvolveDefinitionId is guaranteed to have a value because of the CanEvolve() check above.
-                    var evolvedDefinition = _gameDataProvider.GetCardDefinition(card.EvolveDefinitionId!.Value);
-                    if (evolvedDefinition == null)
-                    {
-                        return Task.FromResult(new DomainOperationResult { Success = false, ErrorMessage = $"Evolved card definition for ID {card.EvolveDefinitionId.Value} not found." });
-                    }
-
-                    // 3. State Change (Entity's responsibility)
-                    // We call the simplified, pure transformation method on the entity.
-                    var domainResult = ownerPlayer.EvolveCard(card, evolvedDefinition);
-                    return Task.FromResult(domainResult);
+                    return ownerPlayer.EvolveCard(cardToEvolve);
                 };
 
-            var serviceResult = await _targetProcessingService.ProcessTargetsAsync(
+            var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                null, // No specific target selector config, targets are passed in context
-                evolveAction,
+                effect.SelectedTargets,
+                createEvolveActionEventAction,
                 effectName);
 
             if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))

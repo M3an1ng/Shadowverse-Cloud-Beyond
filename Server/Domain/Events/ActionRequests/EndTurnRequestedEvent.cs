@@ -1,19 +1,21 @@
-using ShadowverseBeyond.Server.Dtos.SignalR.Events;
-using AutoMapper;
+using System;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
-using ShadowverseBeyond.Server.Dtos;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using ShadowverseBeyond.Server.Domain.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 {
-    /// <summary>
-    /// Represents a player's request to end their turn.
-    /// This event triggers the turn ending sequence within the event loop.
-    /// </summary>
-    public class EndTurnRequestedEvent : GameEventBase
+    [GameEventMetadata(
+        "结束回合请求",
+        "当玩家请求结束回合时触发的事件。",
+        EventType.EndTurnRequested,
+        AbilityEditorCategories.SystemRequestId,
+        AbilityEditorCategories.SystemRequestLabel,
+        EventMetadataVisibility.System)]
+    public class EndTurnRequestedEvent : GameEventBase, ICommittableEvent
     {
+        [GameEventParameter("玩家ID", "发起结束回合请求的玩家ID。")]
         public Guid PlayerId { get; }
 
         public EndTurnRequestedEvent(Guid playerId)
@@ -22,13 +24,54 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             PlayerId = playerId;
         }
 
-
-        public GameEventDto? ToDto(IMapper mapper)
+        public DomainOperationResult Commit(GameContext context)
         {
-            _logger.LogWarning("Attempted to convert EndTurnRequestedEvent to DTO. This event type is typically not broadcast.");
-            return null;
-        }
+            var result = new DomainOperationResult();
 
-        private static readonly ILogger _logger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<EndTurnRequestedEvent>();
+            // =================================================================
+            // 1. Validation Logic from EndTurnAbility.CheckConditions
+            // =================================================================
+
+            if (PlayerId != context.CurrentGameState.CurrentPlayerId)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Player {PlayerId} attempted to end turn, but active player is {context.CurrentGameState.CurrentPlayerId}.";
+                return result;
+            }
+
+            if (context.CurrentGameState.IsGameOver)
+            {
+                result.Success = false;
+                result.ErrorMessage = "Game is already over. Cannot end turn.";
+                return result;
+            }
+
+            // =================================================================
+            // 2. Event Creation Logic from EndTurnAbility.CreateEffectsAsync
+            // =================================================================
+
+            var currentPlayerState = context.CurrentGameState.GetPlayerState(PlayerId);
+            if (currentPlayerState == null)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Could not find current player state for PlayerId {PlayerId}.";
+                return result;
+            }
+
+            var nextPlayerState = context.CurrentGameState.GetOpponentPlayerState(PlayerId);
+            if (nextPlayerState == null)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Could not determine the next player. CurrentPlayerId: {PlayerId}";
+                return result;
+            }
+
+            // Generate the two events that represent the full turn transition
+            result.GeneratedEvents.Add(new TurnEndEvent(currentPlayerState));
+            result.GeneratedEvents.Add(new TurnStartEvent(nextPlayerState));
+            result.Success = true;
+
+            return result;
+        }
     }
 }

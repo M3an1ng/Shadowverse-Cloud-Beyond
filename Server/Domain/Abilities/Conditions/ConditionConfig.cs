@@ -17,12 +17,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
         /// <summary>
         /// 条件名称
         /// </summary>
-        public string Name { get; set; } = string.Empty;
+        //public string Name { get; set; } = string.Empty;
 
         /// <summary>
         /// 逻辑操作符（用于复合条件，如果保留该类型）
         /// </summary>
-        public LogicOperator Logic { get; set; } = LogicOperator.And;
+        //public LogicOperator Logic { get; set; } = LogicOperator.And;
 
         /// <summary>
         /// 条件表达式（DSL语法）

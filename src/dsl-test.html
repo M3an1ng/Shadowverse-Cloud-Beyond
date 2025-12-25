@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSL编辑器测试</title>
+    <link rel="stylesheet" href="styles/ability-editor.css">
+    <link rel="stylesheet" href="styles/DslEditor.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #2c3e50;
+            color: #ecf0f1;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #34495e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .test-section {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #4a5f7a;
+            border-radius: 6px;
+            background: rgba(52, 152, 219, 0.05);
+        }
+        
+        .test-section h3 {
+            margin-top: 0;
+            color: #3498db;
+        }
+        
+        .metadata-info {
+            background: #2c3e50;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .status {
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        
+        .status.success {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .status.error {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .status.loading {
+            background: #f39c12;
+            color: white;
+        }
+        
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>DSL编辑器测试页面</h1>
+        
+        <div class="test-section">
+            <h3>1. 元数据加载测试</h3>
+            <button onclick="testMetadataLoading()">测试元数据加载</button>
+            <div id="metadata-status" class="status loading">等待测试...</div>
+            <div id="metadata-info" class="metadata-info"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2. DSL编辑器功能测试</h3>
+            <button onclick="testDslEditor()">初始化DSL编辑器</button>
+            <button onclick="debugNodeTree()">调试节点树</button>
+            <button onclick="debugAvailableOptions()">调试可用选项</button>
+            <div id="dsl-status" class="status loading">等待测试...</div>
+            <div id="dsl-editor-container"></div>
+
+            <!-- 新增：实时状态显示 -->
+            <div class="real-time-debug" style="background: #1a1a1a; border: 2px solid #333; border-radius: 6px; padding: 15px; margin: 10px 0; color: #fff;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h4 style="color: #00ff00; margin: 0; font-family: monospace;">🔍 实时状态监控</h4>
+                    <button onclick="forceUpdateDebug()" style="background: #333; color: #fff; border: 1px solid #555; padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;">手动刷新</button>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold; color: #ffff00;">主表达式AST:</label>
+                    <span id="main-ast-display" style="color: #00ffff; word-break: break-all;">(null)</span>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold; color: #ffff00;">当前工作区AST:</label>
+                    <span id="workspace-ast-display" style="color: #00ffff; word-break: break-all;">(null)</span>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold; color: #ffff00;">astRoot:</label>
+                    <span id="astroot-display" style="color: #00ffff; word-break: break-all;">(null)</span>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold; color: #ffff00;">编辑路径栈:</label>
+                    <span id="editing-path-display" style="color: #ff9900; word-break: break-all;">[]</span>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold; color: #ffff00;">当前表达式:</label>
+                    <span id="current-expression-display" style="color: #00ff00; word-break: break-all;">(空)</span>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold; color: #ffff00;">高亮目标:</label>
+                    <span id="highlight-target-display" style="color: #ff6699; word-break: break-all;">(null)</span>
+                </div>
+                <div class="debug-row" style="margin: 8px 0; font-family: 'Courier New', monospace; font-size: 11px; color: #888;">
+                    <label style="display: inline-block; width: 140px; font-weight: bold;">最后更新:</label>
+                    <span id="last-update-display">--:--:--</span>
+                </div>
+            </div>
+
+            <div id="dsl-result" class="metadata-info"></div>
+            <div id="debug-info" class="metadata-info"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3. 表达式构建测试</h3>
+            <button onclick="clearDslEditor()">清空编辑器</button>
+            <button onclick="setTestExpression()">设置测试表达式</button>
+            <button onclick="testDeepNesting()">测试深层嵌套</button>
+            <button onclick="testListQuery()">测试集合查询</button>
+            <div id="expression-info" class="metadata-info"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>4. 表达式解析测试 (验证修复)</h3>
+            <button onclick="testExpressionParsing()">测试.query()表达式解析</button>
+            <div id="parser-status" class="status loading">等待测试...</div>
+            <div id="parser-editor-container"></div>
+            <div id="parser-result" class="metadata-info"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { metadataManager } from './metadataManager.js';
+        import { DslEditor } from './components/DslEditor.js';
+
+        let dslEditor = null;
+        let parserTestEditor = null;
+
+        // 测试元数据加载
+        window.testMetadataLoading = async function() {
+            const statusEl = document.getElementById('metadata-status');
+            const infoEl = document.getElementById('metadata-info');
+            
+            try {
+                statusEl.textContent = '正在加载元数据...';
+                statusEl.className = 'status loading';
+                
+                const metadata = await metadataManager.initialize();
+                
+                statusEl.textContent = '元数据加载成功！';
+                statusEl.className = 'status success';
+                
+                // 显示DSL元数据信息
+                const dslInfo = {
+                    contextObjects: metadata.dsl?.contextObjects?.length || 0,
+                    functions: metadata.dsl?.functions?.length || 0,
+                    typeMetadata: Object.keys(metadata.dsl?.typeMetadata || {}).length,
+                    contextObjectNames: metadata.dsl?.contextObjects?.map(obj => obj.name) || [],
+                    functionNames: metadata.dsl?.functions?.map(func => func.name) || [],
+                    typeNames: Object.keys(metadata.dsl?.typeMetadata || {})
+                };
+
+                infoEl.textContent = JSON.stringify(dslInfo, null, 2);
+                
+                console.log('完整的DSL元数据:', metadata.dsl);
+                
+            } catch (error) {
+                statusEl.textContent = `元数据加载失败: ${error.message}`;
+                statusEl.className = 'status error';
+                infoEl.textContent = error.stack || error.toString();
+                console.error('元数据加载错误:', error);
+            }
+        };
+
+        // 测试DSL编辑器
+        window.testDslEditor = async function() {
+            const statusEl = document.getElementById('dsl-status');
+            const containerEl = document.getElementById('dsl-editor-container');
+            const resultEl = document.getElementById('dsl-result');
+            
+            try {
+                statusEl.textContent = '正在初始化DSL编辑器...';
+                statusEl.className = 'status loading';
+                
+                // 确保元数据已加载
+                await metadataManager.initialize();
+                
+                // 创建DSL编辑器
+                dslEditor = new DslEditor();
+                window.dslEditor = dslEditor; // 设置全局引用
+
+                // 渲染编辑器
+                await dslEditor.render(containerEl, '', (expression) => {
+                    resultEl.textContent = `当前表达式: ${expression}`;
+                    console.log('DSL表达式变化:', expression);
+                    // 表达式变化时立即更新状态
+                    updateRealTimeDebug();
+                });
+
+                statusEl.textContent = 'DSL编辑器初始化成功！';
+                statusEl.className = 'status success';
+
+                // 立即触发一次状态更新
+                console.log('DSL编辑器初始化完成，设置全局引用');
+                setTimeout(() => {
+                    updateRealTimeDebug();
+                }, 200);
+                
+            } catch (error) {
+                statusEl.textContent = `DSL编辑器初始化失败: ${error.message}`;
+                statusEl.className = 'status error';
+                resultEl.textContent = error.stack || error.toString();
+                console.error('DSL编辑器错误:', error);
+            }
+        };
+
+        // 清空DSL编辑器
+        window.clearDslEditor = function() {
+            if (dslEditor) {
+                dslEditor.clear();
+                document.getElementById('expression-info').textContent = '编辑器已清空';
+            } else {
+                alert('请先初始化DSL编辑器');
+            }
+        };
+
+        // 设置测试表达式
+        window.setTestExpression = function() {
+            if (dslEditor) {
+                const testExpression = 'context.currentGameState.status';
+                dslEditor.setExpression(testExpression);
+                document.getElementById('expression-info').textContent = `已设置测试表达式: ${testExpression}`;
+            } else {
+                alert('请先初始化DSL编辑器');
+            }
+        };
+
+        // 测试深层嵌套
+        window.testDeepNesting = function() {
+            if (dslEditor) {
+                console.log('Testing deep nesting...');
+                // 模拟用户点击选择深层属性
+                const testPath = 'context.currentGameState.allField';
+                dslEditor.setExpression(testPath);
+                document.getElementById('expression-info').textContent = `测试深层嵌套: ${testPath}`;
+            } else {
+                alert('请先初始化DSL编辑器');
+            }
+        };
+
+        // 测试集合查询
+       window.testListQuery = async function() {
+           if (!dslEditor) {
+               alert('请先初始化DSL编辑器');
+               return;
+           }
+
+           const infoEl = document.getElementById('expression-info');
+           infoEl.textContent = '开始测试集合查询...';
+
+           try {
+               // 1. 清空编辑器
+               dslEditor.clear();
+               await new Promise(r => setTimeout(r, 100));
+
+               // 2. 选择数据源 player.hand
+               const playerHandOption = dslEditor.getDataSourceOptions().find(o => o.value === 'player.hand');
+               dslEditor.addNode(playerHandOption);
+               await new Promise(r => setTimeout(r, 100));
+
+               // 3. 保存 player.hand
+               dslEditor.saveWorkspace();
+               await new Promise(r => setTimeout(r, 100));
+
+               // 4. 选择 .query() 操作
+               const queryOption = dslEditor.getCurrentEditingOptions().find(o => o.type === 'listQuery');
+               dslEditor.addNode(queryOption);
+               await new Promise(r => setTimeout(r, 100));
+
+               // --- 现在应该进入了 filterExpression 的编辑模式 ---
+               // 5. 选择 self.cost
+               const selfOption = dslEditor.getDataSourceOptions().find(o => o.value === 'self');
+               dslEditor.addNode(selfOption);
+               await new Promise(r => setTimeout(r, 100));
+               
+               const costOption = dslEditor.getCurrentEditingOptions().find(o => o.value === 'cost');
+               dslEditor.addNode(costOption);
+               await new Promise(r => setTimeout(r, 100));
+
+               // 6. 保存 self.cost
+               dslEditor.saveWorkspace();
+               await new Promise(r => setTimeout(r, 100));
+
+               // 7. 选择 > 操作符
+               const greaterThanOption = dslEditor.getCurrentEditingOptions().find(o => o.operator === '>');
+               dslEditor.addNode(greaterThanOption);
+               await new Promise(r => setTimeout(r, 100));
+
+               // 8. 选择静态值
+               const staticValueOption = dslEditor.getCurrentEditingOptions().find(o => o.type === 'staticValue');
+               dslEditor.addNode(staticValueOption);
+               await new Promise(r => setTimeout(r, 100));
+
+               // 9. 输入值 3
+               const inputNode = dslEditor.workspaceAST;
+               inputNode.metadata.staticValue = '3';
+               inputNode.value = '3';
+               inputNode.returnType = 'Int32';
+               inputNode.metadata.isAwaitingInput = false;
+               inputNode.updateCompleteness();
+               if (inputNode.parent) inputNode.parent.updateCompleteness();
+               dslEditor.updateExpressionFromAST();
+               await new Promise(r => setTimeout(r, 100));
+
+               // 10. 保存静态值
+               dslEditor.saveWorkspace();
+               await new Promise(r => setTimeout(r, 100));
+
+               // 11. 保存整个查询表达式
+               dslEditor.saveWorkspace();
+               await new Promise(r => setTimeout(r, 100));
+
+               const finalExpression = dslEditor.virtualRoot.main.toExpression();
+               const expectedExpression = 'player.hand.query((self.cost > 3))';
+
+               if (finalExpression === expectedExpression) {
+                   infoEl.textContent = `测试成功！ 最终表达式: ${finalExpression}`;
+                   console.log('集合查询测试成功！');
+               } else {
+                   throw new Error(`表达式不匹配！\n预期: ${expectedExpression}\n实际: ${finalExpression}`);
+               }
+
+           } catch (error) {
+               infoEl.textContent = `测试失败: ${error.message}`;
+               console.error('集合查询测试失败:', error);
+           }
+       };
+
+        // 调试节点树
+        window.debugNodeTree = function() {
+            if (dslEditor) {
+                const nodeTree = dslEditor.nodeTree;
+                const debugInfo = {
+                    nodeTree: nodeTree,
+                    expression: dslEditor.getExpression(),
+                    returnType: nodeTree?.returnType,
+                    type: nodeTree?.type,
+                    name: nodeTree?.name,
+                    contextObject: nodeTree?.contextObject,
+                    property: nodeTree?.property,
+                    fullPath: nodeTree?.fullPath,
+                    isNested: nodeTree?.isNested
+                };
+
+                document.getElementById('debug-info').textContent = JSON.stringify(debugInfo, null, 2);
+                console.log('DSL Editor Debug Info:', debugInfo);
+            } else {
+                alert('请先初始化DSL编辑器');
+            }
+        };
+
+        // 调试可用选项
+        window.debugAvailableOptions = function() {
+            if (dslEditor) {
+                const options = dslEditor.getAvailableOptions();
+                const debugInfo = {
+                    availableOptions: options,
+                    optionsCount: options.length,
+                    nodeTree: dslEditor.nodeTree,
+                    metadata: {
+                        contextObjects: dslEditor.metadata?.dsl?.contextObjects || [],
+                        functions: dslEditor.metadata?.dsl?.functions?.length || 0,
+                        typeMetadata: Object.keys(dslEditor.metadata?.dsl?.typeMetadata || {}).length
+                    },
+                    groupedOptions: dslEditor.groupOptionsByType(options)
+                };
+
+                document.getElementById('debug-info').textContent = JSON.stringify(debugInfo, null, 2);
+                console.log('Available Options Debug Info:', debugInfo);
+                console.log('Context Objects:', dslEditor.metadata?.dsl?.contextObjects);
+            } else {
+                alert('请先初始化DSL编辑器');
+            }
+        };
+
+        // 新增：测试表达式解析
+        window.testExpressionParsing = async function() {
+            const statusEl = document.getElementById('parser-status');
+            const containerEl = document.getElementById('parser-editor-container');
+            const resultEl = document.getElementById('parser-result');
+            
+            const testExpression = "Target.Owner.Hand.Cards.query((self.Cost > 1))";
+            
+            try {
+                statusEl.textContent = `正在使用表达式 "${testExpression}" 初始化编辑器...`;
+                statusEl.className = 'status loading';
+                
+                await metadataManager.initialize();
+                
+                parserTestEditor = new DslEditor();
+                
+                await parserTestEditor.render(containerEl, testExpression, (expression) => {
+                    resultEl.textContent = `当前表达式: ${expression}`;
+                });
+
+                statusEl.textContent = '表达式解析成功！编辑器已加载。';
+                statusEl.className = 'status success';
+                
+                console.log('Parser test editor state:', parserTestEditor);
+
+            } catch (error) {
+                statusEl.textContent = `表达式解析失败: ${error.message}`;
+                statusEl.className = 'status error';
+                resultEl.textContent = error.stack || error.toString();
+                console.error('表达式解析测试错误:', error);
+            }
+        };
+
+        // 页面加载时自动测试元数据
+        window.addEventListener('load', () => {
+            console.log('DSL测试页面已加载');
+        });
+
+        // 实时状态更新函数
+        function updateRealTimeDebug() {
+            try {
+                // 检查编辑器是否存在
+                if (!window.dslEditor) {
+                    // console.log('Debug: dslEditor not found in window');
+                    return;
+                }
+
+                const editor = window.dslEditor;
+                // console.log('Debug: Updating real-time debug, editor found:', !!editor);
+
+                // 格式化AST节点显示
+                function formatAST(node) {
+                    if (!node) return '(null)';
+                    try {
+                        if (node.type === 'value') {
+                            const metadata = node.metadata ? ` [${node.metadata.type || 'unknown'}]` : '';
+                            return `值节点: "${node.value}"${metadata}`;
+                        } else if (node.type === 'operator') {
+                            const left = formatAST(node.leftOperand);
+                            const right = formatAST(node.rightOperand);
+                            return `操作符节点: ${node.operator} (左: ${left}, 右: ${right})`;
+                        }
+                        return `节点类型: ${node.type}`;
+                    } catch (e) {
+                        return `格式化错误: ${e.message}`;
+                    }
+                }
+
+                // 安全获取元素并更新
+                function safeUpdateElement(id, content) {
+                    const element = document.getElementById(id);
+                    if (element) {
+                        element.textContent = content;
+                        // console.log(`Debug: Updated ${id}:`, content);
+                    } else {
+                        console.warn(`Debug: Element ${id} not found`);
+                    }
+                }
+
+                // 更新各个状态显示
+                safeUpdateElement('main-ast-display', formatAST(editor.virtualRoot.main));
+                safeUpdateElement('workspace-ast-display', formatAST(editor.workspaceAST));
+                safeUpdateElement('astroot-display', formatAST(editor.astRoot));
+
+                // 编辑路径栈
+                const pathInfo = editor.editingPath && editor.editingPath.length > 0 ?
+                    `深度${editor.editingPath.length}: [${editor.editingPath.map(p => `${p.slot}@${p.descriptor}`).join(', ')}]` :
+                    '[]';
+                safeUpdateElement('editing-path-display', pathInfo);
+
+                // 当前表达式
+                safeUpdateElement('current-expression-display', editor.expression || '(空)');
+
+                // 高亮目标
+                try {
+                    const highlightTarget = editor.getHighlightTargetNode ? editor.getHighlightTargetNode() : null;
+                    safeUpdateElement('highlight-target-display', formatAST(highlightTarget));
+                } catch (e) {
+                    safeUpdateElement('highlight-target-display', `获取失败: ${e.message}`);
+                }
+
+                // 更新时间戳
+                const now = new Date();
+                const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                safeUpdateElement('last-update-display', timeStr);
+
+                // console.log('Debug: Real-time debug update completed');
+
+            } catch (error) {
+                console.error('Debug: Error in updateRealTimeDebug:', error);
+            }
+        }
+
+        // 移除定期更新，改为事件驱动的静态刷新
+        // setInterval(() => {
+        //     if (window.dslEditor) {
+        //         updateRealTimeDebug();
+        //     }
+        // }, 200);
+
+        // 监听DSL表达式变化事件，立即更新状态
+        window.addEventListener('dslExpressionChanged', (event) => {
+            console.log('DSL表达式变化:', event.detail);
+            if (window.dslEditor) {
+                updateRealTimeDebug();
+            }
+        });
+
+        // 手动触发状态更新的全局函数
+        window.forceUpdateDebug = function() {
+            console.log('手动触发状态更新');
+            updateRealTimeDebug();
+        };
+    </script>
+</body>
+</html>

@@ -36,6 +36,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Action DTOs incl. DebugC
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Added for IConditionFactory
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Added for IEffectExecutor
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Events; // Added for IEventProcessor and PlayCardEvent
 using ShadowverseBeyond.Server.Domain.Factories; // Added for ICardFactory
 using ShadowverseBeyond.Server.Domain.Buffs;
@@ -59,6 +60,7 @@ namespace ShadowverseBeyond.Server.Services
 
         private readonly IGameDataProvider _gameDataProvider; // Inject GameDataProvider for cached data access
         private readonly IPendingActionService _pendingActionService; // Add PendingActionService
+        private readonly IMatchService _matchService;
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
@@ -124,20 +126,6 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, object> _gameLoopCreationLocks = new();
         // Lock objects per game for general game state operations
         private readonly ConcurrentDictionary<string, object> _gameLocks = new();
-        // Define the fixed 20-card test deck list
-        // Updated to use integer IDs
-        private static readonly List<int> _fixedTestDeckCardIds = new List<int>
-        {
-            1001, 1001, 1001, // Goblin x3
-            1002, 1002, 1002, // Fighter x3
-            1005, 1005, 1005, // Shield Guardian x3
-            1006, 1006, 1006, // Bellringer Angel x3 (Assuming F006 is Bellringer Angel with ID 1006)
-            2001, 2001, 2001, // Insight x3
-            2002, 2002, 2002, // Angelic Snipe x3
-            1003,                 // Knight x1
-            1004                  // Heavy Goblin x1 (Assuming F004 is Heavy Goblin with ID 1004)
-        };
-
         // Duplicate declaration removed by Roo.
         // Update constructor signature
         private readonly IClientMethodMapper _clientMethodMapper; // Added field declaration
@@ -152,6 +140,7 @@ namespace ShadowverseBeyond.Server.Services
             IMapper mapper,
             IClientMethodMapper clientMethodMapper,
             IGameDataProvider gameDataProvider,
+            IMatchService matchService,
             IServiceScopeFactory serviceScopeFactory,
             IPendingActionService pendingActionService)
         {
@@ -160,6 +149,7 @@ namespace ShadowverseBeyond.Server.Services
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper));
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
+            _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
         }
@@ -272,8 +262,8 @@ namespace ShadowverseBeyond.Server.Services
 
                         try
                         {
-                            var initialEvent = await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper);
-                            if (initialEvent != null)
+                            var initialEvents = await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper);
+                            if (initialEvents.Count != 0)
                             {
                                 _currentlyProcessingPlayerActionId.AddOrUpdate(gameId, actionWrapper.PlayerId.ToString(), (_, _) => actionWrapper.PlayerId.ToString());
                                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Started transaction for Player {PlayerId}.", gameId, actionWrapper.PlayerId);
@@ -283,9 +273,9 @@ namespace ShadowverseBeyond.Server.Services
                                     var mapper = sp.GetRequiredService<IMapper>();
 
                                     _logger.LogWarning("[STATE_POLLUTION_TRACE] GameService: Creating GameContext for GameId: {GameId} with GameState HashCode: {HashCode}", gameId, gameState.GetHashCode());
-                                    var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, actionWrapper.PlayerId, cancellationToken, initialEvent);
+                                    var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, actionWrapper.PlayerId, cancellationToken, initialEvents[0]);
                                     var transactionService = sp.GetRequiredService<IGameActionTransactionService>();
-                                    var transactionResult = await transactionService.ProcessTransactionAsync(gameContext, new[] { initialEvent });
+                                    var transactionResult = await transactionService.ProcessTransactionAsync(gameContext, initialEvents);
 
                                     // --- NEW: Handle Paused Transaction ---
                                     // The transaction service will now handle its own pauses internally by awaiting player choices.
@@ -406,7 +396,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="actionWrapper">The player action wrapper.</param>
         /// <param name="context">The game action context to add generated domain events to.</param>
         /// <exception cref="GameLogicException">Thrown if the action is invalid based on initial checks.</exception>
-        private async Task<IGameEvent?> ExecutePlayerActionInitialStepAsync(string gameId, PlayerActionWrapper actionWrapper)
+        private async Task<IReadOnlyList<IGameEvent>> ExecutePlayerActionInitialStepAsync(string gameId, PlayerActionWrapper actionWrapper)
         {
             // --- 1. Basic Validation (Requires reading GameState) ---
             GameState? gameState = null;
@@ -416,6 +406,12 @@ namespace ShadowverseBeyond.Server.Services
             {
                 throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game not found: {gameId}");
             }
+
+            if (gameState.IsGameOver && actionWrapper.ActionType != "DebugCommand")
+            {
+                throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game is already over.");
+            }
+
             playerState = gameState.GetPlayerState(actionWrapper.PlayerId);
             if (playerState == null)
             {
@@ -424,10 +420,12 @@ namespace ShadowverseBeyond.Server.Services
 
             // Phase-specific validations
             bool isDebugAction = actionWrapper.ActionType == "DebugCommand";
+            bool isMulliganAction = actionWrapper.ActionType == "SubmitMulligan";
+            bool isAlwaysAllowedAction = actionWrapper.ActionType is "Surrender" or "Disconnect";
 
             if (!isDebugAction)
             {
-                if (actionWrapper.ActionType == "SubmitMulligan")
+                if (isMulliganAction)
                 {
                     // Mulligan validation: Only check phase, not turn (mulligan is simultaneous for both players)
                     if (gameState.Phase != GamePhase.Mulligan)
@@ -437,6 +435,11 @@ namespace ShadowverseBeyond.Server.Services
                     // No turn validation for mulligan - both players can submit simultaneously
                     _logger.LogDebug("[InitialStep:{ActionType}] Mulligan validation passed for Player {PlayerId} during Mulligan phase.",
                         actionWrapper.ActionType, actionWrapper.PlayerId);
+                }
+                else if (isAlwaysAllowedAction)
+                {
+                    _logger.LogDebug("[InitialStep:{ActionType}] Always-allowed action accepted for Player {PlayerId} (Phase: {Phase}).",
+                        actionWrapper.ActionType, actionWrapper.PlayerId, gameState.Phase);
                 }
                 else
                 {
@@ -470,7 +473,8 @@ namespace ShadowverseBeyond.Server.Services
                 actionWrapper.PlayerId,
                 CancellationToken.None // This context is temporary and does not need cancellation.
             );
-            IGameEvent initialEvent;
+
+            var initialEvents = new List<IGameEvent>(capacity: 2);
             switch (actionWrapper.ActionType) // Use the string property
             {
                 // Corrected: Use string literals for case comparison
@@ -480,7 +484,7 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         _logger.LogWarning("🔥 [PLAYCARD_DEBUG] ExecutePlayerActionInitialStepAsync: Creating PlayCardRequestedEvent - Card: {CardUid}, Target: {TargetUid}",
                             playDto.CardUid, playDto.TargetUids?.FirstOrDefault());
-                        initialEvent = new PlayCardRequestedEvent(actionWrapper.PlayerId, playDto);
+                        initialEvents.Add(new PlayCardRequestedEvent(actionWrapper.PlayerId, playDto));
                     }
                     else
                     {
@@ -493,7 +497,7 @@ namespace ShadowverseBeyond.Server.Services
                 case "PerformAttack":
                     if (actionWrapper.ActionData is AttackActionDto attackDto)
                     {
-                        initialEvent = new AttackRequestedEvent(actionWrapper.PlayerId, attackDto);
+                        initialEvents.Add(new AttackRequestedEvent(actionWrapper.PlayerId, attackDto));
                     }
                     else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
                     break;
@@ -507,16 +511,56 @@ namespace ShadowverseBeyond.Server.Services
                 //     break;
 
                 case "EndTurn":
-                    initialEvent = new EndTurnRequestedEvent(actionWrapper.PlayerId);
+                    initialEvents.Add(new EndTurnRequestedEvent(actionWrapper.PlayerId));
                     break;
 
                 case "PerformEvolve":
                     if (actionWrapper.ActionData is EvolveActionDto evolveDto)
                     {
-                        initialEvent = new EvolveRequestedEvent(actionWrapper.PlayerId, evolveDto);
+                        initialEvents.Add(new EvolveRequestedEvent(actionWrapper.PlayerId, evolveDto));
                     }
                     else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
                     break;
+
+                case "PerformSuperEvolve":
+                    if (actionWrapper.ActionData is SuperEvolveActionDto superEvolveDto)
+                    {
+                        initialEvents.Add(new SuperEvolveRequestedEvent(actionWrapper.PlayerId, superEvolveDto));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
+                    break;
+
+                case "RequestAct":
+                    if (actionWrapper.ActionData is ActActionDto actDto)
+                    {
+                        initialEvents.Add(new ActRequestedEvent(actionWrapper.PlayerId, actDto));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
+                    break;
+
+                case "Surrender":
+                {
+                    var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
+                    if (opponent == null || opponent.PlayerId == Guid.Empty)
+                    {
+                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
+                    }
+
+                    initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Surrender"));
+                    break;
+                }
+
+                case "Disconnect":
+                {
+                    var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
+                    if (opponent == null || opponent.PlayerId == Guid.Empty)
+                    {
+                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
+                    }
+
+                    initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Disconnect"));
+                    break;
+                }
 
                 case "SubmitMulligan":
                     // --- Mulligan Debug Logging ---
@@ -538,7 +582,7 @@ namespace ShadowverseBeyond.Server.Services
                     if (actionWrapper.ActionData is List<Guid> cardUids)
                     {
                         // Direct List<Guid> format
-                        initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, cardUids, gameContext);
+                        initialEvents.Add(new MulliganSubmittedEvent(actionWrapper.PlayerId, cardUids, gameContext));
                     }
                     // Handle anonymous object with CardUidsToReplace property (from GameHub)
                     else if (actionWrapper.ActionData != null)
@@ -548,7 +592,7 @@ namespace ShadowverseBeyond.Server.Services
 
                         if (cardUidsProperty != null && cardUidsProperty.GetValue(actionWrapper.ActionData) is List<Guid> extractedCardUids)
                         {
-                            initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, extractedCardUids, gameContext);
+                            initialEvents.Add(new MulliganSubmittedEvent(actionWrapper.PlayerId, extractedCardUids, gameContext));
                         }
                         // Handle JSON element format
                         else if (actionWrapper.ActionData is JsonElement jsonElement && jsonElement.ValueKind == JsonValueKind.Array)
@@ -557,7 +601,7 @@ namespace ShadowverseBeyond.Server.Services
                             {
                                 var deserializedUids = jsonElement.Deserialize<List<Guid>>();
                                 if (deserializedUids == null) throw new ArgumentException("Deserialized card UIDs list is null.");
-                                initialEvent = new MulliganSubmittedEvent(actionWrapper.PlayerId, deserializedUids, gameContext);
+                                initialEvents.Add(new MulliganSubmittedEvent(actionWrapper.PlayerId, deserializedUids, gameContext));
                             }
                             catch (JsonException jex)
                             {
@@ -578,7 +622,23 @@ namespace ShadowverseBeyond.Server.Services
                 case "DebugCommand":
                     if (actionWrapper.ActionData is DebugCommandDto debugDto)
                     {
-                        initialEvent = new DebugCommandEvent(actionWrapper.PlayerId, debugDto);
+                        var parser = serviceProvider.GetRequiredService<IDebugCommandParser>();
+                        var parseResult = parser.Parse(gameState, actionWrapper.PlayerId, debugDto);
+                        if (!parseResult.Success)
+                        {
+                            var message = parseResult.ErrorMessage ?? "debug-error: invalid command";
+                            _logger.LogWarning("[DebugCommand:{GameId}] Parse failed for Player {PlayerId}: {Message}. Command={Command}",
+                                gameId, actionWrapper.PlayerId, message, debugDto.Command);
+
+                            await BroadcastEventToPlayerAsync(
+                                gameId,
+                                actionWrapper.PlayerId,
+                                new LogEventDto(Guid.NewGuid(), "DebugCommand", $"debug-error: {message}", actionWrapper.PlayerId));
+
+                            return Array.Empty<IGameEvent>();
+                        }
+
+                        initialEvents.AddRange(parseResult.GeneratedEvents);
                     }
                     else
                     {
@@ -591,12 +651,14 @@ namespace ShadowverseBeyond.Server.Services
                     throw new NotSupportedException($"Action type '{actionWrapper.ActionType}' is not supported.");
             }
 
-            // --- 3. Return the Event ---
-            _logger.LogDebug("[ExecutePlayerActionInitialStepAsync:{GameId}] Created initial domain event {EventType} for Action {ActionType}",
-                gameId, initialEvent.GetType().Name, actionWrapper.ActionType);
+            if (initialEvents.Count != 0)
+            {
+                _logger.LogDebug("[ExecutePlayerActionInitialStepAsync:{GameId}] Created {Count} initial domain event(s) for Action {ActionType}: {FirstEventType}",
+                    gameId, initialEvents.Count, actionWrapper.ActionType, initialEvents[0].GetType().Name);
+            }
 
             await Task.CompletedTask;
-            return initialEvent;
+            return initialEvents;
         }
 
         /// <summary>
@@ -615,6 +677,93 @@ namespace ShadowverseBeyond.Server.Services
         }
         // --- End Added GetGameStateAsync Implementation ---
 
+        private async Task<List<int>?> ResolveDeckCardIdsAsync(
+            MatchDeckSelection selection,
+            IServiceProvider scopeServiceProvider,
+            CancellationToken cancellationToken)
+        {
+            if (!selection.HasSelection)
+            {
+                return null;
+            }
+
+            var deckService = scopeServiceProvider.GetRequiredService<IDeckService>();
+            var deckValidation = scopeServiceProvider.GetRequiredService<IDeckValidationService>();
+            var deckCodeService = scopeServiceProvider.GetRequiredService<IDeckCodeService>();
+
+            if (selection.DeckId.HasValue)
+            {
+                if (!TryBuildDeckOwner(selection, out var owner))
+                {
+                    return null;
+                }
+
+                var deck = await deckService.GetAsync(owner, selection.DeckId.Value, cancellationToken);
+                if (deck == null)
+                {
+                    return null;
+                }
+
+                var validation = await deckValidation.ValidateAsync(deck.Class, deck.Cards, requireComplete: true, cancellationToken);
+                if (!validation.Success || validation.Data == null)
+                {
+                    return null;
+                }
+
+                return ExpandDeckCardIds(validation.Data);
+            }
+
+            if (!string.IsNullOrWhiteSpace(selection.DeckCode))
+            {
+                if (!deckCodeService.TryDecode(selection.DeckCode, out var deckClass, out var cards, out _))
+                {
+                    return null;
+                }
+
+                var validation = await deckValidation.ValidateAsync(deckClass, cards, requireComplete: true, cancellationToken);
+                if (!validation.Success || validation.Data == null)
+                {
+                    return null;
+                }
+
+                return ExpandDeckCardIds(validation.Data);
+            }
+
+            return null;
+        }
+
+        private static bool TryBuildDeckOwner(MatchDeckSelection selection, out DeckOwner owner)
+        {
+            if (selection.UserId.HasValue && selection.UserId.Value != Guid.Empty)
+            {
+                owner = new DeckOwner(selection.UserId, null);
+                return true;
+            }
+
+            if (selection.GuestId.HasValue && selection.GuestId.Value != Guid.Empty)
+            {
+                owner = new DeckOwner(null, selection.GuestId);
+                return true;
+            }
+
+            owner = default;
+            return false;
+        }
+
+        private static List<int> ExpandDeckCardIds(IReadOnlyList<DeckCardEntryDto> cards)
+        {
+            var expanded = new List<int>(cards.Sum(card => card.Count));
+            foreach (var entry in cards)
+            {
+                for (int i = 0; i < entry.Count; i++)
+                {
+                    expanded.Add(entry.CardDefinitionId);
+                }
+            }
+
+            return expanded;
+        }
+
         // --- Refactored to GetOrCreateGameStateAsync ---
         /// <summary>
         /// Gets the current game state domain entity for the given game ID, or creates a new one if it doesn't exist.
@@ -622,7 +771,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameId">The unique identifier for the game.</param>
         /// <param name="requestingPlayerId">The ID of the player requesting the game state (used for game creation).</param>
         /// <returns>The GameState domain entity for the game, or null if creation failed unexpectedly.</returns>
-        public GameState? GetOrCreateGameState(string gameId, Guid? hostPlayerId, Guid? guestPlayerId, bool useAiFallback, IServiceProvider scopeServiceProvider)
+        public async Task<GameState?> GetOrCreateGameStateAsync(string gameId, Guid? hostPlayerId, Guid? guestPlayerId, bool useAiFallback, IServiceProvider scopeServiceProvider)
         {
             if (_gameStates.TryGetValue(gameId, out var existingState))
             {
@@ -675,10 +824,36 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("[GameService] Created and assigned AbilityManager for Game {GameId}.", gameId);
                 // --- End Manual Manager Creation ---
 
-                foreach (var cardId in _fixedTestDeckCardIds)
+                var roomResult = _matchService.Get(gameId);
+                if (!roomResult.Success || roomResult.Room == null)
                 {
-                    // 【重构】直接调用工厂，由工厂负责将卡牌添加到牌堆
+                    _logger.LogWarning("[GameService] Match room not found while creating game state. GameId={GameId}", gameId);
+                    return null;
+                }
+
+                var room = roomResult.Room;
+                var hostDeckIds = await ResolveDeckCardIdsAsync(room.HostDeckSelection, scopeServiceProvider, CancellationToken.None);
+                if (hostDeckIds == null)
+                {
+                    _logger.LogWarning("[GameService] Host deck selection invalid. GameId={GameId}", gameId);
+                    return null;
+                }
+
+                var opponentSelection = room.GuestPlayerId.HasValue ? room.GuestDeckSelection : room.AiDeckSelection;
+                var opponentDeckIds = await ResolveDeckCardIdsAsync(opponentSelection, scopeServiceProvider, CancellationToken.None);
+                if (opponentDeckIds == null)
+                {
+                    _logger.LogWarning("[GameService] Opponent deck selection invalid. GameId={GameId}", gameId);
+                    return null;
+                }
+
+                foreach (var cardId in hostDeckIds)
+                {
                     cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck);
+                }
+
+                foreach (var cardId in opponentDeckIds)
+                {
                     cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck);
                 }
 
@@ -796,11 +971,16 @@ namespace ShadowverseBeyond.Server.Services
             try
             {
                 // --- Basic Checks ---
-                // Cost Check - This will now correctly use the context-aware BuffService
-                if (playerState.CurrentPlayPoints < cardInHand.CurrentCost)
+                var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
+                var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, abilityConfigs);
+                result.PlayModes = modeResolution.Modes.ToList();
+                result.SelectedPlayMode = modeResolution.SelectedMode;
+
+                if (!modeResolution.HasAvailableMode)
                 {
                     result.IsPlayable = false;
-                    result.FailureReason = $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
+                    result.FailureReason = modeResolution.DefaultFailureReason ??
+                        $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
                     return result;
                 }
 
@@ -817,7 +997,6 @@ namespace ShadowverseBeyond.Server.Services
 
                 // --- PrePlay Condition Checks ---
                 _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting PrePlay condition checks for Card {CardName} ({CardInstanceId}).", gameId, cardDefinition.Name, cardInstanceId);
-                var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
                 var playTriggerConfigs = abilityConfigs
                     .Where(ac => ac.Trigger.EventTypes.Contains(EventType.PlayCard))
                     .ToList();

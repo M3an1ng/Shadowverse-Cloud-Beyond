@@ -1,0 +1,1 @@
+var o=(e=>(e.insertion="insertion",e.deletion="deletion",e.modification="modification",e.noop="noop",e))(o||{}),t=(e=>(e.fresh="fresh",e.stale="stale",e.rejected="rejected",e.accepted="accepted",e))(t||{});export{o as C,t as S};

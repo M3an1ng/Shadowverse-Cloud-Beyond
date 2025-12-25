@@ -25,24 +25,16 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events // Corrected namespace
         /// </summary>
         public DateTime TimestampUtc { get; protected set; }
 
+        /// <summary>
+        /// Human-readable announcement generated on the server for UI display/logging.
+        /// </summary>
+        public string? Announcement { get; set; }
+
         protected GameEventDto(Guid sourcePlayerId, string type) // Added sourcePlayerId parameter
         {
             SourcePlayerId = sourcePlayerId; // Set the new property
             Type = type;
             TimestampUtc = DateTime.UtcNow;
-        }
-    }
-
-    public class AttackStateUpdatedEventDto : GameEventDto
-    {
-        public Guid TargetCardInstanceId { get; set; }
-        public bool CanAttack { get; set; }
-
-        public AttackStateUpdatedEventDto(Guid sourcePlayerId, Guid targetCardInstanceId, bool canAttack)
-            : base(sourcePlayerId, "AttackStateUpdated")
-        {
-            TargetCardInstanceId = targetCardInstanceId;
-            CanAttack = canAttack;
         }
     }
 }

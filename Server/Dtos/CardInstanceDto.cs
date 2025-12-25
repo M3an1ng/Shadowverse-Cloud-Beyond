@@ -44,6 +44,21 @@ namespace ShadowverseBeyond.Server.Dtos
         public CardType Type { get; init; }
 
         /// <summary>
+        /// Rarity of the card.
+        /// </summary>
+        public CardRarity Rarity { get; init; }
+
+        /// <summary>
+        /// Class of the card.
+        /// </summary>
+        public CardClass Class { get; init; }
+
+        /// <summary>
+        /// Tribe of the card.
+        /// </summary>
+        public List<string> Tribe { get; init; } = new();
+
+        /// <summary>
         /// Base attack value (from CardDefinition).
         /// </summary>
         public int Attack { get; init; }
@@ -96,10 +111,25 @@ namespace ShadowverseBeyond.Server.Dtos
         public bool CanAttack { get; set; }
 
         /// <summary>
+        /// Indicates whether this card has an Act (Activated) ability.
+        /// </summary>
+        public bool HasActAbility { get; set; }
+
+        /// <summary>
+        /// The owner's turn number when this card last used Act. Null if never used.
+        /// </summary>
+        public int? ActLastUsedTurnNumber { get; set; }
+
+        /// <summary>
         /// Number of attacks made by this follower instance this turn.
         /// Relevant primarily for followers on the field.
         /// </summary>
         public int AttacksThisTurn { get; set; }
+
+        /// <summary>
+        /// How many turns this instance has been on the field. 0 means it was just played.
+        /// </summary>
+        public int FieldTurn { get; set; }
 
         /// <summary>
         /// Maximum attack of the instance (including buffs).
@@ -143,7 +173,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// <summary>
         /// The position of the card on the field (0-4), if applicable. Null otherwise.
         /// </summary>
-        public int? FieldPosition { get; set; }
+        public int? ZoneIndex { get; set; }
 
         /// <summary>
         /// The Player ID of the player who currently controls this instance on the field.

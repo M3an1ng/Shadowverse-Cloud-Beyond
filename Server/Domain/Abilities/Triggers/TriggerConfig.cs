@@ -20,7 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// <summary>
         /// 触发器名称
         /// </summary>
-        public string Name { get; set; } = string.Empty;
+        //public string Name { get; set; } = string.Empty;
 
         /// <summary>
         /// 监听的游戏事件类型列表
@@ -32,7 +32,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// <summary>
         /// 触发时序
         /// </summary>
-        public TriggerTiming Timing { get; set; } = TriggerTiming.After;
+        public TriggerTiming Timing { get; set; } = TriggerTiming.On;
 
 
         /// <summary>
@@ -40,22 +40,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// 为空或null时代表不需要进行区域检测（所有区域都有效）
         /// 用于性能优化，避免在非活跃区域处理不必要的触发器
         /// </summary>
-        public List<CardZone> ValidZones { get; set; } = new() { CardZone.Field };
+        public List<CardZone> ValidZones { get; set; } = new();
 
         /// <summary>
-        /// 向后兼容的单一区域属性
-        /// 设置时会清空ValidZones并添加单个区域
-        /// 获取时返回ValidZones的第一个区域，如果为空则返回Field
+        /// Defines the relationship between the ability's owner and the event's participants
+        /// required for the ability to trigger. Defaults to 'Any'.
         /// </summary>
-        [Obsolete("Use ValidZones property instead for multi-zone support")]
-        public CardZone CardZone
-        {
-            get => ValidZones?.FirstOrDefault() ?? CardZone.Field;
-            set
-            {
-                ValidZones = new List<CardZone> { value };
-            }
-        }
+        public TriggerRelationType RelationType { get; set; } = TriggerRelationType.Any;
 
         /// <summary>
         /// 是否启用
@@ -121,8 +112,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             {
                 EventTypes = new List<EventType> { eventType },
                 // Scope removed, handle via Conditions if needed
-                Timing = TriggerTiming.After,
-                ValidZones = new List<CardZone> { CardZone.Field } // Default to Field zone
+                Timing = TriggerTiming.On,
+                ValidZones = new List<CardZone>() // Default to no zone restriction
             };
         }
 
@@ -137,8 +128,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             {
                 EventTypes = eventTypes,
                 // Scope removed, handle via Conditions if needed
-                Timing = TriggerTiming.After,
-                ValidZones = new List<CardZone> { CardZone.Field } // Default to Field zone
+                Timing = TriggerTiming.On,
+                ValidZones = new List<CardZone>() // Default to no zone restriction
             };
         }
 
@@ -153,7 +144,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             return new TriggerConfig
             {
                 EventTypes = new List<EventType> { eventType },
-                Timing = TriggerTiming.After,
+                Timing = TriggerTiming.On,
                 ValidZones = new List<CardZone> { zone }
             };
         }
@@ -169,7 +160,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             return new TriggerConfig
             {
                 EventTypes = new List<EventType> { eventType },
-                Timing = TriggerTiming.After,
+                Timing = TriggerTiming.On,
                 ValidZones = zones?.ToList() ?? new List<CardZone>()
             };
         }
@@ -184,7 +175,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             return new TriggerConfig
             {
                 EventTypes = new List<EventType> { eventType },
-                Timing = TriggerTiming.After,
+                Timing = TriggerTiming.On,
                 ValidZones = new List<CardZone>() // Empty list means all zones are valid
             };
         }

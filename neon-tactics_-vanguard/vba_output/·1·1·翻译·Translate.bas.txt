@@ -1,0 +1,126 @@
+Attribute VB_Name = "·1·1·翻译·Translate"
+' ==================================================
+' 函数功能：文本翻译函数，支持中英互译和多种ID转换
+' 参数：InputText - 需要翻译的文本
+' 返回：翻译后的文本或原始文本（未找到匹配时）
+' 功能：1. 中英互译 2. 卡牌ID与名称转换 3. 特性/卡组类型翻译
+' ==================================================
+Function Translate(InputText As String) As String
+    ' ========== 变量声明 ==========
+    Dim dictSheet As Worksheet        ' 字典工作表对象
+    Dim dictData As Variant           ' 字典数据数组
+    Dim lastRow As Long               ' 字典最后行号
+    Dim i As Long                     ' 循环计数器
+    Dim isChinese As Boolean          ' 输入文本语言标识
+    Static dictCache As Variant       ' 静态变量缓存字典数据
+    Static lastCacheTime As Date      ' 记录上次缓存时间
+    
+    ' ========== 输入验证 ==========
+    If Len(InputText) = 0 Then
+        Translate = "输入不能为空"   ' 空输入处理
+        Exit Function
+    End If
+    
+    ' ========== 字典工作表初始化 ==========
+    On Error Resume Next
+    Set dictSheet = ThisWorkbook.Sheets("Dictionary")   ' 尝试获取字典工作表
+    On Error GoTo 0
+    
+    If dictSheet Is Nothing Then
+        Translate = "未找到Dictionary工作表"   ' 工作表不存在处理
+        Exit Function
+    End If
+    
+    ' ========== 语言检测 ==========
+    ' 通过字符编码判断是否为中文（中文字符编码大于127）
+    isChinese = False
+    For i = 1 To Len(InputText)
+        If Abs(AscW(Mid(InputText, i, 1))) > 127 Then
+            isChinese = True   ' 检测到中文字符
+            Exit For
+        End If
+    Next i
+    
+    ' ========== 字典数据缓存处理 ==========
+    ' 缓存策略：每分钟更新一次，避免频繁读取工作表
+    If IsEmpty(dictCache) Or Now - lastCacheTime > TimeValue("00:01:00") Then
+        lastRow = dictSheet.Cells(dictSheet.rows.count, 1).End(xlUp).Row
+        dictData = dictSheet.Range("A1:B" & lastRow).Value   ' 读取A、B列数据
+        dictCache = dictData          ' 更新缓存
+        lastCacheTime = Now           ' 更新缓存时间
+    Else
+        dictData = dictCache          ' 使用缓存数据
+    End If
+    
+    ' ========== 字典查找翻译 ==========
+    If isChinese Then
+        ' 中文→英文：在第二列（中文）查找，返回第一列（英文）
+        For i = 1 To UBound(dictData, 1)
+            If Trim(dictData(i, 2)) = Trim(InputText) Then
+                Translate = dictData(i, 1)
+                Exit Function
+            End If
+        Next i
+    Else
+        ' 英文→中文：在第一列（英文）查找，返回第二列（中文）
+        For i = 1 To UBound(dictData, 1)
+            If Trim(dictData(i, 1)) = Trim(InputText) Then
+                Translate = dictData(i, 2)
+                Exit Function
+            End If
+        Next i
+    End If
+    
+    ' ========== 卡牌ID与名称转换 ==========
+    Dim Str As String   ' 临时存储转换结果
+    
+    ' 尝试通过ID查找卡牌名称
+    Str = DownByID(InputText, "Name")
+    If Str <> "" Then
+        Translate = Str
+        Exit Function
+    End If
+    
+    ' 尝试通过名称查找卡牌ID
+    Str = IDByName(InputText)
+    If Val(Str) > 0 Then
+        Translate = Str
+        Exit Function
+    End If
+    
+    ' ========== 特性(Trait)类型翻译 ==========
+    If Left(InputText, Len("Trait:")) = "Trait:" Then
+        ' 格式："Trait:ID" → "特性:名称"
+        Str = IDTranslate("Trait", Mid(InputText, 1 + Len("Trait:"), 10))
+        If Str <> "-1" Then
+            Translate = Translate("Trait") & ":" & Str   ' 递归调用翻译"Trait"
+            Exit Function
+        End If
+    ElseIf Left(InputText, 3) = Translate("Trait") & ":" Then
+        ' 格式："特性:名称" → "Trait:ID"
+        Str = IDTranslate("Trait", Mid(InputText, 4, 10))
+        If Str <> "-1" Then
+            Translate = "Trait:" & Str
+            Exit Function
+        End If
+    
+    ' ========== 卡组(Deck)类型翻译 ==========
+    ElseIf Left(InputText, Len("Deck:")) = "Deck:" Then
+        ' 格式："Deck:ID" → "卡组:名称"
+        Str = IDTranslate("Deck", Mid(InputText, 1 + Len("Deck:"), 10))
+        If Str <> "-1" Then
+            Translate = Translate("Deck") & ":" & Str   ' 递归调用翻译"Deck"
+            Exit Function
+        End If
+    ElseIf Left(InputText, 3) = Translate("Deck") & ":" Then
+        ' 格式："卡组:名称" → "Deck:ID"
+        Str = IDTranslate("Deck", Mid(InputText, 4, 10))
+        If Str <> "-1" Then
+            Translate = "Deck:" & Str
+            Exit Function
+        End If
+    End If
+    
+    ' ========== 默认返回 ==========
+    Translate = InputText   ' 未找到任何匹配，返回原始文本
+End Function

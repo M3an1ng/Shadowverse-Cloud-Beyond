@@ -23,6 +23,16 @@ namespace ShadowverseBeyond.Server.Domain.Interfaces
         /// <returns>找到的卡牌定义，如果未找到则返回 null。</returns>
         Task<CardDefinition?> GetCardDefinitionByIdAsync(int definitionId);
 
+        /// <summary>
+        /// 创建卡牌定义。
+        /// </summary>
+        Task<CardDefinition> AddAsync(CardDefinition definition);
+
+        /// <summary>
+        /// 更新卡牌定义。
+        /// </summary>
+        Task<CardDefinition?> UpdateAsync(CardDefinition definition);
+
         // 可以根据需要添加其他查询方法，例如按稀有度、类型等查询
     }
 }

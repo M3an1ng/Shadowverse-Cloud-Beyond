@@ -18,117 +18,110 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic; // Added for List<>
 using ShadowverseBeyond.Server.Models; // For GameActionContext
+using ShadowverseBeyond.Server.Services.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ShadowverseBeyond.Server.Services
 {
     public class AiTurnExecutor
     {
-        private readonly IGameService _gameService; // To interact with game state and execute actions
-        private readonly IAiService _aiService;     // To get AI decisions
+        private readonly IGameService _gameService;
+        private readonly IAiService _aiService;
         private readonly ILogger<AiTurnExecutor> _logger;
-        private readonly IMapper _mapper; // Added for Entity to DTO mapping
+        private readonly IMapper _mapper;
+        private readonly IServiceProvider _serviceProvider;
 
-        // Constructor injection
         public AiTurnExecutor(
             IGameService gameService,
             IAiService aiService,
             ILogger<AiTurnExecutor> logger,
-            IMapper mapper)
+            IMapper mapper,
+            IServiceProvider serviceProvider)
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
+            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         }
 
-        /// <summary>
-        /// Executes the AI's turn by making decisions and enqueuing actions in a loop
-        /// until no more actions can be taken.
-        /// </summary>
         public async Task ExecuteTurnAsync(string gameId, Guid aiPlayerId)
         {
             _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI turn execution started.", gameId, aiPlayerId);
 
             try
             {
-                while (true)
+                bool actionTakenInLoop;
+                do
                 {
-                    var gameStateEntity = _gameService.GetGameState(gameId);
-                    if (gameStateEntity == null)
-                    {
-                        _logger.LogError("[AI_EXECUTOR:{GameId}:{PlayerId}] Failed to retrieve game state. Aborting AI turn.", gameId, aiPlayerId);
-                        return;
-                    }
+                    actionTakenInLoop = false;
+                    using var scope = _serviceProvider.CreateScope();
+                    var scopedServiceProvider = scope.ServiceProvider;
+                    var contextAccessor = scopedServiceProvider.GetRequiredService<IGameContextAccessor>();
 
-                    if (gameStateEntity.IsGameOver || gameStateEntity.CurrentPlayerId != aiPlayerId)
+                    var gameStateEntity = _gameService.GetGameState(gameId);
+                    if (gameStateEntity == null || gameStateEntity.IsGameOver || gameStateEntity.CurrentPlayerId != aiPlayerId)
                     {
-                        _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Not AI's turn or game is over. Aborting AI turn.", gameId, aiPlayerId);
+                        _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Aborting AI turn: Game state invalid, game over, or not AI's turn.", gameId, aiPlayerId);
                         return;
                     }
 
                     var gameStateDto = _mapper.Map<GameStateDto>(gameStateEntity);
-                    bool actionTakenThisIteration = false;
 
-                    // 1. Decide to Play a Card
+                    // 1. Decide to play a card
                     var playCardAction = await _aiService.DecidePlayCardAsync(gameStateDto, aiPlayerId);
                     if (playCardAction != null)
                     {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to play card: {CardUid}.", gameId, aiPlayerId, playCardAction.CardUid);
+                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to PLAY CARD: {CardUid}.", gameId, aiPlayerId, playCardAction.CardUid);
                         var wrapper = new PlayerActionWrapper { ActionType = "PlayCard", PlayerId = aiPlayerId, ActionData = playCardAction };
-                        _gameService.EnqueuePlayerAction(gameId, wrapper);
-                        actionTakenThisIteration = true;
+                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
+                        actionTakenInLoop = true;
+                        await Task.Delay(1000); // 为玩家增加1秒的反应时间
+                        continue;
                     }
 
-                    // 2. Decide to Evolve a Unit
+                    // 2. Decide to evolve a unit
                     var evolveAction = await _aiService.DecideEvolveAsync(gameStateDto, aiPlayerId);
                     if (evolveAction != null)
                     {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to evolve unit: {UnitUid}.", gameId, aiPlayerId, evolveAction.UnitUid);
+                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to EVOLVE unit: {UnitUid}.", gameId, aiPlayerId, evolveAction.UnitUid);
                         var wrapper = new PlayerActionWrapper { ActionType = "PerformEvolve", PlayerId = aiPlayerId, ActionData = evolveAction };
-                        _gameService.EnqueuePlayerAction(gameId, wrapper);
-                        actionTakenThisIteration = true;
+                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
+                        actionTakenInLoop = true;
+                        await Task.Delay(1000); // 为玩家增加1秒的反应时间
+                        continue;
                     }
 
-                    // 3. Decide to Attack
-                    var attackActions = await _aiService.DecideAttacksAsync(gameStateDto, aiPlayerId);
-                    if (attackActions != null && attackActions.Any())
+                    // 3. Decide to perform the next single attack
+                    var nextAttackAction = await _aiService.DecideNextAttackAsync(gameStateDto, aiPlayerId);
+                    if (nextAttackAction != null)
                     {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to perform {Count} attacks.", gameId, aiPlayerId, attackActions.Count);
-                        foreach (var attackAction in attackActions)
-                        {
-                            var wrapper = new PlayerActionWrapper { ActionType = "PerformAttack", PlayerId = aiPlayerId, ActionData = attackAction };
-                            _gameService.EnqueuePlayerAction(gameId, wrapper);
-                        }
-                        actionTakenThisIteration = true;
+                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to PERFORM ATTACK: {AttackerUid} -> {TargetUid}.",
+                            gameId, aiPlayerId, nextAttackAction.AttackerUid, nextAttackAction.TargetUid);
+
+                        var wrapper = new PlayerActionWrapper { ActionType = "PerformAttack", PlayerId = aiPlayerId, ActionData = nextAttackAction };
+                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
+                        actionTakenInLoop = true;
+                        await Task.Delay(1000); // Pause after the attack for observation
+                        continue;
                     }
 
-                    if (actionTakenThisIteration)
-                    {
-                        // Wait for the action(s) to be processed by the game loop.
-                        // This is a simplification. A more robust solution would involve a completion signal from GameService.
-                        await Task.Delay(1000); // Adjust delay as needed
+                } while (actionTakenInLoop);
 
-                        continue; // Re-evaluate state for the next action
-                    }
-
-                    // If no action was taken in this iteration, break the loop to end the turn.
-                    break;
-                }
-
-                // 4. End Turn
-                _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI has no more actions and will end the turn.", gameId, aiPlayerId);
+                // 4. If no other actions are taken, end the turn.
+                _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI has no more actions and will END TURN.", gameId, aiPlayerId);
                 var endTurnWrapper = new PlayerActionWrapper
                 {
                     ActionType = "EndTurn",
                     PlayerId = aiPlayerId,
-                    ActionData = new { } // No data needed
+                    ActionData = new { }
                 };
-                _gameService.EnqueuePlayerAction(gameId, endTurnWrapper);
+                await _gameService.EnqueuePlayerActionAsync(gameId, endTurnWrapper);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[AI_EXECUTOR:{GameId}:{PlayerId}] Critical error during AI turn execution.", gameId, aiPlayerId);
-                // Attempt to end the turn gracefully to prevent the game from stalling.
+                // Emergency End Turn
                 try
                 {
                     var emergencyEndTurnWrapper = new PlayerActionWrapper
@@ -137,7 +130,7 @@ namespace ShadowverseBeyond.Server.Services
                         PlayerId = aiPlayerId,
                         ActionData = new { Emergency = true }
                     };
-                    _gameService.EnqueuePlayerAction(gameId, emergencyEndTurnWrapper);
+                    await _gameService.EnqueuePlayerActionAsync(gameId, emergencyEndTurnWrapper);
                     _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Enqueued emergency EndTurn due to an error.", gameId, aiPlayerId);
                 }
                 catch (Exception emergencyEx)

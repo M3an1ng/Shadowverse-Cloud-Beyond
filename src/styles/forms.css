@@ -1,0 +1,224 @@
+/* --- Form Groups & Labels --- */
+.form-group {
+    margin-bottom: var(--space-4);
+}
+
+.form-label {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-weight: 500;
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+}
+
+.form-label.required::after {
+    content: " *";
+    color: var(--color-accent);
+}
+
+/* --- Inputs & Textareas --- */
+.form-input, .form-select, .form-textarea {
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    background-color: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.form-input:focus, .form-select:focus, .form-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.form-input[readonly], .form-textarea[readonly], .form-select[disabled] {
+    background-color: var(--color-surface-highlight);
+    color: var(--color-secondary);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.form-textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+/* --- Number Stepper --- */
+.number-stepper {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background-color: var(--color-background);
+}
+
+.number-input {
+    border: none !important;
+    text-align: center;
+    flex: 1;
+    background: transparent;
+    color: var(--color-primary);
+    font-family: var(--font-mono);
+}
+
+.stepper-btn {
+    background-color: var(--color-surface);
+    border: none;
+    color: var(--color-primary);
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    transition: background-color var(--transition-fast);
+}
+
+.stepper-btn:hover:not([disabled]) {
+    background-color: var(--color-surface-highlight);
+}
+
+.stepper-btn.decrease { border-right: 1px solid var(--color-border); }
+.stepper-btn.increase { border-left: 1px solid var(--color-border); }
+
+/* --- Checkbox --- */
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+}
+
+.form-checkbox {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background-color: var(--color-background);
+    position: relative;
+    cursor: pointer;
+}
+
+.form-checkbox:checked {
+    background-color: var(--color-accent);
+    border-color: var(--color-accent);
+}
+
+.form-checkbox:checked::after {
+    content: '✓';
+    position: absolute;
+    color: white;
+    font-size: 12px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.checkbox-label {
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+}
+
+/* --- Tag Input --- */
+.tag-input-container {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background-color: var(--color-background);
+    padding: var(--space-2);
+    min-height: 80px;
+}
+
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.tag-item {
+    background-color: var(--color-surface-highlight);
+    border: 1px solid var(--color-border);
+    color: var(--color-primary);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+}
+
+.tag-remove-btn {
+    background: none;
+    border: none;
+    color: var(--color-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.tag-remove-btn:hover {
+    color: var(--color-accent);
+}
+
+.tag-input-wrapper {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.tag-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+}
+
+.tag-input:focus {
+    outline: none;
+}
+
+.tag-add-btn {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-primary);
+    border-radius: var(--radius-sm);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.tag-add-btn:hover {
+    border-color: var(--color-primary);
+}
+
+/* --- Validation --- */
+.validation-error {
+    background-color: rgba(220, 38, 38, 0.1);
+    border: 1px solid var(--color-accent);
+    color: var(--color-accent);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-bottom: var(--space-4);
+    font-size: var(--text-sm);
+}
+
+.form-input.invalid {
+    border-color: var(--color-accent);
+}
+
+.form-help {
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+    margin-top: var(--space-1);
+}

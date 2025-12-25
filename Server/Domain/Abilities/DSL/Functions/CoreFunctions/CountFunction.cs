@@ -4,6 +4,7 @@
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 //
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,6 +23,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class CountFunction : BaseDslFunction
     {
         public override string Name => "count";
+        public override string Description => "计算集合中元素的数量。可选择性地根据属性进行过滤。";
+
+        public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
+        {
+            new DslParameterInfo("collection", typeof(IEnumerable), "要计算数量的目标集合。"),
+            new DslParameterInfo("property", typeof(string), "（可选）一个属性名称。如果提供，则只计算该属性值不为null或false的元素。", isOptional: true, defaultValue: null)
+        };
+
+        public override Type ReturnType => typeof(int);
 
         protected override int GetMinimumArgumentCount() => 1;
         protected override int? GetMaximumArgumentCount() => 2;
@@ -55,10 +65,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return true;
         }
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
+        public override object? Execute(List<object?> args, GameContext context)
         {
-            await Task.CompletedTask; // 标记为异步但实际上是同步操作
-
             if (args.Count == 0)
             {
                 return 0;

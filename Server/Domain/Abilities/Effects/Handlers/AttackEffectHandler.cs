@@ -1,101 +1,93 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
+using System.Linq;
 using Microsoft.Extensions.Logging;
-using AutoMapper;
-using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
-using ShadowverseBeyond.Server.Domain.Constants;
-using ShadowverseBeyond.Server.Dtos;
-using ShadowverseBeyond.Server.Dtos.Enums;
-using ShadowverseBeyond.Server.Exceptions;
-using System.Linq; // Added for OfType, FirstOrDefault
-using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // Added for DestroyEffectRequest
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
+    [EffectHandler(EffectType.Attack)]
     public class AttackEffectHandler : EffectHandlerBase<AttackEffectParams>
     {
-        public AttackEffectHandler(ILogger<AttackEffectHandler> logger) : base(logger) { }
+        private readonly ITargetProcessingService _targetProcessingService;
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, AttackEffectParams parameters)
+        public AttackEffectHandler(ILogger<AttackEffectHandler> logger, ITargetProcessingService targetProcessingService)
+            : base(logger)
         {
-            var gameState = context.CurrentGameState;
-            Logger.LogDebug("Starting attack: Attacker={AttackerId}, Target={TargetId}, Type={TargetType}",
-                parameters.AttackerInstanceId, parameters.TargetId, parameters.TargetType);
-
-            var attacker = gameState.FindCardInstance(parameters.AttackerInstanceId, CardZone.Field);
-            var attackerPlayer = attacker != null ? gameState.GetPlayerState(attacker.OwnerPlayerId) : null;
-
-            if (attacker == null || attackerPlayer == null)
-            {
-                Logger.LogError("AttackEffectHandler: Attacker (ID: {AttackerId}) or its owner not found.", parameters.AttackerInstanceId);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Attacker or its owner not found." };
-            }
-
-            if (!attacker.CanPerformAttack(gameState, attackerPlayer, parameters.ForceAttack))
-            {
-                Logger.LogWarning("AttackEffectHandler: Attack preconditions not met for Attacker (ID: {AttackerId}).", parameters.AttackerInstanceId);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Attack preconditions not met." };
-            }
-
-            // BUG-003 Refactor: Unify attack logic.
-            // Since leaders are now registered and findable via FindCardInstanceById,
-            // we can treat both player and unit attacks uniformly.
-            var targetUnit = gameState.FindCardInstanceById(parameters.TargetId);
-            if (targetUnit == null)
-            {
-                Logger.LogError("AttackEffectHandler: Target entity (Unit or Leader) with ID {TargetId} not found.", parameters.TargetId);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Target entity not found." };
-            }
-
-            // The PerformAttack method correctly handles both unit-vs-unit (with counter-attack)
-            // and unit-vs-leader (no counter-attack) scenarios.
-            var attackDomainResult = attacker.PerformAttack(targetUnit);
-
-            if (attackDomainResult.Success)
-            {
-                // Check if target unit died
-                if (targetUnit != null && targetUnit.CurrentHealth <= 0)
-                {
-                    var targetOwner = gameState.GetPlayerState(targetUnit.OwnerPlayerId);
-                    if (targetOwner != null)
-                    {
-                        var destroyResult = targetOwner.DestroyCard(targetUnit, attacker, "DestroyedByCombat");
-                        attackDomainResult.GeneratedEvents.AddRange(destroyResult.GeneratedEvents);
-                    }
-                }
-
-                // Check if attacker died
-                if (attacker.CurrentHealth <= 0)
-                {
-                    var destroyResult = attackerPlayer.DestroyCard(attacker, targetUnit, "DestroyedByCombat");
-                    attackDomainResult.GeneratedEvents.AddRange(destroyResult.GeneratedEvents);
-                }
-            }
-
-            var finalActionResult = new GameStateActionResult
-            {
-                Success = attackDomainResult.Success,
-                GeneratedEvents = new List<IGameEvent>(attackDomainResult.GeneratedEvents),
-                ErrorMessage = attackDomainResult.ErrorMessage ?? string.Empty
-            };
-
-            // The EffectCompletedEvent (which is our "Effect Handler Aggregated Fact Event")
-            // will be created by the EffectExecutor after this handler returns.
-            // The GeneratedEvents from attackDomainResult should primarily be the AttackDeclaredEvent.
-            // Subsequent damage, counter-attack, and death checks will be driven by
-            // System Abilities reacting to AttackDeclaredEvent and subsequent fact events.
-            // This handler is now only responsible for invoking the domain logic
-            // and returning the atomic events generated by that logic.
-
-            await Task.CompletedTask;
-            return finalActionResult;
+            _targetProcessingService = targetProcessingService;
         }
 
-        // CreateEffectCompletedEvent method is removed as this responsibility has moved to EffectExecutor.
-    } // End of AttackEffectHandler class
+        public override GameStateActionResult Apply(Effect effect, GameContext context, AttackEffectParams parameters)
+        {
+            const string effectName = "AttackEffect";
+            var attacker = context.SourceCard;
 
-} // End of namespace
+            if (attacker == null)
+            {
+                Logger.LogError("{EffectName}: Attacker not found in GameContext.SourceCard.", effectName);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Attacker not found in context." };
+            }
+
+            var attackerPlayer = context.CurrentGameState.GetPlayerState(attacker.OwnerPlayerId);
+            if (attackerPlayer == null)
+            {
+                Logger.LogError("{EffectName}: Attacker's owner (ID: {OwnerId}) not found.", effectName, attacker.OwnerPlayerId);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Attacker's owner not found." };
+            }
+
+
+            // Phase 2: Command Creation. For each valid target, create a committable event.
+            Func<TargetInfo, GameContext, DomainOperationResult> createAttackEventAction =
+                (targetInfo, ctx) =>
+                {
+                    var result = new DomainOperationResult();
+                    if (targetInfo.Card == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Target card data is missing for one of the targets.", effectName);
+                        result.Success = false;
+                        result.ErrorMessage = "Attack target is not a valid card.";
+                        return result;
+                    }
+
+                    var targetUnit = targetInfo.Card;
+
+                    // Phase 1: Gatekeeping. Perform all precondition checks before creating any events.
+                    if (!attacker.CanPerformAttack(context.CurrentGameState, attackerPlayer, targetUnit, parameters.ForceAttack))
+                    {
+                        Logger.LogWarning("{EffectName}: Attack preconditions not met for Attacker (ID: {AttackerId}).", effectName, attacker.InstanceId);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Attack preconditions not met." };
+                    }
+
+                    // The handler's job is to create the event (the intent).
+                    // The transaction service will later call its Commit() method.
+                    var attackDeclaredEvent = new AttackEvent(attacker, targetUnit);
+                    result.GeneratedEvents.Add(attackDeclaredEvent);
+                    result.Success = true;
+
+                    return result;
+                };
+
+            // Phase 3: Dispatching. Use the service to process all selected targets.
+            var serviceResult = _targetProcessingService.ProcessTargets(
+                context,
+                effect.SelectedTargets,
+                createAttackEventAction,
+                effectName);
+
+            if (!serviceResult.Success && string.IsNullOrEmpty(serviceResult.ErrorMessage))
+            {
+                serviceResult.ErrorMessage = "Failed to process targets for attack effect, or no valid targets found.";
+            }
+
+            return serviceResult;
+        }
+    }
+}

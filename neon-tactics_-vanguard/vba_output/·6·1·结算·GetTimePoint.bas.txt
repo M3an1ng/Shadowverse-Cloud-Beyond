@@ -1,0 +1,348 @@
+Attribute VB_Name = "·6·1·结算·GetTimePoint"
+' ==================================================
+' 函数功能：处理效果时机点和条件判断
+' 参数：InputEffect - 输入的效果字符串
+'        ThisCard - 当前卡牌的匹配ID
+'        InputTimePoint - 可选，输入的时间点类型
+' 返回：Boolean - 处理是否成功
+' 说明：处理效果中的条件判断、模式选择、目标选择等复杂逻辑，构建效果队列
+' ==================================================
+Function GetTimePoint(InputEffect As String, ThisCard As String, Optional InputTimePoint As String = "") As Boolean
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%, m%, n%  ' 循环计数器
+    Dim Ia As Integer, Ib As Integer                            ' 循环范围控制
+    Dim Str As String                                           ' 临时字符串
+    Dim Arr As Variant                                          ' 临时数组
+    Dim Brr As Variant                                          ' 临时数组
+    Dim Flag As Boolean                                         ' 状态标记
+    Dim IFFlag As Boolean
+    
+    Dim Effectrr() As String    ' 效果块数组
+    Dim EffectSplit() As String ' 效果分割数组
+    Dim IfSplit() As String     ' 条件分割数组
+    Dim options() As String     ' 选项数组
+    
+    GetTimePoint = True   ' 默认返回成功
+    IFFlag = True
+    
+    ' ========== 沉默 ==========
+    Str = DownByMatchID(ThisCard, "Effect")
+    If InStr(Str, "Remove|All") > 0 Then
+        GetTimePoint = False
+        Exit Function
+    End If
+    
+    ' 重新开始处理时间点（用于循环处理）
+StartTimePoint:
+
+    ' ========== 效果块提取 ==========
+    ' 查询并提取所有{}包围的效果块
+    ReDim Effectrr(1 To 10)   ' 初始化效果块数组
+    Flag = False
+    k = 0
+    j = 0   ' 花括号嵌套层级计数器
+    
+    ' 遍历效果字符串，提取所有最外层的{}块
+    For i = 1 To Len(InputEffect)
+        Select Case Mid(InputEffect, i, 1)
+            Case "{"
+                j = j + 1   ' 进入嵌套层级
+                If j = 1 Then
+                    m = i   ' 记录起始位置
+                    Flag = True   ' 标记进入效果块
+                End If
+            Case "}"
+                If j > 0 Then
+                    j = j - 1   ' 退出嵌套层级
+                    If j = 0 And Flag Then
+                        ' 提取最外层{}内的完整内容（包含花括号）
+                        k = k + 1
+                        Effectrr(k) = Mid(InputEffect, m, i - m + 1)
+                        Flag = False   ' 标记退出效果块
+                    End If
+                End If
+        End Select
+    Next i
+    
+    ' ========== 效果块替换 ==========
+    ' 将{}块替换为占位符，便于后续处理
+    For i = 1 To UBound(Effectrr)
+        If Effectrr(i) = "" Then Exit For
+        InputEffect = Replace(InputEffect, Effectrr(i), "{Effect" & i & "}", , 1)
+    Next i
+    
+
+    ' 分割效果字符串
+    EffectSplit = Split(InputEffect, "||")
+    
+    ' ========== Change条件处理 ==========
+    ' 查找并处理Change条件，确定后续处理范围
+    Ia = 1
+    Ib = UBound(EffectSplit)
+    
+    For i = 1 To UBound(EffectSplit)
+        If Left(EffectSplit(i), Len("Change|")) = "Change|" Then
+            ' 恢复效果块占位符为原始内容
+            For j = 1 To UBound(Effectrr)
+                If Effectrr(j) = "" Then Exit For
+                EffectSplit(i) = Replace(EffectSplit(i), "{Effect" & j & "}", Effectrr(j), , 1)
+            Next j
+            InputEffect = Join(EffectSplit, "||")
+        
+            ' 解析Change条件
+            Str = Mid(EffectSplit(i), 1 + Len("Change|"), 100)
+            
+            ' 处理超级进化条件
+            If Left(Str, Len("SuperEvolve")) = "SuperEvolve" Then
+                If InputTimePoint = "SuperEvolve" Then
+                    EffectSplit(i) = "Change|True"
+                Else
+                    EffectSplit(i) = "Change|False"
+                End If
+                
+            ' 处理强化条件
+            ElseIf Left(Str, Len("Enhance")) = "Enhance" Then
+                If InputTimePoint = "Enhance" Then
+                    EffectSplit(i) = "Change|True"
+                Else
+                    EffectSplit(i) = "Change|False"
+                End If
+                
+            ' 处理其他条件
+            ElseIf Str = "False" Then
+                
+            Else
+                EffectSplit(i) = "Change|" & GetIf(Str, ThisCard, InputEffect)
+            End If
+            
+            InputEffect = Join(EffectSplit, "||")
+            
+            ' 根据Change结果确定后续处理范围
+            If Mid(EffectSplit(i), 1 + Len("Change|"), Len("True")) = "True" Then
+                Ia = i + 1   ' True分支：处理Change之后的效果
+                Ib = UBound(EffectSplit)
+            Else
+                Ia = 1       ' False分支：处理Change之前的效果
+                Ib = i - 1
+            End If
+            
+            Exit For
+        End If
+    Next i
+    
+    ' ========== 效果遍历处理 ==========
+    For i = Ia To Ib
+        IfSplit = Split(EffectSplit(i), "|")   ' 分割当前效果
+        
+        ' 恢复效果块占位符为原始内容
+        For j = 1 To UBound(Effectrr)
+            If Effectrr(j) = "" Then Exit For
+            EffectSplit(i) = Replace(EffectSplit(i), "{Effect" & j & "}", Effectrr(j), , 1)
+        Next j
+        InputEffect = Join(EffectSplit, "||")
+        
+        ' ========== 模式选择处理 ==========
+        If Left(IfSplit(0), Len("Mode")) = "Mode" Then
+            ' 构建选项数组
+            Str = Translate("Mode")   ' 基础选项文本
+            For k = 1 To UBound(IfSplit)
+                For j = 1 To UBound(Effectrr)
+                    If Effectrr(j) = "" Then Exit For
+                    IfSplit(k) = Replace(IfSplit(k), "{Effect" & j & "}", Effectrr(j), , 1)
+                Next j
+                Str = Str & "\" & SentenceTranslate(Mid(IfSplit(k), 2, Len(IfSplit(k)) - 2))
+            Next k
+            
+            options = Split(Str, "\")
+            
+            ' 计算选择数量（考虑增加模式的效应）
+            m = Val(Mid(IfSplit(0), 1 + Len("Mode&"), 10))   ' 基础选择数
+            
+            ' 检查场地上增加模式的效应
+            Arr = Down("Field", ThisCard)
+            For j = 1 To UBound(Arr, 1)
+                If InStr(Arr(j, 5), "IncreaseModes") > 0 Then
+                    Brr = GetEffect(CStr(Arr(j, 1)))
+                    For k = 1 To UBound(Brr)
+                        If Brr(k) = "IncreaseModes" Then m = m + 1
+                    Next k
+                End If
+            Next j
+            
+            ' 检查纹章区域增加模式的效应
+            Arr = Down("Crest", ThisCard)
+            For j = 1 To UBound(Arr, 1)
+                If InStr(Arr(j, 5), "IncreaseModes") > 0 Then
+                    Brr = GetEffect(CStr(Arr(j, 1)))
+                    For k = 1 To UBound(Brr)
+                        If Brr(k) = "IncreaseModes" Then m = m + 1
+                    Next k
+                End If
+            Next j
+            
+            ' 显示选择对话框
+            If QueueAction = "" Then
+                Str = ShowChoice(options, 300, 1, m)
+            Else
+                Str = EraseQueueAction("Select")
+                If Str = "" Then
+                    MsgBox ("出现bug，请将excel发给sgg，交换控制方继续对局")
+                    Application.DisplayAlerts = False
+                    ThisWorkbook.Close False
+                    Application.DisplayAlerts = True
+                End If
+            End If
+            
+            If Str = "" Then
+                GetTimePoint = False   ' 用户取消选择
+                Exit Function
+            End If
+            
+            ' 处理选择结果
+            Arr = Split(Str, "&")
+            EffectSplit(i) = Empty
+            For j = 0 To UBound(Arr)
+                EffectSplit(i) = EffectSplit(i) & SentenceTranslate(options(Arr(j)))
+                If j < UBound(Arr) Then EffectSplit(i) = EffectSplit(i) & "||"
+            Next j
+            InputEffect = Join(EffectSplit, "||")
+            
+            ' 记录选择动作
+            Call UpSteps("Select", Str)
+            Call GetAction("Keyword&Mode", ThisCard)
+            
+            ' 重新开始处理（选择后可能改变后续逻辑）
+            GoTo StartTimePoint
+        End If
+        
+        ' ========== 依序处理 ==========
+        If Left(IfSplit(0), Len("InOrder")) = "InOrder" Then
+            '查看当前序号
+            Arr = DownByMatchID(ThisCard, "Effect")
+            Arr = SplitEffect(Arr)
+            k = 1
+            For j = 0 To UBound(Arr)
+                If Left(Arr(j), Len("InOrder|")) = "InOrder|" Then
+                    k = Val(Mid(Arr(j), 1 + Len("InOrder|"), 10))
+                    Exit For
+                End If
+            Next j
+            
+            ' 计算依序数量（考虑增加模式的效应）
+            m = Val(Mid(IfSplit(0), 1 + Len("InOrder&"), 10))   ' 基础选择数
+            
+            ' 处理依序结果
+            EffectSplit(i) = Empty
+            
+            For j = 1 To m
+                For n = 1 To UBound(Effectrr)
+                    If Effectrr(n) = "" Then Exit For
+                    IfSplit(k) = Replace(IfSplit(k), "{Effect" & n & "}", Effectrr(n), , 1)
+                Next n
+                
+                EffectSplit(i) = EffectSplit(i) & Mid(IfSplit(k), 2, Len(IfSplit(k)) - 2)
+                If j < m Then EffectSplit(i) = EffectSplit(i) & "||"
+                k = k + 1
+                If k > UBound(IfSplit) Then k = 1
+            Next j
+            InputEffect = Join(EffectSplit, "||")
+            
+            '更新当前序号
+            For j = 0 To UBound(Arr)
+                If Left(Arr(j), Len("InOrder|")) = "InOrder|" Then
+                    Arr(j) = "InOrder|" & k
+                    Exit For
+                End If
+            Next j
+            If j > UBound(Arr) Then
+                Arr = Join(Arr, "||") & "||InOrder|" & k & "||"
+            Else
+                Arr = Join(Arr, "||") & "||"
+            End If
+            Call UpByMatchID(ThisCard, "Effect", Arr)
+            
+            ' 重新开始处理（选择后可能改变后续逻辑）
+            GoTo StartTimePoint
+        End If
+        
+        ' ========== 重复发动处理 ==========
+        If Left(IfSplit(0), Len("Replicate")) = "Replicate" Then
+            Arr = GetEffect(ThisCard)
+            For j = 1 To UBound(Arr)
+                If Left(Arr(j), Len(IfSplit(1))) = IfSplit(1) Then
+                    ' 修改效果并递归处理
+                    Arr(j) = EffectSplit(0) & Mid(Arr(j), 1 + Len(IfSplit(1)), 1000)
+                    GetTimePoint = GetTimePoint(CStr(Arr(j)), ThisCard, InputTimePoint)
+                End If
+            Next j
+        End If
+        
+        ' ========== 条件判断处理 ==========
+        If IfSplit(0) = "If" Then
+            ' 处理If条件
+            EffectSplit(i) = GetIf(EffectSplit(i), ThisCard, InputEffect)
+            InputEffect = Join(EffectSplit, "||")
+            If Left(EffectSplit(i), Len("False")) = "False" Then IFFlag = False  ' 条件为False时退出
+            
+        ' ========== 变量赋值处理 ==========
+        ElseIf Left(IfSplit(0), 2) = "X=" Or Left(IfSplit(0), 2) = "Y=" Or Left(IfSplit(0), 2) = "Z=" Then
+            ' 变量赋值，暂不处理具体逻辑
+            
+        ' ========== 目标选择处理 ==========
+        Else
+            ' 查询效果中是否有选择目标的要求
+            For j = 0 To UBound(IfSplit)
+                If Left(IfSplit(j), Len("Select&")) = "Select&" And IFFlag Then
+                    If QueueAction = "" Then
+                        ' 根据效果类型确定选择范围
+                        If IfSplit(0) = "ReturnToHand" Or IfSplit(0) = "Destroy" Or IfSplit(0) = "Countdown" Or _
+                        IfSplit(0) = "Damage" Or IfSplit(0) = "SplitDamage" Or IfSplit(0) = "Restore" Or _
+                        IfSplit(0) = "Evolve" Or IfSplit(0) = "SuperEvolve" Then
+                            Call GetGoal("Field-" & IfSplit(j), ThisCard, InputEffect, IfSplit(j))  ' 从场地选择
+                        ElseIf IfSplit(0) = "ReturnToDeck" Or IfSplit(0) = "Discard" Or IfSplit(0) = "HandSummon" Then
+                            Call GetGoal("Hand-" & IfSplit(j), ThisCard, InputEffect, IfSplit(j))   ' 从手牌选择
+                        Else
+                            Call GetGoal(IfSplit(j), ThisCard, InputEffect)              ' 通用选择
+                        End If
+                    Else
+                        PreviousGoal = EraseQueueAction("Select")
+                        If PreviousGoal = "" Then
+                            MsgBox ("出现bug，请将excel发给sgg，交换控制方继续对局")
+                            Application.DisplayAlerts = False
+                            ThisWorkbook.Close False
+                            Application.DisplayAlerts = True
+                        ElseIf PreviousGoal = "0" Then
+                            PreviousGoal = ""
+                        End If
+                    End If
+                    
+                    ' 处理选择结果
+                    If PreviousGoal = "" Then
+                        If DownByID(DownByMatchID(ThisCard, "ID"), "Type") = "Spell" Then
+                            GetTimePoint = False   ' 选择失败
+                        Else
+                            GetTimePoint = True
+                            Call UpSteps("Select", "0")
+                        End If
+                        Exit Function
+                    Else
+                        ' 替换选择占位符为实际目标
+                        EffectSplit(i) = Replace(EffectSplit(i), IfSplit(j), "Goal&" & PreviousGoal)
+                        InputEffect = Join(EffectSplit, "||")
+                        
+                        ' 记录选择动作
+                        Call UpSteps("Select", PreviousGoal)
+                    End If
+                End If
+            Next j
+        End If
+    Next i
+    
+    ' ========== 效果队列构建 ==========
+    ' 将处理后的效果添加到队列
+    QueueAbility = QueueAbility & "\" & InputEffect
+    QueueMatchID = QueueMatchID & "\" & ThisCard
+    
+    GetTimePoint = True   ' 返回处理成功
+End Function
+

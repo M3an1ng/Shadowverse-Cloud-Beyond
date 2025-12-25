@@ -1,0 +1,211 @@
+Attribute VB_Name = "·8·1·对局·UIRefresh"
+' ==================================================
+' 函数功能：用户界面刷新函数
+' 说明：更新游戏主界面的所有显示元素
+' 包括战场、手牌、纹章、牌堆、墓场、职业关键字等
+' ==================================================
+Function UIRefresh()
+    ' ========== 变量声明 ==========
+    Dim i%, j%
+    Dim Str As String
+    Dim Arr As Variant
+    Dim Brr As Variant
+    Dim AlliedMove As String
+    Dim EnemyMove As String
+    
+    ' ========== 先后手确定 ==========
+    ' 查询先后手并设置玩家标识
+    If Down("FirstMove") = "FirstMove" Then
+        AlliedMove = "F"
+        EnemyMove = "S"
+    Else
+        AlliedMove = "S"
+        EnemyMove = "F"
+    End If
+    
+    ' ========== 敌方战场刷新 ==========
+    ' 下载敌方战场信息并格式化显示
+    Arr = Down("Field", EnemyMove & "1000")
+    ReDim Brr(1 To 3, 1 To 5)
+    For i = 1 To UBound(Arr, 1)
+        Brr(1, i) = DownByID(CStr(Arr(i, 2)), "Name")
+        If DownByID(CStr(Arr(i, 2)), "Type") = "Amulet" Then
+            ' 护符类型：显示倒计时
+            j = GetModel("Countdown", CStr(Arr(i, 2)), CStr(Arr(i, 5)))
+            If j > 0 Then
+                Brr(2, i) = Translate("Countdown") & j
+                Arr(i, 5) = Replace(Arr(i, 5), "Countdown&" & j & "||", "")
+            End If
+        ElseIf DownByID(CStr(Arr(i, 2)), "Type") = "Follower" Then
+            ' 从者类型：显示攻击力/防御力
+            Brr(2, i) = GetModel("Attack", CStr(Arr(i, 2)), CStr(Arr(i, 5))) & "/" & GetModel("Defense", CStr(Arr(i, 2)), CStr(Arr(i, 5)))
+        End If
+        Brr(3, i) = SentenceTranslate(CStr(Arr(i, 5)))
+    Next i
+    Call Up("EnemyField", Brr)
+    
+    ' ========== 己方战场刷新 ==========
+    ' 下载己方战场信息并格式化显示
+    Arr = Down("Field", AlliedMove & "1000")
+    ReDim Brr(1 To 3, 1 To 5)
+    For i = 1 To UBound(Arr, 1)
+        Brr(1, i) = DownByID(CStr(Arr(i, 2)), "Name")
+        If DownByID(CStr(Arr(i, 2)), "Type") = "Amulet" Then
+            ' 护符类型：显示倒计时
+            j = GetModel("Countdown", CStr(Arr(i, 2)), CStr(Arr(i, 5)))
+            If j > 0 Then
+                Brr(2, i) = Translate("Countdown") & j
+                Arr(i, 5) = Replace(Arr(i, 5), "Countdown&" & j & "||", "")
+            End If
+        ElseIf DownByID(CStr(Arr(i, 2)), "Type") = "Follower" Then
+            ' 从者类型：显示攻击力/防御力
+            Brr(2, i) = GetModel("Attack", CStr(Arr(i, 2)), CStr(Arr(i, 5))) & "/" & GetModel("Defense", CStr(Arr(i, 2)), CStr(Arr(i, 5)))
+        End If
+        Brr(3, i) = SentenceTranslate(CStr(Arr(i, 5)))
+    Next i
+    Call Up("AlliedField", Brr)
+    
+    ' ========== 手牌区域刷新 ==========
+    ' 下载手牌信息并格式化显示
+    Arr = Down("Hand", AlliedMove & "1000")
+    ReDim Brr(1 To 2, 1 To 9)
+    For i = 1 To UBound(Arr, 1)
+        Brr(1, i) = DownByID(CStr(Arr(i, 2)), "Name")
+        Brr(2, i) = SentenceTranslate(CStr(Arr(i, 5)))
+    Next i
+    Call Up("Hand", Brr)
+    
+    ' ========== 纹章区域刷新 ==========
+    ' 下载纹章信息并格式化显示
+    Arr = Down("Crest", AlliedMove & "1000")
+    ReDim Brr(1 To 3, 1 To 5)
+    For i = 1 To UBound(Arr, 1)
+        Brr(1, i) = DownByID(CStr(Arr(i, 2)), "Name")
+        j = GetModel("Countdown", CStr(Arr(i, 2)), CStr(Arr(i, 5)))
+        If j > 0 Then
+            Brr(2, i) = Translate("Countdown") & j
+            Arr(i, 5) = Replace(Arr(i, 5), "Countdown&" & j & "||", "")
+        End If
+        Brr(3, i) = SentenceTranslate(CStr(Arr(i, 5)))
+    Next i
+    Call Up("Crest", Brr)
+    Sheets("Main").Shapes("CrestBtn").TextFrame.Characters.Text = "查看对手纹章"
+    
+    ' ========== 牌堆计数刷新 ==========
+    ' 计算并显示牌堆剩余卡牌数量
+    Arr = Down("Data")
+    j = 0
+    For i = 1 To UBound(Arr, 1)
+        If Arr(i, 1) = "" Then Exit For
+        If Arr(i, 4) = "Deck" And Left(Arr(i, 1), 1) = AlliedMove Then j = j + 1
+    Next i
+    Call Up("Deck·Cards", j)
+    
+    ' ========== 墓场区域刷新 ==========
+    ' 下载并显示墓场信息
+    Call Up("Shadows", Down("Shadows", AlliedMove & "1000"))
+    
+    ' ========== 职业关键字刷新 ==========
+    ' 根据职业显示相应的关键字信息
+    Str = Down("Class", AlliedMove & "1000")
+    ReDim Arr(1 To 2, 1 To 1)
+    If Str = "Forestcraft" Then
+        ' 精灵职业：显示连击数
+        Arr(1, 1) = Translate("Combo")
+        Arr(2, 1) = Down("Combo", AlliedMove & "1000")
+    ElseIf Str = "Swordcraft" Then
+        ' 皇家职业：显示协作数
+        Arr(1, 1) = Translate("Rally")
+        Arr(2, 1) = Down("Rally", AlliedMove & "1000")
+    ElseIf Str = "Dragoncraft" Then
+        ' 龙族职业：显示觉醒状态
+        Arr(1, 1) = Translate("IsOverflow")
+        If Down("AlliedMaxPP") + 0 >= 7 Then Arr(2, 1) = Translate("Overflow") Else Arr(2, 1) = Translate("UnOverflow")
+    ElseIf Str = "Abysscraft" Then
+        ' 梦魇职业：显示血池数
+        Arr(1, 1) = Translate("BloodPool")
+        Arr(2, 1) = Down("BloodPool", AlliedMove & "1000")
+    End If
+    Call Up("ClassKeyWord", Arr)
+    
+    ' ========== 对手手牌刷新 ==========
+    ' 显示对手手牌张数
+    Arr = Down("Hand", EnemyMove & "1000")
+    Call Up("UIEnemyHands", UBound(Arr, 1))
+    
+    ' ========== 已使用卡片统计 ==========
+    ' 统计并显示本局已使用的卡片
+    Arr = Down("Steps")
+    Brr = Down("PlayArea")
+    ReDim Brr(1 To UBound(Brr, 1), 1 To UBound(Brr, 2))
+    For i = 1 To UBound(Arr)
+        If Arr(i, 2) = "Play" Then
+            If Left(Arr(i, 3), 1) = AlliedMove Then
+                Str = DownByID(DownByMatchID(CStr(Arr(i, 3)), "ID"), "Name")
+                For j = 1 To UBound(Brr, 1)
+                    If Brr(j, 1) = Str Then
+                        Brr(j, 2) = Brr(j, 2) + 1
+                        Exit For
+                    ElseIf Brr(j, 1) = "" Then
+                        Brr(j, 1) = Str
+                        Brr(j, 2) = 1
+                        Exit For
+                    End If
+                Next j
+            End If
+        End If
+    Next i
+    Call Up("PlayArea", Brr)
+    
+    ' ========== 已破坏卡片统计 ==========
+    ' 统计并显示本局已被破坏的卡片
+    Arr = Down("Steps")
+    Brr = Down("DestroyArea")
+    ReDim Brr(1 To UBound(Brr, 1), 1 To UBound(Brr, 2))
+    For i = 1 To UBound(Arr)
+        If Arr(i, 2) = "Destroy" Then
+            If Left(Arr(i, 3), 1) = AlliedMove Then
+                Str = DownByID(DownByMatchID(CStr(Arr(i, 3)), "ID"), "Name")
+                ' 过滤纹章和信仰卡牌（注释标明不严谨实现）
+                If Left(Str, 3) <> Translate("Crest") & ":" And Left(Str, 3) <> Translate("Faith") & ":" Then
+                    For j = 1 To UBound(Brr, 1)
+                        If Brr(j, 1) = Str Then
+                            Brr(j, 2) = Brr(j, 2) + 1
+                            Exit For
+                        ElseIf Brr(j, 1) = "" Then
+                            Brr(j, 1) = Str
+                            Brr(j, 2) = 1
+                            Exit For
+                        End If
+                    Next j
+                End If
+            End If
+        End If
+    Next i
+    Call Up("DestroyArea", Brr)
+    
+    ' ========== 计数区域刷新 ==========
+    ' 显示各种计数器的当前值
+    Arr = Down("Count")
+    Brr = Down("CountArea")
+    ReDim Brr(1 To UBound(Brr, 1), 1 To UBound(Brr, 2))
+    j = 0
+    For i = 1 To UBound(Arr)
+        If Left(Arr(i, 1), 1) = AlliedMove Then
+            Str = Mid(Arr(i, 1), 2, 100)
+            If Str <> "Class" And Str <> "Shadows" And Str <> "Combo" Then
+                j = j + 1
+                Brr(j, 1) = Translate(Str)
+                Brr(j, 2) = Val(Arr(i, 2))
+            End If
+        End If
+    Next i
+    Call Up("CountArea", Brr)
+    
+    ' ========== 标题栏刷新 ==========
+    ' 更新主界面标题栏显示当前回合信息
+    If AlliedMove = "F" Then Str = "FirstMove" Else Str = "SecondMove"
+    Str = Translate(Str)
+    Str = Str & Translate("No") & Mid(Down("Turn"), 2, 10) & Translate("Turn")
+    Sheets("Main").Cells(1, 1) = Str
+End Function

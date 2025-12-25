@@ -26,6 +26,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         string Name { get; }
 
         /// <summary>
+        /// The C# type that this function is expected to return.
+        /// This is used by the DslCompiler to generate strongly-typed expression trees.
+        /// The default is 'object' to support functions that don't have a specific, fixed return type.
+        /// </summary>
+        Type ReturnType { get; }
+
+        /// <summary>
+        /// A user-friendly description of the function for UI tooltips.
+        /// </summary>
+        string Description { get; }
+
+        /// <summary>
+        /// A structured list of metadata for each parameter the function accepts.
+        /// </summary>
+        IReadOnlyList<DslParameterInfo> Parameters { get; }
+
+        /// <summary>
         /// 验证函数参数
         /// </summary>
         /// <param name="args">参数列表</param>
@@ -38,7 +55,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// <param name="args">参数列表</param>
         /// <param name="context">评估上下文</param>
         /// <returns>函数执行结果</returns>
-        Task<object?> ExecuteAsync(List<object?> args, GameContext context);
+        object? Execute(List<object?> args, GameContext context);
     }
 
     /// <summary>
@@ -47,6 +64,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public abstract class BaseDslFunction : IFunctionDefinition
     {
         public abstract string Name { get; }
+
+        public virtual Type ReturnType => typeof(object);
+
+        public virtual string Description => string.Empty;
+
+        public virtual IReadOnlyList<DslParameterInfo> Parameters => Array.Empty<DslParameterInfo>();
 
         /// <summary>
         /// 验证函数参数
@@ -77,7 +100,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// <summary>
         /// 执行函数
         /// </summary>
-        public abstract Task<object?> ExecuteAsync(List<object?> args, GameContext context);
+        public abstract object? Execute(List<object?> args, GameContext context);
 
         /// <summary>
         /// 获取期望的参数数量（如果固定）

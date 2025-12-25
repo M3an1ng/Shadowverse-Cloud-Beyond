@@ -11,6 +11,8 @@ using System.Collections.Generic;
 using Microsoft.Extensions.FileProviders;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions; // Added for AddDslFunctionSystem extension
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation; // For IDslCompiler
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +32,7 @@ using ShadowverseBeyond.Server.Domain.Query;               // Added for ICardQue
 using ShadowverseBeyond.Server.Services.Abstractions;       // Added for IGameDataProvider
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
 using ShadowverseBeyond.Server.Infrastructure.Services; // Added for InMemoryEventHistoryService
+using ShadowverseBeyond.Server.Options;
 
 
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For IAbility
@@ -84,6 +87,19 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         });
     Log.Information("Registered API Controllers.");
 
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddFixedWindowLimiter("replay-read", limiterOptions =>
+        {
+            limiterOptions.PermitLimit = 120;
+            limiterOptions.Window = TimeSpan.FromMinutes(1);
+            limiterOptions.QueueLimit = 0;
+            limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        });
+    });
+    Log.Information("Registered RateLimiter policies.");
+
     // Register AutoMapper - Scans the assembly containing Program for Profile classes
     builder.Services.AddAutoMapper(typeof(Program).Assembly);
     Log.Information("Registered AutoMapper."); // Added Log
@@ -104,6 +120,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddScoped<ICardRepository, EFCardRepository>(); // Keep as Scoped due to DbContext dependency
     Log.Information("Registered ICardRepository."); // Added Log
                                                     // Removed ICardService registration (Controller will use ICardRepository directly)
+
+    builder.Services.AddSingleton<IGuestDeckStore, GuestDeckStore>();
+    builder.Services.AddSingleton<IDeckCodeService, DeckCodeService>();
+    builder.Services.AddScoped<IDeckValidationService, DeckValidationService>();
+    builder.Services.AddScoped<IDeckService, DeckService>();
+    Log.Information("Registered deck services.");
 
     // Register GameDataProvider for data caching and preloading
     builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IGameDataProvider, ShadowverseBeyond.Server.Services.GameDataProvider>();
@@ -172,7 +194,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered HubExceptionLoggerFilter."); // Added Log
     builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Register the client method mapper
     Log.Information("Registered IClientMethodMapper."); // Added Log
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
     Log.Information("Registered IDebugCommandParser."); // Added Log
     builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
     Log.Information("Registered IMatchService (in-memory lobby)."); // Added Log
@@ -184,6 +206,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register Economy Service
     builder.Services.AddScoped<IEconomyService, EconomyService>(); // Register the economy service
     Log.Information("Registered IEconomyService."); // Added Log
+    builder.Services.AddScoped<IMetaProgressionService, MetaProgressionService>();
+    Log.Information("Registered IMetaProgressionService.");
 
     // Register DSL Function System (includes DslEvaluator, DslExpressionParser, IFunctionRegistry)
     builder.Services.AddDslFunctionSystem();
@@ -337,6 +361,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         return contextAccessor.GameContext.BuffManager;
     });
     Log.Information("Registered IBuffManager as Scoped.");
+    builder.Services.AddScoped<IBuffEvaluator, BuffEvaluator>();
+    Log.Information("Registered IBuffEvaluator as Scoped.");
     // Register BuffFactory for creating Buff instances with GameDataProvider support
     // Changed to Singleton to match GameService lifetime
 
@@ -374,8 +400,36 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered Effect Queue System.");
 
     // Register Event History Service
-    builder.Services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
-    Log.Information("Registered IEventHistoryService as Singleton (InMemoryEventHistoryService).");
+    builder.Services.AddSingleton<InMemoryEventHistoryService>();
+    builder.Services.AddSingleton<IEventHistoryService, JournalBackedEventHistoryService>();
+    Log.Information("Registered IEventHistoryService as Singleton (JournalBackedEventHistoryService).");
+
+    builder.Services.Configure<ReplayOptions>(builder.Configuration.GetSection("Replay"));
+    Log.Information("Configured ReplayOptions (Replay section).");
+
+    builder.Services.AddScoped<ICommittedEventJournal, SqliteReplayJournal>();
+    Log.Information("Registered ICommittedEventJournal as Scoped (SqliteReplayJournal).");
+
+    builder.Services.AddScoped<ISnapshotStore, SqliteSnapshotStore>();
+    Log.Information("Registered ISnapshotStore as Scoped (SqliteSnapshotStore).");
+
+    builder.Services.AddSingleton<IRecordedEventMapper, JsonRecordedEventMapper>();
+    Log.Information("Registered IRecordedEventMapper as Singleton (JsonRecordedEventMapper).");
+
+    builder.Services.AddSingleton<IGameEventRawEventMapper, JsonGameEventRawEventMapper>();
+    Log.Information("Registered IGameEventRawEventMapper as Singleton (JsonGameEventRawEventMapper).");
+
+    builder.Services.AddSingleton<IRawEventValidator, RawEventValidator>();
+    Log.Information("Registered IRawEventValidator as Singleton (RawEventValidator).");
+
+    builder.Services.AddSingleton<IRawEventGameEventRegistry, RawEventGameEventRegistry>();
+    Log.Information("Registered IRawEventGameEventRegistry as Singleton (RawEventGameEventRegistry).");
+
+    builder.Services.AddSingleton<IGameEventRehydrator, BestEffortGameEventRehydrator>();
+    Log.Information("Registered IGameEventRehydrator as Singleton (BestEffortGameEventRehydrator).");
+
+    builder.Services.AddHostedService<ReplayCleanupHostedService>();
+    Log.Information("Registered ReplayCleanupHostedService.");
 
     // Register Database Seeding Services
 
@@ -391,6 +445,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         var mapper = provider.GetRequiredService<IMapper>();
         var clientMethodMapper = provider.GetRequiredService<IClientMethodMapper>();
         var gameDataProvider = provider.GetRequiredService<IGameDataProvider>();
+        var matchService = provider.GetRequiredService<IMatchService>();
         var serviceScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var pendingActionService = provider.GetRequiredService<IPendingActionService>();
 
@@ -400,6 +455,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             mapper,
             clientMethodMapper,
             gameDataProvider,
+            matchService,
             serviceScopeFactory,
             pendingActionService
         );
@@ -446,6 +502,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             System.IO.Path.Combine(builder.Environment.ContentRootPath, "..")),
         RequestPath = "" // Serve files directly from the root URL path (e.g., /style.css, /src/gameManager.js)
     });
+
+    app.UseRateLimiter();
 
     // app.UseHttpsRedirection(); // Temporarily disabled for testing static files
 
@@ -577,5 +635,3 @@ record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 
 // Add this partial class definition to make the Program class public and accessible for integration tests.
 public partial class Program { }
-
-

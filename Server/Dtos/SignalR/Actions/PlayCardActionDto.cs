@@ -1,4 +1,5 @@
 using System;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
 {
@@ -14,11 +15,21 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
         public Guid CardUid { get; set; } = Guid.Empty;
 
         /// <summary>
-        /// The unique identifier (UID) of the target, if the card requires one (e.g., targeted spell or Fanfare effect).
-        /// Can be a unit UID or a player/leader identifier (e.g., "Player1Leader", "Player2Leader").
-        /// Null or empty if no target is required or selected.
+        /// A list of unique identifiers (UIDs) for the targets, if the card requires them.
+        /// This supports both single-target and multi-target effects.
+        /// The list can be null or empty if no targets are required or selected.
         /// </summary>
-        public Guid? TargetUid { get; set; }
+        public List<Guid>? TargetUids { get; set; }
+
+        /// <summary>
+        /// The selected play mode for this action (Base or Enhance).
+        /// </summary>
+        public PlayMode? PlayMode { get; set; }
+
+        /// <summary>
+        /// The cost the client expects to pay for the selected mode.
+        /// </summary>
+        public int? PaidCost { get; set; }
 
         // Potential future additions:
         // public int? SelectedOption { get; set; } // For cards with choices

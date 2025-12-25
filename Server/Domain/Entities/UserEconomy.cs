@@ -28,8 +28,6 @@ public class UserEconomy
     /// </summary>
     public int Coins { get; set; } = 1000; // 初始金币
 
-
-
     /// <summary>
     /// 创建时间
     /// </summary>
@@ -45,31 +43,4 @@ public class UserEconomy
     /// 关联的用户
     /// </summary>
     public User User { get; set; } = null!;
-
-    /// <summary>
-    /// 金币交易记录
-    /// </summary>
-    public List<CoinTransaction> CoinTransactions { get; set; } = new();
-
-    /// <summary>
-    /// 用户卡包列表
-    /// </summary>
-    public List<UserCardPack> CardPacks { get; set; } = new();
-
-    /// <summary>
-    /// 用户任务列表
-    /// </summary>
-    public List<UserQuest> Quests { get; set; } = new();
-
-    /// <summary>
-    /// 用户排名信息
-    /// </summary>
-    public UserRanking? Ranking { get; set; }
-
-    /// <summary>
-    /// 用户每日奖励信息
-    /// </summary>
-    public UserDailyReward? DailyReward { get; set; }
-
-
 }

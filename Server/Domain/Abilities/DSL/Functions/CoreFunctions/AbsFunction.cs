@@ -19,6 +19,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class AbsFunction : BaseDslFunction
     {
         public override string Name => "abs";
+        public override string Description => "计算一个数值的绝对值。";
+
+        public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
+        {
+            new DslParameterInfo("value", typeof(object), "需要计算绝对值的数值（可以是整数或小数）。")
+        };
 
         protected override int? GetExpectedArgumentCount() => 1;
 
@@ -33,10 +39,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return arg == null || IsNumeric(arg);
         }
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
+        public override object? Execute(List<object?> args, GameContext context)
         {
-            await Task.CompletedTask; // 标记为异步但实际上是同步操作
-
             if (args.Count != 1)
             {
                 return null;

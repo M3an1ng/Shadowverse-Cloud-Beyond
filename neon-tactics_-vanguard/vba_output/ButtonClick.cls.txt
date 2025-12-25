@@ -1,0 +1,41 @@
+Attribute VB_Name = "ButtonClick"
+Attribute VB_Base = "0{FCFB3D2A-A0FA-1068-A738-08002B3371B5}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' 类模块名称: ButtonClick
+Public WithEvents Button As MSForms.ToggleButton
+Attribute Button.VB_VarHelpID = -1
+Public ButtonIndex As Long
+Public ParentForm As Object
+
+Private Sub Button_Click()
+    Dim Arr() As String
+
+    If Button.Value Then
+        '记录进字符串
+        If Me.ButtonIndex > 0 Then ParentForm.SelectedIndex = ParentForm.SelectedIndex & Me.ButtonIndex & "&"
+        '拆解目前选项
+        Arr = Split(ParentForm.SelectedIndex, "&")
+        
+        '如果是任选
+        If ParentForm.SelectCount < 0 Then
+            If Me.ButtonIndex = 0 Then
+                If Len(ParentForm.SelectedIndex) > 1 Then ParentForm.SelectedIndex = Left(ParentForm.SelectedIndex, Len(ParentForm.SelectedIndex) - 1)
+                ParentForm.Hide
+            End If
+        '如果不是任选，判断是否满足应选数
+        ElseIf UBound(Arr) >= ParentForm.SelectCount Then
+            If Len(ParentForm.SelectedIndex) > 1 Then ParentForm.SelectedIndex = Left(ParentForm.SelectedIndex, Len(ParentForm.SelectedIndex) - 1)
+            ParentForm.Hide
+        End If
+    Else
+        ParentForm.SelectedIndex = Replace(ParentForm.SelectedIndex, Me.ButtonIndex & "&", "")
+    End If
+End Sub
+
+
+

@@ -12,8 +12,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Dtos.Enums; // For CardZone
+using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Domain.Effects; // For CardZone
 // EvolveEffectParams is in ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters, but it's empty.
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.System
 {
@@ -25,8 +27,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public Guid RuntimeId => _runtimeId;
         public long DefinitionId => GameConstants.SystemAbilityIds.EvolveAbilityId;
         public string Name => "Evolve";
-        public string AbilityTag => "System";
+        public EffectKeyword AbilityTag => EffectKeyword.System;
         public AbilityType Type => AbilityType.Triggered;
+        public List<Target> Targets { get; } = new List<Target>();
 
         public TriggerConfig TriggerConfig
         {
@@ -39,7 +42,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             }
         }
 
+        public Guid? SourceCardId { get; set; }
+
         public CardInstance? SourceCard { get; set; }
+
+        public Guid? SourceBuffId => null; // System abilities are not granted by buffs.
 
         public EvolveAbility(ILogger<EvolveAbility> logger)
         {
@@ -59,32 +66,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             return Task.FromResult(true);
         }
 
-        public Task<bool> CheckConditionsAsync(GameContext context)
+        public bool CheckConditions(GameContext context)
         {
             if (context.TriggeringEvent is not EvolveRequestedEvent requestEvent)
             {
                 _logger?.LogWarning("{AbilityName}: Triggering event is not EvolveRequestedEvent. Event: {Event}", Name, context.TriggeringEvent?.GetType().Name);
-                return Task.FromResult(false);
+                return false;
             }
 
             if (requestEvent.PlayerId != context.CurrentGameState.CurrentPlayerId)
             {
                 _logger?.LogWarning("{AbilityName}: Player {RequestingPlayerId} attempted to evolve unit, but it's not their turn (Active: {ActivePlayerId}).",
                     Name, requestEvent.PlayerId, context.CurrentGameState.CurrentPlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             PlayerState? evolverPlayerState = context.CurrentGameState.GetPlayerState(requestEvent.PlayerId);
             if (evolverPlayerState == null)
             {
                 _logger?.LogError("{AbilityName}: Could not find player state for PlayerId {PlayerId}.", Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             if (!Guid.TryParse(requestEvent.ActionDto.UnitUid, out Guid unitGuidToEvolve))
             {
                 _logger?.LogWarning("{AbilityName}: Invalid UnitUid format in EvolveActionDto: {UnitUid}", Name, requestEvent.ActionDto.UnitUid);
-                return Task.FromResult(false);
+                return false;
             }
 
             CardInstance? cardToEvolve = evolverPlayerState.Field.FirstOrDefault(c => c.InstanceId == unitGuidToEvolve);
@@ -92,7 +99,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Unit with UID {UnitUid} not found on player {PlayerId}'s field for evolution.",
                     Name, requestEvent.ActionDto.UnitUid, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
+            }
+
+            if (cardToEvolve.HasKeyword(CardKeyword.BanEvolve))
+            {
+                _logger?.LogWarning("{AbilityName}: Unit {UnitName} (UID: {UnitUid}) cannot evolve due to BanEvolve.",
+                    Name, cardToEvolve.Name, cardToEvolve.InstanceId);
+                return false;
             }
 
             // 1. Check intrinsic card properties (using the new pure method)
@@ -100,22 +114,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Unit {UnitName} (UID: {UnitUid}) cannot evolve intrinsically (already evolved or no form).",
                     Name, cardToEvolve.Name, cardToEvolve.InstanceId);
-                return Task.FromResult(false);
+                return false;
             }
 
             // 2. Check game rule conditions (EP, turn number, player's right to evolve)
-            if (evolverPlayerState.CurrentEvolutionPoints < GameConstants.Evolution.EvolutionPointCost)
+            var hasFreeEvolve = cardToEvolve.HasKeyword(CardKeyword.FreeEvolve);
+            if (!hasFreeEvolve && evolverPlayerState.CurrentEvolutionPoints < GameConstants.Evolution.EvolutionPointCost)
             {
                 _logger?.LogWarning("{AbilityName}: Player {PlayerId} does not have enough EP to evolve. Has: {EP}, Needs: {Cost}",
                     Name, requestEvent.PlayerId, evolverPlayerState.CurrentEvolutionPoints, GameConstants.Evolution.EvolutionPointCost);
-                return Task.FromResult(false);
+                return false;
             }
 
             if (!evolverPlayerState.CanEvolve)
             {
                 _logger?.LogWarning("{AbilityName}: Player {PlayerId} has already used their evolution right this turn.",
                     Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             int evolutionStartTurn = evolverPlayerState.IsFirst ? GameConstants.Evolution.FirstPlayerEvolutionStartTurn : GameConstants.Evolution.SecondPlayerEvolutionStartTurn;
@@ -123,22 +138,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Player {PlayerId} cannot evolve on turn {TurnNumber}. Evolution starts on turn {StartTurn}.",
                     Name, requestEvent.PlayerId, evolverPlayerState.TurnNumber, evolutionStartTurn);
-                return Task.FromResult(false);
+                return false;
             }
 
             _logger?.LogInformation("{AbilityName}: Conditions met for player {PlayerId} to evolve unit {UnitUid}.", Name, requestEvent.PlayerId, requestEvent.ActionDto.UnitUid);
-            return Task.FromResult(true);
+            return true;
         }
 
-        public Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
+        public Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false)
         {
             // The unit to evolve is specified in the EvolveRequestedEvent.
             // The EvolveEffectHandler will use this information.
             _logger?.LogInformation("{AbilityName}: Target unit is specified in the EvolveRequestedEvent.", Name);
-            return Task.FromResult(new List<TargetInfo>());
+            return Task.FromResult(new TargetResolutionResult { Status = ResolutionStatus.Completed, ResolvedTargets = new Dictionary<string, List<TargetInfo>>() });
         }
 
-        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, TargetResolutionResult targetResult)
         {
             var effects = new List<Effect>();
 
@@ -156,13 +171,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
 
             var effectConfig = new EffectConfig
             {
-                Type = "evolve", // Corresponds to EvolveEffectHandler
+                Type = EffectType.Evolve, // Corresponds to EvolveEffectHandler
                 Parameters = new Dictionary<string, ValueConfig>()
             };
 
             var requestingPlayerId = requestEvent.PlayerId;
 
-            effectConfig.Parameters.Add("CardToEvolveInstanceId", ValueConfig.Static(unitGuidToEvolve));
+            // The target is passed via SelectedTargets, not through parameters.
+            // This line was causing a warning and is not the correct way to pass the target.
+            // effectConfig.Parameters.Add("CardToEvolveInstanceId", new StaticValueConfig { Value = unitGuidToEvolve });
 
             var selectedTargetsForEffect = new List<TargetInfo>();
             var cardToEvolve = context.CurrentGameState.FindCardInstance(unitGuidToEvolve);

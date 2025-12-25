@@ -9,42 +9,51 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
+    [EffectHandler(EffectType.TurnEnd)]
     public class TurnEndEffectHandler : EffectHandlerBase<TurnEndEffectParams>
     {
-        private readonly IMapper _mapper;
         private readonly ITargetProcessingService _targetProcessingService;
 
         public TurnEndEffectHandler(
             ILogger<TurnEndEffectHandler> logger,
-            IMapper mapper,
             ITargetProcessingService targetProcessingService)
             : base(logger)
         {
-            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
-        public override async Task<GameStateActionResult> ApplyAsync(GameContext context, TurnEndEffectParams parameters)
+        public override GameStateActionResult Apply(Effect effect, GameContext context, TurnEndEffectParams parameters)
         {
             const string effectName = "TurnEndEffect";
             Logger.LogDebug("{EffectName}: Starting for player {PlayerId}.", effectName, parameters.EndingPlayerId);
 
-            Func<PlayerState, GameContext, Task<DomainOperationResult>> turnEndAction =
-                async (player, ctx) =>
+            Func<TargetInfo, GameContext, DomainOperationResult> turnEndAction =
+                (targetInfo, ctx) =>
                 {
-                    // Delegate the core logic to the domain entity
-                    var operationResult = player.EndTurn();
-                    await Task.CompletedTask;
-                    return operationResult;
+                    if (targetInfo.Type != Common.TargetType.Player || targetInfo.Player == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Target is not a player or player data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "TurnEnd effect can only be applied to players." };
+                    }
+
+                    var result = new DomainOperationResult();
+                    var evt = new TurnEndEvent(targetInfo.Player);
+                    result.GeneratedEvents.Add(evt);
+                    result.Success = true;
+                    return result;
                 };
 
-            return await _targetProcessingService.ProcessTargetsAsync(
+            return _targetProcessingService.ProcessTargets(
                 context,
+                effect.SelectedTargets,
                 turnEndAction,
-                null,
                 effectName);
         }
     }

@@ -1,0 +1,1191 @@
+/* src/styles/ability-editor.css - 能力编辑器样式 (Wizard Mode) */
+
+/* ==========================================================================
+   Variables & Theme
+   ========================================================================== */
+:root {
+    --wizard-bg: rgba(10, 12, 16, 0.95);
+    --wizard-header-bg: rgba(20, 24, 32, 0.8);
+    --wizard-footer-bg: rgba(20, 24, 32, 0.9);
+    
+    --step-active-color: var(--accent-cyan, #00f0ff);
+    --step-completed-color: var(--accent-green, #4ade80);
+    --step-inactive-color: rgba(255, 255, 255, 0.2);
+    
+    --input-bg: rgba(0, 0, 0, 0.3);
+    --input-border: rgba(255, 255, 255, 0.1);
+    --input-focus-border: var(--accent-cyan, #00f0ff);
+    
+    --anim-speed: 0.3s;
+}
+
+/* ==========================================================================
+   Wizard Layout Structure
+   ========================================================================== */
+.ability-editor.wizard-mode {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--wizard-bg);
+    color: var(--text-primary);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.wizard-header {
+    padding: 24px 32px;
+    background: var(--wizard-header-bg);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    flex-shrink: 0;
+}
+
+.wizard-content {
+    flex: 1;
+    padding: 32px;
+    overflow-y: auto;
+    position: relative;
+}
+
+.wizard-footer {
+    padding: 20px 32px;
+    background: var(--wizard-footer-bg);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Wizard Header & Progress Bar
+   ========================================================================== */
+.wizard-title h3 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.5px;
+}
+
+.wizard-subtitle {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.wizard-progress {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 32px;
+    position: relative;
+}
+
+/* Progress Line Background */
+.wizard-progress::before {
+    content: '';
+    position: absolute;
+    top: 15px; /* Center vertically with the 30px indicator */
+    left: 60px; /* Start after the first node's center */
+    right: 60px; /* End before the last node's center */
+    height: 2px;
+    background: var(--step-inactive-color);
+    z-index: 0;
+}
+
+.progress-step {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 120px;
+    /* Removed opacity: 0.5 to prevent background transparency issues */
+    transition: all var(--anim-speed) ease;
+}
+
+/* Apply dimming to content instead of container */
+.progress-step .step-indicator,
+.progress-step .step-label {
+    opacity: 0.5;
+    transition: all var(--anim-speed) ease;
+}
+
+/* Ensure background stays opaque to cover the line */
+.progress-step .step-indicator {
+    opacity: 1; /* Reset opacity for the container of the number */
+    color: rgba(255, 255, 255, 0.5); /* Dim the text instead */
+    background: #141820; /* Keep solid background */
+}
+
+.progress-step .step-label {
+    opacity: 0.5;
+}
+
+.progress-step.active .step-indicator,
+.progress-step.completed .step-indicator {
+    opacity: 1;
+    color: var(--step-active-color);
+}
+
+.progress-step.completed .step-indicator {
+    color: #000;
+}
+
+.progress-step.active .step-label,
+.progress-step.completed .step-label {
+    opacity: 1;
+}
+
+.step-indicator {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--wizard-header-bg); /* Match header bg to cover line */
+    border: 2px solid var(--step-inactive-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+    transition: all var(--anim-speed) ease;
+    z-index: 2; /* Ensure above line */
+}
+
+.progress-step.active .step-indicator {
+    border-color: var(--step-active-color);
+    color: var(--step-active-color);
+    box-shadow: 0 0 10px var(--step-active-color), 0 0 0 4px var(--wizard-header-bg);
+    transform: scale(1.1);
+}
+
+.progress-step.completed .step-indicator {
+    background: var(--step-completed-color);
+    border-color: var(--step-completed-color);
+    color: #000;
+}
+
+.step-label {
+    text-align: center;
+}
+
+.step-name {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+
+.step-desc {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   Step Content & Animations
+   ========================================================================== */
+.step-content-wrapper {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.step-header {
+    margin-bottom: 32px;
+    text-align: center;
+}
+
+.step-header h4 {
+    font-size: 1.25rem;
+    margin: 0;
+    color: var(--step-active-color);
+}
+
+.header-with-help {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    position: relative;
+}
+
+.help-icon-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.help-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    cursor: help;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.help-btn:hover {
+    background: var(--step-active-color);
+    color: #000;
+    border-color: var(--step-active-color);
+}
+
+/* Generic Info Tooltip */
+.info-tooltip {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    width: 300px;
+    background: rgba(15, 19, 26, 0.98);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.8);
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.2s ease;
+    pointer-events: none;
+    text-align: left;
+}
+
+.info-tooltip.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(5px);
+    pointer-events: auto;
+}
+
+.tooltip-title {
+    color: var(--step-active-color);
+    margin: 0 0 8px 0;
+    font-size: 0.9rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 4px;
+}
+
+.tooltip-section {
+    margin-bottom: 12px;
+}
+
+.tooltip-item {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 8px;
+}
+
+.tooltip-item .label {
+    color: #e2e8f0;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.tooltip-item .desc {
+    color: #94a3b8;
+    font-size: 0.8rem;
+}
+
+.tooltip-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.tooltip-list li {
+    margin-bottom: 6px;
+    font-size: 0.8rem;
+    color: #94a3b8;
+}
+
+.tooltip-list code {
+    color: var(--accent-gold, #fbbf24);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+    margin-right: 6px;
+}
+
+.step-intro {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* Fade Animations */
+.fade-in {
+    animation: fadeIn var(--anim-speed) forwards;
+}
+
+.fade-out {
+    animation: fadeOut 0.2s forwards;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(-10px); }
+}
+
+/* ==========================================================================
+   Form Elements (Basic Info Step)
+   ========================================================================== */
+.form-grid-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+}
+
+.form-group.full-width {
+    grid-column: span 2;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--input-focus-border);
+    box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.1);
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.large-input {
+    font-size: 1.2rem;
+    padding: 12px 16px;
+}
+
+.form-description {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
+
+.required-mark {
+    color: #ef4444;
+    margin-left: 4px;
+    font-weight: bold;
+}
+
+/* Toggle Switch */
+.toggle-switch-wrapper {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch-wrapper input {
+    display: none;
+}
+
+.toggle-slider {
+    position: relative;
+    width: 48px;
+    height: 24px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    transition: .3s;
+    margin-right: 12px;
+}
+
+.toggle-slider:before {
+    content: "";
+    position: absolute;
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: .3s;
+}
+
+input:checked + .toggle-slider {
+    background-color: var(--step-active-color);
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+.toggle-label {
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+.btn-primary,
+.btn-secondary,
+.btn-success,
+.btn-danger {
+    padding: 10px 24px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn-primary {
+    background: var(--step-active-color);
+    color: #000;
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+
+.btn-primary:hover {
+    background: #fff;
+    box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
+}
+
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-success {
+    background: var(--step-completed-color);
+    color: #000;
+}
+
+.btn-success:hover {
+    background: #fff;
+    box-shadow: 0 0 15px rgba(74, 222, 128, 0.5);
+}
+
+.btn-danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: #ef4444;
+}
+
+/* ==========================================================================
+   Sub-Editor Styles (Trigger, Target, etc.)
+   ========================================================================== */
+
+/* Empty State Styling */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.empty-state:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.empty-state-visual {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.target-ring-outer {
+    width: 100%;
+    height: 100%;
+    border: 2px solid rgba(96, 165, 250, 0.3);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: pulse-ring 3s infinite;
+}
+
+.target-ring-inner {
+    width: 60%;
+    height: 60%;
+    border: 2px solid rgba(96, 165, 250, 0.6);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.target-dot {
+    width: 20%;
+    height: 20%;
+    background: #60a5fa;
+    border-radius: 50%;
+    box-shadow: 0 0 10px rgba(96, 165, 250, 0.8);
+}
+
+@keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.2); }
+    70% { box-shadow: 0 0 0 10px rgba(96, 165, 250, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
+}
+
+.empty-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 8px 0;
+    letter-spacing: 0.5px;
+}
+
+.empty-desc {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.6;
+    max-width: 300px;
+}
+
+/* Effect Empty State Variant */
+.effect-ring {
+    border-color: rgba(251, 191, 36, 0.3); /* Amber */
+}
+
+.effect-ring .target-ring-inner {
+    border-color: rgba(251, 191, 36, 0.6);
+}
+
+.effect-dot {
+    background: #fbbf24;
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.8);
+}
+
+/* Condition Empty State Variant */
+.condition-ring {
+    border-color: rgba(249, 115, 22, 0.3); /* Orange */
+}
+
+.condition-ring .target-ring-inner {
+    border-color: rgba(249, 115, 22, 0.6);
+}
+
+.condition-dot {
+    background: #f97316;
+    box-shadow: 0 0 10px rgba(249, 115, 22, 0.8);
+}
+
+/* Accordion / Collapsible Panels (Target Config) */
+.accordion-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.accordion-item.expanded {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(96, 165, 250, 0.3); /* Blue border when active */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.accordion-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid transparent;
+}
+
+.accordion-item.expanded .accordion-header {
+    background: rgba(96, 165, 250, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+.accordion-header:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.header-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.item-index {
+    background: rgba(96, 165, 250, 0.2);
+    color: #60a5fa;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-family: monospace;
+}
+
+.item-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #f1f5f9; /* Bright text */
+}
+
+.item-status {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 8px;
+}
+
+.item-status.status-enabled {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+}
+
+.item-status.status-disabled {
+    background: rgba(255, 255, 255, 0.05);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    color: #94a3b8; /* Muted grey */
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+}
+
+.btn-icon:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.btn-icon.delete-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.accordion-content {
+    padding: 20px;
+    /* background: rgba(0, 0, 0, 0.2); */ /* Inner background */
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.accordion-content.collapsed {
+    display: none;
+}
+
+/* Legacy Collapsible (if used elsewhere) */
+.collapsible-header {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.collapsible-header:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.collapsible-content {
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    background: rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.collapsible-content.collapsed {
+    display: none;
+}
+
+.collapse-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    margin-right: 12px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+/* Lists */
+.targets-list,
+.effects-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.target-node,
+.effect-node {
+    animation: fadeIn 0.3s ease;
+}
+
+.add-target-container,
+.add-effect-container,
+.add-condition-container {
+    margin-top: 24px;
+    text-align: center;
+    padding-top: 24px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+/* Condition Logic Panel (from previous task) */
+.condition-logic-panel {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    margin-bottom: 24px;
+    overflow: hidden;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    padding: 16px;
+}
+
+.info-card {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 12px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+}
+
+.info-card:hover {
+    border-color: var(--step-active-color);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.info-card h6 {
+    color: var(--step-active-color);
+    margin: 0 0 8px 0;
+    font-size: 0.9rem;
+}
+
+.info-card p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.example-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.example-list li {
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.example-list code {
+    color: var(--accent-gold, #fbbf24);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+/* ==========================================================================
+   Event Selector (Trigger Editor) - Grid Layout with Tooltip
+   ========================================================================== */
+.event-selector-container {
+    position: relative; /* Anchor for tooltip */
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    padding: 16px;
+    min-height: 200px;
+}
+
+.event-system-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.event-system-toggle input[type="checkbox"] {
+    accent-color: #60a5fa;
+}
+
+/* Grid Layout for Items */
+.multi-select-grid {
+    display: grid;
+    /* Enforce 3 columns on standard screens, responsive on very small ones */
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.event-group-label {
+    grid-column: 1 / -1;
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.2);
+}
+
+@media (max-width: 768px) {
+    .multi-select-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.multi-select-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.multi-select-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.multi-select-item.selected {
+    background: rgba(96, 165, 250, 0.15);
+    border-color: #60a5fa;
+    box-shadow: 0 0 8px rgba(96, 165, 250, 0.2);
+}
+
+.multi-select-item input[type="checkbox"] {
+    margin-right: 10px;
+    accent-color: #60a5fa;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.multi-select-item span {
+    font-size: 0.9rem;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Tooltip / Popup Style */
+.event-info-tooltip {
+    position: absolute;
+    z-index: 100;
+    width: 320px;
+    background: rgba(15, 19, 26, 0.98); /* Darker, more opaque background */
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.8), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+    pointer-events: none; /* Let mouse pass through so it doesn't flicker */
+    /* Initial position will be set by JS */
+    top: 0;
+    right: 0;
+    transform: translateX(10px); /* Slight offset */
+}
+
+.event-info-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+
+.event-name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #60a5fa;
+    display: block;
+}
+
+.event-description {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+
+.params-label {
+    display: block;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.params-list-vertical {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.params-list-vertical li {
+    font-size: 0.8rem;
+    color: #e2e8f0;
+    margin-bottom: 4px;
+    padding-left: 8px;
+    border-left: 2px solid rgba(251, 191, 36, 0.4); /* Amber accent */
+}
+
+.param-name {
+    color: #fbbf24; /* Amber-400 */
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.param-type {
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+
+.param-scope {
+    color: #60a5fa;
+    font-size: 0.72rem;
+    margin-left: 4px;
+}
+
+.param-desc {
+    color: #cbd5e1;
+    font-style: italic;
+}
+
+/* ==========================================================================
+   Event Selector (Trigger Editor) - Grid Layout with Tooltip
+   ========================================================================== */
+.event-selector-container {
+    position: relative; /* Anchor for tooltip */
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    padding: 16px;
+    min-height: 200px;
+}
+
+/* Grid Layout for Items */
+.multi-select-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.multi-select-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.multi-select-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.multi-select-item.selected {
+    background: rgba(96, 165, 250, 0.15);
+    border-color: #60a5fa;
+    box-shadow: 0 0 8px rgba(96, 165, 250, 0.2);
+}
+
+.multi-select-item input[type="checkbox"] {
+    margin-right: 10px;
+    accent-color: #60a5fa;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.multi-select-item span {
+    font-size: 0.9rem;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Tooltip / Popup Style */
+.event-info-tooltip {
+    position: absolute;
+    z-index: 100;
+    width: 320px;
+    background: rgba(15, 19, 26, 0.98); /* Darker, more opaque background */
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.8), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+    pointer-events: none; /* Let mouse pass through so it doesn't flicker */
+    /* Initial position will be set by JS */
+    top: 0;
+    right: 0;
+    transform: translateX(10px); /* Slight offset */
+}
+
+.event-info-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+
+.event-name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #60a5fa;
+    display: block;
+}
+
+.event-description {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+
+.params-label {
+    display: block;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.params-list-vertical {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.params-list-vertical li {
+    font-size: 0.8rem;
+    color: #e2e8f0;
+    margin-bottom: 4px;
+    padding-left: 8px;
+    border-left: 2px solid rgba(251, 191, 36, 0.4); /* Amber accent */
+}
+
+.param-name {
+    color: #fbbf24; /* Amber-400 */
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.param-type {
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+
+.param-desc {
+    color: #cbd5e1;
+    font-style: italic;
+}

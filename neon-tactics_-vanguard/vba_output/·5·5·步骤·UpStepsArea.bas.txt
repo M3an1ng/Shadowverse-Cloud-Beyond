@@ -1,0 +1,166 @@
+Attribute VB_Name = "·5·5·步骤·UpStepsArea"
+' ==================================================
+' 函数功能：更新步骤区域显示
+' 说明：从Steps记录中提取重要动作并格式化显示在StepsArea区域
+' 将游戏中的重要动作（如出牌、攻击、进化等）及其相关动作整理成可读格式
+' ==================================================
+Function UpStepsArea()
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%, m%, n%  ' 循环计数器
+    Dim Arr As Variant          ' Steps数据数组
+    Dim StepsArea As Variant    ' StepsArea区域数据数组
+    
+    ' ========== 查找最近的重要动作 ==========
+    ' 获取Steps区域的所有步骤记录
+    Arr = Down("Steps")
+    
+    ' 从后向前遍历Steps数组，查找最近的重要动作
+    For i = 1 To UBound(Arr)
+        j = UBound(Arr) - i + 1   ' 倒序索引
+        
+        ' 检查是否为重要动作类型
+        If Arr(j, 2) = "Play" Or Arr(j, 2) = "Strike" Or _
+            Arr(j, 2) = "Engage" Or Arr(j, 2) = "Keyword&Fuse" Or Arr(j, 2) = "GetPP" Or _
+            Arr(j, 2) = "TurnStart" Or Arr(j, 2) = "TurnEnd" Then
+            Exit For   ' 找到重要动作后退出循环
+        ElseIf (Arr(j, 2) = "Evolve" Or Arr(j, 2) = "SuperEvolve") And Arr(j, 4) <> "" Then
+            Exit For
+        End If
+    Next i
+    
+    ' 如果没有找到重要动作，直接退出函数
+    If i > UBound(Arr) Then Exit Function
+    
+    ' ========== StepsArea区域空位查找 ==========
+    ' 获取StepsArea区域数据
+    StepsArea = Down("StepsArea")
+    
+    ' 查找StepsArea中的第一个空行
+    For i = 1 To UBound(StepsArea, 1)
+        If StepsArea(i, 1) = "" Then Exit For
+    Next i
+    
+    ' 如果StepsArea已满，直接退出函数
+    If i > UBound(StepsArea) Then Exit Function
+    
+    ' ========== 步骤记录格式化 ==========
+    ' 构建主要动作描述：序号、【卡牌名称|动作描述】
+    If Arr(j, 2) = "TurnStart" Then
+        StepsArea(i, 1) = i & "、回合开始"
+    ElseIf Arr(j, 2) = "TurnEnd" Then
+        StepsArea(i, 1) = i & "、回合结束"
+    ElseIf Arr(j, 2) = "Play" Then
+        StepsArea(i, 1) = i & "、使用【" & Arr(j, 4) & "】"
+    ElseIf Arr(j, 2) = "Strike" Then
+        StepsArea(i, 1) = i & "、" & Arr(j, 4) & "|攻击|"
+        If Arr(j + 1, 2) = "Clash" And Arr(j + 2, 2) = "Clash" Then StepsArea(i, 1) = StepsArea(i, 1) & Arr(j + 2, 4) Else StepsArea(i, 1) = StepsArea(i, 1) & "主战者"
+    ElseIf Arr(j, 2) = "Engage" Then
+        StepsArea(i, 1) = i & "、启动【" & Arr(j, 4) & "】"
+    ElseIf Arr(j, 2) = "Keyword&Fuse" Then
+        StepsArea(i, 1) = i & "、" & DownByID(DownByMatchID(CStr(Arr(j, 3)), "ID"), "Name") & "|融合" & Arr(j, 4) & "张手牌"
+    ElseIf Arr(j, 2) = "Evolve" And Arr(j, 4) <> "" And Arr(j, 4) <> "0" Then
+        StepsArea(i, 1) = i & "、进化|" & Arr(j, 4)
+    ElseIf Arr(j, 2) = "SuperEvolve" And Arr(j, 4) <> "" And Arr(j, 4) <> "0" Then
+        StepsArea(i, 1) = i & "、超进化|" & Arr(j, 4)
+    ElseIf Arr(j, 2) = "GetPP" Then
+        StepsArea(i, 1) = i & "、【能量点+1】"
+    End If
+    
+    ' ========== 相关动作附加 ==========
+    ' 从重要动作位置开始，向后查找相关的后续动作
+    For k = j + 1 To UBound(Arr)
+        ' 检查是否为相关的后续动作类型
+        If Arr(k, 2) = "Discard" Then
+            For m = 1 To 100
+                If Arr(k + m, 2) <> "Discard" Then Exit For
+            Next m
+            k = k + m - 1
+            StepsArea(i, 1) = StepsArea(i, 1) & "，舍弃" & m & "张手牌"
+        ElseIf Arr(k, 2) = "DrawToHand" Then
+            n = 1
+            For m = 1 To 100
+                If Arr(k + m, 2) = "DrawToHand" Then
+                    n = n + 1
+                ElseIf Arr(k + m, 2) = "AddToHand" Then
+                
+                Else
+                    Exit For
+                End If
+            Next m
+            k = k + m - 1
+            StepsArea(i, 1) = StepsArea(i, 1) & "，抽取" & n & "张手牌"
+        ElseIf Arr(k, 2) = "HandDestroy" Then
+            StepsArea(i, 1) = StepsArea(i, 1) & "，" & Arr(k, 4) & "|爆牌"
+            
+        ElseIf Arr(k, 2) = "EnterField" Then
+            For m = 1 To k - 1
+                n = k - m
+                If Arr(n, 2) = "Play" Then Exit For
+            Next m
+            
+            If Arr(n, 3) <> Arr(k, 3) Then
+                StepsArea(i, 1) = StepsArea(i, 1) & "，" & Arr(k, 4)
+                For m = 1 To 100
+                    If Arr(k + m, 2) = "EnterField" Then
+                        StepsArea(i, 1) = StepsArea(i, 1) & "、" & Arr(k + m, 4)
+                    ElseIf Arr(k + m, 2) = "EffectEnter" Then
+                    
+                    Else
+                        Exit For
+                    End If
+                Next m
+                k = k + m - 1
+                StepsArea(i, 1) = StepsArea(i, 1) & "|进入战场"
+            End If
+        ElseIf Arr(k, 2) = "Destroy" Then
+            StepsArea(i, 1) = StepsArea(i, 1) & "，" & Arr(k, 4)
+            For m = 1 To 100
+                If Arr(k + m, 2) = "Destroy" Then
+                    StepsArea(i, 1) = StepsArea(i, 1) & "、" & Arr(k + m, 4)
+                ElseIf Arr(k + m, 2) = "LeaveField" Then
+                
+                Else
+                    Exit For
+                End If
+            Next m
+            k = k + m - 1
+            StepsArea(i, 1) = StepsArea(i, 1) & "|破坏"
+        ElseIf Arr(k, 2) = "Banish" Then
+            StepsArea(i, 1) = StepsArea(i, 1) & "，" & Arr(k, 4)
+            For m = 1 To 100
+                If Arr(k + m, 2) = "Banish" Then
+                    StepsArea(i, 1) = StepsArea(i, 1) & "、" & Arr(k + m, 4)
+                ElseIf Arr(k + m, 2) = "LeaveField" Then
+                
+                Else
+                    Exit For
+                End If
+            Next m
+            k = k + m - 1
+            StepsArea(i, 1) = StepsArea(i, 1) & "|消失"
+        ElseIf Arr(k, 2) = "ReturnToHand" Then
+            StepsArea(i, 1) = StepsArea(i, 1) & "，" & Arr(k, 4)
+            For m = 1 To 100
+                If Arr(k + m, 2) = "ReturnToHand" Then
+                    StepsArea(i, 1) = StepsArea(i, 1) & "、" & Arr(k + m, 4)
+                ElseIf Arr(k + m, 2) = "LeaveField" Then
+                
+                Else
+                    Exit For
+                End If
+            Next m
+            k = k + m - 1
+            StepsArea(i, 1) = StepsArea(i, 1) & "|返回手牌"
+            
+        'ElseIf Arr(k, 2) = "LostBarrier" Then
+            'StepsArea(i, 1) = StepsArea(i, 1) & "，" & Arr(k, 4) & "|失去屏障"
+            
+            
+        End If
+    Next k
+    
+    ' ========== 数据更新 ==========
+    ' 将格式化后的步骤记录写回StepsArea区域
+    Call Up("StepsArea", StepsArea)
+End Function
+

@@ -1,0 +1,613 @@
+Attribute VB_Name = "EnterCard"
+Attribute VB_Base = "0{9FFF860D-CE97-456C-A68A-1FB98673C4FE}{61B4BCAC-A322-4772-9078-6348427F5C51}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ==================================================
+' 窗体名称: EnterCard (卡牌录入窗体)
+' 功能：卡牌信息录入和编辑界面
+' 说明：提供完整的卡牌属性设置、效果录入和动态布局调整
+' ==================================================
+
+' ========== 通用点击事件处理程序 ==========
+' 说明：处理ToggleButton的互斥逻辑，确保同组只有一个按钮被选中
+Private Sub ToggleButton_Click(Btn As MSForms.ToggleButton)
+    ' ========== 变量声明 ==========
+    Dim Flag As Boolean
+    Flag = False ' 记录同组是否有按键按下
+    
+    ' ========== 同组按钮遍历 ==========
+    ' 遍历所有控件，处理同组的ToggleButton
+    For Each ctrl In Me.Controls
+        ' 只处理同组的 ToggleButton
+        If ctrl.Tag = Btn.Tag Then
+            ' 核心逻辑：当前按钮按下，其他弹起
+            If Btn.Value Then ctrl.Value = (ctrl.Name = Btn.Name)
+            If ctrl.Value Then Flag = True
+        End If
+    Next ctrl
+    
+    ' ========== 默认选中处理 ==========
+    ' 如果同组都没有按钮按下，则选中当前按钮
+    If Not Flag Then Btn.Value = True
+End Sub
+
+' ==================================================
+' 事件功能：卡牌名称变更检测
+' 说明：当卡牌名称改变时，自动查询并填充已有卡牌信息
+' ==================================================
+Private Sub CardName_Change()
+    ' ========== 卡牌ID查询 ==========
+    Dim StrID As String
+    StrID = IDByName(CardName.Value)
+    
+    ' ========== 已有卡牌信息填充 ==========
+    ' 如果查询到已有此卡牌，则自动填充所有属性
+    If Val(StrID) > 0 Then
+        ' ========== 控件遍历和属性设置 ==========
+        For Each ctrl In Me.Controls
+            ' 继承职业、种类、稀有度
+            If ctrl.Tag = "Class" Then
+                If ctrl.Name = DownByID(StrID, "Class") Then ctrl.Value = True
+            ElseIf ctrl.Tag = "Type" Then
+                If ctrl.Name = DownByID(StrID, "Type") Then ctrl.Value = True
+            ElseIf ctrl.Tag = "Rarity" Then
+                If ctrl.Name = DownByID(StrID, "Rarity") Then ctrl.Value = True
+            ElseIf ctrl.Tag = "Effect" Then
+                ' 效果文本翻译和显示
+                If Len(DownByID(StrID, ctrl.Name)) > 0 Then ctrl.Caption = SentenceTranslate(DownByID(StrID, ctrl.Name))
+            End If
+        Next ctrl
+        
+        ' ========== 数值属性填充 ==========
+        ' 费用/攻击力/生命值/吟唱
+        Cost.Value = DownByID(StrID, "Cost")
+        Attack.Value = DownByID(StrID, "Attack")
+        Defense.Value = DownByID(StrID, "Defense")
+        Countdown.Value = DownByID(StrID, "Countdown")
+        
+        ' ========== 扩展属性填充 ==========
+        ' 卡包/类型/附属卡牌
+        CardSet.Value = DownByID(StrID, "CardSet")
+        Trait.Value = DownByID(StrID, "Trait")
+        
+        ' ========== 令牌标识设置 ==========
+        ' 根据ID格式判断是否为令牌卡牌
+        If Mid(StrID, 4, 1) = "1" Then IsToken = False Else IsToken = True
+        
+        ' ========== 界面高度调整 ==========
+        Call EffectHeight
+    End If
+End Sub
+
+' ==================================================
+' 事件功能：攻击力/生命值输入自动类型判断
+' 说明：输入攻击力或生命值时自动设置为从者类型
+' ==================================================
+Private Sub Attack_Change()
+    If Len(Attack.Value) Then Follower.Value = True
+    If Len(Attack.Value) Then Countdown.Value = Empty
+End Sub
+
+Private Sub Defense_Change()
+    If Len(Defense.Value) Then Follower.Value = True
+    If Len(Defense.Value) Then Countdown.Value = Empty
+End Sub
+
+' ==================================================
+' 事件功能：倒计时输入自动类型判断
+' 说明：输入倒计时时自动设置为护符类型
+' ==================================================
+Private Sub Countdown_Change()
+    If Len(Countdown.Value) Then Amulet.Value = True
+    If Len(Countdown.Value) Then Attack.Value = Empty
+    If Len(Countdown.Value) Then Defense.Value = Empty
+End Sub
+
+' ==================================================
+' 事件功能：卡牌类型互斥处理
+' 说明：从者、法术、护符类型之间的互斥逻辑
+' ==================================================
+Private Sub Follower_Click()
+    ToggleButton_Click Follower
+    If Follower.Value Then Countdown.Value = Empty
+End Sub
+
+Private Sub Spell_Click()
+    ToggleButton_Click Spell
+    If Spell.Value Then Attack.Value = Empty
+    If Spell.Value Then Defense.Value = Empty
+    If Spell.Value Then Countdown.Value = Empty
+End Sub
+
+Private Sub Amulet_Click()
+    ToggleButton_Click Amulet
+    If Amulet.Value Then Attack.Value = Empty
+    If Amulet.Value Then Defense.Value = Empty
+End Sub
+
+' ==================================================
+' 事件功能：稀有度互斥处理
+' 说明：虹、金、银、铜稀有度之间的互斥逻辑
+' ==================================================
+Private Sub Legendary_Click()
+    ToggleButton_Click Legendary
+End Sub
+
+Private Sub Gold_Click()
+    ToggleButton_Click Gold
+End Sub
+
+Private Sub Silver_Click()
+    ToggleButton_Click Silver
+End Sub
+
+Private Sub Bronze_Click()
+    ToggleButton_Click Bronze
+End Sub
+
+' ==================================================
+' 事件功能：职业互斥处理
+' 说明：各职业之间的互斥选择逻辑
+' ==================================================
+Private Sub Forestcraft_Click()
+    ToggleButton_Click Forestcraft
+End Sub
+
+Private Sub Swordcraft_Click()
+    ToggleButton_Click Swordcraft
+End Sub
+
+Private Sub Runecraft_Click()
+    ToggleButton_Click Runecraft
+End Sub
+
+Private Sub Dragoncraft_Click()
+    ToggleButton_Click Dragoncraft
+End Sub
+
+Private Sub Abysscraft_Click()
+    ToggleButton_Click Abysscraft
+End Sub
+
+Private Sub Havencraft_Click()
+    ToggleButton_Click Havencraft
+End Sub
+
+Private Sub Portalcraft_Click()
+    ToggleButton_Click Portalcraft
+End Sub
+
+Private Sub Neutral_Click()
+    ToggleButton_Click Neutral
+End Sub
+
+' ==================================================
+' 事件功能：效果录入按钮点击处理
+' 说明：点击效果按钮时打开对应的效果录入界面
+' ==================================================
+Private Sub Effect1_Click()
+    Effect 1
+End Sub
+
+Private Sub Effect2_Click()
+    Effect 2
+End Sub
+
+Private Sub Effect3_Click()
+    Effect 3
+End Sub
+
+Private Sub Effect4_Click()
+    Effect 4
+End Sub
+
+Private Sub Effect5_Click()
+    Effect 5
+End Sub
+
+Private Sub Effect6_Click()
+    Effect 6
+End Sub
+
+Private Sub Effect7_Click()
+    Effect 7
+End Sub
+
+Private Sub Effect8_Click()
+    Effect 8
+End Sub
+
+Private Sub Effect9_Click()
+    Effect 9
+End Sub
+
+' ==================================================
+' 函数功能：效果录入处理核心逻辑
+' 参数：Num - 效果编号
+' 说明：处理复杂的效果录入，包括嵌套效果、纹章、信仰等
+' ==================================================
+Function Effect(Num As Integer)
+    ' ========== 效果数据初始化 ==========
+    ' 清空卡片效果变量
+    FatherEffect = Empty
+    CardEffect = Empty
+    
+    ' ========== 临时卡片录入 ==========
+    ' 临时录入当前卡片信息（不保存到数据库）
+    Call EnterCardFunction(False)
+    
+    ' ========== 时间点窗体显示 ==========
+    ' 打开时间点选择窗体
+    EnterCard·1·TimePoint.Show
+    
+    ' ========== 效果解析和处理 ==========
+    ' 检测CardEffect中是否包含复杂效果结构
+    Dim i%, j%, k%, m%
+    Dim Str As String
+    Dim Str2 As String
+    Dim EffectSplit() As String
+    Dim CrestID As String
+    Dim FaithID As String
+    
+    FatherEffect = CardEffect
+    EffectSplit = SplitEffect(FatherEffect)
+    
+    ' ========== 信仰效果处理 ==========
+    ' 如果是信仰类型的效果
+    m = 0
+    FaithID = Empty
+    If TimePoint = "Faith" Then
+        Str = Translate("Faith") & ":" & CardName.Value
+        Call DeleteEffect(IDByName(Str), "1000000")
+        FaithID = CreateCrest(Str)
+        Call UpByID(FaithID, "Type", "Faith")
+    End If
+    
+    ' ========== 纹章效果处理 ==========
+    For j = 0 To UBound(EffectSplit)
+        ' 处理纹章效果
+        k = 0
+        CrestID = Empty
+        If Left(EffectSplit(j), Len("Crest&")) = "Crest&" Or Left(EffectSplit(j), Len("Enemy-Crest&")) = "Enemy-Crest&" Then
+            Str = Translate("Crest") & ":" & CardName.Value
+            Call DeleteEffect(IDByName(Str), "1000000")
+            CrestID = CreateCrest(Str)
+            
+            ' 解析倒计时数值
+            If Left(EffectSplit(j), Len("Crest&")) = "Crest&" Then i = Val(Mid(EffectSplit(j), 1 + Len("Crest&"), 10)) Else i = Val(Mid(EffectSplit(j), 1 + Len("Enemy-Crest&"), 10))
+            If i > 0 Then Call UpByID(CrestID, "Countdown", i)
+        End If
+        
+        ' ========== 嵌套效果替换处理 ==========
+        ' 遍历替换{Effect}占位符
+        Str = Empty
+        Str2 = Empty
+        For i = 1 To 100
+            If InStr(EffectSplit(j), "{Effect}") > 0 Then
+                ' ========== 嵌套效果录入 ==========
+                ' 清空卡片效果并重新录入
+                CardEffect = Empty
+                Call EnterCardFunction(False)
+                EnterCard·1·TimePoint.Show
+                
+                ' ========== 效果替换 ==========
+                ' 替换{Effect}占位符为实际效果
+                EffectSplit(j) = Replace(EffectSplit(j), "{Effect}", "{" & CardEffect & "}", 1, 1)
+                
+                ' ========== 纹章效果嵌套处理 ==========
+                ' 处理纹章中的嵌套效果
+                If CrestID <> "" Then
+                    If Str <> "" Then Str = Replace(Str, "{Effect}", "{" & CardEffect & "}", 1, 1) Else Str = CardEffect
+                    If InStr(Str, "{Effect}") = 0 And InStr(Str, "{Ability}") = 0 Then
+                        k = k + 1
+                        Call UpByID(CrestID, "Effect" & k, Str)
+                        Str = Empty
+                    End If
+                End If
+                
+                ' ========== 信仰效果嵌套处理 ==========
+                ' 处理信仰中的嵌套效果
+                If FaithID <> "" Then
+                    If Str2 <> "" Then Str2 = Replace(Str2, "{Effect}", "{" & CardEffect & "}", 1, 1) Else Str2 = CardEffect
+                    If InStr(Str2, "{Effect}") = 0 And InStr(Str2, "{Ability}") = 0 Then
+                        m = m + 1
+                        Call UpByID(FaithID, "Effect" & m, Str2)
+                        Str2 = Empty
+                    End If
+                End If
+                
+            ' ========== 能力效果替换处理 ==========
+            ElseIf InStr(EffectSplit(j), "{Ability}") > 0 Then
+                ' 清空卡片效果并设置时间点
+                CardEffect = TimePoint & "||"
+                Call EnterCardFunction(False)
+                
+                ' ========== 能力窗体显示 ==========
+                ' 打开能力录入窗体
+                EnterCard·3·Ability.Show
+                
+                ' ========== 能力替换 ==========
+                ' 替换{Ability}占位符为实际能力
+                EffectSplit(j) = Replace(EffectSplit(j), "{Ability}", "{" & Mid(CardEffect, 1 + Len(TimePoint & "||"), 1000) & "}", 1, 1)
+                
+                ' ========== 纹章效果嵌套处理 ==========
+                ' 处理纹章中的嵌套效果
+                If CrestID <> "" Then
+                    If Str <> "" Then Str = Replace(Str, "{Ability}", "{" & Mid(CardEffect, 1 + Len(TimePoint & "||"), 1000) & "}", 1, 1) Else Str = CardEffect
+                    If InStr(Str, "{Effect}") = 0 And InStr(Str, "{Ability}") = 0 Then
+                        k = k + 1
+                        Call UpByID(CrestID, "Effect" & k, Str)
+                        Str = Empty
+                    End If
+                End If
+                
+                ' ========== 信仰效果嵌套处理 ==========
+                ' 处理信仰中的嵌套效果
+                If FaithID <> "" Then
+                    If Str2 <> "" Then Str2 = Replace(Str2, "{Ability}", "{" & Mid(CardEffect, 1 + Len(TimePoint & "||"), 1000) & "}", 1, 1) Else Str2 = CardEffect
+                    If InStr(Str2, "{Effect}") = 0 And InStr(Str2, "{Ability}") = 0 Then
+                        m = m + 1
+                        Call UpByID(FaithID, "Effect" & m, Str2)
+                        Str2 = Empty
+                    End If
+                End If
+            Else
+                Exit For
+            End If
+        Next i
+    Next j
+    
+    ' ========== 效果合并 ==========
+    FatherEffect = Join(EffectSplit, "||")
+    
+    ' ========== 变量效果处理 (X, Y, Z) ==========
+    ' 检测并处理效果中的变量占位符
+    If InStr(FatherEffect, "X") > 0 And InStr(FatherEffect, "Spellboost|X=") = 0 Then
+        XEffect = Empty
+        EnterCard·5·X.Show
+        
+        FatherEffect = FatherEffect & "||X=" & XEffect
+        
+        ' 纹章中的变量处理
+        If CrestID <> "" Then
+            For i = 1 To 9
+                Str = DownByID(CrestID, "Effect" & i)
+                If Str = "" Then Exit For
+                If InStr(Str, "X") > 0 Then
+                    Str = Str & "||X=" & XEffect
+                    Call UpByID(CrestID, "Effect" & i, Str)
+                End If
+            Next i
+        End If
+    End If
+    
+    ' Y变量处理
+    If InStr(FatherEffect, "Y") > 0 Then
+        XEffect = Empty
+        EnterCard·5·X.Show
+        
+        FatherEffect = FatherEffect & "||Y=" & XEffect
+        
+        ' 纹章中的Y变量处理
+        If CrestID <> "" Then
+            For i = 1 To 9
+                Str = DownByID(CrestID, "Effect" & i)
+                If Str = "" Then Exit For
+                If InStr(Str, "Y") > 0 Then
+                    Str = Str & "||Y=" & XEffect
+                    Call UpByID(CrestID, "Effect" & i, Str)
+                End If
+            Next i
+        End If
+    End If
+    
+    ' Z变量处理
+    If InStr(FatherEffect, "Z") > 0 Then
+        XEffect = Empty
+        EnterCard·5·X.Show
+        
+        FatherEffect = FatherEffect & "||Z=" & XEffect
+        
+        ' 纹章中的Z变量处理
+        If CrestID <> "" Then
+            For i = 1 To 9
+                Str = DownByID(CrestID, "Effect" & i)
+                If Str = "" Then Exit For
+                If InStr(Str, "Z") > 0 Then
+                    Str = Str & "||Z=" & XEffect
+                    Call UpByID(CrestID, "Effect" & i, Str)
+                End If
+            Next i
+        End If
+    End If
+    
+    ' ========== 效果文本显示 ==========
+    ' 遍历效果框并填入处理后的效果文本
+    For i = 1 To Num
+        For Each ctrl In Me.Controls
+            If ctrl.Name = "Effect" & i Then Exit For
+        Next ctrl
+        
+        ' ========== 效果填入逻辑 ==========
+        ' 在当前效果框或第一个空效果框中填入文本
+        If i = Num Or ctrl.Caption = Translate("ClickToInput") Then
+            ctrl.Caption = SentenceTranslate(FatherEffect)
+            If Len(FatherEffect) = 0 Then ctrl.Caption = Translate("ClickToInput")
+            Call EffectHeight
+            Exit For
+        End If
+    Next i
+End Function
+
+' ========== 分割线：窗体初始化部分 ==========
+
+' ==================================================
+' 事件功能：窗体激活初始化
+' 说明：窗体显示时自动设置默认值和选中状态
+' ==================================================
+Private Sub UserForm_Activate()
+    ' ========== 卡包自动设置 ==========
+    ' 自动填入最新卡包
+    Dim CardSetrr() As String ' 记录卡包范围
+    CardSetrr = Split(Down("CardSet"), "、") ' 获取卡包范围
+    CardSet.Value = CardSetrr(UBound(CardSetrr))  ' 自动填入最新卡包
+    
+    ' ========== 职业自动选择 ==========
+    ' 自动按下所选职业
+    Dim Class As Variant ' 记录职业
+    Class = Translate(Down("Class")) ' 获取职业
+    For Each ctrl In Me.Controls ' 遍历控件
+        If TypeName(ctrl) = "ToggleButton" And ctrl.Name = Class Then ' 找到对应职业按下
+            ctrl.Value = True
+            Exit For
+        End If
+    Next ctrl
+    
+    ' ========== 默认类型设置 ==========
+    ' 默认为从者、铜卡
+    Follower.Value = True
+    Bronze.Value = True
+    
+    ' ========== 选中卡牌自动填充 ==========
+    ' 如果选中了卡牌，则自动填入名称
+    Dim Arr As Variant
+    Arr = IsSelected("CardSet·Cards")
+    If Not IsEmpty(Arr) Then
+        CardName.Value = Arr
+    End If
+End Sub
+
+' ==================================================
+' 事件功能：录入完成处理
+' 说明：点击完成按钮时保存卡牌信息并关闭窗体
+' ==================================================
+Private Sub Finish_Click()
+    ' ========== 卡牌信息保存 ==========
+    Call EnterCardFunction(True)
+    
+    ' ========== 窗体关闭 ==========
+    Unload EnterCard
+End Sub
+
+' ==================================================
+' 函数功能：卡牌录入核心逻辑
+' 参数：IsTrue - 是否为正式录入（True）或临时录入（False）
+' 说明：处理卡牌信息的保存和ID生成逻辑
+' ==================================================
+Function EnterCardFunction(IsTrue As Boolean)
+    ' ========== 变量声明 ==========
+    Dim newID As String
+    Dim Class As String
+    Dim Rarity As String
+    Dim CardType As String
+    Dim i%
+    
+    ' ========== 卡牌名称验证 ==========
+    If CardName.Value = "" Then Exit Function
+    
+    ' ========== 选中属性获取 ==========
+    ' 遍历控件获取选中的职业、稀有度和类型
+    For Each ctrl In Me.Controls
+        If TypeName(ctrl) = "ToggleButton" Then
+            If ctrl.Tag = "Class" And ctrl.Value Then Class = ctrl.Name
+            If ctrl.Tag = "Rarity" And ctrl.Value Then Rarity = ctrl.Name
+            If ctrl.Tag = "Type" And ctrl.Value Then CardType = ctrl.Name
+        End If
+    Next ctrl
+    
+    ' ========== ID生成规则 ==========
+    ' ID规则：AABCDXX
+    '   AA代表卡包，从10开始，意味着最多90个卡包
+    '   B代表职业，0中立，1精灵，2皇家护卫，3巫师，4龙族，5梦魇，6主教，7超越者
+    '   C代表是否可构筑，0不可构筑，1可构筑
+    '   D代表稀有度，1虹，2金，3银，4铜
+    '   XX代表序号，从01开始，意味着同条件下最多99张卡片
+    
+    ' ========== ID生成逻辑 ==========
+    newID = "1000000" ' 临时录入ID为1000000
+    If IsTrue Then
+        newID = GetCardSetID(CardSet.Value) & IDTranslate("Class", Class)
+        If IsToken Then newID = newID & 0 Else newID = newID & 1
+        newID = newID & IDTranslate("Rarity", Rarity)
+        newID = GetCardID(newID)
+        
+        ' ========== 同名记录处理 ==========
+        ' 删除已有的同名记录
+        Dim StrID As String
+        StrID = IDByName(CardName.Value)
+        If Val(StrID) > 0 Then Call DeleteEffect(StrID, newID)
+    End If
+    
+    ' ========== 卡牌信息保存 ==========
+    ' 基础属性保存
+    Call UpByID(newID, "CardSet", CardSet.Value)
+    Call UpByID(newID, "Class", Class)
+    Call UpByID(newID, "Rarity", Rarity)
+    Call UpByID(newID, "Name", CardName.Value)
+    Call UpByID(newID, "Type", CardType)
+    
+    ' ========== 扩展属性保存 ==========
+    ' 类型创建和保存
+    If Len(Trait.Value) > 0 Then Call IDTranslate("Trait", Trait.Value, True) ' 创建类型ID
+    Call UpByID(newID, "Trait", Trait.Value)
+    
+    ' ========== 数值属性保存 ==========
+    Call UpByID(newID, "Cost", Cost.Value)
+    Call UpByID(newID, "Attack", Attack.Value)
+    Call UpByID(newID, "Defense", Defense.Value)
+    Call UpByID(newID, "Countdown", Countdown.Value)
+    
+    ' ========== 效果文本保存 ==========
+    For Each ctrl In Me.Controls
+        If ctrl.Tag = "Effect" Then
+            If ctrl.Caption <> "点击输入" Then Call UpByID(newID, ctrl.Name, SentenceTranslate(ctrl.Caption))
+        End If
+    Next ctrl
+End Function
+
+' ==================================================
+' 函数功能：效果区域高度调整
+' 说明：根据效果文本的长度动态调整效果控件的高度
+' 返回：无
+' ==================================================
+Function EffectHeight()
+    ' ========== 变量声明 ==========
+    Dim i%, j%
+    Dim Height%
+    
+    ' ========== 效果控件遍历 ==========
+    ' 遍历9个效果控件，逐个调整高度
+    For i = 1 To 9
+        ' ========== 控件查找 ==========
+        ' 查找对应的效果控件
+        For Each ctrl In Me.Controls
+            If ctrl.Name = "Effect" & i Then Exit For
+        Next ctrl
+        
+        ' ========== 高度计算 ==========
+        ' 根据文本长度计算需要调整的高度
+        Height = Int(Len(ctrl.Caption) / 50) * 10 + 10 - ctrl.Height
+        
+        ' ========== 高度调整 ==========
+        ' 如果计算出的高度变化不为零，则进行调整
+        If Height <> 0 Then
+            ' 调整当前效果控件的高度
+            ctrl.Height = ctrl.Height + Height
+            
+            ' ========== 相关控件位置调整 ==========
+            ' 调整效果框架控件的位置和高度
+            For Each ctrl In Me.Controls
+                If ctrl.Tag = "EffectFrame" Then
+                    ' 调整后续效果框架的位置
+                    If Val(Mid(ctrl.Name, Len("EffectFrame") + 1, 10)) > i Then ctrl.Top = ctrl.Top + Height
+                    ' 调整当前效果框架的高度
+                    If Val(Mid(ctrl.Name, Len("EffectFrame") + 1, 10)) = i Then ctrl.Height = ctrl.Height + Height
+                End If
+            Next ctrl
+        End If
+    Next i
+End Function

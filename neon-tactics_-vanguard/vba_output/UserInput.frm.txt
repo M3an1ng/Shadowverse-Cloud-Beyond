@@ -1,0 +1,35 @@
+Attribute VB_Name = "UserInput"
+Attribute VB_Base = "0{2D06F59E-5930-4B5D-BB8C-0433D5728015}{796EEC16-70D7-4B71-B436-E95B9ACC9141}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' 在用户窗体代码模块中
+Public UserInput As String
+Public Cancelled As Boolean
+
+Private Sub UserForm_Initialize()
+    Cancelled = True ' 默认设为取消状态
+End Sub
+
+Private Sub CommandButton_OK_Click()
+    UserInput = TextBox1.Text
+    Cancelled = False
+    Me.Hide
+End Sub
+
+Private Sub CommandButton_Cancel_Click()
+    Cancelled = True
+    Me.Hide
+End Sub
+
+' 允许按Enter提交，按ESC取消
+Private Sub TextBox1_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = 13 Then ' Enter键
+        CommandButton_OK_Click
+    ElseIf KeyCode = 27 Then ' ESC键
+        CommandButton_Cancel_Click
+    End If
+End Sub

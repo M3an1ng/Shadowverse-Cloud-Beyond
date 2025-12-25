@@ -12,7 +12,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // For PlayCardEffectParams
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Effects; // For PlayCardEffectParams
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.System
 {
@@ -24,8 +26,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public Guid RuntimeId => _runtimeId;
         public long DefinitionId => GameConstants.SystemAbilityIds.PlayCardAbilityId;
         public string Name => "Play Card";
-        public string AbilityTag => "System";
+        public EffectKeyword AbilityTag => EffectKeyword.System;
         public AbilityType Type => AbilityType.Triggered;
+        public List<Target> Targets { get; } = new List<Target>();
 
         public TriggerConfig TriggerConfig
         {
@@ -37,8 +40,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                 };
             }
         }
+        public Guid? SourceCardId { get; set; }
 
         public CardInstance? SourceCard { get; set; } // System abilities usually don't have a source card
+
+        public Guid? SourceBuffId => null; // System abilities are not granted by buffs.
 
         public PlayCardAbility(ILogger<PlayCardAbility> logger)
         {
@@ -59,12 +65,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             return Task.FromResult(true);
         }
 
-        public Task<bool> CheckConditionsAsync(GameContext context)
+        public bool CheckConditions(GameContext context)
         {
             if (context.TriggeringEvent is not PlayCardRequestedEvent requestEvent)
             {
                 _logger?.LogWarning("{AbilityName}: Triggering event is not PlayCardRequestedEvent. Event: {Event}", Name, context.TriggeringEvent?.GetType().Name);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Check if it's the requesting player's turn
@@ -72,14 +78,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Player {RequestingPlayerId} attempted to play card, but it's not their turn (Active: {ActivePlayerId}).",
                     Name, requestEvent.PlayerId, context.CurrentGameState.CurrentPlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             PlayerState? activePlayerState = context.CurrentGameState.GetPlayerState(requestEvent.PlayerId);
             if (activePlayerState == null)
             {
                 _logger?.LogError("{AbilityName}: Could not find player state for PlayerId {PlayerId}.", Name, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             CardInstance? cardToPlay = activePlayerState.Hand.FirstOrDefault(c => c.InstanceId == requestEvent.ActionDto.CardUid);
@@ -87,7 +93,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Card with UID {CardUid} not found in player {PlayerId}'s hand.",
                     Name, requestEvent.ActionDto.CardUid, requestEvent.PlayerId);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Check PP cost
@@ -95,7 +101,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             {
                 _logger?.LogWarning("{AbilityName}: Player {PlayerId} does not have enough PP to play {CardName} (Cost: {Cost}, Available: {PP}).",
                     Name, requestEvent.PlayerId, cardToPlay.Name, cardToPlay.CurrentCost, activePlayerState.CurrentPlayPoints);
-                return Task.FromResult(false);
+                return false;
             }
 
             // Further playability checks (e.g., target validity, board space for followers)
@@ -103,20 +109,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             // This system ability focuses on the flow initiation.
 
             _logger?.LogInformation("{AbilityName}: Conditions met for player {PlayerId} to play card {CardUid}.", Name, requestEvent.PlayerId, requestEvent.ActionDto.CardUid);
-            return Task.FromResult(true);
+            return true;
         }
 
-        public Task<List<TargetInfo>> ResolveTargetsAsync(GameContext context)
+        public Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false)
         {
             // The PlayCardRequestedEvent already contains the CardToPlay (via ActionDto.CardUid)
             // and potentially a SelectedTargetId (via ActionDto.TargetUid).
             // This system ability doesn't need to resolve new card targets.
             // The PlayCardEffectHandler will use the information from the triggering event.
             _logger?.LogInformation("{AbilityName}: Targets are expected to be in the triggering PlayCardRequestedEvent.", Name);
-            return Task.FromResult(new List<TargetInfo>());
+            return Task.FromResult(new TargetResolutionResult { Status = ResolutionStatus.Completed, ResolvedTargets = new Dictionary<string, List<TargetInfo>>() });
         }
 
-        public Task<List<Effect>> CreateEffectsAsync(GameContext context, List<TargetInfo> resolvedTargets)
+        public Task<List<Effect>> CreateEffectsAsync(GameContext context, TargetResolutionResult targetResult)
         {
             var effects = new List<Effect>();
 
@@ -144,25 +150,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             var playCardParams = new PlayCardEffectParams
             {
                 CardInstanceId = requestEvent.ActionDto.CardUid,
-                TargetId = requestEvent.ActionDto.TargetUid, // This can be null if no target
-                CardDefinitionId = cardToPlay.DefinitionId, // Get DefinitionId from the card instance
+                TargetIds = requestEvent.ActionDto.TargetUids, // This can be null if no target
+                CardDefinitionId = cardToPlay.BaseDefinitionId, // Get DefinitionId from the card instance
                 PlayReason = "PlayerAction"
             };
 
             var effectConfig = new EffectConfig
             {
-                Type = "playcard", // Corresponds to PlayCardEffectHandler
+                Type = EffectType.Play, // Corresponds to PlayCardEffectHandler
                 Parameters = new Dictionary<string, ValueConfig>
                 {
-                    { nameof(PlayCardEffectParams.CardInstanceId), ValueConfig.Static(playCardParams.CardInstanceId) },
-                    { nameof(PlayCardEffectParams.CardDefinitionId), ValueConfig.Static(playCardParams.CardDefinitionId) },
-                    { nameof(PlayCardEffectParams.PlayReason), ValueConfig.Static(playCardParams.PlayReason) }
+                    { nameof(PlayCardEffectParams.CardInstanceId), new StaticValueConfig { Value = playCardParams.CardInstanceId } },
+                    { nameof(PlayCardEffectParams.CardDefinitionId), new StaticValueConfig { Value = playCardParams.CardDefinitionId } },
+                    { nameof(PlayCardEffectParams.PlayReason), new StaticValueConfig { Value = playCardParams.PlayReason } }
                 }
             };
 
-            if (playCardParams.TargetId.HasValue)
+            if (playCardParams.TargetIds != null && playCardParams.TargetIds.Any())
             {
-                effectConfig.Parameters.Add(nameof(PlayCardEffectParams.TargetId), ValueConfig.Static(playCardParams.TargetId.Value));
+                effectConfig.Parameters.Add(nameof(PlayCardEffectParams.TargetIds), new StaticValueConfig { Value = playCardParams.TargetIds });
             }
 
             // The requesting player is the one who initiated the PlayCardRequest
@@ -178,6 +184,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                 selectedTargetsForEffect.Add(TargetInfo.ForPlayer(playerTarget));
             }
 
+            // 【BUG修复】移除此代码块。PlayCardEffect的目标只应该是玩家。
+            // 玩家选择的卡牌目标（TargetId）已经作为参数传递给了effectConfig，
+            // 不应该被添加到这个初始效果的目标列表中，否则会污染后续效果的目标选择。
+            /*
             if (playCardParams.TargetId.HasValue)
             {
                 var cardTarget = context.CurrentGameState.FindCardInstance(playCardParams.TargetId.Value);
@@ -186,7 +196,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                     selectedTargetsForEffect.Add(TargetInfo.ForCard(cardTarget));
                 }
             }
-
+            */
 
             effects.Add(new Effect(
                 effectConfig,

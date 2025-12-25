@@ -1,0 +1,622 @@
+Attribute VB_Name = "EnterCard·1·TimePoint"
+Attribute VB_Base = "0{298E46DB-A2A7-48D3-980E-6B63686DF4BC}{FBF44C1A-3F28-4A41-B190-E56686F115D6}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+' ==================================================
+' 窗体名称: EnterCard·1·TimePoint (时间点选择窗体)
+' 功能：选择卡牌效果触发的时间点和特殊能力
+' 说明：提供常用时点、特殊效果、战场发动、手牌发动等分类选择
+' ==================================================
+
+' ==================================================
+' 事件功能：常用时点处理 - 入场曲
+' 说明：处理入场曲效果，仅适用于从者和护符
+' ==================================================
+Private Sub Fanfare_Click()
+    ' ========== 类型验证 ==========
+    ' 如果是法术且没有父效果则退出
+    If DownByID("1000000", "Type") = "Spell" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 时间点设置 ==========
+    ' 录入入场曲时间点
+    TimePoint = "Fanfare"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 谢幕曲
+' 说明：处理谢幕曲效果，仅适用于从者和护符
+' ==================================================
+Private Sub LastWords_Click()
+    ' ========== 类型验证 ==========
+    ' 如果是法术且没有父效果则退出
+    If DownByID("1000000", "Type") = "Spell" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 时间点设置 ==========
+    ' 录入谢幕曲时间点
+    TimePoint = "LastWords"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 法术发动
+' 说明：处理法术发动效果，仅适用于法术
+' ==================================================
+Private Sub Play_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是法术且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Spell" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 时间点设置 ==========
+    ' 录入选法发动时间点
+    TimePoint = "Play"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 进化
+' 说明：处理进化效果，仅适用于从者
+' ==================================================
+Private Sub Evolve_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+
+    ' ========== 时间点设置 ==========
+    ' 录入进化时间点
+    TimePoint = "Evolve"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 超进化
+' 说明：处理超进化效果，仅适用于从者
+' ==================================================
+Private Sub SuperEvolve_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 时间点设置 ==========
+    ' 录入超进化时间点
+    TimePoint = "SuperEvolve"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 攻击时
+' 说明：处理攻击时效果，仅适用于从者
+' ==================================================
+Private Sub Strike_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 时间点设置 ==========
+    ' 录入攻击时时间点
+    TimePoint = "Strike"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 交战时
+' 说明：处理交战时效果，仅适用于从者
+' ==================================================
+Private Sub Clash_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 时间点设置 ==========
+    ' 录入交战时时间点
+    TimePoint = "Clash"
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：常用时点处理 - 启动
+' 说明：处理护符启动效果，仅适用于护符
+' ==================================================
+Private Sub Engage_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是护符且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Amulet" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 费用输入 ==========
+    ' 录入启动费用
+    TimePoint = "Engage&" & NumInputBox(Engage.Caption, "Engage")
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：特殊效果处理 - 法术增幅
+' 说明：处理法术增幅效果，提供多种增幅类型选择
+' ==================================================
+Private Sub Spellboost_Click()
+    ' ========== 增幅类型选择 ==========
+    ' 询问法术增幅类型
+    Dim options() As String
+    options = Split(SentenceTranslate("Spellboost|Cost|Attack&Defense|SetX"), "|")
+    Dim i%, j%, k%
+    i = Val(ShowChoice(options, 90, 3))
+    
+    ' ========== 费用增幅处理 ==========
+    If i = 1 Then
+        j = NumInputBox(Translate("Cost"), "Engage")
+        TimePoint = "Spellboost|Cost"
+        If j >= 0 Then TimePoint = TimePoint & "+" & j Else TimePoint = TimePoint & j
+        
+    ' ========== 身材增幅处理 ==========
+    ElseIf i = 2 Then
+        j = NumInputBox(Translate("Attack"), "Engage")
+        TimePoint = "Spellboost|"
+        If j >= 0 Then TimePoint = TimePoint & "+" & j Else TimePoint = TimePoint & j
+        TimePoint = TimePoint & "/"
+        j = NumInputBox(Translate("Defense"), "Engage")
+        If j >= 0 Then TimePoint = TimePoint & "+" & j Else TimePoint = TimePoint & j
+        
+    ' ========== X变量设置处理 ==========
+    ElseIf i = 3 Then
+        j = NumInputBox("SetX", "Engage")
+        TimePoint = "Spellboost|X=" & j
+    End If
+    
+    ' ========== 直接退出处理 ==========
+    ' 法术增幅不需要进入能力选择，直接设置效果并退出
+    CardEffect = TimePoint
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：特殊效果处理 - 融合
+' 说明：处理融合效果，选择融合目标
+' ==================================================
+Private Sub Fuse_Click()
+    ' ========== 目标选择 ==========
+    ' 打开目标选择窗体
+    EnterCard·4·Goal.Tag = "All|Allied|Hand|Follower&Spell&Amulet"
+    EnterCard·4·Goal.Show
+    
+    ' ========== 时间点设置 ==========
+    TimePoint = "Fuse|" & Goal
+    
+    ' ========== 直接退出处理 ==========
+    ' 融合不需要进入能力选择，直接设置效果并退出
+    CardEffect = TimePoint
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：战场发动处理 - 条件触发
+' 说明：处理战场上的条件触发效果
+' ==================================================
+Private Sub FieldWhen_Click()
+    ' ========== 行为选择 ==========
+    ' 选择触发行为
+    EnterCard·6·Action.Show
+    
+    ' ========== 目标选择 ==========
+    ' 打开目标选择窗体
+    EnterCard·4·Goal.Show
+    
+    ' ========== 时间点设置 ==========
+    TimePoint = "When|" & Goal & "|" & Action
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：战场发动处理 - 回合触发
+' 说明：处理回合开始或结束时的触发效果
+' ==================================================
+Private Sub FieldTurn_Click()
+    ' ========== 玩家选择 ==========
+    ' 询问自己或对方回合
+    Dim options() As String
+    options = Split(FieldTurn.Caption & SentenceTranslate("|Allied|Enemy|All"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 60, 3))
+    
+    ' ========== 时间点构建 ==========
+    If options(i) = Translate("All") Then
+        TimePoint = "When|Turn-"
+    Else
+        TimePoint = "When|" & Translate(options(i)) & "-Turn-"
+    End If
+    
+    ' ========== 时机选择 ==========
+    ' 询问回合开始或结束
+    options = Split(FieldTurn.Caption & SentenceTranslate("|Start|End"), "|")
+    i = Val(ShowChoice(options, 60, 2))
+    
+    TimePoint = TimePoint & Translate(options(i))
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：手牌发动处理 - 条件触发
+' 说明：处理手牌中的条件触发效果
+' ==================================================
+Private Sub HandWhen_Click()
+    ' ========== 行为选择 ==========
+    ' 选择触发行为
+    EnterCard·6·Action.Show
+    
+    ' ========== 目标选择 ==========
+    ' 打开目标选择窗体
+    EnterCard·4·Goal.Show
+    
+    ' ========== 时间点设置 ==========
+    TimePoint = "ActivateInHand-When|" & Goal & "|" & Action
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：手牌发动处理 - 回合触发
+' 说明：处理手牌中回合开始或结束时的触发效果
+' ==================================================
+Private Sub HandTurn_Click()
+    ' ========== 玩家选择 ==========
+    ' 询问自己或对方回合
+    Dim options() As String
+    options = Split(FieldTurn.Caption & SentenceTranslate("|Allied|Enemy|All"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 60, 3))
+    
+    ' ========== 时间点构建 ==========
+    If options(i) = Translate("All") Then
+        TimePoint = "ActivateInHand-When|Turn-"
+    Else
+        TimePoint = "ActivateInHand-When|" & Translate(options(i)) & "-Turn-"
+    End If
+    
+    ' ========== 时机选择 ==========
+    ' 询问回合开始或结束
+    options = Split(FieldTurn.Caption & SentenceTranslate("|Start|End"), "|")
+    i = Val(ShowChoice(options, 60, 2))
+    
+    TimePoint = TimePoint & Translate(options(i))
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：牌组发动处理 - 条件触发
+' 说明：处理牌组中的条件触发效果
+' ==================================================
+Private Sub DeckWhen_Click()
+    ' ========== 行为选择 ==========
+    ' 选择触发行为
+    EnterCard·6·Action.Show
+    
+    ' ========== 目标选择 ==========
+    ' 打开目标选择窗体
+    EnterCard·4·Goal.Show
+    
+    ' ========== 时间点设置 ==========
+    TimePoint = "ActivateInDeck-When|" & Goal & "|" & Action
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：牌组发动处理 - 回合触发
+' 说明：处理牌组中回合开始或结束时的触发效果
+' ==================================================
+Private Sub DeckTurn_Click()
+    ' ========== 玩家选择 ==========
+    ' 询问自己或对方回合
+    Dim options() As String
+    options = Split(FieldTurn.Caption & SentenceTranslate("|Allied|Enemy|All"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 60, 3))
+    
+    ' ========== 时间点构建 ==========
+    If options(i) = Translate("All") Then
+        TimePoint = "ActivateInDeck-When|Turn-"
+    Else
+        TimePoint = "ActivateInDeck-When|" & Translate(options(i)) & "-Turn-"
+    End If
+    
+    ' ========== 时机选择 ==========
+    ' 询问回合开始或结束
+    options = Split(FieldTurn.Caption & SentenceTranslate("|Start|End"), "|")
+    i = Val(ShowChoice(options, 60, 2))
+    
+    TimePoint = TimePoint & Translate(options(i))
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+
+' ==================================================
+' 事件功能：特殊费用处理 - 强化
+' 说明：处理强化效果，设置强化费用
+' ==================================================
+Private Sub Enhance_Click()
+    ' ========== 费用输入 ==========
+    ' 录入强化费用
+    TimePoint = "Enhance&" & NumInputBox(Enhance.Caption, "Engage")
+    
+    ' ========== 窗体退出 ==========
+    Call UnloadForm
+End Sub
+
+' ==================================================
+' 事件功能：特殊费用处理 - 加速
+' 说明：处理加速效果（功能未实现）
+' ==================================================
+Private Sub Accelerate_Click()
+    ' 功能待实现
+End Sub
+
+' ==================================================
+' 事件功能：特殊费用处理 - 结晶
+' 说明：处理结晶效果（功能未实现）
+' ==================================================
+Private Sub Crystallize_Click()
+    ' 功能待实现
+End Sub
+
+' ==================================================
+' 事件功能：常驻效果处理
+' 说明：处理各种常驻效果选择
+' ==================================================
+Private Sub Permannent_Click()
+    ' ========== 类型验证 ==========
+    ' 如果是法术且没有父效果则退出
+    If DownByID("1000000", "Type") = "Spell" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 常驻效果选择 ==========
+    Dim options() As String
+    options = Split(SentenceTranslate("Permannent|" & _
+        "CantBeDestroyed|" & _
+        "CantStrike|" & _
+        "CanAttackTimes|" & _
+        "LeaveBanish|" & _
+        "CantPlay|" & _
+        "CantSelectOther|" & _
+        "CantTakeMoreDamage|" & _
+        "TakeDamage|" & _
+        "DoDamage|" & _
+        "NoEP|" & _
+        "NoSEP|" & _
+        "EngageCost|" & _
+        "IncreaseModes"), "|")
+    Dim i%
+    i = Val(ShowChoice(options, 200, 2))
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & Translate(options(i))
+    
+    ' ========== 特殊参数处理 ==========
+    ' 可攻击次数需要额外参数
+    If options(i) = Translate("CanAttackTimes") Then
+        CardEffect = CardEffect & "&" & NumInputBox(Translate("CanAttackTimes"), "Engage")
+    ElseIf options(i) = Translate("CantTakeMoreDamage") Then
+        CardEffect = CardEffect & "&" & NumInputBox(Translate("CantTakeMoreDamage"), "Engage")
+    ElseIf options(i) = Translate("TakeDamage") Then
+        CardEffect = CardEffect & "&" & NumInputBox(Translate("TakeDamage"), "Engage")
+    ElseIf options(i) = Translate("DoDamage") Then
+        CardEffect = CardEffect & "&" & NumInputBox(Translate("DoDamage"), "Engage")
+    ElseIf options(i) = Translate("EngageCost") Then
+        CardEffect = CardEffect & "&" & NumInputBox(Translate("EngageCost"), "Engage")
+        
+    ElseIf options(i) = Translate("CantStrike") Then
+        EnterCard·4·Goal.Tag = "All|Enemy|Field|Follower&Leader"
+        EnterCard·4·Goal.Show
+        CardEffect = CardEffect & "|" & Goal
+    End If
+    
+    ' ========== 直接退出处理 ==========
+    ' 常驻效果不需要进入能力选择，直接退出
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻效果处理 - 在场时
+' 说明：处理在场时常驻效果（功能未实现）
+' ==================================================
+Private Sub WhileFiled_Click()
+    ' 功能待实现
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 突进
+' 说明：处理突进词条，仅适用于从者
+' ==================================================
+Private Sub Rush_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Rush"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 疾驰
+' 说明：处理疾驰词条，仅适用于从者
+' ==================================================
+Private Sub Storm_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Storm"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 潜行
+' 说明：处理潜行词条，仅适用于从者
+' ==================================================
+Private Sub Ambush_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Ambush"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 毁灭
+' 说明：处理毁灭词条，仅适用于从者
+' ==================================================
+Private Sub Bane_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Bane"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 虹吸
+' 说明：处理虹吸词条，仅适用于从者
+' ==================================================
+Private Sub Drain_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Drain"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 守护
+' 说明：处理守护词条，仅适用于从者
+' ==================================================
+Private Sub Ward_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Ward"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 威慑
+' 说明：处理威慑词条，仅适用于从者
+' ==================================================
+Private Sub Intimidate_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Intimidate"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 光环
+' 说明：处理光环词条，适用于从者和护符
+' ==================================================
+Private Sub Aura_Click()
+    ' ========== 类型验证 ==========
+    ' 如果是法术且没有父效果则退出
+    If DownByID("1000000", "Type") = "Spell" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Aura"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ==================================================
+' 事件功能：常驻词条处理 - 屏障
+' 说明：处理屏障词条，仅适用于从者
+' ==================================================
+Private Sub Barrier_Click()
+    ' ========== 类型验证 ==========
+    ' 如果不是随从且没有父效果则退出
+    If DownByID("1000000", "Type") <> "Follower" And Len(FatherEffect) = 0 Then Exit Sub
+    
+    ' ========== 效果设置 ==========
+    CardEffect = CardEffect & "Barrier"
+    
+    ' ========== 直接退出处理 ==========
+    Unload EnterCard·1·TimePoint
+End Sub
+
+' ========== 分割线：窗体初始化和工具函数 ==========
+
+' ==================================================
+' 事件功能：窗体激活初始化
+' 说明：窗体显示时清空时间点变量
+' ==================================================
+Private Sub UserForm_Activate()
+    ' ========== 变量初始化 ==========
+    ' 清空时间点变量
+    TimePoint = Empty
+End Sub
+
+' ==================================================
+' 函数功能：统一退出处理
+' 说明：记录效果并打开能力选择窗体
+' ==================================================
+Function UnloadForm()
+    ' ========== 效果记录 ==========
+    ' 将时间点添加到效果字符串
+    CardEffect = CardEffect & TimePoint & "||"
+    
+    ' ========== 窗体切换 ==========
+    ' 卸载本窗体并打开能力选择窗体
+    Unload EnterCard·1·TimePoint
+    EnterCard·3·Ability.Show
+End Function
+

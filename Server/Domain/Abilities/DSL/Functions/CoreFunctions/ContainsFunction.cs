@@ -21,6 +21,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class ContainsFunction : BaseDslFunction
     {
         public override string Name => "contains";
+        public override string Description => "检查一个集合或字符串是否包含指定的元素或子字符串。";
+
+        public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
+        {
+            new DslParameterInfo("source", typeof(object), "要进行检查的集合或字符串。"),
+            new DslParameterInfo("value", typeof(object), "要查找的元素或子字符串。")
+        };
 
         protected override int? GetExpectedArgumentCount() => 2;
 
@@ -36,10 +43,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return firstArg == null || IsCollection(firstArg) || firstArg is string;
         }
 
-        public override async Task<object?> ExecuteAsync(List<object?> args, GameContext context)
+        public override object? Execute(List<object?> args, GameContext context)
         {
-            await Task.CompletedTask; // 标记为异步但实际上是同步操作
-
             if (args.Count != 2)
             {
                 return false;

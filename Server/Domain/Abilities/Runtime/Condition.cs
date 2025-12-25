@@ -30,7 +30,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// 日志记录器
         /// </summary>
         private readonly ILogger<Condition>? _logger;
-        private readonly IMapper _mapper; // Added IMapper field
 
         /// <summary>
         /// 评估次数
@@ -72,7 +71,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             _conditionEvaluator = conditionEvaluator ?? throw new ArgumentNullException(nameof(conditionEvaluator)); // Store the general evaluator
-            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Store IMapper
             _logger = logger;
         }
 
@@ -81,7 +79,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// </summary>
         /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        public async Task<bool> EvaluateAsync(GameContext context)
+        public bool Evaluate(GameContext context)
         {
             if (!IsEnabled)
                 return false;
@@ -102,7 +100,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             try
             {
                 // 使用IConditionEvaluator进行实际的条件评估
-                result = await EvaluateConditionLogic(context);
+                result = EvaluateConditionLogic(context);
             }
             catch (Exception ex)
             {
@@ -140,12 +138,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// </summary>
         /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        private async Task<bool> EvaluateConditionLogic(GameContext context)
+        private bool EvaluateConditionLogic(GameContext context)
         {
             try
             {
                 // 直接使用GameContext，IConditionEvaluator已经更新为使用GameContext
-                var result = await _conditionEvaluator.EvaluateAsync(Config, context);
+                var result = _conditionEvaluator.Evaluate(Config, context);
 
                 _logger?.LogDebug("Condition {ConditionId} evaluated to {Result}", Config.Id, result);
                 return result;

@@ -20,6 +20,7 @@ using System.Collections.Generic;
 using System.Linq; // For Linq methods
 using System.Text.Json; // For deep copy using JSON serialization
 using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -31,10 +32,6 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ILogger<AiService> _logger;
         private readonly IServiceScopeFactory _serviceScopeFactory; // To resolve IGameService if needed, avoiding circular dependency
         private readonly IGameDataProvider _gameDataProvider;
-
-        // Define constants (like MAX_FIELD_SIZE from ai.js)
-        // TODO: use GameConstants instead
-        private const int MaxFieldSize = 5;
 
         public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, IGameDataProvider gameDataProvider)
         {
@@ -98,14 +95,14 @@ namespace ShadowverseBeyond.Server.Services
                 .OrderByDescending(c => c.Cost)
                 .ToList();
 
-            if (aiState.Field.Count < MaxFieldSize && playableFollowers.Any())
+            if (aiState.Field.Count < GameConstants.Field.MaxFieldSize && playableFollowers.Any())
             {
                 var cardToPlay = playableFollowers.First();
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to play Follower: {CardName} ({CardInstanceId}), Cost: {Cost}.", // Changed Uid to InstanceId in log message
                     gameId, aiPlayerId, cardToPlay.Name, cardToPlay.InstanceId, cardToPlay.Cost); // Changed Uid to InstanceId
                 // Followers generally don't require a target when played, unless they have a specific Fanfare.
                 // Simple V1 plays without target.
-                return Task.FromResult<PlayCardActionDto?>(new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUid = null }); // Changed Uid to InstanceId
+                return Task.FromResult<PlayCardActionDto?>(new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = null }); // Changed Uid to InstanceId
             }
 
             // If no follower can be played, try playing the highest-cost spell
@@ -145,7 +142,7 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to play Spell: {CardName} ({CardInstanceId}), Cost: {Cost}, Target: {TargetUid}.", // Changed Uid to InstanceId in log message
                     gameId, aiPlayerId, cardToPlay.Name, cardToPlay.InstanceId, cardToPlay.Cost, targetUid.ToString() ?? "None"); // Changed Uid to InstanceId
 
-                return Task.FromResult<PlayCardActionDto?>(new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUid = targetUid }); // Changed Uid to InstanceId
+                return Task.FromResult<PlayCardActionDto?>(new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = targetUid.HasValue ? new List<Guid> { targetUid.Value } : null }); // Changed Uid to InstanceId
             }
 
             // If neither follower nor spell can be played (e.g., amulets only, field full, no PP), play nothing.
@@ -204,61 +201,45 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <inheritdoc />
-        public Task<List<AttackActionDto>> DecideAttacksAsync(GameStateDto gameState, Guid aiPlayerId)
+        public Task<AttackActionDto?> DecideNextAttackAsync(GameStateDto gameState, Guid aiPlayerId)
         {
-            _logger.LogDebug("[AiService:{GameId}] DecideAttacksAsync called for AI {PlayerId}.", gameState?.GameId ?? "Unknown", aiPlayerId);
+            _logger.LogDebug("[AiService:{GameId}] DecideNextAttackAsync called for AI {PlayerId}.", gameState?.GameId ?? "Unknown", aiPlayerId);
             var gameId = gameState?.GameId ?? "Unknown";
-            List<AttackActionDto> attacks = new List<AttackActionDto>();
             var states = GetPlayerStates(gameState, aiPlayerId);
             if (states == null)
             {
-                _logger.LogError("[AiService:{GameId}] Could not get player states for AI {PlayerId} in DecideAttacksAsync.", gameId, aiPlayerId);
-                return Task.FromResult(attacks);
+                _logger.LogError("[AiService:{GameId}] Could not get player states for AI {PlayerId} in DecideNextAttackAsync.", gameId, aiPlayerId);
+                return Task.FromResult<AttackActionDto?>(null);
             }
             var (aiState, opponentState) = states.Value;
 
-            // 【BUG-017修复】使用完整的攻击前置条件检查，包括AttacksThisTurn计数
-            var readyUnits = aiState.Field
+            var readyUnit = aiState.Field
                 .Where(u => u != null && u.CanAttack && u.CanPerformAttackDto(aiState.PlayerId, gameState.CurrentPlayerId == aiState.PlayerId))
-                .Select(u => DeepCopy(u)) // Create deep copies to avoid modifying original state
-                .Where(u => u != null) // Filter out potential nulls from failed deep copy (defensive)
-                .Select(u => new { Unit = u, SortAttack = u!.CurrentAttack }) // Project for sorting - Added null-forgiving operator
-                .OrderByDescending(x => x.SortAttack) // Prioritize higher attack units
-                .Select(x => x.Unit) // Select the copied unit
-                .ToList();
+                .Select(u => new { Unit = u, SortAttack = u.CurrentAttack })
+                .OrderByDescending(x => x.SortAttack)
+                .Select(x => x.Unit)
+                .FirstOrDefault();
 
-            _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} found {ReadyUnitsCount} units that can perform attacks after full precondition check.",
-                gameId, aiPlayerId, readyUnits.Count);
-
-
-            if (!readyUnits.Any())
+            if (readyUnit == null)
             {
-                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no units ready to attack.", gameId, aiPlayerId);
-                return Task.FromResult(attacks);
+                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no more units ready to attack.", gameId, aiPlayerId);
+                return Task.FromResult<AttackActionDto?>(null);
             }
 
-            // V1 Logic: Attack with all ready units. Prioritize targets: Ward > Highest Attack Follower > Opponent Leader
-            foreach (var attacker in readyUnits)
+            Guid? targetUid = SelectAttackTarget(readyUnit, opponentState);
+
+            if (targetUid != null)
             {
-                Guid? targetUid = SelectAttackTarget(attacker!, opponentState); // Use helper - Added null-forgiving operator
-
-                if (targetUid != null)
-                {
-                    attacks.Add(new AttackActionDto { AttackerUid = attacker!.InstanceId, TargetUid = targetUid.Value }); // Fix: Use InstanceId // AttackActionDto expects Guid properties // Added !
-                    _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided attack: Unit {AttackerUid} -> Target {TargetUid}.",
-                        gameId, aiPlayerId, attacker!.InstanceId, targetUid); // Fix: Use InstanceId // Added !
-
-                    // Basic simulation: Mark attacker as unable to attack again this turn
-                    // (A more robust simulation would update game state based on attack outcome)
-                    attacker.CanAttack = false; // Simplistic: Assume CanAttack is mutable for simulation state
-                }
-                else
-                {
-                    _logger.LogDebug("[AiService:{GameId}] No valid target found for AI attacker {AttackerUid}.", gameId, attacker!.InstanceId); // Fix: Use InstanceId // Added !
-                }
+                var attackAction = new AttackActionDto { AttackerUid = readyUnit.InstanceId, TargetUid = targetUid.Value };
+                _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided next attack: Unit {AttackerUid} -> Target {TargetUid}.",
+                    gameId, aiPlayerId, readyUnit.InstanceId, targetUid);
+                return Task.FromResult<AttackActionDto?>(attackAction);
             }
-
-            return Task.FromResult(attacks);
+            else
+            {
+                _logger.LogDebug("[AiService:{GameId}] No valid target found for AI attacker {AttackerUid}.", gameId, readyUnit.InstanceId);
+                return Task.FromResult<AttackActionDto?>(null);
+            }
         }
 
         #region Helper Methods
@@ -438,6 +419,44 @@ namespace ShadowverseBeyond.Server.Services
                 // 根据需求，我们可能需要更优雅地处理此问题，
                 // 例如，以错误状态结束 AI 回合，但目前仅记录日志。
             }
+        }
+
+        /// <inheritdoc />
+        public Task<PlayerChoiceResult> DecideTargetChoiceAsync(PlayerChoiceRequest request, GameStateDto gameState)
+        {
+            var gameId = gameState.GameId;
+            var aiPlayerId = request.RequestingPlayerId;
+            _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} is deciding for choice {ChoiceId}.", gameId, aiPlayerId, request.PendingChoiceId);
+
+            // V1 Logic: For now, the AI will make a very simple choice.
+            // If the minimum selection is 0, it means choosing is optional or not applicable (like Goblin's Fanfare).
+            // In this case, the AI will choose nothing.
+            // Otherwise, it will randomly pick the minimum required number of targets.
+            var chosenIds = new List<Guid>();
+            if (request.MinSelectionCount > 0 && request.SelectableTargetIds.Any())
+            {
+                // Simple random selection
+                var random = new Random();
+                chosenIds = request.SelectableTargetIds
+                                   .OrderBy(x => random.Next())
+                                   .Take(request.MinSelectionCount)
+                                   .ToList();
+
+                _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} randomly selected {Count} targets: [{Targets}]",
+                    gameId, aiPlayerId, chosenIds.Count, string.Join(", ", chosenIds));
+            }
+            else
+            {
+                _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} is choosing no targets as MinSelectionCount is 0 or no targets are available.", gameId, aiPlayerId);
+            }
+
+            var result = new PlayerChoiceResult
+            {
+                WasCancelled = false,
+                ChosenTargetIds = chosenIds
+            };
+
+            return Task.FromResult(result);
         }
     }
 }

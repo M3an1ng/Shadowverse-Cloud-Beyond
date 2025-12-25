@@ -87,6 +87,13 @@ public interface IEconomyService
     Task<UserRankDto?> GetUserRankAsync(Guid userId);
 
     /// <summary>
+    /// 获取用户元进度状态（金币/任务/排行/每日奖励）
+    /// </summary>
+    /// <param name="userId">用户ID</param>
+    /// <returns>元进度聚合视图</returns>
+    Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId);
+
+    /// <summary>
     /// 更新用户排名
     /// </summary>
     /// <param name="userId">用户ID</param>
@@ -118,6 +125,14 @@ public interface IEconomyService
     /// <param name="increment">增加的进度值</param>
     /// <returns>是否有任务完成</returns>
     Task<bool> UpdateQuestProgressAsync(Guid userId, QuestType type, int increment = 1);
+
+    /// <summary>
+    /// 领取任务奖励
+    /// </summary>
+    /// <param name="userId">用户ID</param>
+    /// <param name="userQuestId">用户任务ID</param>
+    /// <returns>奖励领取结果；若不可领取则返回 null</returns>
+    Task<QuestRewardClaimDto?> ClaimQuestRewardAsync(Guid userId, Guid userQuestId);
 
     /// <summary>
     /// 检查并完成任务

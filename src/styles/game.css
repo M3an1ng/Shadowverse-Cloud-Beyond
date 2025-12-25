@@ -1,0 +1,985 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+/*
+ * Legacy Style Refactoring
+ * Most base styles have been moved to src/styles/global.css, theme.css, components.css, layout.css
+ * This file now contains specific overrides and game-specific logic styles.
+ */
+
+/* --- Navigation Page Overrides --- */
+#navigation-page {
+    background: transparent; /* Use global grid background */
+}
+
+.nav-header h1 {
+    font-size: var(--text-3xl);
+    font-weight: 900;
+    margin-bottom: var(--space-2);
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+    letter-spacing: -0.05em;
+    color: var(--color-text); /* Ensure text is visible */
+}
+
+.nav-subtitle {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--color-secondary);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+}
+
+/* --- Back Button Override (Artistic) --- */
+.page-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Tighter gap to blend with title */
+}
+
+.back-nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px 8px 0; /* Right padding for click area, no left padding to align with edge */
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    position: relative;
+    overflow: visible; /* Allow glow to spill */
+}
+
+.back-icon-wrapper {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.02);
+    transition: all 0.3s ease;
+}
+
+.back-nav-btn svg {
+    width: 18px;
+    height: 18px;
+    stroke-width: 2px;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.back-text-art {
+    font-family: 'Cinzel', 'Noto Serif SC', serif; /* Match EDIT DECKS font */
+    font-weight: 700;
+    font-size: 24px; /* Increased size */
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.8); /* High visibility */
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+    transition: all 0.3s ease;
+    position: relative;
+    text-transform: uppercase;
+}
+
+/* Hover State - "Juice" */
+.back-nav-btn:hover .back-icon-wrapper {
+    border-color: var(--color-primary);
+    background: rgba(59, 130, 246, 0.15); /* Blue tint */
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+    transform: scale(1.1);
+}
+
+.back-nav-btn:hover svg {
+    transform: translateX(-2px);
+    color: #fff;
+}
+
+.back-nav-btn:hover .back-text-art {
+    color: #fff;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+    letter-spacing: 0.25em; /* Expand text slightly */
+}
+
+/* Active/Click State */
+.back-nav-btn:active {
+    transform: scale(0.95);
+}
+
+.page-header-left h2 {
+    margin-left: 0 !important; /* Override layout.css margin */
+    padding-left: 12px; /* Visual separation from the button group */
+    border-left: 1px solid rgba(255, 255, 255, 0.1); /* Divider line */
+    line-height: 1;
+}
+
+/* --- Game Page Specifics --- */
+#game-page {
+    background: transparent;
+}
+
+/* --- Player Stats (HP, EP, SEP) --- */
+.player-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 280px; /* Increased width for new layout */
+    font-family: var(--font-mono);
+    padding: 8px;
+    background: transparent; /* User Request: Fully transparent */
+    border-radius: 4px;
+}
+
+/* Header: Class, Name, HP */
+.stats-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center; /* Changed to center for avatar alignment */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+}
+
+.stats-avatar {
+    width: 36px;
+    height: 36px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 12px;
+    color: #fff;
+    margin-right: 10px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.stats-info {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1; /* Take remaining space */
+}
+
+.class-name {
+    font-size: 10px;
+    color: var(--color-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+}
+
+.player-name {
+    font-size: 18px;
+    font-weight: 900;
+    color: #fff;
+    line-height: 1.1;
+    text-transform: uppercase;
+}
+
+.hp-display {
+    text-align: right;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.hp-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+    transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.hp-label {
+    font-size: 10px;
+    color: var(--color-secondary);
+    font-weight: 700;
+}
+
+/* Resources Grid */
+.resources-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-size: 12px;
+}
+
+/* PP Container (Full Width) */
+.pp-container {
+    grid-column: 1 / -1; /* Span full width */
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pp-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.pp-label {
+    color: #60a5fa; /* Blue-400 */
+}
+
+.pp-text {
+    color: #fff;
+}
+
+.pp-bar-segments {
+    display: flex;
+    gap: 2px;
+    height: 8px;
+}
+
+.pp-segment {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 1px;
+    transition: all 0.2s ease;
+}
+
+.pp-segment.active {
+    background: #3b82f6; /* Blue-500 */
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+}
+
+.pp-segment.empty {
+    background: rgba(24, 24, 27, 0.8); /* Zinc-900 */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Resource Box (EP, SEP, Deck, Grave) */
+.resource-box {
+    background: rgba(0, 0, 0, 0.2); /* More transparent as requested */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 4px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 28px;
+    border-radius: 2px;
+}
+
+.resource-label {
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.resource-value {
+    color: #fff;
+    font-weight: 400;
+}
+
+/* Specific Resource Colors */
+.ep-label { color: #eab308; /* Yellow-500 */ }
+.sep-label { color: #a855f7; /* Purple-500 */ }
+.deck-box .resource-label { color: var(--color-secondary); }
+.grave-box .resource-label { color: var(--color-secondary); }
+
+/* Dots Containers */
+.ep-dots, .sep-dots {
+    display: flex;
+    gap: 3px;
+}
+
+.ep-dot, .sep-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.ep-dot.active {
+    background: #facc15; /* Yellow-400 */
+    box-shadow: 0 0 4px rgba(250, 204, 21, 0.5);
+}
+
+.sep-dot.active {
+    background: #c084fc; /* Purple-400 */
+    box-shadow: 0 0 4px rgba(192, 132, 252, 0.5);
+}
+
+/* --- Log UI --- */
+#game-log-container {
+    position: absolute;
+    top: 140px; /* Moved down to match visual reference */
+    left: 0; /* Anchored to the left edge */
+    z-index: 9000;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(0, 0, 0, 0.8); /* Darker background for better contrast */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: none; /* Remove left border since it's docked */
+    border-radius: 0 8px 8px 0; /* Rounded corners only on the right */
+    backdrop-filter: blur(8px);
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Bouncy "pop" effect */
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Collapsed State */
+#game-log-container.collapsed {
+    width: 40px; /* Slightly wider for better click target */
+    height: 40px;
+    background: rgba(0, 0, 0, 0.6);
+    border-color: rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    transform: translateX(0);
+}
+
+/* Hover effect for Collapsed State - "Pop out" feel */
+#game-log-container.collapsed:hover {
+    background: rgba(255, 255, 255, 0.15);
+    width: 48px; /* Expands slightly to the right */
+    box-shadow: 2px 0 10px rgba(255, 255, 255, 0.1);
+}
+
+/* Expanded State */
+#game-log-container.expanded {
+    width: 400px;
+    height: 300px;
+    box-shadow: 4px 4px 16px rgba(0, 0, 0, 0.6);
+    background: rgba(10, 10, 15, 0.95); /* Solid dark background when reading */
+}
+
+/* Header Container */
+.log-header {
+    display: flex;
+    align-items: center;
+    height: 40px;
+    flex-shrink: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Toggle Button */
+.log-toggle-btn {
+    width: 40px; /* Match container width */
+    height: 40px;
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    transition: color 0.2s, transform 0.3s ease;
+    flex-shrink: 0;
+}
+
+/* Rotate icon when expanded */
+#game-log-container.expanded .log-toggle-btn {
+    transform: rotate(180deg);
+}
+
+.log-toggle-btn:hover {
+    color: #fff;
+}
+
+.log-toggle-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+/* Log Title */
+.log-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.9);
+    margin-left: 8px;
+    opacity: 0;
+    transform: translateX(-10px);
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    pointer-events: none; /* Let clicks pass through to container if needed */
+}
+
+#game-log-container.expanded .log-title {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+/* Log Content Wrapper */
+#game-log-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    opacity: 1;
+    transition: opacity 0.2s ease-in;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    
+    /* Gradient Mask for "Fade-in" effect */
+    /* Top is transparent (faded out), bottom is opaque (visible) */
+    mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
+}
+
+#game-log-container.collapsed #game-log-content {
+    display: none;
+    opacity: 0;
+}
+
+.log-entry {
+    margin-bottom: 4px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.log-entry:last-child {
+    margin-bottom: 0;
+}
+
+/* #game-container layout is now handled in src/styles/layout.css */
+/* Removed conflicting grid and max-width styles */
+
+/* --- Card Slots (Battlefield) --- */
+.slot {
+    width: 100px;
+    height: 140px;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-md);
+    background-color: rgba(255, 255, 255, 0.05);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.2s ease;
+}
+
+.slot:hover {
+    border-color: rgba(255, 255, 255, 0.4);
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Card Styles (Game Board) --- */
+.card, .card-back {
+    width: 100px;
+    height: 140px;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-surface);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2);
+    font-size: var(--text-xs);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    position: relative;
+    cursor: pointer;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+    flex-shrink: 0;
+    color: var(--color-primary);
+}
+
+.card:hover {
+    transform: translateY(-10px) scale(1.1);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--color-primary);
+    z-index: 20;
+}
+
+.card-back {
+    background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+    border: 1px solid var(--color-border);
+    justify-content: center;
+}
+
+/* Card Content */
+.card .cost {
+    position: absolute;
+    top: -8px;
+    left: -8px;
+    font-weight: bold;
+    background-color: #3b82f6; /* Blue 500 */
+    color: white;
+    border-radius: var(--radius-full);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: var(--text-xs);
+    box-shadow: var(--shadow-sm);
+    font-family: var(--font-mono);
+}
+
+.card .name {
+    font-weight: 600;
+    text-align: center;
+    margin-top: var(--space-4);
+    font-size: var(--text-xs);
+    line-height: 1.2;
+}
+
+.card .stats {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0 var(--space-1);
+    font-family: var(--font-mono);
+}
+
+.card .attack, .card .health {
+    font-weight: bold;
+    background-color: var(--color-surface-highlight);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+}
+
+.card .attack { color: var(--color-accent); }
+.card .health { color: var(--color-success); }
+
+/* In-card action buttons (Evolve / Super Evolve / Act) */
+.card .evolve-button,
+.card .super-evolve-button,
+.card .act-button {
+    position: absolute;
+    right: 6px;
+    top: 6px;
+    padding: 4px 6px;
+    font-size: 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.5);
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+    transition: transform var(--transition-fast), opacity var(--transition-fast), background-color var(--transition-fast);
+    z-index: 30;
+}
+
+.card .evolve-button:hover,
+.card .super-evolve-button:hover,
+.card .act-button:hover {
+    transform: translateY(-1px);
+    background: rgba(0, 0, 0, 0.65);
+}
+
+.card .super-evolve-button {
+    top: 28px;
+    border-color: rgba(251, 113, 133, 0.6);
+    color: #fda4af;
+}
+
+.card .act-button {
+    right: auto;
+    left: 6px;
+    top: 28px; /* avoid overlapping the cost badge */
+}
+
+.card .act-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Fusion animation */
+.fusion-float-card {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+    transition: transform 650ms cubic-bezier(0.22, 1, 0.36, 1), opacity 650ms ease;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+}
+
+.fusion-burst-root {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 9500;
+}
+
+.fusion-burst {
+    position: relative;
+    width: 220px;
+    height: 220px;
+}
+
+.fusion-burst-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(168, 85, 247, 0.65);
+    box-shadow: 0 0 24px rgba(168, 85, 247, 0.35);
+    animation: fusion-ring 650ms ease-out forwards;
+}
+
+.fusion-burst-text {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+}
+
+@keyframes fusion-ring {
+    0% { transform: scale(0.55); opacity: 0.0; }
+    30% { opacity: 1.0; }
+    100% { transform: scale(1.2); opacity: 0.0; }
+}
+
+/* --- Game States --- */
+.card.playable {
+    box-shadow: 0 0 0 2px var(--color-warning);
+    animation: pulse-glow 2s infinite;
+}
+
+/* Mulligan States */
+.card.mulligan-selectable {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card.mulligan-selectable:hover {
+    transform: translateY(-15px) scale(1.05);
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); /* Blue glow hint */
+}
+
+.card.selected-for-mulligan {
+    transform: translateY(-20px) scale(1.05);
+    box-shadow: 0 0 0 3px var(--color-danger), 0 0 20px rgba(239, 68, 68, 0.6); /* Red glow for "discard/replace" */
+    border-color: var(--color-danger);
+    position: relative;
+}
+
+.card.selected-for-mulligan::after {
+    content: "↻"; /* Minimalist cycle symbol */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7); /* Semi-transparent black background */
+    color: var(--color-danger); /* Red icon */
+    width: 40px;
+    height: 40px;
+    border-radius: 50%; /* Circular */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 900;
+    font-size: 24px;
+    pointer-events: none;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+    border: 2px solid var(--color-danger);
+    backdrop-filter: blur(4px); /* Glassmorphism touch */
+    animation: spin-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes spin-in {
+    from { transform: translate(-50%, -50%) rotate(-180deg) scale(0); opacity: 0; }
+    to { transform: translate(-50%, -50%) rotate(0) scale(1); opacity: 1; }
+}
+
+.targetable {
+    outline: 2px dashed var(--color-accent);
+    outline-offset: 2px;
+    cursor: crosshair;
+}
+
+.targetable-restricted {
+    outline: 2px dashed rgba(255, 255, 255, 0.25);
+    outline-offset: 2px;
+    cursor: not-allowed;
+    filter: grayscale(0.2);
+}
+
+/* Player choice / spell targeting (used by ui.js) */
+.targetable-spell {
+    outline: 2px solid var(--color-warning);
+    outline-offset: 2px;
+    cursor: crosshair;
+}
+
+.targeting-spell {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.9), 0 0 18px rgba(59, 130, 246, 0.45);
+}
+
+.choice-selected {
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.9), 0 0 18px rgba(34, 197, 94, 0.35);
+    border-color: rgba(34, 197, 94, 0.9);
+}
+
+.choice-overlay-root {
+    position: absolute;
+    inset: 0;
+    z-index: 9500;
+    pointer-events: none;
+}
+
+.choice-overlay {
+    pointer-events: auto;
+}
+
+.choice-controls-overlay {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(620px, calc(100% - 24px));
+    background: rgba(10, 10, 10, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    padding: 12px 14px;
+    backdrop-filter: blur(8px);
+}
+
+.choice-prompt-text {
+    font-size: var(--text-base);
+    font-weight: 700;
+    color: var(--color-text);
+    margin-bottom: 6px;
+}
+
+.choice-prompt-hint {
+    font-size: var(--text-sm);
+    color: rgba(255, 255, 255, 0.72);
+    margin-bottom: 10px;
+}
+
+.choice-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.choice-selected-count {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.choice-controls-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.choice-btn {
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--color-text);
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.choice-btn:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.choice-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.choice-confirm-btn {
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.choice-cancel-btn {
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.choice-panel-overlay {
+    position: absolute;
+    right: 12px;
+    top: 110px;
+    width: 320px;
+    max-height: min(62vh, 520px);
+    overflow: hidden;
+    background: rgba(10, 10, 10, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(8px);
+    display: flex;
+    flex-direction: column;
+}
+
+.choice-panel-title {
+    padding: 10px 12px 8px;
+    font-size: var(--text-sm);
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.9);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.choice-card-list {
+    overflow: auto;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.choice-card {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    grid-template-rows: auto auto;
+    gap: 4px 10px;
+    align-items: start;
+    width: 100%;
+    text-align: left;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--color-text);
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.choice-card:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.26);
+}
+
+.choice-card-selected {
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.85), 0 0 14px rgba(34, 197, 94, 0.25);
+    border-color: rgba(34, 197, 94, 0.65);
+}
+
+.choice-card-cost {
+    grid-row: 1 / span 2;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 800;
+    background: rgba(59, 130, 246, 0.25);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.choice-card-name {
+    font-weight: 700;
+    font-size: var(--text-sm);
+}
+
+.choice-card-desc {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.72);
+    line-height: 1.2;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.reveal-overlay-root {
+    position: absolute;
+    inset: 0;
+    z-index: 9500;
+    pointer-events: auto;
+}
+
+.reveal-overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+}
+
+.reveal-overlay-content {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.reveal-title {
+    font-size: var(--text-sm);
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.85);
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+}
+
+.reveal-card {
+    cursor: default;
+    pointer-events: none;
+    transform: none !important;
+}
+
+.selected-attacker {
+    box-shadow: 0 0 0 3px #3b82f6; /* Blue ring */
+    transform: translateY(-10px);
+}
+
+/* --- Damage Numbers --- */
+.damage-number {
+    position: absolute;
+    color: var(--color-accent);
+    font-size: var(--text-2xl);
+    font-weight: 900;
+    font-family: var(--font-mono);
+    text-shadow: 2px 2px 0px black;
+    pointer-events: none;
+    z-index: 100;
+    animation: damage-animation 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes damage-animation {
+    0% { transform: translateY(0) scale(0.5); opacity: 0; }
+    20% { transform: translateY(-20px) scale(1.5); opacity: 1; }
+    100% { transform: translateY(-50px) scale(1); opacity: 0; }
+}
+
+/* --- Legacy Components Support (Ability Editor) --- */
+/* Mapping old classes to new variables where possible */
+
+.modal-container {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+    background-color: var(--color-surface-highlight);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.form-input, .form-select, .form-textarea {
+    background-color: var(--color-background);
+    border: 1px solid var(--color-border);
+    color: var(--color-primary);
+}
+
+.form-input:focus, .form-select:focus, .form-textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* --- Scrollbar Override for Legacy Containers --- */
+.card-list, .abilities-content, .modal-content {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-highlight) var(--color-background);
+}

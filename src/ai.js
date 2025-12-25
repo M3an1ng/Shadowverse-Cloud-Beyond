@@ -6,7 +6,7 @@
 // - 状态管理: 文档/03-前端架构/02-状态管理.md
 //
 
-import { getCardDefinition } from './cardManager.js'; // 获取卡牌定义
+// getCardDefinition is obsolete. Card instances now contain all necessary data.
 // 导入依赖
 // MODIFIED: Added getPlayerState, getCurrentPlayerId, findCardInstanceByUid, executeAttack
 // MODIFIED: Added endTurnRequest, removed handleMulligan/executeAttack
@@ -165,16 +165,15 @@ function aiDecideAndEvolve(aiPlayer, currentGameState) { // 注意: 签名已调
         // 3. 检查资格
         if (!cardInstance.isEvolved) {
             console.log(`  - ${cardInstance.name}: Not evolved. Checking definition...`);
-            const definition = getCardDefinition(cardInstance.id); // 使用导入的函数
-
-            if (definition && definition.can_evolve === true) {
-                console.log(`  - ${cardInstance.name}: Definition allows evolution.`);
+            // Check the canEvolve property directly on the instance, which is hydrated from the DTO.
+            if (cardInstance.canEvolve === true) {
+                console.log(`  - ${cardInstance.name}: Instance property 'canEvolve' is true.`);
                 // 4. 选择目标 (第一个符合条件的)
                 targetFollower = cardInstance;
                 console.log(`AI [${aiPlayer.id}]: Found eligible evolution target: ${targetFollower.name} (UID: ${targetFollower.uid})`);
                 break; // 找到目标，停止搜索
             } else {
-                 console.log(`  - ${cardInstance.name}: Definition does not allow evolution or definition not found.`);
+                 console.log(`  - ${cardInstance.name}: Instance property 'canEvolve' is false or missing.`);
             }
         } else {
              console.log(`  - ${cardInstance.name}: Already evolved.`);

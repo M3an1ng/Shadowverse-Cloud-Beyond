@@ -1,0 +1,130 @@
+Attribute VB_Name = "·8·2·对局·EngageFunction"
+' ==================================================
+' 函数功能：处理护符启动（Engage）效果
+' 参数：MatchID - 要启动的护符MatchID
+' 说明：检查启动条件、消耗能量点、触发启动效果
+' 包含启动费用检查、效果触发和状态更新等逻辑
+' ==================================================
+Function EngageFunction(MatchID As String) As Boolean
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%
+    Dim Arr As Variant
+    Dim Flag As Boolean
+    Dim Cost As Integer, AlliedPP As Integer, Effect As String
+    Dim Effectrr() As String
+    Dim EffectSplit() As String
+    EngageFunction = True
+    
+    ' ========== 初始化设置 ==========
+    ' 清空能力队列
+    QueueAbility = Empty
+    QueueMatchID = Empty
+    
+    ' ========== 启动状态检查 ==========
+    ' 检查护符是否已启动，已启动则直接退出
+    Effect = DownByMatchID(MatchID, "Effect")
+    EffectSplit = SplitEffect(Effect)
+    For i = 0 To UBound(EffectSplit)
+        If EffectSplit(i) = "Engaged" Then Exit For
+    Next i
+    If i <= UBound(EffectSplit) Then
+        EngageFunction = False
+        Exit Function
+    End If
+    
+    ' ========== 启动费用查找 ==========
+    ' 查找启动效果的费用要求
+    Cost = -1
+    Effectrr = GetEffect(MatchID)
+    For i = 1 To UBound(Effectrr)
+        If Left(Effectrr(i), Len("Engage&")) = "Engage&" Then
+            Cost = Val(Mid(Effectrr(i), 1 + Len("Engage&"), 10))
+            Exit For
+        End If
+    Next i
+    
+    ' ========== 启动效果验证 ==========
+    ' 没有启动效果直接退出
+    If Cost = -1 Then
+        EngageFunction = False
+        Exit Function
+    End If
+    
+    ' ========== 启动费用修正 ==========
+    ' 检查场地上启动费用的效应
+    Arr = Down("Field", MatchID)
+    For j = 1 To UBound(Arr, 1)
+        If InStr(Arr(j, 5), "EngageCost") > 0 Then
+            Brr = GetEffect(CStr(Arr(j, 1)))
+            For k = 1 To UBound(Brr)
+                If Left(Brr(k), Len("EngageCost&")) = "EngageCost&" Then
+                    Cost = Cost + Val(Mid(Brr(k), 1 + Len("EngageCost&"), 10))
+                    Exit For
+                End If
+            Next k
+        End If
+    Next j
+    ' 检查纹章区域启动费用的效应
+    Arr = Down("Crest", MatchID)
+    For j = 1 To UBound(Arr, 1)
+        If InStr(Arr(j, 5), "EngageCost") > 0 Then
+            Brr = GetEffect(CStr(Arr(j, 1)))
+            For k = 1 To UBound(Brr)
+                If Left(Brr(k), Len("EngageCost&")) = "EngageCost&" Then
+                    Cost = Cost + Val(Mid(Brr(k), 1 + Len("EngageCost&"), 10))
+                    Exit For
+                End If
+            Next k
+        End If
+    Next j
+    If Cost < 0 Then Cost = 0
+    
+    ' ========== 能量点检查 ==========
+    ' 获取当前能量点并检查是否足够支付启动费用
+    AlliedPP = Down("PP", MatchID)
+    
+    ' 判断费用是否足够
+    If AlliedPP < Cost Then
+        MsgBox "能量点不足", vbExclamation
+        EngageFunction = False
+        Exit Function
+    End If
+    Call UpSteps("Engage", MatchID, DownByID(DownByMatchID(MatchID, "ID"), "Name"))
+    
+    ' ========== 启动效果处理 ==========
+    ' 遍历并触发启动相关效果
+    Flag = True
+    For i = 1 To UBound(Effectrr)
+        ' 处理启动效果
+        If Left(Effectrr(i), Len("Engage")) = "Engage" And InStr(Effect, "Remove|Engage") = 0 Then
+            Flag = GetTimePoint(Effectrr(i), MatchID)
+        End If
+        
+        ' 如果选择未成功，立刻退出并清空队列
+        If Not Flag Then
+            QueueAbility = Empty
+            QueueMatchID = Empty
+            Call EraseSteps("Engage")
+            EngageFunction = False
+            Exit Function
+        End If
+    Next i
+    
+    ' ========== 费用消耗 ==========
+    ' 消耗启动所需的能量点
+    Call Up("PP", AlliedPP - Cost, MatchID)
+    
+    ' ========== 状态标记 ==========
+    ' 标记护符为已启动状态
+    Effect = DownByMatchID(MatchID, "Effect")
+    Effect = Effect & "Engaged||"
+    Call UpByMatchID(MatchID, "Effect", Effect)
+    
+    ' ========== 能力触发处理 ==========
+    ' 其他卡牌响应启动事件
+    Call GetAction("Engage", MatchID, "")
+    
+    ' ========== 清理和刷新 ==========
+    ' 清空能力队列
+    Call EraseQueue
+End Function

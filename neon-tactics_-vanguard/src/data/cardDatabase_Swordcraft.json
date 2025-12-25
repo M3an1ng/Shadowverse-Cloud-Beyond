@@ -1,0 +1,117 @@
+{
+  "1421301": {
+    "id": "1421301",
+    "name": "见习骑士",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||If|{Cards|Allied-Field-Evolved-Follower}>0||Evolve|ThisCard"
+    ]
+  },
+  "1421303": {
+    "id": "1421303",
+    "name": "历战近卫",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 5,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Evolve||Summon|1020401|3",
+      "SuperEvolve||Give|Allied-Field-Trait:2-Follower|{Rush}||+1/+2|Allied-Field-Trait:2-Follower"
+    ]
+  },
+  "1421304": {
+    "id": "1421304",
+    "name": "陷阵骑将",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 8,
+    "attack": 5,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Storm",
+      "Strike||If|{Cards|Opposing}>0||Give|ThisCard|{CanAttackTimes&2}||Give|ThisCard|{Barrier}"
+    ]
+  },
+  "1421401": {
+    "id": "1421401",
+    "name": "须臾剑士",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 1,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Storm"
+    ]
+  },
+  "1421402": {
+    "id": "1421402",
+    "name": "动员令",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||AddToHand|1020401|2"
+    ]
+  },
+  "1421404": {
+    "id": "1421404",
+    "name": "月夜暗杀者",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 3,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Enhance&6||Destroy|Select&1-Enemy-Follower",
+      "Ambush"
+    ]
+  },
+  "1421405": {
+    "id": "1421405",
+    "name": "军备锻造",
+    "cardSet": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||+2/+2|Select&1-Allied-Field-Follower||If|Unlock-SuperEvolve||Give|It|{Barrier}"
+    ]
+  }
+}

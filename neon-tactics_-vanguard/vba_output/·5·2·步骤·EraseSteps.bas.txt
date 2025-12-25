@@ -1,0 +1,33 @@
+Attribute VB_Name = "·5·2·步骤·EraseSteps"
+' ==================================================
+' 函数功能：更新步骤记录
+' 参数：InputAction - 输入的动作描述
+'        MatchID - 匹配ID值
+' 说明：将当前回合的动作记录添加到Steps区域，用于游戏步骤追踪
+' ==================================================
+Function EraseSteps(InputAction As String)
+    ' ========== 变量声明 ==========
+    Dim i%, j%, k%
+    Dim Arr As Variant      ' 步骤数据数组
+    
+    ' ========== 步骤数据获取 ==========
+    ' 获取Steps区域的所有步骤记录
+    Arr = Down("Steps")
+    
+    ' ========== 空位查找与记录添加 ==========
+    ' 遍历步骤数组查找第一个空位置
+    For k = 1 To UBound(Arr)
+        If Arr(k, 1) = "" Then Exit For
+    Next k
+    For i = 1 To k
+        j = k - i + 1
+        Arr(j, 1) = Empty
+        If Arr(j, 2) = InputAction Then Exit For
+    Next i
+    Arr = NonEmptyArray(Arr, True)
+    
+    ' ========== 数据更新 ==========
+    ' 将更新后的步骤数据写回Steps区域
+    Call Up("Steps", Arr)
+End Function
+

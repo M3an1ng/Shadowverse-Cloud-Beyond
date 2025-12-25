@@ -3,16 +3,6 @@ using System.Text.Json.Serialization;
 namespace ShadowverseBeyond.Server.Domain.Query
 {
     /// <summary>
-    /// 指定查询的目标是卡牌实例还是卡牌定义。
-    /// </summary>
-    [JsonConverter(typeof(JsonStringEnumConverter))]
-    public enum QueryType
-    {
-        Instance, // 查询游戏对局中的卡牌实例 (CardInstance)
-        Definition // 查询全局的卡牌定义 (CardDefinition)
-    }
-
-    /// <summary>
     /// 定义卡牌查询的初始来源池类型。
     /// </summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]

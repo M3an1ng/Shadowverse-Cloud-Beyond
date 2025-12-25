@@ -1,0 +1,86 @@
+Attribute VB_Name = "·4·6·辅助·GetEffect"
+' ==================================================
+' 函数功能：获取卡牌效果数组
+' 参数：MatchID - 匹配ID值
+' 返回：String() - 效果字符串数组
+' 说明：从Data区域和卡牌数据中提取所有效果，包括局内效果和局外效果
+' ==================================================
+Function GetEffect(MatchID As String) As String()
+    ' ========== 变量声明 ==========
+    Dim Effectrr() As String    ' 效果临时数组
+    Dim Resultrr() As String    ' 结果数组
+    Dim i As Integer, j As Integer, k As Integer, m As Integer   ' 循环计数器和位置索引
+    Dim ID As String            ' 卡牌ID
+    Dim Effect As String        ' 效果字符串
+    Dim Str As String        ' 效果字符串
+    Dim Flag As Boolean         ' 标记是否在效果块内
+    
+    ' ========== 基础数据获取 ==========
+    ' 根据MatchID获取卡牌ID和效果字符串
+    ID = DownByMatchID(MatchID, "ID")
+    Str = DownByMatchID(MatchID, "Effect")
+    Effect = Str
+    If InStr(Effect, "Remove|All") > 0 Then
+        ReDim Resultrr(1 To 1)
+        GetEffect = Resultrr
+        Exit Function
+    End If
+
+    ' 初始化效果数组（最多20个效果）
+    ReDim Effectrr(1 To 20)
+    Flag = False
+    k = 0   ' 效果计数器
+    j = 0   ' 嵌套层数计数器
+    
+    
+    ' ========== 局外效果提取 ==========
+    ' 从卡牌数据的Effect1到Effect9字段获取额外效果
+    For i = 1 To 9
+        Effect = DownByID(ID, "Effect" & i)   ' 获取Effect1到Effect9
+        If Effect = "" Then
+            'Exit For
+        Else
+            k = k + 1
+            Effectrr(k) = Effect   ' 添加到效果数组
+        End If
+    Next i
+    
+    ' ========== 局内效果提取 ==========
+    ' 遍历效果字符串，解析嵌套的效果结构
+    Effect = Str
+    For i = 1 To Len(Effect)
+        Select Case Mid(Effect, i, 1)
+            Case "{"
+                j = j + 1   ' 进入嵌套层
+                If j = 1 Then
+                    m = i   ' 记录最外层{的起始位置
+                    Flag = True   ' 标记进入效果块
+                End If
+                
+            Case "}"
+                If j > 0 Then
+                    j = j - 1   ' 退出嵌套层
+                    If j = 0 And Flag Then
+                        ' 提取最外层{}内的内容（不包含{}本身）
+                        k = k + 1
+                        Effectrr(k) = Mid(Effect, m + 1, i - m - 1)
+                        Flag = False   ' 标记退出效果块
+                    End If
+                End If
+        End Select
+    Next i
+    
+    ' ========== 结果数组构建 ==========
+    ' 确保至少有一个元素
+    If k = 0 Then k = 1
+    
+    ' 创建最终结果数组
+    ReDim Resultrr(1 To k)
+    
+    ' 复制有效效果到结果数组
+    For i = 1 To UBound(Resultrr)
+        Resultrr(i) = Effectrr(i)
+    Next i
+    
+    GetEffect = Resultrr   ' 返回效果数组
+End Function

@@ -7,7 +7,7 @@
 //
 
 // 导入依赖
-import { createCardInstance, getCardDefinition } from './cardManager.js'; // Import getCardDefinition
+import { createCardInstance } from './cardManager.js';
 
 // 使用工厂函数创建玩家对象，更灵活简单
 export function createPlayer(id, isAI = false) {
@@ -23,13 +23,17 @@ export function createPlayer(id, isAI = false) {
     return {
         id: id,
         isAI: isAI,
+        hasCompletedMulligan: false,
         leaderCard: null, // Initialize leaderCard as null, will be populated during hydration
         // NOTE: Direct 'health' and 'maxHealth' properties are removed. Use getters below.
         pp: 0,         // 当前 Play Points
         maxPP: 0,      // 当前回合 Play Points 上限
         ep: 0,         // 当前 Evolution Points
-        maxEP: 0,      // EP 上限 (先手2, 后手3)
+        maxEP: 0,      // EP 上限 (先手2, 后手2)
+        sep: 0,        // 当前 Super Evolution Points
+        maxSEP: 0,     // SEP 上限
         canEvolveThisTurn: false, // ADDED: Flag to track if evolve is possible this turn
+        canSuperEvolve: false,
         hasUnlockedEvolution: false, // Flag to track if EP has been unlocked for this player
         turn: 0,       // 玩家经历的回合数 (可用于进化点解锁)
 
@@ -57,8 +61,8 @@ export function createPlayer(id, isAI = false) {
 
         // 初始化牌库 (由外部调用传入卡组列表)
         initializeDeck(deckList) {
-            // deckList 是一个卡牌 ID 数组
-            this.deck = [...deckList]; // 直接用 ID
+            // deckList 现在应该是一个完整的卡牌DTO对象数组
+            this.deck = [...deckList];
             this.shuffleDeck(); // Initialize and immediately shuffle
         },
 
@@ -90,15 +94,13 @@ export function createPlayer(id, isAI = false) {
                     continue; // Skip adding to hand, but continue loop if drawing multiple
                 }
 
-                const cardId = this.deck.pop(); // Draw from the end (top) of the deck
-                // --- FIX: Get card definition first, then create instance ---
-                const cardDefinition = getCardDefinition(cardId);
-                if (!cardDefinition) {
-                    console.error(`Player ${this.id}: Failed to get definition for card ID: ${cardId}. Skipping draw.`);
-                    continue; // Skip to next iteration if definition not found
+                const cardDto = this.deck.pop(); // 从牌库（现在是DTO数组）的末尾抽牌
+                if (!cardDto) {
+                    console.error(`Player ${this.id}: Drew an invalid DTO from the deck. Skipping draw.`);
+                    continue;
                 }
-                // Pass the definition object (acting as DTO) to createCardInstance
-                const cardInstance = createCardInstance(cardDefinition);
+                // 直接将完整的DTO传递给createCardInstance
+                const cardInstance = createCardInstance(cardDto);
 
                 if (cardInstance) {
                     cardInstance.zone = 'hand'; // <-- Set zone
@@ -107,7 +109,7 @@ export function createPlayer(id, isAI = false) {
                     this.hand.push(cardInstance);
                     drawnCards.push(cardInstance);
                 } else {
-                    console.error(`Player ${this.id}: Failed to create instance for card ID: ${cardId}. Card might be missing from database.`);
+                    console.error(`Player ${this.id}: Failed to create instance from DTO:`, cardDto);
                     // Put the ID back? Or handle differently? For now, it's lost.
                 }
             }

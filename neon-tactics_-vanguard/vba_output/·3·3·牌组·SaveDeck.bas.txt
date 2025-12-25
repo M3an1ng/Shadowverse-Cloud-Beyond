@@ -1,0 +1,80 @@
+Attribute VB_Name = "·3·3·牌组·SaveDeck"
+' ==================================================
+' 过程功能：保存卡组到Deck工作表
+' 说明：将当前原卡组数据保存到Deck工作表，支持多卡组管理
+' ==================================================
+Sub SaveDeck()
+    ' ========== 优化设置 ==========
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' ========== 变量声明 ==========
+    Dim DeckName As String       ' 卡组名称
+    Dim Decks As Variant         ' Deck工作表数据数组
+    Dim i As Integer, j As Integer, k As Integer   ' 循环计数器
+    Dim OrigDeck As Variant      ' 原卡组数据数组
+    Dim Class As String          ' 职业类型
+    
+    ' ========== 卡组清理与准备 ==========
+    DeckName = Down("DeckName")                   ' 获取当前卡组名称
+    Call DeleteDeckFunction(DeckName)             ' 删除同名旧卡组（如果存在）
+    Call OrigDeckSorting                          ' 对原卡组进行排序
+    
+    ' ========== Deck工作表数据初始化 ==========
+    ' 读取Deck工作表全部数据（42行×100列）
+    Decks = Range(Sheets("Deck").Cells(1, 1), Sheets("Deck").Cells(42, 100))
+    
+    ' ========== 当前卡组数据获取 ==========
+    OrigDeck = Down("OrigDeck")   ' 获取排序后的原卡组数据
+    Class = Down("Class")         ' 获取当前职业
+    
+    ' ========== 卡组数据保存 ==========
+    ' 在Deck工作表中查找空位置（每3列为一组卡组数据）
+    For k = 1 To UBound(Decks, 2)
+        ' 检查当前列组是否为空（第1行第k列为空表示该位置可用）
+        If Decks(1, k) = "" Then
+            ' ========== 卡组头信息设置 ==========
+            Decks(1, k) = DeckName                   ' 第1行：卡组名称
+            Decks(1, k + 2) = Class                  ' 第1行：职业（跳过1列）
+            
+            ' ========== 列标题设置 ==========
+            Decks(2, k) = Translate("Cost")          ' 第2行：费用列标题
+            Decks(2, k + 1) = Translate("CardName")  ' 第2行：卡牌名称列标题
+            Decks(2, k + 2) = Translate("Counts")    ' 第2行：数量列标题
+            
+            ' ========== 卡牌数据填充 ==========
+            For i = 1 To UBound(OrigDeck, 1)
+                ' 复制原卡组数据到Deck工作表对应位置
+                Decks(i + 2, k) = OrigDeck(i, 1)     ' 费用数据
+                Decks(i + 2, k + 1) = OrigDeck(i, 2) ' 卡牌名称数据
+                Decks(i + 2, k + 2) = OrigDeck(i, 3) ' 数量数据
+            Next i
+            
+            Exit For   ' 找到空位并填充后退出循环
+        End If
+        
+        k = k + 3   ' 每组卡组占用3列，所以跳过2列（循环会自动+1，所以总共+3）
+    Next k
+    
+    ' ========== 卡组数量限制检查 ==========
+    If k > UBound(Decks, 2) Then
+        ' 超出最大卡组数量限制（100列÷3列/组 ≈ 33组，但提示为30个？）
+        MsgBox "最多保存30个卡组", vbExclamation
+    Else
+        ' ========== 数据回写与保存 ==========
+        ' 将更新后的数据写回Deck工作表
+        Range(Sheets("Deck").Cells(1, 1), Sheets("Deck").Cells(42, 100)) = Decks
+        
+        ' 保存游戏数据到指定路径
+        Call SaveGame(Down("Path"))
+    End If
+    
+CleanUp:
+    ' ========== 恢复应用程序状态 ==========
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
