@@ -12,8 +12,10 @@ namespace ShadowverseBeyond.Server.Domain.Query
     /// </summary>
     public class QueryDslParser : IQueryDslParser
     {
-        // Regex to match .take(number) at the beginning of the string
-        private static readonly Regex TakeRegex = new Regex(@"^\.take\((?<count>\d+)\)", RegexOptions.Compiled);
+        // Regex to match .take(number) or .take(random 2) at the beginning of the string
+        private static readonly Regex TakeRegex = new Regex(
+            @"^\.take\(\s*(?:(?<strategy>first|last|random)\s*[ ,]+)?(?<count>\d+)\s*\)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // Regex to match .orderBy(...) at the beginning of the string
         private static readonly Regex OrderByRegex = new Regex(@"^\.orderBy\((?<expressions>.+?)\)", RegexOptions.Compiled);
@@ -83,9 +85,26 @@ namespace ShadowverseBeyond.Server.Domain.Query
             if (match.Success)
             {
                 var countStr = match.Groups["count"].Value;
+                var strategyRaw = match.Groups["strategy"].Value;
+                var strategy = SelectionStrategy.First;
+                if (!string.IsNullOrWhiteSpace(strategyRaw))
+                {
+                    switch (strategyRaw.Trim().ToLowerInvariant())
+                    {
+                        case "last":
+                            strategy = SelectionStrategy.Last;
+                            break;
+                        case "random":
+                            strategy = SelectionStrategy.Random;
+                            break;
+                        default:
+                            strategy = SelectionStrategy.First;
+                            break;
+                    }
+                }
                 if (int.TryParse(countStr, out var count))
                 {
-                    operations.Add(new SelectionOperation(SelectionStrategy.First, new FormulaValueConfig { Formula = countStr }));
+                    operations.Add(new SelectionOperation(strategy, new FormulaValueConfig { Formula = countStr }));
                     return dsl.Substring(match.Length).Trim();
                 }
             }

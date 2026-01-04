@@ -46,6 +46,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.AttacksThisTurn, opt => opt.MapFrom(src => src.AttacksThisTurn))
                 .ForMember(dest => dest.FieldTurn, opt => opt.MapFrom(src => src.FieldTurn)) // BUG修复：添加缺失的FieldTurn映射
                 .ForMember(dest => dest.CurrentCountdown, opt => opt.MapFrom(src => src.CurrentCountdown))
+                .ForMember(dest => dest.MaxAttacksPerTurn, opt => opt.MapFrom(src => src.MaxAttacksPerTurn))
                 .ForMember(dest => dest.Zone, opt => opt.MapFrom(src => src.CurrentZone))
                 .ForMember(dest => dest.OwnerPlayerId, opt => opt.MapFrom(src => src.OwnerPlayerId))
                 .ForMember(dest => dest.Keywords, opt => opt.MapFrom(src => src.Keywords))

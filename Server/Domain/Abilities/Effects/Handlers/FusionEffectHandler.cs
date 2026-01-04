@@ -55,26 +55,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
             var generatedEvents = new List<IGameEvent>();
 
-            var player = context.CurrentGameState.GetPlayerState(context.RequestingPlayerId);
-            if (player == null)
+            var sourceCard = effect.SourceCardId.HasValue
+                ? context.CurrentGameState.FindCardInstance(effect.SourceCardId.Value)
+                : null;
+            if (sourceCard == null)
             {
-                return new GameStateActionResult { Success = false, ErrorMessage = $"{effectName}: Player state not found for {context.RequestingPlayerId}." };
+                return new GameStateActionResult { Success = false, ErrorMessage = $"{effectName}: Source card not found for fusion." };
             }
 
-            generatedEvents.Add(new CardsFusedEvent(player, cards.Select(c => c.InstanceId).ToList()));
-            foreach (var card in cards)
-            {
-                if (parameters.DestinationZone == CardZone.Removed)
-                {
-                    generatedEvents.Add(new CardVanishedEvent(card, CardZone.Hand, parameters.FusionReason));
-                }
-                else
-                {
-                    generatedEvents.Add(new CardMovedEvent(card, CardZone.Hand, parameters.DestinationZone));
-                }
-            }
+            generatedEvents.Add(new FusionEvent(sourceCard, cards));
 
-            Logger.LogDebug("{EffectName}: Fused {Count} materials to {DestinationZone}.", effectName, cards.Count, parameters.DestinationZone);
+            Logger.LogDebug("{EffectName}: Fused {Count} materials.", effectName, cards.Count);
 
             return new GameStateActionResult
             {

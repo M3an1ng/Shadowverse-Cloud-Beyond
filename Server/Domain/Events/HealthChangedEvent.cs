@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // DomainOperationResult
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -47,9 +48,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
             // Positive ChangeAmount = heal, negative = damage
             card.ApplyHealthChange(ChangeAmount);
 
+            if (card.IsLeader && ChangeAmount < 0)
+            {
+                var owner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
+                if (owner != null)
+                {
+                    owner.BloodPool = Math.Max(0, owner.BloodPool + (-ChangeAmount));
+                }
+            }
+
             result.Success = true;
             return result;
         }
     }
 }
-

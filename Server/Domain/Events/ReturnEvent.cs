@@ -12,7 +12,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// 高层返回事件：描述“将目标卡牌返回到拥有者手牌”的意图。
     /// Commit 不直接落地状态变化，而是生成 AddCardToHandEvent 交由后续处理。
     /// </summary>
-    [GameEventMetadata("卡牌返回", "当一张卡牌被返回到拥有者手牌时触发的事件。", EventType.Return)]
+    [GameEventMetadata("回手", "当一张卡牌被返回到拥有者手牌时触发的事件。", EventType.Return)]
     public class ReturnEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("返回原因", "卡牌被返回的原因。")]
@@ -21,8 +21,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("返回的卡牌", "被返回的卡牌。")]
         public CardInstance? ReturnedCard => Target.FirstOrDefault()?.Card;
 
-        public ReturnEvent(CardInstance card, string reason = "Effect")
-            : base(EventType.Return)
+        public ReturnEvent(CardInstance card, string reason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Return, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
@@ -30,11 +30,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
-            var player = Source?.Player;
             var card = ReturnedCard;
-            if (player == null || card == null)
+            if (card == null)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "ReturnEvent.Commit: player or card is null." };
+                return new DomainOperationResult { Success = false, ErrorMessage = "ReturnEvent.Commit: card is null." };
+            }
+
+            var player = Source?.Player;
+            if (player == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ReturnEvent.Commit: player is null." };
             }
 
             var result = new DomainOperationResult { Success = true };

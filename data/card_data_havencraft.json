@@ -1,0 +1,554 @@
+[
+  {
+    "id": 1461301,
+    "name": "持矛锤的僧侣",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "持矛锤的僧侣-进化消失",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从并消失"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Vanish"
+          }
+        ]
+      },
+      {
+        "name": "持矛锤的僧侣-超进化消失",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从并消失"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          },
+          {
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\" && self.Name == AbilityTargets.target1.find(1).Card.Name)"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Vanish",
+            "targetSelector": [
+              "target2"
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1461303,
+    "name": "白羽石像",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "白羽石像-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1060401
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "白羽石像-启动倒计时",
+        "type": "Activated",
+        "activateCost": 1,
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetCountdown",
+            "parameters": {
+              "changeAmount": {
+                "value": -1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true,
+    "countdown": 3
+  },
+  {
+    "id": 1461304,
+    "name": "亚巴顿",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 9,
+    "attack": 6,
+    "health": 8,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "亚巴顿-攻击破坏护符",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "AttackEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Attack"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner.field.query(self.Type == \"Amulet\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1461401,
+    "name": "圣枪战士",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 3,
+    "health": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "圣枪战士-战吼强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\" and self.InstanceId != context.sourceCard.InstanceId)"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "圣枪战士-进化强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\" and self.InstanceId != context.sourceCard.InstanceId)"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1461402,
+    "name": "投影鸟像",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 4,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "投影鸟像-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1060402
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "投影鸟像-启动倒计时",
+        "type": "Activated",
+        "activateCost": 2,
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetCountdown",
+            "parameters": {
+              "changeAmount": {
+                "value": -2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true,
+    "countdown": 2
+  },
+  {
+    "id": 1461403,
+    "name": "受祝勇士",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 1,
+    "health": 3,
+    "description": "",
+    "keywords": [
+      "Ward",
+      "Aura"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1461404,
+    "name": "清泉修士",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 5,
+    "attack": 3,
+    "health": 5,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "清泉修士-战吼治疗",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "value": 5
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1060401,
+    "name": "神圣猎鹰",
+    "card_set": "衍生物",
+    "class": "Havencraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": [
+      "圣兽"
+    ]
+  },
+  {
+    "id": 1060402,
+    "name": "壮丽大神隼",
+    "card_set": "衍生物",
+    "class": "Havencraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 6,
+    "attack": 4,
+    "health": 4,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": [
+      "圣兽"
+    ]
+  }
+]

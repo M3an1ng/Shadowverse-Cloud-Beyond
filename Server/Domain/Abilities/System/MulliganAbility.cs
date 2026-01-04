@@ -1,4 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -27,7 +28,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public Guid RuntimeId => _runtimeId;
         public long DefinitionId => GameConstants.SystemAbilityIds.MulliganAbilityId;
         public string Name => "Mulligan";
-        public EffectKeyword AbilityTag => EffectKeyword.System;
+        private static readonly IReadOnlyList<AbilityKeywordConfig> SystemKeywords = Array.Empty<AbilityKeywordConfig>();
+        public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => SystemKeywords;
+        public EffectKeyword PrimaryKeyword => EffectKeyword.None;
+        public string KeywordSummary => EffectKeyword.None.ToString();
         public AbilityType Type => AbilityType.Triggered;
         public List<Target> Targets { get; } = new List<Target>();
 
@@ -159,6 +163,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public void RecordTrigger(GameContext context)
         {
             _logger?.LogDebug("{AbilityName} triggered.", Name);
+        }
+
+        public bool HasKeyword(EffectKeyword keyword)
+        {
+            return false;
+        }
+
+        public int? GetKeywordValue(EffectKeyword keyword)
+        {
+            return null;
         }
 
         public int GetTriggerCountThisTurn(GameContext context)

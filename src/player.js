@@ -28,6 +28,7 @@ export function createPlayer(id, isAI = false) {
         // NOTE: Direct 'health' and 'maxHealth' properties are removed. Use getters below.
         pp: 0,         // 当前 Play Points
         maxPP: 0,      // 当前回合 Play Points 上限
+        ppBoostUsesAvailable: 0, // PP+1 可用次数
         ep: 0,         // 当前 Evolution Points
         maxEP: 0,      // EP 上限 (先手2, 后手2)
         sep: 0,        // 当前 Super Evolution Points

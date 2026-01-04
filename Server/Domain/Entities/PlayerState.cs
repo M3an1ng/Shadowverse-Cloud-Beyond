@@ -28,6 +28,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("当前PP", Description = "玩家当前可用的PP值")]
         public int CurrentPlayPoints { get; set; } = 0;
+        public int PpBoostUsesAvailable { get; set; } = 0;
+        public bool PpBoostResetApplied { get; set; } = false;
 
         [DslExposable("最大EP", Description = "玩家的最大进化点数")]
         public int MaxEvolutionPoints { get; set; } = 0;
@@ -41,7 +43,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("当前SEP", Description = "玩家当前可用的超进化点数")]
         public int CurrentSuperEvolutionPoints { get; set; } = 0;
         public bool IsAI { get; set; } = false;
-        
+
         [DslExposable("是否先手", Description = "玩家是否为先手")]
         public bool IsFirst { get; set; } = false;
         public bool HasCompletedMulligan { get; set; } = false;
@@ -74,6 +76,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("墓地", Description = "玩家墓地中的卡牌列表")]
         public List<CardInstance> Graveyard { get; set; } = new List<CardInstance>();
+
+        [DslExposable("墓场数", Description = "玩家墓场计数（用于死灵术等）")]
+        public int GraveyardCount { get; set; } = 0;
+
+        [DslExposable("血池", Description = "玩家血池计数（用于血祭等）")]
+        public int BloodPool { get; set; } = 0;
 
         public List<CardInstance> Extra { get; set; } = new List<CardInstance>();
         [DslExposable("纹章区", Description = "玩家纹章区域中的卡牌列表")]
@@ -152,11 +160,19 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         private bool RemoveCardFromCurrentZone(CardInstance card)
         {
             var zoneList = GetZoneList(card.CurrentZone);
-            if (zoneList != null && zoneList.Remove(card))
+            if (zoneList == null)
+            {
+                return card.CurrentZone == CardZone.Playing
+                    || card.CurrentZone == CardZone.None
+                    || card.CurrentZone == CardZone.Removed;
+            }
+
+            if (zoneList.Remove(card))
             {
                 UpdateZoneIndices(card.CurrentZone);
                 return true;
             }
+
             return false;
         }
 
@@ -200,7 +216,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
         #endregion
 
-        private DomainOperationResult MoveCard(CardInstance card, CardZone destination, int? index = null)
+        private DomainOperationResult MoveCard(CardInstance card, CardZone destination, int? index = null, CardMoveReason moveReason = CardMoveReason.Unknown)
         {
             var result = new DomainOperationResult();
             var sourceZone = card.CurrentZone;
@@ -212,9 +228,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             // Emit only the atomic move; notifications will be derived in CardMovedEvent.Commit
-            result.GeneratedEvents.Add(new CardMovedEvent(card, sourceZone, destination));
+            result.GeneratedEvents.Add(new CardMovedEvent(card, sourceZone, destination, moveReason));
             result.Success = true;
             return result;
+        }
+
+        private static bool HasMoveToZone(DomainOperationResult result, CardZone destination)
+        {
+            return result.GeneratedEvents.OfType<CardMovedEvent>().Any(e => e.ToZone == destination);
         }
 
         #region Internal State Mutations (Evolution)
@@ -264,15 +285,24 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void ApplyPlayPointsMaxChange(int maxPp)
         {
             MaxPlayPoints = Math.Max(0, maxPp);
-            if (CurrentPlayPoints > MaxPlayPoints)
+            var allowedMax = MaxPlayPoints + GameConstants.PlayPoints.PpBoostOverflowAmount;
+            if (CurrentPlayPoints > allowedMax)
             {
-                CurrentPlayPoints = MaxPlayPoints;
+                CurrentPlayPoints = allowedMax;
             }
         }
 
-        internal void ApplyPlayPointsCurrentChange(int currentPp)
+        internal void ApplyPlayPointsCurrentChange(int currentPp, bool allowOverflow = false)
         {
-            CurrentPlayPoints = Math.Max(0, Math.Min(currentPp, MaxPlayPoints));
+            var allowedMax = allowOverflow
+                ? MaxPlayPoints + GameConstants.PlayPoints.PpBoostOverflowAmount
+                : MaxPlayPoints;
+            CurrentPlayPoints = Math.Max(0, Math.Min(currentPp, allowedMax));
+        }
+
+        internal void ApplyPpBoostUsesChange(int usesAvailable)
+        {
+            PpBoostUsesAvailable = Math.Max(0, usesAvailable);
         }
 
         internal void ApplyMulliganCompleted()
@@ -293,24 +323,18 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return new DomainOperationResult { Success = false, ErrorMessage = "Field is full." };
             }
             // Only generate atomic move; SummonEvent command should not be re-enqueued here
-            var result = MoveCard(card, CardZone.Field, index);
+            var result = MoveCard(card, CardZone.Field, index, CardMoveReason.Summoned);
             return result;
         }
 
-        public DomainOperationResult MoveCardToGraveyard(CardInstance card)
+        public DomainOperationResult MoveCardToGraveyard(CardInstance card, CardMoveReason moveReason = CardMoveReason.Unknown)
         {
-            var result = MoveCard(card, CardZone.Graveyard, null);
-            if (result.Success)
-            {
-                // 【BUG修复】当卡牌成功移动到墓地时，生成GraveyardUpdatedEvent
-                result.GeneratedEvents.Add(new GraveyardUpdatedEvent(this, this.Graveyard.Count));
-            }
-            return result;
+            return MoveCard(card, CardZone.Graveyard, null, moveReason);
         }
 
-        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance cause, string reason = "Effect")
+        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance cause, string reason = "Effect", CardMoveReason moveReason = CardMoveReason.Destroyed)
         {
-            var moveResult = MoveCardToGraveyard(cardToDestroy);
+            var moveResult = MoveCardToGraveyard(cardToDestroy, moveReason);
             // As per two-method pattern, DestroyEvent is a high-level command and should not be re-enqueued here.
             // MoveCardToGraveyard already generates the atomic CardMovedEvent; no further command events are needed.
             return moveResult;
@@ -564,9 +588,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             var result = new DomainOperationResult();
 
+            if (!IsFirst && !PpBoostResetApplied && TurnNumber >= GameConstants.PlayPoints.PpBoostResetTurn)
+            {
+                PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
+                PpBoostResetApplied = true;
+                result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(this, PpBoostUsesAvailable));
+            }
+
             foreach (var amulet in this.Field.Where(c => c.CurrentCountdown.HasValue && c.CurrentCountdown.Value > 0))
             {
                 result.GeneratedEvents.Add(new CountdownTickEvent(amulet, -1));
+            }
+
+            foreach (var crest in this.Emblem.Where(c => c.CurrentCountdown.HasValue && c.CurrentCountdown.Value > 0))
+            {
+                result.GeneratedEvents.Add(new CountdownTickEvent(crest, -1));
             }
 
             var epResult = CheckAndUnlockEvolutionPoints();
@@ -578,11 +614,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var ppResult = RestorePlayPoints();
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
 
-            int cardsToDraw = (this.TurnNumber == 1 && !this.IsFirst) ? 2 : 1;
+            int cardsToDraw = GameConstants.Hand.CardsPerTurn;
             var drawResult = DrawCards(cardsToDraw);
             result.GeneratedEvents.AddRange(drawResult.GeneratedEvents);
 
-            var unitResetResult = ResetUnitsForTurnStart();
+            var unitResetResult = ResetCardsForTurnStart();
             result.GeneratedEvents.AddRange(unitResetResult.GeneratedEvents);
 
             result.Success = true;
@@ -658,7 +694,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
                 if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
                 {
-                    var burnOpResult = MoveCard(cardToDraw, CardZone.Graveyard, null);
+                    var burnOpResult = MoveCard(cardToDraw, CardZone.Graveyard, null, CardMoveReason.Burned);
                     result.GeneratedEvents.AddRange(burnOpResult.GeneratedEvents);
                     if (burnOpResult.Success)
                     {
@@ -667,8 +703,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 }
                 else
                 {
-                    var addOpResult = MoveCard(cardToDraw, CardZone.Hand, null);
-                    if (addOpResult.Success)
+                    var addOpResult = MoveCard(cardToDraw, CardZone.Hand, null, CardMoveReason.Drawn);
+                    if (addOpResult.Success && HasMoveToZone(addOpResult, CardZone.Hand))
                     {
                         successfullyDrawnIds.Add(cardToDraw.InstanceId);
                     }
@@ -689,26 +725,87 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 result.ErrorMessage = "cardInstancesToAdd cannot be null.";
                 return result;
             }
+            var generatedExpectedMoveEvent = false;
             foreach (var cardInstance in cardInstancesToAdd)
             {
                 if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
                 {
                     break;
                 }
-                var addResult = MoveCard(cardInstance, CardZone.Hand, null);
+                if (cardInstance.CurrentZone == CardZone.Hand)
+                {
+                    continue;
+                }
+                var addResult = MoveCard(cardInstance, CardZone.Hand, null, CardMoveReason.AddedToHand);
+                generatedExpectedMoveEvent = generatedExpectedMoveEvent || HasMoveToZone(addResult, CardZone.Hand);
                 result.GeneratedEvents.AddRange(addResult.GeneratedEvents);
+            }
+            if (generatedExpectedMoveEvent)
+            {
+                result.GeneratedEvents.Add(new HandUpdatedEvent(this, Hand.ToList()));
             }
             result.Success = true;
             return result;
         }
 
-        private DomainOperationResult ResetUnitsForTurnStart()
+        public DomainOperationResult AddCardsToDeck(List<CardInstance> cardInstancesToAdd)
+        {
+            var result = new DomainOperationResult();
+            if (cardInstancesToAdd == null)
+            {
+                result.Success = false;
+                result.ErrorMessage = "cardInstancesToAdd cannot be null.";
+                return result;
+            }
+
+            var generatedExpectedMoveEvent = false;
+            foreach (var cardInstance in cardInstancesToAdd)
+            {
+                if (cardInstance.CurrentZone == CardZone.Deck)
+                {
+                    continue;
+                }
+                var addResult = MoveCard(cardInstance, CardZone.Deck, null, CardMoveReason.AddedToDeck);
+                generatedExpectedMoveEvent = generatedExpectedMoveEvent || HasMoveToZone(addResult, CardZone.Deck);
+                result.GeneratedEvents.AddRange(addResult.GeneratedEvents);
+            }
+
+            if (generatedExpectedMoveEvent)
+            {
+                result.GeneratedEvents.Add(new DeckCountChangedEvent(this, Deck.Count));
+            }
+            result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult AddCardsToEmblem(List<CardInstance> cardInstancesToAdd)
+        {
+            var result = new DomainOperationResult();
+            if (cardInstancesToAdd == null)
+            {
+                result.Success = false;
+                result.ErrorMessage = "cardInstancesToAdd cannot be null.";
+                return result;
+            }
+
+            foreach (var cardInstance in cardInstancesToAdd)
+            {
+                var addResult = MoveCard(cardInstance, CardZone.Emblem, null);
+                result.GeneratedEvents.AddRange(addResult.GeneratedEvents);
+            }
+
+            result.Success = true;
+            return result;
+        }
+
+        private DomainOperationResult ResetCardsForTurnStart()
         {
             var result = new DomainOperationResult();
             foreach (var unit in Field)
             {
                 var oldCanAttack = unit.CanAttack;
                 unit.AttacksThisTurn = 0;
+                unit.ActsThisTurn = 0;
                 unit.FieldTurn++;
                 if (!oldCanAttack && unit.CanAttack)
                 {
@@ -760,8 +857,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     result.GeneratedEvents.Add(new SummonEvent(this, cardInHand));
                     break;
                 case CardType.Spell:
-                    var graveyardResult = MoveCardToGraveyard(cardInHand);
+                    var graveyardResult = MoveCardToGraveyard(cardInHand, CardMoveReason.SpellPlayed);
                     result.GeneratedEvents.AddRange(graveyardResult.GeneratedEvents);
+                    var spellboostTargets = Hand
+                        .Where(c => c.InstanceId != cardInHand.InstanceId && c.HasAbility(EffectKeyword.SpellBoost))
+                        .ToList();
+                    foreach (var target in spellboostTargets)
+                    {
+                        result.GeneratedEvents.Add(new SpellBoostEvent(this, cardInHand, target));
+                    }
                     break;
                 default:
                     result.Success = false;
@@ -778,7 +882,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Card {cardToDiscard.InstanceId} not found in hand." };
             }
-            var result = MoveCardToGraveyard(cardToDiscard);
+            var result = MoveCardToGraveyard(cardToDiscard, CardMoveReason.Discarded);
             if (result.Success)
             {
                 result.GeneratedEvents.Add(new CardDiscardedEvent(this, cardToDiscard, reason));
@@ -794,12 +898,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
             if (this.Hand.Count >= GameConstants.Hand.MaxHandSize)
             {
-                var graveyardResult = MoveCardToGraveyard(cardToReturn);
+                var graveyardResult = MoveCardToGraveyard(cardToReturn, CardMoveReason.Burned);
                 graveyardResult.ErrorMessage = "Hand is full, card was moved to graveyard instead.";
                 return graveyardResult;
             }
-            var result = MoveCard(cardToReturn, CardZone.Hand, null);
-            if (result.Success)
+            var result = MoveCard(cardToReturn, CardZone.Hand, null, CardMoveReason.ReturnedToHand);
+            if (result.Success && HasMoveToZone(result, CardZone.Hand))
             {
                 result.GeneratedEvents.Add(new ReturnEvent(cardToReturn));
             }

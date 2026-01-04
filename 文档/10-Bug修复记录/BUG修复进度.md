@@ -9,6 +9,20 @@
 
 ## 🔄 **当前修复中**
 
+### 🔄 **[IN-PROGRESS] AI 目标选择 SourceAbilityRuntimeId mismatch**
+- **问题描述**: AI 触发目标选择时抛出 `SourceAbilityRuntimeId mismatch`，导致选择流程中断（如“天使之箭”）。
+- **根本原因**: AI 提交 `SubmitTargetChoiceActionDto` 时未填写 `SourceAbilityRuntimeId` 与 `TargetKey`。
+- **修复方案**: AI 提交与取消均补齐 `SourceAbilityRuntimeId` / `TargetKey`。
+- **修复文件**: `Server/Services/PendingActionService.cs`
+- **验证状态**: 🔄 修复已实施，待 AI 对战验证
+
+### 🔄 **[IN-PROGRESS] AI 进化后无目标导致攻击循环**
+- **问题描述**: AI 进化随从后场上无可攻击目标时，持续提交无效攻击导致死循环。
+- **根本原因**: `CanAttackLeader` 错误将 `IsEvolved` 视为可攻击主战者条件，且 AI 未校验是否允许攻击主战者。
+- **修复方案**: 主战者攻击判定仅允许 Storm 或 FieldTurn > 0；AI 选择主战者前先校验可攻击性。
+- **修复文件**: `Server/Domain/Entities/CardInstance.cs`, `Server/Domain/Extensions/CardInstanceExtensions.cs`, `Server/Services/AiService.cs`
+- **验证状态**: 🔄 修复已实施，待 AI 对战验证
+
 ### ✅ **[COMPLETED] 敌方手牌显示问题**
 - **问题描述**: 在我方调度确认后，敌方手牌短暂显示为UnknownCard而非卡背
 - **根本原因**: `renderGame` 函数中，当 `gameState.localPlayerId` 为 `null` 或 `undefined` 时，本地玩家和对手的识别逻辑失败，导致敌方手牌被错误地渲染为完整卡牌

@@ -1,0 +1,751 @@
+[
+  {
+    "id": 1451301,
+    "name": "灵魂转化",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "灵魂转化-破坏",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从并破坏"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "灵魂转化-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1451302,
+    "name": "呼魂女巫",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "呼魂女巫-进化召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1050403
+              },
+              "summonCount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "呼魂女巫-超进化死灵术",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          },
+          {
+            "keyword": "Necromance",
+            "value": 8
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Necromancy",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 8
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "呼魂女巫-超进化死灵术-必杀",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "context.sourceCard"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "SetKeyword",
+                    "parameters": {
+                      "operation": {
+                        "value": "Add"
+                      },
+                      "keyword": {
+                        "value": "Bane"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1451303,
+    "name": "魅惑的魅魔·莉莉姆",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "魅惑的魅魔·莉莉姆-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1050402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1451402,
+    "name": "禁约掘墓人",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "禁约掘墓人-战吼伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "禁约掘墓人-战吼衍生物",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1250402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1451403,
+    "name": "迷魂归途",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "迷魂归途-亡者召还",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Reanimate",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "maxCost": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1451404,
+    "name": "恶毒的小木乃伊",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "恶毒的小木乃伊-死灵术疾走",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Necromance",
+            "value": 4
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Necromancy",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 4
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "恶毒的小木乃伊-死灵术疾走-赋予",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "context.sourceCard"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "SetKeyword",
+                    "parameters": {
+                      "operation": {
+                        "value": "Add"
+                      },
+                      "keyword": {
+                        "value": "Storm"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1451405,
+    "name": "狂猎恶魔",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 6,
+    "attack": 3,
+    "health": 6,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "狂猎恶魔-血祭吸血",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Sacrifice",
+            "value": 3
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Sacrifice",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 3
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "狂猎恶魔-血祭吸血-赋予",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "context.sourceCard"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "SetKeyword",
+                    "parameters": {
+                      "operation": {
+                        "value": "Add"
+                      },
+                      "keyword": {
+                        "value": "Drain"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1050402,
+    "name": "蝙蝠",
+    "card_set": "衍生物",
+    "class": "Abysscraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Drain"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": []
+  },
+  {
+    "id": 1050403,
+    "name": "怨灵",
+    "card_set": "衍生物",
+    "class": "Abysscraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "怨灵-离场消失",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Destroy",
+            "Return",
+            "Tuck"
+          ],
+          "timing": "Before",
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "ReplaceEvent",
+            "parameters": {
+              "replacementEventType": {
+                "value": "Vanish"
+              },
+              "replacementParams.VanishedCard": {
+                "$type": "FormulaValueConfig",
+                "formula": "context.sourceCard"
+              },
+              "replacementParams.OriginalZone": {
+                "value": "Field"
+              },
+              "replacementParams.VanishReason": {
+                "value": "LeaveFieldIntercept"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "怨灵-回合结束消失",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnEnd"
+          ],
+          "relationType": "Any"
+        },
+        "conditions": [
+          {
+            "expression": "context.triggeringEvent.Source != null and context.triggeringEvent.Source.InstanceId == owner.PlayerId"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Vanish"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": [
+      "亡者"
+    ]
+  },
+  {
+    "id": 1250402,
+    "name": "骸骨士兵",
+    "card_set": "衍生物",
+    "class": "Abysscraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": [
+      "亡者"
+    ]
+  }
+]

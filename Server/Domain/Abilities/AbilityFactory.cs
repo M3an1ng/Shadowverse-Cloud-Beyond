@@ -45,6 +45,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 throw new ArgumentNullException(nameof(owner));
             }
 
+            config.NormalizeKeywords();
+
             _logger.LogDebug("Creating ability '{AbilityName}' for card {CardName} ({CardInstanceId}).", config.Name, owner.Name, owner.InstanceId);
 
             return new Ability(config, _conditionFactory, _targetFactory, _targetSelectionService, owner, sourceBuffId);

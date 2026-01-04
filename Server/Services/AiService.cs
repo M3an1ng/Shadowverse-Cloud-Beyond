@@ -31,13 +31,11 @@ namespace ShadowverseBeyond.Server.Services
     {
         private readonly ILogger<AiService> _logger;
         private readonly IServiceScopeFactory _serviceScopeFactory; // To resolve IGameService if needed, avoiding circular dependency
-        private readonly IGameDataProvider _gameDataProvider;
 
-        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, IGameDataProvider gameDataProvider)
+        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
-            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
         }
 
         /// <inheritdoc />
@@ -151,6 +149,49 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <inheritdoc />
+        public Task<bool> DecidePpBoostAsync(GameStateDto gameState, Guid aiPlayerId)
+        {
+            _logger.LogDebug("[AiService:{GameId}] DecidePpBoostAsync called for AI {PlayerId}.", gameState?.GameId ?? "Unknown", aiPlayerId);
+            var gameId = gameState?.GameId ?? "Unknown";
+            var states = GetPlayerStates(gameState, aiPlayerId);
+            if (states == null)
+            {
+                _logger.LogError("[AiService:{GameId}] Could not get player states for AI {PlayerId} in DecidePpBoostAsync.", gameId, aiPlayerId);
+                return Task.FromResult(false);
+            }
+
+            var aiState = states.Value.AiState;
+            if (gameState.CurrentPlayerId != aiPlayerId)
+            {
+                return Task.FromResult(false);
+            }
+
+            if (aiState.PpBoostUsesAvailable <= 0)
+            {
+                return Task.FromResult(false);
+            }
+
+            var allowedMax = aiState.MaxPP + GameConstants.PlayPoints.PpBoostOverflowAmount;
+            if (aiState.CurrentPP >= allowedMax)
+            {
+                return Task.FromResult(false);
+            }
+
+            var canEnablePlay = aiState.Hand.Any(card =>
+                card != null &&
+                card.Cost > aiState.CurrentPP &&
+                card.Cost <= aiState.CurrentPP + GameConstants.PlayPoints.PpBoostAmount);
+
+            if (!canEnablePlay)
+            {
+                return Task.FromResult(false);
+            }
+
+            _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to use PP+1.", gameId, aiPlayerId);
+            return Task.FromResult(true);
+        }
+
+        /// <inheritdoc />
         public Task<EvolveActionDto?> DecideEvolveAsync(GameStateDto gameState, Guid aiPlayerId)
         {
             _logger.LogDebug("[AiService:{GameId}] DecideEvolveAsync called for AI {PlayerId}.", gameState?.GameId ?? "Unknown", aiPlayerId);
@@ -175,9 +216,8 @@ namespace ShadowverseBeyond.Server.Services
             {
                 if (unit != null && unit.Type == CardType.Follower && !unit.IsEvolved)
                 {
-                    // Correctly call the synchronous GetCardDefinition method with the correct property CardId
-                    var definition = _gameDataProvider.GetCardDefinition(unit.CardId);
-                    if (definition?.EvolveId != null)
+                    var hasBanEvolve = unit.Keywords?.Any(k => k == CardKeyword.BanEvolve) ?? false;
+                    if (unit.CanEvolve && !hasBanEvolve)
                     {
                         evolvableUnits.Add(unit);
                     }
@@ -186,7 +226,7 @@ namespace ShadowverseBeyond.Server.Services
 
             if (!evolvableUnits.Any())
             {
-                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no units with a valid EvolveId on the field.", gameId, aiPlayerId);
+                _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} has no evolvable units on the field.", gameId, aiPlayerId);
                 return Task.FromResult<EvolveActionDto?>(null);
             }
 
@@ -361,9 +401,16 @@ namespace ShadowverseBeyond.Server.Services
 
             // 3. If opponent has no units on field, attack the opponent leader
             // Check if the attacker itself can attack the leader (some units might be restricted)
-            // V1 assumes any unit can attack leader if field is empty.
+            // V1 only attacks the leader if the attacker is allowed to do so.
             if (!opponentField.Any())
             {
+                if (!attacker.CanAttackLeader())
+                {
+                    _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} cannot attack leader this turn. Skipping leader target.",
+                        attacker?.InstanceId.ToString() ?? "Unknown");
+                    return null;
+                }
+
                 if (opponentState.LeaderCard != null)
                 {
                     _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} targeting opponent leader {TargetUid}", attacker?.InstanceId.ToString() ?? "Unknown", opponentState.LeaderCard.InstanceId);
@@ -371,8 +418,8 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 // Fallback with a warning if LeaderCard is null, to prevent crash and highlight the mapping issue.
-                _logger.LogWarning("[AiService:Helper] Opponent LeaderCard DTO is null. Falling back to PlayerId. This indicates a mapping issue. Attacker: {AttackerUid}", attacker?.InstanceId.ToString() ?? "Unknown");
-                return opponentState.PlayerId;
+                _logger.LogWarning("[AiService:Helper] Opponent LeaderCard DTO is null. Cannot target leader. Attacker: {AttackerUid}", attacker?.InstanceId.ToString() ?? "Unknown");
+                return null;
             }
 
             // Should not happen if opponent has a state, but defensively return null

@@ -102,7 +102,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             var grantedKeywords = new HashSet<CardKeyword>(card.IsSilenced ? [] : card.BaseKeywords);
             var suppressedKeywords = new HashSet<CardKeyword>();
 
-            var orderedBuffs = _buffManager.GetBuffsForCard(card.InstanceId);
+            var orderedBuffs = ResolveBuffManager(gameContext).GetBuffsForCard(card.InstanceId);
             foreach (var buff in orderedBuffs)
             {
                 if (!_buffEvaluator.IsApplicable(buff, card, gameContext))
@@ -218,7 +218,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             var events = new List<BuffRemovedEvent>();
             foreach (var card in context.CurrentGameState.AllCards)
             {
-                var buffs = _buffManager.GetBuffsForCard(card.InstanceId);
+                var buffs = ResolveBuffManager(context).GetBuffsForCard(card.InstanceId);
                 foreach (var buff in buffs)
                 {
                     if (buff.DurationType != DurationType.EndOfTurn)
@@ -244,7 +244,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     continue;
                 }
 
-                var buffs = _buffManager.GetBuffsForCard(card.InstanceId);
+                var buffs = ResolveBuffManager(context).GetBuffsForCard(card.InstanceId);
                 foreach (var buff in buffs)
                 {
                     if (buff.DurationType != DurationType.StartOfNextTurn)
@@ -410,7 +410,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             }
 
             var cardId = buff.TargetCardInstanceId;
-            var buffList = _buffManager.GetBuffsForCard(cardId);
+            var buffList = ResolveBuffManager(context).GetBuffsForCard(cardId);
 
             var stackingResult = _stackingEngine.EvaluateStacking(buff, buffList);
 
@@ -451,7 +451,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             }
 
             // Find the buff in the manager, but do not remove it here.
-            var buffToRemove = _buffManager.FindBuffInstance(buffId);
+            var buffToRemove = ResolveBuffManager(context).FindBuffInstance(buffId);
 
             if (buffToRemove != null)
             {
@@ -478,7 +478,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
             foreach (var cardId in allCardIdsWithBuffs)
             {
-                var buffList = _buffManager.GetBuffsForCard(cardId);
+                var buffList = ResolveBuffManager(context).GetBuffsForCard(cardId);
                 var buffsFromSource = buffList
                     .Where(b =>
                     {
@@ -494,7 +494,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
                     foreach (var buffToRemove in buffsFromSource)
                     {
-                        _buffManager.UnregisterBuffInstance(buffToRemove.Id);
+                        ResolveBuffManager(context).UnregisterBuffInstance(buffToRemove.Id);
                         var sourceCardSourceRemoved = ResolveSourceCard(context, buffToRemove.SourceAbilityId);
                         if (sourceCardSourceRemoved != null)
                         {
@@ -519,7 +519,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 return result;
             }
 
-            var buffList = _buffManager.GetBuffsForCard(cardInstanceId);
+            var buffList = ResolveBuffManager(context).GetBuffsForCard(cardInstanceId);
             if (buffList.Any())
             {
                 var buffsToRemove = predicate == null ? buffList.ToList() : buffList.Where(predicate).ToList();
@@ -528,7 +528,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 {
                     foreach (var buffToRemove in buffsToRemove)
                     {
-                        _buffManager.UnregisterBuffInstance(buffToRemove.Id);
+                        ResolveBuffManager(context).UnregisterBuffInstance(buffToRemove.Id);
                         var sourceCardAllRemoved = ResolveSourceCard(context, buffToRemove.SourceAbilityId);
                         if (sourceCardAllRemoved != null)
                         {
@@ -545,6 +545,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             }
 
             return result;
+        }
+
+        private IBuffManager ResolveBuffManager(GameContext context)
+        {
+            return context.BuffManager ?? _buffManager;
         }
 
         private static IAbility? ResolveSourceAbility(GameContext context, Guid sourceAbilityId)

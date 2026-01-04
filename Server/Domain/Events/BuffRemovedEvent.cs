@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Event triggered when a Buff is removed from a target.
     /// As a committable event, it performs the removal via BuffService.
     /// </summary>
-    [GameEventMetadata("Buff移除", "当一个Buff从目标身上被移除时触发的事件。", EventType.BuffRemoved)]
+    [GameEventMetadata("失去临时状态", "当一个临时状态从目标身上被移除时触发的事件。", EventType.BuffRemoved)]
     public class BuffRemovedEvent : GameEventBase, ICommittableEvent
     {
         [GameEventParameter("移除的Buff", "被移除的Buff实例。")]

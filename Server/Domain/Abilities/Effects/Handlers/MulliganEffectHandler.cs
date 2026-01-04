@@ -58,9 +58,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     return mulliganResult;
                 };
 
+            var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                context.CurrentGameState,
+                context.RequestingPlayerId,
+                parameters.PlayerScope);
+
             var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                effect.SelectedTargets,
+                playerTargets,
                 mulliganAction,
                 effectName);
 

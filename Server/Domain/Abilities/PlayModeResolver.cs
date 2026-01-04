@@ -96,8 +96,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             int currentPp)
         {
             var costs = abilityConfigs
-                .Where(c => c.AbilityTag == EffectKeyword.Enhance && c.EnhanceCost.HasValue && c.EnhanceCost.Value > 0)
-                .Select(c => c.EnhanceCost!.Value)
+                .Select(c => c.GetKeywordValue(EffectKeyword.Enhance))
+                .Where(value => value.HasValue && value.Value > 0)
+                .Select(value => value!.Value)
                 .Distinct()
                 .ToList();
 

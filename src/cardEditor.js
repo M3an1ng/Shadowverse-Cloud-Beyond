@@ -1,4 +1,4 @@
-// src/cardEditor.js - 卡牌编辑器主模块
+﻿// src/cardEditor.js - 卡牌编辑器主模块
 //
 // 相关文档:
 // - UI设计: 文档/06-UI设计/01-卡牌编辑器原型设计.md
@@ -25,6 +25,59 @@ function normalizeEnumName(value) {
 function equalsIgnoreCase(a, b) {
     if (typeof a !== 'string' || typeof b !== 'string') return a === b;
     return a.toLowerCase() === b.toLowerCase();
+}
+
+function normalizeAbilityKeywords(ability) {
+    const raw = ability?.abilityKeywords ?? [];
+    const normalized = [];
+    const addKeyword = (keyword, value) => {
+        if (!keyword || typeof keyword !== 'string') return;
+        const existing = normalized.find(k => k.keyword.toLowerCase() === keyword.toLowerCase());
+        if (existing) {
+            if (value !== null && value !== undefined) {
+                existing.value = value;
+            }
+            return;
+        }
+        normalized.push({ keyword, value: value ?? null });
+    };
+
+    if (Array.isArray(raw)) {
+        raw.forEach(entry => {
+            if (!entry) return;
+            if (typeof entry === 'string') {
+                addKeyword(entry);
+                return;
+            }
+            if (typeof entry === 'object') {
+                const keyword = entry.keyword || entry.tag || entry.Keyword || entry.Tag;
+                const value = entry.value ?? entry.amount ?? entry.cost ?? entry.Value ?? null;
+                addKeyword(keyword, value);
+            }
+        });
+    } else if (typeof raw === 'string') {
+        addKeyword(raw);
+    }
+
+    return normalized;
+}
+
+function formatAbilityTagSummary(keywords) {
+    if (!Array.isArray(keywords) || keywords.length === 0) return '';
+    return keywords
+        .map(entry => entry.value !== null && entry.value !== undefined
+            ? `${entry.keyword}:${entry.value}`
+            : entry.keyword)
+        .filter(text => text && typeof text === 'string')
+        .join(', ');
+}
+
+function formatAbilityKeywordsDisplay(ability) {
+    const keywords = normalizeAbilityKeywords(ability);
+    if (keywords.length === 0) {
+        return 'Unknown';
+    }
+    return formatAbilityTagSummary(keywords);
 }
 
 /**
@@ -185,7 +238,7 @@ class CardEditor {
                                         <h4 class="tech-header-small">ABILITY CONFIGURATION</h4>
                                         <div class="abilities-header-actions">
                                             <button class="btn-tech btn-small" id="add-ability-btn">ADD ABILITY</button>
-                                            <button class="btn-tech btn-small" id="link-ability-btn">LINK EXISTING</button>
+                                            <button class="btn-tech btn-small" id="link-ability-btn">COPY EXISTING</button>
                                         </div>
                                     </div>
                                     <div class="abilities-content">
@@ -335,6 +388,7 @@ class CardEditor {
             cost: 0,
             attack: 0,
             health: 1,
+            countdown: 0,
             cardType: 'Follower',
             cardClass: 'Neutral',
             rarity: 'Bronze',
@@ -501,27 +555,106 @@ CardEditor.prototype.updateCardPreview = function() {
         return;
     }
 
+    const card = this.currentCard;
+    const isFollower = equalsIgnoreCase(normalizeEnumName(card.cardType), 'Follower');
+    const rarity = normalizeEnumName(card.rarity || 'Common').toLowerCase();
+    const cardClass = normalizeEnumName(card.cardClass || 'Neutral').toLowerCase();
+    const cardType = normalizeEnumName(card.cardType || 'Spell').toLowerCase();
+    const hasCountdownKeyword = (card.keywords || []).some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
+    const showCountdown = !isFollower && hasCountdownKeyword;
+    const countdownValue = (card.countdown ?? card.Countdown) ?? 0;
+
     previewContainer.innerHTML = `
-        <div class="card-preview-content">
-            <div class="card-preview-header">
-                <div class="card-name">${this.currentCard.name || '未命名卡牌'}</div>
-                <div class="card-cost">${this.currentCard.cost}</div>
-            </div>
-            <div class="card-preview-body">
-                <div class="card-type">${this.currentCard.cardType} - ${this.currentCard.cardClass}</div>
-                <div class="card-description">${this.currentCard.description || '暂无描述'}</div>
-                ${equalsIgnoreCase(normalizeEnumName(this.currentCard.cardType), 'Follower') ? `
-                    <div class="card-stats">
-                        <span class="attack">${this.currentCard.attack}</span>
-                        <span class="health">${this.currentCard.health}</span>
+        <div class="preview-slate rarity-${rarity}">
+            <!-- 顶部：核心识别区 -->
+            <div class="slate-header">
+                <div class="slate-identity">
+                    <div class="identity-top">
+                        <div class="slate-cost-badge-embedded">
+                            <span class="cost-value">${card.cost}</span>
+                        </div>
+                        <h2 class="slate-name">${card.name || 'UNTITLED'}</h2>
                     </div>
+                    <div class="slate-meta">
+                        <span class="meta-tag rarity-tag">${card.rarity || 'Common'}</span>
+                        <span class="meta-tag class-tag">${card.cardClass || 'Neutral'}</span>
+                        <span class="meta-tag type-tag">${card.cardType || 'Spell'}</span>
+                    </div>
+                </div>
+                
+                <!-- 战斗数值 (仅随从显示，位于Header右下) -->
+                ${isFollower ? `
+                <div class="header-stats">
+                    <div class="stat-mini attack">
+                        <span class="stat-icon">⚔</span>
+                        <span class="stat-value">${card.attack}</span>
+                    </div>
+                    <div class="stat-mini health">
+                        <span class="stat-icon">♥</span>
+                        <span class="stat-value">${card.health}</span>
+                    </div>
+                </div>
+                ` : showCountdown ? `
+                <div class="header-stats">
+                    <div class="stat-mini countdown">
+                        <span class="stat-icon">⏳</span>
+                        <span class="stat-value">${countdownValue}</span>
+                    </div>
+                </div>
                 ` : ''}
             </div>
-            <div class="card-preview-footer">
-                <div class="card-rarity">${this.currentCard.rarity}</div>
+
+            <!-- 背景插画层 -->
+            <div class="slate-art-background">
+                <!-- 这里将来可以动态插入图片，目前使用占位符或CSS背景 -->
             </div>
+
+            <!-- 中部：数据与描述 -->
+            <div class="slate-body">
+                <!-- 描述区域 -->
+                <div class="slate-content-area">
+                    <div class="slate-description custom-scrollbar">${card.description || '<span class="text-dim">NO DATA DESCRIPTION...</span>'}</div>
+                </div>
+            </div>
+            
+            <!-- 装饰性全息扫描线 -->
+            <div class="holo-scanline"></div>
+            <div class="holo-grid-overlay"></div>
         </div>
     `;
+
+    // 更新 DEBUG INFO 区域
+    const debugContainer = this.container.querySelector('#preview-details');
+    if (debugContainer) {
+        debugContainer.innerHTML = `
+            <div class="debug-grid">
+                <div class="debug-row">
+                    <span class="debug-label">ID</span>
+                    <span class="debug-value">${card.id || 'N/A'}</span>
+                </div>
+                <div class="debug-row">
+                    <span class="debug-label">INTERNAL NAME</span>
+                    <span class="debug-value">${card.name || 'N/A'}</span>
+                </div>
+                <div class="debug-row">
+                    <span class="debug-label">KEYWORDS</span>
+                    <span class="debug-value">[${(card.keywords || []).join(', ')}]</span>
+                </div>
+                <div class="debug-row">
+                    <span class="debug-label">TRIBE</span>
+                    <span class="debug-value">[${(card.tribe || []).join(', ')}]</span>
+                </div>
+                <div class="debug-row">
+                    <span class="debug-label">EVOLVE ID</span>
+                    <span class="debug-value">${card.evolveId || 'None'}</span>
+                </div>
+                <div class="debug-row">
+                    <span class="debug-label">IS NEW</span>
+                    <span class="debug-value">${card.isNew ? 'YES' : 'NO'}</span>
+                </div>
+            </div>
+        `;
+    }
 };
 
 CardEditor.prototype.renderBasicInfoForm = async function() {
@@ -585,6 +718,19 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
                                     <button type="button" class="stepper-btn decrease" data-target="card-health">-</button>
                                     <input type="number" id="card-health" class="form-input number-input tech-input" value="${this.currentCard.health}" min="1" max="99">
                                     <button type="button" class="stepper-btn increase" data-target="card-health">+</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="countdown-container">
+                        <div class="form-grid form-grid-1" style="margin-bottom: var(--space-md);">
+                            <div class="form-group">
+                                <label class="form-label">COUNTDOWN</label>
+                                <div class="number-stepper tech-stepper">
+                                    <button type="button" class="stepper-btn decrease" data-target="card-countdown">-</button>
+                                    <input type="number" id="card-countdown" class="form-input number-input tech-input" value="${this.currentCard.countdown ?? 0}" min="0" max="99">
+                                    <button type="button" class="stepper-btn increase" data-target="card-countdown">+</button>
                                 </div>
                             </div>
                         </div>
@@ -814,6 +960,7 @@ CardEditor.prototype.updateCardProperty = function(property, value) {
         'cost': 'cost',
         'attack': 'attack',
         'health': 'health',
+        'countdown': 'countdown',
         'type': 'cardType',
         'class': 'cardClass',
         'rarity': 'rarity'
@@ -830,11 +977,15 @@ CardEditor.prototype.updateCardProperty = function(property, value) {
 
 CardEditor.prototype.updateStatsVisibility = function() {
     const statsContainer = this.container.querySelector('#stats-container');
-    if (!statsContainer || !this.currentCard) return;
+    const countdownContainer = this.container.querySelector('#countdown-container');
+    if (!statsContainer || !countdownContainer || !this.currentCard) return;
 
     // 只有随从卡牌显示攻击力和生命值
-    const shouldShowStats = equalsIgnoreCase(normalizeEnumName(this.currentCard.cardType), 'Follower');
+    const cardType = normalizeEnumName(this.currentCard.cardType);
+    const shouldShowStats = equalsIgnoreCase(cardType, 'Follower');
+    const shouldShowCountdown = equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest');
     statsContainer.style.display = shouldShowStats ? 'block' : 'none';
+    countdownContainer.style.display = shouldShowCountdown ? 'block' : 'none';
 };
 
 CardEditor.prototype.buildCardUpsertDto = function(isCreate) {
@@ -842,6 +993,8 @@ CardEditor.prototype.buildCardUpsertDto = function(isCreate) {
 
     const cardType = normalizeEnumName(this.currentCard.cardType);
     const isFollower = equalsIgnoreCase(cardType, 'Follower');
+    const isCountdownType = equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest');
+    const hasCountdownKeyword = (this.currentCard.keywords || []).some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
 
     return {
         id: isCreate ? null : this.currentCard.id,
@@ -853,6 +1006,7 @@ CardEditor.prototype.buildCardUpsertDto = function(isCreate) {
         cost: Number(this.currentCard.cost) || 0,
         attack: isFollower ? (Number(this.currentCard.attack) || 0) : null,
         health: isFollower ? (Number(this.currentCard.health) || 1) : null,
+        countdown: isCountdownType && hasCountdownKeyword ? (Number(this.currentCard.countdown) || 0) : null,
         description: this.currentCard.description || '',
         can_evolve: !!this.currentCard.canEvolve,
         evolve_id: this.currentCard.evolveId ?? null,
@@ -1108,6 +1262,11 @@ CardEditor.prototype.selectCard = async function(cardId) {
         // 渲染基础信息表单
         await this.renderBasicInfoForm();
 
+        const activeTab = this.container.querySelector('.tab-button.active')?.dataset.tab;
+        if (activeTab === 'abilities') {
+            await this.renderAbilitiesList();
+        }
+
         // 更新预览
         this.updateCardPreview();
 
@@ -1298,6 +1457,7 @@ CardEditor.prototype.convertApiCardToEditorFormat = function(apiCard) {
         cost: (card.cost ?? card.Cost) ?? 0,
         attack: (card.attack ?? card.Attack) ?? 0,
         health: (card.health ?? card.Health) ?? 1,
+        countdown: (card.countdown ?? card.Countdown) ?? 0,
         cardType: normalizeEnumName((card.type ?? card.Type) ?? 'Follower'),
         cardClass: normalizeEnumName((card.class ?? card.Class) ?? 'Neutral'),
         rarity: normalizeEnumName((card.rarity ?? card.Rarity) ?? 'Bronze'),
@@ -1448,12 +1608,13 @@ CardEditor.prototype.bindFormValidationEvents = function() {
     const costInput = basicTab.querySelector('#card-cost');
     const attackInput = basicTab.querySelector('#card-attack');
     const healthInput = basicTab.querySelector('#card-health');
+    const countdownInput = basicTab.querySelector('#card-countdown');
     const typeSelect = basicTab.querySelector('#card-type');
     const classSelect = basicTab.querySelector('#card-class');
     const raritySelect = basicTab.querySelector('#card-rarity');
 
     // 为每个字段添加验证事件
-    [nameInput, costInput, attackInput, healthInput, typeSelect, classSelect, raritySelect].forEach(input => {
+    [nameInput, costInput, attackInput, healthInput, countdownInput, typeSelect, classSelect, raritySelect].forEach(input => {
         if (input) {
             input.addEventListener('input', () => this.validateForm());
             input.addEventListener('change', () => this.validateForm());
@@ -1491,13 +1652,20 @@ CardEditor.prototype.validateForm = function() {
         errors.push('费用必须在0-20之间');
     }
 
-    if (equalsIgnoreCase(normalizeEnumName(this.currentCard.cardType), 'Follower')) {
+    const cardType = normalizeEnumName(this.currentCard.cardType);
+    const hasCountdownKeyword = (this.currentCard.keywords || []).some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
+
+    if (equalsIgnoreCase(cardType, 'Follower')) {
         if (this.currentCard.attack < 0 || this.currentCard.attack > 99) {
             errors.push('攻击力必须在0-99之间');
         }
 
         if (this.currentCard.health < 1 || this.currentCard.health > 99) {
             errors.push('生命值必须在1-99之间');
+        }
+    } else if ((equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest')) && hasCountdownKeyword) {
+        if (this.currentCard.countdown < 0 || this.currentCard.countdown > 99) {
+            errors.push('倒计时必须在0-99之间');
         }
     }
 
@@ -1613,7 +1781,7 @@ CardEditor.prototype.renderAbilitiesListContent = function(abilities) {
             <div class="ability-header">
                 <div class="ability-info">
                     <span class="ability-name tech-text-bold">${ability.name || '未命名能力'}</span>
-                    <span class="ability-tag tech-tag">${ability.abilityTag || 'Unknown'}</span>
+                    <span class="ability-tag tech-tag">${formatAbilityKeywordsDisplay(ability)}</span>
                 </div>
                 <div class="ability-actions">
                     <button class="btn-tech-small edit-ability-btn" data-ability-id="${ability.id}">EDIT</button>
@@ -1708,7 +1876,7 @@ try {
         cardId: this.currentCard.id,
         name: '',
         description: '',
-        abilityTag: '',
+        abilityKeywords: [],
         abilityType: 1,
         priority: 0,
         isActive: true,
@@ -1771,7 +1939,7 @@ try {
         cardId: this.currentCard.id,
         name: config.name,
         description: config.description,
-        abilityTag: config.abilityTag,
+        abilityKeywords: config.abilityKeywords || [],
         abilityType: config.abilityType || 1,
         priority: config.priority || 0,
         isActive: config.isActive,
@@ -1874,18 +2042,18 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
             <div class="modal-overlay" id="link-ability-modal">
                 <div class="modal-container ability-edit-container">
                     <div class="modal-header">
-                        <h3>关联现有能力</h3>
+                        <h3>复制现有能力</h3>
                         <button class="modal-close-btn" id="close-link-ability-modal">×</button>
                     </div>
                     <div class="modal-content">
-                        <div class="tech-text-dim" style="margin-bottom: 12px;">请选择一个能力并确认关联</div>
+                        <div class="tech-text-dim" style="margin-bottom: 12px;">请选择一个能力并复制到当前卡牌</div>
                         <div class="abilities-list custom-scrollbar" id="link-abilities-list">
                             <div class="loading-spinner"></div>
                             <p>正在加载能力列表...</p>
                         </div>
                         <div class="modal-actions" style="margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;">
                             <button class="btn-tech btn-secondary" id="cancel-link-ability">取消</button>
-                            <button class="btn-tech btn-primary" id="confirm-link-ability" disabled>确认关联</button>
+                            <button class="btn-tech btn-primary" id="confirm-link-ability" disabled>确认复制</button>
                         </div>
                     </div>
                 </div>
@@ -1927,7 +2095,7 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
                 <div class="ability-header">
                     <div class="ability-info">
                         <span class="ability-name tech-text-bold">${a.name || '未命名能力'}</span>
-                        <span class="ability-tag tech-tag">${a.abilityTag || 'Unknown'}</span>
+                        <span class="ability-tag tech-tag">${formatAbilityKeywordsDisplay(a)}</span>
                     </div>
                     <div class="ability-config">
                         <span class="config-item tech-tag">CARD: ${a.cardId ?? '-'}</span>
@@ -1953,24 +2121,21 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
                 if (!this.selectedExistingAbilityId) return;
                 confirmBtn.disabled = true;
                 try {
-                    const linkRes = await fetch(`/api/cards/${this.currentCard.id}/abilities/${this.selectedExistingAbilityId}`, { method: 'POST' });
-                    if (!linkRes.ok) {
-                        throw new Error(`HTTP ${linkRes.status}: ${linkRes.statusText}`);
-                    }
+                    await this.copyExistingAbilityById(this.selectedExistingAbilityId);
                     await this.renderAbilitiesList();
                     close();
-                    alert('能力关联成功！');
+                    alert('能力复制成功！');
                 } catch (error) {
-                    console.error('CardEditor: Failed to link ability:', error);
-                    alert(`关联能力失败: ${error.message}`);
+                    console.error('CardEditor: Failed to copy ability:', error);
+                    alert(`复制能力失败: ${error.message}`);
                 } finally {
                     confirmBtn.disabled = false;
                 }
             });
         }
     } catch (error) {
-        console.error('CardEditor: Failed to show link ability modal:', error);
-        alert(`打开关联窗口失败: ${error.message}`);
+        console.error('CardEditor: Failed to show copy ability modal:', error);
+        alert(`打开复制窗口失败: ${error.message}`);
         this.closeLinkExistingAbilityModal();
     }
 };
@@ -2054,7 +2219,7 @@ CardEditor.prototype.renderExistingAbilitiesList = function(abilities) {
         <div class="existing-ability-item" data-ability-id="${ability.id}">
             <div class="ability-info">
                 <div class="ability-name">${ability.name || '未命名能力'}</div>
-                <div class="ability-tag">${ability.abilityTag || 'Unknown'}</div>
+                <div class="ability-tag">${formatAbilityKeywordsDisplay(ability)}</div>
                 <div class="ability-description">${ability.description || '暂无描述'}</div>
             </div>
             <button class="btn-secondary select-ability-btn" data-ability-id="${ability.id}">选择</button>
@@ -2149,14 +2314,14 @@ CardEditor.prototype.createNewAbility = async function() {
         cardId: this.currentCard.id,
         name: name,
         description: description,
-        abilityTag: abilityTag,
+        abilityKeywords: [{ keyword: abilityTag }],
         abilityType: abilityType ? parseInt(abilityType) : 1, // 默认为Triggered
         priority: priority,
         isActive: true,
         jsonConfig: JSON.stringify({
             name: name,
             description: description,
-            abilityTag: abilityTag,
+            abilityKeywords: [{ keyword: abilityTag }],
             type: abilityType || "Triggered",
             trigger: {
                 eventTypes: ["CardPlayed"],
@@ -2194,25 +2359,50 @@ CardEditor.prototype.linkExistingAbility = async function() {
         return;
     }
 
-    console.log('CardEditor: Linking existing ability:', this.selectedExistingAbilityId);
-
-    // 调用后端API关联能力到卡牌
-    const response = await fetch(`/api/cards/${this.currentCard.id}/abilities/${this.selectedExistingAbilityId}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    });
-
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    console.log('CardEditor: Linked ability:', result);
+    console.log('CardEditor: Copying existing ability:', this.selectedExistingAbilityId);
+    const result = await this.copyExistingAbilityById(this.selectedExistingAbilityId);
+    console.log('CardEditor: Copied ability:', result);
 
     // 清除选中状态
     this.selectedExistingAbilityId = null;
+};
+
+CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
+    if (!this.currentCard || !this.currentCard.id) {
+        throw new Error('请先选择并保存一张卡牌');
+    }
+
+    const abilityResponse = await fetch(`/api/abilities/${abilityId}`);
+    if (!abilityResponse.ok) {
+        throw new Error(`HTTP ${abilityResponse.status}: ${abilityResponse.statusText}`);
+    }
+
+    const ability = await abilityResponse.json();
+
+    const abilityData = {
+        cardId: this.currentCard.id,
+        name: ability.name,
+        description: ability.description,
+        abilityKeywords: ability.abilityKeywords || normalizeAbilityKeywords(ability),
+        abilityType: ability.abilityType,
+        priority: ability.priority,
+        isActive: ability.isActive,
+        jsonConfig: ability.jsonConfig
+    };
+
+    const createRes = await fetch('/api/abilities', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(abilityData)
+    });
+
+    if (!createRes.ok) {
+        throw new Error(`HTTP ${createRes.status}: ${createRes.statusText}`);
+    }
+
+    return await createRes.json();
 };
 
 CardEditor.prototype.editAbility = async function(abilityId) {
@@ -2326,7 +2516,7 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
         id: ability.id,
         name: ability.name || '',
         description: ability.description || '',
-        abilityTag: ability.abilityTag || '',
+        abilityKeywords: normalizeAbilityKeywords(ability),
         abilityType: ability.abilityType || 1,
         priority: ability.priority || 0,
         isActive: ability.isActive !== false,
@@ -2353,6 +2543,9 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
 
             if (jsonConfig.trigger) {
                 config.trigger = { ...config.trigger, ...jsonConfig.trigger };
+            }
+            if (jsonConfig.abilityKeywords) {
+                config.abilityKeywords = normalizeAbilityKeywords({ abilityKeywords: jsonConfig.abilityKeywords });
             }
             if (jsonConfig.conditions) {
                 config.conditions = jsonConfig.conditions;
@@ -2448,1233 +2641,6 @@ CardEditor.prototype.saveAbilityChanges = async function(originalAbility, update
     }
 };
 
-CardEditor.prototype.bindAbilityEditModalEvents = function(ability) {
-    const modal = document.getElementById('ability-edit-modal');
-    if (!modal) return;
-
-    // 关闭模态框事件
-    const closeBtn = modal.querySelector('#close-ability-edit-modal');
-    const cancelBtn = modal.querySelector('#cancel-ability-edit');
-
-    [closeBtn, cancelBtn].forEach(btn => {
-        if (btn) {
-            btn.addEventListener('click', () => this.closeAbilityEditModal());
-        }
-    });
-
-    // 标签页切换事件
-    const tabButtons = modal.querySelectorAll('.ability-edit-tab-btn');
-    tabButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const tabName = btn.dataset.tab;
-            this.switchAbilityEditTab(tabName);
-        });
-    });
-
-    // 保存按钮事件
-    const saveBtn = modal.querySelector('#save-ability-edit');
-    if (saveBtn) {
-        saveBtn.addEventListener('click', () => this.saveAbilityEdit(ability));
-    }
-
-    // 添加条件按钮事件
-    const addConditionBtn = modal.querySelector('#add-condition-btn');
-    if (addConditionBtn) {
-        addConditionBtn.addEventListener('click', () => this.addConditionEditor());
-    }
-
-    // 添加目标按钮事件
-    const addTargetBtn = modal.querySelector('#add-target-btn');
-    if (addTargetBtn) {
-        addTargetBtn.addEventListener('click', () => this.addTargetEditor());
-    }
-
-    // 添加效果按钮事件
-    const addEffectBtn = modal.querySelector('#add-effect-btn');
-    if (addEffectBtn) {
-        addEffectBtn.addEventListener('click', () => this.addEffectEditor());
-    }
-
-    // 触发器配置事件
-    const addEventTypeBtn = modal.querySelector('#add-event-type-btn');
-    if (addEventTypeBtn) {
-        addEventTypeBtn.addEventListener('click', () => this.addEventTypeEditor());
-    }
-
-    const addValidZoneBtn = modal.querySelector('#add-valid-zone-btn');
-    if (addValidZoneBtn) {
-        addValidZoneBtn.addEventListener('click', () => this.addValidZoneEditor());
-    }
-};
-
-CardEditor.prototype.initializeAbilityEditModal = async function(ability) {
-    try {
-        // 加载能力标签选项
-        const abilityTagOptions = await this.metadataManager.getAbilityTagOptions();
-        const abilityTagSelect = document.getElementById('edit-ability-tag');
-
-        if (abilityTagSelect && abilityTagOptions) {
-            abilityTagOptions.forEach(option => {
-                const optionElement = document.createElement('option');
-                optionElement.value = option.value;
-                optionElement.textContent = option.label;
-                // abilityTag现在是数组，检查是否包含该值
-                if (Array.isArray(ability.abilityTag) && ability.abilityTag.includes(option.value)) {
-                    optionElement.selected = true;
-                } else if (ability.abilityTag === option.value) {
-                    optionElement.selected = true;
-                }
-                abilityTagSelect.appendChild(optionElement);
-            });
-        }
-
-        // 解析并显示现有配置
-        if (ability.jsonConfig) {
-            try {
-                // jsonConfig已经是对象，不需要JSON.parse
-                const config = typeof ability.jsonConfig === 'string'
-                    ? JSON.parse(ability.jsonConfig)
-                    : ability.jsonConfig;
-                this.loadAbilityConfig(config);
-            } catch (error) {
-                console.error('CardEditor: Failed to parse ability config:', error);
-            }
-        }
-
-    } catch (error) {
-        console.error('CardEditor: Failed to initialize ability edit modal:', error);
-    }
-};
-
-CardEditor.prototype.switchAbilityEditTab = function(tabName) {
-    const modal = document.getElementById('ability-edit-modal');
-    if (!modal) return;
-
-    // 移除所有活动状态
-    modal.querySelectorAll('.ability-edit-tab-btn').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    modal.querySelectorAll('.ability-edit-panel').forEach(panel => {
-        panel.classList.remove('active');
-    });
-
-    // 激活选中的标签页
-    const tabButton = modal.querySelector(`[data-tab="${tabName}"]`);
-    const tabPanel = modal.querySelector(`#${tabName}-edit-panel`);
-
-    if (tabButton && tabPanel) {
-        tabButton.classList.add('active');
-        tabPanel.classList.add('active');
-    }
-};
-
-CardEditor.prototype.closeAbilityEditModal = function() {
-    const modal = document.getElementById('ability-edit-modal');
-    if (modal) {
-        modal.remove();
-    }
-};
-
-CardEditor.prototype.loadAbilityConfig = function(config) {
-    console.log('CardEditor: Loading ability config:', config);
-
-    try {
-        // 显示触发器配置
-        if (config.trigger) {
-            this.displayTriggerInfo(config.trigger);
-        }
-
-        // 显示条件配置
-        if (config.conditions && Array.isArray(config.conditions)) {
-            this.displayConditionsInfo(config.conditions);
-        }
-
-        // 显示目标配置
-        if (config.targets && Array.isArray(config.targets)) {
-            this.displayTargetsInfo(config.targets);
-        }
-
-        // 显示效果配置
-        if (config.effects && Array.isArray(config.effects)) {
-            this.displayEffectsInfo(config.effects);
-        }
-
-        console.log('CardEditor: Ability config loaded successfully');
-    } catch (error) {
-        console.error('CardEditor: Error loading ability config:', error);
-    }
-};
-
-CardEditor.prototype.addConditionEditor = function() {
-    console.log('CardEditor: Adding condition editor');
-
-    const conditionsListContainer = document.querySelector('#conditions-list');
-    if (!conditionsListContainer) return;
-
-    // 移除占位符
-    const placeholder = conditionsListContainer.querySelector('.conditions-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 创建条件编辑器
-    const conditionId = 'condition_' + Math.random().toString(36).substr(2, 9);
-    const conditionEditorHTML = `
-        <div class="condition-item" data-condition-id="${conditionId}">
-            <div class="condition-item-header">
-                <div class="condition-item-title">条件表达式</div>
-                <div class="condition-item-actions">
-                    <button class="btn-icon remove-condition-btn" data-condition-id="${conditionId}" title="移除条件">
-                        <span>🗑️</span>
-                    </button>
-                </div>
-            </div>
-            <div class="condition-item-content">
-                <div class="form-group">
-                    <label class="form-label">条件表达式</label>
-                    <div class="condition-expression-editor" id="condition-expr-${conditionId}">
-                        <div class="loading-spinner"></div>
-                        <p>正在初始化DSL编辑器...</p>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" class="form-checkbox condition-enabled" checked>
-                        <span>启用条件</span>
-                    </label>
-                </div>
-            </div>
-        </div>
-    `;
-
-    conditionsListContainer.insertAdjacentHTML('beforeend', conditionEditorHTML);
-
-    // 绑定移除按钮事件
-    const removeBtn = conditionsListContainer.querySelector(`[data-condition-id="${conditionId}"].remove-condition-btn`);
-    if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-            const conditionItem = conditionsListContainer.querySelector(`[data-condition-id="${conditionId}"].condition-item`);
-            if (conditionItem && confirm('确定要移除这个条件吗？')) {
-                conditionItem.remove();
-
-                // 如果没有条件了，显示占位符
-                if (conditionsListContainer.children.length === 0) {
-                    conditionsListContainer.innerHTML = `
-                        <div class="conditions-placeholder">
-                            <p>暂无条件</p>
-                            <button class="btn-primary" id="add-condition-btn">添加条件</button>
-                        </div>
-                    `;
-
-                    // 重新绑定添加按钮
-                    const addBtn = conditionsListContainer.querySelector('#add-condition-btn');
-                    if (addBtn) {
-                        addBtn.addEventListener('click', () => this.addConditionEditor());
-                    }
-                }
-            }
-        });
-    }
-
-    // 初始化DSL编辑器
-    this.initializeConditionDslEditor(conditionId);
-};
-
-CardEditor.prototype.initializeConditionDslEditor = async function(conditionId) {
-    const editorContainer = document.getElementById(`condition-expr-${conditionId}`);
-    if (!editorContainer) return;
-
-    try {
-        console.log('CardEditor: Initializing condition DSL editor for:', conditionId);
-
-        // 使用DynamicUIRenderer创建DSL编辑器
-        const dslEditor = this.uiRenderer.createValueConfigEditor(
-            {
-                name: 'conditionExpression',
-                displayName: '条件表达式',
-                typeName: 'ValueConfig'
-            },
-            '', // 初始值
-            (value) => {
-                // 缓存到DOM，后续构建配置时读取
-                editorContainer.dataset.dslExpression = value || "";
-                console.log('CardEditor: Condition expression updated:', value);
-            }
-        );
-
-        // 清空容器并添加编辑器
-        editorContainer.innerHTML = '';
-        editorContainer.appendChild(dslEditor);
-
-    } catch (error) {
-        console.error('CardEditor: Failed to initialize condition DSL editor:', error);
-        editorContainer.innerHTML = `
-            <div class="error-message">
-                初始化DSL编辑器失败: ${error.message}
-            </div>
-        `;
-    }
-};
-
-CardEditor.prototype.addTargetEditor = function() {
-    console.log('CardEditor: Adding target editor');
-
-    const targetsListContainer = document.querySelector('#targets-list');
-    if (!targetsListContainer) return;
-
-    // 移除占位符
-    const placeholder = targetsListContainer.querySelector('.targets-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 创建目标编辑器
-    const targetId = 'target_' + Math.random().toString(36).substr(2, 9);
-    const targetKey = `target${targetsListContainer.children.length + 1}`;
-    const targetEditorHTML = `
-        <div class="target-item" data-target-id="${targetId}" data-target-key="${targetKey}">
-            <div class="target-item-header">
-                <div class="target-item-title">目标: ${targetKey}</div>
-                <div class="target-item-actions">
-                    <button class="btn-icon remove-target-btn" data-target-id="${targetId}" title="移除目标">
-                        <span>🗑️</span>
-                    </button>
-                </div>
-            </div>
-            <div class="target-item-content">
-                <div class="form-group">
-                    <label class="form-label">目标池表达式</label>
-                    <div class="target-pool-editor" id="target-pool-${targetId}">
-                        <div class="loading-spinner"></div>
-                        <p>正在初始化目标池编辑器...</p>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">失败处理方式</label>
-                    <select class="form-select target-failure-handling">
-                        <option value="AbortAbility" selected>中止能力</option>
-                        <option value="SkipEffect">跳过效果</option>
-                        <option value="UseDefault">使用默认值</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" class="form-checkbox target-player-choice">
-                        <span>需要玩家选择</span>
-                    </label>
-                </div>
-                <div class="player-choice-config" style="display: none;">
-                    <div class="form-grid form-grid-2">
-                        <div class="form-group">
-                            <label class="form-label">最小选择数量</label>
-                            <input type="number" class="form-input target-min-count" value="1" min="0">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">最大选择数量</label>
-                            <input type="number" class="form-input target-max-count" value="1" min="1">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">选择提示</label>
-                        <input type="text" class="form-input target-prompt" placeholder="请选择目标...">
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    targetsListContainer.insertAdjacentHTML('beforeend', targetEditorHTML);
-
-    // 绑定移除按钮事件
-    const removeBtn = targetsListContainer.querySelector(`[data-target-id="${targetId}"].remove-target-btn`);
-    if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-            const targetItem = targetsListContainer.querySelector(`[data-target-id="${targetId}"].target-item`);
-            if (targetItem && confirm('确定要移除这个目标吗？')) {
-                targetItem.remove();
-
-                // 如果没有目标了，显示占位符
-                if (targetsListContainer.children.length === 0) {
-                    targetsListContainer.innerHTML = `
-                        <div class="targets-placeholder">
-                            <p>暂无目标</p>
-                            <button class="btn-primary" id="add-target-btn">添加目标</button>
-                        </div>
-                    `;
-
-                    // 重新绑定添加按钮
-                    const addBtn = targetsListContainer.querySelector('#add-target-btn');
-                    if (addBtn) {
-                        addBtn.addEventListener('click', () => this.addTargetEditor());
-                    }
-                }
-            }
-        });
-    }
-
-    // 绑定玩家选择复选框事件
-    const playerChoiceCheckbox = targetsListContainer.querySelector(`[data-target-id="${targetId}"] .target-player-choice`);
-    const playerChoiceConfig = targetsListContainer.querySelector(`[data-target-id="${targetId}"] .player-choice-config`);
-
-    if (playerChoiceCheckbox && playerChoiceConfig) {
-        playerChoiceCheckbox.addEventListener('change', () => {
-            playerChoiceConfig.style.display = playerChoiceCheckbox.checked ? 'block' : 'none';
-        });
-    }
-
-    // 初始化目标池编辑器
-    this.initializeTargetPoolEditor(targetId);
-};
-
-CardEditor.prototype.initializeTargetPoolEditor = async function(targetId) {
-    const editorContainer = document.getElementById(`target-pool-${targetId}`);
-    if (!editorContainer) return;
-
-    try {
-        console.log('CardEditor: Initializing target pool editor for:', targetId);
-
-        // 使用DynamicUIRenderer创建DSL编辑器
-        const dslEditor = this.uiRenderer.createValueConfigEditor(
-            {
-                name: 'sourcePoolExpression',
-                displayName: '目标池表达式',
-                typeName: 'ValueConfig'
-            },
-            'battlefield.allUnits', // 默认值
-            (value) => {
-                editorContainer.dataset.dslExpression = value || "";
-                console.log('CardEditor: Target pool expression updated:', value);
-            }
-        );
-
-        // 清空容器并添加编辑器
-        editorContainer.innerHTML = '';
-        editorContainer.appendChild(dslEditor);
-
-    } catch (error) {
-        console.error('CardEditor: Failed to initialize target pool editor:', error);
-        editorContainer.innerHTML = `
-            <div class="error-message">
-                初始化目标池编辑器失败: ${error.message}
-            </div>
-        `;
-    }
-};
-
-CardEditor.prototype.addEffectEditor = async function() {
-    console.log('CardEditor: Adding effect editor');
-
-    try {
-        // 获取效果类型选项
-        const effectTypes = await this.metadataManager.getEffectTypes();
-
-        if (!effectTypes || effectTypes.length === 0) {
-            alert('暂无可用的效果类型');
-            return;
-        }
-
-        // 显示效果类型选择模态框
-        this.showEffectTypeSelectionModal(effectTypes);
-
-    } catch (error) {
-        console.error('CardEditor: Failed to load effect types:', error);
-        alert(`加载效果类型失败: ${error.message}`);
-    }
-};
-
-CardEditor.prototype.showEffectTypeSelectionModal = function(effectTypes) {
-    // 创建效果类型选择模态框
-    const modalHTML = `
-        <div class="modal-overlay" id="effect-type-selection-modal">
-            <div class="modal-container">
-                <div class="modal-header">
-                    <h3>选择效果类型</h3>
-                    <button class="modal-close-btn" id="close-effect-type-modal">×</button>
-                </div>
-                <div class="modal-content">
-                    <div class="effect-types-grid">
-                        ${effectTypes.map(effectType => `
-                            <div class="effect-type-card" data-effect-type="${effectType.typeName}">
-                                <div class="effect-type-header">
-                                    <span class="effect-type-name">${effectType.displayName || effectType.typeName}</span>
-                                </div>
-                                <div class="effect-type-description">
-                                    ${effectType.description || '暂无描述'}
-                                </div>
-                                <div class="effect-type-params">
-                                    参数数量: ${effectType.parameters ? effectType.parameters.length : 0}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn-secondary" id="cancel-effect-type-selection">取消</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-    // 绑定事件
-    this.bindEffectTypeSelectionEvents(effectTypes);
-};
-
-CardEditor.prototype.bindEffectTypeSelectionEvents = function(effectTypes) {
-    const modal = document.getElementById('effect-type-selection-modal');
-    if (!modal) return;
-
-    // 关闭按钮
-    const closeBtn = modal.querySelector('#close-effect-type-modal');
-    const cancelBtn = modal.querySelector('#cancel-effect-type-selection');
-
-    [closeBtn, cancelBtn].forEach(btn => {
-        if (btn) {
-            btn.addEventListener('click', () => {
-                modal.remove();
-            });
-        }
-    });
-
-    // 效果类型卡片点击
-    const effectTypeCards = modal.querySelectorAll('.effect-type-card');
-    effectTypeCards.forEach(card => {
-        card.addEventListener('click', () => {
-            const effectTypeName = card.dataset.effectType;
-            const effectType = effectTypes.find(et => et.typeName === effectTypeName);
-
-            if (effectType) {
-                modal.remove();
-                this.createEffectEditor(effectType);
-            }
-        });
-    });
-};
-
-CardEditor.prototype.createEffectEditor = function(effectType) {
-    console.log('CardEditor: Creating effect editor for:', effectType);
-
-    const effectsListContainer = document.querySelector('#effects-list');
-    if (!effectsListContainer) return;
-
-    // 移除占位符
-    const placeholder = effectsListContainer.querySelector('.effects-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 创建效果编辑器
-    const effectId = 'effect_' + Math.random().toString(36).substr(2, 9);
-    const effectEditorHTML = `
-        <div class="effect-item" data-effect-id="${effectId}" data-effect-type="${effectType.typeName}">
-            <div class="effect-item-header">
-                <div class="effect-item-title">${effectType.displayName || effectType.typeName}</div>
-                <div class="effect-item-actions">
-                    <button class="btn-icon remove-effect-btn" data-effect-id="${effectId}" title="移除效果">
-                        <span>🗑️</span>
-                    </button>
-                </div>
-            </div>
-            <div class="effect-item-content">
-                <div class="effect-parameters-container" id="effect-params-${effectId}">
-                    <div class="loading-spinner"></div>
-                    <p>正在加载参数配置...</p>
-                </div>
-            </div>
-        </div>
-    `;
-
-    effectsListContainer.insertAdjacentHTML('beforeend', effectEditorHTML);
-
-    // 绑定移除按钮事件
-    const removeBtn = effectsListContainer.querySelector(`[data-effect-id="${effectId}"].remove-effect-btn`);
-    if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-            const effectItem = effectsListContainer.querySelector(`[data-effect-id="${effectId}"].effect-item`);
-            if (effectItem && confirm('确定要移除这个效果吗？')) {
-                effectItem.remove();
-
-                // 如果没有效果了，显示占位符
-                if (effectsListContainer.children.length === 0) {
-                    effectsListContainer.innerHTML = `
-                        <div class="effects-placeholder">
-                            <p>暂无效果</p>
-                            <button class="btn-primary" id="add-effect-btn">添加效果</button>
-                        </div>
-                    `;
-
-                    // 重新绑定添加按钮
-                    const addBtn = effectsListContainer.querySelector('#add-effect-btn');
-                    if (addBtn) {
-                        addBtn.addEventListener('click', () => this.addEffectEditor());
-                    }
-                }
-            }
-        });
-    }
-
-    // 渲染效果参数
-    this.renderEffectParameters(effectType, effectId);
-};
-
-CardEditor.prototype.renderEffectParameters = async function(effectType, effectId) {
-    const parametersContainer = document.getElementById(`effect-params-${effectId}`);
-    if (!parametersContainer) return;
-
-    try {
-        console.log('CardEditor: Rendering effect parameters for:', effectType);
-
-        // 使用DynamicUIRenderer渲染参数表单
-        const parametersForm = this.uiRenderer.renderEffectParametersForm(
-            effectType.typeName,
-            {}, // 初始参数值
-            (updatedParams) => {
-                console.log('CardEditor: Effect parameters updated:', updatedParams);
-                // 缓存到容器数据集，后续保存时提取
-                parametersContainer.dataset.effectParams = JSON.stringify(updatedParams || {});
-            }
-        );
-
-        // 清空容器并添加表单
-        parametersContainer.innerHTML = '';
-        parametersContainer.appendChild(parametersForm);
-
-    } catch (error) {
-        console.error('CardEditor: Failed to render effect parameters:', error);
-        parametersContainer.innerHTML = `
-            <div class="error-message">
-                渲染参数失败: ${error.message}
-            </div>
-        `;
-    }
-};
-
-CardEditor.prototype.addEventTypeEditor = async function() {
-    console.log('CardEditor: Adding event type editor');
-
-    try {
-        // 获取事件类型选项
-        const eventTypes = await this.metadataManager.getEventTypes();
-
-        if (!eventTypes || eventTypes.length === 0) {
-            alert('暂无可用的事件类型');
-            return;
-        }
-
-        // 显示事件类型选择模态框
-        this.showEventTypeSelectionModal(eventTypes);
-
-    } catch (error) {
-        console.error('CardEditor: Failed to load event types:', error);
-        alert(`加载事件类型失败: ${error.message}`);
-    }
-};
-
-CardEditor.prototype.showEventTypeSelectionModal = function(eventTypes) {
-    const modalHTML = `
-        <div class="modal-overlay" id="event-type-selection-modal">
-            <div class="modal-container">
-                <div class="modal-header">
-                    <h3>选择事件类型</h3>
-                    <button class="modal-close-btn" id="close-event-type-modal">×</button>
-                </div>
-                <div class="modal-content">
-                    <div class="event-types-grid">
-                        ${eventTypes.map(eventType => `
-                            <div class="event-type-card" data-event-type="${eventType.value}">
-                                <div class="event-type-header">
-                                    <span class="event-type-name">${eventType.label}</span>
-                                </div>
-                                <div class="event-type-description">
-                                    ${eventType.description || '暂无描述'}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn-secondary" id="cancel-event-type-selection">取消</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-    // 绑定事件
-    this.bindEventTypeSelectionEvents(eventTypes);
-};
-
-CardEditor.prototype.bindEventTypeSelectionEvents = function(eventTypes) {
-    const modal = document.getElementById('event-type-selection-modal');
-    if (!modal) return;
-
-    // 关闭按钮
-    const closeBtn = modal.querySelector('#close-event-type-modal');
-    const cancelBtn = modal.querySelector('#cancel-event-type-selection');
-
-    [closeBtn, cancelBtn].forEach(btn => {
-        if (btn) {
-            btn.addEventListener('click', () => {
-                modal.remove();
-            });
-        }
-    });
-
-    // 事件类型卡片点击
-    const eventTypeCards = modal.querySelectorAll('.event-type-card');
-    eventTypeCards.forEach(card => {
-        card.addEventListener('click', () => {
-            const eventTypeName = card.dataset.eventType;
-            const eventType = eventTypes.find(et => et.value === eventTypeName);
-
-            if (eventType) {
-                modal.remove();
-                this.addEventTypeToTrigger(eventType);
-            }
-        });
-    });
-};
-
-CardEditor.prototype.addEventTypeToTrigger = function(eventType) {
-    const eventTypesContainer = document.getElementById('event-types-container');
-    if (!eventTypesContainer) return;
-
-    // 移除占位符
-    const placeholder = eventTypesContainer.querySelector('.event-types-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 创建事件类型项
-    const eventTypeId = 'event_' + Math.random().toString(36).substr(2, 9);
-    const eventTypeHTML = `
-        <div class="event-type-item" data-event-id="${eventTypeId}">
-            <span class="event-type-label">${eventType.label}</span>
-            <button class="btn-icon remove-event-type-btn" data-event-id="${eventTypeId}" title="移除事件类型">
-                <span>×</span>
-            </button>
-        </div>
-    `;
-
-    eventTypesContainer.insertAdjacentHTML('beforeend', eventTypeHTML);
-
-    // 绑定移除按钮事件
-    const removeBtn = eventTypesContainer.querySelector(`[data-event-id="${eventTypeId}"].remove-event-type-btn`);
-    if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-            const eventItem = eventTypesContainer.querySelector(`[data-event-id="${eventTypeId}"].event-type-item`);
-            if (eventItem && confirm('确定要移除这个事件类型吗？')) {
-                eventItem.remove();
-
-                // 如果没有事件类型了，显示占位符
-                if (eventTypesContainer.children.length === 0) {
-                    eventTypesContainer.innerHTML = `
-                        <div class="event-types-placeholder">
-                            <p>暂无监听事件</p>
-                            <button class="btn-primary" id="add-event-type-btn">添加事件类型</button>
-                        </div>
-                    `;
-
-                    // 重新绑定添加按钮
-                    const addBtn = eventTypesContainer.querySelector('#add-event-type-btn');
-                    if (addBtn) {
-                        addBtn.addEventListener('click', () => this.addEventTypeEditor());
-                    }
-                }
-            }
-        });
-    }
-};
-
-CardEditor.prototype.addValidZoneEditor = async function() {
-    console.log('CardEditor: Adding valid zone editor');
-
-    try {
-        // 获取卡牌区域选项
-        const cardZones = await this.metadataManager.getCardZones();
-
-        if (!cardZones || cardZones.length === 0) {
-            alert('暂无可用的卡牌区域');
-            return;
-        }
-
-        // 显示区域选择模态框
-        this.showValidZoneSelectionModal(cardZones);
-
-    } catch (error) {
-        console.error('CardEditor: Failed to load card zones:', error);
-        alert(`加载卡牌区域失败: ${error.message}`);
-    }
-};
-
-CardEditor.prototype.showValidZoneSelectionModal = function(cardZones) {
-    const modalHTML = `
-        <div class="modal-overlay" id="valid-zone-selection-modal">
-            <div class="modal-container">
-                <div class="modal-header">
-                    <h3>选择有效区域</h3>
-                    <button class="modal-close-btn" id="close-valid-zone-modal">×</button>
-                </div>
-                <div class="modal-content">
-                    <div class="valid-zones-grid">
-                        ${cardZones.map(zone => `
-                            <div class="valid-zone-card" data-zone="${zone.value}">
-                                <div class="valid-zone-header">
-                                    <span class="valid-zone-name">${zone.label}</span>
-                                </div>
-                                <div class="valid-zone-description">
-                                    ${zone.description || '暂无描述'}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn-secondary" id="cancel-valid-zone-selection">取消</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-    // 绑定事件
-    this.bindValidZoneSelectionEvents(cardZones);
-};
-
-CardEditor.prototype.bindValidZoneSelectionEvents = function(cardZones) {
-    const modal = document.getElementById('valid-zone-selection-modal');
-    if (!modal) return;
-
-    // 关闭按钮
-    const closeBtn = modal.querySelector('#close-valid-zone-modal');
-    const cancelBtn = modal.querySelector('#cancel-valid-zone-selection');
-
-    [closeBtn, cancelBtn].forEach(btn => {
-        if (btn) {
-            btn.addEventListener('click', () => {
-                modal.remove();
-            });
-        }
-    });
-
-    // 区域卡片点击
-    const zoneCards = modal.querySelectorAll('.valid-zone-card');
-    zoneCards.forEach(card => {
-        card.addEventListener('click', () => {
-            const zoneName = card.dataset.zone;
-            const zone = cardZones.find(z => z.value === zoneName);
-
-            if (zone) {
-                modal.remove();
-                this.addValidZoneToTrigger(zone);
-            }
-        });
-    });
-};
-
-CardEditor.prototype.addValidZoneToTrigger = function(zone) {
-    const validZonesContainer = document.getElementById('valid-zones-container');
-    if (!validZonesContainer) return;
-
-    // 移除占位符
-    const placeholder = validZonesContainer.querySelector('.valid-zones-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 创建区域项
-    const zoneId = 'zone_' + Math.random().toString(36).substr(2, 9);
-    const zoneHTML = `
-        <div class="valid-zone-item" data-zone-id="${zoneId}">
-            <span class="valid-zone-label">${zone.label}</span>
-            <button class="btn-icon remove-valid-zone-btn" data-zone-id="${zoneId}" title="移除有效区域">
-                <span>×</span>
-            </button>
-        </div>
-    `;
-
-    validZonesContainer.insertAdjacentHTML('beforeend', zoneHTML);
-
-    // 绑定移除按钮事件
-    const removeBtn = validZonesContainer.querySelector(`[data-zone-id="${zoneId}"].remove-valid-zone-btn`);
-    if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-            const zoneItem = validZonesContainer.querySelector(`[data-zone-id="${zoneId}"].valid-zone-item`);
-            if (zoneItem && confirm('确定要移除这个有效区域吗？')) {
-                zoneItem.remove();
-
-                // 如果没有区域了，显示占位符
-                if (validZonesContainer.children.length === 0) {
-                    validZonesContainer.innerHTML = `
-                        <div class="valid-zones-placeholder">
-                            <p>所有区域有效</p>
-                            <button class="btn-secondary" id="add-valid-zone-btn">限制区域</button>
-                        </div>
-                    `;
-
-                    // 重新绑定添加按钮
-                    const addBtn = validZonesContainer.querySelector('#add-valid-zone-btn');
-                    if (addBtn) {
-                        addBtn.addEventListener('click', () => this.addValidZoneEditor());
-                    }
-                }
-            }
-        });
-    }
-};
-
-CardEditor.prototype.saveAbilityEdit = async function(ability) {
-    console.log('CardEditor: Saving ability edit:', ability);
-
-    try {
-        // 收集所有配置数据
-        const abilityConfig = this.buildAbilityConfig(ability);
-
-        console.log('CardEditor: Built ability config:', abilityConfig);
-
-        // 调用后端API保存
-        const response = await fetch(`/api/abilities/${ability.id}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(abilityConfig)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        console.log('CardEditor: Ability saved successfully:', result);
-
-        // 关闭模态框
-        this.closeAbilityEditModal();
-
-        // 刷新能力列表
-        await this.renderAbilitiesList();
-
-        alert('能力保存成功！');
-
-    } catch (error) {
-        console.error('CardEditor: Failed to save ability:', error);
-        alert(`保存能力失败: ${error.message}`);
-    }
-};
-
-CardEditor.prototype.buildAbilityConfig = function(ability) {
-    const modal = document.getElementById('ability-edit-modal');
-    if (!modal) {
-        throw new Error('Ability edit modal not found');
-    }
-
-    // 收集基础信息
-    const name = modal.querySelector('#edit-ability-name').value.trim();
-    const description = modal.querySelector('#edit-ability-description').value.trim();
-    const abilityTag = modal.querySelector('#edit-ability-tag').value;
-    const priority = parseInt(modal.querySelector('#edit-ability-priority').value) || 0;
-    const isActive = modal.querySelector('#edit-ability-active').checked;
-
-    // 收集触发器配置
-    const triggerConfig = this.buildTriggerConfig(modal);
-
-    // 收集条件配置
-    const conditions = this.buildConditionsConfig(modal);
-
-    // 收集目标配置
-    const targets = this.buildTargetsConfig(modal);
-
-    // 收集效果配置
-    const effects = this.buildEffectsConfig(modal);
-
-    // 构建完整的AbilityConfig
-    const abilityConfig = {
-        id: ability.id,
-        cardId: this.currentCard.id,
-        name: name,
-        description: description,
-        abilityTag: abilityTag,
-        abilityType: ability.abilityType || 1, // 默认为Triggered
-        priority: priority,
-        isActive: isActive,
-        jsonConfig: JSON.stringify({
-            name: name,
-            description: description,
-            abilityTag: abilityTag,
-            type: "Triggered",
-            trigger: triggerConfig,
-            preConditions: [], // TODO: 实现预条件配置
-            conditions: conditions,
-            targets: targets,
-            effects: effects,
-            isActive: isActive,
-            version: "1.0"
-        })
-    };
-
-    return abilityConfig;
-};
-
-CardEditor.prototype.buildTriggerConfig = function(modal) {
-    const timing = modal.querySelector('#trigger-timing').value;
-    const relationType = modal.querySelector('#trigger-relation-type').value;
-    const isEnabled = modal.querySelector('#trigger-enabled').checked;
-
-    // 收集事件类型 - 需要转换为EventType枚举值
-    const eventTypeItems = modal.querySelectorAll('.event-type-item');
-    const eventTypes = Array.from(eventTypeItems).map(item => {
-        const eventTypeLabel = item.querySelector('.event-type-label').textContent;
-        // 这里需要将显示标签转换回EventType枚举值
-        return this.convertEventTypeLabelToEnum(eventTypeLabel);
-    });
-
-    // 收集有效区域 - 需要转换为CardZone枚举值
-    const validZoneItems = modal.querySelectorAll('.valid-zone-item');
-    const validZones = Array.from(validZoneItems).map(item => {
-        const zoneLabel = item.querySelector('.valid-zone-label').textContent;
-        // 这里需要将显示标签转换回CardZone枚举值
-        return this.convertCardZoneLabelToEnum(zoneLabel);
-    });
-
-    return {
-        id: 'trigger_' + Math.random().toString(36).substr(2, 9),
-        eventTypes: eventTypes, // List<EventType>
-        timing: timing, // TriggerTiming枚举
-        validZones: validZones, // List<CardZone>
-        relationType: relationType, // TriggerRelationType枚举
-        isEnabled: isEnabled
-    };
-};
-
-CardEditor.prototype.convertEventTypeLabelToEnum = function(label) {
-    // 从MetadataManager获取事件类型映射
-    try {
-        const eventTypes = this.metadataManager.getEventTypes();
-        const eventType = eventTypes.find(et => et.label === label);
-        return eventType ? eventType.value : label;
-    } catch (error) {
-        console.error('CardEditor: Failed to convert event type label:', error);
-        return label;
-    }
-};
-
-CardEditor.prototype.convertCardZoneLabelToEnum = function(label) {
-    // 从MetadataManager获取卡牌区域映射
-    try {
-        const cardZones = this.metadataManager.getCardZones();
-        const cardZone = cardZones.find(cz => cz.label === label);
-        return cardZone ? cardZone.value : label;
-    } catch (error) {
-        console.error('CardEditor: Failed to convert card zone label:', error);
-        return label;
-    }
-};
-
-CardEditor.prototype.buildConditionsConfig = function(modal) {
-    const conditionItems = modal.querySelectorAll('.condition-item');
-    return Array.from(conditionItems).map(item => {
-        const conditionId = item.dataset.conditionId;
-        const isEnabled = item.querySelector('.condition-enabled').checked;
-
-        // 从DSL编辑器中获取实际表达式
-        const conditionEditor = item.querySelector(`#condition-expr-${conditionId}`);
-        const expression = this.extractDslEditorValue(conditionEditor) || "true";
-
-        return {
-            id: conditionId,
-            expression: expression, // DSL表达式字符串
-            isEnabled: isEnabled
-        };
-    });
-};
-
-CardEditor.prototype.buildTargetsConfig = function(modal) {
-    const targetItems = modal.querySelectorAll('.target-item');
-    const targets = {};
-
-    Array.from(targetItems).forEach((item, index) => {
-        const targetKey = item.dataset.targetKey || `target${index + 1}`;
-        const failureHandling = item.querySelector('.target-failure-handling').value;
-        const needsPlayerChoice = item.querySelector('.target-player-choice').checked;
-
-        // 从DSL编辑器中获取实际目标池表达式
-        const targetPoolEditor = item.querySelector(`#target-pool-${item.dataset.targetId}`);
-        const sourcePoolExpression = this.extractDslEditorValue(targetPoolEditor) || "battlefield.allUnits";
-
-        let playerChoiceOptions = null;
-        if (needsPlayerChoice) {
-            const minCount = parseInt(item.querySelector('.target-min-count').value) || 1;
-            const maxCount = parseInt(item.querySelector('.target-max-count').value) || 1;
-            const prompt = item.querySelector('.target-prompt').value || '请选择目标...';
-
-            playerChoiceOptions = {
-                isRequired: true,
-                prompt: prompt,
-                canCancel: false,
-                autoSelect: false,
-                minCount: minCount,
-                maxCount: maxCount
-            };
-        }
-
-        // 构建完整的CardQueryConfig结构
-        targets[targetKey] = {
-            query: {
-                sourcePoolExpression: sourcePoolExpression,
-                operations: [] // List<IQueryOperation> - 目前为空，后续可扩展
-            },
-            onFailure: this.convertFailureHandlingToEnum(failureHandling),
-            playerChoiceOptions: playerChoiceOptions
-        };
-    });
-
-    return targets;
-};
-
-CardEditor.prototype.convertFailureHandlingToEnum = function(value) {
-    // 将字符串值转换为FailureHandling枚举
-    const failureHandlingMapping = {
-        'AbortAbility': 'AbortAbility',
-        'SkipEffect': 'SkipEffect',
-        'UseDefault': 'UseDefault'
-    };
-
-    return failureHandlingMapping[value] || 'AbortAbility';
-};
-
-CardEditor.prototype.buildEffectsConfig = function(modal) {
-    const effectItems = modal.querySelectorAll('.effect-item');
-    return Array.from(effectItems).map((item, index) => {
-        const effectType = item.dataset.effectType || item.querySelector('.effect-item-title')?.textContent || '';
-
-        // 从效果参数容器中提取实际参数
-        const parametersContainer = item.querySelector('.effect-parameters-container');
-        const parameters = this.extractEffectParameters(parametersContainer);
-
-        return {
-            type: effectType,
-            executionOrder: index,
-            parameters: parameters, // Dictionary<string, ValueConfig>格式
-            targetQuery: null, // 效果级别的目标查询
-            outputs: null // 效果输出配置
-        };
-    });
-};
-
-CardEditor.prototype.extractEffectParameters = function(parametersContainer) {
-    if (!parametersContainer) {
-        return {};
-    }
-
-    // 优先使用数据集中缓存的参数
-    if (parametersContainer.dataset && parametersContainer.dataset.effectParams) {
-        try {
-            const cached = JSON.parse(parametersContainer.dataset.effectParams);
-            if (cached && typeof cached === 'object') {
-                return cached;
-            }
-        } catch {
-            // ignore parse error, fall back to DOM extraction
-        }
-    }
-
-    const parameters = {};
-
-    // 遍历所有参数表单组件
-    const formGroups = parametersContainer.querySelectorAll('.form-group');
-    formGroups.forEach(group => {
-        // 优先使用参数名标记
-        const paramName = group.dataset.paramName || group.querySelector('.form-label')?.textContent?.trim();
-        if (!paramName) return;
-        let paramValue = null;
-
-        // 根据不同的输入类型提取值
-        const textInput = group.querySelector('.form-input[type="text"]');
-        const numberInput = group.querySelector('.form-input[type="number"]');
-        const checkbox = group.querySelector('.form-checkbox');
-        const select = group.querySelector('.form-select');
-        const textarea = group.querySelector('.form-textarea');
-        const dslEditor = group.querySelector('.dsl-editor');
-
-        if (textInput) {
-            paramValue = {
-                type: "Literal",
-                value: textInput.value
-            };
-        } else if (numberInput) {
-            paramValue = {
-                type: "Literal",
-                value: parseFloat(numberInput.value) || 0
-            };
-        } else if (checkbox) {
-            paramValue = {
-                type: "Literal",
-                value: checkbox.checked
-            };
-        } else if (select) {
-            paramValue = {
-                type: "Literal",
-                value: select.value
-            };
-        } else if (textarea) {
-            paramValue = {
-                type: "Literal",
-                value: textarea.value
-            };
-        } else if (group.querySelector('.value-config-editor')) {
-            // ValueConfig编辑器，直接取缓存或实例
-            let valueConfig = null;
-            if (group.dataset && group.dataset.valueConfig) {
-                try {
-                    valueConfig = JSON.parse(group.dataset.valueConfig);
-                } catch {
-                    valueConfig = null;
-                }
-            }
-            if (!valueConfig) {
-                const vcInstance = group._valueConfig || group.querySelector('.value-config-editor')._valueConfig;
-                if (vcInstance) valueConfig = vcInstance;
-            }
-            if (valueConfig) {
-                paramValue = valueConfig;
-            }
-        } else if (dslEditor) {
-            // DSL编辑器的值需要特殊处理
-            paramValue = {
-                type: "Expression",
-                expression: this.extractDslEditorValue(dslEditor)
-            };
-        }
-
-        if (paramValue) {
-            parameters[paramName] = paramValue;
-        }
-    });
-
-    return parameters;
-};
-
-CardEditor.prototype.extractDslEditorValue = function(dslEditor) {
-    if (!dslEditor) return null;
-
-    // 优先从数据集读取（由 onChange 同步）
-    if (dslEditor.dataset && typeof dslEditor.dataset.dslExpression !== 'undefined') {
-        return dslEditor.dataset.dslExpression;
-    }
-
-    // 其次尝试挂载的 DslEditor 实例
-    if (dslEditor._dslEditor && typeof dslEditor._dslEditor.expression === 'string') {
-        return dslEditor._dslEditor.expression;
-    }
-
-    // 最后回退到预览区域文本（旧实现）
-    const previewContent = dslEditor.querySelector('.dsl-preview-content code');
-    return previewContent ? previewContent.textContent : null;
-};
-
 // 加载关键字选项
 CardEditor.prototype.loadKeywordOptions = async function(selectElement) {
     try {
@@ -3714,275 +2680,3 @@ CardEditor.prototype.loadKeywordOptions = async function(selectElement) {
     }
 };
 
-// 显示触发器信息
-CardEditor.prototype.displayTriggerInfo = function(trigger) {
-    const triggerPanel = document.getElementById('trigger-edit-panel');
-    if (!triggerPanel) return;
-
-    // 查找并填充事件类型选择器
-    const eventTypeSelect = triggerPanel.querySelector('#trigger-event-type');
-    if (eventTypeSelect && trigger.eventTypes && trigger.eventTypes.length > 0) {
-        // 清空现有选项
-        eventTypeSelect.innerHTML = '<option value="">选择事件类型</option>';
-
-        // 添加当前事件类型选项
-        trigger.eventTypes.forEach(eventType => {
-            const option = document.createElement('option');
-            option.value = eventType;
-            option.textContent = eventType;
-            option.selected = true;
-            eventTypeSelect.appendChild(option);
-        });
-    }
-
-    // 查找并填充关系类型选择器
-    const relationTypeSelect = triggerPanel.querySelector('#trigger-relation-type');
-    if (relationTypeSelect && trigger.relationType) {
-        // 清空现有选项
-        relationTypeSelect.innerHTML = '<option value="">选择关系类型</option>';
-
-        // 添加当前关系类型选项
-        const option = document.createElement('option');
-        option.value = trigger.relationType;
-        option.textContent = trigger.relationType;
-        option.selected = true;
-        relationTypeSelect.appendChild(option);
-    }
-
-    // 显示配置摘要信息
-    const triggerInfo = document.createElement('div');
-    triggerInfo.className = 'trigger-config-summary';
-    triggerInfo.innerHTML = `
-        <div class="config-summary-item">
-            <strong>已配置事件类型:</strong> ${trigger.eventTypes ? trigger.eventTypes.join(', ') : '未设置'}
-        </div>
-        <div class="config-summary-item">
-            <strong>已配置关系类型:</strong> ${trigger.relationType || '未设置'}
-        </div>
-    `;
-
-    // 移除现有的触发器信息
-    const existingInfo = triggerPanel.querySelector('.trigger-config-summary');
-    if (existingInfo) {
-        existingInfo.remove();
-    }
-
-    triggerPanel.appendChild(triggerInfo);
-};
-
-// 显示条件信息
-CardEditor.prototype.displayConditionsInfo = function(conditions) {
-    const conditionsPanel = document.getElementById('conditions-edit-panel');
-    if (!conditionsPanel) return;
-
-    const conditionsList = conditionsPanel.querySelector('#conditions-list');
-    if (!conditionsList) return;
-
-    // 移除占位符
-    const placeholder = conditionsList.querySelector('.conditions-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 清空现有条件
-    conditionsList.innerHTML = '';
-
-    if (conditions.length === 0) {
-        conditionsList.innerHTML = `
-            <div class="conditions-placeholder">
-                <p>暂无条件</p>
-                <button class="btn-primary" id="add-condition-btn">添加条件</button>
-            </div>
-        `;
-        return;
-    }
-
-    // 为每个条件创建可编辑的UI组件
-    conditions.forEach((condition, index) => {
-        const conditionId = `condition_${index}`;
-        const conditionItem = document.createElement('div');
-        conditionItem.className = 'condition-item';
-        conditionItem.setAttribute('data-condition-id', conditionId);
-
-        conditionItem.innerHTML = `
-            <div class="condition-item-header">
-                <div class="condition-item-title">条件 ${index + 1}</div>
-                <div class="condition-item-actions">
-                    <button class="btn-icon remove-condition-btn" data-condition-id="${conditionId}" title="移除条件">
-                        <span>🗑️</span>
-                    </button>
-                </div>
-            </div>
-            <div class="condition-item-content">
-                <div class="form-group">
-                    <label>条件类型:</label>
-                    <input type="text" class="form-control" value="${condition.type || ''}" readonly>
-                </div>
-                <div class="form-group">
-                    <label>条件配置:</label>
-                    <textarea class="form-control" rows="4" readonly>${JSON.stringify(condition, null, 2)}</textarea>
-                </div>
-            </div>
-        `;
-
-        conditionsList.appendChild(conditionItem);
-    });
-
-    // 添加"添加条件"按钮
-    const addButton = document.createElement('div');
-    addButton.className = 'add-condition-container';
-    addButton.innerHTML = '<button class="btn-primary" id="add-condition-btn">添加条件</button>';
-    conditionsList.appendChild(addButton);
-};
-
-// 显示目标信息
-CardEditor.prototype.displayTargetsInfo = function(targets) {
-    const targetsPanel = document.getElementById('targets-edit-panel');
-    if (!targetsPanel) return;
-
-    const targetsList = targetsPanel.querySelector('#targets-list');
-    if (!targetsList) return;
-
-    // 移除占位符
-    const placeholder = targetsList.querySelector('.targets-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 清空现有目标
-    targetsList.innerHTML = '';
-
-    if (targets.length === 0) {
-        targetsList.innerHTML = `
-            <div class="targets-placeholder">
-                <p>暂无目标</p>
-                <button class="btn-primary" id="add-target-btn">添加目标</button>
-            </div>
-        `;
-        return;
-    }
-
-    // 为每个目标创建可编辑的UI组件
-    targets.forEach((target, index) => {
-        const targetId = `target_${index}`;
-        const targetKey = `target${index + 1}`;
-        const targetItem = document.createElement('div');
-        targetItem.className = 'target-item';
-        targetItem.setAttribute('data-target-id', targetId);
-        targetItem.setAttribute('data-target-key', targetKey);
-
-        targetItem.innerHTML = `
-            <div class="target-item-header">
-                <div class="target-item-title">目标 ${index + 1}</div>
-                <div class="target-item-actions">
-                    <button class="btn-icon remove-target-btn" data-target-id="${targetId}" title="移除目标">
-                        <span>🗑️</span>
-                    </button>
-                </div>
-            </div>
-            <div class="target-item-content">
-                <div class="form-group">
-                    <label>选择器类型:</label>
-                    <select class="form-control target-selector-type">
-                        <option value="">选择选择器类型</option>
-                        <option value="Filtered" ${target.selectorType === 'Filtered' ? 'selected' : ''}>Filtered</option>
-                        <option value="All" ${target.selectorType === 'All' ? 'selected' : ''}>All</option>
-                        <option value="Random" ${target.selectorType === 'Random' ? 'selected' : ''}>Random</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>查询配置:</label>
-                    <textarea class="form-control target-query-config" rows="4">${JSON.stringify(target.query || {}, null, 2)}</textarea>
-                </div>
-                <div class="form-group">
-                    <label>完整目标配置:</label>
-                    <textarea class="form-control" rows="3" readonly>${JSON.stringify(target, null, 2)}</textarea>
-                </div>
-            </div>
-        `;
-
-        targetsList.appendChild(targetItem);
-    });
-
-    // 添加"添加目标"按钮
-    const addButton = document.createElement('div');
-    addButton.className = 'add-target-container';
-    addButton.innerHTML = '<button class="btn-primary" id="add-target-btn">添加目标</button>';
-    targetsList.appendChild(addButton);
-};
-
-// 显示效果信息
-CardEditor.prototype.displayEffectsInfo = function(effects) {
-    const effectsPanel = document.getElementById('effects-edit-panel');
-    if (!effectsPanel) return;
-
-    const effectsList = effectsPanel.querySelector('#effects-list');
-    if (!effectsList) return;
-
-    // 移除占位符
-    const placeholder = effectsList.querySelector('.effects-placeholder');
-    if (placeholder) {
-        placeholder.remove();
-    }
-
-    // 清空现有效果
-    effectsList.innerHTML = '';
-
-    if (effects.length === 0) {
-        effectsList.innerHTML = `
-            <div class="effects-placeholder">
-                <p>暂无效果</p>
-                <button class="btn-primary" id="add-effect-btn">添加效果</button>
-            </div>
-        `;
-        return;
-    }
-
-    // 为每个效果创建可编辑的UI组件
-    effects.forEach((effect, index) => {
-        const effectId = `effect_${index}`;
-        const effectItem = document.createElement('div');
-        effectItem.className = 'effect-item';
-        effectItem.setAttribute('data-effect-id', effectId);
-
-        effectItem.innerHTML = `
-            <div class="effect-item-header">
-                <div class="effect-item-title">效果 ${index + 1}</div>
-                <div class="effect-item-actions">
-                    <button class="btn-icon remove-effect-btn" data-effect-id="${effectId}" title="移除效果">
-                        <span>🗑️</span>
-                    </button>
-                </div>
-            </div>
-            <div class="effect-item-content">
-                <div class="form-group">
-                    <label>效果类型:</label>
-                    <select class="form-control effect-type-select">
-                        <option value="">选择效果类型</option>
-                        <option value="Draw" ${effect.type === 'Draw' ? 'selected' : ''}>Draw (抽牌)</option>
-                        <option value="Damage" ${effect.type === 'Damage' ? 'selected' : ''}>Damage (伤害)</option>
-                        <option value="Heal" ${effect.type === 'Heal' ? 'selected' : ''}>Heal (治疗)</option>
-                        <option value="AddBuff" ${effect.type === 'AddBuff' ? 'selected' : ''}>AddBuff (添加增益)</option>
-                        <option value="Summon" ${effect.type === 'Summon' ? 'selected' : ''}>Summon (召唤)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>效果参数:</label>
-                    <textarea class="form-control effect-parameters" rows="4">${JSON.stringify(effect.parameters || {}, null, 2)}</textarea>
-                </div>
-                <div class="form-group">
-                    <label>完整效果配置:</label>
-                    <textarea class="form-control" rows="3" readonly>${JSON.stringify(effect, null, 2)}</textarea>
-                </div>
-            </div>
-        `;
-
-        effectsList.appendChild(effectItem);
-    });
-
-    // 添加"添加效果"按钮
-    const addButton = document.createElement('div');
-    addButton.className = 'add-effect-container';
-    addButton.innerHTML = '<button class="btn-primary" id="add-effect-btn">添加效果</button>';
-    effectsList.appendChild(addButton);
-};

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -6,6 +7,8 @@ using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // Add this for PlayerChoiceRequest
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -16,6 +19,9 @@ using ShadowverseBeyond.Server.Domain.Events.Services;
 using Microsoft.Extensions.Options;
 using ShadowverseBeyond.Server.Options;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using System.Reflection;
+using System.Linq.Expressions;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -37,7 +43,10 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IMetaProgressionService _metaProgressionService;
         private readonly ReplayOptions _replayOptions;
         private readonly Queue<Effect> _effectQueue = new();
-
+        private static readonly ConcurrentDictionary<EventType, Type?> ReplacementEventTypeCache = new();
+        private static readonly ConcurrentDictionary<Type, IReadOnlyList<ReplacementEventParameter>> ReplacementEventParameterCache = new();
+        private static readonly ConcurrentDictionary<Type, IReadOnlyList<ReplacementConstructorBinding>> ReplacementEventConstructorCache = new();
+        private static readonly ConcurrentDictionary<Type, Func<object?, (bool Ok, object? Value, string? ErrorMessage)>> ValueCoercerCache = new();
         public GameActionTransactionService(
             ILogger<GameActionTransactionService> logger,
             IAbilityManager abilityManager,
@@ -114,7 +123,7 @@ namespace ShadowverseBeyond.Server.Services
                     var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(gameEvent, gameContext, TriggerTiming.On);
 
                     // --- DIAGNOSTIC LOGGING START ---
-                    var triggeredAbilitiesInfo = string.Join(", ", triggeredAbilities.Select(a => $"{a.AbilityTag} on {a.SourceCard?.Name ?? "System"}"));
+                    var triggeredAbilitiesInfo = string.Join(", ", triggeredAbilities.Select(a => $"{a.KeywordSummary} on {a.SourceCard?.Name ?? "System"}"));
                     _logger.LogWarning("[DIAGNOSTIC] Triggered abilities found: [{Abilities}]", triggeredAbilitiesInfo);
                     // --- DIAGNOSTIC LOGGING END ---
 
@@ -127,7 +136,7 @@ namespace ShadowverseBeyond.Server.Services
                     ).ToList();
 
                     // --- DIAGNOSTIC LOGGING START ---
-                    var primaryAbilitiesInfo = string.Join(", ", primaryAbilities.Select(a => $"{a.AbilityTag} on {a.SourceCard?.Name ?? "System"}"));
+                    var primaryAbilitiesInfo = string.Join(", ", primaryAbilities.Select(a => $"{a.KeywordSummary} on {a.SourceCard?.Name ?? "System"}"));
                     _logger.LogWarning("[DIAGNOSTIC] Filtered primary abilities: [{Abilities}]", primaryAbilitiesInfo);
                     // --- DIAGNOSTIC LOGGING END ---
 
@@ -151,7 +160,7 @@ namespace ShadowverseBeyond.Server.Services
 
                         if (!abilityResult.IsSuccess)
                         {
-                            _logger.LogError("Primary ability '{AbilityTag}' failed to process: {Error}", ability.AbilityTag, abilityResult.ErrorMessage);
+                            _logger.LogError("Primary ability '{AbilityKeywords}' failed to process: {Error}", ability.KeywordSummary, abilityResult.ErrorMessage);
                             return PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Primary ability processing failed.");
                         }
                     }
@@ -162,7 +171,10 @@ namespace ShadowverseBeyond.Server.Services
             return PausableTransactionResult.Success(new List<IGameEvent>());
         }
 
-        private async Task<(PausableTransactionResult, List<Effect>)> GetTriggerAbilityEffectsAsync(GameContext gameContext, IGameEvent gameEvent, TriggerTiming timing)
+        private async Task<(PausableTransactionResult, List<Effect>)> GetTriggerAbilityEffectsAsync(
+            GameContext gameContext,
+            IGameEvent gameEvent,
+            TriggerTiming timing)
         {
             var generatedEffects = new List<Effect>();
             var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(gameEvent, gameContext, timing);
@@ -195,6 +207,695 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return (PausableTransactionResult.Success(new List<IGameEvent>()), generatedEffects);
+        }
+
+        private static bool IsInterceptEffect(Effect effect)
+        {
+            return IsInterceptEffectType(effect.Type);
+        }
+
+        private static bool IsInterceptEffectType(EffectType effectType)
+        {
+            return effectType == EffectType.RewriteEventParams || effectType == EffectType.ReplaceEvent;
+        }
+
+        private async Task<(PausableTransactionResult Result, IGameEvent FinalEvent)> ApplyBeforeInterceptsAsync(
+            GameContext gameContext,
+            IGameEvent initialEvent,
+            List<IGameEvent> processedEvents)
+        {
+            var currentEvent = initialEvent;
+            var interceptIteration = 0;
+            var interceptedAbilityIds = new HashSet<Guid>();
+            var maxIterations = GameConstants.AbilityTrigger.BeforeInterceptMaxIterations;
+
+            while (interceptIteration < maxIterations)
+            {
+                bool eventChanged = false;
+
+                var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(currentEvent, gameContext, TriggerTiming.Before);
+
+                foreach (var ability in triggeredAbilities)
+                {
+                    if (interceptedAbilityIds.Contains(ability.RuntimeId))
+                    {
+                        continue;
+                    }
+
+                    var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = currentEvent };
+                    var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(ability, abilityContext, false);
+
+                    if (!abilityResult.IsSuccess)
+                    {
+                        return (PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Before intercept ability processing failed."), currentEvent);
+                    }
+
+                    var interceptEffects = abilityResult.Effects.Where(IsInterceptEffect).ToList();
+                    if (interceptEffects.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    interceptedAbilityIds.Add(ability.RuntimeId);
+
+                    foreach (var interceptEffect in interceptEffects)
+                    {
+                        var (effectResult, actionResult) = ExecuteInterceptEffect(interceptEffect, abilityContext, processedEvents);
+                        if (!effectResult.IsSuccess)
+                        {
+                            return (effectResult, currentEvent);
+                        }
+
+                        var intercept = actionResult?.EventIntercept;
+                        if (intercept == null)
+                        {
+                            continue;
+                        }
+
+                        if (!TryApplyEventIntercept(gameContext, currentEvent, intercept, out var updatedEvent, out var changed, out var errorMessage))
+                        {
+                            return (PausableTransactionResult.Failure(errorMessage ?? "Before intercept failed to apply."), currentEvent);
+                        }
+
+                        if (changed)
+                        {
+                            currentEvent = updatedEvent;
+                            eventChanged = true;
+                            interceptIteration++;
+                            break;
+                        }
+                    }
+
+                    if (eventChanged)
+                    {
+                        break;
+                    }
+                }
+
+                if (!eventChanged)
+                {
+                    break;
+                }
+            }
+
+            if (interceptIteration >= maxIterations)
+            {
+                _logger.LogWarning("Before intercept reached max iterations ({MaxIterations}) for event {EventType} ({EventId}).",
+                    maxIterations, currentEvent.EventType, currentEvent.EventId);
+            }
+
+            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent);
+        }
+
+        private (PausableTransactionResult Result, GameStateActionResult? ActionResult) ExecuteInterceptEffect(
+            Effect effect,
+            GameContext gameContext,
+            List<IGameEvent> processedEvents)
+        {
+            var sourceCard = effect.SourceCardId.HasValue
+                ? gameContext.CurrentGameState.FindCardInstance(effect.SourceCardId.Value)
+                : null;
+
+            if (!effect.ForceExecution && effect.sourceAbilityId.HasValue)
+            {
+                var ability = gameContext.AbilityManager.GetAbilityByRuntimeId(effect.sourceAbilityId.Value);
+                if (ability?.TriggerConfig?.RevalidateZoneBeforeExecution == true)
+                {
+                    var cardToCheck = sourceCard ?? ability.SourceCard;
+                    if (cardToCheck != null && !ability.TriggerConfig.IsValidZone(cardToCheck.CurrentZone))
+                    {
+                        _logger.LogDebug(
+                            "Skipping intercept effect {EffectType} ({EffectId}) because source card {CardId} is now in zone {Zone}, which is outside ValidZones.",
+                            effect.Type,
+                            effect.Id,
+                            cardToCheck.InstanceId,
+                            cardToCheck.CurrentZone);
+                        return (PausableTransactionResult.Success(new List<IGameEvent>()), null);
+                    }
+                }
+            }
+
+            IGameEvent? triggeringEvent = null;
+            if (effect.TriggeredEventId != Guid.Empty)
+            {
+                triggeringEvent = processedEvents.FirstOrDefault(e => e.EventId == effect.TriggeredEventId);
+            }
+
+            if (triggeringEvent == null && gameContext.TriggeringEvent != null)
+            {
+                if (effect.TriggeredEventId == Guid.Empty || gameContext.TriggeringEvent.EventId == effect.TriggeredEventId)
+                {
+                    triggeringEvent = gameContext.TriggeringEvent;
+                }
+            }
+
+            var effectContext = gameContext with
+            {
+                SourceCard = sourceCard,
+                TriggeringEvent = triggeringEvent,
+                CurrentEffect = effect
+            };
+
+            var actionResult = _effectExecutor.ExecuteEffect(effect, effectContext);
+            if (!actionResult.Success)
+            {
+                switch (effect.EffectConfig.OnFailure)
+                {
+                    case FailureHandling.CompleteWithFailure:
+                        _logger.LogWarning("Intercept effect {EffectType} failed but will continue due to OnFailure=CompleteWithFailure.", effect.Type);
+                        return (PausableTransactionResult.Success(new List<IGameEvent>()), actionResult);
+                    case FailureHandling.SkipEffect:
+                        _logger.LogWarning("Intercept effect {EffectType} failed and was skipped due to OnFailure=SkipEffect.", effect.Type);
+                        return (PausableTransactionResult.Success(new List<IGameEvent>()), null);
+                    case FailureHandling.AbortAbility:
+                    default:
+                        var errorMessage = $"Intercept effect execution failed for {effect.Type}.";
+                        _logger.LogError(errorMessage);
+                        return (PausableTransactionResult.Failure(errorMessage), null);
+                }
+            }
+
+            return (PausableTransactionResult.Success(new List<IGameEvent>()), actionResult);
+        }
+
+        private bool TryApplyEventIntercept(
+            GameContext gameContext,
+            IGameEvent currentEvent,
+            EventInterceptResult intercept,
+            out IGameEvent updatedEvent,
+            out bool changed,
+            out string? errorMessage)
+        {
+            updatedEvent = currentEvent;
+            changed = false;
+            errorMessage = null;
+
+            switch (intercept.Kind)
+            {
+                case EventInterceptKind.RewriteParameters:
+                    return TryApplyEventRewrite(currentEvent, intercept, out updatedEvent, out changed, out errorMessage);
+                case EventInterceptKind.ReplaceEvent:
+                    return TryApplyEventReplacement(gameContext, currentEvent, intercept, out updatedEvent, out changed, out errorMessage);
+                default:
+                    return true;
+            }
+        }
+
+        private static bool TryApplyEventRewrite(
+            IGameEvent currentEvent,
+            EventInterceptResult intercept,
+            out IGameEvent updatedEvent,
+            out bool changed,
+            out string? errorMessage)
+        {
+            updatedEvent = currentEvent;
+            changed = false;
+            errorMessage = null;
+
+            var paramName = intercept.ParameterName?.Trim();
+            if (string.IsNullOrWhiteSpace(paramName))
+            {
+                return true;
+            }
+
+            if (!EventParameterCache.TryGetRewritableBinding(currentEvent.GetType(), paramName, out var binding, out var resolveError))
+            {
+                // Safe no-op for unsupported parameters or scopes.
+                errorMessage = resolveError;
+                return true;
+            }
+
+            if (!TryCoerceValue(intercept.ParameterValue, binding.PropertyType, out var coercedValue, out var convertError))
+            {
+                // Safe no-op for conversion failures.
+                errorMessage = convertError;
+                return true;
+            }
+
+            var currentValue = binding.Getter(currentEvent);
+            if (Equals(currentValue, coercedValue))
+            {
+                return true;
+            }
+
+            if (binding.Setter == null)
+            {
+                // Safe no-op for non-settable properties.
+                errorMessage = $"RewriteEventParamsEffect: parameter '{binding.PropertyName}' is not settable.";
+                return true;
+            }
+
+            binding.Setter(currentEvent, coercedValue);
+            changed = true;
+            return true;
+        }
+
+        private bool TryApplyEventReplacement(
+            GameContext gameContext,
+            IGameEvent currentEvent,
+            EventInterceptResult intercept,
+            out IGameEvent updatedEvent,
+            out bool changed,
+            out string? errorMessage)
+        {
+            updatedEvent = currentEvent;
+            changed = false;
+            errorMessage = null;
+
+            if (!intercept.ReplacementEventType.HasValue)
+            {
+                return true;
+            }
+
+            var replacementParams = intercept.ReplacementParameters ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            if (!TryCreateReplacementEvent(
+                gameContext,
+                currentEvent,
+                intercept.ReplacementEventType.Value,
+                replacementParams,
+                out var replacementEvent,
+                out var createError))
+            {
+                errorMessage = createError;
+                return false;
+            }
+
+            updatedEvent = replacementEvent;
+            changed = true;
+            return true;
+        }
+
+        private bool TryCreateReplacementEvent(
+            GameContext gameContext,
+            IGameEvent currentEvent,
+            EventType replacementEventType,
+            IReadOnlyDictionary<string, object?> replacementParams,
+            out IGameEvent replacementEvent,
+            out string? errorMessage)
+        {
+            replacementEvent = currentEvent;
+            errorMessage = null;
+
+            var eventType = ResolveReplacementEventType(replacementEventType);
+            if (eventType == null)
+            {
+                errorMessage = $"ReplaceEventEffect: unsupported replacement event type '{replacementEventType}'.";
+                return false;
+            }
+
+            var paramLookup = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in replacementParams)
+            {
+                paramLookup[kvp.Key] = kvp.Value;
+            }
+
+            var inputParams = GetReplacementEventParameters(eventType);
+            var constructors = GetReplacementConstructors(eventType);
+
+            foreach (var constructor in constructors)
+            {
+                var parameters = constructor.Parameters;
+                var args = new object?[parameters.Length];
+                var canUse = true;
+
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    var param = parameters[i];
+                    var paramName = param.Name ?? string.Empty;
+
+                    if (TryGetReplacementParameterValue(paramLookup, inputParams, paramName, out var rawValue))
+                    {
+                        if (!TryCoerceValue(gameContext, rawValue, param.ParameterType, out var coercedValue, out var convertError))
+                        {
+                            errorMessage = convertError;
+                            canUse = false;
+                            break;
+                        }
+
+                        args[i] = coercedValue;
+                        continue;
+                    }
+
+                    if (paramName.Equals("eventId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        args[i] = currentEvent.EventId;
+                        continue;
+                    }
+
+                    if (paramName.Equals("timestamp", StringComparison.OrdinalIgnoreCase))
+                    {
+                        args[i] = currentEvent.Timestamp;
+                        continue;
+                    }
+
+                    if (param.HasDefaultValue)
+                    {
+                        args[i] = param.DefaultValue;
+                        continue;
+                    }
+
+                    canUse = false;
+                    break;
+                }
+
+                if (!canUse)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    replacementEvent = constructor.Activator(args);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "ReplaceEventEffect: failed to construct event {EventType} with constructor {Constructor}.", eventType.Name, constructor.Constructor);
+                }
+            }
+
+            errorMessage = $"ReplaceEventEffect: unable to construct event '{replacementEventType}' with provided parameters.";
+            return false;
+        }
+
+        private static bool TryGetReplacementParameterValue(
+            Dictionary<string, object?> paramLookup,
+            IReadOnlyList<ReplacementEventParameter> inputParams,
+            string paramName,
+            out object? rawValue)
+        {
+            rawValue = null;
+            if (paramLookup.TryGetValue(paramName, out rawValue))
+            {
+                return true;
+            }
+
+            var candidate = inputParams
+                .Where(p => p.PropertyName.EndsWith(paramName, StringComparison.OrdinalIgnoreCase))
+                .Select(p =>
+                {
+                    if (paramLookup.TryGetValue(p.PropertyName, out var value))
+                    {
+                        return (Found: true, Value: value);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(p.DisplayName) && paramLookup.TryGetValue(p.DisplayName, out var displayValue))
+                    {
+                        return (Found: true, Value: displayValue);
+                    }
+
+                    return (Found: false, Value: (object?)null);
+                })
+                .FirstOrDefault(p => p.Found);
+
+            if (candidate.Found)
+            {
+                rawValue = candidate.Value;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static IReadOnlyList<ReplacementEventParameter> GetReplacementEventParameters(Type eventType)
+        {
+            return ReplacementEventParameterCache.GetOrAdd(eventType, type =>
+            {
+                var descriptor = EventParameterCache.GetDescriptor(type);
+                return descriptor.Parameters
+                    .Where(p => p.Scope == GameEventParameterScope.Input || p.Scope == GameEventParameterScope.Both)
+                    .Select(p => new ReplacementEventParameter(p.PropertyName, string.IsNullOrWhiteSpace(p.DisplayName) ? null : p.DisplayName))
+                    .ToList();
+            });
+        }
+
+        private static IReadOnlyList<ReplacementConstructorBinding> GetReplacementConstructors(Type eventType)
+        {
+            return ReplacementEventConstructorCache.GetOrAdd(eventType, type =>
+            {
+                return type.GetConstructors()
+                    .OrderByDescending(ctor => ctor.GetParameters().Length)
+                    .Select(ctor => new ReplacementConstructorBinding(ctor, ctor.GetParameters(), CreateReplacementActivator(ctor)))
+                    .ToList();
+            });
+        }
+
+        private static Func<object?[], IGameEvent> CreateReplacementActivator(ConstructorInfo constructor)
+        {
+            try
+            {
+                var args = Expression.Parameter(typeof(object[]), "args");
+                var parameters = constructor.GetParameters();
+                var argExpressions = parameters
+                    .Select((param, index) =>
+                        Expression.Convert(
+                            Expression.ArrayIndex(args, Expression.Constant(index)),
+                            param.ParameterType))
+                    .ToArray();
+
+                var newExpression = Expression.New(constructor, argExpressions);
+                var castResult = Expression.Convert(newExpression, typeof(IGameEvent));
+                return Expression.Lambda<Func<object?[], IGameEvent>>(castResult, args).Compile();
+            }
+            catch
+            {
+                return args => (IGameEvent)constructor.Invoke(args);
+            }
+        }
+
+        private static Type? ResolveReplacementEventType(EventType replacementEventType)
+        {
+            return ReplacementEventTypeCache.GetOrAdd(replacementEventType, eventType =>
+            {
+                var eventInterfaceType = typeof(IGameEvent);
+
+                static IEnumerable<Type> SafeGetTypes(Assembly assembly)
+                {
+                    try
+                    {
+                        return assembly.GetTypes();
+                    }
+                    catch (ReflectionTypeLoadException ex)
+                    {
+                        return ex.Types.Where(t => t != null)!;
+                    }
+                    catch
+                    {
+                        return Array.Empty<Type>();
+                    }
+                }
+
+                var candidates = AppDomain.CurrentDomain.GetAssemblies()
+                    .Where(a => !a.IsDynamic)
+                    .SelectMany(SafeGetTypes)
+                    .Where(t => t.IsClass && !t.IsAbstract && eventInterfaceType.IsAssignableFrom(t))
+                    .Select(t => (Type: t, Attr: t.GetCustomAttribute<GameEventMetadataAttribute>()))
+                    .Where(x => x.Attr != null && x.Attr.EventType == eventType)
+                    .ToList();
+
+                if (!candidates.Any())
+                {
+                    return null;
+                }
+
+                return candidates
+                    .OrderByDescending(x => GetVisibilityRank(x.Attr!.Visibility))
+                    .ThenBy(x => x.Type.Name, StringComparer.Ordinal)
+                    .Select(x => x.Type)
+                    .FirstOrDefault();
+            });
+        }
+
+        private static int GetVisibilityRank(EventMetadataVisibility visibility)
+        {
+            return visibility switch
+            {
+                EventMetadataVisibility.Visible => 2,
+                EventMetadataVisibility.System => 1,
+                EventMetadataVisibility.Hidden => 0,
+                _ => 0
+            };
+        }
+
+        private static bool TryCoerceValue(
+            GameContext context,
+            object? value,
+            Type targetType,
+            out object? coercedValue,
+            out string? errorMessage)
+        {
+            if (value != null)
+            {
+                var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+                if (underlyingType == typeof(CardInstance))
+                {
+                    if (value is Guid cardId)
+                    {
+                        coercedValue = context.CurrentGameState.FindCardInstance(cardId);
+                        if (coercedValue == null)
+                        {
+                            errorMessage = $"ReplaceEventEffect: card {cardId} not found.";
+                            return false;
+                        }
+
+                        errorMessage = null;
+                        return true;
+                    }
+
+                    if (value is string cardString && Guid.TryParse(cardString, out var parsedCardId))
+                    {
+                        coercedValue = context.CurrentGameState.FindCardInstance(parsedCardId);
+                        if (coercedValue == null)
+                        {
+                            errorMessage = $"ReplaceEventEffect: card {parsedCardId} not found.";
+                            return false;
+                        }
+
+                        errorMessage = null;
+                        return true;
+                    }
+                }
+
+                if (underlyingType == typeof(PlayerState))
+                {
+                    if (value is Guid playerId)
+                    {
+                        coercedValue = context.CurrentGameState.GetPlayerState(playerId);
+                        if (coercedValue == null)
+                        {
+                            errorMessage = $"ReplaceEventEffect: player {playerId} not found.";
+                            return false;
+                        }
+
+                        errorMessage = null;
+                        return true;
+                    }
+
+                    if (value is string playerString && Guid.TryParse(playerString, out var parsedPlayerId))
+                    {
+                        coercedValue = context.CurrentGameState.GetPlayerState(parsedPlayerId);
+                        if (coercedValue == null)
+                        {
+                            errorMessage = $"ReplaceEventEffect: player {parsedPlayerId} not found.";
+                            return false;
+                        }
+
+                        errorMessage = null;
+                        return true;
+                    }
+                }
+            }
+
+            return TryCoerceValue(value, targetType, out coercedValue, out errorMessage);
+        }
+
+        private sealed record ReplacementEventParameter(string PropertyName, string? DisplayName);
+        private sealed record ReplacementConstructorBinding(
+            ConstructorInfo Constructor,
+            ParameterInfo[] Parameters,
+            Func<object?[], IGameEvent> Activator);
+
+        private static bool TryCoerceValue(object? value, Type targetType, out object? coercedValue, out string? errorMessage)
+        {
+            errorMessage = null;
+            coercedValue = null;
+
+            if (value == null)
+            {
+                if (!IsNullableType(targetType))
+                {
+                    errorMessage = $"RewriteEventParamsEffect: parameter type '{targetType.Name}' does not accept null.";
+                    return false;
+                }
+                return true;
+            }
+
+            var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+            var coercer = ValueCoercerCache.GetOrAdd(underlyingType, BuildValueCoercer);
+            var result = coercer(value);
+            if (!result.Ok)
+            {
+                errorMessage = result.ErrorMessage ?? $"RewriteEventParamsEffect: failed to convert value to '{targetType.Name}'.";
+                return false;
+            }
+
+            coercedValue = result.Value;
+            return true;
+        }
+
+        private static bool IsNullableType(Type type)
+        {
+            if (!type.IsValueType)
+            {
+                return true;
+            }
+
+            return Nullable.GetUnderlyingType(type) != null;
+        }
+
+        private static Func<object?, (bool Ok, object? Value, string? ErrorMessage)> BuildValueCoercer(Type targetType)
+        {
+            if (targetType.IsEnum)
+            {
+                return value =>
+                {
+                    try
+                    {
+                        if (value is string enumString)
+                        {
+                            return (true, Enum.Parse(targetType, enumString, true), null);
+                        }
+
+                        return (true, Enum.ToObject(targetType, value!), null);
+                    }
+                    catch
+                    {
+                        return (false, null, $"RewriteEventParamsEffect: failed to convert value to '{targetType.Name}'.");
+                    }
+                };
+            }
+
+            if (targetType == typeof(Guid))
+            {
+                return value =>
+                {
+                    if (value is Guid guid)
+                    {
+                        return (true, guid, null);
+                    }
+
+                    if (value is string guidString && Guid.TryParse(guidString, out var parsedGuid))
+                    {
+                        return (true, parsedGuid, null);
+                    }
+
+                    return (false, null, $"RewriteEventParamsEffect: failed to convert value to '{targetType.Name}'.");
+                };
+            }
+
+            return value =>
+            {
+                try
+                {
+                    if (value == null)
+                    {
+                        return (true, null, null);
+                    }
+
+                    if (targetType.IsInstanceOfType(value))
+                    {
+                        return (true, value, null);
+                    }
+
+                    var converted = System.Convert.ChangeType(value, targetType);
+                    return (true, converted, null);
+                }
+                catch
+                {
+                    return (false, null, $"RewriteEventParamsEffect: failed to convert value to '{targetType.Name}'.");
+                }
+            };
         }
 
         private async Task<PausableTransactionResult> CommitTransactionAsync(GameContext gameContext, IEnumerable<IGameEvent> initialEvents)
@@ -331,7 +1032,6 @@ namespace ShadowverseBeyond.Server.Services
         private async Task<PausableTransactionResult> ProcessEventRecursivelyAsync(GameContext gameContext, IGameEvent gameEvent, List<IGameEvent> processedEvents)
         {
             _logger.LogDebug("Processing event: {EventType} ({EventId})", gameEvent.GetType().Name, gameEvent.EventId);
-            processedEvents.Add(gameEvent);
 
             // NOTE: Broadcasting is now deferred to the end of the CommitTransactionAsync method.
             // This method now only focuses on processing the domain logic.
@@ -347,10 +1047,17 @@ namespace ShadowverseBeyond.Server.Services
                 gameContext.BuffService.RefreshDerivedStateCache(gameContext, "turn_start");
             }
 
+            // 0. Before intercepts: allow rewrites/replacements before committing the event.
+            var (interceptResult, interceptedEvent) = await ApplyBeforeInterceptsAsync(gameContext, gameEvent, processedEvents);
+            if (!interceptResult.IsSuccess) return interceptResult;
+            gameEvent = interceptedEvent;
+
+            processedEvents.Add(gameEvent);
+
             // 1. 'Before' phase: Effects are executed immediately and their events are processed recursively.
             var (beforeResult, beforeEffects) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.Before);
             if (!beforeResult.IsSuccess) return beforeResult;
-            foreach (var effect in beforeEffects)
+            foreach (var effect in beforeEffects.Where(effect => !IsInterceptEffect(effect)))
             {
                 var result = await ProcessEffectAsync(effect, gameContext, processedEvents);
                 if (!result.IsSuccess) return result;
@@ -431,7 +1138,7 @@ namespace ShadowverseBeyond.Server.Services
 
                     if (!result.IsSuccess)
                     {
-                        _logger.LogError("Chained ability {AbilityTag} failed: {Error}", chainedAbility.AbilityTag, result.ErrorMessage);
+                        _logger.LogError("Chained ability {AbilityKeywords} failed: {Error}", chainedAbility.KeywordSummary, result.ErrorMessage);
                         continue;
                     }
 
@@ -454,6 +1161,12 @@ namespace ShadowverseBeyond.Server.Services
         {
             _logger.LogDebug("Processing effect: {EffectType}", effect.Type);
 
+            if (IsInterceptEffectType(effect.Type))
+            {
+                _logger.LogDebug("Skipping intercept effect {EffectType} outside of the Before intercept pipeline.", effect.Type);
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
             // --- BUG-025 FIX START ---
             // Create a new, precise context for this specific effect execution.
             // This ensures that DSLs and handlers use the context in which the effect was generated,
@@ -461,6 +1174,25 @@ namespace ShadowverseBeyond.Server.Services
             var sourceCard = effect.SourceCardId.HasValue
                 ? gameContext.CurrentGameState.FindCardInstance(effect.SourceCardId.Value)
                 : null;
+
+            if (!effect.ForceExecution && effect.sourceAbilityId.HasValue)
+            {
+                var ability = gameContext.AbilityManager.GetAbilityByRuntimeId(effect.sourceAbilityId.Value);
+                if (ability?.TriggerConfig?.RevalidateZoneBeforeExecution == true)
+                {
+                    var cardToCheck = sourceCard ?? ability.SourceCard;
+                    if (cardToCheck != null && !ability.TriggerConfig.IsValidZone(cardToCheck.CurrentZone))
+                    {
+                        _logger.LogDebug(
+                            "Skipping effect {EffectType} ({EffectId}) because source card {CardId} is now in zone {Zone}, which is outside ValidZones.",
+                            effect.Type,
+                            effect.Id,
+                            cardToCheck.InstanceId,
+                            cardToCheck.CurrentZone);
+                        return PausableTransactionResult.Success(new List<IGameEvent>());
+                    }
+                }
+            }
 
             IGameEvent? triggeringEvent = null;
             if (effect.TriggeredEventId != Guid.Empty)
@@ -502,9 +1234,35 @@ namespace ShadowverseBeyond.Server.Services
             var effectResult = _effectExecutor.ExecuteEffect(effect, effectContext); // Use the new context
             if (!effectResult.Success)
             {
-                var errorMessage = $"Effect execution failed for {effect.Type}.";
-                _logger.LogError(errorMessage);
-                return PausableTransactionResult.Failure(errorMessage);
+                switch (effect.EffectConfig.OnFailure)
+                {
+                    case FailureHandling.CompleteWithFailure:
+                        _logger.LogWarning("Effect {EffectType} failed but will continue due to OnFailure=CompleteWithFailure.", effect.Type);
+
+                        var completionEvent = effectResult.GeneratedEvents?.OfType<EffectCompletedEvent>().FirstOrDefault();
+                        effectResult.GeneratedEvents = completionEvent != null
+                            ? new List<IGameEvent> { completionEvent }
+                            : new List<IGameEvent>();
+
+                        var chainedOnFailureResult = await ProcessChainedAbilitiesAsync(effect, effectContext, effectResult, processedEvents);
+                        if (!chainedOnFailureResult.IsSuccess) return chainedOnFailureResult;
+
+                        foreach (var newEvent in effectResult.GeneratedEvents)
+                        {
+                            var result = await ProcessEventRecursivelyAsync(effectContext, newEvent, processedEvents);
+                            if (!result.IsSuccess) return result;
+                        }
+
+                        return PausableTransactionResult.Success(new List<IGameEvent>());
+                    case FailureHandling.SkipEffect:
+                        _logger.LogWarning("Effect {EffectType} failed and was skipped due to OnFailure=SkipEffect.", effect.Type);
+                        return PausableTransactionResult.Success(new List<IGameEvent>());
+                    case FailureHandling.AbortAbility:
+                    default:
+                        var errorMessage = $"Effect execution failed for {effect.Type}.";
+                        _logger.LogError(errorMessage);
+                        return PausableTransactionResult.Failure(errorMessage);
+                }
             }
 
             // Pass the new context to chained abilities as well

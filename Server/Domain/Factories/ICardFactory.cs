@@ -7,6 +7,6 @@ namespace ShadowverseBeyond.Server.Domain.Factories
     public interface ICardFactory
     {
         CardInstance CreateAndRegisterNewCard(GameState gameState, int cardDefinitionId, Guid ownerPlayerId, CardZone initialZone);
-        CardInstance CreateAndRegisterCardCopy(GameState gameState, CardInstance originalCardToCopy, Guid newOwnerPlayerId, CardZone initialZone, bool exactCopy);
+        CardInstance CreateAndRegisterCardCopy(GameState gameState, CardInstance originalCardToCopy, Guid newOwnerPlayerId, CardZone initialZone, bool exactCopy, CardInstance? copyInstance = null);
     }
 }

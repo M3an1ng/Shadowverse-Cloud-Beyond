@@ -10,13 +10,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when a player's Super Evolution Points (SEP) change.
     /// </summary>
-    [GameEventMetadata("SEP Update", "Triggered when a player's current SEP value changes.", EventType.SepUpdated)]
+    [GameEventMetadata("SEP变化", "当玩家的当前SEP值发生变化时触发的事件。", EventType.SepUpdated)]
     public class SepUpdateEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("Current SEP", "Updated current SEP value.")]
+        [GameEventParameter("当前SEP值", "更新后的当前SEP值。")]
         public int CurrentSep { get; }
 
-        [GameEventParameter("Target Player", "Player whose SEP changed.")]
+        [GameEventParameter("目标玩家", "SEP值被更新的玩家。")]
         public PlayerState? TargetPlayer => Source?.Player;
 
         public SepUpdateEvent(PlayerState player, int currentSep)

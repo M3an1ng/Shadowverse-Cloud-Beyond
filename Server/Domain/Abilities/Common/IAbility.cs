@@ -1,6 +1,7 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
@@ -34,9 +35,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         string Name { get; }
 
         /// <summary>
-        /// Gets a tag or category for the ability, used for grouping or specific interactions.
+        /// Gets the configured keywords for this ability.
         /// </summary>
-        EffectKeyword AbilityTag { get; }
+        IReadOnlyList<AbilityKeywordConfig> AbilityKeywords { get; }
+
+        /// <summary>
+        /// Gets the primary keyword for display or legacy fallbacks.
+        /// </summary>
+        EffectKeyword PrimaryKeyword { get; }
+
+        /// <summary>
+        /// Gets a human-readable keyword summary for logging or UI fallback.
+        /// </summary>
+        string KeywordSummary { get; }
+
+        /// <summary>
+        /// Checks whether this ability includes a specific keyword.
+        /// </summary>
+        bool HasKeyword(EffectKeyword keyword);
+
+        /// <summary>
+        /// Gets the numeric value attached to a keyword, if any.
+        /// </summary>
+        int? GetKeywordValue(EffectKeyword keyword);
 
         /// <summary>
         /// Gets the type of the ability (e.g., Spell, FollowerEffect, System).

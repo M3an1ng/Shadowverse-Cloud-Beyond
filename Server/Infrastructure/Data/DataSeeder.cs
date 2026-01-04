@@ -104,9 +104,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                         CardSet = dto.CardSet,
                         Attack = dto.Attack,
                         Health = dto.Health,
+                        Countdown = dto.Countdown,
                         Description = dto.Description ?? string.Empty,
                         Keywords = dto.Keywords,
-                        EvolveId = dto.EvolveId,
                         Tribe = dto.Tribe,
                         Class = Enum.TryParse<CardClass>(dto.Class, true, out var cardClass) ? cardClass : CardClass.Neutral,
                         AbilityIds = new List<long>()

@@ -6,7 +6,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// 添加Buff效果参数
     /// </summary>
-    [EffectMetadata("添加Buff", "为目标添加增益效果。")]
+    [EffectMetadata("添加Buff", "为目标添加增益效果。使用卡牌目标。")]
     public class AddBuffEffectParams : BaseEffectParams
     {
         /// <summary>
@@ -20,12 +20,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// </summary>
         [ParameterMetadata("持续时间", UiControlType.NumberStepper, DefaultValue = -1, Min = -1, Description = "Buff的持续回合数。-1表示永久效果。")]
         public int Duration { get; set; } = -1;
-
-        /// <summary>
-        /// Buff强度或层数
-        /// </summary>
-        [ParameterMetadata("强度/层数", UiControlType.NumberStepper, DefaultValue = 1, Min = 1, Description = "Buff的强度或叠加层数。")]
-        public int Intensity { get; set; } = 1;
 
         /// <summary>
         /// 是否可以叠加

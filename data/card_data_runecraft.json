@@ -1,0 +1,827 @@
+[
+  {
+    "id": 1431301,
+    "name": "辉彩元素使",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "辉彩元素使-进化土之印",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "AddEarthSigil",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 2
+              },
+              "tokenDefinitionId": {
+                "value": 1030401
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "辉彩元素使-进化伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "辉彩元素使-超进化土之秘术",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "EarthRite",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 2
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "辉彩元素使-超进化土之秘术-召唤",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "owner"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "Summon",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "cardSourceMode": {
+                        "value": "Definition"
+                      },
+                      "cardDefinitionId": {
+                        "value": 1030404
+                      },
+                      "summonCount": {
+                        "value": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1431302,
+    "name": "魔焰毁灭者",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 10,
+    "attack": 8,
+    "health": 6,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "魔焰毁灭者-魔力增幅减费",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SpellBoost"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SpellBoost"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetStatus",
+            "parameters": {
+              "costModifier": {
+                "value": -1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1431303,
+    "name": "流水药剂师",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "流水药剂师-战吼选择",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Choose",
+            "chainedAbilities": [
+              {
+                "name": "流水药剂师-土之印",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "owner"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "AddEarthSigil",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "amount": {
+                        "value": 2
+                      },
+                      "tokenDefinitionId": {
+                        "value": 1030401
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "流水药剂师-土之秘术",
+                "type": "Triggered",
+                "abilityKeywords": [
+                  {
+                    "keyword": "EarthRitual"
+                  }
+                ],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "owner"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "EarthRite",
+                    "onFailure": "SkipEffect",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "amount": {
+                        "value": 2
+                      }
+                    },
+                    "chainedAbilities": [
+                      {
+                        "name": "流水药剂师-土之秘术-回复",
+                        "type": "Triggered",
+                        "abilityKeywords": [],
+                        "trigger": {
+                          "eventTypes": [
+                            "EffectCompleted"
+                          ],
+                          "relationType": "Any"
+                        },
+                        "conditions": [],
+                        "targets": [
+                          {
+                            "query": {
+                              "sourcePoolExpression": "owner.leader"
+                            }
+                          }
+                        ],
+                        "effects": [
+                          {
+                            "type": "Heal",
+                            "parameters": {
+                              "healAmount": {
+                                "value": 4
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1431401,
+    "name": "魔女的炼金炉",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "EarthSigil"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "魔女的炼金炉-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "魔女的炼金炉-启动土之印",
+        "type": "Activated",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "AddEarthSigil",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 1
+              },
+              "tokenDefinitionId": {
+                "value": 1030401
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1431402,
+    "name": "智慧光辉",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "智慧光辉-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1431403,
+    "name": "疾风爆裂",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "疾风爆裂-魔力增幅",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SpellBoost"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SpellBoost"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": []
+      },
+      {
+        "name": "疾风爆裂-伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "$type": "FormulaValueConfig",
+                "formula": "context.sourceCard.Spellboost"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1431404,
+    "name": "尘土化形",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "尘土化形-土之秘术",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EarthRitual"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "count(owner.field, \"Earthsigil\") >= 1"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "EarthRite",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 1
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "尘土化形-土之秘术-召唤",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "owner"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "Summon",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "cardSourceMode": {
+                        "value": "Definition"
+                      },
+                      "cardDefinitionId": {
+                        "value": 1030404
+                      },
+                      "summonCount": {
+                        "value": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "尘土化形-基础召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "count(owner.field, \"Earthsigil\") < 1"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1030403
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1030401,
+    "name": "大地之魔片",
+    "card_set": "衍生物",
+    "class": "Runecraft",
+    "rarity": "Special",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "EarthSigil"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "大地之魔片-启动土之印",
+        "type": "Activated",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "AddEarthSigil",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 1
+              },
+              "tokenDefinitionId": {
+                "value": 1030401
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": []
+  },
+  {
+    "id": 1030403,
+    "name": "泥尘巨像",
+    "card_set": "衍生物",
+    "class": "Runecraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": [
+      "巨像"
+    ]
+  },
+  {
+    "id": 1030404,
+    "name": "守护者巨像",
+    "card_set": "衍生物",
+    "class": "Runecraft",
+    "rarity": "Special",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 3,
+    "health": 3,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": false,
+    "tribe": [
+      "巨像"
+    ]
+  }
+]

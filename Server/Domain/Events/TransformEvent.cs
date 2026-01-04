@@ -11,7 +11,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// 变形事件（唯一）：既可作为通知型事件（变形完成后广播），也可作为可提交事件（驱动实际变形）。
     /// 语义：变形是效果的结果，不是玩家直接动作。
     /// </summary>
-    [GameEventMetadata("卡牌变形", "当一张卡牌变形为另一张卡牌时触发的事件。", EventType.Transform)]
+    [GameEventMetadata("变形", "当一张卡牌变形为另一张卡牌时触发的事件。", EventType.Transform)]
     public class TransformEvent : GameEventBase, ICommittableEvent
     {
         /// <summary>

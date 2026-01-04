@@ -173,6 +173,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task ActStateUpdated(ActStateUpdatedEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client that a player's PP+1 uses availability has been updated.
+        /// </summary>
+        Task PpBoostStateUpdated(PpBoostStateUpdatedEventDto eventDto);
+
+        /// <summary>
         /// Notifies the client that the game has ended.
         /// </summary>
         Task GameOver(GameOverEventDto eventDto);
@@ -196,6 +201,6 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// <summary>
         /// Notifies clients that Fusion materials have been consumed (UI animation/log).
         /// </summary>
-        Task CardsFused(CardsFusedEventDto eventDto);
+        Task Fusion(FusionEventDto eventDto);
     }
 }

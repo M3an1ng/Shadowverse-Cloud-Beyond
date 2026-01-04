@@ -30,4 +30,11 @@ Server/Data/shadowverse.db-wal
 
 # Ignore temporary reference files
 info/reference1/
-node_modules
+
+# Node/build artifacts
+node_modules/
+dist/
+.vite/
+test-results/
+playwright-report/
+coverage/

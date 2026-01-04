@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// System lifecycle event: start of a player's turn.
     /// Implements ICommittableEvent; Commit executes turn start operations.
     /// </summary>
-    [GameEventMetadata("回合开始时", "当一个玩家的回合开始时触发。", EventType.TurnStart)]
+    [GameEventMetadata("回合开始", "当一个玩家的回合开始时触发。", EventType.TurnStart)]
     public class TurnStartEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("回合开始的玩家", "当前回合开始的玩家。")]

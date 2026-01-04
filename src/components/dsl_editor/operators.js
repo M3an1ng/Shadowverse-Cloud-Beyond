@@ -47,6 +47,8 @@ export function getOptionsForType(ctx, typeName) {
 
   // 集合类型：提供集合函数和查询操作
   else if (ctx.isCollectionType(typeName)) {
+    options.push(...getCollectionOperators());
+
     const collectionFunctions = ctx.getCollectionFunctions() || [];
     options.push(...collectionFunctions);
 
@@ -153,4 +155,12 @@ export function getTextOperators() {
     { type: "operator", value: "!=", label: "不等于 (!=)", description: "文本不等比较", priority: 95 }
   ].sort((a, b) => b.priority - a.priority)
    .map(op => ({ type: op.type, value: op.value, label: op.label, description: op.description }));
+}
+
+function getCollectionOperators() {
+  return [
+    { type: "operator", value: "|", label: "并集 (|)", description: "合并两个集合并去重" },
+    { type: "operator", value: "&", label: "交集 (&)", description: "取两个集合的交集" },
+    { type: "operator", value: "-", label: "差集 (-)", description: "从左侧集合中排除右侧集合" }
+  ];
 }

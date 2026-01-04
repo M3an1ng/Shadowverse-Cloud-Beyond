@@ -68,7 +68,19 @@ namespace ShadowverseBeyond.Server.Services
 
                     var gameStateDto = _mapper.Map<GameStateDto>(gameStateEntity);
 
-                    // 1. Decide to play a card
+                    // 1. Decide to use PP+1
+                    var usePpBoost = await _aiService.DecidePpBoostAsync(gameStateDto, aiPlayerId);
+                    if (usePpBoost)
+                    {
+                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to USE PP+1.", gameId, aiPlayerId);
+                        var wrapper = new PlayerActionWrapper { ActionType = "PerformPpBoost", PlayerId = aiPlayerId, ActionData = new { } };
+                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
+                        actionTakenInLoop = true;
+                        await Task.Delay(1000);
+                        continue;
+                    }
+
+                    // 2. Decide to play a card
                     var playCardAction = await _aiService.DecidePlayCardAsync(gameStateDto, aiPlayerId);
                     if (playCardAction != null)
                     {
@@ -80,7 +92,7 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
-                    // 2. Decide to evolve a unit
+                    // 3. Decide to evolve a unit
                     var evolveAction = await _aiService.DecideEvolveAsync(gameStateDto, aiPlayerId);
                     if (evolveAction != null)
                     {
@@ -92,7 +104,7 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
-                    // 3. Decide to perform the next single attack
+                    // 4. Decide to perform the next single attack
                     var nextAttackAction = await _aiService.DecideNextAttackAsync(gameStateDto, aiPlayerId);
                     if (nextAttackAction != null)
                     {

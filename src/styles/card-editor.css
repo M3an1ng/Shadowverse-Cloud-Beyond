@@ -662,13 +662,239 @@
 /* --- Preview Area --- */
 .card-preview-container {
     flex: 1;
+    align-items: center;
+    justify-content: center;
+    /* background: radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0%, transparent 70%); */
+    /* border: 1px dashed var(--border-tech); */
+    margin-bottom: var(--space-md);
+    margin-right: var(--space-md);
+
+    /* padding: var(--space-md); */
+    /* overflow: hidden; */
+    position: relative;
+}
+
+.preview-placeholder {
+    width: 100%;
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0%, transparent 70%);
+    background: rgba(255, 255, 255, 0.02);
     border: 1px dashed var(--border-tech);
-    margin-bottom: var(--space-md);
+    border-radius: 4px;
 }
+
+/* --- Data Slate (Holographic Card) --- */
+.preview-slate {
+    width: 100%;
+    max-width: 320px;
+    height: auto; /* Allow growth based on content */
+    min-height: 0; /* Remove forced minimum height */
+    background: rgba(10, 14, 20, 0.85);
+    border: 1px solid var(--accent-cyan-dim);
+    border-radius: 4px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-md);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(96, 165, 250, 0.05);
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+    transition: all 0.3s ease;
+    animation: slate-entry 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes slate-entry {
+    0% { transform: scale(0.95) translateY(10px); opacity: 0; }
+    100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+/* Holographic Effects */
+.holo-scanline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, transparent 50%, rgba(96, 165, 250, 0.03) 50%);
+    background-size: 100% 4px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.holo-grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        linear-gradient(rgba(96, 165, 250, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(96, 165, 250, 0.03) 1px, transparent 1px);
+    background-size: 20px 20px;
+    pointer-events: none;
+    z-index: 5;
+}
+
+/* Slate Header */
+.slate-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--space-md);
+    border-bottom: 1px solid var(--border-tech);
+    padding-bottom: var(--space-sm);
+    position: relative;
+    z-index: 20;
+}
+
+.slate-identity {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.identity-top {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.slate-cost-badge-embedded {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--accent-cyan);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    box-shadow: 0 0 8px var(--accent-cyan-dim);
+    flex-shrink: 0;
+}
+
+.slate-cost-badge-embedded .cost-value {
+    font-family: var(--font-ui);
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--accent-cyan);
+    line-height: 1;
+    text-shadow: 0 0 5px var(--accent-cyan-dim);
+}
+
+.slate-name {
+    font-family: var(--font-header);
+    font-size: 1.4rem;
+    color: var(--text-primary);
+    margin: 0;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+    line-height: 1.2;
+}
+
+.slate-meta {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    padding-left: 0;
+    white-space: nowrap;
+}
+
+.meta-tag {
+    font-family: var(--font-code);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    border: 1px solid transparent;
+}
+
+.meta-tag.rarity-tag { color: var(--accent-gold); border-color: var(--accent-gold-dim); }
+.meta-tag.class-tag { color: var(--accent-cyan); }
+.meta-tag.type-tag { color: var(--text-dim); }
+
+/* Slate Body */
+.slate-body {
+    /* Removed flex: 1 to prevent forced expansion */
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 20;
+    overflow: visible; /* Allow content to dictate size */
+}
+
+/* Art Background Layer */
+.slate-art-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    background-color: rgba(0, 0, 0, 0.3); /* Fallback/Overlay */
+    /* Placeholder gradient until real art is loaded */
+    background-image: radial-gradient(circle at top right, rgba(96, 165, 250, 0.1), transparent 60%);
+    pointer-events: none;
+}
+
+.slate-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px; /* Tighter gap */
+    padding-right: 0;
+    padding-top: 4px;
+}
+
+.slate-description {
+    font-family: var(--font-ui);
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    text-align: left;
+    overflow-y: visible;
+    padding-right: 4px;
+    /* Removed flex: 1 to allow auto-height behavior */
+    min-height: 1.4em; /* Ensure at least one line height */
+}
+
+.text-dim {
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+/* Header Stats (Embedded in Header) */
+.header-stats {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    position: absolute;
+    bottom: 8px;
+    right: 0;
+}
+
+.stat-mini {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.stat-mini .stat-icon {
+    font-size: 0.8rem;
+    opacity: 0.8;
+}
+
+.stat-mini.attack { color: var(--accent-cyan); text-shadow: 0 0 8px rgba(96, 165, 250, 0.4); }
+.stat-mini.health { color: var(--accent-red); text-shadow: 0 0 8px rgba(255, 51, 51, 0.4); }
+.stat-mini.countdown { color: var(--accent-gold); text-shadow: 0 0 8px var(--accent-gold-dim); }
 
 .tech-code-block {
     background: rgba(0, 0, 0, 0.5);
@@ -677,6 +903,13 @@
     font-family: var(--font-code);
     font-size: 0.7rem;
     color: var(--text-secondary);
+    overflow-x: auto; /* Allow horizontal scrolling for long lines */
+}
+
+.debug-json {
+    margin: 0;
+    white-space: pre-wrap; /* Wrap long lines */
+    word-break: break-all;
 }
 
 /* --- Modals --- */

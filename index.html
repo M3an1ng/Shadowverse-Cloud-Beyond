@@ -22,6 +22,7 @@
     <link rel="stylesheet" href="src/styles/ability-editor.css">
     <link rel="stylesheet" href="src/styles/card-editor.css">
     <link rel="stylesheet" href="src/styles/deck-builder.css">
+    <link rel="stylesheet" href="src/styles/DslEditor.css">
     
     <!-- defer 确保在 HTML 解析完成后执行脚本 -->
     <!-- type="module" 启用 ES Module 功能 -->
@@ -235,6 +236,11 @@
                 </div>
             </div>
             <div id="game-container">
+                <div id="battle-card-preview" class="card-preview-container battle-card-preview">
+                    <div class="preview-placeholder">
+                        <p class="tech-text-dim">NO CARD SELECTED</p>
+                    </div>
+                </div>
                 <!-- 对手信息区 (Top Right) -->
                 <div id="player2-info" class="player-info opponent-info">
                     <div class="player-stats" id="player2-stats">
@@ -371,6 +377,13 @@
                 <!-- Action Buttons -->
                 <button id="confirm-mulligan-button" class="action-button" style="display: none;">CONFIRM MULLIGAN</button>
                 <button id="spectator-toggle-view" class="action-button" style="display: none;">切换视角</button>
+                <div id="pp-boost-action" class="pp-boost-action">
+                    <div class="pp-boost-action-label">PP+1</div>
+                    <button class="pp-boost-button" id="player1-pp-boost-button" type="button">
+                        <span class="pp-boost-action-text">BOOST</span>
+                        <span class="pp-boost-count" id="player1-pp-boost-count">0</span>
+                    </button>
+                </div>
                 <button id="end-turn-button" class="action-button">END TURN →</button>
             </div>
         </div>

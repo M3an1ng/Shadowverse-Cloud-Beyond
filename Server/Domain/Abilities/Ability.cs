@@ -17,6 +17,7 @@ using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.Json;
 using ShadowverseBeyond.Server.Domain.Factories;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -59,9 +60,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public string Description => Config.Description;
 
         /// <summary>
-        /// 能力标签，用于标识能力类型（如"Fanfare", "LastWords", "Rush"等）
+        /// 能力关键字列表，用于标识能力类型（如"Fanfare", "LastWords", "Rush"等）
         /// </summary>
-        public EffectKeyword AbilityTag => Config.AbilityTag;
+        public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => Config.AbilityKeywords;
+
+        /// <summary>
+        /// 能力的主关键字（用于兼容展示）
+        /// </summary>
+        public EffectKeyword PrimaryKeyword => Config.PrimaryKeyword;
+
+        /// <summary>
+        /// Ability keyword summary for logging or display.
+        /// </summary>
+        public string KeywordSummary => AbilityKeywords.Count == 0
+            ? EffectKeyword.None.ToString()
+            : string.Join(", ", AbilityKeywords.Select(k => k.ToString()));
 
         /// <summary>
         /// 能力类型
@@ -131,7 +144,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private sealed class ChooseDecisionState
         {
             public Dictionary<Guid, AbilityConfig> OptionsById { get; } = new();
-            public Guid? SelectedOptionId { get; set; }
+            public List<Guid>? SelectedOptionIds { get; set; }
         }
 
         /// <summary>
@@ -167,7 +180,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 .ToList();
 
             Targets = config.Targets
-                .Select(kvp => _targetFactory.Create(kvp.Key, kvp.Value))
+                .Select((kvp, index) => new { kvp, index })
+                .OrderBy(item => item.kvp.Value.Order ?? int.MaxValue)
+                .ThenBy(item => item.index)
+                .Select(item => _targetFactory.Create(item.kvp.Key, item.kvp.Value))
                 .ToList();
         }
 
@@ -185,6 +201,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return Task.FromResult(false); // 被沉默的卡牌能力不能触发
             }
             return Task.FromResult(Trigger.CanTrigger(gameEvent, SourceCard));
+        }
+
+        public bool HasKeyword(EffectKeyword keyword)
+        {
+            return Config.HasKeyword(keyword);
+        }
+
+        public int? GetKeywordValue(EffectKeyword keyword)
+        {
+            return Config.GetKeywordValue(keyword);
         }
 
         /// <summary>
@@ -234,8 +260,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var resultingEffects = new List<Effect>();
 
             // 根据配置，为每个EffectConfig创建一个独立的Effect请求
-            var sortedEffectConfigs = Config.Effects
-                .OrderBy(e => e.ExecutionOrder)
+            var enabledEffectConfigs = Config.Effects
+                .Where(e => e.IsEnabled)
                 .ToList();
 
             // 从上下文中获取IAbilityFactory，用于创建连锁能力
@@ -243,12 +269,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var pendingActionService = context.ServiceProvider.GetRequiredService<IPendingActionService>();
             var triggeringEventId = context.TriggeringEvent?.EventId ?? Guid.Empty;
 
-            for (var effectIndex = 0; effectIndex < sortedEffectConfigs.Count; effectIndex++)
+            for (var effectIndex = 0; effectIndex < enabledEffectConfigs.Count; effectIndex++)
             {
-                var effectConfig = sortedEffectConfigs[effectIndex];
+                var effectConfig = enabledEffectConfigs[effectIndex];
                 List<TargetInfo> effectSpecificTargets;
 
-                if (string.IsNullOrEmpty(effectConfig.TargetSelector))
+                if (effectConfig.TargetSelector == null || effectConfig.TargetSelector.Count == 0)
                 {
                     // 如果效果没有指定自己的目标选择器，则默认使用能力的所有已解析目标。
                     effectSpecificTargets = targetResult.ResolvedTargets.Values.SelectMany(list => list).ToList();
@@ -341,9 +367,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 _chooseDecisions[key] = state;
             }
 
-            if (state.SelectedOptionId == null)
+            if (state.SelectedOptionIds == null)
             {
                 var optionIds = state.OptionsById.Keys.ToList();
+                if (optionIds.Count == 0)
+                {
+                    throw new GameLogicException("Choose effect has no available options.");
+                }
+
+                var valueResolver = context.ServiceProvider.GetRequiredService<IValueSourceResolver>();
+                var selectionCount = ResolveSelectionCount(effectConfig, "selectionCount", 1, context, valueResolver);
+                selectionCount = Math.Max(1, selectionCount);
+
+                if (this.SourceCard == null)
+                {
+                    throw new GameLogicException("Choose effect requires a source card to execute branch abilities.");
+                }
+
+                if (selectionCount >= optionIds.Count)
+                {
+                    state.SelectedOptionIds = optionIds;
+                    return abilityFactory.CreateAbilities(this.SourceCard, state.SelectedOptionIds.Select(id => state.OptionsById[id]), this.SourceBuffId);
+                }
+
                 var optionCards = state.OptionsById.Select(kvp =>
                 {
                     var optionId = kvp.Key;
@@ -353,7 +399,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     {
                         InstanceId = optionId,
                         CardId = 0,
-                        Name = string.IsNullOrWhiteSpace(branch.Name) ? branch.AbilityTag.ToString() : branch.Name,
+                        Name = string.IsNullOrWhiteSpace(branch.Name) ? branch.PrimaryKeyword.ToString() : branch.Name,
                         Cost = 0,
                         Type = CardType.Spell,
                         Rarity = CardRarity.Special,
@@ -383,6 +429,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     };
                 }).ToList();
 
+                var promptMessage = $"请选择{selectionCount}个选项";
+
                 var request = new PlayerChoiceRequest
                 {
                     PendingChoiceId = Guid.NewGuid(),
@@ -390,11 +438,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     TargetKey = $"choose_{effectIndex}",
                     SourceAbilityRuntimeId = this.RuntimeId,
                     RequestingPlayerId = context.RequestingPlayerId,
-                    Message = "请选择一个选项",
+                    Message = promptMessage,
                     SelectableTargetIds = optionIds,
                     SelectableCardInstances = optionCards,
-                    MinSelectionCount = 1,
-                    MaxSelectionCount = 1,
+                    MinSelectionCount = selectionCount,
+                    MaxSelectionCount = selectionCount,
                     IsCancellable = context.IsCancellable
                 };
 
@@ -404,22 +452,88 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     throw new GameLogicException("Player cancelled Choose selection.");
                 }
 
-                var chosen = result.ChosenTargetIds.FirstOrDefault();
-                if (chosen == Guid.Empty || !state.OptionsById.ContainsKey(chosen))
+                var chosen = result.ChosenTargetIds
+                    .Where(id => id != Guid.Empty)
+                    .Distinct()
+                    .ToList();
+                if (chosen.Count == 0 || chosen.Any(id => !state.OptionsById.ContainsKey(id)))
                 {
                     throw new GameLogicException("Invalid Choose selection result.");
                 }
 
-                state.SelectedOptionId = chosen;
+                state.SelectedOptionIds = chosen;
             }
 
-            var selectedConfig = state.OptionsById[state.SelectedOptionId.Value];
+            var selectedConfigs = state.SelectedOptionIds
+                .Select(id => state.OptionsById[id])
+                .ToList();
             if (this.SourceCard == null)
             {
                 throw new GameLogicException("Choose effect requires a source card to execute branch abilities.");
             }
+            return abilityFactory.CreateAbilities(this.SourceCard, selectedConfigs, this.SourceBuffId);
+        }
 
-            return abilityFactory.CreateAbilities(this.SourceCard, new[] { selectedConfig }, this.SourceBuffId);
+        private static int ResolveSelectionCount(
+            EffectConfig effectConfig,
+            string key,
+            int fallback,
+            GameContext context,
+            IValueSourceResolver resolver)
+        {
+            if (effectConfig.Parameters == null || !effectConfig.Parameters.TryGetValue(key, out var valueConfig))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                var resolved = valueConfig.Resolve(context, resolver);
+                return CoerceToInt(resolved, fallback);
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        private static int CoerceToInt(object? value, int fallback)
+        {
+            switch (value)
+            {
+                case null:
+                    return fallback;
+                case int i:
+                    return i;
+                case long l:
+                    return (int)l;
+                case short s:
+                    return s;
+                case byte b:
+                    return b;
+                case double d:
+                    return (int)d;
+                case float f:
+                    return (int)f;
+                case decimal m:
+                    return (int)m;
+                case bool b:
+                    return b ? 1 : 0;
+                case string s when int.TryParse(s, out var parsed):
+                    return parsed;
+                case JsonElement jsonElement:
+                    if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var number))
+                    {
+                        return number;
+                    }
+                    if (jsonElement.ValueKind == JsonValueKind.String && int.TryParse(jsonElement.GetString(), out var strValue))
+                    {
+                        return strValue;
+                    }
+                    return fallback;
+                default:
+                    return fallback;
+            }
         }
 
         /// <summary>

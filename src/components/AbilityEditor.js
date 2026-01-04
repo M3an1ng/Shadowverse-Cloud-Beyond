@@ -34,7 +34,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         this.steps = [
             { id: 'basic', label: '基础信息', description: '定义名称与类型' },
             { id: 'trigger', label: '触发时机', description: '何时发动能力' },
-            { id: 'targets', label: '目标选择', description: '对谁生效' },
+            { id: 'targets', label: '目标选择', description: '选择卡牌目标' },
             { id: 'conditions', label: '发动条件', description: '额外的限制' },
             { id: 'effects', label: '效果配置', description: '具体产生的影响' }
         ];
@@ -76,7 +76,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             id: ability.id || '',
             name: ability.name || '',
             description: ability.description || '',
-            abilityTag: ability.abilityTag || '',
+            abilityKeywords: this.normalizeAbilityKeywords(ability),
             abilityType: ability.abilityType || 1,
             priority: ability.priority || 0,
             isActive: ability.isActive !== false,
@@ -84,12 +84,56 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 eventTypes: [],
                 relationType: '',
                 timing: 'On',
-                validZones: []
+                validZones: [],
+                revalidateZoneBeforeExecution: false
             },
             conditions: ability.conditions || [],
             targets: ability.targets || [],
-            effects: ability.effects || []
+            effects: (ability.effects && ability.effects.length > 0) ? ability.effects : [{ type: '', parameters: {} }]
         };
+    }
+
+    normalizeAbilityKeywords(ability) {
+        const rawKeywords = ability?.abilityKeywords ?? [];
+        const normalized = [];
+
+        const addKeyword = (keyword, value) => {
+            if (!keyword || typeof keyword !== 'string') return;
+            const existing = normalized.find(k => k.keyword.toLowerCase() === keyword.toLowerCase());
+            if (existing) {
+                if (value !== null && value !== undefined) {
+                    existing.value = value;
+                }
+                return;
+            }
+            normalized.push({ keyword, value: value ?? null });
+        };
+
+        if (Array.isArray(rawKeywords)) {
+            rawKeywords.forEach(entry => {
+                if (!entry) return;
+                if (typeof entry === 'string') {
+                    addKeyword(entry);
+                    return;
+                }
+
+                if (typeof entry === 'object') {
+                    const keyword = entry.keyword || entry.tag || entry.Keyword || entry.Tag;
+                    const value = entry.value ?? entry.amount ?? entry.cost ?? entry.Value ?? null;
+                    addKeyword(keyword, value);
+                }
+            });
+        } else if (typeof rawKeywords === 'string') {
+            addKeyword(rawKeywords);
+        }
+
+        return normalized;
+    }
+
+    isCostKeyword(keyword) {
+        if (!keyword || typeof keyword !== 'string') return false;
+        const normalized = keyword.toLowerCase();
+        return ['enhance', 'act', 'necromance', 'sacrifice'].includes(normalized);
     }
 
     /**
@@ -204,7 +248,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     contentArea,
                     this.ability.effects,
                     (effects) => this.updateAbility({ effects: effects }),
-                    { trigger: this.ability.trigger }
+                    { trigger: this.ability.trigger, targets: this.ability.targets }
                 );
                 break;
         }
@@ -319,10 +363,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
 
         switch (currentStepId) {
             case 'basic':
-                if (!this.ability.name || this.ability.name.trim() === '') {
-                    errors.push('能力名称不能为空');
-                }
-                // 能力标签不再必填
+                // 能力名称不再必填，如果为空会自动生成默认名称
                 break;
             case 'trigger':
                 errors.push(...this.triggerEditor.validateConfig());
@@ -365,6 +406,9 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const pushWarn = (message) => issues.warns.push(message);
 
         (this.ability.targets || []).forEach((target, index) => {
+            if (target?.isEnabled === false) {
+                return;
+            }
             const sourceExpr = target?.query?.sourcePoolExpression || '';
             if (sourceExpr.trim()) {
                 const res = validateDslExpression(this.metadata, sourceExpr, { expectedType: 'List<CardInstance>', allowEmpty: false });
@@ -397,6 +441,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
 
         const effects = this.ability.effects || [];
         effects.forEach((effect, index) => {
+            if (effect?.isEnabled === false) return;
             if (!effect?.type) return;
 
             const effectMeta = (this.metadata?.effects || []).find(e => e.effectTypeName === effect.type);
@@ -429,16 +474,15 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const pushError = (message) => issues.errors.push({ severity: 'error', message });
         const pushWarn = (message) => issues.warns.push({ severity: 'warn', message });
 
-        if (!this.ability.name || this.ability.name.trim() === '') {
-            pushError('能力名称不能为空');
-        }
-
         // Trigger: required
         for (const msg of this.triggerEditor.validateConfig()) {
             pushError(msg);
         }
 
         (this.ability.effects || []).forEach((effect, index) => {
+            if (effect?.isEnabled === false) {
+                return;
+            }
             if (!effect?.type) {
                 pushError(`效果 #${index + 1}: 必须选择效果类型`);
             }
@@ -478,64 +522,100 @@ export class AbilityEditor extends MetadataDrivenComponent {
         formGrid.className = 'form-grid-layout';
 
         // 1. 能力名称 (全宽)
+        const defaultName = `Ability_${new Date().getTime().toString().slice(-6)}`;
         const nameInput = this.createTextInput(
             this.ability.name,
             (value) => this.updateAbility({ name: value }),
-            { placeholder: '例如：火球术、神圣治愈...' }
+            { placeholder: `${defaultName}` }
         );
         nameInput.className = 'form-input large-input';
         const nameLabel = document.createElement('span');
-        nameLabel.innerHTML = '能力名称 <span class="required-mark">*</span>';
-        const nameGroup = this.createFormGroup(nameLabel, nameInput, '给能力起一个响亮的名字');
+        nameLabel.innerHTML = '能力名称';
+        const nameGroup = this.createFormGroup(nameLabel, nameInput, '给能力起一个响亮的名字，留空将自动生成');
         nameGroup.className += ' full-width';
         formGrid.appendChild(nameGroup);
 
-        // 2. 能力标签 (半宽)
+        // 2. 能力关键字 (半宽)
         const abilityTagOptions = await this.loadAbilityTagOptions();
-        // 添加一个空选项作为默认值（如果允许不选）
-        if (!abilityTagOptions.some(opt => opt.value === '')) {
-            abilityTagOptions.unshift({ value: '', label: '无 / 默认' });
-        }
-        
-        const tagDropdown = this.createDropdown(
-            abilityTagOptions,
-            this.ability.abilityTag,
-            (value) => this.updateAbility({ abilityTag: value }),
-            '选择分类...'
-        );
-        tagDropdown.className = 'form-select';
-        const tagGroup = this.createFormGroup('能力类型', tagDropdown, '决定能力的触发机制（可选）');
+        const keywordOptions = abilityTagOptions.filter(opt => opt.value && String(opt.value).toLowerCase() !== 'none');
+        const keywordContainer = document.createElement('div');
+        keywordContainer.className = 'keyword-grid';
+
+        const updateKeywordSelection = (keyword, checked) => {
+            const current = Array.isArray(this.ability.abilityKeywords) ? [...this.ability.abilityKeywords] : [];
+            const existingIndex = current.findIndex(k => (k.keyword || '').toLowerCase() === keyword.toLowerCase());
+            if (checked) {
+                if (existingIndex === -1) {
+                    current.push({ keyword, value: this.isCostKeyword(keyword) ? 0 : null });
+                }
+            } else if (existingIndex >= 0) {
+                current.splice(existingIndex, 1);
+            }
+            this.updateAbility({ abilityKeywords: current });
+        };
+
+        const updateKeywordValue = (keyword, value) => {
+            const current = Array.isArray(this.ability.abilityKeywords) ? [...this.ability.abilityKeywords] : [];
+            const existingIndex = current.findIndex(k => (k.keyword || '').toLowerCase() === keyword.toLowerCase());
+            if (existingIndex >= 0) {
+                current[existingIndex] = { ...current[existingIndex], value };
+                this.updateAbility({ abilityKeywords: current });
+            }
+        };
+
+        keywordOptions.forEach(option => {
+            const keyword = option.value;
+            const entry = (this.ability.abilityKeywords || []).find(k => (k.keyword || '').toLowerCase() === keyword.toLowerCase());
+            const isChecked = Boolean(entry);
+
+            const item = document.createElement('label');
+            item.className = 'keyword-item';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = isChecked;
+            checkbox.addEventListener('change', () => {
+                updateKeywordSelection(keyword, checkbox.checked);
+                const showValue = this.isCostKeyword(keyword) && checkbox.checked;
+                valueInput.disabled = !showValue;
+                valueInput.classList.toggle('hidden', !showValue);
+            });
+
+            const label = document.createElement('span');
+            label.textContent = option.label;
+
+            const valueInput = document.createElement('input');
+            valueInput.type = 'number';
+            valueInput.className = 'keyword-value-input';
+            valueInput.placeholder = this.isCostKeyword(keyword) ? '费用' : '';
+            valueInput.disabled = !this.isCostKeyword(keyword) || !isChecked;
+            valueInput.classList.toggle('hidden', !this.isCostKeyword(keyword) || !isChecked);
+            if (entry && entry.value !== null && entry.value !== undefined) {
+                valueInput.value = entry.value;
+            }
+            valueInput.addEventListener('change', () => {
+                const raw = valueInput.value.trim();
+                const parsed = raw === '' ? null : parseInt(raw, 10);
+                updateKeywordValue(keyword, Number.isNaN(parsed) ? null : parsed);
+            });
+
+            item.appendChild(checkbox);
+            item.appendChild(label);
+            item.appendChild(valueInput);
+            keywordContainer.appendChild(item);
+        });
+
+        const tagGroup = this.createFormGroup('能力关键字', keywordContainer, '可多选，部分关键字可填写费用参数');
         formGrid.appendChild(tagGroup);
 
-        // 3. 优先级 (半宽)
-        const priorityInput = this.createNumberInput(
-            this.ability.priority,
-            (value) => this.updateAbility({ priority: value }),
-            { min: 0, max: 100, placeholder: '0' }
-        );
-        priorityInput.className = 'form-input';
-        const priorityGroup = this.createFormGroup('优先级', priorityInput, '数值越高越先结算');
-        formGrid.appendChild(priorityGroup);
-
-        // 4. 描述 (全宽)
-        const descInput = this.createTextInput(
-            this.ability.description,
-            (value) => this.updateAbility({ description: value }),
-            { placeholder: '详细描述能力的效果...', multiline: true }
-        );
-        descInput.className = 'form-textarea';
-        const descGroup = this.createFormGroup('能力描述', descInput, '这段文字将显示在卡牌详情中');
-        descGroup.className += ' full-width';
-        formGrid.appendChild(descGroup);
-
-        // 5. 激活状态 (开关)
+        // 3. 激活状态 (开关) - 移到右侧与能力类型并排，或者单独一行
         const activeSwitch = this.createToggleSwitch(
             this.ability.isActive,
             (checked) => this.updateAbility({ isActive: checked }),
             '立即启用此能力'
         );
         const activeGroup = this.createFormGroup('状态', activeSwitch);
-        activeGroup.className += ' full-width';
+        // activeGroup.className += ' full-width'; // 不再强制全宽，使其适应网格布局
         formGrid.appendChild(activeGroup);
 
         wrapper.appendChild(formGrid);
@@ -580,7 +660,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             if (this._abilityTagOptionsCache) {
                 return this._abilityTagOptionsCache;
             }
-            const res = await fetch('/api/localization/enums/AbilityTag');
+            const res = await fetch('/api/localization/enums/AbilityKeyword');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             const options = Object.entries(data).map(([value, label]) => ({ value, label }));
@@ -612,24 +692,38 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 { value: 'Travel', label: '漫游' },
                 { value: 'Intromezzo', label: '间奏' },
                 { value: 'Wrath', label: '狂乱' },
-                { value: 'Choose', label: '抉择' }
+                { value: 'Choose', label: '抉择' },
+                { value: 'Act', label: '启动' },
+                { value: 'Sacrifice', label: '血祭' }
             ];
         }
     }
 
     buildFinalConfig() {
-        return {
+        // 处理默认值
+        const finalName = (this.ability.name && this.ability.name.trim() !== '')
+            ? this.ability.name
+            : `Ability_${new Date().getTime().toString().slice(-6)}`;
+            
+        const finalAbility = {
             ...this.ability,
+            name: finalName,
+            priority: this.ability.priority || 0,
+            description: this.ability.description || ''
+        };
+
+        return {
+            ...finalAbility,
             jsonConfig: JSON.stringify({
-                name: this.ability.name,
-                description: this.ability.description,
-                abilityTag: this.ability.abilityTag,
+                name: finalAbility.name,
+                description: finalAbility.description,
+                abilityKeywords: finalAbility.abilityKeywords,
                 type: "Triggered",
-                trigger: this.ability.trigger,
-                conditions: this.ability.conditions,
-                targets: this.ability.targets,
-                effects: this.ability.effects,
-                isActive: this.ability.isActive,
+                trigger: finalAbility.trigger,
+                conditions: finalAbility.conditions,
+                targets: finalAbility.targets,
+                effects: finalAbility.effects,
+                isActive: finalAbility.isActive,
                 version: "1.0"
             })
         };

@@ -1,0 +1,444 @@
+[
+  {
+    "id": 1401301,
+    "name": "治愈的旋律",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Spell",
+    "cost": 3,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "治愈的旋律-治疗",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "治愈的旋律-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1401302,
+    "name": "商队猛犸象",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 7,
+    "attack": 10,
+    "health": 10,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1401303,
+    "name": "哥布林杀手·路西乌斯&汀娜",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "哥布林杀手·路西乌斯&汀娜-进化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [
+          {
+            "expression": "not eventBool(\"IsSuperEvolution\")"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方中立随从并摧毁"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\" and self.Class == \"Neutral\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "哥布林杀手·路西乌斯&汀娜-超进化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 2,
+              "maxCount": 2,
+              "prompt": "选择2个敌方中立随从并摧毁"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\" and self.Class == \"Neutral\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1401401,
+    "name": "侦探的放大镜",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 2,
+    "health": null,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "侦探的放大镜-自毁",
+        "type": "Activated",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "侦探的放大镜-破除守护",
+        "type": "Activated",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从移除守护"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Remove"
+              },
+              "keyword": {
+                "value": "Ward"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1401402,
+    "name": "叮当天使·莉亚",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 0,
+    "health": 2,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "叮当天使·莉亚-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "叮当天使·莉亚-进化抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1401403,
+    "name": "激震的歌利亚",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 5,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  },
+  {
+    "id": 1401404,
+    "name": "不屈的剑斗士",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "不屈的剑斗士-爆能",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 4
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "eventString(\"PlayMode\") == \"Enhance\""
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 3
+              },
+              "healthModifier": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isEvolved": false,
+    "isCollectible": true
+  }
+]

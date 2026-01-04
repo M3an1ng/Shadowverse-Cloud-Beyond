@@ -233,7 +233,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var cacheKey = $"TSC_Predicate_Inner:{typeof(TItem).FullName}:{dslExpression}";
 
             // [STATE_POLLUTION_FIX] The cached item is now the inner delegate, which does NOT capture the context.
-            if (!_cache.TryGetValue<Func<TItem, TargetSelectionContext, IGameDataProvider, bool>>(cacheKey, out var compiledInner))
+            if (!_cache.TryGetValue<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, bool>>(cacheKey, out var compiledInner))
             {
                 // Cache miss: Compile the inner, generic delegate.
                 var lexer = new Lexer(dslExpression);
@@ -254,7 +254,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
                 }
 
-                var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, IGameDataProvider, bool>>(body, selfParam, tscParam, dbContextParam);
+                var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, bool>>(
+                    body,
+                    selfParam,
+                    tscParam,
+                    gameContextParam,
+                    dbContextParam);
                 compiledInner = innerLambda.Compile();
 
                 // [STATE_POLLUTION_FIX] Store the generic, inner delegate in the cache.
@@ -263,7 +268,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
             // [STATE_POLLUTION_FIX] Always return a new outer lambda that captures the CURRENT tsc instance for this specific call.
             // This prevents the cached delegate from holding a reference to a stale context.
-            Func<TItem, bool> outerLambda = (item) => compiledInner(item, tsc, _gameDataProvider);
+            var gameContext = tsc.GameContext;
+            Func<TItem, bool> outerLambda = (item) => compiledInner(item, tsc, gameContext, _gameDataProvider);
             return outerLambda;
         }
 
@@ -276,7 +282,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var cacheKey = $"TSC_Getter_Inner:{typeof(TItem).FullName}:{dslExpression}";
 
             // [STATE_POLLUTION_FIX] The cached item is now the inner delegate, which does NOT capture the context.
-            if (!_cache.TryGetValue<Func<TItem, TargetSelectionContext, IGameDataProvider, object>>(cacheKey, out var compiledInner))
+            if (!_cache.TryGetValue<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, object>>(cacheKey, out var compiledInner))
             {
                 // Cache miss: Compile the inner, generic delegate.
                 var lexer = new Lexer(dslExpression);
@@ -297,7 +303,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     body = Expression.Convert(body, typeof(object));
                 }
 
-                var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, IGameDataProvider, object>>(body, selfParam, tscParam, dbContextParam);
+                var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, object>>(
+                    body,
+                    selfParam,
+                    tscParam,
+                    gameContextParam,
+                    dbContextParam);
                 compiledInner = innerLambda.Compile();
 
                 // [STATE_POLLUTION_FIX] Store the generic, inner delegate in the cache.
@@ -305,7 +316,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             // [STATE_POLLUTION_FIX] Always return a new outer lambda that captures the CURRENT tsc instance for this specific call.
-            Func<TItem, object> outerLambda = (item) => compiledInner(item, tsc, _gameDataProvider);
+            var gameContext = tsc.GameContext;
+            Func<TItem, object> outerLambda = (item) => compiledInner(item, tsc, gameContext, _gameDataProvider);
             return outerLambda;
         }
     }

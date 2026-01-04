@@ -1,6 +1,9 @@
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Events.Services;
+using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -40,6 +43,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             }
 
             var type = ev.GetType();
+            if (EventParameterCache.TryGetBinding(type, name, out var binding))
+            {
+                try
+                {
+                    value = binding.Getter(ev);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
             var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
             if (prop == null || prop.GetIndexParameters().Length != 0) return false;
 
@@ -54,7 +70,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             }
         }
 
-        private static bool TryGetJsonValue(JsonObject obj, string name, out JsonNode? node)
+        protected static bool TryGetJsonValue(JsonObject obj, string name, out JsonNode? node)
         {
             node = null;
             foreach (var kv in obj)
@@ -320,6 +336,184 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             }
 
             return defaultValue;
+        }
+    }
+
+    public sealed class EventCardFunction : EventParamFunctionBase
+    {
+        public override string Name => "eventCard";
+        public override Type ReturnType => typeof(CardInstance);
+        public override string Description => "从 triggeringEvent 读取一个 CardInstance 参数（优先 OutputRawEvent，其次反射属性）。";
+
+        public override object? Execute(List<object?> args, GameContext context)
+        {
+            var name = ConvertToString(args[0], string.Empty);
+            var defaultValue = args.Count >= 2 ? args[1] as CardInstance : null;
+
+            if (!TryGetEventParameter(context, name, out var value))
+                return defaultValue;
+
+            return ConvertToCardValue(value, context) ?? defaultValue;
+        }
+
+        private static CardInstance? ConvertToCardValue(object? value, GameContext context)
+        {
+            if (value == null || context == null) return null;
+
+            if (value is CardInstance card) return card;
+
+            if (value is TargetInfo targetInfo && targetInfo.Card != null) return targetInfo.Card;
+
+            if (value is Guid guid) return context.CurrentGameState.FindCardInstance(guid);
+
+            if (value is string str && Guid.TryParse(str, out var parsed)) return context.CurrentGameState.FindCardInstance(parsed);
+
+            if (value is JsonNode node)
+            {
+                if (node is JsonValue jv)
+                {
+                    try
+                    {
+                        var s = jv.GetValue<string>();
+                        if (Guid.TryParse(s, out var parsedGuid))
+                        {
+                            return context.CurrentGameState.FindCardInstance(parsedGuid);
+                        }
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }
+
+                if (node is JsonObject obj)
+                {
+                    if (TryGetJsonValue(obj, "InstanceId", out var idNode) && idNode is JsonValue idValue)
+                    {
+                        try
+                        {
+                            var s = idValue.GetValue<string>();
+                            if (Guid.TryParse(s, out var parsedGuid))
+                            {
+                                return context.CurrentGameState.FindCardInstance(parsedGuid);
+                            }
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+    }
+
+    public sealed class EventCardsFunction : EventParamFunctionBase
+    {
+        public override string Name => "eventCards";
+        public override Type ReturnType => typeof(List<CardInstance>);
+        public override string Description => "从 triggeringEvent 读取一个 CardInstance 列表参数（优先 OutputRawEvent，其次反射属性）。";
+
+        public override object? Execute(List<object?> args, GameContext context)
+        {
+            var name = ConvertToString(args[0], string.Empty);
+            var defaultValue = args.Count >= 2 ? args[1] as List<CardInstance> : new List<CardInstance>();
+
+            if (!TryGetEventParameter(context, name, out var value))
+                return defaultValue;
+
+            return ConvertToCardListValue(value, context) ?? defaultValue;
+        }
+
+        private static List<CardInstance>? ConvertToCardListValue(object? value, GameContext context)
+        {
+            if (value == null || context == null) return null;
+
+            if (value is IEnumerable<CardInstance> cardInstances)
+            {
+                return cardInstances.ToList();
+            }
+
+            if (value is IEnumerable<TargetInfo> targetInfos)
+            {
+                return targetInfos
+                    .Select(info => info.Card)
+                    .Where(card => card != null)
+                    .Select(card => card!)
+                    .ToList();
+            }
+
+            if (value is IEnumerable<object> objects)
+            {
+                var results = new List<CardInstance>();
+                foreach (var item in objects)
+                {
+                    var card = ConvertSingleCardValue(item, context);
+                    if (card != null)
+                    {
+                        results.Add(card);
+                    }
+                }
+                return results;
+            }
+
+            var single = ConvertSingleCardValue(value, context);
+            return single != null ? new List<CardInstance> { single } : null;
+        }
+
+        private static CardInstance? ConvertSingleCardValue(object? value, GameContext context)
+        {
+            if (value == null || context == null) return null;
+
+            if (value is CardInstance card) return card;
+
+            if (value is TargetInfo targetInfo && targetInfo.Card != null) return targetInfo.Card;
+
+            if (value is Guid guid) return context.CurrentGameState.FindCardInstance(guid);
+
+            if (value is string str && Guid.TryParse(str, out var parsed)) return context.CurrentGameState.FindCardInstance(parsed);
+
+            if (value is JsonNode node)
+            {
+                if (node is JsonValue jv)
+                {
+                    try
+                    {
+                        var s = jv.GetValue<string>();
+                        if (Guid.TryParse(s, out var parsedGuid))
+                        {
+                            return context.CurrentGameState.FindCardInstance(parsedGuid);
+                        }
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }
+
+                if (node is JsonObject obj)
+                {
+                    if (TryGetJsonValue(obj, "InstanceId", out var idNode) && idNode is JsonValue idValue)
+                    {
+                        try
+                        {
+                            var s = idValue.GetValue<string>();
+                            if (Guid.TryParse(s, out var parsedGuid))
+                            {
+                                return context.CurrentGameState.FindCardInstance(parsedGuid);
+                            }
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+                }
+            }
+
+            return null;
         }
     }
 }

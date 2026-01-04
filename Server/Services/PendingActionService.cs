@@ -88,6 +88,8 @@ namespace ShadowverseBeyond.Server.Services
                         var dto = new SubmitTargetChoiceActionDto
                         {
                             PendingChoiceId = request.PendingChoiceId,
+                            SourceAbilityRuntimeId = request.SourceAbilityRuntimeId,
+                            TargetKey = request.TargetKey,
                             ChosenTargetIds = aiResult.ChosenTargetIds,
                             WasCancelled = aiResult.WasCancelled
                         };
@@ -102,7 +104,13 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         _logger.LogError(ex, "Error in background AI choice decision task for choice {ChoiceId}.", request.PendingChoiceId);
                         // If the AI fails, we should probably cancel the choice to prevent the game from stalling.
-                        var cancellationDto = new SubmitTargetChoiceActionDto { WasCancelled = true, PendingChoiceId = request.PendingChoiceId };
+                        var cancellationDto = new SubmitTargetChoiceActionDto
+                        {
+                            PendingChoiceId = request.PendingChoiceId,
+                            SourceAbilityRuntimeId = request.SourceAbilityRuntimeId,
+                            TargetKey = request.TargetKey,
+                            WasCancelled = true
+                        };
                         CompletePlayerChoice(request.PendingChoiceId, cancellationDto);
                     }
                 }, cancellationToken);

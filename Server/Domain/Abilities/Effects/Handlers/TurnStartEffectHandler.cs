@@ -41,8 +41,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, TurnStartEffectParams parameters)
         {
             const string effectName = "TurnStartEffect";
-            Logger.LogDebug("{EffectName}: Starting for player {PlayerId}.",
-                           effectName, parameters.StartingPlayerId);
+            Logger.LogDebug("{EffectName}: Starting for player scope {PlayerScope}.",
+                           effectName, parameters.PlayerScope);
 
             Func<TargetInfo, GameContext, DomainOperationResult> turnStartAction =
                 (targetInfo, ctx) =>
@@ -60,9 +60,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     return result;
                 };
 
+            var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                context.CurrentGameState,
+                context.RequestingPlayerId,
+                parameters.PlayerScope);
+
             return _targetProcessingService.ProcessTargets(
                 context,
-                effect.SelectedTargets,
+                playerTargets,
                 turnStartAction,
                 effectName);
         }

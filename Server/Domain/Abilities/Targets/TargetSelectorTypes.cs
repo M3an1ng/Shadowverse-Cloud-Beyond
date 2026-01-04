@@ -134,10 +134,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         SkipEffect,
 
         /// <summary>
-        /// 记录警告
+        /// 失败仍完成（发出完成事件并继续连锁）
         /// </summary>
-        [Description("记录警告")]
-        LogWarning
+        [Description("失败仍完成")]
+        CompleteWithFailure
     }
 
     /// <summary>

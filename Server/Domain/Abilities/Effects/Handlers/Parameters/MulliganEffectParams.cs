@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
@@ -9,9 +10,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// 包含执行换牌操作所需的所有参数
     /// 目标玩家通过 GameContext.SelectedTargets 传递，遵循统一的 EffectHandler 架构模式
     /// </summary>
-    [EffectMetadata("换牌", "允许玩家重新抽取指定的手牌。")]
+    [EffectMetadata("换牌", "允许玩家重新抽取指定的手牌。忽略卡牌目标，按玩家范围结算。")]
     public class MulliganEffectParams : BaseEffectParams
     {
+        [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择受到影响的玩家（自己/对手/双方）。")]
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
+
         /// <summary>
         /// 要替换的卡牌UID列表
         /// </summary>

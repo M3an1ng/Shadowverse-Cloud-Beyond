@@ -186,6 +186,29 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                 try { value = jv.GetValue<string>(); return true; } catch { return false; }
             }
 
+            public static bool TryGetOptionalBool(JsonObject payload, string key, out bool value, out bool found)
+            {
+                value = default;
+                found = false;
+                if (!TryGetNode(payload, key, out var node)) return true;
+                found = true;
+                if (node is not JsonValue jv) return false;
+                try { value = jv.GetValue<bool>(); return true; } catch { }
+                try
+                {
+                    var s = jv.GetValue<string>();
+                    if (bool.TryParse(s, out var parsed))
+                    {
+                        value = parsed;
+                        return true;
+                    }
+                }
+                catch { }
+                try { value = jv.GetValue<int>() != 0; return true; } catch { }
+                try { value = Math.Abs(jv.GetValue<double>()) > double.Epsilon; return true; } catch { }
+                return false;
+            }
+
             private static bool TryGetNode(JsonObject payload, string key, out JsonNode? node)
             {
                 node = null;
@@ -429,8 +452,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
         {
             private static readonly HashSet<string> Allowed = new(StringComparer.OrdinalIgnoreCase)
             {
-                "CardDefinitionId",
-                "Location"
+                "CardDefinitionId"
             };
 
             public bool TryCreate(RawEventEnvelopeDto input, GameState gameState, Guid requestingPlayerId, out IGameEvent? gameEvent, out string? errorMessage)
@@ -462,25 +484,13 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     return false;
                 }
 
-                if (!Payload.TryGetString(input.Payload, "Location", out var locationStr) || string.IsNullOrWhiteSpace(locationStr))
-                {
-                    errorMessage = "add-card payload 缺少 Location";
-                    return false;
-                }
-
-                if (!Enum.TryParse<CardZone>(locationStr, ignoreCase: true, out var location))
-                {
-                    errorMessage = "add-card Location 非法";
-                    return false;
-                }
-
                 if (!Resolver.TryResolvePlayer(gameState, input.SourceId, out var player) || player == null)
                 {
                     errorMessage = "add-card sourceId 无法解析为玩家";
                     return false;
                 }
 
-                gameEvent = new CreateCardEvent(player.PlayerId, cardDefinitionId, location);
+                gameEvent = new CreateCardEvent(player, cardDefinitionId);
                 return true;
             }
         }
@@ -543,7 +553,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
         {
             private static readonly HashSet<string> Allowed = new(StringComparer.OrdinalIgnoreCase)
             {
-                "CurrentPp", "Current"
+                "CurrentPp", "Current", "AllowOverflow"
             };
 
             public bool TryCreate(RawEventEnvelopeDto input, GameState gameState, Guid requestingPlayerId, out IGameEvent? gameEvent, out string? errorMessage)
@@ -575,13 +585,20 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     return false;
                 }
 
+                var allowOverflow = false;
+                if (!Payload.TryGetOptionalBool(input.Payload, "AllowOverflow", out allowOverflow, out _))
+                {
+                    errorMessage = "pp payload AllowOverflow 非法";
+                    return false;
+                }
+
                 if (!Resolver.TryResolvePlayer(gameState, input.SourceId, out var player) || player == null)
                 {
                     errorMessage = "pp sourceId 无法解析为玩家";
                     return false;
                 }
 
-                gameEvent = new PpUpdateEvent(player, current);
+                gameEvent = new PpUpdateEvent(player, current, allowOverflow);
                 return true;
             }
         }

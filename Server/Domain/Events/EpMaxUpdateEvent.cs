@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event to update only the max Evolution Points (EP) value.
     /// </summary>
-    [GameEventMetadata("EP最大值更新", "当玩家的EP最大值发生变化时触发的事件。", EventType.EpMaxUpdated)]
+    [GameEventMetadata("EP最大值变化", "当玩家的EP最大值发生变化时触发的事件。", EventType.EpMaxUpdated)]
     public class EpMaxUpdateEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("新的EP最大值", "更新后的EP最大值。")]

@@ -422,6 +422,7 @@ namespace ShadowverseBeyond.Server.Services
             bool isDebugAction = actionWrapper.ActionType == "DebugCommand";
             bool isMulliganAction = actionWrapper.ActionType == "SubmitMulligan";
             bool isAlwaysAllowedAction = actionWrapper.ActionType is "Surrender" or "Disconnect";
+            bool isPpBoostAction = actionWrapper.ActionType == "PerformPpBoost";
 
             if (!isDebugAction)
             {
@@ -448,8 +449,15 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] It's not player {actionWrapper.PlayerId}'s turn (Current: {gameState.CurrentPlayerId}).");
                     }
+                    if (isPpBoostAction)
+                    {
+                        if (gameState.Phase != GamePhase.Main && gameState.Phase != GamePhase.TurnStart)
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during TurnStart or Main phase (Current: {gameState.Phase}).");
+                        }
+                    }
                     // Allow other actions only during Main phase
-                    if (gameState.Phase != GamePhase.Main)
+                    else if (gameState.Phase != GamePhase.Main)
                     {
                         throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during Main phase (Current: {gameState.Phase}).");
                     }
@@ -529,11 +537,21 @@ namespace ShadowverseBeyond.Server.Services
                     }
                     else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
                     break;
+                case "PerformPpBoost":
+                    initialEvents.Add(new PpBoostRequestedEvent(actionWrapper.PlayerId));
+                    break;
 
                 case "RequestAct":
                     if (actionWrapper.ActionData is ActActionDto actDto)
                     {
                         initialEvents.Add(new ActRequestedEvent(actionWrapper.PlayerId, actDto));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
+                    break;
+                case "RequestFusion":
+                    if (actionWrapper.ActionData is FusionActionDto fusionDto)
+                    {
+                        initialEvents.Add(new FusionRequestedEvent(actionWrapper.PlayerId, fusionDto));
                     }
                     else throw new ArgumentException($"Invalid ActionData type for {actionWrapper.ActionType}");
                     break;
@@ -809,6 +827,8 @@ namespace ShadowverseBeyond.Server.Services
                 var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = createAi };
 
                 var newGameState = new GameState(gameId, player1State, player2State, player1IsFirst ? player1Id : player2Id);
+                var secondPlayerState = player1IsFirst ? player2State : player1State;
+                secondPlayerState.PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
 
                 // --- Manual Manager Creation ---
                 var loggerFactory = scopeServiceProvider.GetRequiredService<ILoggerFactory>();
@@ -863,16 +883,21 @@ namespace ShadowverseBeyond.Server.Services
                 // 【最终修复】根据领域规则，初始发牌不属于“抽牌”，不应触发抽牌事件。
                 // 因此，回归到直接操作列表的方式。
                 // 此操作现在是安全的，因为CardFactory的BUG已被修复，能确保Deck列表被正确填充。
-                for (int i = 0; i < 3; i++)
+                var player1InitialHandSize = GameConstants.Hand.InitialHandSizeFirstPlayer;
+                var player2InitialHandSize = GameConstants.Hand.InitialHandSizeSecondPlayer;
+                var maxInitialHandSize = Math.Max(player1InitialHandSize, player2InitialHandSize);
+
+                for (int i = 0; i < maxInitialHandSize; i++)
                 {
-                    if (player1State.Deck.Any())
+                    if (i < player1InitialHandSize && player1State.Deck.Any())
                     {
                         var card = player1State.Deck[0];
                         player1State.Deck.RemoveAt(0);
                         card.CurrentZone = CardZone.Hand;
                         player1State.Hand.Add(card);
                     }
-                    if (player2State.Deck.Any())
+
+                    if (i < player2InitialHandSize && player2State.Deck.Any())
                     {
                         var card = player2State.Deck[0];
                         player2State.Deck.RemoveAt(0);

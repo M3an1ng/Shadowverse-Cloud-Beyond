@@ -1,5 +1,6 @@
 // using ShadowverseBeyond.Server.Domain.Abilities.Effects.Parameters; // No longer needed if base class is in the same new namespace or accessible
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters // Corrected namespace to match file location
 {
@@ -7,9 +8,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters 
     /// Parameters for the AddCardToHand effect.
     /// </summary>
     // Inherit from BaseEffectParams which contains common properties like GenerateBattleLog
-    [EffectMetadata("添加卡牌到手牌", "将指定的卡牌添加到玩家手牌中。")]
+    [EffectMetadata("添加卡牌到手牌", "将卡牌添加到手牌。定义模式按玩家范围创建新卡；实例模式使用卡牌目标；复制模式复制卡牌目标并按玩家范围归属。")]
     public class AddCardToHandEffectParams : BaseEffectParams // Changed base class to BaseEffectParams
     {
+        [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择受到影响的玩家（自己/对手/双方）。")]
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
+
+        [ParameterMetadata("卡牌来源", UiControlType.Dropdown, DefaultValue = CardSourceMode.Definition, Description = "定义模式创建新卡；实例模式使用已选卡牌目标；复制模式复制已选卡牌目标。")]
+        public CardSourceMode CardSourceMode { get; set; } = CardSourceMode.Definition;
+
         /// <summary>
         /// The ID of the card definition to add to the hand.
         /// </summary>

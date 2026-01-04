@@ -25,9 +25,11 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.SuperEvolve, AbilityEditorCategories.BaseActionId },
             { EventType.PlayCard, AbilityEditorCategories.BaseActionId },
             { EventType.Act, AbilityEditorCategories.BaseActionId },
+            { EventType.Fusion, AbilityEditorCategories.BaseActionId },
 
             { EventType.Summon, AbilityEditorCategories.PositionChangeId },
             { EventType.CreateCard, AbilityEditorCategories.PositionChangeId },
+            { EventType.CopyCard, AbilityEditorCategories.PositionChangeId },
             { EventType.CardMoved, AbilityEditorCategories.PositionChangeId },
             { EventType.CardRevealed, AbilityEditorCategories.PositionChangeId },
             { EventType.AddCardToHand, AbilityEditorCategories.PositionChangeId },
@@ -37,6 +39,7 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.Vanish, AbilityEditorCategories.PositionChangeId },
             { EventType.Destroy, AbilityEditorCategories.PositionChangeId },
             { EventType.Transform, AbilityEditorCategories.PositionChangeId },
+            { EventType.AddDeck, AbilityEditorCategories.PositionChangeId },
 
             { EventType.BuffApplied, AbilityEditorCategories.TempStateId },
             { EventType.BuffRemoved, AbilityEditorCategories.TempStateId },
@@ -47,6 +50,7 @@ namespace ShadowverseBeyond.Server.Services
 
             { EventType.PpUpdated, AbilityEditorCategories.ResourceValueId },
             { EventType.PpMaxUpdated, AbilityEditorCategories.ResourceValueId },
+            { EventType.PpBoostStateUpdated, AbilityEditorCategories.ResourceValueId },
             { EventType.EpUpdated, AbilityEditorCategories.ResourceValueId },
             { EventType.EpMaxUpdated, AbilityEditorCategories.ResourceValueId },
             { EventType.SepUpdated, AbilityEditorCategories.ResourceValueId },
@@ -69,9 +73,11 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.EvolveRequested, AbilityEditorCategories.SystemRequestId },
             { EventType.SuperEvolveRequested, AbilityEditorCategories.SystemRequestId },
             { EventType.ActRequested, AbilityEditorCategories.SystemRequestId },
+            { EventType.FusionRequested, AbilityEditorCategories.SystemRequestId },
             { EventType.MulliganSubmitted, AbilityEditorCategories.SystemRequestId },
             { EventType.EndTurnRequested, AbilityEditorCategories.SystemRequestId },
-            { EventType.PlayerChoiceSubmitted, AbilityEditorCategories.SystemRequestId }
+            { EventType.PlayerChoiceSubmitted, AbilityEditorCategories.SystemRequestId },
+            { EventType.PpBoostRequested, AbilityEditorCategories.SystemRequestId }
         };
 
         public EventMetadataService(ILogger<EventMetadataService> logger)
@@ -134,22 +140,17 @@ namespace ShadowverseBeyond.Server.Services
                     Parameters = new List<EventParameterMetadataDto>()
                 };
 
-                var properties = eventType.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-
-                foreach (var property in properties)
+                var descriptor = EventParameterCache.GetDescriptor(eventType);
+                foreach (var parameter in descriptor.Parameters)
                 {
-                    var paramAttribute = property.GetCustomAttribute<GameEventParameterAttribute>();
-                    if (paramAttribute != null)
+                    eventDto.Parameters.Add(new EventParameterMetadataDto
                     {
-                        eventDto.Parameters.Add(new EventParameterMetadataDto
-                        {
-                            PropertyName = property.Name,
-                            DisplayName = paramAttribute.DisplayName,
-                            Description = paramAttribute.Description,
-                            TypeName = TypeNameHelper.GetCleanTypeName(property.PropertyType),
-                            Scope = paramAttribute.Scope
-                        });
-                    }
+                        PropertyName = parameter.PropertyName,
+                        DisplayName = parameter.DisplayName,
+                        Description = parameter.Description,
+                        TypeName = TypeNameHelper.GetCleanTypeName(parameter.PropertyType),
+                        Scope = parameter.Scope
+                    });
                 }
 
                 _cachedMetadata.Add(eventDto);

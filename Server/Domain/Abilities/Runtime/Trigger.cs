@@ -92,6 +92,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
                 return false;
             }
 
+            // 3. 检查触发次数限制
+            if (IsLimitReached(CurrentTurnTriggerCount, Config.CountLimit?.MaxPerTurn)
+                || IsLimitReached(TotalTriggerCount, Config.CountLimit?.MaxPerGame))
+            {
+                return false;
+            }
+
             // 3. 检查时序匹配 (由调用者保证)
             return true;
         }
@@ -159,6 +166,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
                 default:
                     return true; // Should be covered by the 'Any' check at the beginning
             }
+        }
+
+        private static bool IsLimitReached(int currentCount, int? limit)
+        {
+            return limit.HasValue && limit.Value > 0 && currentCount >= limit.Value;
         }
     }
 }

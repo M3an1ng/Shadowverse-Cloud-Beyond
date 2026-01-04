@@ -182,6 +182,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
                 default:
                     // Fallback for direct properties on the GameContext (e.g., TriggeringEvent).
+                    var access = TryBuildMemberAccess(gameContextSource, rootName);
+                    if (access != null)
+                    {
+                        return access;
+                    }
                     return Expression.PropertyOrField(gameContextSource, rootName);
             }
         }
@@ -196,40 +201,133 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 targetInstance = Expression.Convert(targetInstance, typeof(CardInstance));
             }
 
-            try
+            var directAccess = TryBuildMemberAccess(targetInstance, memberName);
+            if (directAccess != null)
             {
-                // The primary, universal approach: directly access the property or field.
-                // This automatically handles computed properties (like CurrentAttack) by invoking their 'get' accessor.
-                // No special handling or hardcoding is needed.
-                return Expression.PropertyOrField(targetInstance, memberName);
+                return directAccess;
             }
-            catch (ArgumentException) // This exception is thrown if the member does not exist on the target type.
+
+            var dictionaryAccess = TryBuildDictionaryAccess(targetInstance, memberName);
+            if (dictionaryAccess != null)
             {
-                // Fallback logic specifically for CardInstance: if a property is not found on the instance,
-                // try to find it on its definition. This is a common pattern in the game's domain model.
-                if (typeof(CardInstance).IsAssignableFrom(targetInstance.Type))
+                return dictionaryAccess;
+            }
+
+            // Fallback logic specifically for CardInstance: if a property is not found on the instance,
+            // try to find it on its definition. This is a common pattern in the game's domain model.
+            if (typeof(CardInstance).IsAssignableFrom(targetInstance.Type))
+            {
+                var definitionProperty = Expression.Property(targetInstance, nameof(CardInstance.CurrentDefinition));
+                var definitionAccess = TryBuildMemberAccess(definitionProperty, memberName);
+                if (definitionAccess != null)
                 {
-                    try
-                    {
-                        var definitionProperty = Expression.Property(targetInstance, nameof(CardInstance.CurrentDefinition));
-                        return Expression.PropertyOrField(definitionProperty, memberName);
-                    }
-                    catch (ArgumentException innerEx)
-                    {
-                        // If it's not on the definition either, throw a more informative exception.
-                        throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}' or its '{nameof(CardInstance.CurrentDefinition)}' property.", innerEx);
-                    }
+                    return definitionAccess;
                 }
 
-                // If it's not a CardInstance or the fallback failed, re-throw the original exception.
-                throw;
+                throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}' or its '{nameof(CardInstance.CurrentDefinition)}' property.");
             }
+
+            throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}'.");
+        }
+
+        private static Expression? TryBuildMemberAccess(Expression instance, string memberName)
+        {
+            var type = instance.Type;
+            var property = type.GetProperty(memberName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+            if (property != null)
+            {
+                return Expression.Property(instance, property);
+            }
+
+            var field = type.GetField(memberName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+            if (field != null)
+            {
+                return Expression.Field(instance, field);
+            }
+
+            return null;
+        }
+
+        private static Expression? TryBuildDictionaryAccess(Expression instance, string memberName)
+        {
+            if (string.IsNullOrWhiteSpace(memberName))
+            {
+                return null;
+            }
+
+            var dictionaryInterface = GetDictionaryInterface(instance.Type);
+            if (dictionaryInterface == null)
+            {
+                return null;
+            }
+
+            var genericArguments = dictionaryInterface.GetGenericArguments();
+            if (genericArguments.Length != 2 || genericArguments[0] != typeof(string))
+            {
+                return null;
+            }
+
+            var valueType = genericArguments[1];
+            var accessor = FindDictionaryAccessor(dictionaryInterface);
+            if (accessor == null)
+            {
+                return null;
+            }
+
+            var closedAccessor = accessor.MakeGenericMethod(valueType);
+            var dictionaryExpression = instance.Type == dictionaryInterface
+                ? instance
+                : Expression.Convert(instance, dictionaryInterface);
+
+            return Expression.Call(
+                null,
+                closedAccessor,
+                dictionaryExpression,
+                Expression.Constant(memberName));
+        }
+
+        private static Type? GetDictionaryInterface(Type type)
+        {
+            if (type.IsInterface && type.IsGenericType)
+            {
+                var definition = type.GetGenericTypeDefinition();
+                if (definition == typeof(IReadOnlyDictionary<,>) || definition == typeof(IDictionary<,>))
+                {
+                    return type;
+                }
+            }
+
+            var interfaces = type.GetInterfaces();
+            var readOnly = interfaces.FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>));
+            if (readOnly != null)
+            {
+                return readOnly;
+            }
+
+            return interfaces.FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IDictionary<,>));
+        }
+
+        private static MethodInfo? FindDictionaryAccessor(Type dictionaryInterface)
+        {
+            var genericDefinition = dictionaryInterface.GetGenericTypeDefinition();
+            return typeof(DslDictionaryAccess).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(method =>
+                    method.Name == nameof(DslDictionaryAccess.GetValueOrDefault)
+                    && method.IsGenericMethodDefinition
+                    && method.GetParameters().Length == 2
+                    && method.GetParameters()[0].ParameterType.IsGenericType
+                    && method.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == genericDefinition);
         }
 
         private Expression VisitBinaryOperator(BinaryOperationNode node)
         {
             var left = VisitNode(node.Left);
             var right = VisitNode(node.Right);
+
+            if (IsSetOperator(node.Operator, left.Type, right.Type))
+            {
+                return BuildSetOperation(left, right, node.Operator);
+            }
 
             // Do not promote yet, as we need the original types for special handling.
 
@@ -260,6 +358,129 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                         _ => throw new NotSupportedException($"Binary operator '{node.Operator}' is not supported for expression tree building.")
                     };
             }
+        }
+
+        private static bool IsSetOperator(TokenType operatorType, Type leftType, Type rightType)
+        {
+            return operatorType == TokenType.SetUnion
+                || operatorType == TokenType.SetIntersect
+                || (operatorType == TokenType.Minus && IsCollectionType(leftType) && IsCollectionType(rightType));
+        }
+
+        private static bool IsCollectionType(Type type)
+        {
+            return TryGetEnumerableElementType(type, out _);
+        }
+
+        private Expression BuildSetOperation(Expression left, Expression right, TokenType operatorType)
+        {
+            if (!TryGetEnumerableElementType(left.Type, out var leftElementType)
+                || !TryGetEnumerableElementType(right.Type, out var rightElementType))
+            {
+                throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
+            }
+
+            if (!leftElementType.IsAssignableFrom(rightElementType))
+            {
+                throw new InvalidOperationException($"Set operator '{operatorType}' requires compatible collection element types.");
+            }
+
+            var elementType = leftElementType;
+            var leftEnumerable = EnsureEnumerableOrEmpty(left, elementType);
+            var rightEnumerable = EnsureEnumerableOrEmpty(right, elementType);
+
+            var methodName = operatorType switch
+            {
+                TokenType.SetUnion => nameof(DslSetOperators.Union),
+                TokenType.SetIntersect => nameof(DslSetOperators.Intersect),
+                TokenType.Minus => nameof(DslSetOperators.Except),
+                _ => throw new NotSupportedException($"Unsupported set operator '{operatorType}'.")
+            };
+
+            var method = typeof(DslSetOperators).GetMethod(methodName, BindingFlags.Public | BindingFlags.Static);
+            if (method == null)
+            {
+                throw new InvalidOperationException($"Cannot resolve set operator method '{methodName}'.");
+            }
+
+            var genericMethod = method.MakeGenericMethod(elementType);
+            return Expression.Call(null, genericMethod, leftEnumerable, rightEnumerable);
+        }
+
+        private static Expression EnsureEnumerableOrEmpty(Expression source, Type elementType)
+        {
+            var emptyMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Empty), BindingFlags.Public | BindingFlags.Static);
+            if (emptyMethod == null)
+            {
+                throw new InvalidOperationException("Cannot resolve Enumerable.Empty.");
+            }
+
+            var emptyCall = Expression.Call(null, emptyMethod.MakeGenericMethod(elementType));
+            var nullCheck = Expression.Equal(Expression.Convert(source, typeof(object)), Expression.Constant(null));
+            var converted = EnsureEnumerableOf(source, elementType);
+            return Expression.Condition(nullCheck, emptyCall, converted);
+        }
+
+        private static Expression EnsureEnumerableOf(Expression source, Type elementType)
+        {
+            var targetType = typeof(IEnumerable<>).MakeGenericType(elementType);
+            if (targetType.IsAssignableFrom(source.Type))
+            {
+                if (source.Type == targetType)
+                {
+                    return source;
+                }
+                return Expression.Convert(source, targetType);
+            }
+
+            if (typeof(IEnumerable).IsAssignableFrom(source.Type))
+            {
+                var castMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Cast), BindingFlags.Public | BindingFlags.Static);
+                if (castMethod == null)
+                {
+                    throw new InvalidOperationException("Cannot resolve Enumerable.Cast.");
+                }
+                return Expression.Call(null, castMethod.MakeGenericMethod(elementType), source);
+            }
+
+            return Expression.Convert(source, targetType);
+        }
+
+        private static bool TryGetEnumerableElementType(Type type, out Type elementType)
+        {
+            elementType = typeof(object);
+            if (type == typeof(string))
+            {
+                return false;
+            }
+
+            if (type.IsArray)
+            {
+                elementType = type.GetElementType() ?? typeof(object);
+                return true;
+            }
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                elementType = type.GetGenericArguments()[0];
+                return true;
+            }
+
+            var enumerableInterface = type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            if (enumerableInterface != null)
+            {
+                elementType = enumerableInterface.GetGenericArguments()[0];
+                return true;
+            }
+
+            if (typeof(IEnumerable).IsAssignableFrom(type))
+            {
+                elementType = typeof(object);
+                return true;
+            }
+
+            return false;
         }
 
         private Expression BuildEqualsExpression(Expression left, Expression right)
@@ -399,6 +620,55 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var convertedCall = Expression.Convert(callExpression, returnType);
 
             return convertedCall;
+        }
+    }
+
+    internal static class DslDictionaryAccess
+    {
+        public static TValue? GetValueOrDefault<TValue>(IReadOnlyDictionary<string, TValue> dictionary, string key)
+        {
+            if (dictionary == null || string.IsNullOrWhiteSpace(key))
+            {
+                return default;
+            }
+
+            if (dictionary.TryGetValue(key, out var value))
+            {
+                return value;
+            }
+
+            foreach (var entry in dictionary)
+            {
+                if (string.Equals(entry.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return entry.Value;
+                }
+            }
+
+            return default;
+        }
+
+        public static TValue? GetValueOrDefault<TValue>(IDictionary<string, TValue> dictionary, string key)
+        {
+            if (dictionary == null || string.IsNullOrWhiteSpace(key))
+            {
+                return default;
+            }
+
+            if (dictionary.TryGetValue(key, out var value))
+            {
+                return value;
+            }
+
+            foreach (var entry in dictionary)
+            {
+                if (string.Equals(entry.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return entry.Value;
+                }
+            }
+
+            return default;
         }
     }
 }

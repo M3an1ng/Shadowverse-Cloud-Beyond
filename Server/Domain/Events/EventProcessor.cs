@@ -146,6 +146,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.HandUpdated => ConvertHandUpdatedEvent(gameEvent),
                     EventType.PpUpdated => ConvertPpUpdateEvent(gameEvent),
                     EventType.PpMaxUpdated => ConvertPpMaxUpdateEvent(gameEvent),
+                    EventType.PpBoostStateUpdated => ConvertPpBoostStateUpdatedEvent(gameEvent),
                     EventType.EpUpdated => ConvertEpUpdateEvent(gameEvent),
                     EventType.EpMaxUpdated => ConvertEpMaxUpdateEvent(gameEvent),
                     EventType.SepUpdated => ConvertSepUpdateEvent(gameEvent),
@@ -161,6 +162,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.EvolveRequested => null,
                     EventType.SuperEvolveRequested => null,
                     EventType.PlayCardRequested => null,
+                    EventType.PpBoostRequested => null,
                     // Keyword Events - 关键字事件转换
                     EventType.KeywordApplied => ConvertKeywordAddedEvent(gameEvent),
                     EventType.KeywordRemoved => ConvertKeywordRemovedEvent(gameEvent),
@@ -171,7 +173,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.EvolveStateUpdated => ConvertEvolveStateUpdatedEvent(gameEvent),
                     EventType.SuperEvolveStateUpdated => ConvertSuperEvolveStateUpdatedEvent(gameEvent),
                     EventType.CardRevealed => ConvertCardRevealedEvent(gameEvent),
-                    EventType.CardsFused => ConvertCardsFusedEvent(gameEvent),
+                    EventType.Fusion => ConvertFusionEvent(gameEvent),
                     _ => null
                 };
             }
@@ -338,9 +340,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return new AbilityTriggeredEventDto(
                 sourcePlayerId,
                 sourceCard?.InstanceId ?? Guid.Empty,
-                e.AbilityTag,
                 e.TriggeringEvent.EventType.ToString(),
-                parameters
+                parameters,
+                e.AbilityKeywords.ToList()
             );
         }
 
@@ -534,6 +536,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
             );
         }
 
+        private GameEventDto? ConvertPpBoostStateUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not PpBoostStateUpdatedEvent e) return null;
+            var player = e.Source?.Player;
+            if (player == null) return null;
+            return new PpBoostStateUpdatedEventDto(
+                player.PlayerId,
+                e.PpBoostUsesAvailable
+            );
+        }
+
         private GameEventDto? ConvertEpMaxUpdateEvent(IGameEvent gameEvent)
         {
             var player = gameEvent.Source?.Player;
@@ -702,14 +715,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
             );
         }
 
-        private GameEventDto? ConvertCardsFusedEvent(IGameEvent gameEvent)
+        private GameEventDto? ConvertFusionEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not CardsFusedEvent e) return null;
-            if (e.Source?.Player == null) return null;
-
-            return new CardsFusedEventDto(
-                e.Source.Player.PlayerId,
-                e.FusedCardInstanceIds.ToList());
+            if (gameEvent is not FusionEvent e) return null;
+            var sourcePlayerId = e.FusionCard?.OwnerPlayerId ?? Guid.Empty;
+            var fusedIds = e.FusedCards.Select(card => card.InstanceId).ToList();
+            return new FusionEventDto(sourcePlayerId, fusedIds);
         }
 
         private GameEventDto? ConvertCardRevealedEvent(IGameEvent gameEvent)

@@ -258,8 +258,27 @@ export class OperatorNode extends ASTNode {
     }
 
     validateOperandTypes() {
-        const leftType = this.leftOperand.returnType;
-        const rightType = this.rightOperand.returnType;
+        const resolveNodeType = (node) => {
+            if (!node) return null;
+            if (node.metadata?.type === 'encapsulated' && node.metadata?.innerAST) {
+                return resolveNodeType(node.metadata.innerAST);
+            }
+            return node.returnType;
+        };
+
+        const isCollectionType = (typeName) => {
+            if (!typeName) return false;
+            return /^(List|IEnumerable)(<.+>)?$/.test(String(typeName));
+        };
+
+        const getCollectionInnerType = (typeName) => {
+            if (!typeName) return null;
+            const match = String(typeName).match(/<(.*)>/);
+            return match ? match[1] : 'Object';
+        };
+
+        const leftType = resolveNodeType(this.leftOperand);
+        const rightType = resolveNodeType(this.rightOperand);
 
         // 逻辑操作符要求两个操作数都是布尔类型
         if (['&&', '||'].includes(this.operator)) {
@@ -268,6 +287,21 @@ export class OperatorNode extends ASTNode {
             }
             if (rightType !== 'Boolean') {
                 return `逻辑操作符 ${this.operator} 的右操作数必须是布尔表达式，当前类型：${formatTypeName(rightType)}`;
+            }
+        }
+
+        // 集合操作符要求两个操作数都是兼容的集合类型
+        if (['|', '&'].includes(this.operator) || (this.operator === '-' && isCollectionType(leftType) && isCollectionType(rightType))) {
+            if (!isCollectionType(leftType)) {
+                return `集合操作符 ${this.operator} 的左操作数必须是集合类型，当前类型：${formatTypeName(leftType)}`;
+            }
+            if (!isCollectionType(rightType)) {
+                return `集合操作符 ${this.operator} 的右操作数必须是集合类型，当前类型：${formatTypeName(rightType)}`;
+            }
+            const leftInner = getCollectionInnerType(leftType);
+            const rightInner = getCollectionInnerType(rightType);
+            if (leftInner && rightInner && leftInner !== 'Object' && leftInner !== rightInner) {
+                return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(leftInner)} 与 ${formatTypeName(rightInner)}`;
             }
         }
 
@@ -321,33 +355,45 @@ export class ListQueryNode extends ASTNode {
     updateCompleteness() {
         // source 必须存在，filterExpression 可以为空（表示不过滤）
         // 但在我们的交互流程中，它必须被填充才算完成
-        this.isComplete = this.source && this.filterExpression && this.filterExpression.isComplete;
+        const isEmpty = !this.filterExpression
+            || this.filterExpression.metadata?.type === 'empty'
+            || (this.filterExpression.metadata?.type === 'encapsulated'
+                && this.filterExpression.metadata?.innerAST?.metadata?.type === 'empty');
+        this.isComplete = this.source && (isEmpty || this.filterExpression.isComplete);
     }
 
     toExpression() {
         const sourceExpr = this.source ? this.source.toExpression() : '';
         const filterExpr = this.filterExpression ? this.filterExpression.toExpression() : '';
+        const isEmpty = !this.filterExpression
+            || this.filterExpression.metadata?.type === 'empty'
+            || (this.filterExpression.metadata?.type === 'encapsulated'
+                && this.filterExpression.metadata?.innerAST?.metadata?.type === 'empty')
+            || !filterExpr;
+        if (isEmpty) return sourceExpr;
         return `${sourceExpr}.query(${filterExpr})`;
     }
 
-    validate() {
-        const errors = [];
-        if (!this.source) {
-            errors.push('Query操作缺少源集合');
-        }
-        if (!this.filterExpression) {
-            errors.push('Query操作缺少筛选表达式');
-        } else {
-            const filterValidation = this.filterExpression.validate();
-            if (!filterValidation.isValid) {
-                errors.push(...filterValidation.errors);
+        validate() {
+            const errors = [];
+            if (!this.source) {
+                errors.push('Query操作缺少源集合');
             }
-            if (this.filterExpression.returnType !== 'Boolean') {
-                errors.push(`Query筛选表达式必须返回布尔值，当前返回: ${formatTypeName(this.filterExpression.returnType)}`);
+            const isEmpty = !this.filterExpression
+                || this.filterExpression.metadata?.type === 'empty'
+                || (this.filterExpression.metadata?.type === 'encapsulated'
+                    && this.filterExpression.metadata?.innerAST?.metadata?.type === 'empty');
+            if (!isEmpty) {
+                const filterValidation = this.filterExpression.validate();
+                if (!filterValidation.isValid) {
+                    errors.push(...filterValidation.errors);
+                }
+                if (this.filterExpression.returnType !== 'Boolean') {
+                    errors.push(`Query筛选表达式必须返回布尔值，当前返回: ${formatTypeName(this.filterExpression.returnType)}`);
+                }
             }
+            return { isValid: errors.length === 0, errors };
         }
-        return { isValid: errors.length === 0, errors };
-    }
 
     clone() {
         const cloned = new ListQueryNode(this.source.clone());
@@ -381,21 +427,33 @@ export class ListQueryNode extends ASTNode {
         }
     
         updateCompleteness() {
-            this.isComplete = this.source && this.sortExpression && this.sortExpression.isComplete;
+            const isEmpty = !this.sortExpression
+                || this.sortExpression.metadata?.type === 'empty'
+                || (this.sortExpression.metadata?.type === 'encapsulated'
+                    && this.sortExpression.metadata?.innerAST?.metadata?.type === 'empty');
+            this.isComplete = this.source && (isEmpty || this.sortExpression.isComplete);
         }
-    
+
         toExpression() {
             const sourceExpr = this.source ? this.source.toExpression() : '';
             const sortExpr = this.sortExpression ? this.sortExpression.toExpression() : '';
+            const isEmpty = !this.sortExpression
+                || this.sortExpression.metadata?.type === 'empty'
+                || (this.sortExpression.metadata?.type === 'encapsulated'
+                    && this.sortExpression.metadata?.innerAST?.metadata?.type === 'empty')
+                || !sortExpr;
+            if (isEmpty) return sourceExpr;
             return `${sourceExpr}.orderBy(${sortExpr})`;
         }
     
         validate() {
             const errors = [];
             if (!this.source) errors.push('OrderBy操作缺少源集合');
-            if (!this.sortExpression) {
-                errors.push('OrderBy操作缺少排序表达式');
-            } else {
+            const isEmpty = !this.sortExpression
+                || this.sortExpression.metadata?.type === 'empty'
+                || (this.sortExpression.metadata?.type === 'encapsulated'
+                    && this.sortExpression.metadata?.innerAST?.metadata?.type === 'empty');
+            if (!isEmpty) {
                 const v = this.sortExpression.validate();
                 if (!v.isValid) errors.push(...v.errors);
             }
@@ -419,6 +477,7 @@ export class ListQueryNode extends ASTNode {
             super('listTake', sourceNode.returnType);
             this.source = sourceNode;
             this.countExpression = null; // 数量表达式
+            this.strategy = 'first';
             if (sourceNode) {
                 sourceNode.parent = this;
             }
@@ -432,23 +491,46 @@ export class ListQueryNode extends ASTNode {
             }
             this.updateCompleteness();
         }
-    
-        updateCompleteness() {
-            this.isComplete = this.source && this.countExpression && this.countExpression.isComplete;
+
+        setStrategy(strategy) {
+            const normalized = String(strategy || '').toLowerCase();
+            if (['first', 'last', 'random'].includes(normalized)) {
+                this.strategy = normalized;
+            }
         }
     
+        updateCompleteness() {
+            const isEmpty = !this.countExpression
+                || this.countExpression.metadata?.type === 'empty'
+                || (this.countExpression.metadata?.type === 'encapsulated'
+                    && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty');
+            this.isComplete = this.source && (isEmpty || this.countExpression.isComplete);
+        }
+
         toExpression() {
             const sourceExpr = this.source ? this.source.toExpression() : '';
             const countExpr = this.countExpression ? this.countExpression.toExpression() : '';
+            const isEmpty = !this.countExpression
+                || this.countExpression.metadata?.type === 'empty'
+                || (this.countExpression.metadata?.type === 'encapsulated'
+                    && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty')
+                || !countExpr;
+            if (isEmpty) return sourceExpr;
+            const strategy = String(this.strategy || 'first').toLowerCase();
+            if (strategy && strategy !== 'first') {
+                return `${sourceExpr}.take(${strategy} ${countExpr})`;
+            }
             return `${sourceExpr}.take(${countExpr})`;
         }
     
         validate() {
             const errors = [];
             if (!this.source) errors.push('Take操作缺少源集合');
-            if (!this.countExpression) {
-                errors.push('Take操作缺少数量表达式');
-            } else {
+            const isEmpty = !this.countExpression
+                || this.countExpression.metadata?.type === 'empty'
+                || (this.countExpression.metadata?.type === 'encapsulated'
+                    && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty');
+            if (!isEmpty) {
                 const v = this.countExpression.validate();
                 if (!v.isValid) errors.push(...v.errors);
 
@@ -463,6 +545,7 @@ export class ListQueryNode extends ASTNode {
     
         clone() {
             const cloned = new ListTakeNode(this.source.clone());
+            cloned.strategy = this.strategy;
             if (this.countExpression) {
                 cloned.setCountExpression(this.countExpression.clone());
             }

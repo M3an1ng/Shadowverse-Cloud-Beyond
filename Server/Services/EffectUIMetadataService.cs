@@ -37,6 +37,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.Destroy, AbilityEditorCategories.PositionChangeId },
             { EffectType.Transform, AbilityEditorCategories.PositionChangeId },
             { EffectType.Reveal, AbilityEditorCategories.PositionChangeId },
+            { EffectType.AddDeck, AbilityEditorCategories.PositionChangeId },
 
             { EffectType.AddBuff, AbilityEditorCategories.TempStateId },
             { EffectType.RemoveBuff, AbilityEditorCategories.TempStateId },
@@ -47,10 +48,15 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.SetEP, AbilityEditorCategories.ResourceValueId },
             { EffectType.SetEPMax, AbilityEditorCategories.ResourceValueId },
             { EffectType.SetStatus, AbilityEditorCategories.ResourceValueId },
+            { EffectType.AddEarthSigil, AbilityEditorCategories.ResourceValueId },
+            { EffectType.EarthRite, AbilityEditorCategories.ResourceValueId },
 
             { EffectType.TurnStart, AbilityEditorCategories.TurnFlowId },
             { EffectType.TurnEnd, AbilityEditorCategories.TurnFlowId },
-            { EffectType.Mulligan, AbilityEditorCategories.TurnFlowId }
+            { EffectType.Mulligan, AbilityEditorCategories.TurnFlowId },
+
+            { EffectType.RewriteEventParams, AbilityEditorCategories.SpecialId },
+            { EffectType.ReplaceEvent, AbilityEditorCategories.SpecialId }
         };
 
         public EffectUIMetadataService(IEffectHandlerRegistry effectHandlerRegistry)

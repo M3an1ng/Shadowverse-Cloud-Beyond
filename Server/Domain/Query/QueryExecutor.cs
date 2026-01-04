@@ -70,6 +70,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <inheritdoc />
         public QueryResult ExecuteQuery(QueryConfig queryConfig, GameContext context, Dictionary<string, List<Abilities.Targets.TargetInfo>>? resolvedTargets = null)
         {
+            queryConfig = NormalizeQueryConfig(queryConfig);
             _logger.LogDebug("Executing card query pipeline. Source DSL: {SourcePoolExpression}, Operations: {OperationCount}",
                 queryConfig.SourcePoolExpression, queryConfig.Operations?.Count ?? 0);
 
@@ -215,6 +216,39 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
 
         // --- Private Helper Methods ---
+
+        private QueryConfig NormalizeQueryConfig(QueryConfig queryConfig)
+        {
+            if (queryConfig == null)
+            {
+                throw new ArgumentNullException(nameof(queryConfig));
+            }
+
+            if (queryConfig.Operations != null && queryConfig.Operations.Any())
+            {
+                return queryConfig;
+            }
+
+            var dsl = queryConfig.SourcePoolExpression?.Trim();
+            if (string.IsNullOrWhiteSpace(dsl))
+            {
+                return queryConfig;
+            }
+
+            if (dsl.Contains(".query(") || dsl.Contains(".orderBy(") || dsl.Contains(".take("))
+            {
+                try
+                {
+                    return _dslParser.Parse(dsl);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to normalize query DSL from SourcePoolExpression: {Dsl}", dsl);
+                }
+            }
+
+            return queryConfig;
+        }
 
         private List<object> ApplyFilterOperation(List<object> pool, FilterOperation filterOp, Abilities.Targets.TargetSelectionContext tsc)
         {

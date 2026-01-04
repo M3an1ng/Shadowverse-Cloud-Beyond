@@ -1,5 +1,5 @@
-using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Metadata;
@@ -16,16 +16,45 @@ namespace ShadowverseBeyond.Server.Domain.Events
         EventType.Act,
         AbilityEditorCategories.BaseActionId,
         AbilityEditorCategories.BaseActionLabel)]
-    public sealed class ActInvokedEvent : GameEventBase
+    public sealed class ActInvokedEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent
     {
-        [GameEventParameter("发起玩家ID", "发动启动能力的玩家ID。")]
-        public Guid RequestingPlayerId { get; }
+        [GameEventParameter("启动玩家", "发动启动能力的玩家。")]
+        public PlayerState? ActPlayer { get; }
 
-        public ActInvokedEvent(CardInstance sourceCard, Guid requestingPlayerId)
+        [GameEventParameter("启动卡牌", "发动启动能力的卡牌。")]
+        public CardInstance? ActCard => Source?.Card;
+
+        public ActInvokedEvent(PlayerState requestingPlayer, CardInstance sourceCard)
             : base(EventType.Act)
         {
             Source = TargetInfo.ForCard(sourceCard);
-            RequestingPlayerId = requestingPlayerId;
+            ActPlayer = requestingPlayer;
+        }
+
+        public DomainOperationResult Commit(GameContext context)
+        {
+            var card = ActCard;
+            var player = ActPlayer;
+            if (card == null || player == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: player or card is null." };
+            }
+
+            if (card.OwnerPlayerId != player.PlayerId)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card owner mismatch." };
+            }
+
+            if (card.HasUsedActThisTurn(player.TurnNumber))
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card has already used Act this turn." };
+            }
+
+            card.MarkActUsed(player.TurnNumber);
+
+            var result = new DomainOperationResult { Success = true };
+            result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, player.TurnNumber));
+            return result;
         }
     }
 }

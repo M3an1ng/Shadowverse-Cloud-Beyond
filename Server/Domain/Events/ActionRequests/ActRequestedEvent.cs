@@ -66,11 +66,6 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "Act can only be used while the card is on the field." };
             }
 
-            if (card.IsSilenced)
-            {
-                return new DomainOperationResult { Success = false, ErrorMessage = "This card is silenced and cannot use Act." };
-            }
-
             var hasActAbility = context.AbilityManager
                 .GetAbilitiesForCard(card.InstanceId)
                 .Any(a => a.Type == AbilityType.Activated);
@@ -91,13 +86,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has already used Act this turn." };
             }
 
-            card.MarkActUsed(owner.TurnNumber);
-
-            // Drive client UI even if the activated ability produces no visible state change.
-            result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, owner.TurnNumber));
-
             // Trigger actual activated abilities (data-driven via TriggerConfig listening to EventType.Act).
-            result.GeneratedEvents.Add(new ActInvokedEvent(card, PlayerId));
+            result.GeneratedEvents.Add(new ActInvokedEvent(owner, card));
 
             result.Success = true;
             return result;

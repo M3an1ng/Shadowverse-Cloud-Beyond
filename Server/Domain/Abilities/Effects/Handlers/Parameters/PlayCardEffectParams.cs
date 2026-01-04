@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
@@ -8,9 +9,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// 出牌效果参数
     /// 包含执行出牌操作所需的所有参数
     /// </summary>
-    [EffectMetadata("出牌", "强制打出指定的卡牌。")]
+    [EffectMetadata("出牌", "强制打出指定的卡牌。忽略卡牌目标，按玩家范围结算。")]
     public class PlayCardEffectParams : BaseEffectParams
     {
+        [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择执行出牌的玩家（自己/对手/双方）。")]
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
+
         /// <summary>
         /// 要打出的卡牌实例ID
         /// </summary>

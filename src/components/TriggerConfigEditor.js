@@ -28,6 +28,9 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
     async render(container, config = {}, onChange = () => {}) {
         await this.initialize();
         
+        // 清理可能存在的旧 tooltip
+        this.cleanupTooltip();
+
         this.container = container;
         this.config = config;
         this.onChange = onChange;
@@ -63,9 +66,13 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
             const relationSelector = await this.createRelationTypeSelector();
             formGrid.appendChild(relationSelector);
 
-            // 4. 有效区域 (全宽)
+            // 4. 有效区域 & 执行前校验 (合并，全宽)
             const zoneSelector = await this.createValidZonesSelector();
             formGrid.appendChild(zoneSelector);
+
+            // 5. 触发次数限制 (全宽)
+            const countLimitSelector = await this.createTriggerCountLimitSelector();
+            formGrid.appendChild(countLimitSelector);
 
             wrapper.appendChild(formGrid);
             container.appendChild(wrapper);
@@ -81,7 +88,22 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
      */
     async createEventTypesSelector() {
         const events = this.metadata.events || [];
-        const selectedValues = new Set(this.config.eventTypes || []);
+        const normalizeEventType = (value) => String(value || '').trim().toLowerCase();
+        const eventTypeMap = new Map(
+            events
+                .map(event => String(event.eventType || '').trim())
+                .filter(value => value)
+                .map(value => [normalizeEventType(value), value])
+        );
+        const selectedValues = new Set(
+            (this.config.eventTypes || []).map(value => {
+                const key = normalizeEventType(value);
+                return eventTypeMap.get(key) || value;
+            })
+        );
+        const selectedNormalized = new Set(
+            Array.from(selectedValues).map(value => normalizeEventType(value))
+        );
 
         const container = document.createElement('div');
         container.className = 'event-selector-container';
@@ -131,7 +153,28 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
         };
 
         // Helper to update and show tooltip
+        let tooltipMonitorId = null;
+
+        const hideTooltip = () => {
+            const tooltip = getGlobalTooltip();
+            if (tooltip) {
+                tooltip.style.display = 'none';
+            }
+            if (tooltipMonitorId) {
+                cancelAnimationFrame(tooltipMonitorId);
+                tooltipMonitorId = null;
+            }
+        };
+
         const showTooltip = (event, e) => {
+            const target = e.target;
+            
+            // 检查触发元素是否仍然连接在 DOM 上
+            if (!target.isConnected) {
+                hideTooltip();
+                return;
+            }
+
             const tooltip = getGlobalTooltip();
             let paramsHtml = '';
             const params = event.contextVariables || event.parameters;
@@ -160,9 +203,27 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
             // Initial show
             tooltip.style.display = 'block';
             updateTooltipPosition(e);
+
+            // 启动监控循环：如果目标元素被移除，立即隐藏 tooltip
+            if (tooltipMonitorId) cancelAnimationFrame(tooltipMonitorId);
+            
+            const monitor = () => {
+                if (!target.isConnected) {
+                    hideTooltip();
+                    return;
+                }
+                tooltipMonitorId = requestAnimationFrame(monitor);
+            };
+            tooltipMonitorId = requestAnimationFrame(monitor);
         };
 
         const updateTooltipPosition = (e) => {
+            // 检查触发元素是否仍然连接在 DOM 上
+            if (!e.target.isConnected) {
+                hideTooltip();
+                return;
+            }
+
             const tooltip = getGlobalTooltip();
             const tooltipWidth = 320; // Defined in CSS
             const tooltipHeight = tooltip.offsetHeight || 200;
@@ -187,13 +248,6 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
 
             tooltip.style.left = `${left}px`;
             tooltip.style.top = `${top}px`;
-        };
-
-        const hideTooltip = () => {
-            const tooltip = getGlobalTooltip();
-            if (tooltip) {
-                tooltip.style.display = 'none';
-            }
         };
 
         const toggleWrapper = document.createElement('label');
@@ -265,7 +319,7 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
                     checkbox.value = event.eventType;
-                    checkbox.checked = selectedValues.has(event.eventType);
+                    checkbox.checked = selectedNormalized.has(normalizeEventType(event.eventType));
 
                     const span = document.createElement('span');
                     span.textContent = event.displayName;
@@ -276,15 +330,22 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
                     checkbox.addEventListener('change', (e) => {
                         if (e.target.checked) {
                             selectedValues.add(event.eventType);
+                            selectedNormalized.add(normalizeEventType(event.eventType));
                             label.classList.add('selected');
                         } else {
-                            selectedValues.delete(event.eventType);
+                            const key = normalizeEventType(event.eventType);
+                            for (const value of Array.from(selectedValues)) {
+                                if (normalizeEventType(value) === key) {
+                                    selectedValues.delete(value);
+                                }
+                            }
+                            selectedNormalized.delete(key);
                             label.classList.remove('selected');
                         }
                         this.updateConfig({ eventTypes: Array.from(selectedValues) });
                     });
 
-                    if (selectedValues.has(event.eventType)) {
+                    if (selectedNormalized.has(normalizeEventType(event.eventType))) {
                         label.classList.add('selected');
                     }
 
@@ -367,30 +428,190 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
     }
 
     /**
-     * 创建有效区域选择器
+     * 创建有效区域选择器 (包含执行前校验)
      */
     async createValidZonesSelector() {
+        const container = document.createElement('div');
+        container.className = 'valid-zones-container';
+
+        // 1. 区域选择 (横向排列)
         const zoneOptions = [
-            { value: 'Hand', label: '手牌 (Hand)' },
-            { value: 'Field', label: '战场 (Field)' },
-            { value: 'Deck', label: '牌库 (Deck)' },
-            { value: 'Graveyard', label: '墓地 (Graveyard)' },
-            { value: 'Banished', label: '放逐区 (Banished)' }
+            { value: 'Hand', label: '手牌' },
+            { value: 'Field', label: '战场' },
+            { value: 'Deck', label: '牌库' },
+            { value: 'Graveyard', label: '墓地' },
+            { value: 'Emblem', label: '纹章区' }
         ];
 
-        const selectedZones = this.config.validZones || [];
+        const selectedZones = new Set(this.config.validZones || []);
         
-        const multiSelect = this.createMultiSelect(
-            zoneOptions,
-            selectedZones,
-            (newValues) => this.updateConfig({ validZones: newValues })
-        );
-        multiSelect.className = 'form-select multi-select';
+        const zonesWrapper = document.createElement('div');
+        zonesWrapper.className = 'zones-horizontal-layout';
+
+        zoneOptions.forEach(option => {
+            const label = document.createElement('label');
+            label.className = 'zone-checkbox-item';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = option.value;
+            checkbox.checked = selectedZones.has(option.value);
+            
+            const span = document.createElement('span');
+            span.textContent = option.label;
+
+            label.appendChild(checkbox);
+            label.appendChild(span);
+
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    selectedZones.add(option.value);
+                    label.classList.add('selected');
+                } else {
+                    selectedZones.delete(option.value);
+                    label.classList.remove('selected');
+                }
+                this.updateConfig({ validZones: Array.from(selectedZones) });
+            });
+
+            if (selectedZones.has(option.value)) {
+                label.classList.add('selected');
+            }
+
+            zonesWrapper.appendChild(label);
+        });
+
+        container.appendChild(zonesWrapper);
+
+        // 2. 执行前校验开关 (作为特殊选项整合)
+        const revalidateLabel = document.createElement('label');
+        revalidateLabel.className = 'zone-checkbox-item special-option';
+        // revalidateLabel.title = ... // Removed native tooltip in favor of custom one
+
+        // Tooltip Logic for Revalidate Option (Reusing global style)
+        const getGlobalTooltip = () => {
+            let tooltip = document.getElementById('global-event-tooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.id = 'global-event-tooltip';
+                tooltip.className = 'event-info-tooltip';
+                tooltip.style.position = 'fixed';
+                tooltip.style.zIndex = '9999';
+                tooltip.style.display = 'none';
+                tooltip.style.pointerEvents = 'none';
+                document.body.appendChild(tooltip);
+            }
+            return tooltip;
+        };
+
+        const hideTooltip = () => {
+            const tooltip = getGlobalTooltip();
+            if (tooltip) tooltip.style.display = 'none';
+        };
+
+        const updateTooltipPosition = (e) => {
+            const tooltip = getGlobalTooltip();
+            const tooltipWidth = 320;
+            const tooltipHeight = tooltip.offsetHeight || 100;
+            
+            let left = e.clientX + 15;
+            let top = e.clientY + 15;
+
+            if (left + tooltipWidth > window.innerWidth) {
+                left = e.clientX - tooltipWidth - 15;
+            }
+            if (top + tooltipHeight > window.innerHeight) {
+                top = e.clientY - tooltipHeight - 15;
+            }
+
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${top}px`;
+        };
+
+        const showTooltip = (e) => {
+            const tooltip = getGlobalTooltip();
+            tooltip.innerHTML = `
+                <div class="event-body">
+                    <p class="event-description">开启后，效果在结算前会再次检查卡牌是否仍在有效区域。</p>
+                </div>
+            `;
+            tooltip.style.display = 'block';
+            updateTooltipPosition(e);
+        };
+
+        revalidateLabel.addEventListener('mouseenter', showTooltip);
+        revalidateLabel.addEventListener('mousemove', updateTooltipPosition);
+        revalidateLabel.addEventListener('mouseleave', hideTooltip);
+
+        const revalidateInput = document.createElement('input');
+        revalidateInput.type = 'checkbox';
+        revalidateInput.checked = !!this.config.revalidateZoneBeforeExecution;
+        
+        const revalidateText = document.createElement('span');
+        revalidateText.textContent = '执行前再次校验';
+
+        revalidateLabel.appendChild(revalidateInput);
+        revalidateLabel.appendChild(revalidateText);
+
+        revalidateInput.addEventListener('change', (e) => {
+            this.updateConfig({ revalidateZoneBeforeExecution: e.target.checked });
+            if (e.target.checked) {
+                revalidateLabel.classList.add('selected');
+            } else {
+                revalidateLabel.classList.remove('selected');
+            }
+        });
+
+        if (this.config.revalidateZoneBeforeExecution) {
+            revalidateLabel.classList.add('selected');
+        }
+
+        // 添加分隔符和校验选项到区域列表
+        const separator = document.createElement('div');
+        separator.className = 'zone-separator';
+        zonesWrapper.appendChild(separator);
+        zonesWrapper.appendChild(revalidateLabel);
 
         const formGroup = this.createFormGroup(
-            '有效区域',
-            multiSelect,
+            '有效区域与限制',
+            container,
             '能力仅在卡牌位于这些区域时生效（留空则无限制）'
+        );
+        formGroup.className += ' full-width';
+        return formGroup;
+    }
+
+    async createTriggerCountLimitSelector() {
+        const container = document.createElement('div');
+        container.className = 'trigger-count-limit-container';
+
+        const currentLimit = this.config.countLimit || {};
+
+        const perTurnInput = this.createNumberInput(
+            currentLimit.maxPerTurn ?? null,
+            (value) => this.updateCountLimit({ maxPerTurn: value }),
+            { placeholder: '不限' }
+        );
+        perTurnInput.classList.add('form-input', 'small');
+
+        const perGameInput = this.createNumberInput(
+            currentLimit.maxPerGame ?? null,
+            (value) => this.updateCountLimit({ maxPerGame: value }),
+            { placeholder: '不限' }
+        );
+        perGameInput.classList.add('form-input', 'small');
+
+        const grid = document.createElement('div');
+        grid.className = 'form-grid-layout';
+        grid.appendChild(this.createFormGroup('每回合上限', perTurnInput));
+        grid.appendChild(this.createFormGroup('全局上限', perGameInput));
+
+        container.appendChild(grid);
+
+        const formGroup = this.createFormGroup(
+            '触发次数限制',
+            container,
+            '留空或填写 0/负数表示不限（全局限制对单个能力实例贯穿整局生效）'
         );
         formGroup.className += ' full-width';
         return formGroup;
@@ -403,6 +624,19 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
         }
     }
 
+    updateCountLimit(updates) {
+        const currentLimit = { ...(this.config.countLimit || {}), ...updates };
+        const hasPerTurn = currentLimit.maxPerTurn !== null && currentLimit.maxPerTurn !== undefined;
+        const hasPerGame = currentLimit.maxPerGame !== null && currentLimit.maxPerGame !== undefined;
+
+        if (!hasPerTurn && !hasPerGame) {
+            this.updateConfig({ countLimit: null });
+            return;
+        }
+
+        this.updateConfig({ countLimit: currentLimit });
+    }
+
     validateConfig() {
         const errors = [];
         if (!this.config.eventTypes || this.config.eventTypes.length === 0) {
@@ -412,5 +646,15 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
             errors.push('触发器: 必须选择事件关联方');
         }
         return errors;
+    }
+
+    /**
+     * 清理全局 tooltip
+     */
+    cleanupTooltip() {
+        const tooltip = document.getElementById('global-event-tooltip');
+        if (tooltip) {
+            tooltip.remove();
+        }
     }
 }

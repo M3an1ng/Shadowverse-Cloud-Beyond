@@ -208,6 +208,54 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     }
 
     /// <summary>
+    /// 玩家范围枚举
+    /// </summary>
+    public enum PlayerScope
+    {
+        /// <summary>
+        /// 自己
+        /// </summary>
+        [Description("自己")]
+        Self,
+
+        /// <summary>
+        /// 对手
+        /// </summary>
+        [Description("对手")]
+        Opponent,
+
+        /// <summary>
+        /// 双方
+        /// </summary>
+        [Description("双方")]
+        Both
+    }
+
+    /// <summary>
+    /// 卡牌来源模式
+    /// </summary>
+    public enum CardSourceMode
+    {
+        /// <summary>
+        /// 从卡牌定义创建新实例
+        /// </summary>
+        [Description("定义")]
+        Definition,
+
+        /// <summary>
+        /// 使用已存在的卡牌实例
+        /// </summary>
+        [Description("实例")]
+        Instance,
+
+        /// <summary>
+        /// 复制已存在的卡牌实例（保留状态）
+        /// </summary>
+        [Description("复制")]
+        Copy
+    }
+
+    /// <summary>
     /// 目标类型枚举
     /// </summary>
     public enum TargetConfigType
@@ -348,24 +396,24 @@ public enum TriggerRelationType
     /// <summary>
     /// Triggers if the ability's owner is the source of the event.
     /// </summary>
-    [Description("仅限自己为事件源时")]
+    [Description("仅限自己触发时")]
     SourceSelf,
 
     /// <summary>
     /// Triggers if the source of the event is any entity other than the ability's owner.
     /// </summary>
-    [Description("仅限自己不是事件源时")]
+    [Description("仅限自己以外触发时")]
     SourceOther,
 
     /// <summary>
     /// Triggers if the ability's owner is the target of the event.
     /// </summary>
-    [Description("仅限自己为事件目标时")]
+    [Description("仅限自己为目标时")]
     TargetSelf,
 
     /// <summary>
     /// Triggers if the target of the event is any entity other than the ability's owner.
     /// </summary>
-    [Description("仅限自己不是事件目标时")]
+    [Description("仅限自己以外为目标时")]
     TargetOther
 }

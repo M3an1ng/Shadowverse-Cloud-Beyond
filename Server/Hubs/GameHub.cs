@@ -432,6 +432,45 @@ namespace ShadowverseBeyond.Server.Hubs
         }
 
         /// <summary>
+        /// Client invokes this method to use PP+1.
+        /// </summary>
+        public async Task PerformPpBoost()
+        {
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
+            {
+                _logger.LogWarning("PerformPpBoost called by unidentified connection: {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting to use PP+1", playerId, gameId);
+
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "PerformPpBoost",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = new { }
+                };
+
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                _logger.LogWarning("Game Logic Error for Player {PlayerId} in Game {GameId} using PP+1: {Message}",
+                    playerId, gameId, ex.Message);
+                await Clients.Caller.ReceiveError($"PP+1 Error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error processing PP+1 for Player {PlayerId} in Game {GameId}",
+                    playerId, gameId);
+                await Clients.Caller.ReceiveError("An unexpected server error occurred while using PP+1.");
+            }
+        }
+
+        /// <summary>
         /// Client invokes this method to request activating a card's Act ability.
         /// </summary>
         public async Task RequestAct(ActActionDto actionDto)
@@ -468,6 +507,46 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogError(ex, "Unexpected error processing RequestAct for Player {PlayerId} in Game {GameId}",
                     playerId, gameId);
                 await Clients.Caller.ReceiveError("An unexpected server error occurred while requesting Act.");
+            }
+        }
+
+        /// <summary>
+        /// Client invokes this method to request activating a card's Fusion ability.
+        /// </summary>
+        public async Task RequestFusion(FusionActionDto actionDto)
+        {
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
+            {
+                _logger.LogWarning("RequestFusion called by unidentified connection: {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Player {PlayerId} in Game {GameId} attempting to use Fusion on card {CardUid}",
+                    playerId, gameId, actionDto.CardUid);
+
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "RequestFusion",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = actionDto
+                };
+
+                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                _logger.LogWarning("Game Logic Error for Player {PlayerId} in Game {GameId} requesting Fusion: {Message}",
+                    playerId, gameId, ex.Message);
+                await Clients.Caller.ReceiveError($"Fusion Error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error processing RequestFusion for Player {PlayerId} in Game {GameId}",
+                    playerId, gameId);
+                await Clients.Caller.ReceiveError("An unexpected server error occurred while requesting Fusion.");
             }
         }
 

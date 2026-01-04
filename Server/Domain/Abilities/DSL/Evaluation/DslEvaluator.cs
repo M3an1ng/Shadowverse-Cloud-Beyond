@@ -15,6 +15,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 {
+    [Obsolete("DslEvaluator is deprecated; use IDslCompiler via ValueSourceResolver or QueryExecutor instead.")]
     public class DslEvaluator
     {
         private readonly ILogger<DslEvaluator> _logger;
@@ -227,6 +228,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             _logger.LogTrace("Performing binary operation {Operator} on '{Left}' ({LeftType}) and '{Right}' ({RightType})",
                 operatorType, left ?? "null", left?.GetType().Name ?? "null", right ?? "null", right?.GetType().Name ?? "null");
 
+            if (operatorType == TokenType.SetUnion)
+            {
+                return DynamicOperations.SetUnion(left, right);
+            }
+            if (operatorType == TokenType.SetIntersect)
+            {
+                return DynamicOperations.SetIntersect(left, right);
+            }
+            if (operatorType == TokenType.Minus && DynamicOperations.IsCollection(left) && DynamicOperations.IsCollection(right))
+            {
+                return DynamicOperations.SetDifference(left, right);
+            }
+
             switch (operatorType)
             {
                 case TokenType.Plus:
@@ -420,6 +434,26 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
     internal static class DynamicOperations
     {
+        public static bool IsCollection(object? value)
+        {
+            return value is IEnumerable && value is not string;
+        }
+
+        public static object? SetUnion(object? left, object? right)
+        {
+            return ApplySetOperation(left, right, TokenType.SetUnion);
+        }
+
+        public static object? SetIntersect(object? left, object? right)
+        {
+            return ApplySetOperation(left, right, TokenType.SetIntersect);
+        }
+
+        public static object? SetDifference(object? left, object? right)
+        {
+            return ApplySetOperation(left, right, TokenType.Minus);
+        }
+
         public static object? Add(object? left, object? right)
         {
             if (left is string || right is string)
@@ -556,6 +590,111 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         public static bool LogicalNot(object? operand)
         {
             return !TypeConverter.ConvertToBool(operand);
+        }
+
+        private static object? ApplySetOperation(object? left, object? right, TokenType operatorType)
+        {
+            if (left == null && right == null)
+            {
+                return Array.Empty<object>();
+            }
+
+            if (left == null)
+            {
+                return right ?? Array.Empty<object>();
+            }
+
+            if (right == null)
+            {
+                return left;
+            }
+
+            if (left is string || right is string)
+            {
+                throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
+            }
+
+            if (left is not IEnumerable leftEnumerable || right is not IEnumerable rightEnumerable)
+            {
+                throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
+            }
+
+            var leftElementType = TryGetEnumerableElementType(left.GetType());
+            var rightElementType = TryGetEnumerableElementType(right.GetType());
+            if (leftElementType == null || rightElementType == null)
+            {
+                throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
+            }
+
+            if (!leftElementType.IsAssignableFrom(rightElementType))
+            {
+                throw new InvalidOperationException($"Set operator '{operatorType}' requires compatible collection element types.");
+            }
+
+            var elementType = leftElementType;
+            var leftTyped = CastEnumerable(leftEnumerable, elementType);
+            var rightTyped = CastEnumerable(rightEnumerable, elementType);
+
+            var methodName = operatorType switch
+            {
+                TokenType.SetUnion => nameof(DslSetOperators.Union),
+                TokenType.SetIntersect => nameof(DslSetOperators.Intersect),
+                TokenType.Minus => nameof(DslSetOperators.Except),
+                _ => throw new InvalidOperationException($"Unsupported set operator '{operatorType}'.")
+            };
+
+            var method = typeof(DslSetOperators).GetMethod(methodName, BindingFlags.Public | BindingFlags.Static);
+            if (method == null)
+            {
+                throw new InvalidOperationException($"Cannot resolve set operator method '{methodName}'.");
+            }
+
+            var genericMethod = method.MakeGenericMethod(elementType);
+            return genericMethod.Invoke(null, new[] { leftTyped, rightTyped });
+        }
+
+        private static object CastEnumerable(IEnumerable source, Type elementType)
+        {
+            var castMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Cast), BindingFlags.Public | BindingFlags.Static);
+            if (castMethod == null)
+            {
+                throw new InvalidOperationException("Cannot resolve Enumerable.Cast.");
+            }
+
+            return castMethod.MakeGenericMethod(elementType).Invoke(null, new object[] { source })
+                ?? throw new InvalidOperationException("Failed to cast enumerable.");
+        }
+
+        private static Type? TryGetEnumerableElementType(Type type)
+        {
+            if (type == typeof(string))
+            {
+                return null;
+            }
+
+            if (type.IsArray)
+            {
+                return type.GetElementType() ?? typeof(object);
+            }
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return type.GetGenericArguments()[0];
+            }
+
+            var enumerableInterface = type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            if (enumerableInterface != null)
+            {
+                return enumerableInterface.GetGenericArguments()[0];
+            }
+
+            if (typeof(IEnumerable).IsAssignableFrom(type))
+            {
+                return typeof(object);
+            }
+
+            return null;
         }
 
         private static bool TryCompare(object left, object right, out int comparisonResult)

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Dtos.Enums; // For CardZone
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
@@ -11,9 +12,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// Parameters specific to the SummonUnit effect.
     /// Defines which card to summon and how many.
     /// </summary>
-    [EffectMetadata("召唤", "召唤指定的卡牌到战场上。")]
+    [EffectMetadata("召唤", "召唤卡牌到战场。定义模式按玩家范围创建新卡；实例模式使用卡牌目标；复制模式复制卡牌目标并按玩家范围归属。")]
     public class SummonEffectParams : BaseEffectParams
     {
+        [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择召唤卡牌的玩家（自己/对手/双方）。")]
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
+
+        [ParameterMetadata("卡牌来源", UiControlType.Dropdown, DefaultValue = CardSourceMode.Definition, Description = "定义模式创建新卡；实例模式使用已选卡牌目标；复制模式复制已选卡牌目标。")]
+        public CardSourceMode CardSourceMode { get; set; } = CardSourceMode.Definition;
+
         /// <summary>
         /// The Definition ID of the card to summon.
         /// This is mandatory for summoning.
@@ -31,8 +38,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// <summary>
         /// Optional: The position index on field (ZoneIndex). Null means append to the end.
         /// </summary>
-        [ParameterMetadata("位置索引", UiControlType.NumberStepper, DefaultValue = null, Min = 0, Description = "在战场上的位置索引。留空表示添加到末尾。")]
-        public int? Position { get; set; } = null;
+        // [ParameterMetadata("位置索引", UiControlType.NumberStepper, DefaultValue = null, Min = 0, Description = "在战场上的位置索引。留空表示添加到末尾。")]
+        // public int? Position { get; set; } = null;
 
         // Potential future parameters:
         // public bool SummonEvolved { get; set; } = false; // Summon the evolved version directly?

@@ -7,7 +7,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// Parameters for the ModifyStats effect, used for simple stat additions/subtractions.
     /// HealthModifier affects MaxHealth, and CurrentHealth is adjusted accordingly.
     /// </summary>
-    [EffectMetadata("修改属性", "修改目标的攻击力、生命值或费用等属性。")]
+    [EffectMetadata("修改属性", "修改目标的攻击力、生命值或费用等属性。使用卡牌目标。")]
     public class ModifyStatsEffectParams : BaseEffectParams
     {
         /// <summary>

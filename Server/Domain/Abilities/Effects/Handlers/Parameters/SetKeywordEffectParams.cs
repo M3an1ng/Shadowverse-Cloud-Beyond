@@ -12,7 +12,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Parameters for the SetKeyword effect.
     /// </summary>
-    [EffectMetadata("设置关键字", "为目标添加或移除指定的关键字能力。")]
+    [EffectMetadata("设置关键字", "为目标添加或移除指定的关键字能力。使用卡牌目标。")]
     public class SetKeywordEffectParams : BaseEffectParams
     {
         [ParameterMetadata("操作", UiControlType.Dropdown, DefaultValue = KeywordOperation.Add, Description = "添加或移除关键字。")]

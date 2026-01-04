@@ -5,7 +5,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Strongly-typed parameters for the Damage effect. Inherits common parameters from BaseEffectParams.
     /// </summary>
-    [EffectMetadata("造成伤害", "对一个或多个目标造成伤害。")]
+    [EffectMetadata("伤害", "对一个或多个目标造成伤害。使用卡牌目标。")]
     public class DamageEffectParams : BaseEffectParams // Inherit from BaseEffectParams
     {
         /// <summary>

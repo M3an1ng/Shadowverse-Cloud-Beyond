@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when a specific card is discarded from a player's hand.
     /// </summary>
-    [GameEventMetadata("卡牌弃置", "当一张卡牌从玩家手牌中被弃置时触发的事件。", EventType.Discard)]
+    [GameEventMetadata("弃置", "当一张卡牌从玩家手牌中被弃置时触发的事件。", EventType.Discard)]
     public class CardDiscardedEvent : GameEventBase, ICommittableEvent
     {
         [GameEventParameter("弃置原因", "卡牌被弃置的原因。")]
@@ -40,9 +40,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             // 丢弃：从手牌移动到墓地，使用封装方法触发 CardMovedEvent 原子事实
-            var moveResult = player.MoveCardToGraveyard(card);
+            var moveResult = player.MoveCardToGraveyard(card, CardMoveReason.Discarded);
             return moveResult;
         }
     }
 }
-

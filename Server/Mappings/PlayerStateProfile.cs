@@ -14,11 +14,14 @@ namespace ShadowverseBeyond.Server.Mappings
             CreateMap<PlayerState, PlayerStateDto>()
                 .ForMember(dest => dest.MaxPP, opt => opt.MapFrom(src => src.MaxPlayPoints))
                 .ForMember(dest => dest.CurrentPP, opt => opt.MapFrom(src => src.CurrentPlayPoints))
+                .ForMember(dest => dest.PpBoostUsesAvailable, opt => opt.MapFrom(src => src.PpBoostUsesAvailable))
                 .ForMember(dest => dest.MaxEP, opt => opt.MapFrom(src => src.MaxEvolutionPoints))
                 .ForMember(dest => dest.CurrentEP, opt => opt.MapFrom(src => src.CurrentEvolutionPoints))
                 .ForMember(dest => dest.MaxSEP, opt => opt.MapFrom(src => src.MaxSuperEvolutionPoints))
                 .ForMember(dest => dest.CurrentSEP, opt => opt.MapFrom(src => src.CurrentSuperEvolutionPoints))
                 .ForMember(dest => dest.CanSuperEvolve, opt => opt.MapFrom(src => src.CanSuperEvolve))
+                .ForMember(dest => dest.GraveyardCount, opt => opt.MapFrom(src => src.GraveyardCount))
+                .ForMember(dest => dest.BloodPool, opt => opt.MapFrom(src => src.BloodPool))
                 .ForMember(dest => dest.LeaderCard, opt => opt.MapFrom(src => src.Leader))
                 // 【BUG修复】在将领域实体映射到DTO时，从Field列表中过滤掉主战者。
                 // 这确保了前端渲染时不会将主战者错误地当作场上的卡牌。

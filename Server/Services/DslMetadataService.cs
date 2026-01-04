@@ -128,6 +128,14 @@ namespace ShadowverseBeyond.Server.Services
             var exposableTypes = assembly.GetTypes()
                 .Where(t => t.IsClass && t.GetCustomAttribute<DslExposableAttribute>() != null)
                 .ToList();
+            var baseEventFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "EventType",
+                "EventId",
+                "Timestamp",
+                "Source",
+                "Target"
+            };
 
             foreach (var type in exposableTypes)
             {
@@ -145,6 +153,12 @@ namespace ShadowverseBeyond.Server.Services
                     var exposableProperties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                         .Where(p => p.GetCustomAttribute<DslExposableAttribute>() != null)
                         .ToList();
+                    if (typeof(GameEventBase).IsAssignableFrom(type))
+                    {
+                        exposableProperties = exposableProperties
+                            .Where(p => !baseEventFields.Contains(p.Name))
+                            .ToList();
+                    }
 
                     foreach (var prop in exposableProperties)
                     {

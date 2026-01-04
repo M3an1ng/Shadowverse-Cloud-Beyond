@@ -104,13 +104,39 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
      * 渲染编辑器界面
      */
     renderEditor() {
+        if (!this.container) return;
+        // Ensure re-render replaces previous UI instead of duplicating.
+        this.clearContainer(this.container);
         const editorContainer = document.createElement('div');
         editorContainer.className = 'value-config-editor';
 
-        // 类型选择器
-        const typeSelector = this.createTypeSelector();
-        const typeGroup = this.createFormGroup('值类型', typeSelector);
-        editorContainer.appendChild(typeGroup);
+        // 模式切换入口（默认静态值，可切换到高级DSL）
+        const currentType = this.valueConfig.$type || 'StaticValueConfig';
+        const isAdvanced = currentType === 'FormulaValueConfig';
+        const headerRow = document.createElement('div');
+        headerRow.className = 'value-config-header';
+
+        const labelText = this.options?.parameterLabel || this.options?.displayName || this.options?.parameterName;
+        if (labelText) {
+            const label = document.createElement('div');
+            label.className = 'value-config-label';
+            label.textContent = labelText;
+            headerRow.appendChild(label);
+        } else {
+            headerRow.classList.add('no-label');
+        }
+
+        const modeSwitchContainer = document.createElement('div');
+        modeSwitchContainer.className = 'mode-switch-container';
+        const switchBtn = this.createButton(
+            isAdvanced ? '切换至简化模式' : '切换至高级模式',
+            () => this.changeValueType(isAdvanced ? 'StaticValueConfig' : 'FormulaValueConfig'),
+            'secondary small'
+        );
+        modeSwitchContainer.appendChild(switchBtn);
+        headerRow.appendChild(modeSwitchContainer);
+
+        editorContainer.appendChild(headerRow);
 
         // 值编辑器
         const valueEditor = this.createValueEditor();

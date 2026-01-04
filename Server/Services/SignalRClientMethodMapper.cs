@@ -75,10 +75,11 @@ namespace ShadowverseBeyond.Server.Services
                     EvolveStateUpdatedEventDto e => clientProxy.EvolveStateUpdated(e),
                     SuperEvolveStateUpdatedEventDto e => clientProxy.SuperEvolveStateUpdated(e),
                     ActStateUpdatedEventDto e => clientProxy.ActStateUpdated(e),
+                    PpBoostStateUpdatedEventDto e => clientProxy.PpBoostStateUpdated(e),
                     PlayerChoiceRequestedEventDto e => clientProxy.PlayerChoiceRequested(e), // 【TARGETING_FIX】添加缺失的目标选择事件映射
                     LogEventDto e => clientProxy.LogEvent(e),
                     CardRevealedEventDto e => clientProxy.CardRevealed(e),
-                    CardsFusedEventDto e => clientProxy.CardsFused(e),
+                    FusionEventDto e => clientProxy.Fusion(e),
 
                     // --- Default Case for Unmapped Events (Fallback) ---
                     // Includes CardDrawnEventDto, PlayerAttackedEventDto, UnitAttackedEventDto implicitly

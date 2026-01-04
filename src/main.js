@@ -17,7 +17,7 @@ import {
     handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt,
     handleCardSummoned, handleCardPlayed, handleHealthChanged,
     handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleAttackStateUpdated,
-    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePlayerChoiceRequested, handleCardRevealed, handleCardsFused, appendGameLog // 【新增】导入最大值更新处理函数
+    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested, handleCardRevealed, handleFusion, appendGameLog // 【新增】导入最大值更新处理函数
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
 import { renderGame } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
@@ -335,6 +335,7 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
         "EpUpdate",
         "PpMaxUpdate",
         "EpMaxUpdate",
+        "PpBoostStateUpdated",
         "GraveyardUpdate",
         "CardPlayed",
         "CardSummoned",
@@ -415,6 +416,7 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     wireEvent("PpMaxUpdate", handlePpMaxUpdate);
     wireEvent("EpMaxUpdate", handleEpMaxUpdate);
     wireEvent("SepMaxUpdate", handleSepMaxUpdate);
+    wireEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
 
     // Removed conn.on("HandUpdate", ...) block as it's deprecated
     wireEvent("GraveyardUpdate", handleGraveyardUpdate);
@@ -438,7 +440,7 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     // NEW: Handler for when the server requests the player to make a choice
     wireEvent("PlayerChoiceRequested", handlePlayerChoiceRequested);
     wireEvent("CardRevealed", handleCardRevealed);
-    wireEvent("CardsFused", handleCardsFused);
+    wireEvent("Fusion", handleFusion);
     // Generic log entries (for events without specific DTO)
     conn.on("LogEvent", (eventData) => {
         appendGameLog("LogEvent", eventData);

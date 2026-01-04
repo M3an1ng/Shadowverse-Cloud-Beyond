@@ -18,16 +18,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     /// 支持用法：
     /// - count(collection) - 返回集合中元素的总数
     /// - count(collection, property) - 返回集合中指定属性非空的元素数量
+    /// - count("counterName") - 返回当前卡牌上的计数器数值
     /// - count(collection, condition) - 返回满足条件的元素数量（未来扩展）
     /// </summary>
     public class CountFunction : BaseDslFunction
     {
         public override string Name => "count";
-        public override string Description => "计算集合中元素的数量。可选择性地根据属性进行过滤。";
+        public override string Description => "计算集合中元素的数量或读取计数器数值。可选择性地根据属性进行过滤。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
         {
-            new DslParameterInfo("collection", typeof(IEnumerable), "要计算数量的目标集合。"),
+            new DslParameterInfo("collectionOrCounter", typeof(object), "要计算数量的目标集合，或计数器名称。"),
             new DslParameterInfo("property", typeof(string), "（可选）一个属性名称。如果提供，则只计算该属性值不为null或false的元素。", isOptional: true, defaultValue: null)
         };
 
@@ -48,6 +49,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             if (firstArg == null)
             {
                 return true; // null集合返回0
+            }
+
+            if (firstArg is string)
+            {
+                return args.Count == 1;
             }
 
             // 检查是否为集合类型（排除字符串）
@@ -76,6 +82,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             if (collection == null)
             {
                 return 0;
+            }
+
+            if (collection is string counterName)
+            {
+                var sourceCard = context.SourceCard;
+                if (sourceCard == null)
+                {
+                    return 0;
+                }
+
+                return sourceCard.GetCounter(counterName);
             }
 
             var enumerable = ConvertToEnumerable(collection);

@@ -94,7 +94,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // System abilities (other IAbility implementers) can have SourceCard == null.
             if (ability is Ability && ability.SourceCard == null)
             {
-                _logger?.LogWarning("[AbilityManager] Attempted to register a card ability (Type: Ability) without a SourceCard. AbilityTag: {AbilityTag}. Registration skipped.", ability.AbilityTag);
+                _logger?.LogWarning("[AbilityManager] Attempted to register a card ability (Type: Ability) without a SourceCard. Keywords: {Keywords}. Registration skipped.", ability.KeywordSummary);
                 return;
             }
 
@@ -337,8 +337,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "[AbilityManager] Error checking trigger for ability {AbilityTag} (Type: {AbilityType})",
-                        ability.AbilityTag, ability.Type);
+                    _logger?.LogError(ex, "[AbilityManager] Error checking trigger for ability {AbilityKeywords} (Type: {AbilityType})",
+                        ability.KeywordSummary, ability.Type);
                 }
             }
 
@@ -538,9 +538,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 EventType.AbilityTriggered => new AbilityTriggeredEventDto(
                     gameEvent.Source?.Player?.PlayerId ?? Guid.Empty,
                     gameEvent.Source?.Card?.InstanceId ?? Guid.Empty,
-                    (gameEvent as AbilityTriggeredEvent)?.AbilityTag ?? string.Empty,
                     (gameEvent as AbilityTriggeredEvent)?.TriggeringEvent.EventType.ToString() ?? string.Empty,
-                    new Dictionary<string, object>()
+                    new Dictionary<string, object>(),
+                    (gameEvent as AbilityTriggeredEvent)?.AbilityKeywords ?? Array.Empty<string>()
                 ),
                 _ => null
             };
@@ -561,8 +561,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // If an ability was paused, its conditions were already met, but re-checking is safe and handles edge cases.
             if (!ability.CheckConditions(context))
             {
-                _logger?.LogDebug("[AbilityManager] Ability {AbilityTag} (RuntimeId: {RuntimeId}) conditions not met. Skipping.",
-                    ability.AbilityTag, ability.RuntimeId);
+                _logger?.LogDebug("[AbilityManager] Ability {AbilityKeywords} (RuntimeId: {RuntimeId}) conditions not met. Skipping.",
+                    ability.KeywordSummary, ability.RuntimeId);
                 return AbilityProcessResult.Success(new List<Effect>()); // Return a successful result with no effects.
             }
 
@@ -572,8 +572,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // 3. Handle the result from the target resolution process.
             if (targetResult.Status == ResolutionStatus.Failed)
             {
-                _logger?.LogError("[AbilityManager] Target resolution failed for ability {AbilityTag} (RuntimeId: {RuntimeId}): {ErrorMessage}",
-                    ability.AbilityTag, ability.RuntimeId, targetResult.ErrorMessage);
+                _logger?.LogError("[AbilityManager] Target resolution failed for ability {AbilityKeywords} (RuntimeId: {RuntimeId}): {ErrorMessage}",
+                    ability.KeywordSummary, ability.RuntimeId, targetResult.ErrorMessage);
                 return AbilityProcessResult.Failure(targetResult.ErrorMessage ?? "Target resolution failed.");
             }
 
@@ -592,13 +592,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
             catch (GameLogicException ex)
             {
-                _logger?.LogInformation(ex, "[AbilityManager] Ability {AbilityTag} (RuntimeId: {RuntimeId}) aborted by game logic: {Message}",
-                    ability.AbilityTag, ability.RuntimeId, ex.Message);
+                _logger?.LogInformation(ex, "[AbilityManager] Ability {AbilityKeywords} (RuntimeId: {RuntimeId}) aborted by game logic: {Message}",
+                    ability.KeywordSummary, ability.RuntimeId, ex.Message);
                 return AbilityProcessResult.Failure(ex.Message);
             }
 
-            _logger?.LogDebug("[AbilityManager] Processed ability {AbilityTag} (RuntimeId: {RuntimeId}) and created {EffectCount} effects.",
-                ability.AbilityTag, ability.RuntimeId, effects.Count);
+            _logger?.LogDebug("[AbilityManager] Processed ability {AbilityKeywords} (RuntimeId: {RuntimeId}) and created {EffectCount} effects.",
+                ability.KeywordSummary, ability.RuntimeId, effects.Count);
 
             return AbilityProcessResult.Success(effects);
         }

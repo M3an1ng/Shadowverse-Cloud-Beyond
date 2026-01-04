@@ -123,7 +123,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
                 Id = config.Id,
                 EventTypes = new List<EventType>(config.EventTypes),
                 Timing = config.Timing,
-                IsEnabled = config.IsEnabled
+                IsEnabled = config.IsEnabled,
+                RevalidateZoneBeforeExecution = config.RevalidateZoneBeforeExecution
             };
 
             // 如果原配置允许所有区域，则限制为活跃区域

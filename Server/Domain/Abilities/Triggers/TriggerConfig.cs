@@ -43,6 +43,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         public List<CardZone> ValidZones { get; set; } = new();
 
         /// <summary>
+        /// 是否在效果正式执行前再次校验区域限制（ValidZones）
+        /// </summary>
+        public bool RevalidateZoneBeforeExecution { get; set; } = false;
+
+        /// <summary>
         /// Defines the relationship between the ability's owner and the event's participants
         /// required for the ability to trigger. Defaults to 'Any'.
         /// </summary>
@@ -52,6 +57,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         /// 是否启用
         /// </summary>
         public bool IsEnabled { get; set; } = true;
+
+        /// <summary>
+        /// 触发次数限制配置（可选）
+        /// 0 或负数表示不限制
+        /// </summary>
+        public TriggerCountLimitConfig? CountLimit { get; set; }
 
         /// <summary>
         /// 检查指定区域是否在有效区域列表中
@@ -181,6 +192,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         }
 
         // Removed OnCondition static helper method as Conditions are no longer part of TriggerConfig
+    }
+
+    /// <summary>
+    /// 触发次数限制配置
+    /// </summary>
+    public class TriggerCountLimitConfig
+    {
+        /// <summary>
+        /// 每回合触发次数上限
+        /// 0 或负数表示不限制
+        /// </summary>
+        public int? MaxPerTurn { get; set; }
+
+        /// <summary>
+        /// 全局触发次数上限（单个能力实例贯穿整局）
+        /// 0 或负数表示不限制
+        /// </summary>
+        public int? MaxPerGame { get; set; }
     }
 
     // Removed TriggerLimitConfig class and LimitScope enum (Limits handled by AbilityConfig.Conditions)

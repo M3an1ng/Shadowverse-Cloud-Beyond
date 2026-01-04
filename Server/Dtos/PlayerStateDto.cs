@@ -17,12 +17,16 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         // Resources & Limits
         public int CurrentPP { get; set; }
         public int MaxPP { get; set; }
+        public int PpBoostUsesAvailable { get; set; }
         public int CurrentEP { get; set; }
         public int MaxEP { get; set; }
         public bool CanEvolve { get; set; } // Whether the player can use an evolution point this turn
         public int CurrentSEP { get; set; }
         public int MaxSEP { get; set; }
         public bool CanSuperEvolve { get; set; }
+
+        public int GraveyardCount { get; set; }
+        public int BloodPool { get; set; }
 
         // Leader Info
         // public int LeaderHealth { get; set; } // Removed: Use LeaderCard.CurrentHealth
@@ -40,11 +44,10 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         // Turn State
         public int PlayedCardCountThisTurn { get; set; }
         public bool HasCompletedMulligan { get; set; } = false; // Flag indicating if the player has submitted their mulligan choice.
-        public bool HasTakenFirstTurn { get; set; } = false; // Indicates if the player has finished their first turn (for draw 2 logic)
+        public bool HasTakenFirstTurn { get; set; } = false; // Legacy flag retained for compatibility.
         public int TurnNumber { get; set; } = 0; // Renamed: Tracks the player's individual turn number, starts at 0 before their first turn begins.
 
-        // Add Graveyard count, Banished count, etc., if needed by UI
-        // public int GraveyardCount { get; set; }
+        // Add Banished count, etc., if needed by UI
         // Removed IBoardEntityState implementation
     }
 }

@@ -23,6 +23,7 @@ import {
     evolveCard,
     superEvolveCard,
     requestAct,
+    requestPpBoost,
     // handleMulligan, // Removed import - Now uses submitMulligan
     isValidSpellTarget,
     submitMulligan, // Added import for SignalR mulligan submission
@@ -34,7 +35,7 @@ import {
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 // console.log("ui.js loaded");
 
-export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection };
+export { renderGame, showDamageNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection };
 
 let mulliganSelectedUids = new Set();
 
@@ -71,17 +72,20 @@ function updatePpDisplay(playerId, currentPp, maxPp) {
     if (ppBarContainer) {
         ppBarContainer.innerHTML = '';
         const displayMax = 10; // Always show 10 slots for consistency
-        const filledSegments = currentPp || 0;
-        const unlockedSegments = maxPp || 0;
+        const safeMax = Math.max(0, Math.min(maxPp ?? 0, displayMax));
+        const safeCurrent = Math.max(0, Math.min(currentPp ?? 0, displayMax));
+        const overflowCount = Math.max(0, safeCurrent - safeMax);
 
         for (let i = 0; i < displayMax; i++) {
             const segment = document.createElement('div');
             segment.classList.add('pp-segment');
             
-            if (i < filledSegments) {
-                segment.classList.add('active'); // Filled PP
-            } else if (i < unlockedSegments) {
-                // Unlocked but empty (default style)
+            if (i < safeMax) {
+                if (i < safeCurrent) {
+                    segment.classList.add('active'); // Filled PP
+                }
+            } else if (i < safeMax + overflowCount) {
+                segment.classList.add('overflow'); // PP+1 overflow
             } else {
                 segment.classList.add('empty'); // Locked/Max capacity limit
             }
@@ -793,6 +797,7 @@ let player1MaxEpEl, player2MaxEpEl;
 let player1MaxSepEl, player2MaxSepEl;
 let turnInfoEl, endTurnButtonEl, confirmMulliganButtonEl, gameContainerEl; // Added confirmMulliganButtonEl
 let spectatorToggleViewButtonEl;
+let battleCardPreviewEl;
 
 // 缓存 DOM 元素的函数
 function cacheDOMElements() {
@@ -803,6 +808,7 @@ function cacheDOMElements() {
         endTurnButtonEl = document.getElementById('end-turn-button');
         confirmMulliganButtonEl = document.getElementById('confirm-mulligan-button'); // Cache the new button
         spectatorToggleViewButtonEl = document.getElementById('spectator-toggle-view');
+        battleCardPreviewEl = document.getElementById('battle-card-preview');
 
         // Player 1 elements
         player1HandEl = document.getElementById('player1-hand');
@@ -830,7 +836,8 @@ function cacheDOMElements() {
         const elementsToVerify = {
             gameContainerEl, turnInfoEl, endTurnButtonEl, confirmMulliganButtonEl, // Added confirmMulliganButtonEl
             player1HandEl, player1FieldEl, player1HpEl, player1PpEl, player1MaxPpEl, player1EpEl, player1MaxEpEl, player1SepEl, player1MaxSepEl, player1DeckEl, player1GraveEl,
-            player2HandEl, player2FieldEl, player2HpEl, player2PpEl, player2MaxPpEl, player2EpEl, player2MaxEpEl, player2SepEl, player2MaxSepEl, player2DeckEl, player2GraveEl
+            player2HandEl, player2FieldEl, player2HpEl, player2PpEl, player2MaxPpEl, player2EpEl, player2MaxEpEl, player2SepEl, player2MaxSepEl, player2DeckEl, player2GraveEl,
+            battleCardPreviewEl
         };
         let missing = [];
         for (const key in elementsToVerify) {
@@ -1031,6 +1038,9 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
         const maxSep = (playerState.maxSEP && playerState.maxSEP > 0) ? playerState.maxSEP : 2;
         updateSepDisplay(playerState.id, playerState.sep, maxSep);
 
+        // 4.5 PP+1
+        updatePpBoostDisplay(playerState.id, playerState.ppBoostUsesAvailable ?? 0);
+
         // 5. Deck
         const deckCountEl = statsContainer.querySelector(`#${prefix}-deck-count`);
         if (deckCountEl) deckCountEl.textContent = playerState.deckCount ?? 0;
@@ -1202,20 +1212,34 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     // 基本的 Inner HTML 结构 - 需要根据 style.css 进行调整
     // 使用 ?? 提供默认值，防止属性缺失导致显示错误
     // 【修复】使用正确的属性名：Name（大写）而不是name（小写）
+    
+    // Determine Countdown visibility (Amulets only)
+    const countdownValue = cardInstance.CurrentCountdown ?? cardInstance.currentCountdown;
+    const showCountdown = (cardType === 'Amulet' || cardType === 'amulet') && (countdownValue !== null && countdownValue !== undefined);
+
     cardDiv.innerHTML = `
         <div class="card-art"></div> <!-- 卡面美术图占位 -->
-        <div class="cost">${cardInstance.Cost ?? cardInstance.cost ?? '?'}</div>
+        <div class="cost"><span>${cardInstance.Cost ?? cardInstance.cost ?? '?'}</span></div>
         <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
         ${
         // 仅为随从显示攻击力和生命值区域
         (cardInstance.Type === 'Follower' || cardInstance.type === 'Follower' || cardInstance.Type === 'Follower_Evolved' || cardInstance.type === 'Follower_Evolved') ?
             // Use CurrentAttack and CurrentHealth from the DTO received from server
             `<div class="stats">
-                <span class="attack">${cardInstance.CurrentAttack ?? cardInstance.currentAttack ?? '?'}</span>/<span class="health">${cardInstance.CurrentHealth ?? cardInstance.currentHealth ?? '?'}</span>
+                <span class="attack">${cardInstance.CurrentAttack ?? cardInstance.currentAttack ?? '?'}</span>
+                <span class="stat-separator">/</span>
+                <span class="health">${cardInstance.CurrentHealth ?? cardInstance.currentHealth ?? '?'}</span>
             </div>`
             : '' // 法术和护符不显示 stats 区域
         }
-        <div class="description">${cardInstance.Description ?? cardInstance.description ?? ''}</div> <!-- 卡牌描述区域 -->
+        ${
+            showCountdown ?
+            `<div class="countdown">
+                <span class="countdown-icon">⏳</span>
+                <span class="countdown-value">${countdownValue}</span>
+            </div>` : ''
+        }
+        <!-- Description removed for minimalist design -->
     `;
 
     // 注意: 'playable', 'selected-attacker', 'targetable' 等交互状态相关的 class
@@ -1321,6 +1345,104 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     // --- END Mouse Enter Listener ---
 
     return cardDiv;
+}
+
+function normalizeEnumName(value) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed) return trimmed;
+    if (trimmed.includes('_')) {
+        return trimmed
+            .split('_')
+            .map(part => part ? part[0].toUpperCase() + part.slice(1) : part)
+            .join('_');
+    }
+    return trimmed[0].toUpperCase() + trimmed.slice(1);
+}
+
+function equalsIgnoreCase(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return a === b;
+    return a.toLowerCase() === b.toLowerCase();
+}
+
+function getBattlePreviewPlaceholderHtml() {
+    return '';
+}
+
+function buildBattlePreviewHtml(cardInstance) {
+    const rawRarity = cardInstance.rarity ?? cardInstance.Rarity ?? 'Common';
+    const rawClass = cardInstance.class ?? cardInstance.Class ?? 'Neutral';
+    const rawType = cardInstance.type ?? cardInstance.Type ?? 'Spell';
+    const rarityLabel = normalizeEnumName(rawRarity) || 'Common';
+    const classLabel = normalizeEnumName(rawClass) || 'Neutral';
+    const typeLabel = normalizeEnumName(rawType) || 'Spell';
+    const rarityClass = String(rarityLabel).toLowerCase();
+    const normalizedType = normalizeEnumName(rawType);
+    const isFollower = equalsIgnoreCase(normalizedType, 'Follower') || equalsIgnoreCase(normalizedType, 'Follower_Evolved');
+    const costValue = cardInstance.currentCost ?? cardInstance.CurrentCost ?? cardInstance.cost ?? cardInstance.Cost ?? 0;
+    const attackValue = cardInstance.currentAttack ?? cardInstance.CurrentAttack ?? cardInstance.attack ?? cardInstance.Attack ?? 0;
+    const healthValue = cardInstance.currentHealth ?? cardInstance.CurrentHealth ?? cardInstance.health ?? cardInstance.Health ?? 0;
+    const description = cardInstance.description ?? cardInstance.Description ?? '';
+    const descriptionHtml = description ? description : '<span class="text-dim">NO DATA DESCRIPTION...</span>';
+
+    return `
+        <div class="preview-slate rarity-${rarityClass}">
+            <div class="slate-header">
+                <div class="slate-identity">
+                    <div class="identity-top">
+                        <div class="slate-cost-badge-embedded">
+                            <span class="cost-value">${costValue}</span>
+                        </div>
+                        <h2 class="slate-name">${cardInstance.name ?? cardInstance.Name ?? 'UNTITLED'}</h2>
+                    </div>
+                    <div class="slate-meta">
+                        <span class="meta-tag rarity-tag">${rarityLabel}</span>
+                        <span class="meta-tag class-tag">${classLabel}</span>
+                        <span class="meta-tag type-tag">${typeLabel}</span>
+                    </div>
+                </div>
+                ${isFollower ? `
+                <div class="header-stats">
+                    <div class="stat-mini attack">
+                        <span class="stat-icon">⚔</span>
+                        <span class="stat-value">${attackValue}</span>
+                    </div>
+                    <div class="stat-mini health">
+                        <span class="stat-icon">♥</span>
+                        <span class="stat-value">${healthValue}</span>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="slate-art-background"></div>
+
+            <div class="slate-body">
+                <div class="slate-content-area">
+                    <div class="slate-description custom-scrollbar">${descriptionHtml}</div>
+                </div>
+            </div>
+            
+            <div class="holo-scanline"></div>
+            <div class="holo-grid-overlay"></div>
+        </div>
+    `;
+}
+
+function renderBattleCardPreview(cardInstance) {
+    if (!battleCardPreviewEl) {
+        battleCardPreviewEl = document.getElementById('battle-card-preview');
+    }
+    if (!battleCardPreviewEl) return;
+
+    if (!cardInstance) {
+        battleCardPreviewEl.classList.add('is-empty');
+        battleCardPreviewEl.innerHTML = getBattlePreviewPlaceholderHtml();
+        return;
+    }
+
+    battleCardPreviewEl.classList.remove('is-empty');
+    battleCardPreviewEl.innerHTML = buildBattlePreviewHtml(cardInstance);
 }
 
 // --- 渲染回合信息的辅助函数 ---
@@ -1756,6 +1878,7 @@ function showDamageNumber(targetUid, damageAmount) {
 function initializeUI() {
     // console.log("UI: Initializing...");
     cacheDOMElements();
+    renderBattleCardPreview(null);
     setupGlobalEventListeners(); // 确保调用
 }
 // (确保 initializeUI 在 DOMContentLoaded 后调用)
@@ -1769,8 +1892,72 @@ function setupGlobalEventListeners() {
     // console.log("UI: Setting up global click listener on game container...");
     // 先移除旧监听器，防止重复添加 (如果 initializeUI 可能被多次调用)
     gameContainerEl.removeEventListener('click', handleGameClick);
+    gameContainerEl.removeEventListener('mouseover', handleGameMouseOver);
+    gameContainerEl.removeEventListener('mouseout', handleGameMouseOut);
     gameContainerEl.addEventListener('click', handleGameClick);
+    gameContainerEl.addEventListener('mouseover', handleGameMouseOver);
+    gameContainerEl.addEventListener('mouseout', handleGameMouseOut);
     // console.log("UI: Global click listener attached.");
+}
+
+function handleGameMouseOver(event) {
+    const hoveredCard = event.target.closest('.card');
+    if (!hoveredCard) return;
+
+    const uid = hoveredCard.dataset.uid;
+    if (!uid) return;
+
+    const cardInstance = findCardInstanceByUid(uid);
+    if (cardInstance) {
+        renderBattleCardPreview(cardInstance);
+    }
+}
+
+/**
+ * Updates the PP+1 availability display for a specific player.
+ * @param {string} playerId - The GUID of the player.
+ * @param {number} usesAvailable - Remaining PP+1 uses.
+ */
+function updatePpBoostDisplay(playerId, usesAvailable) {
+    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const countEl = document.getElementById(`${prefix}-pp-boost-count`);
+    const buttonEl = document.getElementById(`${prefix}-pp-boost-button`);
+
+    if (countEl) {
+        // 隐藏次数显示
+        countEl.style.display = 'none';
+    }
+
+    if (buttonEl) {
+        const isLocalTurn = gameState.currentPlayerId === gameState.localPlayerId;
+        const isTurnPhase = gameState.phase === 'Main' || gameState.phase === 'TurnStart';
+        const canUse = isLocalPlayer && isLocalTurn && isTurnPhase && (usesAvailable ?? 0) > 0 && !gameState.isSpectator;
+
+        buttonEl.disabled = !canUse;
+        buttonEl.classList.toggle('available', canUse);
+        
+        // 确保按钮文本为 PP+1
+        const textEl = buttonEl.querySelector('.pp-boost-action-text');
+        if (textEl) {
+            textEl.textContent = 'PP+1';
+        }
+
+        // 移除复杂的 title，保持简洁
+        buttonEl.title = '';
+    }
+}
+
+function handleGameMouseOut(event) {
+    const leftCard = event.target.closest('.card');
+    if (!leftCard) return;
+
+    const related = event.relatedTarget;
+    if (related && related.closest && related.closest('.card')) {
+        return;
+    }
+
+    renderBattleCardPreview(null);
 }
 
 // 全局点击事件处理器 (事件委托)
@@ -1828,6 +2015,11 @@ function handleGameClick(event) {
             const uid = clickedHandCard.dataset.uid;
             if (!uid) return;
 
+            const previewCard = findCardInstanceByUid(uid);
+            if (previewCard) {
+                renderBattleCardPreview(previewCard);
+            }
+
             if (mulliganSelectedUids.has(uid)) {
                 mulliganSelectedUids.delete(uid);
                 clickedHandCard.classList.remove('selected-for-mulligan');
@@ -1862,6 +2054,17 @@ function handleGameClick(event) {
             alert("错误：结束回合功能未加载！(endTurnRequest)"); // Update alert message
         }
         return; // Stop processing this click further
+    }
+
+    const clickedPpBoostButton = event.target.closest('.pp-boost-button');
+    if (clickedPpBoostButton) {
+        if (clickedPpBoostButton.disabled) return;
+        if (typeof requestPpBoost === 'function') {
+            requestPpBoost();
+        } else {
+            alert("错误：PP+1功能未加载！");
+        }
+        return;
     }
 
     // Existing logic follows... (This comment isn't inserted, just for clarity here)

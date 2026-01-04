@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         // PlayerId is inherited from GameEventDto
 
         /// <summary>
-        /// The total number of cards currently in the player's graveyard after the update.
+        /// The graveyard counter value after the update.
         /// Important for mechanics interacting with graveyard count (Necromancy in Shadowverse).
         /// </summary>
         public int GraveyardCount { get; set; }

@@ -15,7 +15,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Event triggered when a Buff is successfully applied (registered) to a target.
     /// This is now a committable event that handles the application logic.
     /// </summary>
-    [GameEventMetadata("Buff应用", "当一个Buff被成功应用到目标时触发的事件。", EventType.BuffApplied)]
+    [GameEventMetadata("获得临时状态", "当一个临时状态被成功应用到目标时触发的事件。", EventType.BuffApplied)]
     public class BuffAppliedEvent : GameEventBase, ICommittableEvent
     {
         /// <summary>

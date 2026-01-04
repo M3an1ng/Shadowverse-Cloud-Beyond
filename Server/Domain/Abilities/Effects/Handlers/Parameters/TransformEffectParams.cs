@@ -5,7 +5,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters 
     /// <summary>
     /// Parameters for the Transform effect.
     /// </summary>
-    [EffectMetadata("变形", "将目标变形为指定的卡牌，不触发死亡效果。")]
+    [EffectMetadata("变形", "将目标变形为指定的卡牌，不触发死亡效果。使用卡牌目标。")]
     public class TransformEffectParams : BaseEffectParams // Corrected base class
     {
         /// <summary>

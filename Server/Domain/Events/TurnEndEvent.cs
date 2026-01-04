@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// System lifecycle event: end of a player's turn.
     /// Implements ICommittableEvent; Commit executes turn-end cleanup.
     /// </summary>
-    [GameEventMetadata("回合结束时", "当一个玩家的回合结束时触发。", EventType.TurnEnd)]
+    [GameEventMetadata("回合结束", "当一个玩家的回合结束时触发。", EventType.TurnEnd)]
     public class TurnEndEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("回合结束的玩家", "当前回合结束的玩家。")]

@@ -18,6 +18,10 @@ using Microsoft.AspNetCore.Http; // Required for StatusCodes
 using AutoMapper;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using System.Text.Json;
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
+using ShadowverseBeyond.Server.Domain.Constants;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 {
@@ -116,8 +120,6 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     AbilityIds = dto.AbilityIds ?? existing.AbilityIds,
                     Keywords = dto.Keywords ?? existing.Keywords,
                     Tribe = dto.Tribe ?? existing.Tribe,
-                    CanEvolve = dto.CanEvolve ?? existing.EvolveId.HasValue,
-                    EvolveId = dto.EvolveId ?? existing.EvolveId,
                     CardSet = string.IsNullOrWhiteSpace(dto.CardSet) ? existing.CardSet : dto.CardSet,
                     Rarity = string.IsNullOrWhiteSpace(dto.Rarity) ? existing.Rarity.ToString() : dto.Rarity,
                     Class = string.IsNullOrWhiteSpace(dto.Class) ? existing.Class.ToString() : dto.Class
@@ -216,17 +218,21 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     }
                 }
 
-                var abilities = abilityEntities.Select(a => new
+                var abilities = abilityEntities.Select(a =>
                 {
-                    id = a.Id,
-                    name = a.Name,
-                    description = a.Description,
-                    abilityTag = a.AbilityTag,
-                    abilityType = a.AbilityType,
-                    priority = a.Priority,
-                    isActive = a.IsActive,
-                    cardId = a.CardId,
-                    jsonConfig = ParseJsonConfig(a.JsonConfig)
+                    var keywords = ExtractAbilityKeywords(a.JsonConfig);
+                    return new
+                    {
+                        id = a.Id,
+                        name = a.Name,
+                        description = a.Description,
+                        abilityKeywords = BuildAbilityKeywordDtos(keywords),
+                        abilityType = a.AbilityType,
+                        priority = a.Priority,
+                        isActive = a.IsActive,
+                        cardId = a.CardId,
+                        jsonConfig = ParseJsonConfig(a.JsonConfig)
+                    };
                 }).ToList();
 
                 _logger.LogInformation("Successfully retrieved {Count} abilities for card ID: {CardId}", abilities.Count, cardId);
@@ -340,5 +346,48 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Failed to delete card" });
             }
         }
+
+        private static List<AbilityKeywordConfig> ExtractAbilityKeywords(string? jsonConfig)
+        {
+            var config = TryDeserializeAbilityConfig(jsonConfig);
+            if (config == null)
+            {
+                return new List<AbilityKeywordConfig>();
+            }
+
+            config.NormalizeKeywords();
+            return config.AbilityKeywords;
+        }
+
+        private static AbilityConfig? TryDeserializeAbilityConfig(string? jsonConfig)
+        {
+            if (string.IsNullOrWhiteSpace(jsonConfig))
+            {
+                return null;
+            }
+
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    Converters = { new LenientEffectKeywordConverter(), new JsonStringEnumConverter() }
+                };
+                return JsonSerializer.Deserialize<AbilityConfig>(jsonConfig, options);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static List<object> BuildAbilityKeywordDtos(IEnumerable<AbilityKeywordConfig> keywords)
+        {
+            return keywords
+                .Select(k => new { keyword = k.Keyword.ToString(), value = k.Value })
+                .Cast<object>()
+                .ToList();
+        }
+
     }
 }

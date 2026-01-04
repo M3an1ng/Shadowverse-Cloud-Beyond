@@ -2,7 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Meta
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
-    [EffectMetadata("公开", "公开目标卡牌的卡面信息。")]
+[EffectMetadata("公开", "公开目标卡牌的卡面信息。使用卡牌目标。")]
     public class RevealEffectParams : BaseEffectParams
     {
     }

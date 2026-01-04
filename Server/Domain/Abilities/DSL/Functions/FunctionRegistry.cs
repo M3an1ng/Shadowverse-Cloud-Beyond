@@ -145,6 +145,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             var coreFunctions = new List<IFunctionDefinition>
             {
                 new CountFunction(),
+                new FindFunction(),
                 new MaxFunction(),
                 new MinFunction(),
                 new SumFunction(),
@@ -152,11 +153,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                 new IfFunction(),
                 new ContainsFunction(),
                 new IsEmptyFunction(),
+                new VarFunction(),
                 new EventIntFunction(),
                 new EventBoolFunction(),
                 new EventStringFunction(),
                 new EventGuidFunction(),
-                new EventGuidListFunction()
+                new EventGuidListFunction(),
+                new EventCardFunction(),
+                new EventCardsFunction()
             };
 
             RegisterFunctions(coreFunctions);

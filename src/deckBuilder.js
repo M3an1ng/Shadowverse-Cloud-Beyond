@@ -611,6 +611,7 @@ function renderDeckList() {
         <div class="deck-card-mini" data-card-id="${item.entry.cardDefinitionId}">
             <div class="mini-cost">${item.card.cost ?? '-'}</div>
             <div class="mini-visual"></div>
+            <div class="mini-name">${item.card.name ?? '-'}</div>
             <div class="mini-count">x${item.entry.count}</div>
             <div class="mini-overlay">
                 <span class="remove-icon">-</span>

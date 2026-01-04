@@ -641,14 +641,33 @@
     /* Placeholder for card art */
 }
 
+.mini-name {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 20px 4px 4px 4px;
+    background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0) 100%);
+    color: #fff;
+    font-family: var(--db-font-serif);
+    font-size: 0.75rem;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 2;
+    text-shadow: 0 1px 2px #000;
+}
+
 .mini-count {
     position: absolute;
-    bottom: 4px; right: 4px;
+    top: 4px; right: 4px;
     font-family: var(--db-font-mono);
     font-weight: bold;
     color: #fff;
     text-shadow: 0 0 4px #000;
-    z-index: 2;
+    z-index: 3;
+    font-size: 0.8rem;
 }
 
 .mini-overlay {

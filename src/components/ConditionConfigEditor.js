@@ -180,22 +180,55 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
         const statusClass = condition.isEnabled !== false ? 'status-enabled' : 'status-disabled';
         const statusText = condition.isEnabled !== false ? '启用' : '禁用';
 
-        header.innerHTML = `
-            <div class="header-info">
-                <span class="item-index">#${index + 1}</span>
-                <span class="item-title">条件配置</span>
-                <span class="item-status ${statusClass}">${statusText}</span>
-            </div>
-            <div class="header-actions">
-                <button class="btn-icon delete-btn" title="删除">×</button>
-                <button class="btn-icon expand-btn" title="展开/折叠">▼</button>
-            </div>
+        const headerInfo = document.createElement('div');
+        headerInfo.className = 'header-info';
+        headerInfo.innerHTML = `
+            <span class="item-index">#${index + 1}</span>
+            <span class="item-title">条件配置</span>
+            <span class="item-status ${statusClass}">${statusText}</span>
         `;
 
+        const headerActions = document.createElement('div');
+        headerActions.className = 'header-actions';
+
+        const toggle = this.createToggleSwitch(
+            condition.isEnabled !== false,
+            (checked) => {
+                this.updateCondition(index, { isEnabled: checked });
+                const statusSpan = header.querySelector('.item-status');
+                if (checked) {
+                    statusSpan.textContent = '启用';
+                    statusSpan.className = 'item-status status-enabled';
+                    toggle.title = '点击禁用条件';
+                } else {
+                    statusSpan.textContent = '禁用';
+                    statusSpan.className = 'item-status status-disabled';
+                    toggle.title = '点击启用条件';
+                }
+            },
+            '',
+            { compact: true }
+        );
+        toggle.title = condition.isEnabled !== false ? '点击禁用条件' : '点击启用条件';
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-icon delete-btn';
+        deleteBtn.title = '删除';
+        deleteBtn.textContent = '×';
+
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'btn-icon expand-btn';
+        expandBtn.title = '展开/折叠';
+        expandBtn.textContent = '▼';
+
+        headerActions.appendChild(toggle);
+        headerActions.appendChild(deleteBtn);
+        headerActions.appendChild(expandBtn);
+
+        header.appendChild(headerInfo);
+        header.appendChild(headerActions);
+
         // 绑定头部事件
-        const expandBtn = header.querySelector('.expand-btn');
-        const deleteBtn = header.querySelector('.delete-btn');
-        
         deleteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.removeCondition(index);
@@ -204,36 +237,10 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
         // 内容区域
         const content = document.createElement('div');
         content.className = 'accordion-content collapsed';
-        
-        // 1. 启用/禁用开关
-        const toggleWrapper = document.createElement('div');
-        toggleWrapper.className = 'config-section-header';
-        const toggle = this.createToggleSwitch(
-            condition.isEnabled !== false,
-            (checked) => {
-                this.updateCondition(index, { isEnabled: checked });
-                // 更新头部状态显示
-                const statusSpan = header.querySelector('.item-status');
-                if (checked) {
-                    statusSpan.textContent = '启用';
-                    statusSpan.className = 'item-status status-enabled';
-                } else {
-                    statusSpan.textContent = '禁用';
-                    statusSpan.className = 'item-status status-disabled';
-                }
-            },
-            '启用此条件'
-        );
-        toggleWrapper.appendChild(toggle);
-        content.appendChild(toggleWrapper);
 
-        // 2. 条件表达式编辑器
+        // 条件表达式编辑器
         const expressionGroup = this.createConditionExpressionEditor(condition, index);
         content.appendChild(expressionGroup);
-
-        // 3. 条件描述
-        const descriptionGroup = this.createConditionDescription(condition, index);
-        content.appendChild(descriptionGroup);
 
         node.appendChild(header);
         node.appendChild(content);
@@ -302,47 +309,35 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
     /**
      * 创建条件描述编辑器
      */
-    createConditionDescription(condition, index) {
-        const container = document.createElement('div');
-        container.className = 'config-section';
-
-        const descriptionInput = this.createTextInput(
-            condition.description || '',
-            (value) => this.updateCondition(index, { description: value }),
-            {
-                placeholder: '为这个条件添加描述（可选）',
-                multiline: false
-            }
-        );
-        descriptionInput.className = 'form-input';
-
-        container.appendChild(this.createFormGroup(
-            '条件描述',
-            descriptionInput,
-            '为条件添加易于理解的描述文本'
-        ));
-        
-        return container;
-    }
-
     /**
      * 复用 Toggle Switch 创建逻辑
      */
-    createToggleSwitch(checked, onChange, labelText) {
+    createToggleSwitch(checked, onChange, labelText, options = {}) {
         const wrapper = document.createElement('label');
         wrapper.className = 'toggle-switch-wrapper';
+        if (options.compact) {
+            wrapper.classList.add('compact');
+        }
+        wrapper.addEventListener('click', (e) => e.stopPropagation());
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = checked;
-        input.addEventListener('change', (e) => onChange(e.target.checked));
+        input.setAttribute('aria-label', labelText || '启用条件');
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('change', (e) => {
+            e.stopPropagation();
+            onChange(e.target.checked);
+        });
         const slider = document.createElement('span');
         slider.className = 'toggle-slider';
-        const label = document.createElement('span');
-        label.className = 'toggle-label';
-        label.textContent = labelText;
         wrapper.appendChild(input);
         wrapper.appendChild(slider);
-        wrapper.appendChild(label);
+        if (labelText) {
+            const label = document.createElement('span');
+            label.className = 'toggle-label';
+            label.textContent = labelText;
+            wrapper.appendChild(label);
+        }
         return wrapper;
     }
 
@@ -353,7 +348,6 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
         const newCondition = {
             id: this.generateConditionId(),
             expression: '',
-            description: '',
             isEnabled: true
         };
 

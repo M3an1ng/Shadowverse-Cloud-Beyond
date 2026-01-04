@@ -113,7 +113,13 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         /// Represents an amulet card that occupies the field and provides effects.
         /// </summary>
         [Description("护符")]
-        Amulet
+        Amulet,
+
+        /// <summary>
+        /// Represents a crest/emblem card stored in the Emblem zone.
+        /// </summary>
+        [Description("纹章")]
+        Crest
     }
 
     /// <summary>

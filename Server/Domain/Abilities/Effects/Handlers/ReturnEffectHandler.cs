@@ -58,5 +58,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 returnAction,
                 effectName);
         }
+
     }
 }

@@ -26,7 +26,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         await this.initialize();
         
         this.container = container;
-        this.targets = targets;
+        this.targets = (targets || []).map(target => this.normalizeTargetConfig(target));
         this.onChange = onChange;
         this.options = options || {};
 
@@ -40,8 +40,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             const header = document.createElement('div');
             header.className = 'step-header';
             header.innerHTML = `
-                <h4>目标选择配置</h4>
-                <p class="step-intro">定义能力将影响哪些对象。你可以配置多个目标，并为每个目标指定筛选条件。</p>
+                <h4>卡牌目标选择配置</h4>
+                <p class="step-intro">定义能力将影响哪些卡牌实例。你可以配置多个目标，并为每个目标指定筛选条件。</p>
             `;
             wrapper.appendChild(header);
 
@@ -83,8 +83,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                         </div>
                     </div>
                 </div>
-                <h5 class="empty-title">暂无目标配置</h5>
-                <p class="empty-desc">定义能力将影响哪些对象<br>点击下方按钮添加第一个目标</p>
+                <h5 class="empty-title">暂无卡牌目标配置</h5>
+                <p class="empty-desc">定义能力将影响哪些卡牌实例<br>点击下方按钮添加第一个目标</p>
             `;
             container.appendChild(placeholder);
             return;
@@ -104,21 +104,60 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         // 头部
         const header = document.createElement('div');
         header.className = 'accordion-header';
-        header.innerHTML = `
-            <div class="header-info">
-                <span class="item-index">#${index + 1}</span>
-                <span class="item-title">目标配置</span>
-            </div>
-            <div class="header-actions">
-                <button class="btn-icon delete-btn" title="删除">×</button>
-                <button class="btn-icon expand-btn" title="展开/折叠">▼</button>
-            </div>
+
+        const isEnabled = target.isEnabled !== false;
+        const statusClass = isEnabled ? 'status-enabled' : 'status-disabled';
+        const statusText = isEnabled ? '启用' : '禁用';
+
+        const headerInfo = document.createElement('div');
+        headerInfo.className = 'header-info';
+        headerInfo.innerHTML = `
+            <span class="item-index">#${index + 1}</span>
+            <span class="item-title">目标配置</span>
+            <span class="item-status ${statusClass}">${statusText}</span>
         `;
 
+        const headerActions = document.createElement('div');
+        headerActions.className = 'header-actions';
+
+        const toggle = this.createToggleSwitch(
+            isEnabled,
+            (checked) => {
+                this.updateTarget(index, { isEnabled: checked });
+                const statusSpan = header.querySelector('.item-status');
+                if (checked) {
+                    statusSpan.textContent = '启用';
+                    statusSpan.className = 'item-status status-enabled';
+                    toggle.title = '点击禁用目标';
+                } else {
+                    statusSpan.textContent = '禁用';
+                    statusSpan.className = 'item-status status-disabled';
+                    toggle.title = '点击启用目标';
+                }
+            },
+            '',
+            { compact: true }
+        );
+        toggle.title = isEnabled ? '点击禁用目标' : '点击启用目标';
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-icon delete-btn';
+        deleteBtn.title = '删除';
+        deleteBtn.textContent = '×';
+
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'btn-icon expand-btn';
+        expandBtn.title = '展开/折叠';
+        expandBtn.textContent = '▼';
+
+        headerActions.appendChild(toggle);
+        headerActions.appendChild(deleteBtn);
+        headerActions.appendChild(expandBtn);
+
+        header.appendChild(headerInfo);
+        header.appendChild(headerActions);
+
         // 绑定头部事件
-        const expandBtn = header.querySelector('.expand-btn');
-        const deleteBtn = header.querySelector('.delete-btn');
-        
         deleteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.removeTarget(index);
@@ -128,17 +167,34 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const content = document.createElement('div');
         content.className = 'accordion-content collapsed';
         
-        // 1. 查询配置
-        const querySection = this.createQueryEditor(target, index);
-        content.appendChild(querySection);
+        // 模式切换按钮
+        const modeSwitchContainer = document.createElement('div');
+        modeSwitchContainer.className = 'mode-switch-container';
+        const isAdvanced = target._uiMode === 'advanced';
+        
+        const switchBtn = this.createButton(
+            isAdvanced ? '切换至简化模式' : '切换至高级模式',
+            () => this.toggleTargetMode(index),
+            'secondary small'
+        );
+        modeSwitchContainer.appendChild(switchBtn);
+        content.appendChild(modeSwitchContainer);
 
-        // 2. 验证与失败处理
-        const validationSection = this.createValidationEditor(target, index);
-        content.appendChild(validationSection);
+        if (isAdvanced) {
+            // 高级模式：原有 DSL 编辑器
+            const querySection = this.createQueryEditor(target, index);
+            content.appendChild(querySection);
 
-        // 3. 玩家选择
-        const playerChoiceSection = this.createPlayerChoiceEditor(target, index);
-        content.appendChild(playerChoiceSection);
+            const validationSection = this.createValidationEditor(target, index);
+            content.appendChild(validationSection);
+
+            const playerChoiceSection = this.createPlayerChoiceEditor(target, index);
+            content.appendChild(playerChoiceSection);
+        } else {
+            // 简化模式：按钮引导式 UI
+            const simplifiedEditor = this.createSimplifiedEditor(target, index);
+            content.appendChild(simplifiedEditor);
+        }
 
         node.appendChild(header);
         node.appendChild(content);
@@ -168,10 +224,6 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         // 起始卡池
         const sourcePoolGroup = this.createSourcePoolEditor(target, index);
         container.appendChild(sourcePoolGroup);
-
-        // 操作列表
-        const operationsGroup = this.createOperationsEditor(target, index);
-        container.appendChild(operationsGroup);
 
         return container;
     }
@@ -295,20 +347,6 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const grid = document.createElement('div');
         grid.className = 'form-grid-layout';
 
-        // 失败处理
-        const failureOptions = [
-            { value: 'AbortAbility', label: '中止能力' },
-            { value: 'SkipEffect', label: '跳过效果' },
-            { value: 'LogWarning', label: '仅记录警告' }
-        ];
-        const failureDropdown = this.createDropdown(
-            failureOptions,
-            target.onFailure || 'AbortAbility',
-            (val) => this.updateTarget(index, { onFailure: val })
-        );
-        failureDropdown.className = 'form-select';
-        grid.appendChild(this.createFormGroup('若无目标', failureDropdown));
-
         // 强制有效
         const validCheck = this.createToggleSwitch(
             target.requireValidTarget || false,
@@ -348,54 +386,192 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             const grid = document.createElement('div');
             grid.className = 'form-grid-layout';
             
-            const promptInput = this.createTextInput(opts.prompt || '', (val) => {
-                this.updatePlayerChoiceOption(index, { prompt: val });
-            }, { placeholder: '例如：选择一个敌方随从' });
-            promptInput.className = 'form-input';
-            grid.appendChild(this.createFormGroup('提示文本', promptInput));
-
-            // 数量限制
-            const countGroup = document.createElement('div');
-            countGroup.className = 'input-group-row';
+            // 数量限制 (Range Slider)
+            const rangeSlider = this.createRangeSlider(
+                opts.minCount || 1,
+                opts.maxCount || 1,
+                (min, max) => {
+                    this.updatePlayerChoiceOption(index, { minCount: min, maxCount: max });
+                }
+            );
             
-            const minInput = this.createNumberInput(opts.minCount || 1, (val) => {
-                this.updatePlayerChoiceOption(index, { minCount: val });
-            }, { min: 0 });
-            minInput.className = 'form-input small';
-            
-            const maxInput = this.createNumberInput(opts.maxCount || 1, (val) => {
-                this.updatePlayerChoiceOption(index, { maxCount: val });
-            }, { min: 1 });
-            maxInput.className = 'form-input small';
-
-            countGroup.appendChild(minInput);
-            countGroup.appendChild(document.createTextNode(' 至 '));
-            countGroup.appendChild(maxInput);
-            
-            grid.appendChild(this.createFormGroup('选择数量', countGroup));
+            grid.appendChild(this.createFormGroup('选择数量', rangeSlider));
             container.appendChild(grid);
         }
 
         return container;
     }
 
+    createRangeSlider(minVal, maxVal, onChange, options = {}) {
+        const mode = options.mode || 'range'; // 'range' or 'single'
+        const maxLimit = options.max || 10;
+        
+        const container = document.createElement('div');
+        container.className = 'range-slider-container';
+        if (mode === 'single') container.classList.add('single-mode');
+
+        // Min Input (Hidden in single mode)
+        const minInput = document.createElement('input');
+        minInput.type = 'number';
+        minInput.className = 'range-input-min form-input small';
+        minInput.value = minVal;
+        minInput.min = 0;
+        minInput.max = maxLimit;
+        if (mode === 'single') minInput.style.display = 'none';
+
+        // Max Input
+        const maxInput = document.createElement('input');
+        maxInput.type = 'number';
+        maxInput.className = 'range-input-max form-input small';
+        maxInput.value = maxVal;
+        maxInput.min = 0;
+        maxInput.max = maxLimit;
+
+        // Slider Track Wrapper
+        const trackWrapper = document.createElement('div');
+        trackWrapper.className = 'slider-track-wrapper';
+
+        const track = document.createElement('div');
+        track.className = 'slider-track';
+        
+        const highlight = document.createElement('div');
+        highlight.className = 'slider-range-highlight';
+
+        // Range Inputs (Thumbs)
+        const rangeMin = document.createElement('input');
+        rangeMin.type = 'range';
+        rangeMin.className = 'thumb thumb-left';
+        rangeMin.min = 0;
+        rangeMin.max = maxLimit;
+        rangeMin.value = minVal;
+        if (mode === 'single') rangeMin.style.display = 'none';
+
+        const rangeMax = document.createElement('input');
+        rangeMax.type = 'range';
+        rangeMax.className = 'thumb thumb-right';
+        rangeMax.min = 0;
+        rangeMax.max = maxLimit;
+        rangeMax.value = maxVal;
+
+        trackWrapper.appendChild(track);
+        trackWrapper.appendChild(highlight);
+        trackWrapper.appendChild(rangeMin);
+        trackWrapper.appendChild(rangeMax);
+
+        container.appendChild(minInput);
+        container.appendChild(trackWrapper);
+        container.appendChild(maxInput);
+
+        // Update Logic
+        const updateUI = () => {
+            let min = parseInt(rangeMin.value);
+            let max = parseInt(rangeMax.value);
+
+            if (mode === 'range') {
+                // Ensure Min <= Max
+                if (min > max) {
+                    rangeMin.value = max;
+                    rangeMax.value = min;
+                    // Swap values for calculation
+                    const temp = min; min = max; max = temp;
+                }
+                
+                minInput.value = min;
+                maxInput.value = max;
+
+                const percentMin = (min / maxLimit) * 100;
+                const percentMax = (max / maxLimit) * 100;
+                highlight.style.left = percentMin + '%';
+                highlight.style.width = (percentMax - percentMin) + '%';
+            } else {
+                // Single Mode: Highlight from 0 to Value
+                maxInput.value = max;
+                const percentMax = (max / maxLimit) * 100;
+                highlight.style.left = '0%';
+                highlight.style.width = percentMax + '%';
+            }
+        };
+
+        const triggerChange = () => {
+            onChange(parseInt(minInput.value), parseInt(maxInput.value));
+        };
+
+        // Event Listeners
+        if (mode === 'range') {
+            rangeMin.addEventListener('input', () => {
+                if (parseInt(rangeMin.value) > parseInt(rangeMax.value)) {
+                    rangeMin.value = rangeMax.value;
+                }
+                updateUI();
+            });
+            rangeMin.addEventListener('change', triggerChange);
+
+            minInput.addEventListener('change', () => {
+                let val = parseInt(minInput.value);
+                if (val > parseInt(maxInput.value)) val = parseInt(maxInput.value);
+                if (val < 0) val = 0;
+                rangeMin.value = val;
+                updateUI();
+                triggerChange();
+            });
+        }
+
+        rangeMax.addEventListener('input', () => {
+            if (mode === 'range') {
+                if (parseInt(rangeMax.value) < parseInt(rangeMin.value)) {
+                    rangeMax.value = rangeMin.value;
+                }
+            }
+            updateUI();
+        });
+        rangeMax.addEventListener('change', triggerChange);
+
+        maxInput.addEventListener('change', () => {
+            let val = parseInt(maxInput.value);
+            if (mode === 'range') {
+                if (val < parseInt(minInput.value)) val = parseInt(minInput.value);
+            }
+            if (val > maxLimit) val = maxLimit;
+            if (val < 0) val = 0;
+            rangeMax.value = val;
+            updateUI();
+            triggerChange();
+        });
+
+        // Initialize
+        updateUI();
+
+        return container;
+    }
+
     // ... 辅助方法 (createToggleSwitch, updateTargetNode, etc.) ...
     // 复用 AbilityEditor 中的 createToggleSwitch 逻辑或将其提取到 MetadataDrivenComponent
-    createToggleSwitch(checked, onChange, labelText) {
+    createToggleSwitch(checked, onChange, labelText, options = {}) {
         const wrapper = document.createElement('label');
         wrapper.className = 'toggle-switch-wrapper';
+        if (options.compact) {
+            wrapper.classList.add('compact');
+        }
+        wrapper.addEventListener('click', (e) => e.stopPropagation());
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = checked;
-        input.addEventListener('change', (e) => onChange(e.target.checked));
+        input.setAttribute('aria-label', labelText || '启用目标');
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('change', (e) => {
+            e.stopPropagation();
+            onChange(e.target.checked);
+        });
         const slider = document.createElement('span');
         slider.className = 'toggle-slider';
-        const label = document.createElement('span');
-        label.className = 'toggle-label';
-        label.textContent = labelText;
         wrapper.appendChild(input);
         wrapper.appendChild(slider);
-        wrapper.appendChild(label);
+        if (labelText) {
+            const label = document.createElement('span');
+            label.className = 'toggle-label';
+            label.textContent = labelText;
+            wrapper.appendChild(label);
+        }
         return wrapper;
     }
 
@@ -418,11 +594,449 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         existingNode.replaceWith(newNode);
     }
 
+    toggleTargetMode(index) {
+        const target = this.targets[index];
+        const currentMode = target._uiMode || 'simplified';
+        
+        if (currentMode === 'simplified') {
+            // 切换到高级模式：无需特殊处理，DSL 已经在 updateTargetFromSimplifiedUI 中生成
+            this.updateTarget(index, { _uiMode: 'advanced' });
+        } else {
+            // 切换到简化模式：尝试解析 DSL
+            // 如果解析失败（DSL太复杂），则提示用户
+            const simplifiedState = this.parseDslToSimplifiedUI(target);
+            if (simplifiedState) {
+                this.updateTarget(index, { _uiMode: 'simplified', ...simplifiedState });
+            } else {
+                if (confirm('当前配置过于复杂，无法完全转换为简化模式。切换将重置部分高级配置。是否继续？')) {
+                    this.updateTarget(index, { _uiMode: 'simplified' }); // 重置为默认简化状态
+                }
+            }
+        }
+        this.updateTargetNode(index);
+    }
+
+    createSimplifiedEditor(target, index) {
+        const container = document.createElement('div');
+        container.className = 'simplified-target-editor';
+
+        // 1. 选择方式 (Selection Method)
+        const methodGroup = this.createButtonGroup(
+            '选择方式',
+            [
+                { value: 'All', label: '所有' },
+                { value: 'Random', label: '随机' },
+                { value: 'Select', label: '选择' }
+            ],
+            target._simpleMethod || 'All',
+            (val) => this.updateSimplifiedTarget(index, { _simpleMethod: val }),
+            'method-group'
+        );
+        container.appendChild(methodGroup);
+
+        // 6. 动态内容区域 (选择数量等) - 移至选择方式下方
+        const dynamicContent = document.createElement('div');
+        dynamicContent.className = 'simplified-dynamic-content';
+        this.renderSimplifiedDynamicContent(dynamicContent, target, index);
+        container.appendChild(dynamicContent);
+
+        // 2. 生效方 (Player Scope)
+        const scopeGroup = this.createCheckboxGroup(
+            '生效方',
+            [
+                { value: 'Self', label: '自己' },
+                { value: 'Opponent', label: '对手' }
+            ],
+            target._simpleScope || ['Self'],
+            (vals) => this.updateSimplifiedTarget(index, { _simpleScope: vals }),
+            'scope-group'
+        );
+        container.appendChild(scopeGroup);
+
+        // 3. 生效区域 (Zone)
+        const zoneGroup = this.createCheckboxGroup(
+            '生效区域',
+            [
+                { value: 'Battlefield', label: '战场' },
+                { value: 'Hand', label: '手牌' },
+                { value: 'Deck', label: '牌组' },
+                { value: 'Graveyard', label: '墓地' }
+            ],
+            target._simpleZone || ['Battlefield'],
+            (vals) => this.updateSimplifiedTarget(index, { _simpleZone: vals }),
+            'zone-group'
+        );
+        container.appendChild(zoneGroup);
+
+        // 4. 生效种类 (Card Type)
+        const typeGroup = this.createCheckboxGroup(
+            '生效种类',
+            [
+                { value: 'Unit', label: '随从' },
+                { value: 'Spell', label: '法术' },
+                { value: 'Amulet', label: '护符' },
+                { value: 'Leader', label: '主战者' }
+            ],
+            target._simpleType || ['Unit'],
+            (vals) => this.updateSimplifiedTarget(index, { _simpleType: vals }),
+            'type-group'
+        );
+        container.appendChild(typeGroup);
+
+        // 5. 验证规则 (Validation Rules) - 复用高级模式组件
+        const validationSection = this.createValidationEditor(target, index);
+        validationSection.classList.add('simplified-section'); // 添加标记以便样式微调
+        container.appendChild(validationSection);
+
+        return container;
+    }
+
+    renderSimplifiedDynamicContent(container, target, index) {
+        this.clearContainer(container);
+        const method = target._simpleMethod || 'All';
+        let hasContent = false;
+
+        if (method === 'Random') {
+            hasContent = true;
+            // 随机模式：显示单滑块（随机数量）
+            const randomCountContainer = document.createElement('div');
+            randomCountContainer.className = 'config-section simplified-section';
+            
+            const grid = document.createElement('div');
+            grid.className = 'form-grid-layout';
+            
+            const randomOp = (target.query?.operations || []).find(op => op.$type === 'RandomOperation');
+            const currentCount = randomOp?.count || target._simpleRandomCount || 1;
+
+            const slider = this.createRangeSlider(
+                0, // Min ignored in single mode
+                currentCount,
+                (min, max) => {
+                    this.updateSimplifiedTarget(index, { _simpleRandomCount: max });
+                },
+                { mode: 'single', label: '随机数量', max: 10 }
+            );
+            
+            grid.appendChild(this.createFormGroup('随机数量', slider));
+            randomCountContainer.appendChild(grid);
+            container.appendChild(randomCountContainer);
+
+        } else if (method === 'Select') {
+            hasContent = true;
+            // 选择模式：显示双滑块（最小/最大数量）
+            const selectCountContainer = document.createElement('div');
+            selectCountContainer.className = 'config-section simplified-section';
+            
+            const grid = document.createElement('div');
+            grid.className = 'form-grid-layout';
+            
+            const opts = target.playerChoiceOptions || {};
+            const minCount = opts.minCount || 1;
+            const maxCount = opts.maxCount || 1;
+
+            const slider = this.createRangeSlider(
+                minCount,
+                maxCount,
+                (min, max) => {
+                    this.updateSimplifiedTarget(index, {
+                        playerChoiceOptions: { ...target.playerChoiceOptions, isRequired: true, minCount: min, maxCount: max }
+                    });
+                },
+                { mode: 'range', label: '选择数量', max: 10 }
+            );
+            
+            grid.appendChild(this.createFormGroup('选择数量', slider));
+            selectCountContainer.appendChild(grid);
+            container.appendChild(selectCountContainer);
+        }
+
+        // 控制容器显示/隐藏以保持布局间距
+        container.style.display = hasContent ? 'block' : 'none';
+    }
+
+    createButtonGroup(label, options, currentValue, onChange, groupClass = '') {
+        const wrapper = document.createElement('div');
+        wrapper.className = `form-group ${groupClass}`;
+        
+        const labelEl = document.createElement('label');
+        labelEl.className = 'form-label';
+        labelEl.textContent = label;
+        wrapper.appendChild(labelEl);
+
+        const btnGroup = document.createElement('div');
+        btnGroup.className = 'btn-group-row';
+        
+        options.forEach(opt => {
+            const btn = document.createElement('button');
+            btn.className = `btn-option ${currentValue === opt.value ? 'active' : ''}`;
+            btn.textContent = opt.label;
+            btn.dataset.value = opt.value;
+            btn.addEventListener('click', () => onChange(opt.value));
+            btnGroup.appendChild(btn);
+        });
+        
+        wrapper.appendChild(btnGroup);
+        return wrapper;
+    }
+
+    createCheckboxGroup(label, options, currentValues, onChange, groupClass = '') {
+        const wrapper = document.createElement('div');
+        wrapper.className = `form-group ${groupClass}`;
+        
+        const labelEl = document.createElement('label');
+        labelEl.className = 'form-label';
+        labelEl.textContent = label;
+        wrapper.appendChild(labelEl);
+
+        const btnGroup = document.createElement('div');
+        btnGroup.className = 'btn-group-row';
+        
+        options.forEach(opt => {
+            const btn = document.createElement('button');
+            const isChecked = currentValues.includes(opt.value);
+            btn.className = `btn-option ${isChecked ? 'active' : ''}`;
+            btn.textContent = opt.label;
+            btn.dataset.value = opt.value;
+            btn.addEventListener('click', () => {
+                // 重新获取当前值，因为闭包中的 currentValues 可能是旧的
+                // 但这里我们依赖外部传入的 onChange 来处理状态更新，所以这里只负责触发
+                // 实际上，为了 UI 响应更快，我们可以先切换 active 类，但为了数据一致性，
+                // 最好还是依赖 refreshSimplifiedUI。
+                // 这里的逻辑是：点击 -> 计算新值 -> onChange -> updateSimplifiedTarget -> refreshSimplifiedUI
+                
+                // 注意：这里需要获取最新的选中状态，不能依赖闭包中的 currentValues
+                // 我们可以通过检查 btn.classList.contains('active') 来判断
+                const currentlyActive = btn.classList.contains('active');
+                const newValues = currentlyActive
+                    ? currentValues.filter(v => v !== opt.value)
+                    : [...currentValues, opt.value];
+                
+                // 修正：由于 currentValues 是闭包变量，它不会更新。
+                // 我们需要一种方式获取当前的真实值。
+                // 简单的方法是：在 refreshSimplifiedUI 中更新 DOM 的 dataset，或者
+                // 更好的方法是：在 updateSimplifiedTarget 中我们已经有了最新的 target 对象。
+                // 但在这里（事件处理函数中），我们只能访问到闭包时的 currentValues。
+                // 这是一个潜在的 Bug。
+                
+                // 修复方案：onChange 回调应该接收 "toggle" 指令而不是绝对值，或者
+                // 我们在 createCheckboxGroup 时不绑定具体的值计算逻辑，而是让上层处理。
+                // 但为了保持接口简单，我们可以在这里做一个 hack：
+                // 从 DOM 中读取当前所有 active 的按钮值。
+                
+                const allActiveBtns = Array.from(btnGroup.querySelectorAll('.btn-option.active'));
+                let currentActiveValues = allActiveBtns.map(b => b.dataset.value);
+                
+                if (currentlyActive) {
+                    currentActiveValues = currentActiveValues.filter(v => v !== opt.value);
+                } else {
+                    currentActiveValues.push(opt.value);
+                }
+                
+                onChange(currentActiveValues);
+            });
+            btnGroup.appendChild(btn);
+        });
+        
+        wrapper.appendChild(btnGroup);
+        return wrapper;
+    }
+
+    updateSimplifiedTarget(index, updates) {
+        const target = { ...this.targets[index], ...updates };
+        
+        // 根据简化状态生成 DSL
+        const method = target._simpleMethod || 'All';
+        const scopes = Array.isArray(target._simpleScope) && target._simpleScope.length > 0
+            ? target._simpleScope
+            : ['Self'];
+        const zones = Array.isArray(target._simpleZone) && target._simpleZone.length > 0
+            ? target._simpleZone
+            : ['Battlefield'];
+        const types = Array.isArray(target._simpleType) && target._simpleType.length > 0
+            ? target._simpleType
+            : ['Unit'];
+
+        const scopeSet = new Set(scopes);
+        const zoneSet = new Set(zones);
+        const typeSet = new Set(types);
+        const hasLeaderType = typeSet.has('Leader');
+        const nonLeaderTypes = Array.from(typeSet).filter(type => type !== 'Leader');
+
+        const mapScopeRoot = (scope) => scope === 'Opponent' ? 'opponent' : 'owner';
+        const mapZoneProperty = (zone) => {
+            switch (zone) {
+                case 'Hand':
+                    return 'hand';
+                case 'Deck':
+                    return 'deck';
+                case 'Graveyard':
+                    return 'graveyard';
+                case 'Battlefield':
+                default:
+                    return 'field';
+            }
+        };
+        const mapTypePredicate = (type) => {
+            switch (type) {
+                case 'Unit':
+                    return 'self.Type == "Follower"';
+                case 'Spell':
+                    return 'self.Type == "Spell"';
+                case 'Amulet':
+                    return 'self.Type == "Amulet"';
+                case 'Leader':
+                    return 'self.Type == "Leader"';
+                default:
+                    return null;
+            }
+        };
+
+        const wrapForCall = (expression) => {
+            if (!expression) return expression;
+            const trimmed = expression.trim();
+            if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
+                return trimmed;
+            }
+            if (trimmed.includes(' | ') || trimmed.includes(' & ') || trimmed.includes(' - ')) {
+                return `(${trimmed})`;
+            }
+            return trimmed;
+        };
+
+        const scopeRoots = [];
+        if (scopeSet.has('Self')) scopeRoots.push('owner');
+        if (scopeSet.has('Opponent')) scopeRoots.push('opponent');
+        if (scopeRoots.length === 0) scopeRoots.push('owner');
+
+        const zoneValues = zoneSet.size > 0 ? Array.from(zoneSet) : ['Battlefield'];
+        const zoneSources = [];
+        scopeRoots.forEach((scopeRoot) => {
+            zoneValues.forEach((zone) => {
+                zoneSources.push(`${scopeRoot}.${mapZoneProperty(zone)}`);
+            });
+        });
+
+        let nonLeaderSource = null;
+        if (nonLeaderTypes.length > 0) {
+            if (zoneSources.length === 0) {
+                zoneSources.push('owner.field');
+            }
+            nonLeaderSource = zoneSources.length > 1
+                ? `(${zoneSources.join(' | ')})`
+                : zoneSources[0];
+
+            const typePredicates = nonLeaderTypes
+                .map(mapTypePredicate)
+                .filter(Boolean);
+            if (typePredicates.length > 0) {
+                const typeExpr = typePredicates.length > 1
+                    ? `(${typePredicates.join(' || ')})`
+                    : typePredicates[0];
+                nonLeaderSource = `${wrapForCall(nonLeaderSource)}.query(${typeExpr})`;
+            }
+        }
+
+        let leaderSource = null;
+        if (hasLeaderType) {
+            leaderSource = 'state.allLeaders';
+            if (scopeRoots.length === 1) {
+                leaderSource = `${leaderSource}.query(self.OwnerPlayerId == ${scopeRoots[0]}.PlayerId)`;
+            }
+        }
+
+        let sourcePoolExpression = '';
+        if (nonLeaderSource && leaderSource) {
+            sourcePoolExpression = `(${nonLeaderSource} | ${leaderSource})`;
+        } else if (nonLeaderSource) {
+            sourcePoolExpression = nonLeaderSource;
+        } else if (leaderSource) {
+            sourcePoolExpression = leaderSource;
+        } else {
+            sourcePoolExpression = 'owner.field';
+        }
+
+        if (method === 'Random') {
+            const count = Math.max(1, Number(target._simpleRandomCount || 1));
+            sourcePoolExpression = `${wrapForCall(sourcePoolExpression)}.take(random ${count})`;
+            target.playerChoiceOptions = null;
+        } else if (method === 'Select') {
+            if (!target.playerChoiceOptions) {
+                target.playerChoiceOptions = { isRequired: true, minCount: 1, maxCount: 1 };
+            }
+        } else {
+            target.playerChoiceOptions = null;
+        }
+
+        this.targets[index] = {
+            ...target,
+            query: { sourcePoolExpression, operations: [] },
+            playerChoiceOptions: target.playerChoiceOptions
+        };
+        
+        // 优化：仅更新 UI 状态而不重建 DOM
+        this.refreshSimplifiedUI(index);
+        this.notifyChange();
+    }
+
+    refreshSimplifiedUI(index) {
+        const targetNode = this.container.querySelector(`[data-target-index="${index}"]`);
+        if (!targetNode) return;
+
+        const target = this.targets[index];
+        
+        // 更新按钮状态
+        const updateGroup = (groupClass, currentValue) => {
+            const group = targetNode.querySelector(groupClass);
+            if (!group) return;
+            
+            const buttons = group.querySelectorAll('.btn-option');
+            buttons.forEach(btn => {
+                const val = btn.dataset.value;
+                const isActive = Array.isArray(currentValue)
+                    ? currentValue.includes(val)
+                    : currentValue === val;
+                
+                if (isActive) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        };
+
+        updateGroup('.method-group', target._simpleMethod || 'All');
+        updateGroup('.scope-group', target._simpleScope || ['Self']);
+        updateGroup('.zone-group', target._simpleZone || ['Battlefield']);
+        updateGroup('.type-group', target._simpleType || ['Unit']);
+
+        // 刷新动态内容 (滑块等)
+        const dynamicContainer = targetNode.querySelector('.simplified-dynamic-content');
+        if (dynamicContainer) {
+            this.renderSimplifiedDynamicContent(dynamicContainer, target, index);
+        }
+    }
+
+    parseDslToSimplifiedUI(target) {
+        // 这是一个逆向解析过程，非常脆弱，仅用于演示
+        // 实际项目中需要更强大的 AST 分析
+        return {
+            _simpleMethod: 'All',
+            _simpleScope: ['Self'],
+            _simpleZone: ['Battlefield'],
+            _simpleType: ['Unit']
+        };
+    }
+
     // ... 其余辅助方法 (addTarget, removeTarget, etc.) ...
     addTarget() {
         this.targets.push({
+            isEnabled: true,
             query: { sourcePoolExpression: '', operations: [] },
-            onFailure: 'AbortAbility'
+            _uiMode: 'simplified', // 默认使用简化模式
+            _simpleMethod: 'All',
+            _simpleScope: ['Self'],
+            _simpleZone: ['Battlefield'],
+            _simpleType: ['Unit']
         });
         this.renderTargetsList(this.container.querySelector('#targets-list-container'));
         this.notifyChange();
@@ -447,8 +1061,26 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     }
 
     updatePlayerChoiceOption(index, updates) {
-        this.targets[index].playerChoiceOptions = { ...this.targets[index].playerChoiceOptions, ...updates };
+        const currentOptions = this.targets[index].playerChoiceOptions || {};
+        const { prompt, ...rest } = currentOptions;
+        this.targets[index].playerChoiceOptions = { ...rest, ...updates };
         this.notifyChange();
+    }
+
+    normalizeTargetConfig(target) {
+        if (!target || typeof target !== 'object') return target;
+        const { onFailure, ...rest } = target;
+
+        if (rest.playerChoiceOptions && typeof rest.playerChoiceOptions === 'object') {
+            const { prompt, ...playerChoiceOptions } = rest.playerChoiceOptions;
+            rest.playerChoiceOptions = playerChoiceOptions;
+        }
+
+        if (rest.isEnabled === undefined) {
+            rest.isEnabled = true;
+        }
+
+        return rest;
     }
 
     showAddOperationMenu(index) {

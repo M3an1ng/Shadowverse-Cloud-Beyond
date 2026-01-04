@@ -44,14 +44,14 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         FreeEvolve = 22,
         [Description("无法进化")]
         BanEvolve = 23,
+        [Description("土之印")]
+        EarthSigil = 24,
     }
 
     public enum EffectKeyword
     {
         [Description("无")]
         None = 0,
-        [Description("系统")]
-        System = 1,
         [Description("入场曲")]
         Fanfare = 101,
         [Description("谢幕曲")]
@@ -97,7 +97,11 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         [Description("狂乱")]
         Wrath = 122,
         [Description("抉择")]
-        Choose = 123
+        Choose = 123,
+        [Description("启动")]
+        Act = 124,
+        [Description("血祭")]
+        Sacrifice = 125
     }
 
     /// <summary>

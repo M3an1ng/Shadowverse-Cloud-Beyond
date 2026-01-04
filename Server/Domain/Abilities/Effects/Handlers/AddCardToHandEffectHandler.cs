@@ -45,6 +45,94 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             Logger.LogDebug("{EffectName}: Starting with CardDefinitionId={CardDefId}, Amount={Amount}.",
                            effectName, parameters.CardDefinitionId, parameters.Amount);
 
+            if (parameters.CardSourceMode == Common.CardSourceMode.Instance)
+            {
+                var targetCards = effect.SelectedTargets
+                    .Where(target => target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList();
+
+                if (targetCards.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "AddCardToHand instance mode requires card targets."
+                    };
+                }
+
+                var instanceResult = new GameStateActionResult { Success = true };
+                foreach (var group in targetCards.GroupBy(card => card.OwnerPlayerId))
+                {
+                    var owner = context.CurrentGameState.GetPlayerState(group.Key);
+                    if (owner == null)
+                    {
+                        return new GameStateActionResult
+                        {
+                            Success = false,
+                            ErrorMessage = $"AddCardToHand instance mode owner not found for player {group.Key}."
+                        };
+                    }
+
+                    instanceResult.GeneratedEvents.Add(new AddCardToHandEvent(owner, group.ToList()));
+                }
+
+                return instanceResult;
+            }
+
+            if (parameters.CardSourceMode == Common.CardSourceMode.Copy)
+            {
+                var targetCards = effect.SelectedTargets
+                    .Where(target => target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList();
+
+                if (targetCards.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "AddCardToHand copy mode requires card targets."
+                    };
+                }
+
+                var copyPlayerTargets = PlayerScopeResolver.ResolvePlayers(
+                    context.CurrentGameState,
+                    context.RequestingPlayerId,
+                    parameters.PlayerScope);
+
+                if (copyPlayerTargets.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "AddCardToHand copy mode could not resolve player scope."
+                    };
+                }
+
+                var copyResult = new GameStateActionResult { Success = true };
+                foreach (var player in copyPlayerTargets)
+                {
+                    var copies = new List<CardInstance>();
+                    foreach (var card in targetCards)
+                    {
+                        var copy = new CardInstance(Guid.NewGuid(), card.CurrentDefinitionId, player.PlayerId)
+                        {
+                            CurrentZone = CardZone.Playing
+                        };
+                        copies.Add(copy);
+                        copyResult.GeneratedEvents.Add(new CopyCardEvent(player, card, copy));
+                    }
+
+                    if (copies.Count > 0)
+                    {
+                        copyResult.GeneratedEvents.Add(new AddCardToHandEvent(player, copies));
+                    }
+                }
+
+                return copyResult;
+            }
+
             if (parameters.CardDefinitionId <= 0 || parameters.Amount <= 0)
             {
                 Logger.LogWarning("{EffectName}: Invalid parameters CardDefinitionId={CardDefId} or Amount={Amount}.",
@@ -82,9 +170,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     return result;
                 };
 
+            var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                context.CurrentGameState,
+                context.RequestingPlayerId,
+                parameters.PlayerScope);
+
             var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                effect.SelectedTargets,
+                playerTargets,
                 createAddCardToHandEventAction,
                 effectName);
 
@@ -97,5 +190,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         }
 
         // CreateEffectCompletedEvent method is removed as this responsibility has moved to EffectExecutor.
+
     }
 }

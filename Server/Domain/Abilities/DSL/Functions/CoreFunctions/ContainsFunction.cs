@@ -21,6 +21,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class ContainsFunction : BaseDslFunction
     {
         public override string Name => "contains";
+        public override Type ReturnType => typeof(bool);
         public override string Description => "检查一个集合或字符串是否包含指定的元素或子字符串。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>

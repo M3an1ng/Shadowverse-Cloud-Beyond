@@ -237,7 +237,7 @@ export class MetadataManager {
      * 获取能力标签选项
      */
     async getAbilityTagOptions() {
-        return await this.getEnumOptions('AbilityTag');
+        return await this.getEnumOptions('AbilityKeyword');
     }
 
     /**

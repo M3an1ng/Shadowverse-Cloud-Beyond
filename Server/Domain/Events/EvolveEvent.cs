@@ -3,6 +3,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using ShadowverseBeyond.Server.Domain.Identifiers;
 using System.Linq;
 
 namespace ShadowverseBeyond.Server.Domain.Events
@@ -12,7 +13,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Its Commit method applies the actual state changes to the card instance.
     /// </summary>
     [GameEventMetadata("进化", "当一张卡牌进化时触发的事件。", EventType.Evolve)]
-    public class EvolveEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent
+    public class EvolveEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("进化的卡牌", "被进化的卡牌。")]
         public CardInstance? EvolvedCard => Source?.Card;
@@ -37,11 +38,31 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "Card to evolve is null in EvolveEvent." };
             }
 
-            // Perform the actual state change via entity's internal Apply method
-            cardToEvolve.ApplyEvolutionChange(IsSuperEvolution);
+            var evolveResult = cardToEvolve.ApplyEvolutionChange(context, IsSuperEvolution);
+            if (!evolveResult.Success)
+            {
+                return evolveResult;
+            }
+
+            result.GeneratedEvents.AddRange(evolveResult.GeneratedEvents);
 
             result.Success = true;
             return result;
+        }
+
+        public string GetAnnouncement(GameState gameState)
+        {
+            var cardId = EvolvedCard?.InstanceId;
+            if (!cardId.HasValue)
+            {
+                return "evolve";
+            }
+
+            var cardToken = gameState.InGameIds.Format(InGameIdKind.Card, cardId.Value);
+            var ownerId = EvolvedCard?.OwnerPlayerId;
+            return ownerId.HasValue
+                ? $"evolve card={cardToken} player={gameState.InGameIds.Format(InGameIdKind.Player, ownerId.Value)}"
+                : $"evolve card={cardToken}";
         }
     }
 }

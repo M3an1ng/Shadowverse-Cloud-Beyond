@@ -16,7 +16,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     /// Handles the effect of modifying a player's maximum Evolution Points (EP).
     /// </summary>
     [EffectHandler(EffectType.SetEPMax)]
-    public class ModifyEPMaxEffectHandler : EffectHandlerBase<ModifyEPEffectParams>
+    public class ModifyEPMaxEffectHandler : EffectHandlerBase<ModifyEPMaxEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
 
@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             _targetProcessingService = targetProcessingService ?? throw new ArgumentNullException(nameof(targetProcessingService));
         }
 
-        public override GameStateActionResult Apply(ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue.Effect effect, GameContext context, ModifyEPEffectParams parameters)
+        public override GameStateActionResult Apply(ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue.Effect effect, GameContext context, ModifyEPMaxEffectParams parameters)
         {
             const string effectName = "ModifyEPMaxEffect";
             Logger.LogDebug("{EffectName}: Starting with ModifyAmount={Amount}.", effectName, parameters.ModifyAmount);
@@ -49,9 +49,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 return result;
             };
 
+            var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                context.CurrentGameState,
+                context.RequestingPlayerId,
+                parameters.PlayerScope);
+
             var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                effect.SelectedTargets,
+                playerTargets,
                 modifyEpMaxAction,
                 effectName);
 

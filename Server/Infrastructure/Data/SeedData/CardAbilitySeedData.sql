@@ -2,12 +2,11 @@
 -- 为基础卡牌添加能力配置，用于测试能力系统的完整流程
 
 -- 5. 智慧之光 (CardId: 2001)
-INSERT INTO CardAbilities (CardId, Name, Description, AbilityTag, AbilityType, Priority, IsActive, JsonConfig, CreatedAt, UpdatedAt)
+INSERT INTO CardAbilities (CardId, Name, Description, AbilityType, Priority, IsActive, JsonConfig, CreatedAt, UpdatedAt)
 VALUES (
     2001,
     '智慧之光',
     'Draw a card.',
-    'Fanfare',
     0,
     1,
     1,
@@ -15,7 +14,7 @@ VALUES (
         "id": "wisdom_of_light",
         "name": "智慧之光",
         "type": "Triggered",
-        "abilityTag": "Fanfare",
+        "abilityKeywords": [{ "keyword": "Fanfare" }],
         "trigger": {
             "eventTypes": ["PlayCard"],
             "relationType": "TargetSelf"
@@ -43,12 +42,11 @@ VALUES (
 );
 
 -- 6. 天使之箭 (CardId: 2002)
-INSERT INTO CardAbilities (CardId, Name, Description, AbilityTag, AbilityType, Priority, IsActive, JsonConfig, CreatedAt, UpdatedAt)
+INSERT INTO CardAbilities (CardId, Name, Description, AbilityType, Priority, IsActive, JsonConfig, CreatedAt, UpdatedAt)
 VALUES (
     2002,
     '天使之箭',
     'Deal 1 damage to an enemy follower or leader.',
-    'Fanfare',
     0,
     1,
     1,
@@ -56,7 +54,7 @@ VALUES (
         "id": "angelic_arrow",
         "name": "天使之箭",
         "type": "Triggered",
-        "abilityTag": "Fanfare",
+        "abilityKeywords": [{ "keyword": "Fanfare" }],
         "trigger": {
             "eventTypes": ["PlayCard"],
             "relationType": "TargetSelf"

@@ -34,14 +34,11 @@ namespace ShadowverseBeyond.Server.Dtos
         [JsonPropertyName("health")]
         public int? Health { get; init; }
 
+        [JsonPropertyName("countdown")]
+        public int? Countdown { get; init; }
+
         [JsonPropertyName("description")]
         public string? Description { get; init; }
-
-        [JsonPropertyName("can_evolve")]
-        public bool? CanEvolve { get; init; }
-
-        [JsonPropertyName("evolve_id")]
-        public int? EvolveId { get; init; }
 
         [JsonPropertyName("keywords")]
         public List<string> Keywords { get; init; } = new List<string>();

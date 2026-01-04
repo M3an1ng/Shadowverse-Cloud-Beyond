@@ -21,6 +21,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class IsEmptyFunction : BaseDslFunction
     {
         public override string Name => "isEmpty";
+        public override Type ReturnType => typeof(bool);
         public override string Description => "检查一个集合是否为空。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>

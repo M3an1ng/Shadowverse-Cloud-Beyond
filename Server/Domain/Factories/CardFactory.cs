@@ -104,7 +104,7 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             return cardInstance;
         }
 
-        public CardInstance CreateAndRegisterCardCopy(GameState gameState, CardInstance originalCardToCopy, Guid newOwnerPlayerId, CardZone initialZone, bool exactCopy)
+        public CardInstance CreateAndRegisterCardCopy(GameState gameState, CardInstance originalCardToCopy, Guid newOwnerPlayerId, CardZone initialZone, bool exactCopy, CardInstance? copyInstance = null)
         {
             if (gameState == null)
             {
@@ -117,16 +117,37 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                 throw new ArgumentNullException(nameof(originalCardToCopy));
             }
 
-            // The definition is implicitly handled by the CardInstance constructor and its CurrentDefinitionId
-            Guid newInstanceId = Guid.NewGuid();
-            var newCardCopy = new CardInstance(newInstanceId, originalCardToCopy.CurrentDefinitionId, newOwnerPlayerId);
+            CardInstance newCardCopy;
+            Guid newInstanceId;
+            if (copyInstance != null)
+            {
+                if (copyInstance.CurrentDefinitionId != originalCardToCopy.CurrentDefinitionId)
+                {
+                    _logger.LogError("Copy instance definition mismatch. Expected {DefinitionId}, got {CopyDefinitionId}.",
+                        originalCardToCopy.CurrentDefinitionId, copyInstance.CurrentDefinitionId);
+                    throw new ArgumentException("Copy instance definition mismatch.", nameof(copyInstance));
+                }
+
+                newCardCopy = copyInstance;
+                if (newCardCopy.InstanceId == Guid.Empty)
+                {
+                    newCardCopy.InstanceId = Guid.NewGuid();
+                }
+                newCardCopy.OwnerPlayerId = newOwnerPlayerId;
+                newInstanceId = newCardCopy.InstanceId;
+            }
+            else
+            {
+                // The definition is implicitly handled by the CardInstance constructor and its CurrentDefinitionId
+                newInstanceId = Guid.NewGuid();
+                newCardCopy = new CardInstance(newInstanceId, originalCardToCopy.CurrentDefinitionId, newOwnerPlayerId);
+            }
 
             if (exactCopy)
             {
-                // For an exact copy in the new architecture, we copy the stateful parts: damage and buffs.
-                // All other stats (Attack, Health, Cost, Keywords) are computed from these.
-                newCardCopy.Damage = originalCardToCopy.Damage;
-                newCardCopy.IsEvolved = originalCardToCopy.IsEvolved;
+                newCardCopy.CopyRuntimeStateFrom(originalCardToCopy);
+                newCardCopy.ResetAttackState();
+                newCardCopy.ResetActState();
 
                 // Use the BuffFactory to create deep copies of each buff.
                 // Use the BuffFactory to create deep copies of each buff and register them to the new card.
@@ -162,7 +183,42 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             newCardCopy.CurrentZone = initialZone;
             // TODO: Set ZoneIndex
 
-            gameState.RegisterCardInstance(newCardCopy);
+            if (gameState.FindCardInstance(newCardCopy.InstanceId) == null)
+            {
+                gameState.RegisterCardInstance(newCardCopy);
+            }
+            var ownerPlayer = gameState.GetPlayerState(newOwnerPlayerId);
+            if (ownerPlayer != null)
+            {
+                switch (initialZone)
+                {
+                    case CardZone.Deck:
+                        ownerPlayer.Deck.Add(newCardCopy);
+                        break;
+                    case CardZone.Hand:
+                        ownerPlayer.Hand.Add(newCardCopy);
+                        break;
+                    case CardZone.Field:
+                        ownerPlayer.Field.Add(newCardCopy);
+                        break;
+                    case CardZone.Graveyard:
+                        ownerPlayer.Graveyard.Add(newCardCopy);
+                        break;
+                    case CardZone.Extra:
+                        ownerPlayer.Extra.Add(newCardCopy);
+                        break;
+                    case CardZone.Emblem:
+                        ownerPlayer.Emblem.Add(newCardCopy);
+                        break;
+                    default:
+                        _logger.LogWarning("Attempted to add copied card {InstanceId} to an unhandled zone: {InitialZone}", newInstanceId, initialZone);
+                        break;
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Could not find owner player state for ID {OwnerPlayerId} to add copied card to zone list.", newOwnerPlayerId);
+            }
             var readableNewId = gameState.InGameIds.Format(InGameIdKind.Card, newInstanceId);
             var readableOriginalId = gameState.InGameIds.Format(InGameIdKind.Card, originalCardToCopy.InstanceId);
             _logger.LogInformation("Created and registered a copy {NewCardId} (guid={NewInstanceId}, Def: {DefinitionId}) of card {OriginalCardId} (guid={OriginalInstanceId}) for player {NewOwnerPlayerId} in zone {InitialZone}. ExactCopy: {ExactCopy}",

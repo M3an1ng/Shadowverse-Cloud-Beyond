@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// A committable event representing the intent to destroy a card.
     /// </summary>
-    [GameEventMetadata("摧毁卡牌", "当一张卡牌被摧毁时触发的事件。", EventType.Destroy)]
+    [GameEventMetadata("破坏", "当一张卡牌被破坏时触发的事件。", EventType.Destroy)]
     public class DestroyEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("摧毁原因", "卡牌被摧毁的原因。")]
@@ -25,8 +25,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("被摧毁的卡牌", "被摧毁的目标卡牌。")]
         public CardInstance? DestroyTarget => Target.FirstOrDefault()?.Card;
 
-        public DestroyEvent(CardInstance target, CardInstance source, string reason)
-            : base(EventType.Destroy)
+        public DestroyEvent(CardInstance target, CardInstance source, string reason, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Destroy, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(target));
             Source = TargetInfo.ForCard(source);
@@ -49,6 +49,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = true };
             }
 
+            if (targetKeywords.Contains(CardKeyword.EarthSigil)
+                && IsAbilityDestroyReason(Reason)
+                && sourceCard.OwnerPlayerId != targetCard.OwnerPlayerId)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+
             if (targetCard.IsSuperEvolved &&
                 targetCard.IsFollower &&
                 targetCard.OwnerPlayerId == context.CurrentGameState.CurrentPlayerId &&
@@ -63,8 +70,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Owner player for card {targetCard.InstanceId} not found." };
             }
 
+            var moveReason = ResolveMoveReason(Reason);
             // The entity method handles the state change and generates the factual CardDestroyedEvent.
-            return ownerPlayer.DestroyCard(targetCard, sourceCard, Reason);
+            return ownerPlayer.DestroyCard(targetCard, sourceCard, Reason, moveReason);
         }
 
         public string GetAnnouncement(GameState gameState)
@@ -92,6 +100,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return reason.Equals("Effect", StringComparison.OrdinalIgnoreCase) ||
                    reason.StartsWith("Effect", StringComparison.OrdinalIgnoreCase) ||
                    reason.StartsWith("Ability", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static CardMoveReason ResolveMoveReason(string reason)
+        {
+            return CardMoveReason.Destroyed;
         }
     }
 }

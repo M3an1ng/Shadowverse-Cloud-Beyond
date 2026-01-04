@@ -11,8 +11,6 @@
     "effects": [],
     "art": "goblin_base.png",
     "isEvolved": false,
-    "can_evolve": true,
-    "evolve_id": 10011,
     "isCollectible": true
   },
   {
@@ -23,12 +21,12 @@
     "attack": 2,
     "health": 2,
     "description": "久经沙场的战士。",
-    "keywords": ["Storm"],
+    "keywords": [
+      "Storm"
+    ],
     "effects": [],
     "art": "fighter_base.png",
     "isEvolved": false,
-    "can_evolve": true,
-    "evolve_id": 10021,
     "isCollectible": true
   },
   {
@@ -43,8 +41,6 @@
     "effects": [],
     "art": "knight_base.png",
     "isEvolved": false,
-    "can_evolve": true,
-    "evolve_id": 10031,
     "isCollectible": true
   },
   {
@@ -59,8 +55,6 @@
     "effects": [],
     "art": "armored_goblin_base.png",
     "isEvolved": false,
-    "can_evolve": true,
-    "evolve_id": 10041,
     "isCollectible": true
   },
   {
@@ -77,8 +71,6 @@
     "effects": [],
     "art": null,
     "isEvolved": false,
-    "can_evolve": false,
-    "evolve_id": null,
     "isCollectible": false
   },
   {
@@ -89,12 +81,12 @@
     "attack": 1,
     "health": 1,
     "description": "守护者不会让你轻易通过。",
-    "keywords": ["Ward"],
+    "keywords": [
+      "Ward"
+    ],
     "effects": [],
     "art": "goblin_base.png",
     "isEvolved": false,
-    "can_evolve": true,
-    "evolve_id": 10051,
     "isCollectible": true
   },
   {
@@ -115,8 +107,6 @@
     ],
     "art": "fighter_base.png",
     "isEvolved": false,
-    "can_evolve": true,
-    "evolve_id": 10061,
     "isCollectible": true
   },
   {
@@ -152,7 +142,10 @@
     ],
     "art": "spell_placeholder_snipe.png",
     "requiresTarget": true,
-    "validTargets": ["EnemyFollower", "EnemyLeader"],
+    "validTargets": [
+      "EnemyFollower",
+      "EnemyLeader"
+    ],
     "isCollectible": true
   }
 ]

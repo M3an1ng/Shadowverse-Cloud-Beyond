@@ -40,7 +40,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Event triggered when two units engage in combat (clash).
     /// This event is fired before damage calculation and allows abilities to trigger.
     /// </summary>
-    [GameEventMetadata("战斗冲突", "当两个单位进行战斗时触发的事件。", EventType.Clash)]
+    [GameEventMetadata("交战", "当两个单位进行战斗时触发的事件。", EventType.Clash)]
     public class ClashEvent : GameEventBase
     {
         [GameEventParameter("攻击者", "发起攻击的卡牌。")]
@@ -84,25 +84,25 @@ namespace ShadowverseBeyond.Server.Domain.Events
         }
     }
 
-    /// <summary>
-    /// Event triggered when an amulet's countdown reaches zero.
-    /// </summary>
-    [GameEventMetadata("倒计时结束", "当护符的倒计时归零时触发的事件。", EventType.CountdownFinished)]
-    public class CountdownFinishedEvent : GameEventBase
-    {
-        [GameEventParameter("拥有者", "护符的拥有者玩家。")]
-        public PlayerState? Owner => Source?.Player;
+    // /// <summary>
+    // /// Event triggered when an amulet's countdown reaches zero.
+    // /// </summary>
+    // [GameEventMetadata("倒计时结束", "当护符的倒计时归零时触发的事件。", EventType.CountdownFinished)]
+    // public class CountdownFinishedEvent : GameEventBase
+    // {
+    //     [GameEventParameter("拥有者", "护符的拥有者玩家。")]
+    //     public PlayerState? Owner => Source?.Player;
 
-        [GameEventParameter("护符", "倒计时结束的护符。")]
-        public CardInstance? Amulet => Target.FirstOrDefault()?.Card;
+    //     [GameEventParameter("护符", "倒计时结束的护符。")]
+    //     public CardInstance? Amulet => Target.FirstOrDefault()?.Card;
 
-        public CountdownFinishedEvent(PlayerState player, CardInstance amulet)
-            : base(EventType.CountdownFinished)
-        {
-            Source = TargetInfo.ForPlayer(player);
-            Target.Add(TargetInfo.ForCard(amulet));
-        }
-    }
+    //     public CountdownFinishedEvent(PlayerState player, CardInstance amulet)
+    //         : base(EventType.CountdownFinished)
+    //     {
+    //         Source = TargetInfo.ForPlayer(player);
+    //         Target.Add(TargetInfo.ForCard(amulet));
+    //     }
+    // }
 
 
 
@@ -111,7 +111,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when silence is applied to a target.
     /// </summary>
-    [GameEventMetadata("沉默应用", "当一张卡牌被沉默时触发的事件。", EventType.SilenceApplied)]
+    [GameEventMetadata("沉默应用", "当一张卡牌被沉默时触发的事件。", EventType.SilenceApplied, visibility: EventMetadataVisibility.Hidden)]
     public class SilenceAppliedEvent : GameEventBase
     {
         /// <summary>
@@ -142,7 +142,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when silence is removed from a target.
     /// </summary>
-    [GameEventMetadata("沉默移除", "当一张卡牌的沉默效果被移除时触发的事件。", EventType.SilenceRemoved)]
+    [GameEventMetadata("沉默移除", "当一张卡牌的沉默效果被移除时触发的事件。", EventType.SilenceRemoved, visibility: EventMetadataVisibility.Hidden)]
     public class SilenceRemovedEvent : GameEventBase
     {
         [GameEventParameter("移除来源", "移除沉默的卡牌。")]
@@ -362,29 +362,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
     }
 
     /// <summary>
-    /// Event triggered when Fusion has been resolved and materials have been consumed.
-    /// This is a UI-focused signal event (animation/log) and does not mutate state.
-    /// </summary>
-    public class CardsFusedEvent : GameEventBase, ILogAnnounceableEvent
-    {
-        public Guid FusingPlayerId { get; }
-        public IReadOnlyList<Guid> FusedCardInstanceIds { get; }
-
-        public int FusedCount => FusedCardInstanceIds.Count;
-
-        public CardsFusedEvent(PlayerState player, IReadOnlyList<Guid> fusedCardInstanceIds)
-            : base(EventType.CardsFused)
-        {
-            Source = TargetInfo.ForPlayer(player);
-            FusingPlayerId = player.PlayerId;
-            FusedCardInstanceIds = fusedCardInstanceIds ?? Array.Empty<Guid>();
-        }
-
-        public string GetAnnouncement(GameState gameState)
-            => $"fusion player={gameState.InGameIds.Format(InGameIdKind.Player, FusingPlayerId)} count={FusedCount}";
-    }
-
-    /// <summary>
     /// Event triggered when a player's ability to evolve changes.
     /// </summary>
     public class EvolveStateUpdatedEvent : GameEventBase
@@ -411,6 +388,22 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             Source = TargetInfo.ForPlayer(player);
             CanSuperEvolve = canSuperEvolve;
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when a player's PP+1 uses availability changes.
+    /// </summary>
+    [GameEventMetadata("PP+1次数更新", "当玩家的PP+1可用次数发生变化时触发。", EventType.PpBoostStateUpdated)]
+    public class PpBoostStateUpdatedEvent : GameEventBase
+    {
+        public int PpBoostUsesAvailable { get; }
+
+        public PpBoostStateUpdatedEvent(PlayerState player, int usesAvailable)
+            : base(EventType.PpBoostStateUpdated)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            PpBoostUsesAvailable = usesAvailable;
         }
     }
 }

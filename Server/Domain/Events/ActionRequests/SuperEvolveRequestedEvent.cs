@@ -62,14 +62,14 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} attempted to super evolve unit, but it's not their turn (Active: {context.CurrentGameState.CurrentPlayerId})." };
             }
 
-            if (!cardToEvolve.CanEvolve())
-            {
-                return new DomainOperationResult { Success = false, ErrorMessage = $"Unit {cardToEvolve.Name} (UID: {cardToEvolve.InstanceId}) cannot super evolve intrinsically (already evolved or no form)." };
-            }
-
             if (cardToEvolve.HasKeyword(CardKeyword.BanEvolve))
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Unit {cardToEvolve.Name} (UID: {cardToEvolve.InstanceId}) cannot super evolve due to BanEvolve." };
+            }
+
+            if (!cardToEvolve.CanEvolve())
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Unit {cardToEvolve.Name} (UID: {cardToEvolve.InstanceId}) cannot super evolve intrinsically (already evolved or not a follower)." };
             }
 
             if (requestingPlayer.CurrentSuperEvolutionPoints < GameConstants.SuperEvolution.SuperEvolutionPointCost)

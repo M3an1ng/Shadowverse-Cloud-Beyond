@@ -1,20 +1,35 @@
 // Phase B - 工作区 UI 渲染（第二阶段：方法级拆分迁移）
+import { renderPipelineEditorUI } from "./ui-pipeline.js";
+import { renderFavoritesToolbar } from "./ui-favorites.js";
+export { renderPipelineEditorUI };
 
 export function renderWorkspaceUI(editor, container) {
   // 标题
-  editor.renderWorkspaceHeader(container);
+  renderWorkspaceHeader(editor, container);
 
   // 工作区面板
   const workspaceContainer = document.createElement("div");
   workspaceContainer.className = "dsl-workspace";
-  workspaceContainer.style.cssText = `
-    border: 1px solid #ffc107;
-    border-radius: 4px;
-    padding: 12px;
-    background: #fff3cd;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin-bottom: 8px;
-  `;
+  if (editor.isPipelineInline) {
+    workspaceContainer.classList.add("dsl-workspace--pipeline");
+  }
+  workspaceContainer.style.cssText = editor.isPipelineInline
+    ? `
+      border: 1px solid #90caf9;
+      border-radius: 4px;
+      padding: 12px;
+      background: #e8f4ff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin-bottom: 8px;
+    `
+    : `
+      border: 1px solid #ffc107;
+      border-radius: 4px;
+      padding: 12px;
+      background: #fff3cd;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin-bottom: 8px;
+    `;
 
   // 节点容器
   const nodesContainer = document.createElement("div");
@@ -25,255 +40,108 @@ export function renderWorkspaceUI(editor, container) {
   renderNodeChainUI(editor, nodesContainer);
   renderPipelineEditorUI(editor, nodesContainer);
   renderAddButtonUI(editor, nodesContainer);
-  renderExpressionPreviewUI(editor, workspaceContainer);
+  if (!editor.isPipelineInline) {
+    renderExpressionPreviewUI(editor, workspaceContainer);
+  }
 
   container.appendChild(workspaceContainer);
 }
 
-export function renderPipelineEditorUI(editor, container) {
-  const pipeline = typeof editor.getPipelineContext === "function" ? editor.getPipelineContext() : null;
-  if (!pipeline) return;
-  const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
-  if (stages.length === 0 && !pipeline.allowEmpty) return;
-
-  const panel = document.createElement("div");
-  panel.className = "dsl-pipeline-editor";
-  panel.style.cssText = `
-    margin-top: 10px;
-    padding: 10px;
-    border: 1px solid #90caf9;
-    border-radius: 6px;
-    background: #e3f2fd;
-  `;
-
-  const header = document.createElement("div");
-  header.style.cssText = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;";
-
-  const title = document.createElement("div");
-  title.textContent = "Pipeline 编辑";
-  title.style.cssText = "font-weight: 700; color: #1565c0; font-size: 13px;";
-  header.appendChild(title);
-
-  panel.appendChild(header);
-
-  const stagesContainer = document.createElement("div");
-  stagesContainer.style.cssText = "display: flex; flex-direction: column; gap: 6px;";
-
-  stages.forEach((stage, index) => {
-    const isRawStage = stage.type === "raw";
-    const isEditing = typeof editor.isPipelineStageEditing === "function"
-      ? editor.isPipelineStageEditing(stage)
-      : false;
-    const stageRow = document.createElement("div");
-    const typeIssue = typeof editor.getPipelineStageTypeIssue === "function"
-      ? editor.getPipelineStageTypeIssue(stage)
-      : null;
-    stageRow.style.cssText = `
+export function renderWorkspaceHeader(editor, container) {
+  const workspaceHeader = document.createElement("div");
+  workspaceHeader.className = "workspace-header";
+  if (editor.isPipelineInline) {
+    workspaceHeader.classList.add("workspace-header--pipeline");
+  }
+  workspaceHeader.style.cssText = editor.isPipelineInline
+    ? `
+      background: #e8f4ff;
+      border: 1px solid #bbdefb;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 8px;
-      background: ${typeIssue ? "#ffebee" : "#ffffff"};
-      border: 1px solid ${typeIssue ? "#ef5350" : "#bbdefb"};
-      border-radius: 6px;
+      flex-wrap: wrap;
+    `
+    : `
+      background: #fff3cd;
+      border: 1px solid #ffeaa7;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
     `;
-    if (typeIssue) {
-      stageRow.title = `类型不匹配：期望 ${typeIssue.expectedType}，实际 ${typeIssue.actualType}`;
-    }
 
-    stageRow.draggable = !isRawStage;
-    stageRow.dataset.index = String(index);
+  const leftGroup = document.createElement("div");
+  leftGroup.style.cssText = "display: flex; align-items: center; gap: 8px;";
 
-    stageRow.addEventListener("dragstart", (event) => {
-      if (isRawStage) return;
-      event.dataTransfer?.setData("text/plain", String(index));
-    });
+  const icon = document.createElement("span");
+  icon.textContent = "🔧";
+  icon.style.fontSize = "16px";
 
-    stageRow.addEventListener("dragover", (event) => {
-      if (isRawStage) return;
-      event.preventDefault();
-      stageRow.style.borderColor = "#42a5f5";
-    });
+  const text = document.createElement("span");
+  const top = typeof editor.peekEditingPath === 'function' ? editor.peekEditingPath() : null;
+  if (editor.isPipelineInline) {
+    text.textContent = "管线编辑";
+  } else {
+    text.textContent = top?.descriptor ? `工作区：${top.descriptor}` : "工作区：构建新表达式";
+  }
+  text.style.cssText = `
+    font-weight: 500;
+    color: #856404;
+    font-size: 14px;
+  `;
 
-    stageRow.addEventListener("dragleave", () => {
-      stageRow.style.borderColor = "#bbdefb";
-    });
+  leftGroup.appendChild(icon);
+  leftGroup.appendChild(text);
+  workspaceHeader.appendChild(leftGroup);
 
-    stageRow.addEventListener("drop", (event) => {
-      if (isRawStage) return;
-      event.preventDefault();
-      stageRow.style.borderColor = "#bbdefb";
-      const fromIndex = Number(event.dataTransfer?.getData("text/plain"));
-      const toIndex = Number(stageRow.dataset.index);
-      if (!Number.isNaN(fromIndex) && !Number.isNaN(toIndex)) {
-        editor.movePipelineStage(fromIndex, toIndex);
-      }
-    });
+  const rightGroup = document.createElement("div");
+  rightGroup.style.cssText = "margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;";
 
-    const badge = document.createElement("span");
-    badge.textContent = editor.getPipelineStageLabel(stage);
-    badge.style.cssText = `
-      padding: 2px 6px;
+  const hint = document.createElement("span");
+  const expected = editor.slotExpectedType || editor.expectedType || null;
+  if (editor.isPipelineInline) {
+    hint.textContent = expected ? `目标类型：${editor.getDisplayTypeName(expected)}` : "从当前项 (self) 开始构建公式";
+  } else {
+    hint.textContent = expected ? `期望类型：${editor.getDisplayTypeName(expected)}` : "完成后将添加到上方的已完成表达式中";
+  }
+  hint.style.cssText = `
+    font-size: 12px;
+    color: #856404;
+  `;
+
+  const statusInfo = editor.getParseStatusInfo ? editor.getParseStatusInfo() : null;
+  if (!editor.isPipelineInline && statusInfo) {
+    const status = document.createElement("span");
+    status.textContent = statusInfo.label;
+    status.title = statusInfo.detail || statusInfo.label;
+    status.style.cssText = `
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
       border-radius: 10px;
-      background: ${typeIssue ? "#ef9a9a" : "#bbdefb"};
-      color: ${typeIssue ? "#b71c1c" : "#0d47a1"};
-      font-size: 11px;
-      font-weight: 700;
+      color: ${statusInfo.color};
+      background: ${statusInfo.bg};
+      border: 1px solid ${statusInfo.border};
     `;
-    stageRow.appendChild(badge);
-
-    const summary = document.createElement("div");
-    summary.textContent = editor.getPipelineStageSummary(stage);
-    summary.style.cssText = "flex: 1; font-size: 12px; color: #1a237e;";
-    stageRow.appendChild(summary);
-
-    const editBtn = document.createElement("button");
-    editBtn.textContent = isEditing ? "收起" : "编辑";
-    editBtn.style.cssText = isRawStage
-      ? "border: none; background: #cfd8dc; color: #607d8b; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
-      : "border: none; background: #1976d2; color: #fff; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;";
-    if (!isRawStage) {
-      editBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        editor.editPipelineStage(stage);
-      });
-    } else {
-      editBtn.disabled = true;
-    }
-    stageRow.appendChild(editBtn);
-
-    const removeBtn = document.createElement("button");
-    removeBtn.textContent = "移除";
-    removeBtn.style.cssText = isRawStage
-      ? "border: none; background: #ef9a9a; color: #8e0000; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
-      : "border: none; background: #e53935; color: #fff; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;";
-    if (!isRawStage) {
-      removeBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        editor.removePipelineStage(index);
-      });
-    } else {
-      removeBtn.disabled = true;
-    }
-    stageRow.appendChild(removeBtn);
-
-    stagesContainer.appendChild(stageRow);
-
-    if (isEditing) {
-      const editPanel = document.createElement("div");
-      editPanel.style.cssText = `
-        margin-left: 20px;
-        padding: 8px;
-        border: 1px dashed #90caf9;
-        border-radius: 6px;
-        background: #f8fbff;
-      `;
-
-      const actionRow = document.createElement("div");
-      actionRow.style.cssText = "display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 6px;";
-
-      const applyBtn = document.createElement("button");
-      applyBtn.textContent = "应用";
-      applyBtn.style.cssText = "border: none; background: #43a047; color: #fff; padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;";
-      applyBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        editor.commitPipelineStageEdit();
-      });
-      actionRow.appendChild(applyBtn);
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.textContent = "取消";
-      cancelBtn.style.cssText = "border: none; background: #cfd8dc; color: #455a64; padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;";
-      cancelBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        editor.cancelPipelineStageEdit();
-      });
-      actionRow.appendChild(cancelBtn);
-
-      const editorHost = document.createElement("div");
-      editorHost.style.cssText = "background: #ffffff; border-radius: 6px; padding: 6px;";
-
-      editPanel.appendChild(actionRow);
-      editPanel.appendChild(editorHost);
-      stagesContainer.appendChild(editPanel);
-
-      if (typeof editor.renderPipelineStageInlineEditor === "function") {
-        editor.renderPipelineStageInlineEditor(stage, editorHost);
-      }
-    }
-  });
-
-  if (stages.length === 0) {
-    const emptyState = document.createElement("div");
-    emptyState.style.cssText = "font-size: 12px; color: #607d8b; padding: 6px 4px;";
-    emptyState.textContent = "尚未添加筛选阶段，可点击下方按钮添加。";
-    stagesContainer.appendChild(emptyState);
+    rightGroup.appendChild(status);
   }
 
-  panel.appendChild(stagesContainer);
-
-  const addRow = document.createElement("div");
-  addRow.style.cssText = "display: flex; gap: 6px; margin-top: 8px;";
-  const canAddStage = Boolean(pipeline.source);
-
-  const addFilter = document.createElement("button");
-  addFilter.textContent = "+ 筛选";
-  addFilter.style.cssText = canAddStage
-    ? "border: 1px solid #64b5f6; background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;"
-    : "border: 1px solid #cfd8dc; background: #eceff1; color: #90a4ae; padding: 4px 8px; border-radius: 4px; font-size: 12px;";
-  if (canAddStage) {
-    addFilter.addEventListener("click", (event) => {
-      event.preventDefault();
-      editor.insertPipelineStage("filter");
-    });
-  } else {
-    addFilter.disabled = true;
-    addFilter.title = "原始表达式无法拆分为阶段";
+  rightGroup.appendChild(hint);
+  if (!editor.isPipelineInline) {
+    rightGroup.appendChild(renderFavoritesToolbar(editor));
   }
-  addRow.appendChild(addFilter);
-
-  const addSort = document.createElement("button");
-  addSort.textContent = "+ 排序";
-  addSort.style.cssText = canAddStage
-    ? "border: 1px solid #64b5f6; background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;"
-    : "border: 1px solid #cfd8dc; background: #eceff1; color: #90a4ae; padding: 4px 8px; border-radius: 4px; font-size: 12px;";
-  if (canAddStage) {
-    addSort.addEventListener("click", (event) => {
-      event.preventDefault();
-      editor.insertPipelineStage("sort");
-    });
-  } else {
-    addSort.disabled = true;
-    addSort.title = "原始表达式无法拆分为阶段";
-  }
-  addRow.appendChild(addSort);
-
-  const addSelect = document.createElement("button");
-  addSelect.textContent = "+ 选择";
-  addSelect.style.cssText = canAddStage
-    ? "border: 1px solid #64b5f6; background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;"
-    : "border: 1px solid #cfd8dc; background: #eceff1; color: #90a4ae; padding: 4px 8px; border-radius: 4px; font-size: 12px;";
-  if (canAddStage) {
-    addSelect.addEventListener("click", (event) => {
-      event.preventDefault();
-      editor.insertPipelineStage("select");
-    });
-  } else {
-    addSelect.disabled = true;
-    addSelect.title = "原始表达式无法拆分为阶段";
-  }
-  addRow.appendChild(addSelect);
-
-  const disabledPost = document.createElement("button");
-  disabledPost.textContent = "+ 后处理";
-  disabledPost.disabled = true;
-  disabledPost.title = "当前DSL尚不支持后处理阶段";
-  disabledPost.style.cssText = "border: 1px solid #cfd8dc; background: #eceff1; color: #90a4ae; padding: 4px 8px; border-radius: 4px; font-size: 12px;";
-  addRow.appendChild(disabledPost);
-
-  panel.appendChild(addRow);
-  container.appendChild(panel);
+  workspaceHeader.appendChild(rightGroup);
+  container.appendChild(workspaceHeader);
 }
+
+
 
 export function renderNodeChainUI(editor, container) {
   if (!editor.astRoot) {

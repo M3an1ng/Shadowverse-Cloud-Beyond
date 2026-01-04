@@ -8,7 +8,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when an amulet's countdown value decreases.
     /// </summary>
-    [GameEventMetadata("倒计时减少", "当护符倒计时减少时触发的事件。", EventType.CountdownTick)]
+    [GameEventMetadata("倒计时变化", "当护符倒计时减少时触发的事件。", EventType.CountdownTick)]
     public class CountdownTickEvent : GameEventBase, ICommittableEvent
     {
         [GameEventParameter("变化量", "倒计时变化量（通常为-1）。")]

@@ -5,7 +5,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// 移除Buff效果参数
     /// </summary>
-    [EffectMetadata("移除Buff", "移除目标身上的增益或减益效果。")]
+    [EffectMetadata("移除Buff", "移除目标身上的增益或减益效果。使用卡牌目标。")]
     public class RemoveBuffEffectParams : BaseEffectParams
     {
         /// <summary>
@@ -19,17 +19,5 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// </summary>
         [ParameterMetadata("移除数量", UiControlType.NumberStepper, DefaultValue = -1, Min = -1, Description = "要移除的Buff数量。-1表示移除所有匹配的Buff。")]
         public int RemoveCount { get; set; } = -1;
-
-        /// <summary>
-        /// 是否只移除负面Buff
-        /// </summary>
-        [ParameterMetadata("仅负面Buff", UiControlType.Checkbox, DefaultValue = false, Description = "是否只移除负面效果的Buff。")]
-        public bool OnlyNegativeBuffs { get; set; } = false;
-
-        /// <summary>
-        /// 是否只移除正面Buff
-        /// </summary>
-        [ParameterMetadata("仅正面Buff", UiControlType.Checkbox, DefaultValue = false, Description = "是否只移除正面效果的Buff。")]
-        public bool OnlyPositiveBuffs { get; set; } = false;
     }
 }

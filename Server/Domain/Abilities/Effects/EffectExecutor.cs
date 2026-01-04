@@ -166,6 +166,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     }
                 }
 
+                // Always expose execution success/failure for downstream DSL checks.
+                calculatedOutputs["effectFailed"] = !actionResult.Success;
+
                 // Built-in outputs for certain effect types (so downstream chained abilities can rely on them).
                 if (effectConfig.Type == EffectType.Fusion)
                 {
@@ -276,6 +279,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                             }
                         }
 
+                        if (property.PropertyType == typeof(object))
+                        {
+                            property.SetValue(paramsObject, value);
+                            continue;
+                        }
+
                         // Handle potential type mismatches (e.g., int vs long, string vs enum)
                         if (value != null && property.PropertyType != value.GetType())
                         {
@@ -347,12 +356,64 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                         // Decide if we should continue or re-throw depending on desired strictness
                     }
                 }
-                else if (property == null)
+                else if (!TrySetNestedDictionaryParameter(paramsObject, paramsType, kvp.Key, kvp.Value))
                 {
-                    _logger.LogWarning("Property '{PropertyName}' not found (case-insensitive) on parameter type {ParamsTypeName}. Skipping.", kvp.Key, paramsType.Name);
+                    if (property == null)
+                    {
+                        _logger.LogWarning("Property '{PropertyName}' not found (case-insensitive) on parameter type {ParamsTypeName}. Skipping.", kvp.Key, paramsType.Name);
+                    }
                 }
                 // else: Property found but cannot write (e.g., no setter), which is less common for DTO-like params
             }
+        }
+
+        private bool TrySetNestedDictionaryParameter(object paramsObject, Type paramsType, string key, object? value)
+        {
+            var dotIndex = key.IndexOf('.');
+            if (dotIndex <= 0 || dotIndex >= key.Length - 1)
+            {
+                return false;
+            }
+
+            var rootName = key.Substring(0, dotIndex);
+            var subKey = key[(dotIndex + 1)..];
+
+            var property = paramsType.GetProperty(rootName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+            if (property == null || !property.CanWrite)
+            {
+                return false;
+            }
+
+            if (!typeof(global::System.Collections.IDictionary).IsAssignableFrom(property.PropertyType))
+            {
+                return false;
+            }
+
+            var current = property.GetValue(paramsObject) as global::System.Collections.IDictionary;
+            if (current == null)
+            {
+                if (property.PropertyType.IsInterface || property.PropertyType.IsAbstract)
+                {
+                    current = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                }
+                else
+                {
+                    try
+                    {
+                        current = (global::System.Collections.IDictionary)Activator.CreateInstance(property.PropertyType)!;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to create dictionary instance for property {PropertyName}.", property.Name);
+                        return false;
+                    }
+                }
+
+                property.SetValue(paramsObject, current);
+            }
+
+            current[subKey] = value;
+            return true;
         }
 
         // Helper to check if a type is an integer type

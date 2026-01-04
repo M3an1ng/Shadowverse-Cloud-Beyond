@@ -145,7 +145,10 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
         /// <returns>如果可以攻击主战者则返回true</returns>
         public static bool CanAttackLeader(this CardInstanceDto cardDto)
         {
-            return cardDto.Keywords?.Contains(CardKeyword.Storm) ?? false;
+            if (cardDto.HasStorm())
+                return true;
+
+            return cardDto.FieldTurn > 0;
         }
 
         /// <summary>
@@ -221,7 +224,7 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
                 return false;
 
             // 【关键修复】攻击次数检查：检查是否已达到本回合最大攻击次数
-            var maxAttacksPerTurn = attacker.MaxAttacksPerTurn > 0 ? attacker.MaxAttacksPerTurn : 1; // 默认每回合最多攻击1次
+            var maxAttacksPerTurn = Math.Max(0, attacker.MaxAttacksPerTurn);
             if (attacker.AttacksThisTurn >= maxAttacksPerTurn)
                 return false;
 

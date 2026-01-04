@@ -7,9 +7,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
 {
     /// <summary>
-    /// A custom JSON converter that deserializes a JSON array with a single TargetConfig element
-    /// into a Dictionary<string, TargetConfig> with a default key "defaultTarget".
-    /// If the JSON is already an object, it deserializes it as a normal dictionary.
+    /// A custom JSON converter that deserializes target configs from either:
+    /// - Object: a normal dictionary of key -> TargetConfig
+    /// - Array: a list of TargetConfig mapped to stable keys (target1, target2, ...)
     /// </summary>
     public class SingleTargetConfigToDictionaryConverter : JsonConverter<Dictionary<string, TargetConfig>>
     {
@@ -26,17 +26,43 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
             if (reader.TokenType == JsonTokenType.StartArray)
             {
                 var list = JsonSerializer.Deserialize<List<TargetConfig>>(ref reader, options);
-                if (list != null && list.Count == 1)
+                if (list == null || list.Count == 0)
                 {
-                    // If it's an array with one element, create a dictionary with the default key.
+                    return new Dictionary<string, TargetConfig>();
+                }
+
+                if (list.Count == 1)
+                {
+                    var single = list[0];
+                    if (single != null && single.Order == null)
+                    {
+                        single.Order = 0;
+                    }
                     return new Dictionary<string, TargetConfig>
                     {
-                        { DefaultKey, list[0] }
+                        { DefaultKey, single }
                     };
                 }
 
-                // For empty arrays or arrays with more than one element, return an empty dictionary.
-                return new Dictionary<string, TargetConfig>();
+                var result = new Dictionary<string, TargetConfig>(list.Count);
+                for (var index = 0; index < list.Count; index++)
+                {
+                    var target = list[index];
+                    if (target == null)
+                    {
+                        continue;
+                    }
+
+                    if (target.Order == null)
+                    {
+                        target.Order = index;
+                    }
+
+                    var key = $"target{index + 1}";
+                    result[key] = target;
+                }
+
+                return result;
             }
 
             if (reader.TokenType == JsonTokenType.Null)
@@ -44,7 +70,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
                 return null;
             }
 
-            throw new JsonException($"Expected a JSON object or an array with a single TargetConfig element, but got {reader.TokenType}.");
+            throw new JsonException($"Expected a JSON object or array for TargetConfig, but got {reader.TokenType}.");
         }
 
         public override void Write(Utf8JsonWriter writer, Dictionary<string, TargetConfig> value, JsonSerializerOptions options)

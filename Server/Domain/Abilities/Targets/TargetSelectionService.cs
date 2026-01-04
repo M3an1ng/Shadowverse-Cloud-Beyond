@@ -102,6 +102,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             // Iterate through the ability's runtime Target objects.
             foreach (var target in ability.Targets)
             {
+                if (!target.Config.IsEnabled)
+                {
+                    target.SetResolvedTargets(new List<TargetInfo>());
+                    resolvedTargetsForQuery[target.Key] = target.ResolvedTargets;
+                    continue;
+                }
+
                 // Leverage the Target's internal state. If it's already resolved, skip it.
                 if (!target.NeedsResolution)
                 {
@@ -123,7 +130,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 var potentialTargets = queryResult.Results.Select(item => item switch
                 {
                     CardInstance card => TargetInfo.ForCard(card),
-                    PlayerState player => TargetInfo.ForPlayer(player),
                     _ => null
                 })
                 .Where(t => t != null)
@@ -138,10 +144,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     if (!potentialTargets.Any())
                     {
                         finalResult.Status = ResolutionStatus.Failed;
-                        finalResult.ErrorMessage = $"No valid selectable targets for ability '{ability.AbilityTag}' (target key '{target.Key}').";
+                        finalResult.ErrorMessage = $"No valid selectable targets for ability '{ability.KeywordSummary}' (target key '{target.Key}').";
                         _logger.LogInformation(finalResult.ErrorMessage);
                         return finalResult;
                     }
+
+                    var minSelectionCount = target.Config.PlayerChoiceOptions.MinCount;
+                    var maxSelectionCount = Math.Min(potentialTargets.Count, target.Config.PlayerChoiceOptions.MaxCount);
+                    var message = BuildPlayerChoicePrompt(minSelectionCount, maxSelectionCount);
 
                     var choiceRequest = new PlayerChoiceRequest
                     {
@@ -154,21 +164,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                             .Where(t => t.Type == TargetType.Card && t.Card != null)
                             .Select(t => context.Mapper.Map<CardInstanceDto>(t.Card!))
                             .ToList(),
-                        MinSelectionCount = target.Config.PlayerChoiceOptions.MinCount,
-                        MaxSelectionCount = Math.Min(potentialTargets.Count, target.Config.PlayerChoiceOptions.MaxCount),
-                        Message = target.Config.PlayerChoiceOptions.Prompt ?? "Choose your target(s).",
+                        MinSelectionCount = minSelectionCount,
+                        MaxSelectionCount = maxSelectionCount,
+                        Message = message,
                         IsCancellable = isCancellable
                     };
 
                     // --- CORE REFACTOR ---
                     // Instead of returning, we now await the player's choice directly.
-                    _logger.LogInformation("Awaiting player choice for ability {AbilityTag}, target key '{TargetKey}'.", ability.AbilityTag, target.Key);
+                    _logger.LogInformation("Awaiting player choice for ability {AbilityKeywords}, target key '{TargetKey}'.", ability.KeywordSummary, target.Key);
                     var choiceResult = await _pendingActionService.WaitForPlayerChoiceAsync(context.CurrentGameState.GameId, choiceRequest, context.CancellationToken);
 
                     if (choiceResult.WasCancelled)
                     {
                         finalResult.Status = ResolutionStatus.Failed;
-                        finalResult.ErrorMessage = $"Player cancelled target selection for ability '{ability.AbilityTag}'.";
+                        finalResult.ErrorMessage = $"Player cancelled target selection for ability '{ability.KeywordSummary}'.";
                         _logger.LogInformation(finalResult.ErrorMessage);
                         return finalResult;
                     }
@@ -213,6 +223,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
             foreach (var target in ability.Targets)
             {
+                if (!target.Config.IsEnabled)
+                {
+                    continue;
+                }
+
                 // Only check targets that are explicitly configured to require a valid target for the ability to be playable.
                 if (!target.Config.RequireValidTarget)
                 {
@@ -225,8 +240,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                 if (!queryResult.Success)
                 {
-                    _logger.LogWarning("Target availability check failed for ability {AbilityTag}, target '{TargetKey}': Query execution failed: {Error}",
-                        ability.AbilityTag, target.Key, queryResult.ErrorMessage);
+                    _logger.LogWarning("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': Query execution failed: {Error}",
+                        ability.KeywordSummary, target.Key, queryResult.ErrorMessage);
                     // If the query itself fails, we consider targets unavailable.
                     return new TargetAvailabilityResult(false, $"目标查询失败: {queryResult.ErrorMessage}");
                 }
@@ -234,7 +249,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 var potentialTargets = queryResult.Results.Select(item => item switch
                     {
                         CardInstance card => TargetInfo.ForCard(card),
-                        PlayerState player => TargetInfo.ForPlayer(player),
                         _ => null
                     })
                     .Where(t => t != null)
@@ -245,8 +259,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                 if (!potentialTargets.Any())
                 {
-                    _logger.LogInformation("Target availability check failed for ability {AbilityTag}, target '{TargetKey}': No valid targets found.",
-                        ability.AbilityTag, target.Key);
+                    _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': No valid targets found.",
+                        ability.KeywordSummary, target.Key);
                     // If the query returns no results, and a target is required, the ability is not available.
                     return new TargetAvailabilityResult(false, "没有有效的目标。");
                 }
@@ -259,10 +273,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
         private static List<TargetInfo> ApplyAbilityTargetKeywordRules(List<TargetInfo> potentialTargets, TargetConfig config, GameContext context)
         {
-            if (config.PlayerChoiceOptions?.IsRequired != true)
-            {
-                return potentialTargets;
-            }
+            var requiresChoice = config.PlayerChoiceOptions?.IsRequired == true;
+            var abilityOwnerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
 
             // Ability targeted: only enforce for opponent target selection by default.
             return potentialTargets.Where(targetInfo =>
@@ -273,13 +285,43 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 }
 
                 var card = targetInfo.Card;
-                if (card.OwnerPlayerId == context.RequestingPlayerId)
+                if (card.OwnerPlayerId != abilityOwnerId && card.HasKeyword(CardKeyword.EarthSigil))
+                {
+                    return false;
+                }
+
+                if (!requiresChoice)
+                {
+                    return true;
+                }
+
+                if (card.OwnerPlayerId == abilityOwnerId)
                 {
                     return true;
                 }
 
                 return !card.HasKeyword(CardKeyword.Aura) && !card.HasKeyword(CardKeyword.Ambush);
             }).ToList();
+        }
+
+        private static string BuildPlayerChoicePrompt(int minCount, int maxCount)
+        {
+            if (maxCount <= 0)
+            {
+                return "请选择目标";
+            }
+
+            if (minCount <= 0)
+            {
+                return maxCount == 1 ? "请选择1个目标" : $"请选择最多{maxCount}个目标";
+            }
+
+            if (minCount >= maxCount)
+            {
+                return $"请选择{maxCount}个目标";
+            }
+
+            return $"请选择{minCount}-{maxCount}个目标";
         }
 
         private void HandleSelectionFailure(FailureHandling failureHandling, Exception exception)
@@ -291,8 +333,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 case FailureHandling.SkipEffect:
                     _logger.LogWarning(exception, "Target selection failed. Skipping effect as per configuration.");
                     break;
-                case FailureHandling.LogWarning:
-                    _logger.LogWarning(exception, "Target selection failed.");
+                case FailureHandling.CompleteWithFailure:
+                    _logger.LogWarning(exception, "Target selection failed. Continuing due to CompleteWithFailure.");
                     break;
             }
         }

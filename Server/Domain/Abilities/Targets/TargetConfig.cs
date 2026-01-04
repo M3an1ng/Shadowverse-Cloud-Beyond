@@ -21,13 +21,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// </summary>
         public QueryConfig Query { get; set; } = new();
 
-        // Removed TargetPool, Filters, Count, Ordering properties as their functionality
-        // is now handled by the embedded CardQueryConfig 'Query'.
+        /// <summary>
+        /// 是否启用
+        /// </summary>
+        public bool IsEnabled { get; set; } = true;
 
         /// <summary>
-        /// 失败处理方式
+        /// 目标解析顺序（序号越小越先解析）
         /// </summary>
-        public FailureHandling OnFailure { get; set; } = FailureHandling.AbortAbility;
+        public int? Order { get; set; }
+
+        // Removed TargetPool, Filters, Count, Ordering properties as their functionality
+        // is now handled by the embedded CardQueryConfig 'Query'.
 
         /// <summary>
         /// 指示在可玩性检查期间，是否必须至少存在一个有效的目标。
@@ -53,11 +58,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// 是否强制需要玩家选择
         /// </summary>
         public bool IsRequired { get; set; } = false;
-
-        /// <summary>
-        /// 选择提示信息
-        /// </summary>
-        public string? Prompt { get; set; }
 
         /// <summary>
         /// 是否可以取消选择

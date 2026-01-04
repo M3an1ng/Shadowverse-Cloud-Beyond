@@ -20,7 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when damage is dealt to a target.
     /// </summary>
-    [GameEventMetadata("造成伤害", "当对目标造成伤害时触发的事件。", EventType.Damage)]
+    [GameEventMetadata("伤害", "当对目标造成伤害时触发的事件。", EventType.Damage)]
     public class DamageEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("伤害值", "造成的伤害数值。")]
@@ -40,8 +40,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
         }
 
-        public DamageEvent(CardInstance target, int damage, CardInstance source, DamageKind kind)
-            : base(EventType.Damage)
+        public DamageEvent(CardInstance target, int damage, CardInstance source, DamageKind kind, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Damage, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(target));
             Damage = damage;

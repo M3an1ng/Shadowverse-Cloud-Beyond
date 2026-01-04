@@ -3,6 +3,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Effects;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 {
@@ -32,7 +34,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 效果的执行顺序，数值越小越先执行。
         /// 用于处理同一能力内多个效果的执行次序。
-        /// TODO: 移除所有ExecutionOrder的调用，依靠事件入队顺序即可
         /// </summary>
         public int ExecutionOrder { get; set; } = 0; // Default to 0 if not specified
 
@@ -47,17 +48,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         public Dictionary<string, ValueConfig> Parameters { get; set; } = new();
 
         /// <summary>
-        /// 一个DSL查询字符串，用于从父级能力已解析的目标池(ResolvedTargets)中，为当前效果选择其自己的目标。
-        /// 这允许效果对已选定的目标进行二次筛选和组合。
-        /// 例如: "ResolvedTargets.primary" 或 "Filter(ResolvedTargets.secondary, c => c.Attack > 3)"
+        /// 目标选择器：用于从父级能力已解析的目标池(ResolvedTargets)中选择目标。
+        /// 规则为“取并”，每个字符串是一个目标池 key（如 "primary" / "target1"）。
+        /// 支持通配："*" / "ResolvedTargets.*" / "ResolvedTargets.All" 表示全量。
         /// 如果为空，则默认使用父能力的所有已解析目标。
         /// </summary>
-        public string TargetSelector { get; set; } = string.Empty;
+        [JsonConverter(typeof(TargetSelectorListConverter))]
+        public List<string> TargetSelector { get; set; } = new();
 
         /// <summary>
         /// 失败时的处理策略
         /// </summary>
-        //public FailureStrategy OnFailure { get; set; } = FailureStrategy.Continue;
+        public FailureHandling OnFailure { get; set; } = FailureHandling.SkipEffect;
 
         /// <summary>
         /// 效果表达式（DSL语法）
@@ -80,11 +82,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// </summary>
         //public List<ConditionConfig> CancelConditions { get; set; } = new();
 
-
         /// <summary>
         /// 是否启用
         /// </summary>
-        //public bool IsEnabled { get; set; } = true;
+        public bool IsEnabled { get; set; } = true;
 
         /// <summary>
         /// 定义当此效果成功执行后，如何构建 EffectCompletedEvent.ExecutionResults 的内容。

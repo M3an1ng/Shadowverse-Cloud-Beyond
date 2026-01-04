@@ -85,6 +85,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         AttackStateUpdated,
         /// <summary>
+        /// 单位每回合可攻击次数发生改变时触发。
+        /// </summary>
+        AttackTimesUpdated,
+        /// <summary>
         /// 玩家的可进化状态发生改变时触发。
         /// </summary>
         EvolveStateUpdated,
@@ -124,6 +128,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// 玩家PP（Play Point）最大值发生改变时触发。
         /// </summary>
         PpMaxUpdated,
+        /// <summary>
+        /// 玩家PP+1可用次数发生改变时触发。
+        /// </summary>
+        PpBoostStateUpdated,
         /// <summary>
         /// 玩家EP（Evolve Point）当前值发生改变时触发。
         /// </summary>
@@ -217,6 +225,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         SuperEvolveRequested,
         /// <summary>
+        /// 玩家请求使用PP+1时触发。
+        /// </summary>
+        PpBoostRequested,
+        /// <summary>
         /// 玩家请求出牌时触发。
         /// </summary>
         PlayCardRequested,
@@ -249,6 +261,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         Clash,
 
         Return,
+
+        /// <summary>
+        /// 将卡牌从战场洗回牌库时触发。
+        /// </summary>
+        [Description("洗回牌库")]
+        Tuck,
 
         Transform,
 
@@ -292,6 +310,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         CreateCard,
 
         /// <summary>
+        /// 复制卡牌实例并放置到指定区域。
+        /// </summary>
+        CopyCard,
+
+        /// <summary>
         /// 一张卡牌成功发动了 Act（启动）能力（用于触发 Activated 能力）。
         /// </summary>
         Act,
@@ -302,14 +325,30 @@ namespace ShadowverseBeyond.Server.Domain.Events
         ActRequested,
 
         /// <summary>
+        /// 一张卡牌成功发动了 Fusion（融合）能力（用于触发 Fusion 能力）。
+        /// </summary>
+        Fusion,
+
+        /// <summary>
+        /// 玩家请求发动手牌中的 Fusion（融合）能力。
+        /// </summary>
+        FusionRequested,
+
+        /// <summary>
         /// 场上卡牌的 Act 可用性/已使用状态发生变化（用于驱动客户端 UI）。
         /// </summary>
         ActStateUpdated,
+        AddDeck,
+        /// <summary>
+        /// 纹章被添加到玩家纹章区时触发。
+        /// </summary>
+        AddEmblem,
 
         /// <summary>
-        /// 融合已结算（用于驱动客户端动画与日志）。
+        /// 玩家使用法术后触发的魔力增幅事件。
         /// </summary>
-        CardsFused
+        SpellBoost,
+
     }
 
 

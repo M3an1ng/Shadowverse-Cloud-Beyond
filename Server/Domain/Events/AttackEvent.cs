@@ -12,7 +12,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// This event is the entry point for an attack action. Its Commit method
     /// orchestrates the generation of subsequent events like Clash and Damage.
     /// </summary>
-    [GameEventMetadata("攻击时", "当一个单位攻击另一个单位时触发（在伤害计算前）。", EventType.Attack)]
+    [GameEventMetadata("攻击", "当一个单位攻击另一个单位时触发（在伤害计算前）。", EventType.Attack)]
     public class AttackEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("攻击者", "发起攻击的单位。")]

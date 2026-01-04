@@ -10,13 +10,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event to update only the max Super Evolution Points (SEP) value.
     /// </summary>
-    [GameEventMetadata("SEP Max Update", "Triggered when a player's max SEP value changes.", EventType.SepMaxUpdated)]
+    [GameEventMetadata("SEP最大值变化", "当玩家的SEP最大值发生变化时触发的事件。", EventType.SepMaxUpdated)]
     public class SepMaxUpdateEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("Max SEP", "Updated max SEP value.")]
+        [GameEventParameter("新的SEP最大值", "更新后的SEP最大值。")]
         public int MaxSep { get; }
 
-        [GameEventParameter("Target Player", "Player whose max SEP changed.")]
+        [GameEventParameter("目标玩家", "SEP最大值被更新的玩家。")]
         public PlayerState? TargetPlayer => Source?.Player;
 
         public SepMaxUpdateEvent(PlayerState player, int maxSep)

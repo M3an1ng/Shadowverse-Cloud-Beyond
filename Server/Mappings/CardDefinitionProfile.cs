@@ -2,7 +2,6 @@ using AutoMapper;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using System.Collections.Generic; // Required for List
-using System.Linq; // Required for .Any() if used, though not strictly needed here
 using ShadowverseBeyond.Server.Dtos.Enums;
 using System;
 
@@ -18,8 +17,6 @@ namespace ShadowverseBeyond.Server.Mappings
             CreateMap<CardDefinition, CardDefinitionDto>()
                 // Map Id (Entity) to CardId (DTO)
                 .ForMember(dest => dest.CardId, opt => opt.MapFrom(src => src.Id))
-                // Map CanEvolve (DTO) based on whether EvolveId (Entity) has a value
-                .ForMember(dest => dest.CanEvolve, opt => opt.MapFrom(src => src.EvolveId.HasValue))
                 // Ensure Keywords list is initialized even if source is null
                 .ForMember(dest => dest.Keywords, opt => opt.NullSubstitute(new List<string>()))
                 .ForMember(dest => dest.Rarity, opt => opt.MapFrom(src => src.Rarity.ToString()))
@@ -37,7 +34,6 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.Rarity, opt => opt.MapFrom(src => ParseEnum<CardRarity>(src.Rarity, CardRarity.Bronze)))
                 .ForMember(dest => dest.Class, opt => opt.MapFrom(src => ParseEnum<CardClass>(src.Class, CardClass.Neutral)))
                 .ForMember(dest => dest.CardSet, opt => opt.MapFrom(src => src.CardSet ?? "Basic"))
-                .ForMember(dest => dest.EvolveId, opt => opt.MapFrom(src => src.CanEvolve == true ? src.EvolveId : null))
                 .ForMember(dest => dest.Keywords, opt => opt.MapFrom(src => src.Keywords ?? new List<string>()))
                 .ForMember(dest => dest.Tribe, opt => opt.MapFrom(src => src.Tribe))
                 .ForMember(dest => dest.AbilityIds, opt => opt.MapFrom(src => src.AbilityIds ?? new List<long>()));

@@ -16,14 +16,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("当前PP值", "更新后的当前PP值。")]
         public int CurrentPp { get; }
 
+        [GameEventParameter("允许超出上限", "是否允许当前PP暂时超过最大PP。")]
+        public bool AllowOverflow { get; }
+
         [GameEventParameter("目标玩家", "PP值被更新的玩家。")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public PpUpdateEvent(PlayerState player, int currentPp)
+        public PpUpdateEvent(PlayerState player, int currentPp, bool allowOverflow = false)
             : base(EventType.PpUpdated)
         {
             Source = TargetInfo.ForPlayer(player);
             CurrentPp = currentPp;
+            AllowOverflow = allowOverflow;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -34,7 +38,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "PpUpdateEvent.Commit: Source player is null." };
             }
 
-            player.ApplyPlayPointsCurrentChange(CurrentPp);
+            player.ApplyPlayPointsCurrentChange(CurrentPp, AllowOverflow);
             return new DomainOperationResult { Success = true };
         }
 

@@ -49,6 +49,88 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             Logger.LogDebug("{EffectName}: Starting with CardDefinitionId={CardDefId}, Count={Count}.",
                            effectName, parameters.CardDefinitionId, parameters.SummonCount);
 
+            if (parameters.CardSourceMode == Common.CardSourceMode.Instance)
+            {
+                var targetCards = effect.SelectedTargets
+                    .Where(target => target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList();
+
+                if (targetCards.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Summon instance mode requires card targets."
+                    };
+                }
+
+                var instanceResult = new GameStateActionResult { Success = true };
+                foreach (var card in targetCards)
+                {
+                    var owner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
+                    if (owner == null)
+                    {
+                        return new GameStateActionResult
+                        {
+                            Success = false,
+                            ErrorMessage = $"Summon instance mode owner not found for card {card.InstanceId}."
+                        };
+                    }
+
+                    instanceResult.GeneratedEvents.Add(new SummonEvent(owner, card, null));
+                }
+
+                return instanceResult;
+            }
+
+            if (parameters.CardSourceMode == Common.CardSourceMode.Copy)
+            {
+                var targetCards = effect.SelectedTargets
+                    .Where(target => target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList();
+
+                if (targetCards.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Summon copy mode requires card targets."
+                    };
+                }
+
+                var copyPlayerTargets = PlayerScopeResolver.ResolvePlayers(
+                    context.CurrentGameState,
+                    context.RequestingPlayerId,
+                    parameters.PlayerScope);
+
+                if (copyPlayerTargets.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Summon copy mode could not resolve player scope."
+                    };
+                }
+
+                var copyResult = new GameStateActionResult { Success = true };
+                foreach (var player in copyPlayerTargets)
+                {
+                    foreach (var card in targetCards)
+                    {
+                        var copy = new CardInstance(Guid.NewGuid(), card.CurrentDefinitionId, player.PlayerId)
+                        {
+                            CurrentZone = CardZone.Playing
+                        };
+                        copyResult.GeneratedEvents.Add(new CopyCardEvent(player, card, copy));
+                        copyResult.GeneratedEvents.Add(new SummonEvent(player, copy, null));
+                    }
+                }
+
+                return copyResult;
+            }
+
             Func<TargetInfo, GameContext, DomainOperationResult> summonAction =
                 (targetInfo, ctx) =>
                 {
@@ -75,15 +157,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     foreach (var token in tokensToSummon)
                     {
                         // 支持位置参数：从参数传递 Position（ZoneIndex），null 表示追加到末尾
-                        var evt = new SummonEvent(player, token, parameters.Position);
+                        var evt = new SummonEvent(player, token, null);
                         combinedResult.GeneratedEvents.Add(evt);
                     }
                     return combinedResult;
                 };
 
+            var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                context.CurrentGameState,
+                context.RequestingPlayerId,
+                parameters.PlayerScope);
+
             return _targetProcessingService.ProcessTargets(
                 context,
-                effect.SelectedTargets,
+                playerTargets,
                 summonAction,
                 effectName);
         }

@@ -683,19 +683,63 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         /// </summary>
         private ExpressionNode ParseComparison()
         {
-            var expr = ParseTerm();
+            var expr = ParseSetUnion();
 
             while (Match(TokenType.GreaterThan, TokenType.GreaterEqual,
                         TokenType.LessThan, TokenType.LessEqual))
             {
                 var opToken = Previous(); // Get the token
-                var right = ParseTerm();
+                var right = ParseSetUnion();
                 expr = new BinaryOperationNode
                 {
                     Left = expr,
                     Operator = opToken.Type, // Assign TokenType
                     Right = right,
 
+                };
+            }
+
+            return expr;
+        }
+
+        /// <summary>
+        /// 解析集合并集表达式
+        /// </summary>
+        private ExpressionNode ParseSetUnion()
+        {
+            var expr = ParseSetIntersect();
+
+            while (Match(TokenType.SetUnion))
+            {
+                var opToken = Previous();
+                var right = ParseSetIntersect();
+                expr = new BinaryOperationNode
+                {
+                    Left = expr,
+                    Operator = opToken.Type,
+                    Right = right,
+                };
+            }
+
+            return expr;
+        }
+
+        /// <summary>
+        /// 解析集合交集表达式
+        /// </summary>
+        private ExpressionNode ParseSetIntersect()
+        {
+            var expr = ParseTerm();
+
+            while (Match(TokenType.SetIntersect))
+            {
+                var opToken = Previous();
+                var right = ParseTerm();
+                expr = new BinaryOperationNode
+                {
+                    Left = expr,
+                    Operator = opToken.Type,
+                    Right = right,
                 };
             }
 
@@ -826,6 +870,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 {
                     FunctionName = identifier.Name,
                     Arguments = arguments
+                };
+            }
+
+            if (callee is MemberAccessNode memberAccess)
+            {
+                // Treat member calls like list.find(x) as find(list, x)
+                var callArguments = new List<ExpressionNode> { memberAccess.Target };
+                callArguments.AddRange(arguments);
+                return new FunctionCallNode
+                {
+                    FunctionName = memberAccess.Member.Name,
+                    Arguments = callArguments
                 };
             }
 

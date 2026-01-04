@@ -11,7 +11,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Event committed when a player finalizes mulligan.
     /// Implements ICommittableEvent to apply mulligan results and transition readiness.
     /// </summary>
-    [GameEventMetadata("换牌完成", "当玩家完成换牌操作时触发的事件。", EventType.MulliganCompleted)]
+    [GameEventMetadata("调度完成", "当玩家完成调度操作时触发的事件。", EventType.MulliganCompleted)]
     public class MulliganCompletedEvent : GameEventBase, ICommittableEvent
     {
         [GameEventParameter("换牌玩家", "执行换牌操作的玩家。")]

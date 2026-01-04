@@ -38,6 +38,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     public class CardInstance : ICard
     {
         private const string ActLastUsedTurnKey = "act.lastUsedTurnNumber";
+        public const string SpellboostCounterKey = "spellboost";
+        public const string EarthsigilCounterKey = "earthsigil";
+        private static readonly string[] SystemCounterKeys = { SpellboostCounterKey, EarthsigilCounterKey };
 
         /// <summary>
         /// Unique identifier for this card instance within the current game.
@@ -54,16 +57,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int BaseDefinitionId { get; private set; }
 
         /// <summary>
-        /// The DefinitionId of the card this instance evolves into. Null if it cannot evolve. This is immutable.
-        /// </summary>
-        public int? EvolveDefinitionId { get; private set; }
-
-        /// <summary>
         /// A computed property that returns the appropriate DefinitionId based on the current IsEvolved state.
         /// This is the core of the dynamic data switching.
         /// </summary>
-        // 旧实现：进化后切换到 EvolveDefinitionId
-        // public int CurrentDefinitionId => IsEvolved && EvolveDefinitionId.HasValue ? EvolveDefinitionId.Value : BaseDefinitionId;
+        // 旧实现：进化后切换到进化定义
+        // public int CurrentDefinitionId => IsEvolved ? EvolvedDefinitionId : BaseDefinitionId;
         // 超凡规则：进化/超进化不再切换卡牌定义，始终使用基础定义并通过状态加成调整身材
         public int CurrentDefinitionId => BaseDefinitionId;
 
@@ -77,6 +75,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         [DslExposable("当前区域", Description = "卡牌当前所在的区域")]
         public CardZone CurrentZone { get; set; } = CardZone.Deck;
+
+        [DslExposable("上次移动原因", Description = "卡牌最近一次移动的原因")]
+        public CardMoveReason LastMoveReason { get; private set; } = CardMoveReason.Unknown;
 
         // --- Computed Properties from CardDefinition ---
         [DslExposable("卡牌类型", Description = "卡牌的类型（随从、法术、护符等）")]
@@ -160,9 +161,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             .ToList();
 
         /// <summary>
-        /// Countdown value (for amulets only).
+        /// Countdown value (for amulets and crests only).
         /// </summary>
-        [DslExposable("倒计时", Description = "护符的倒计时值")]
+        [DslExposable("倒计时", Description = "护符与纹章的倒计时值")]
         public int? Countdown => CurrentCountdown;
 
         /// <summary>
@@ -194,7 +195,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         public bool IsSilenced { get; private set; } = false;
 
-        // Removed CanEvolve property - evolution eligibility is determined by game rules and player state
+        // Evolvability is derived from card type and runtime state (no definition flag).
 
         /// <summary>
         /// Number of attacks made this turn.
@@ -202,10 +203,32 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int AttacksThisTurn { get; set; } = 0;
 
         /// <summary>
+        /// Maximum number of attacks this card can perform per turn.
+        /// </summary>
+        [DslExposable("最大攻击次数", Description = "该卡牌每回合可攻击次数上限")]
+        public int MaxAttacksPerTurn { get; set; } = 1;
+
+        /// <summary>
         /// 存储与此卡牌实例关联的能力的持久运行时状态（例如计数器）。
         /// Key: 变量名 (string), Value: 变量值 (object)
         /// </summary>
         public Dictionary<string, object> AbilityState { get; private set; } = [];
+
+        private readonly List<string> _additionalTribes = new();
+
+        private readonly CardCounters _counters = new(SystemCounterKeys);
+
+        [DslExposable("计数器", Description = "卡牌上的系统与临时计数器")]
+        public CardCounters Counters => _counters;
+
+        [DslExposable("计数字典", Description = "计数器的只读字典视图")]
+        public IReadOnlyDictionary<string, object?> CounterMap => _counters;
+
+        [DslExposable("魔力增幅", Description = "spellboost 计数器数值")]
+        public int Spellboost => GetCounter(SpellboostCounterKey);
+
+        [DslExposable("土之印计数", Description = "earthsigil 计数器数值")]
+        public int Earthsigil => GetCounter(EarthsigilCounterKey);
 
         /// <summary>
         /// Whether this card currently has at least one Activated (Act) ability.
@@ -231,11 +254,24 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
         }
 
+        /// <summary>
+        /// Number of Act activations used this turn.
+        /// </summary>
+        public int ActsThisTurn { get; set; } = 0;
+
+        /// <summary>
+        /// Maximum Act activations allowed per turn.
+        /// </summary>
+        public int MaxActsPerTurn { get; set; } = 1;
+
         public bool HasUsedActThisTurn(int ownerTurnNumber)
-            => ActLastUsedTurnNumber.HasValue && ActLastUsedTurnNumber.Value == ownerTurnNumber;
+            => ActsThisTurn >= GetMaxActsPerTurn();
 
         public void MarkActUsed(int ownerTurnNumber)
-            => AbilityState[ActLastUsedTurnKey] = ownerTurnNumber;
+        {
+            ActsThisTurn = Math.Max(0, ActsThisTurn + 1);
+            AbilityState[ActLastUsedTurnKey] = ownerTurnNumber;
+        }
 
         /// <summary>
         /// 此卡牌实例的所有能力列表（只读）。
@@ -281,7 +317,28 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// Gets the card's tribe names from its definition.
         /// </summary>
-        public List<string> Tribe => CurrentDefinition?.Tribe ?? new List<string>();
+        public List<string> Tribe
+        {
+            get
+            {
+                var baseTribes = CurrentDefinition?.Tribe ?? new List<string>();
+                if (_additionalTribes.Count == 0)
+                {
+                    return baseTribes;
+                }
+
+                var combined = new List<string>(baseTribes);
+                foreach (var tribe in _additionalTribes)
+                {
+                    if (!combined.Any(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        combined.Add(tribe);
+                    }
+                }
+
+                return combined;
+            }
+        }
 
         #endregion
 
@@ -295,8 +352,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             OwnerPlayerId = ownerPlayerId;
 
             var baseDef = GameDataProvider.Instance?.GetCardDefinition(definitionId);
-            EvolveDefinitionId = baseDef?.EvolveId;
             InitializeCountdown(baseDef);
+            ResetCounters();
         }
 
         /// <summary>
@@ -306,6 +363,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             InstanceId = Guid.Empty;
             OwnerPlayerId = Guid.Empty; // Use Guid.Empty for default
+            ResetCounters();
         }
 
         /// <summary>
@@ -323,9 +381,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         /// <param name="abilityTag">能力标签</param>
         /// <returns>匹配的能力列表</returns>
-        public IEnumerable<Ability> GetAbilitiesByTag(EffectKeyword abilityTag)
+        public IEnumerable<Ability> GetAbilitiesByKeyword(EffectKeyword abilityTag)
         {
-            return Abilities.Where(a => a.AbilityTag == abilityTag);
+            return Abilities.Where(a => a.HasKeyword(abilityTag));
         }
 
         /// <summary>
@@ -335,7 +393,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <returns>是否拥有该能力</returns>
         public bool HasAbility(EffectKeyword abilityTag)
         {
-            return Abilities.Any(a => a.AbilityTag == abilityTag);
+            return Abilities.Any(a => a.HasKeyword(abilityTag));
         }
 
         /// <summary>
@@ -385,7 +443,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 // To attack a leader, one of the following must be true:
                 // 1. The attacker has Storm.
-                // 2. The attacker is not under "summoning sickness" (i.e., it has been on the field for more than its entry turn, or it has evolved).
+                // 2. The attacker is not under "summoning sickness" (i.e., it has been on the field for more than its entry turn).
                 // Rush only allows attacking followers on the turn the card is played.
                 bool hasSummoningSickness = this.FieldTurn == 0;
                 if (!this.HasKeyword(CardKeyword.Storm) && hasSummoningSickness)
@@ -403,9 +461,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <returns>最大攻击次数</returns>
         private int GetMaxAttacksPerTurn()
         {
-            // 默认每回合可攻击1次
-            // TODO: 检查是否有增加攻击次数的能力或Buff
-            return 1;
+            return Math.Max(0, MaxAttacksPerTurn);
+        }
+
+        private int GetMaxActsPerTurn()
+        {
+            return Math.Max(0, MaxActsPerTurn);
         }
 
 
@@ -451,20 +512,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
 
         /// <summary>
-        /// 验证是否可以进化
+        /// 验证是否可以进化（仅检查卡牌本体状态）。
         /// </summary>
-        /// <param name="ownerPlayer">拥有者玩家</param>
-        /// <param name="currentTurn">当前回合数</param>
-        /// <param name="evolutionPointCost">进化所需EP</param>
-        /// <param name="firstPlayerEvolutionStartTurn">先手玩家进化开始回合</param>
-        /// <param name="secondPlayerEvolutionStartTurn">后手玩家进化开始回合</param>
         /// <returns>是否可以进化</returns>
         public bool CanEvolve()
         {
-            // This method now only checks for intrinsic properties of the card itself.
+            // This method only checks intrinsic properties of the card itself.
             // All game-rule checks (EP cost, turn number, player's evolution right)
             // are handled by the committable event (e.g., EvolveRequestedEvent).
-            return !IsEvolved && EvolveDefinitionId.HasValue;
+            return IsFollower && !IsEvolved && !BaseKeywords.Contains(CardKeyword.BanEvolve);
         }
 
         /// <summary>
@@ -480,14 +536,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (!CanEvolve())
             {
                 result.Success = false;
-                result.ErrorMessage = "Card cannot evolve (IsEvolved is true or EvolveDefinitionId is null).";
+                result.ErrorMessage = "Card cannot evolve (IsEvolved is true, not a follower, or BanEvolve present).";
                 return result;
             }
 
             // This method now only generates the event.
             // The actual state change is handled by the event's Commit method.
             result.GeneratedEvents.Add(new EvolveEvent(this, false));
-            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 2, healthModifier: 2, costModifier: 0));
             result.Success = true;
 
             return result;
@@ -504,14 +559,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (!CanEvolve())
             {
                 result.Success = false;
-                result.ErrorMessage = "Card cannot super evolve (IsEvolved is true or EvolveDefinitionId is null).";
+                result.ErrorMessage = "Card cannot super evolve (IsEvolved is true, not a follower, or BanEvolve present).";
                 return result;
             }
 
             // 触发普通进化事件（便于沿用进化触发），同时触发超进化专用事件
             result.GeneratedEvents.Add(new EvolveEvent(this, true));
             result.GeneratedEvents.Add(new SuperEvolveEvent(this));
-            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 3, healthModifier: 3, costModifier: 0));
             result.Success = true;
 
             return result;
@@ -543,22 +597,35 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// 内部方法：应用进化的实体变更（定义切换、能力重建等）。当前实现超凡简化规则。
         /// </summary>
-        internal void ApplyEvolutionChange(bool isSuperEvolution = false)
+        internal DomainOperationResult ApplyEvolutionChange(GameContext context, bool isSuperEvolution = false)
         {
             IsEvolved = true;
             IsSuperEvolved = isSuperEvolution;
 
-            // 旧实现：通过切换到进化卡牌定义获取身材/关键词
-            // if (EvolveDefinitionId.HasValue)
-            // {
-            //     BaseDefinitionId = EvolveDefinitionId.Value;
-            // }
-            // 新规则：不切换定义，实际身材加成通过 StatChangedEvent -> Buff 系统完成
+            if (isSuperEvolution)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+
+            var result = new DomainOperationResult();
+            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 2, healthModifier: 2, costModifier: 0));
+            result.Success = true;
+            return result;
+        }
+
+        internal DomainOperationResult ApplySuperEvolutionChange(GameContext context)
+        {
+            IsEvolved = true;
+            IsSuperEvolved = true;
+            var result = new DomainOperationResult();
+            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 3, healthModifier: 3, costModifier: 0));
+            result.Success = true;
+            return result;
         }
 
         private void InitializeCountdown(CardDefinition? definition)
         {
-            if (definition == null || definition.Type != CardType.Amulet)
+            if (definition == null || (definition.Type != CardType.Amulet && definition.Type != CardType.Crest))
             {
                 CurrentCountdown = null;
                 return;
@@ -567,7 +634,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var hasCountdown = definition.Keywords?.Any(k =>
                 string.Equals(k, nameof(CardKeyword.Countdown), StringComparison.OrdinalIgnoreCase)) ?? false;
 
-            CurrentCountdown = hasCountdown ? definition.Health ?? 0 : null;
+            CurrentCountdown = hasCountdown && definition.Countdown.HasValue
+                ? definition.Countdown
+                : null;
         }
 
         internal void ApplyCountdownChange(int delta)
@@ -604,7 +673,81 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             AttacksThisTurn += 1;
         }
+
+        internal void CopyRuntimeStateFrom(CardInstance source)
+        {
+            Damage = source.Damage;
+            IsEvolved = source.IsEvolved;
+            IsSuperEvolved = source.IsSuperEvolved;
+            CurrentCountdown = source.CurrentCountdown;
+            IsSilenced = source.IsSilenced;
+            FieldTurn = source.FieldTurn;
+            AttacksThisTurn = source.AttacksThisTurn;
+            MaxAttacksPerTurn = source.MaxAttacksPerTurn;
+            ActsThisTurn = source.ActsThisTurn;
+            MaxActsPerTurn = source.MaxActsPerTurn;
+            AbilityState = new Dictionary<string, object>(source.AbilityState);
+            _additionalTribes.Clear();
+            _additionalTribes.AddRange(source._additionalTribes);
+            _counters.CopyFrom(source._counters);
+        }
+
+        internal void ResetAttackState()
+        {
+            AttacksThisTurn = 0;
+            FieldTurn = 0;
+        }
+
+        internal void ResetActState()
+        {
+            ActsThisTurn = 0;
+            AbilityState.Remove(ActLastUsedTurnKey);
+        }
+
+        internal void ResetToDefinitionState()
+        {
+            Damage = 0;
+            IsEvolved = false;
+            IsSuperEvolved = false;
+            IsSilenced = false;
+            FieldTurn = 0;
+            AttacksThisTurn = 0;
+            MaxAttacksPerTurn = 1;
+            ActsThisTurn = 0;
+            MaxActsPerTurn = 1;
+            AbilityState.Clear();
+            _additionalTribes.Clear();
+            ResetCounters();
+
+            var baseDef = GameDataProvider.Instance?.GetCardDefinition(BaseDefinitionId);
+            InitializeCountdown(baseDef);
+        }
         #endregion
+
+        public int GetCounter(string key)
+        {
+            return _counters.Get(key);
+        }
+
+        public int SetCounter(string key, int value)
+        {
+            return _counters.Set(key, value);
+        }
+
+        public int AddCounter(string key, int delta)
+        {
+            return _counters.Add(key, delta);
+        }
+
+        public bool TryConsumeCounter(string key, int amount)
+        {
+            return _counters.TryConsume(key, amount);
+        }
+
+        private void ResetCounters()
+        {
+            _counters.Reset();
+        }
 
         /// <summary>
         /// 获取能力数量
@@ -667,6 +810,26 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             return false;
+        }
+
+        internal void SetLastMoveReason(CardMoveReason reason)
+        {
+            LastMoveReason = reason;
+        }
+
+        public void AddTribeMarker(string tribe)
+        {
+            if (string.IsNullOrWhiteSpace(tribe))
+            {
+                return;
+            }
+
+            if (_additionalTribes.Any(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            _additionalTribes.Add(tribe);
         }
 
 
@@ -741,7 +904,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // 2. Perform the basic transformation on the card instance
             this.BaseDefinitionId = newDefinition.Id;
-            this.EvolveDefinitionId = newDefinition.EvolveId;
             this.Damage = 0; // Reset damage on transform
             InitializeCountdown(newDefinition);
 

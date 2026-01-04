@@ -74,14 +74,14 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} attempted to evolve unit, but it's not their turn (Active: {context.CurrentGameState.CurrentPlayerId})." };
             }
 
-            if (!cardToEvolve.CanEvolve())
-            {
-                return new DomainOperationResult { Success = false, ErrorMessage = $"Unit {cardToEvolve.Name} (UID: {cardToEvolve.InstanceId}) cannot evolve intrinsically (already evolved or no form)." };
-            }
-
             if (cardToEvolve.HasKeyword(CardKeyword.BanEvolve))
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Unit {cardToEvolve.Name} (UID: {cardToEvolve.InstanceId}) cannot evolve due to BanEvolve." };
+            }
+
+            if (!cardToEvolve.CanEvolve())
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Unit {cardToEvolve.Name} (UID: {cardToEvolve.InstanceId}) cannot evolve intrinsically (already evolved or not a follower)." };
             }
 
             var hasFreeEvolve = cardToEvolve.HasKeyword(CardKeyword.FreeEvolve);

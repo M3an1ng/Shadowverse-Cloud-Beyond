@@ -23,9 +23,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
     async render(container, effects = [], onChange = () => {}, options = {}) {
         await this.initialize();
-
+        
         this.container = container;
-        this.effects = effects;
+        this.effects = (effects || []).map(effect => this.normalizeEffectConfig(effect));
         this.onChange = onChange;
         this.options = options || {};
 
@@ -106,21 +106,74 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         // 头部
         const header = document.createElement('div');
         header.className = 'accordion-header';
-        header.innerHTML = `
-            <div class="header-info">
-                <span class="item-index">#${index + 1}</span>
-                <span class="item-title">${titleText}</span>
-            </div>
-            <div class="header-actions">
-                <button class="btn-icon delete-btn" title="删除">×</button>
-                <button class="btn-icon expand-btn" title="展开/折叠">▼</button>
-            </div>
+
+        const isEnabled = effect.isEnabled !== false;
+        const statusClass = isEnabled ? 'status-enabled' : 'status-disabled';
+        const statusText = isEnabled ? '启用' : '禁用';
+
+        const headerInfo = document.createElement('div');
+        headerInfo.className = 'header-info';
+        headerInfo.innerHTML = `
+            <span class="item-index">#${index + 1}</span>
+            <span class="item-title">${titleText}</span>
+            <span class="item-status ${statusClass}">${statusText}</span>
         `;
 
+        const headerActions = document.createElement('div');
+        headerActions.className = 'header-actions';
+
+        const toggle = this.createToggleSwitch(
+            isEnabled,
+            (checked) => {
+                this.updateEffect(index, { isEnabled: checked });
+                const statusSpan = header.querySelector('.item-status');
+                if (checked) {
+                    statusSpan.textContent = '启用';
+                    statusSpan.className = 'item-status status-enabled';
+                    toggle.title = '点击禁用效果';
+                } else {
+                    statusSpan.textContent = '禁用';
+                    statusSpan.className = 'item-status status-disabled';
+                    toggle.title = '点击启用效果';
+                }
+            },
+            '',
+            { compact: true }
+        );
+        toggle.title = isEnabled ? '点击禁用效果' : '点击启用效果';
+
+        const settingsBtn = document.createElement('button');
+        settingsBtn.type = 'button';
+        settingsBtn.className = 'btn-icon settings-btn';
+        settingsBtn.title = '效果选项';
+        settingsBtn.setAttribute('aria-label', '效果选项');
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-icon delete-btn';
+        deleteBtn.title = '删除';
+        deleteBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+        `;
+
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'btn-icon expand-btn';
+        expandBtn.title = '展开/折叠';
+        expandBtn.textContent = '▼';
+
+        headerActions.appendChild(toggle);
+        headerActions.appendChild(settingsBtn);
+        headerActions.appendChild(deleteBtn);
+        headerActions.appendChild(expandBtn);
+
+        header.appendChild(headerInfo);
+        header.appendChild(headerActions);
+
         // 绑定头部事件
-        const expandBtn = header.querySelector('.expand-btn');
-        const deleteBtn = header.querySelector('.delete-btn');
-        
         deleteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.removeEffect(index);
@@ -129,20 +182,30 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         // 内容区域
         const content = document.createElement('div');
         content.className = 'accordion-content collapsed';
-        
-        // 1. 效果类型选择
-        const typeSelector = this.createEffectTypeSelector(effect.type, (newType) => {
-            this.updateEffect(index, { type: newType, parameters: {} });
-        });
-        const typeGroup = this.createFormGroup('效果类型', typeSelector, '选择要执行的具体操作');
-        content.appendChild(typeGroup);
 
-        // 2. 动态参数面板
-        if (effectMeta && effect.type) {
-            const paramsPanel = this.createParametersPanel(effectMeta, effect.parameters || {}, (newParams) => {
-                this.updateEffect(index, { parameters: newParams });
+        const optionsPanel = this.createEffectOptionsPanel(effect, index);
+        content.appendChild(optionsPanel);
+
+        // 1. 效果类型选择 (如果未选择类型，显示网格选择器；否则显示参数面板)
+        if (!effect.type) {
+            const selectionContainer = document.createElement('div');
+            selectionContainer.className = 'effect-type-selection-container';
+            
+            this.renderEffectTypeSelection(selectionContainer, (newType) => {
+                this.updateEffect(index, { type: newType, parameters: {} });
             });
-            content.appendChild(paramsPanel);
+            
+            content.appendChild(selectionContainer);
+        } else {
+            // 已选择类型，显示参数面板
+            // 添加一个"更改类型"的微小入口，或者依赖删除重加
+            // 2. 动态参数面板
+            if (effectMeta) {
+                const paramsPanel = this.createParametersPanel(effectMeta, effect.parameters || {}, (newParams) => {
+                    this.updateEffect(index, { parameters: newParams });
+                });
+                content.appendChild(paramsPanel);
+            }
         }
 
         node.appendChild(header);
@@ -162,26 +225,34 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             }
         });
 
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                expandBtn.innerHTML = '▲';
+                node.classList.add('expanded');
+            }
+
+            const isCollapsed = optionsPanel.classList.contains('collapsed');
+            if (isCollapsed) {
+                optionsPanel.classList.remove('collapsed');
+                settingsBtn.classList.add('active');
+            } else {
+                optionsPanel.classList.add('collapsed');
+                settingsBtn.classList.remove('active');
+            }
+        });
+
         return node;
     }
 
-    createEffectTypeSelector(selectedType, onChange) {
+    renderEffectTypeSelection(container, onSelect) {
         const effects = this.metadata.effects || [];
-        const select = document.createElement('select');
-        select.className = 'form-select';
-
-        const placeholderOption = document.createElement('option');
-        placeholderOption.value = '';
-        placeholderOption.textContent = effects.length === 0 ? '加载中...' : '选择效果类型...';
-        placeholderOption.disabled = true;
-        if (!selectedType) {
-            placeholderOption.selected = true;
-        }
-        select.appendChild(placeholderOption);
-
+        
         if (effects.length === 0) {
-            select.disabled = true;
-            return select;
+            container.innerHTML = '<div class="loading-spinner">加载效果元数据中...</div>';
+            return;
         }
 
         const orderedCategories = this.getAbilityEditorCategoryOrder();
@@ -206,38 +277,39 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             grouped.get(categoryId).push(effect);
         });
 
+        // 渲染分类网格
         orderedCategories.forEach(category => {
             const items = grouped.get(category.id);
-            if (!items || items.length === 0) {
-                return;
-            }
+            if (!items || items.length === 0) return;
 
             items.sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || '')));
 
-            const optgroup = document.createElement('optgroup');
-            optgroup.label = categoryLabelMap.get(category.id) || category.label;
+            const categorySection = document.createElement('div');
+            categorySection.className = 'effect-category-section';
+            
+            const categoryTitle = document.createElement('h5');
+            categoryTitle.className = 'effect-category-title';
+            categoryTitle.textContent = categoryLabelMap.get(category.id) || category.label;
+            categorySection.appendChild(categoryTitle);
+
+            const grid = document.createElement('div');
+            grid.className = 'effect-type-grid';
 
             items.forEach(effect => {
-                const optionElement = document.createElement('option');
-                optionElement.value = effect.effectTypeName;
-                optionElement.textContent = effect.displayName;
-                if (effect.description) {
-                    optionElement.title = effect.description;
-                }
-                if (effect.effectTypeName === selectedType) {
-                    optionElement.selected = true;
-                }
-                optgroup.appendChild(optionElement);
+                const btn = document.createElement('button');
+                btn.className = 'effect-type-btn';
+                btn.innerHTML = `
+                    <span class="effect-name">${effect.displayName}</span>
+                    ${effect.description ? `<span class="effect-desc">${effect.description}</span>` : ''}
+                `;
+                btn.title = effect.description || effect.displayName;
+                btn.addEventListener('click', () => onSelect(effect.effectTypeName));
+                grid.appendChild(btn);
             });
 
-            select.appendChild(optgroup);
+            categorySection.appendChild(grid);
+            container.appendChild(categorySection);
         });
-
-        select.addEventListener('change', (e) => {
-            onChange(e.target.value);
-        });
-
-        return select;
     }
 
     createParametersPanel(effectMeta, parameters, onChange) {
@@ -286,7 +358,12 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 onChange
             });
 
-            const group = this.createFormGroup(displayName, controlContainer, description);
+            const isValueConfigEditor = controlType === 'valueConfigEditor';
+            const groupLabel = isValueConfigEditor ? null : displayName;
+            const group = this.createFormGroup(groupLabel, controlContainer, description);
+            if (isValueConfigEditor) {
+                group.classList.add('value-config-group');
+            }
             // 如果是复杂参数，占满一行
             // ValueConfigEditor needs full width for better UX (especially the DSL editor)
             if (['CardFilter', 'EffectList'].includes(paramMeta.typeName) ||
@@ -298,6 +375,125 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         });
 
         container.appendChild(grid);
+        return container;
+    }
+
+    createEffectOptionsPanel(effect, index) {
+        const container = document.createElement('div');
+        container.className = 'collapsible-content effect-options-panel collapsed';
+
+        const title = document.createElement('h5');
+        title.className = 'section-title';
+        title.textContent = '效果选项';
+        container.appendChild(title);
+
+        const selectionSection = this.createTargetSelectorEditor(effect, index);
+        container.appendChild(selectionSection);
+
+        const failureSection = this.createFailureHandlingEditor(effect, index);
+        container.appendChild(failureSection);
+
+        return container;
+    }
+
+    createTargetSelectorEditor(effect, index) {
+        const container = document.createElement('div');
+        container.className = 'config-section';
+        container.innerHTML = '<h5 class="section-title">目标选择</h5>';
+
+        const availableKeys = this.getAvailableTargetKeys();
+        const currentKeys = this.normalizeTargetSelector(effect?.targetSelector);
+        const currentSet = new Set(currentKeys);
+
+        const group = document.createElement('div');
+        group.className = 'btn-group-row target-selector-group';
+
+        const allBtn = this.createTargetSelectorButton('*', '全部');
+        if (currentKeys.some(this.isSelectAllToken)) {
+            allBtn.classList.add('active');
+        }
+        group.appendChild(allBtn);
+
+        if (availableKeys.length > 0) {
+            availableKeys.forEach((key) => {
+                const btn = this.createTargetSelectorButton(key, key);
+                if (currentSet.has(key)) {
+                    btn.classList.add('active');
+                }
+                group.appendChild(btn);
+            });
+        }
+
+        const updateSelection = () => {
+            const activeButtons = Array.from(group.querySelectorAll('.btn-option.active'));
+            const nextKeys = activeButtons.map(btn => btn.dataset.value).filter(Boolean);
+            const finalKeys = nextKeys.some(this.isSelectAllToken) ? ['*'] : nextKeys;
+            this.updateEffect(index, { targetSelector: finalKeys });
+        };
+
+        group.addEventListener('click', (event) => {
+            const button = event.target.closest('.btn-option');
+            if (!button) return;
+
+            const value = button.dataset.value;
+            const isActive = button.classList.contains('active');
+
+            if (this.isSelectAllToken(value)) {
+                group.querySelectorAll('.btn-option').forEach(btn => btn.classList.remove('active'));
+                if (!isActive) {
+                    button.classList.add('active');
+                }
+            } else {
+                const allButton = group.querySelector('.btn-option[data-value="*"]');
+                if (allButton) {
+                    allButton.classList.remove('active');
+                }
+                button.classList.toggle('active');
+            }
+
+            updateSelection();
+        });
+
+        if (availableKeys.length === 0) {
+            const hint = document.createElement('div');
+            hint.className = 'text-muted';
+            hint.textContent = '暂无可用目标池，请先在目标配置中添加目标。';
+            container.appendChild(hint);
+        }
+
+        container.appendChild(this.createFormGroup('目标池', group, '点击按钮选择目标池，* 表示所有目标池'));
+        return container;
+    }
+
+    createTargetSelectorButton(value, label) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-option';
+        btn.dataset.value = value;
+        btn.textContent = label;
+        return btn;
+    }
+
+    createFailureHandlingEditor(effect, index) {
+        const container = document.createElement('div');
+        container.className = 'config-section';
+        container.innerHTML = '<h5 class="section-title">失败处理</h5>';
+
+        const select = document.createElement('select');
+        select.className = 'form-select';
+        select.innerHTML = '<option value="">加载中...</option>';
+        select.disabled = true;
+
+        const current = this.normalizeFailureHandling(effect);
+        this.populateEnumDropdown(select, 'FailureHandling', current).finally(() => {
+            select.disabled = false;
+        });
+
+        select.addEventListener('change', (e) => {
+            this.updateEffect(index, { onFailure: e.target.value });
+        });
+
+        container.appendChild(this.createFormGroup('失败策略', select, '效果失败时的处理方式'));
         return container;
     }
 
@@ -332,7 +528,10 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             });
 
             if (currentValue != null && String(currentValue) !== '') {
-                select.value = String(currentValue);
+                const normalized = this.normalizeEnumValue(currentValue, data);
+                if (normalized != null) {
+                    select.value = normalized;
+                }
             }
         } catch (e) {
             console.warn('EffectConfigEditor: failed to load enum options', enumName, e);
@@ -383,7 +582,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     }
 
     renderParameterControl(container, ctx) {
-        const { controlType, paramName, typeName, paramMeta, paramValue, parameters, onChange } = ctx;
+        const { controlType, paramName, typeName, paramMeta, paramValue, parameters, onChange, displayName } = ctx;
+        const controlKey = (controlType || '').toString().toLowerCase();
         const enumName = paramMeta.enumName || paramMeta.EnumName;
         const optionsProviderKey = paramMeta.optionsProviderKey || paramMeta.OptionsProviderKey;
 
@@ -396,8 +596,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const unwrapped = this.unwrapStaticValueConfig(paramValue);
         const scalarValue = unwrapped.ok ? unwrapped.value : paramValue;
 
-        switch (controlType) {
-            case 'valueConfigEditor': {
+        switch (controlKey) {
+            case 'valueconfigeditor': {
                 const valueConfig = (paramValue && typeof paramValue === 'object' && paramValue.$type)
                     ? paramValue
                     : this.toStaticValueConfig(paramValue ?? paramMeta.defaultValue ?? 0);
@@ -405,6 +605,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 const valueEditor = new ValueConfigEditor();
                 valueEditor.render(container, valueConfig, (newValue) => updateParam(newValue), {
                     parameterName: paramName,
+                    parameterLabel: displayName || paramName,
                     parameterType: typeName,
                     triggeringEventContext: {
                         eventTypes: this.options?.trigger?.eventTypes || [],
@@ -421,7 +622,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 container.appendChild(input);
                 return;
             }
-            case 'numberStepper': {
+            case 'numberstepper': {
                 const input = this.createNumberInput(
                     scalarValue ?? paramMeta.defaultValue ?? 0,
                     (val) => updateParam(val),
@@ -431,7 +632,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 container.appendChild(input);
                 return;
             }
-            case 'textArea': {
+            case 'textarea': {
                 const input = this.createTextInput(
                     scalarValue ?? paramMeta.defaultValue ?? '',
                     (val) => updateParam(val),
@@ -441,7 +642,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 container.appendChild(input);
                 return;
             }
-            case 'textInput': {
+            case 'textinput': {
                 const input = this.createTextInput(
                     scalarValue ?? paramMeta.defaultValue ?? '',
                     (val) => updateParam(val),
@@ -476,7 +677,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 container.appendChild(select);
                 return;
             }
-            case 'targetSelector': {
+            case 'targetselector': {
                 const input = this.createTextInput(
                     scalarValue ?? paramMeta.defaultValue ?? '',
                     (val) => updateParam(val),
@@ -496,9 +697,121 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         }
     }
 
+    normalizeEnumValue(value, options) {
+        if (value == null) return null;
+        const raw = String(value);
+        const entries = options ? Object.keys(options) : [];
+        if (entries.length === 0) return raw;
+
+        const match = entries.find((key) => key.toLowerCase() === raw.toLowerCase());
+        return match || raw;
+    }
+
+    normalizeEffectConfig(effect) {
+        const normalized = {
+            isEnabled: effect?.isEnabled !== false,
+            ...(effect || {})
+        };
+
+        const rawSelector = effect?.targetSelector ?? effect?.TargetSelector ?? effect?.targetselector;
+        normalized.targetSelector = this.normalizeTargetSelector(rawSelector);
+
+        const rawFailure = effect?.onFailure ?? effect?.OnFailure ?? effect?.onfailure;
+        if (rawFailure != null && rawFailure !== '') {
+            normalized.onFailure = rawFailure;
+        }
+
+        return normalized;
+    }
+
+    normalizeTargetSelector(value) {
+        if (!value) return [];
+        let keys = [];
+        if (Array.isArray(value)) {
+            keys = value;
+        } else if (typeof value === 'string') {
+            keys = this.parseTargetSelectorInput(value);
+        }
+
+        return keys
+            .filter(item => typeof item === 'string' && item.trim())
+            .map(item => this.normalizeTargetSelectorKey(item))
+            .filter(Boolean);
+    }
+
+    normalizeTargetSelectorKey(value) {
+        if (!value) return '';
+        const raw = String(value).trim();
+        if (this.isSelectAllToken(raw)) {
+            return '*';
+        }
+        const prefix = 'ResolvedTargets.';
+        if (raw.toLowerCase().startsWith(prefix.toLowerCase())) {
+            return raw.slice(prefix.length).trim();
+        }
+        return raw;
+    }
+
+    getAvailableTargetKeys() {
+        const targets = this.options?.targets;
+        if (!targets) return [];
+
+        if (Array.isArray(targets)) {
+            if (targets.length === 1) {
+                return ['default'];
+            }
+            return targets.map((target, index) => {
+                if (target && typeof target.key === 'string' && target.key.trim()) {
+                    return target.key.trim();
+                }
+                return `target${index + 1}`;
+            });
+        }
+
+        if (typeof targets === 'object') {
+            return Object.keys(targets);
+        }
+
+        return [];
+    }
+
+    formatTargetSelector(value) {
+        if (!value) return '';
+        if (Array.isArray(value)) {
+            return value.join(' | ');
+        }
+        if (typeof value === 'string') {
+            return value;
+        }
+        return '';
+    }
+
+    parseTargetSelectorInput(raw) {
+        if (!raw) return [];
+        return raw
+            .split(/[|,;]+/)
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
+
+    isSelectAllToken(token) {
+        if (!token) return false;
+        const normalized = String(token).trim().toLowerCase();
+        return normalized === '*'
+            || normalized === 'all'
+            || normalized === 'resolvedtargets'
+            || normalized === 'resolvedtargets.*'
+            || normalized === 'resolvedtargets.all';
+    }
+
+    normalizeFailureHandling(effect) {
+        const raw = effect?.onFailure ?? effect?.OnFailure ?? effect?.onfailure;
+        return raw ?? 'AbortAbility';
+    }
+
     // ... 辅助方法 (addEffect, removeEffect, updateEffect, etc.) ...
     addEffect() {
-        this.effects.push({ type: '', parameters: {} });
+        this.effects.push({ type: '', parameters: {}, isEnabled: true });
         this.renderEffectsList(this.container.querySelector('#effects-list-container'));
         this.notifyChange();
     }
@@ -549,6 +862,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     validateEffects() {
         const errors = [];
         this.effects.forEach((effect, index) => {
+            if (effect.isEnabled === false) {
+                return;
+            }
             if (!effect.type) {
                 errors.push(`效果 #${index + 1}: 必须选择效果类型`);
             } else {
@@ -564,5 +880,39 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             }
         });
         return errors;
+    }
+
+    createToggleSwitch(checked, onChange, labelText, options = {}) {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'toggle-switch-wrapper';
+        if (options.compact) {
+            wrapper.classList.add('compact');
+        }
+        wrapper.addEventListener('click', (e) => e.stopPropagation());
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        input.setAttribute('aria-label', labelText || '启用效果');
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('change', (e) => {
+            e.stopPropagation();
+            onChange(e.target.checked);
+        });
+
+        const slider = document.createElement('span');
+        slider.className = 'toggle-slider';
+
+        wrapper.appendChild(input);
+        wrapper.appendChild(slider);
+
+        if (labelText) {
+            const label = document.createElement('span');
+            label.className = 'toggle-label';
+            label.textContent = labelText;
+            wrapper.appendChild(label);
+        }
+
+        return wrapper;
     }
 }

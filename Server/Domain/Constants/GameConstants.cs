@@ -32,7 +32,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// <summary>
             /// Initial number of cards drawn at game start for first player
             /// </summary>
-            public const int InitialHandSizeFirstPlayer = 3;
+            public const int InitialHandSizeFirstPlayer = 4;
 
             /// <summary>
             /// Initial number of cards drawn at game start for second player
@@ -64,6 +64,26 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// Play points gained per turn (normal)
             /// </summary>
             public const int PlayPointsPerTurn = 1;
+
+            /// <summary>
+            /// PP+1 boost amount for the second player.
+            /// </summary>
+            public const int PpBoostAmount = 1;
+
+            /// <summary>
+            /// PP+1 uses available per phase (before and after the reset turn).
+            /// </summary>
+            public const int PpBoostUsesPerPhase = 1;
+
+            /// <summary>
+            /// Maximum PP overflow allowed by PP+1.
+            /// </summary>
+            public const int PpBoostOverflowAmount = 1;
+
+            /// <summary>
+            /// The second player's PP+1 availability resets at the start of this turn.
+            /// </summary>
+            public const int PpBoostResetTurn = 6;
         }
 
         /// <summary>
@@ -186,6 +206,11 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             public const int LeaderCardId = 0;
         }
 
+        public static class Tribes
+        {
+            public const string Reanimate = "Reanimate";
+        }
+
         /// <summary>
         /// AI behavior constants
         /// </summary>
@@ -262,6 +287,11 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         /// </summary>
         public static class AbilityTrigger
         {
+            /// <summary>
+            /// Maximum number of Before intercept iterations for a single event.
+            /// </summary>
+            public const int BeforeInterceptMaxIterations = 8;
+
             /// <summary>
             /// Gets the priority value for a given card zone and ownership context.
             /// Lower numbers have higher priority.

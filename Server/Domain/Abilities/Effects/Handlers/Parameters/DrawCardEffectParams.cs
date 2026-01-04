@@ -2,15 +2,19 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities; // For PlayerState if needed later
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
     /// <summary>
     /// Parameters for the Draw effect.
     /// </summary>
-    [EffectMetadata("抽牌", "从牌库抽取指定数量的卡牌到手牌。")]
+    [EffectMetadata("抽牌", "从牌库抽取指定数量的卡牌到手牌。忽略卡牌目标，按玩家范围结算。")]
     public class DrawCardEffectParams : BaseEffectParams
     {
+        [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择受到影响的玩家（自己/对手/双方）。")]
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
+
         /// <summary>
         /// The target(s) of the draw effect. This should resolve to one or more players.
         /// </summary>

@@ -8,7 +8,6 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
-using DomainKeywords = ShadowverseBeyond.Server.Domain.Constants.Keywords;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -198,8 +197,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 config.CardId = cardAbility.CardId; // Populate CardId
                 config.Name = cardAbility.Name;
                 config.Description = cardAbility.Description ?? string.Empty;
-                config.AbilityTag = DomainKeywords.ParseEffectKeywordOrDefault(cardAbility.AbilityTag);
-                config.IsActive = cardAbility.IsActive;
+                config.IsEnabled = cardAbility.IsActive;
+                config.NormalizeKeywords();
 
                 return config;
             }

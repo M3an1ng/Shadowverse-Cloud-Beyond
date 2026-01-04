@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization; // Add for JsonPropertyName
 
 using Shadowverse.Domain.Interfaces; // Correct namespace
@@ -92,8 +93,7 @@ namespace ShadowverseBeyond.Server.Dtos
         public string Description { get; init; } = string.Empty;
 
         /// <summary>
-        /// Indicates if the card has an evolution form.
-        /// TODO: 移除该属性，所有从者卡默认都可以进化
+        /// Indicates if the card instance can evolve under intrinsic rules (derived from type/keywords).
         /// </summary>
         public bool CanEvolve { get; init; }
 
@@ -211,7 +211,8 @@ namespace ShadowverseBeyond.Server.Dtos
             Attack = definition.Attack ?? 0;
             Health = definition.Health ?? 0; // Base health
             Description = definition.Description ?? string.Empty;
-            CanEvolve = definition.CanEvolve ?? false;
+            var hasBanEvolve = definition.Keywords?.Any(k => string.Equals(k, nameof(CardKeyword.BanEvolve), StringComparison.OrdinalIgnoreCase)) ?? false;
+            CanEvolve = definition.Type == CardType.Follower && !hasBanEvolve;
             // EffectDescriptions does not exist in CardDefinitionDto, rely on CardInstanceDto's default initializer
             // Convert string keywords to CardKeyword enum
             Keywords = new List<CardKeyword>();
@@ -234,8 +235,8 @@ namespace ShadowverseBeyond.Server.Dtos
             IsEvolved = false;
             CanAttack = false; // Usually false initially (unless Rush etc.)
             AttacksThisTurn = 0;
-            // MaxAttacksPerTurn does not exist in CardDefinitionDto, rely on CardInstanceDto's default initializer (= 1)
-            // CurrentCountdown does not exist in CardDefinitionDto, rely on CardInstanceDto's default (null)
+            var hasCountdown = definition.Keywords?.Any(k => string.Equals(k, nameof(CardKeyword.Countdown), StringComparison.OrdinalIgnoreCase)) ?? false;
+            CurrentCountdown = hasCountdown ? definition.Countdown : null;
             Zone = initialZone;
             OwnerPlayerId = ownerPlayerId;
             MaxAttack = definition.Attack ?? 0; // Initial max attack = base attack

@@ -72,7 +72,9 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "CardZone", typeof(CardZone) },
                 { "FailureHandling", typeof(FailureHandling) },
                 { "CardKeyword", typeof(CardKeyword) },
-                { "AbilityTag", typeof(EffectKeyword) }
+                { "AbilityKeyword", typeof(EffectKeyword) },
+                { "PlayerScope", typeof(PlayerScope) },
+                { "CardSourceMode", typeof(CardSourceMode) }
             };
 
             return enumTypes.TryGetValue(enumName, out var type) ? type : null;
@@ -111,6 +113,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "Follower", "随从" },
                 { "Spell", "法术" },
                 { "Amulet", "护符" },
+                { "Crest", "纹章" },
                 { "Leader", "主战者" },
 
                 // CardClass
@@ -160,7 +163,17 @@ namespace ShadowverseBeyond.Server.Controllers
                 // FailureHandling
                 { "AbortAbility", "中止能力" },
                 { "SkipEffect", "跳过效果" },
-                { "UseDefault", "使用默认值" }
+                { "CompleteWithFailure", "失败仍完成" },
+                { "UseDefault", "使用默认值" },
+
+                // PlayerScope
+                { "Opponent", "对手" },
+                { "Both", "双方" },
+
+                // CardSourceMode
+                { "Definition", "定义" },
+                { "Instance", "实例" },
+                { "Copy", "复制" }
             };
 
             return defaultLocalizations.TryGetValue(enumValue, out var localized) ? localized : enumValue;

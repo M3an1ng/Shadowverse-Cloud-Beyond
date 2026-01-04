@@ -23,7 +23,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("抽取的卡牌", "被抽取的卡牌列表。", Scope = GameEventParameterScope.Output)]
         public List<CardInstance> DrawnCards => Target.Where(t => t.Card != null).Select(t => t.Card!).ToList();
 
-        [GameEventParameter("抽取的卡牌ID", "被抽取的卡牌实例ID列表（向后兼容）。", Scope = GameEventParameterScope.Output)]
         public List<Guid> DrawnCardInstanceIds => DrawnCards.Select(c => c.InstanceId).ToList();
 
         public DrawEvent(PlayerState player, List<CardInstance> drawnCards)

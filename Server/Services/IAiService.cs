@@ -31,6 +31,14 @@ namespace ShadowverseBeyond.Server.Services
         Task<PlayCardActionDto?> DecidePlayCardAsync(GameStateDto gameState, Guid aiPlayerId);
 
         /// <summary>
+        /// Decides whether the AI should use PP+1 this turn.
+        /// </summary>
+        /// <param name="gameState">The current state of the game.</param>
+        /// <param name="aiPlayerId">The ID of the AI player.</param>
+        /// <returns>True if the AI should use PP+1 now.</returns>
+        Task<bool> DecidePpBoostAsync(GameStateDto gameState, Guid aiPlayerId);
+
+        /// <summary>
         /// Decides which unit the AI should evolve. (V0.1: At most one evolution per turn).
         /// </summary>
         /// <param name="gameState">The current state of the game.</param>

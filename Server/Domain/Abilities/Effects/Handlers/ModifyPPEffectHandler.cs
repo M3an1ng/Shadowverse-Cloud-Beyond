@@ -55,9 +55,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     return result;
                 };
 
+            var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                context.CurrentGameState,
+                context.RequestingPlayerId,
+                parameters.PlayerScope);
+
             var serviceResult = _targetProcessingService.ProcessTargets(
                 context,
-                effect.SelectedTargets,
+                playerTargets,
                 playerAction,
                 effectName);
 

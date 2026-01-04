@@ -2,7 +2,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
+using ShadowverseBeyond.Server.Domain.Constants;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -32,21 +36,26 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 _logger.LogInformation("Attempting to get all abilities");
 
-                var abilities = await _context.CardAbilities
+                var abilityEntities = await _context.CardAbilities
                     .Where(ca => ca.IsActive)
-                    .Select(ca => new
+                    .ToListAsync();
+
+                var abilities = abilityEntities.Select(ca =>
+                {
+                    var keywords = ExtractAbilityKeywords(ca.JsonConfig);
+                    return new
                     {
                         id = ca.Id,
                         name = ca.Name ?? $"Ability {ca.Id}",
                         description = ca.Description ?? "No description available",
-                        abilityTag = ca.AbilityTag ?? "Unknown",
+                        abilityKeywords = BuildAbilityKeywordDtos(keywords),
                         abilityType = ca.AbilityType,
                         priority = ca.Priority,
                         isActive = ca.IsActive,
                         cardId = ca.CardId,
                         jsonConfig = ca.JsonConfig
-                    })
-                    .ToListAsync();
+                    };
+                }).ToList();
 
                 _logger.LogInformation("Successfully retrieved {Count} abilities", abilities.Count);
                 return Ok(abilities);
@@ -83,6 +92,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 }
 
                 // 解析JsonConfig以获取详细的能力配置
+                var keywords = ExtractAbilityKeywords(cardAbility.JsonConfig);
                 object? jsonConfig = null;
                 if (!string.IsNullOrEmpty(cardAbility.JsonConfig))
                 {
@@ -99,7 +109,7 @@ namespace ShadowverseBeyond.Server.Controllers
                             id = $"ability_{cardAbility.Id}",
                             name = cardAbility.Name ?? $"Ability {cardAbility.Id}",
                             type = "Triggered",
-                            abilityTag = new[] { cardAbility.AbilityTag ?? "Unknown" },
+                            abilityKeywords = BuildAbilityKeywordDtos(keywords),
                             trigger = new { },
                             conditions = new object[] { },
                             targets = new object[] { },
@@ -115,7 +125,7 @@ namespace ShadowverseBeyond.Server.Controllers
                         id = $"ability_{cardAbility.Id}",
                         name = cardAbility.Name ?? $"Ability {cardAbility.Id}",
                         type = "Triggered",
-                        abilityTag = new[] { cardAbility.AbilityTag ?? "Unknown" },
+                        abilityKeywords = BuildAbilityKeywordDtos(keywords),
                         trigger = new { },
                         conditions = new object[] { },
                         targets = new object[] { },
@@ -128,7 +138,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     id = cardAbility.Id,
                     name = cardAbility.Name ?? $"Ability {cardAbility.Id}",
                     description = cardAbility.Description ?? "No description available",
-                    abilityTag = cardAbility.AbilityTag ?? "Unknown",
+                    abilityKeywords = BuildAbilityKeywordDtos(keywords),
                     abilityType = cardAbility.AbilityType,
                     priority = cardAbility.Priority,
                     isActive = cardAbility.IsActive,
@@ -182,12 +192,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     cardAbility.Priority = priorityProp.GetInt32();
                 }
-                if (abilityData.TryGetProperty("abilityTag", out var tagProp))
-                {
-                    cardAbility.AbilityTag = tagProp.ValueKind == JsonValueKind.Array
-                        ? string.Join(",", tagProp.EnumerateArray().Select(e => e.ToString()))
-                        : tagProp.GetString();
-                }
+                var incomingKeywords = ExtractAbilityKeywords(abilityData);
 
                 // 将前端完整配置保存为 JsonConfig（优先使用 jsonConfig 字段）
                 if (abilityData.TryGetProperty("jsonConfig", out var jsonConfigProp))
@@ -250,16 +255,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
                 var description = abilityData.TryGetProperty("description", out var descProp) ? descProp.GetString() : null;
 
-                var abilityTag = "Unknown";
-                if (abilityData.TryGetProperty("abilityTag", out var tagProp))
-                {
-                    abilityTag = tagProp.ValueKind switch
-                    {
-                        JsonValueKind.Array => tagProp.EnumerateArray().Select(e => e.ToString()).FirstOrDefault() ?? "Unknown",
-                        JsonValueKind.String => tagProp.GetString() ?? "Unknown",
-                        _ => tagProp.ToString()
-                    };
-                }
+                var incomingKeywords = ExtractAbilityKeywords(abilityData);
 
                 var abilityType = abilityData.TryGetProperty("abilityType", out var typeProp) && typeProp.ValueKind == JsonValueKind.Number
                     ? typeProp.GetInt32()
@@ -284,7 +280,6 @@ namespace ShadowverseBeyond.Server.Controllers
                     CardId = cardId,
                     Name = name,
                     Description = description,
-                    AbilityTag = abilityTag,
                     AbilityType = abilityType,
                     Priority = priority,
                     IsActive = isActive,
@@ -302,12 +297,13 @@ namespace ShadowverseBeyond.Server.Controllers
                     await _context.SaveChangesAsync();
                 }
 
+                var createdKeywords = ExtractAbilityKeywords(entity.JsonConfig);
                 var created = new
                 {
                     id = entity.Id,
                     name = entity.Name,
                     description = entity.Description,
-                    abilityTag = entity.AbilityTag,
+                    abilityKeywords = BuildAbilityKeywordDtos(createdKeywords),
                     abilityType = entity.AbilityType,
                     priority = entity.Priority,
                     isActive = entity.IsActive,
@@ -324,5 +320,101 @@ namespace ShadowverseBeyond.Server.Controllers
                 return StatusCode(500, new { error = "Failed to create ability" });
             }
         }
+
+        private static List<AbilityKeywordConfig> ExtractAbilityKeywords(JsonElement abilityData)
+        {
+            if (abilityData.ValueKind == JsonValueKind.Object &&
+                abilityData.TryGetProperty("abilityKeywords", out var keywordsProp))
+            {
+                var parsed = DeserializeAbilityKeywords(keywordsProp);
+                if (parsed.Count > 0)
+                {
+                    return parsed;
+                }
+            }
+
+            if (abilityData.ValueKind == JsonValueKind.Object &&
+                abilityData.TryGetProperty("jsonConfig", out var jsonConfigProp))
+            {
+                var jsonConfigText = jsonConfigProp.ValueKind == JsonValueKind.String
+                    ? jsonConfigProp.GetString()
+                    : jsonConfigProp.GetRawText();
+                var config = TryDeserializeAbilityConfig(jsonConfigText);
+                if (config != null)
+                {
+                    config.NormalizeKeywords();
+                    return config.AbilityKeywords;
+                }
+            }
+
+            return new List<AbilityKeywordConfig>();
+        }
+
+        private static List<AbilityKeywordConfig> ExtractAbilityKeywords(string? jsonConfig)
+        {
+            var config = TryDeserializeAbilityConfig(jsonConfig);
+            if (config == null)
+            {
+                return new List<AbilityKeywordConfig>();
+            }
+
+            config.NormalizeKeywords();
+            return config.AbilityKeywords;
+        }
+
+        private static AbilityConfig? TryDeserializeAbilityConfig(string? jsonConfig)
+        {
+            if (string.IsNullOrWhiteSpace(jsonConfig))
+            {
+                return null;
+            }
+
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    Converters = { new LenientEffectKeywordConverter(), new JsonStringEnumConverter() }
+                };
+                return JsonSerializer.Deserialize<AbilityConfig>(jsonConfig, options);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static List<AbilityKeywordConfig> DeserializeAbilityKeywords(JsonElement element)
+        {
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    Converters =
+                    {
+                        new AbilityKeywordConfigListConverter(),
+                        new LenientEffectKeywordConverter(),
+                        new JsonStringEnumConverter()
+                    }
+                };
+
+                return JsonSerializer.Deserialize<List<AbilityKeywordConfig>>(element.GetRawText(), options)
+                    ?? new List<AbilityKeywordConfig>();
+            }
+            catch
+            {
+                return new List<AbilityKeywordConfig>();
+            }
+        }
+
+        private static List<object> BuildAbilityKeywordDtos(IEnumerable<AbilityKeywordConfig> keywords)
+        {
+            return keywords
+                .Select(k => new { keyword = k.Keyword.ToString(), value = k.Value })
+                .Cast<object>()
+                .ToList();
+        }
+
     }
 }

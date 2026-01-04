@@ -11,7 +11,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when a player's Evolution Points (EP) change.
     /// </summary>
-    [GameEventMetadata("EP更新", "当玩家的当前EP值发生变化时触发的事件。", EventType.EpUpdated)]
+    [GameEventMetadata("EP变化", "当玩家的当前EP值发生变化时触发的事件。", EventType.EpUpdated)]
     public class EpUpdateEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("当前EP值", "更新后的当前EP值。")]

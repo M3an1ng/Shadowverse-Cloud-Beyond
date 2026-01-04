@@ -246,6 +246,11 @@
     box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
 }
 
+.pp-segment.overflow {
+    background: #22c55e; /* Green-500 */
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
 .pp-segment.empty {
     background: rgba(24, 24, 27, 0.8); /* Zinc-900 */
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -271,6 +276,108 @@
 .resource-value {
     color: #fff;
     font-weight: 400;
+}
+
+.pp-boost-action {
+    position: absolute;
+    right: 70px;
+    bottom: 100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    z-index: 50;
+}
+
+/* 隐藏旧的标签 */
+.pp-boost-action-label {
+    display: none;
+}
+
+.pp-boost-button {
+    /* 基础尺寸与形状 */
+    width: 60px;
+    height: 60px;
+    border-radius: 50%; /* 圆形按钮 */
+    
+    /* 基础样式 (不可用状态) */
+    background: rgba(20, 20, 25, 0.8);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.3);
+    
+    /* 排版 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 900;
+    font-size: 14px;
+    letter-spacing: 0.05em;
+    
+    /* 交互 */
+    cursor: not-allowed;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    backdrop-filter: blur(4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.pp-boost-action-text {
+    font-size: 16px;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* 隐藏计数器 */
+.pp-boost-count {
+    display: none;
+}
+
+/* 可用状态 */
+.pp-boost-button.available {
+    /* 激活样式 */
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(16, 185, 129, 0.1));
+    border-color: #22c55e; /* Green-500 */
+    color: #fff;
+    cursor: pointer;
+    
+    /* 发光效果 */
+    box-shadow:
+        0 0 20px rgba(34, 197, 94, 0.3),
+        inset 0 0 15px rgba(34, 197, 94, 0.2);
+        
+    animation: pp-boost-pulse 2s infinite ease-in-out;
+}
+
+/* Hover 效果 (仅在可用时) */
+.pp-boost-button.available:hover {
+    transform: scale(1.1);
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(16, 185, 129, 0.2));
+    border-color: #4ade80; /* Green-400 */
+    box-shadow:
+        0 0 30px rgba(34, 197, 94, 0.5),
+        inset 0 0 20px rgba(34, 197, 94, 0.3);
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+}
+
+/* 点击效果 */
+.pp-boost-button.available:active {
+    transform: scale(0.95);
+    box-shadow:
+        0 0 10px rgba(34, 197, 94, 0.4),
+        inset 0 0 10px rgba(34, 197, 94, 0.4);
+}
+
+/* 呼吸动画 */
+@keyframes pp-boost-pulse {
+    0% {
+        box-shadow: 0 0 20px rgba(34, 197, 94, 0.3), inset 0 0 15px rgba(34, 197, 94, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 30px rgba(34, 197, 94, 0.5), inset 0 0 25px rgba(34, 197, 94, 0.3);
+    }
+    100% {
+        box-shadow: 0 0 20px rgba(34, 197, 94, 0.3), inset 0 0 15px rgba(34, 197, 94, 0.2);
+    }
 }
 
 /* Specific Resource Colors */
@@ -305,7 +412,7 @@
 /* --- Log UI --- */
 #game-log-container {
     position: absolute;
-    top: 140px; /* Moved down to match visual reference */
+    top: 320px; /* Moved down to avoid overlapping the battle preview */
     left: 0; /* Anchored to the left edge */
     z-index: 9000;
     font-family: 'JetBrains Mono', monospace;
@@ -510,14 +617,46 @@
     font-size: var(--text-xs);
     box-shadow: var(--shadow-sm);
     font-family: var(--font-mono);
+    z-index: 20;
+}
+
+/* Follower: Rounded Rectangle (Default, but explicit) */
+.card.follower .cost {
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+}
+
+/* Spell: Circle */
+.card.spell .cost {
+    border-radius: 50%;
+}
+
+/* Amulet: Diamond */
+.card.amulet .cost {
+    border-radius: 2px;
+    transform: rotate(45deg);
+    top: -6px; /* Adjust position for rotation */
+    left: -6px;
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.3); /* Adjust shadow for rotation */
+}
+
+.card.amulet .cost span {
+    transform: rotate(-45deg); /* Counter-rotate text */
+    display: block;
 }
 
 .card .name {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
     font-weight: 600;
     text-align: center;
-    margin-top: var(--space-4);
     font-size: var(--text-xs);
     line-height: 1.2;
+    z-index: 10;
 }
 
 .card .stats {
@@ -526,6 +665,8 @@
     width: 100%;
     padding: 0 var(--space-1);
     font-family: var(--font-mono);
+    position: relative; /* Create positioning context for separator */
+    align-items: center; /* Ensure items align vertically */
 }
 
 .card .attack, .card .health {
@@ -538,6 +679,19 @@
 
 .card .attack { color: var(--color-accent); }
 .card .health { color: var(--color-success); }
+
+.card .stat-separator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255, 255, 255, 0.3);
+    font-weight: 900;
+    font-size: 14px;
+    font-family: var(--font-mono);
+    line-height: 1;
+    pointer-events: none;
+}
 
 /* In-card action buttons (Evolve / Super Evolve / Act) */
 .card .evolve-button,
@@ -580,6 +734,34 @@
     opacity: 0.55;
     cursor: not-allowed;
     transform: none;
+}
+
+/* --- Battle Card Preview --- */
+.battle-card-preview {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(340px, 38vw);
+    padding: var(--space-sm);
+    margin: 0;
+    z-index: 120;
+    pointer-events: none;
+    border: none;
+    background: transparent;
+}
+
+@media (max-width: 900px) {
+    .battle-card-preview {
+        width: min(300px, 70vw);
+        top: 0;
+        left: 0;
+    }
+}
+
+@media (max-width: 600px) {
+    .battle-card-preview {
+        width: min(260px, 85vw);
+    }
 }
 
 /* Fusion animation */

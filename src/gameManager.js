@@ -10,7 +10,7 @@
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-import { renderGame, renderGameLog, showDamageNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, updateSingleCardHighlight } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus + updateSingleCardHighlight
+import { renderGame, renderGameLog, showDamageNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, updateSingleCardHighlight } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus + updateSingleCardHighlight
 
 // --- Constants ---
 const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
@@ -999,6 +999,77 @@ export async function requestAct(cardUid) {
         alert(`启动失败：${err?.message || "服务器通信错误"}`);
     }
 }
+
+// Fusion request for a hand card
+export async function requestFusion(cardUid, fusedCardUids = []) {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
+    if (gameState.gameOver) {
+        console.warn("GM: Cannot use Fusion - Game is over.");
+        return;
+    }
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: RequestFusion failed - SignalR connection not available or not connected.");
+        alert("与服务器连接丢失，无法融合！");
+        return;
+    }
+
+    const playerState = getPlayerState(gameState.currentPlayerId);
+    const cardInstance = findCardInstanceByUid(cardUid);
+
+    if (!playerState || !cardInstance) {
+        console.error(`GM: RequestFusion failed - Missing player/card state for UID ${cardUid}.`);
+        return;
+    }
+
+    if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
+        alert("现在不是你的回合！");
+        return;
+    }
+
+    if (gameState.phase !== "Main") {
+        alert("只能在主阶段进行融合！");
+        return;
+    }
+
+    if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Hand") {
+        alert("只能融合自己手牌中的卡牌！");
+        return;
+    }
+
+    const materials = Array.isArray(fusedCardUids) ? fusedCardUids.filter(Boolean) : [];
+    if (materials.length === 0) {
+        alert("需要选择至少一张融合素材。");
+        return;
+    }
+
+    if (materials.includes(cardUid)) {
+        alert("融合素材不能包含发动融合的卡牌本体。");
+        return;
+    }
+
+    for (const materialUid of materials) {
+        const material = findCardInstanceByUid(materialUid);
+        if (!material) {
+            alert(`找不到素材卡牌：${materialUid}`);
+            return;
+        }
+        if (material.ownerId !== playerState.id || material.zone !== "Hand") {
+            alert("融合素材必须是自己手牌中的卡牌。");
+            return;
+        }
+    }
+
+    try {
+        const actionDto = { CardUid: cardUid, FusedCardUids: materials };
+        await signalRConnection.invoke("RequestFusion", actionDto);
+    } catch (err) {
+        console.error("GM: SignalR 'RequestFusion' invocation failed:", err);
+        alert(`融合失败：${err?.message || "服务器通信错误"}`);
+    }
+}
 // Duplicate evolveCard function removed to fix SyntaxError
 // --- SignalR Hub Invocation Wrappers ---
 
@@ -1278,6 +1349,7 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     // Use PascalCase: CurrentPP, MaxPP, CurrentEP, MaxEP, CanEvolve, HasUnlockedEvolution, TurnNumber, DeckCount, Deck
     playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
     playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
+    playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
     playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
     playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
     playerInstance.sep = playerDto.CurrentSEP ?? 0;
@@ -1846,6 +1918,65 @@ export function handleSepMaxUpdate(eventData) {
     if (typeof renderGame === "function") {
         renderGame(gameState);
     }
+}
+
+/**
+ * Sends a request to the server to use PP+1.
+ */
+export async function requestPpBoost() {
+    if (gameState.isSpectator) {
+        alert("观战模式：不能进行操作。");
+        return;
+    }
+    if (!signalRConnection || signalRConnection.state !== "Connected") {
+        console.error("GM: requestPpBoost failed - SignalR connection not available.");
+        alert("与服务器连接丢失，无法使用PP+1！");
+        return;
+    }
+
+    const playerState = getPlayerState(gameState.currentPlayerId);
+    if (!playerState) {
+        console.error("GM: requestPpBoost failed - Player state missing.");
+        return;
+    }
+
+    if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
+        alert("现在不是你的回合！");
+        return;
+    }
+
+    if (gameState.phase !== "Main" && gameState.phase !== "TurnStart") {
+        alert("只能在自己的回合使用PP+1！");
+        return;
+    }
+
+    if ((playerState.ppBoostUsesAvailable ?? 0) <= 0) {
+        alert("没有可用的PP+1次数。");
+        return;
+    }
+
+    try {
+        await signalRConnection.invoke("PerformPpBoost");
+    } catch (err) {
+        console.error("GM: SignalR 'PerformPpBoost' invocation failed:", err);
+        alert(`PP+1使用失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export function handlePpBoostStateUpdated(eventData) {
+    console.log('%c[EVENT RECEIVED] handlePpBoostStateUpdated:', 'background: #0ea5e9; color: #000; font-weight: bold;', eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.PpBoostUsesAvailable === undefined) {
+        console.error("GM Error: Invalid data in handlePpBoostStateUpdated (expected SourcePlayerId, PpBoostUsesAvailable):", eventData);
+        return;
+    }
+    const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
+    if (!playerToUpdate) {
+        console.warn(`GM: PpBoostStateUpdated event received for invalid player: ${eventData.SourcePlayerId}`);
+        return;
+    }
+
+    playerToUpdate.ppBoostUsesAvailable = eventData.PpBoostUsesAvailable;
+    updatePpBoostDisplay(playerToUpdate.id, playerToUpdate.ppBoostUsesAvailable);
 }
 
 
@@ -2540,9 +2671,9 @@ export function handleCardRevealed(eventData) {
     appendGameLog("Reveal", { name, cost, instanceId: revealedCard.InstanceId, cardId: revealedCard.CardId });
 }
 
-export function handleCardsFused(eventData) {
-    // DTO: CardsFusedEventDto { SourcePlayerId, FusedCount, FusedCardInstanceIds }
-    console.log(`%cGM HANDLE: handleCardsFused`, 'color: #a855f7; font-weight: bold;', eventData);
+export function handleFusion(eventData) {
+    // DTO: FusionEventDto { SourcePlayerId, FusedCount, FusedCardInstanceIds }
+    console.log(`%cGM HANDLE: handleFusion`, 'color: #a855f7; font-weight: bold;', eventData);
 
     const sourcePlayerId = eventData?.SourcePlayerId ?? null;
     const fusedIds = Array.isArray(eventData?.FusedCardInstanceIds) ? eventData.FusedCardInstanceIds : [];

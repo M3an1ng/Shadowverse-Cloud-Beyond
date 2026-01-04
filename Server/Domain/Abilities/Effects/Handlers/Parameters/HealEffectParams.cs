@@ -6,7 +6,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Parameters for the Heal effect.
     /// </summary>
-    [EffectMetadata("治疗", "恢复一个或多个目标的生命值。")]
+    [EffectMetadata("治疗", "恢复一个或多个目标的生命值。使用卡牌目标。")]
     public class HealEffectParams : BaseEffectParams // Target can be CardInstance or PlayerState
     {
         /// <summary>

@@ -91,6 +91,12 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// </summary>
         SetAttackTimes = 13,
 
+        /// <summary>
+        /// 超进化 - 触发超进化流程
+        /// 🔄 可实现：调用超进化流程
+        /// </summary>
+        SuperEvolve = 14,
+
         // ==================== 特殊控制效果 (90-99) ====================
 
         /// <summary>
@@ -104,6 +110,18 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// 🔄 可实现：基于随机数生成器的效果处理
         /// </summary>
         Random = 91,
+
+        /// <summary>
+        /// 改写事件参数 - Before阶段用于改写触发事件的参数
+        /// ⚠️ 仅用于Before拦截机制
+        /// </summary>
+        RewriteEventParams = 92,
+
+        /// <summary>
+        /// 替换触发事件 - Before阶段用于替换触发事件类型
+        /// ⚠️ 仅用于Before拦截机制
+        /// </summary>
+        ReplaceEvent = 93,
 
         // ==================== 核心游戏效果 (100-110) ====================
 
@@ -228,6 +246,36 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// 🔄 可实现：类似AddCardToHandEffectHandler但目标是牌库
         /// </summary>
         AddDeck = 119,
+
+        /// <summary>
+        /// 添加纹章 - 将纹章卡牌添加到纹章区
+        /// 🔄 可实现：类似AddCardToDeckEffectHandler但目标是纹章区
+        /// </summary>
+        AddEmblem = 136,
+
+        /// <summary>
+        /// 土之印增加 - 增加土之印计数或生成土之印护符
+        /// ⚠️ 需要土之印系统支持
+        /// </summary>
+        AddEarthSigil = 137,
+
+        /// <summary>
+        /// 土之秘术 - 消耗土之印计数
+        /// ⚠️ 需要土之秘术系统支持
+        /// </summary>
+        EarthRite = 138,
+
+        /// <summary>
+        /// 死灵术 - 消耗墓场计数
+        /// 🔄 可实现：消耗玩家墓场计数
+        /// </summary>
+        Necromancy = 139,
+
+        /// <summary>
+        /// 血祭 - 消耗血池计数
+        /// 🔄 可实现：消耗玩家血池计数
+        /// </summary>
+        Sacrifice = 140,
 
         /// <summary>
         /// 混合效果 - 复合型效果，可能包含多种子效果

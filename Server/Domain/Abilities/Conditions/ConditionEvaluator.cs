@@ -42,8 +42,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
             {
                 if (!config.IsEnabled)
                 {
-                    _logger.LogDebug("Condition {ConditionId} is disabled, returning false", config.Id);
-                    return false;
+                    _logger.LogDebug("Condition {ConditionId} is disabled, returning true", config.Id);
+                    return true;
                 }
 
                 // Delegate the evaluation to the injected evaluator (which should be the DslConditionEvaluator).

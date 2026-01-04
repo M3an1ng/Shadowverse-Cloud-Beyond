@@ -290,7 +290,6 @@ public class ApplicationDbContext : DbContext
 
       // 配置索引
       entity.HasIndex(e => e.CardId);
-      entity.HasIndex(e => e.AbilityTag);
       entity.HasIndex(e => new { e.CardId, e.IsActive });
 
       // 配置与CardDefinition的关系
@@ -306,10 +305,6 @@ public class ApplicationDbContext : DbContext
 
       entity.Property(e => e.Description)
                 .HasMaxLength(500);
-
-      entity.Property(e => e.AbilityTag)
-                .IsRequired()
-                .HasMaxLength(50);
 
       // 注意：移除了简单字符串表达式字段的配置
       // 统一使用DSL或JSON格式存储复杂配置

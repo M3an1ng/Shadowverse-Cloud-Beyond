@@ -6,13 +6,13 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using System;
-using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 using ShadowverseBeyond.Server.Domain.Constants;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -26,8 +26,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public int CardId { get; set; } // 添加 CardId 属性
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
-        public EffectKeyword AbilityTag { get; set; } = EffectKeyword.None;
-        public int? EnhanceCost { get; set; }
+
+        [JsonConverter(typeof(AbilityKeywordConfigListConverter))]
+        public List<AbilityKeywordConfig> AbilityKeywords { get; set; } = new();
+
+        public int? ActivateCost { get; set; }
         public AbilityType Type { get; set; }
         public TriggerConfig Trigger { get; set; } = new();
         /// <summary>
@@ -44,7 +47,42 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         [JsonConverter(typeof(SingleTargetConfigToDictionaryConverter))]
         public Dictionary<string, TargetConfig> Targets { get; set; } = new();
         public List<EffectConfig> Effects { get; set; } = new();
-        public bool IsActive { get; set; } = true;
+        public bool IsEnabled { get; set; } = true;
         public string Version { get; set; } = "1.0";
+
+        [JsonIgnore]
+        public EffectKeyword PrimaryKeyword => AbilityKeywords.FirstOrDefault()?.Keyword ?? EffectKeyword.None;
+
+        public bool HasKeyword(EffectKeyword keyword)
+        {
+            return AbilityKeywords.Any(k => k.Keyword == keyword);
+        }
+
+        public int? GetKeywordValue(EffectKeyword keyword)
+        {
+            return AbilityKeywords.FirstOrDefault(k => k.Keyword == keyword)?.Value;
+        }
+
+        public void NormalizeKeywords()
+        {
+            if (!ActivateCost.HasValue)
+            {
+                return;
+            }
+
+            var enhanceEntry = AbilityKeywords.FirstOrDefault(k => k.Keyword == EffectKeyword.Enhance);
+            if (enhanceEntry == null)
+            {
+                AbilityKeywords.Add(new AbilityKeywordConfig
+                {
+                    Keyword = EffectKeyword.Enhance,
+                    Value = ActivateCost
+                });
+            }
+            else if (!enhanceEntry.Value.HasValue)
+            {
+                enhanceEntry.Value = ActivateCost;
+            }
+        }
     } // End of AbilityConfig class
 } // End of namespace

@@ -11,7 +11,7 @@ using System.Linq;
 namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
-    /// 能力触发事件，用于播报能力标签
+    /// 能力触发事件，用于播报能力关键字
     /// 基于最新Event驱动架构设计
     /// </summary>
     [GameEventMetadata("能力触发", "当一个能力被触发时发生的事件。", EventType.AbilityTriggered)]
@@ -23,8 +23,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("触发事件", "导致能力触发的原始事件。")]
         public IGameEvent TriggeringEvent { get; }
 
-        [GameEventParameter("能力标签", "能力的标识标签。")]
-        public string AbilityTag { get; }
+        [GameEventParameter("能力关键字", "能力的关键字列表。")]
+        public IReadOnlyList<string> AbilityKeywords { get; }
 
         [GameEventParameter("能力拥有者", "拥有此能力的卡牌。")]
         public CardInstance? AbilityOwner => Source?.Card;
@@ -34,7 +34,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             TriggeredAbility = triggeredAbility;
             TriggeringEvent = triggeringEvent;
-            AbilityTag = triggeredAbility.AbilityTag.ToString(); // Preserve the ability tag as enum name
+            AbilityKeywords = triggeredAbility.AbilityKeywords.Select(k => k.ToString()).ToList();
 
             // Set the source as the ability owner if available
             if (triggeredAbility.SourceCard != null)

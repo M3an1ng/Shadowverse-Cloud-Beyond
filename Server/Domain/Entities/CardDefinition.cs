@@ -58,6 +58,11 @@ public class CardDefinition
     public int? Health { get; set; }
 
     /// <summary>
+    /// Countdown value (nullable for non-countdown cards).
+    /// </summary>
+    public int? Countdown { get; set; }
+
+    /// <summary>
     /// List of keywords associated with the card (e.g., "Ward", "Storm").
     /// EF Core typically maps List<string> to a suitable format or requires configuration.
     /// Storing as JSON or delimited string might be alternative options if needed.
@@ -78,11 +83,6 @@ public class CardDefinition
     public bool IsCollectible { get; set; } = true; // Default to true
 
     // Removed IsEvolved property - evolution is handled through the evolution system
-
-    /// <summary>
-    /// The ID of the card this card evolves into. Null if this card cannot evolve or is already evolved.
-    /// </summary>
-    public int? EvolveId { get; set; } // Changed type to int?
 
     /// <summary>
     /// List of ability IDs associated with this card.

@@ -76,11 +76,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("事件目标", Description = "事件的目标列表（玩家或卡牌）")]
         public List<TargetInfo> Target { get; protected set; } = new();
 
-        protected GameEventBase(EventType eventType)
+        protected GameEventBase(EventType eventType, Guid? eventId = null, DateTime? timestamp = null)
         {
             EventType = eventType;
-            EventId = Guid.NewGuid();
-            Timestamp = DateTime.UtcNow;
+            EventId = eventId ?? Guid.NewGuid();
+            Timestamp = timestamp ?? DateTime.UtcNow;
         }
     }
 

@@ -24,7 +24,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// The key is the name of the target group (e.g., "primary", "secondary"), corresponding to a key
         /// in `AbilityConfig.Targets`. The value is the list of resolved targets for that group.
         /// This dictionary is populated during the ability's target resolution and consumed by the
-        /// effect's `TargetSelector` DSL.
+        /// effect's `TargetSelector` keys.
         /// </summary>
         public Dictionary<string, List<TargetInfo>> ResolvedTargets { get; }
 

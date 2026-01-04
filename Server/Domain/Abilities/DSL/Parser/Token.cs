@@ -89,6 +89,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         Or,             // or, ||
         Not,            // not, !
 
+        // 集合操作符
+        SetUnion,       // |
+        SetIntersect,   // &
+
         // 赋值操作符
         Assign,         // =
         PlusAssign,     // +=
@@ -215,6 +219,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             ["&&"] = TokenType.And,
             ["||"] = TokenType.Or,
             ["!"] = TokenType.Not,
+
+            // 集合操作符
+            ["|"] = TokenType.SetUnion,
+            ["&"] = TokenType.SetIntersect,
 
             // 赋值操作符
             ["="] = TokenType.Assign,
