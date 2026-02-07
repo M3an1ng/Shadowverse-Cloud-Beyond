@@ -76,11 +76,11 @@
 
 **后续操作:**
 - 列表查询: `.query(condition)` (筛选集合元素)
-- 函数调用: `count(collection)`, `sum(collection)`, `min(collection)`, `max(collection)`, `contains(collection, value)`, `isEmpty(collection)`
+- 函数调用/链式调用: `list.count()`, `list.contains(value)`, `list.isEmpty()`；数值列表额外支持 `list.sum()`, `list.min()`, `list.max()`
 - 比较操作符: `==`, `!=` (集合比较)
 - 逻辑操作符: `&&`, `||`
 
-**重要说明**: DSL中的列表操作主要通过函数实现，而不是方法链。`.query()`是唯一的列表方法操作。
+**重要说明**: 列表聚合函数以 `list.xxx()` 形式调用；列表查询仍使用 `.query()` 等链式操作。
 
 ## 3. 类型推断规则
 
@@ -95,9 +95,9 @@
 ### 3.2 函数调用类型推断
 ```
 count(List<T>) → Int32
-sum(List<T>) → Object (数值类型)
-min(List<T>) → Object
-max(List<T>) → Object
+sum(List<Number>) → Double
+min(List<Number>) → Double
+max(List<Number>) → Double
 contains(List<T>, value) → Boolean
 isEmpty(List<T>) → Boolean
 List<T>.query(condition) → List<T> (唯一的列表方法)
@@ -121,7 +121,7 @@ List<T>.query(condition) → List<T> (唯一的列表方法)
 | Boolean | 操作符 + 函数 | ==, !=, &&, \|\|, !; if() |
 | CardType/Rarity/Craft | 操作符 | ==, != (作为文本类型处理) |
 | CardInstance/PlayerState | 属性访问 | 根据类型元数据的properties |
-| List&lt;T&gt; | 函数 + 查询 | count(), sum(), min(), max(), contains(), isEmpty(); .query() |
+| List&lt;T&gt; | 函数 + 查询 | count(), contains(), isEmpty(); 数值列表额外支持 sum(), min(), max(); .query() |
 
 ### 4.2 特殊情况处理
 

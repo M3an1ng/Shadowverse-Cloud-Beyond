@@ -31,6 +31,7 @@ public record DslAstNodeDto
     public DslAstNodeDto? Left { get; init; }
     public DslAstNodeDto? Right { get; init; }
     public DslAstNodeDto? Operand { get; init; }
+    public DslAstNodeDto? Inner { get; init; }
     public DslAstNodeDto? Receiver { get; init; }
     public DslAstNodeDto? Target { get; init; }
     public DslAstNodeDto? Member { get; init; }
@@ -41,4 +42,13 @@ public record DslAstNodeDto
     public DslAstNodeDto? FalseExpression { get; init; }
     public List<DslAstNodeDto>? Arguments { get; init; }
     public List<DslAstNodeDto>? Statements { get; init; }
+    public List<DslQueryOrderingDto>? QueryOrderings { get; init; }
+    public string? QueryTakeStrategy { get; init; }
+    public DslAstNodeDto? QueryTakeCount { get; init; }
+}
+
+public record DslQueryOrderingDto
+{
+    public DslAstNodeDto Expression { get; init; } = new();
+    public string Direction { get; init; } = "asc";
 }

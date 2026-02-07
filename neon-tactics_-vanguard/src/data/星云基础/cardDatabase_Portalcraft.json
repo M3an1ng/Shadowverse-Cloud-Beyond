@@ -1,0 +1,181 @@
+{
+  "1470301": {
+    "id": "1470301",
+    "name": "纹章:加速引擎",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Trait:7-Follower|EnterField||Give|It|{Rush}"
+    ]
+  },
+  "1470401": {
+    "id": "1470401",
+    "name": "古老的创造物",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "创造物",
+    "cost": 0,
+    "attack": 3,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Rush"
+    ]
+  },
+  "1470402": {
+    "id": "1470402",
+    "name": "解析的创造物",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "创造物",
+    "cost": 0,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "LastWords||Draw|1"
+    ]
+  },
+  "1470403": {
+    "id": "1470403",
+    "name": "公转的创造物",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "创造物",
+    "cost": 0,
+    "attack": 1,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Ward"
+    ]
+  },
+  "1471302": {
+    "id": "1471302",
+    "name": "人偶剧场",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 2,
+    "effects": [
+      "Fanfare||AddToHand|1070405|1",
+      "When|Allied-Turn-End||AddToHand|1070405|1"
+    ]
+  },
+  "1471303": {
+    "id": "1471303",
+    "name": "加速引擎",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&0||Destroy|ThisCard",
+      "Engage&0||Crest&1|{When|Allied-Trait:7-Follower|EnterField||Give|It|{Rush}}"
+    ]
+  },
+  "1471304": {
+    "id": "1471304",
+    "name": "战地机械师",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 5,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Evolve||AddToHand|1470401|1||Change|SuperEvolve||AddToHand|1470401|3"
+    ]
+  },
+  "1471401": {
+    "id": "1471401",
+    "name": "创造物防壁",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 6,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||AddToHand|1470403|4"
+    ]
+  },
+  "1471402": {
+    "id": "1471402",
+    "name": "调频分析员",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Enhance&4||AddToHand|1470402|1",
+      "When|Allied-Trait:7-Follower|AddToHand||+1/+1|It"
+    ]
+  },
+  "1471403": {
+    "id": "1471403",
+    "name": "人偶长矛手",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1070402|1"
+    ]
+  },
+  "1471404": {
+    "id": "1471404",
+    "name": "镜像刻录者",
+    "cardSet": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Copy|Select&1-Allied-Hand-OrigCost<3-Follower"
+    ]
+  }
+}

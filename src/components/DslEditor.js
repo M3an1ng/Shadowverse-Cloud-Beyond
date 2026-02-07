@@ -6,6 +6,8 @@
 //
 
 import { MetadataDrivenComponent } from "./MetadataDrivenComponent.js";
+import { getBlockingLoader } from "./blockingLoader.js";
+import { ensureEnumLocalization as ensureSharedEnumLocalization } from "../enumLocalizationCache.js";
 
 import {
     pushEditingPath,
@@ -30,6 +32,7 @@ import {
     renderNestedEncapsulatedExpression,
     renderOperatorNodeAST,
     renderStaticValueInput,
+    renderPropertyInput,
     renderRawTextInput,
     renderEmptySlotPlaceholder,
     renderPropertyChainUI,
@@ -60,14 +63,17 @@ import {
     getPipelineStageTypeIssue,
     insertPipelineStage,
     removePipelineStage,
-    movePipelineStage
+    movePipelineStage,
+    syncPipelineContext,
+    markPipelineContextDirty
 } from "./dsl_editor/pipeline-editor.js";
 import { buildAstFromExpression } from "./dsl_editor/ast-parse.js";
 import { calculateASTReturnType, validateExpressionSemantics } from "./dsl_editor/type-check.js";
 import { fetchFavoritesApi, markFavoriteUsedApi, createFavoriteApi } from "./dsl_editor/services/favorites.js";
 import { requestParseAstApi } from "./dsl_editor/services/parse.js";
-import { createValueNode, createOperatorNode, createFunctionCallNode, createListQueryNode, createListSortNode, createListTakeNode, validateAST, findIncompleteNode, findRightmostLeafNode } from "./dsl_editor/core.js";
+import { createValueNode, createOperatorNode, createFunctionCallNode, createListQueryNode, createListSortNode, createListTakeNode, createListDistinctNode, createListSelectNode, validateAST, findIncompleteNode, findRightmostLeafNode } from "./dsl_editor/core.js";
 import { renderPipelineBlock, renderListQueryNodeAST } from "./dsl_editor/ui-pipeline.js";
+import { finalizeDraftInputs, refreshCompleteness, refreshValueNodeReturnTypes } from "./dsl_editor/ast-normalize.js";
 import {
     renderClickableMainExpression,
     renderASTNodeRecursive,
@@ -148,7 +154,6 @@ export class DslEditor extends MetadataDrivenComponent {
         // 统一架构：引入虚拟根节点
         this.virtualRoot = { type: 'virtualRoot', main: null };
         this.workspaceAST = null;
-        this.astRoot = null;
         this.isInitialized = false;
         this.currentNode = null;
         this.selectedNode = null;
@@ -176,6 +181,10 @@ export class DslEditor extends MetadataDrivenComponent {
         this.pipelineOpen = false;
         this.pipelineOpenSource = null;
         this.pipelineEditState = createPipelineEditState();
+        this.pipelineContextStore = new Map();
+        this.pipelineNodeIds = new WeakMap();
+        this.pipelineNodeIdSeed = 1;
+        this.pipelineActiveContextKey = null;
         this.parseStatus = {
             state: "idle",
             message: "",
@@ -183,6 +192,33 @@ export class DslEditor extends MetadataDrivenComponent {
         };
         this.allowRawTextInput = true;
         this.isPipelineInline = false;
+        this.isLightWorkspace = false;
+        this.lightWorkspaceFocus = null;
+        this.enumLocalizationCache = new Map();
+        this.enumLocalizationRequests = new Map();
+    }
+
+    get astRoot() {
+        return this.workspaceAST;
+    }
+
+    set astRoot(value) {
+        this.workspaceAST = value;
+    }
+
+    assertAstAlias() {
+        if (Object.prototype.hasOwnProperty.call(this, "astRoot")) {
+            console.warn("DslEditor: astRoot should be derived from workspaceAST; instance property detected.");
+        }
+    }
+
+    async initialize() {
+        if (this.isInitialized) {
+            return;
+        }
+
+        await super.initialize();
+        await this.preloadEnumLocalizations();
     }
 
     normalizeTypeName(typeName) {
@@ -192,8 +228,38 @@ export class DslEditor extends MetadataDrivenComponent {
         const nullable = trimmed.match(/^Nullable<(.+)>$/);
         if (nullable) return nullable[1];
         if (trimmed === 'List') return 'List<Object>';
-        if (trimmed === 'IEnumerable') return 'IEnumerable<Object>';
+        if (trimmed === 'IEnumerable') return 'List<Object>';
+        if (trimmed === 'IReadOnlyList') return 'List<Object>';
+        if (trimmed === 'IReadOnlyCollection') return 'List<Object>';
+        if (trimmed === 'ICollection') return 'List<Object>';
+        const listMatch = trimmed.match(/^IReadOnlyList<(.+)>$/);
+        if (listMatch) return `List<${listMatch[1]}>`;
+        const roCollectionMatch = trimmed.match(/^IReadOnlyCollection<(.+)>$/);
+        if (roCollectionMatch) return `List<${roCollectionMatch[1]}>`;
+        const collectionMatch = trimmed.match(/^ICollection<(.+)>$/);
+        if (collectionMatch) return `List<${collectionMatch[1]}>`;
+        const enumerableMatch = trimmed.match(/^IEnumerable<(.+)>$/);
+        if (enumerableMatch) return `List<${enumerableMatch[1]}>`;
         return trimmed;
+    }
+
+    resolveTypeAlias(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return null;
+
+        const aliasMap = {
+            CardInstanceSnapshot: 'CardInstance',
+            CardInstanceResetSnapshot: 'CardInstance',
+            CardDefinitionSnapshot: 'CardDefinition'
+        };
+
+        const listMatch = normalized.match(/^List<(.+)>$/);
+        if (listMatch) {
+            const innerAlias = this.resolveTypeAlias(listMatch[1]) || listMatch[1];
+            return `List<${innerAlias}>`;
+        }
+
+        return aliasMap[normalized] || normalized;
     }
 
         // ---------------------------
@@ -235,6 +301,127 @@ export class DslEditor extends MetadataDrivenComponent {
     }
 
         /**
+         * 轻工作区：设置当前聚焦槽位（不进入编辑路径）
+         */
+    setLightWorkspaceFocus(parentNode, slot, index = null) {
+            this.lightWorkspaceFocus = { parentNode, slot, index };
+            if (this.isLightWorkspace) {
+                this.clearEditingPath();
+            }
+            this.syncLightWorkspaceFocus();
+    }
+
+        /**
+         * 轻工作区：清除聚焦槽位
+         */
+    clearLightWorkspaceFocus() {
+            this.lightWorkspaceFocus = null;
+            this.slotExpectedType = null;
+            if (!this.isPipelineInline) {
+                this.contextOverride = null;
+            }
+    }
+
+        /**
+         * 轻工作区：同步槽位期望类型与上下文覆盖
+         */
+    syncLightWorkspaceFocus() {
+            if (!this.isLightWorkspace) return;
+            const focus = this.lightWorkspaceFocus;
+            const preservedContext = this.isPipelineInline && this.contextOverride?.name
+                ? this.contextOverride
+                : null;
+            const restoreContext = () => {
+                if (!this.contextOverride && preservedContext) {
+                    this.contextOverride = preservedContext;
+                }
+            };
+            if (!focus?.parentNode) {
+                this.slotExpectedType = this.normalizeTypeName(this.expectedType);
+                if (!this.isPipelineInline) {
+                    this.contextOverride = null;
+                }
+                return;
+            }
+
+            const { parentNode, slot, index } = focus;
+            this.slotExpectedType = null;
+            this.contextOverride = null;
+
+            if (parentNode.type === 'virtualRoot' && slot === 'main') {
+                this.slotExpectedType = this.normalizeTypeName(this.expectedType);
+                restoreContext();
+                return;
+            }
+
+            if (parentNode.type === 'operator' && (slot === 'left' || slot === 'right')) {
+                const expected = this.getExpectedTypeForSlot(parentNode, slot, index);
+                if (expected) {
+                    this.slotExpectedType = this.normalizeTypeName(expected);
+                }
+                restoreContext();
+                return;
+            }
+
+            if (parentNode.type === 'functionCall' && slot === 'arg') {
+                const p = (parentNode.parameters || [])[typeof index === 'number' ? index : 0];
+                if (p?.typeName) {
+                    this.slotExpectedType = this.normalizeTypeName(p.typeName);
+                }
+                restoreContext();
+                return;
+            }
+
+            const setSelfContext = (sourceType) => {
+                const itemType = this.getCollectionInnerType(sourceType)
+                    || (typeof this.isBusinessObjectType === "function" && this.isBusinessObjectType(sourceType)
+                        ? sourceType
+                        : null);
+                if (itemType) {
+                    this.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+                }
+            };
+
+            if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
+                this.slotExpectedType = 'Boolean';
+                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
+                setSelfContext(sourceReturnType);
+                restoreContext();
+                return;
+            }
+
+            if (parentNode.type === 'listSort' && slot === 'sortExpression') {
+                this.slotExpectedType = 'NonEntity';
+                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
+                setSelfContext(sourceReturnType);
+                restoreContext();
+                return;
+            }
+
+            if (parentNode.type === 'listTake' && slot === 'countExpression') {
+                this.slotExpectedType = 'Int32';
+                restoreContext();
+                return;
+            }
+
+            if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
+                this.slotExpectedType = 'NonEntity';
+                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
+                setSelfContext(sourceReturnType);
+                restoreContext();
+                return;
+            }
+            if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
+                this.slotExpectedType = 'Object';
+                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
+                setSelfContext(sourceReturnType);
+                restoreContext();
+                return;
+            }
+            restoreContext();
+    }
+
+        /**
          * 保持 astRoot 始终指向工作区 AST
          */
     ensureAstRootSync() {
@@ -261,7 +448,6 @@ export class DslEditor extends MetadataDrivenComponent {
         // 2. 将其设置到虚拟根节点的 main 槽位
         this.virtualRoot.main = emptyEncapsulatedNode;
 
-        console.log("DslEditor: Workspace initialized with a virtual root.");
 
         // 3. 统一入口：立即进入对 main 槽位的编辑
         this.handleEnterEditModeForSlot(this.virtualRoot, 'main');
@@ -276,6 +462,7 @@ export class DslEditor extends MetadataDrivenComponent {
      * 获取当前编辑位置的可用选项
      */
     getCurrentEditingOptions() {
+        this.syncLightWorkspaceFocus();
         return getCurrentEditingOptions(this);
     }
 
@@ -305,34 +492,28 @@ export class DslEditor extends MetadataDrivenComponent {
     findLastNodeInExpression(node) {
         if (!node) return null;
 
-        console.log("DslEditor: Finding last node in expression:", node);
 
         // 关键修复：如果是封装表达式且没有父节点，说明它是完整的表达式，不应该查找内部
         if (node.metadata && node.metadata.type === "encapsulated" && !node.parent) {
-            console.log("DslEditor: Complete encapsulated expression, returning itself:", node);
             return node;
         }
 
         // 如果是操作符节点，找到最右边的操作数
         if (node.type === 'operator') {
             if (node.rightOperand) {
-                console.log("DslEditor: Operator node, checking right operand:", node.rightOperand);
                 // 递归查找右操作数中的最后一个节点
                 return this.findLastNodeInExpression(node.rightOperand);
             } else if (node.leftOperand) {
-                console.log("DslEditor: Operator node, no right operand, checking left operand:", node.leftOperand);
                 return this.findLastNodeInExpression(node.leftOperand);
             }
         }
 
         // 如果是封装表达式且有父节点，检查其内部AST
         if (node.metadata && node.metadata.type === "encapsulated" && node.metadata.innerAST) {
-            console.log("DslEditor: Encapsulated node with parent, checking inner AST:", node.metadata.innerAST);
             return this.findLastNodeInExpression(node.metadata.innerAST);
         }
 
         // 如果是值节点，就是最后一个节点
-        console.log("DslEditor: Found last node (value node):", node);
         return node;
     }
 
@@ -359,6 +540,110 @@ export class DslEditor extends MetadataDrivenComponent {
     }
 
     /**
+     * 获取指定槽位的期望类型（统一规则）
+     */
+    getExpectedTypeForSlot(parentNode, slot, index) {
+        if (!parentNode) {
+            return this.normalizeTypeName(this.expectedType);
+        }
+
+        if (parentNode.type === 'virtualRoot' && slot === 'main') {
+            return this.normalizeTypeName(this.expectedType);
+        }
+
+        if (parentNode.type === 'functionCall' && slot === 'arg') {
+            const argIndex = typeof index === 'number' ? index : 0;
+            const param = (parentNode.parameters || [])[argIndex];
+            const paramType = this.normalizeTypeName(param?.typeName);
+            if (paramType && paramType !== 'Object') {
+                return paramType;
+            }
+            if (argIndex > 0) {
+                const receiver = (parentNode.args || [])[0];
+                const receiverType = receiver ? this.calculateASTReturnType(receiver) : null;
+                if (receiverType) {
+                    if (this.isCollectionType(receiverType)) {
+                        return this.normalizeTypeName(this.getCollectionInnerType(receiverType)) || 'Object';
+                    }
+                    if (this.isTextType(receiverType)) {
+                        return 'String';
+                    }
+                }
+            }
+            return paramType;
+        }
+
+        if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
+            return 'Boolean';
+        }
+
+        if (parentNode.type === 'listSort' && slot === 'sortExpression') {
+            return 'NonEntity';
+        }
+
+        if (parentNode.type === 'listTake' && slot === 'countExpression') {
+            return 'Int32';
+        }
+
+        if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
+            return 'NonEntity';
+        }
+        if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
+            return 'Object';
+        }
+
+        if (parentNode.type === 'operator') {
+            const op = parentNode.operator;
+            if (['&&', '||'].includes(op)) {
+                return 'Boolean';
+            }
+            if (['|', '&', '~'].includes(op)) {
+                const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
+                return sibling ? this.calculateASTReturnType(sibling) : null;
+            }
+            if (['==', '!=', '>', '<', '>=', '<='].includes(op)) {
+                const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
+                return sibling ? this.calculateASTReturnType(sibling) : null;
+            }
+            if (['contains', 'startsWith', 'endsWith'].includes(op)) {
+                const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
+                const siblingType = sibling ? this.calculateASTReturnType(sibling) : null;
+                const normalizedSibling = this.normalizeTypeName(siblingType);
+                if (normalizedSibling) {
+                    if (this.isCollectionType(normalizedSibling)) {
+                        const inner = this.getCollectionInnerType(normalizedSibling);
+                        return slot === 'right'
+                            ? (this.normalizeTypeName(inner) || normalizedSibling)
+                            : normalizedSibling;
+                    }
+                    if (this.isTextType(normalizedSibling)) {
+                        return 'String';
+                    }
+                }
+                return normalizedSibling || 'String';
+            }
+            if (op === '-') {
+                return 'Number';
+            }
+            if (['+', '*', '/', '\\', '%'].includes(op)) {
+                return 'Number';
+            }
+        }
+
+        return this.normalizeTypeName(this.slotExpectedType || this.expectedType);
+    }
+
+    /**
+     * 将期望类型转为占位提示文案
+     */
+    getPlaceholderLabel(expectedType) {
+        if (!expectedType) return '待填写';
+        if (String(expectedType).toLowerCase() === 'object') return '任意类型';
+        const display = this.getDisplayTypeName(expectedType);
+        return display || '待填写';
+    }
+
+    /**
      * 计算节点的预期类型和实际类型
      */
     calculateNodeTypeMatch(node, externalExpectedType = null) {
@@ -370,19 +655,12 @@ export class DslEditor extends MetadataDrivenComponent {
         };
 
         if (!node) {
-            console.log("DslEditor: calculateNodeTypeMatch - node is null");
             return result;
         }
 
-        console.log("DslEditor: calculateNodeTypeMatch - analyzing node:", {
-            type: node.type,
-            value: node.value,
-            parent: node.parent ? {type: node.parent.type, operator: node.parent.operator} : null
-        });
 
         // 计算实际类型
         result.actualType = this.calculateASTReturnType(node);
-        console.log("DslEditor: calculateNodeTypeMatch - actual type:", result.actualType);
 
         const hasEffectiveParent = node.parent && node.parent.type !== 'virtualRoot';
 
@@ -391,21 +669,14 @@ export class DslEditor extends MetadataDrivenComponent {
             const parentOperator = node.parent.operator;
             const isRightOperand = node.parent.rightOperand === node;
 
-            console.log("DslEditor: calculateNodeTypeMatch - parent context:", {
-                parentOperator,
-                isRightOperand,
-                hasLeftOperand: !!node.parent.leftOperand
-            });
 
             // 根据操作符确定预期类型
             if (['&&', '||'].includes(parentOperator)) {
                 result.expectedType = 'Boolean';
-                console.log("DslEditor: calculateNodeTypeMatch - logical operator expects Boolean");
-            } else if (['|', '&'].includes(parentOperator)) {
+            } else if (['|', '&', '~'].includes(parentOperator)) {
                 if (isRightOperand && node.parent.leftOperand) {
                     result.expectedType = this.calculateASTReturnType(node.parent.leftOperand);
                 }
-                console.log("DslEditor: calculateNodeTypeMatch - set operator expects:", result.expectedType);
             } else if (['>', '<', '>=', '<='].includes(parentOperator)) {
                 // 比较操作符：如果左操作数是数值，右操作数也应该是数值
                 if (isRightOperand && node.parent.leftOperand) {
@@ -413,18 +684,31 @@ export class DslEditor extends MetadataDrivenComponent {
                     if (leftType === 'Int32' || leftType === 'Number') {
                         result.expectedType = leftType;
                     }
-                    console.log("DslEditor: calculateNodeTypeMatch - comparison operator expects:", result.expectedType);
                 }
             } else if (['==', '!='].includes(parentOperator)) {
                 // 相等操作符：两个操作数类型应该匹配
                 if (isRightOperand && node.parent.leftOperand) {
                     result.expectedType = this.calculateASTReturnType(node.parent.leftOperand);
-                    console.log("DslEditor: calculateNodeTypeMatch - equality operator expects:", result.expectedType);
+                }
+            } else if (['contains', 'startsWith', 'endsWith'].includes(parentOperator)) {
+                if (isRightOperand && node.parent.leftOperand) {
+                    const leftType = this.calculateASTReturnType(node.parent.leftOperand);
+                    const normalizedLeft = this.normalizeTypeName(leftType);
+                    if (normalizedLeft) {
+                        if (this.isCollectionType(normalizedLeft)) {
+                            const inner = this.getCollectionInnerType(normalizedLeft);
+                            result.expectedType = this.normalizeTypeName(inner) || normalizedLeft;
+                        } else if (this.isTextType(normalizedLeft)) {
+                            result.expectedType = 'String';
+                        } else {
+                            result.expectedType = normalizedLeft;
+                        }
+                    }
                 }
             } else if (parentOperator === '-') {
                 if (isRightOperand && node.parent.leftOperand) {
                     const leftType = this.calculateASTReturnType(node.parent.leftOperand);
-                    if (this.isCollectionType(leftType)) {
+                    if (['Int32', 'Int64', 'Single', 'Double', 'Number'].includes(leftType)) {
                         result.expectedType = leftType;
                     }
                 }
@@ -435,27 +719,56 @@ export class DslEditor extends MetadataDrivenComponent {
             const index = args.indexOf(node);
             const p = (parent.parameters || [])[index];
             if (p?.typeName) {
-                result.expectedType = this.normalizeTypeName(p.typeName);
-                console.log("DslEditor: calculateNodeTypeMatch - functionCall arg expects:", result.expectedType);
+                let expectedType = this.normalizeTypeName(p.typeName);
+                if (expectedType === 'Object' && index > 0) {
+                    const receiver = args[0];
+                    const receiverType = receiver ? this.calculateASTReturnType(receiver) : null;
+                    if (receiverType) {
+                        if (this.isCollectionType(receiverType)) {
+                            expectedType = this.normalizeTypeName(this.getCollectionInnerType(receiverType)) || expectedType;
+                        } else if (this.isTextType(receiverType)) {
+                            expectedType = 'String';
+                        }
+                    }
+                }
+                result.expectedType = expectedType;
             }
         } else if (node.parent && node.parent.type === 'listQuery') {
             if (node.parent.filterExpression === node) {
                 result.expectedType = 'Boolean';
-                console.log("DslEditor: calculateNodeTypeMatch - listQuery filter expects Boolean");
             }
         } else if (node.parent && node.parent.type === 'listTake') {
             if (node.parent.countExpression === node) {
                 result.expectedType = 'Int32';
-                console.log("DslEditor: calculateNodeTypeMatch - listTake count expects Int32");
+            }
+        } else if (node.parent && node.parent.type === 'listSort') {
+            if (node.parent.sortExpression === node) {
+                const isEntity = this.isBusinessObjectType(result.actualType);
+                const isCollection = this.isCollectionType(result.actualType);
+                const isDictionary = typeof this.isDictionaryType === "function" && this.isDictionaryType(result.actualType);
+                if (isEntity || isCollection || isDictionary) {
+                    result.expectedType = 'NonEntity';
+                }
+            }
+        } else if (node.parent && node.parent.type === 'listDistinct') {
+            if (node.parent.keyExpression === node) {
+                const isEntity = this.isBusinessObjectType(result.actualType);
+                const isCollection = this.isCollectionType(result.actualType);
+                const isDictionary = typeof this.isDictionaryType === "function" && this.isDictionaryType(result.actualType);
+                if (isEntity || isCollection || isDictionary) {
+                    result.expectedType = 'NonEntity';
+                }
+            }
+        } else if (node.parent && node.parent.type === 'listSelect') {
+            if (node.parent.selectExpression === node) {
+                result.expectedType = 'Object';
             }
         } else {
-            console.log("DslEditor: calculateNodeTypeMatch - no parent or parent is not operator");
         }
 
         // 关键：如果存在外部预期类型且当前节点是根节点，则使用外部类型
         if (externalExpectedType && !hasEffectiveParent) {
             result.expectedType = externalExpectedType;
-            console.log("DslEditor: calculateNodeTypeMatch - using external expected type:", result.expectedType);
         }
 
         // 检查类型匹配
@@ -544,6 +857,10 @@ export class DslEditor extends MetadataDrivenComponent {
      * @param {Function} onChange - 表达式变化回调
      */
     async render(container, expression = "", onChange = () => { }, options = {}) {
+        const loader = container ? getBlockingLoader(container) : null;
+        if (loader) {
+            loader.show("正在加载DSL编辑器...");
+        }
         try {
             await this.initialize();
 
@@ -557,7 +874,6 @@ export class DslEditor extends MetadataDrivenComponent {
 
             this.clearContainer(container);
 
-            console.log("DslEditor: Starting render with expression:", expression);
             
             // 关键修复：如果表达式为空，则始终执行初始化流程
             if (!expression) {
@@ -568,12 +884,15 @@ export class DslEditor extends MetadataDrivenComponent {
                 this.renderEditor();
             }
 
-            console.log("DslEditor: Render completed successfully");
             // 初次渲染后对外通知当前表达式
             this.emitExpressionChange(this.expression || "");
         } catch (error) {
             console.error("DslEditor: Render failed:", error);
             showErrorFromModule(this, `渲染DSL编辑器失败: ${error.message}`, container);
+        } finally {
+            if (loader) {
+                loader.hide();
+            }
         }
     }
 
@@ -594,6 +913,14 @@ export class DslEditor extends MetadataDrivenComponent {
 
     openPipelineFromCurrent() {
         return openPipelineFromCurrent(this);
+    }
+
+    syncPipelineContext() {
+        return syncPipelineContext(this);
+    }
+
+    markPipelineContextDirty() {
+        return markPipelineContextDirty(this);
     }
 
     getPipelineStageLabel(stage) {
@@ -662,7 +989,6 @@ export class DslEditor extends MetadataDrivenComponent {
      */
     parseExpression(expression) {
         const raw = (expression ?? "").trim();
-        console.log(`DslEditor: Parsing expression string V2: "${raw}"`);
         if (!raw) {
             this.initializeWorkspace();
             return;
@@ -678,11 +1004,11 @@ export class DslEditor extends MetadataDrivenComponent {
         const finalNode = this.createEncapsulatedFrom(rootNode);
 
         this.virtualRoot.main = finalNode;
-        this.workspaceAST = this.cloneAST(finalNode);
+        this.workspaceAST = this.cloneAST(rootNode);
         this.astRoot = this.workspaceAST;
         this.expression = this.astRoot?.toExpression?.() || raw;
+        this.normalizeLoadedAst();
 
-        console.log("DslEditor: Parsed expression into AST:", this.virtualRoot.main);
     }
 
 
@@ -691,6 +1017,10 @@ export class DslEditor extends MetadataDrivenComponent {
      * 渲染编辑器界面
      */
     renderEditor() {
+        if (!this.isPipelineInline) {
+            this.syncPipelineContext();
+        }
+
         // 查找现有的编辑器容器，如果不存在则创建
         let editorContainer = this.container.querySelector(".dsl-editor");
         if (!editorContainer) {
@@ -704,7 +1034,9 @@ export class DslEditor extends MetadataDrivenComponent {
 
         // 渲染主表达式（上方）
         // 统一渲染：mainExpressionAST 现在是 virtualRoot.main 的别名
-        renderMainExpressionUI(this, editorContainer);
+        if (!this.isPipelineInline) {
+            renderMainExpressionUI(this, editorContainer);
+        }
 
         // 渲染工作区（模块化）
         renderWorkspaceUI(this, editorContainer);
@@ -790,11 +1122,23 @@ export class DslEditor extends MetadataDrivenComponent {
     applyParsedAst(rootNode, expression) {
         const finalNode = this.createEncapsulatedFrom(rootNode);
         this.virtualRoot.main = finalNode;
-        this.workspaceAST = this.cloneAST(finalNode);
+        this.workspaceAST = this.cloneAST(rootNode);
         this.astRoot = this.workspaceAST;
         this.expression = this.astRoot?.toExpression?.() || expression;
-        this.maintainASTRelationships(this.virtualRoot.main);
+        this.normalizeLoadedAst();
         this.setParseStatus("parsed", "解析成功");
+    }
+
+    normalizeLoadedAst() {
+        const normalize = (node) => {
+            if (!node) return;
+            this.maintainASTRelationships(node);
+            refreshValueNodeReturnTypes(this, node);
+            refreshCompleteness(node);
+            this.maintainASTRelationships(node);
+        };
+        normalize(this.virtualRoot.main);
+        normalize(this.workspaceAST);
     }
 
     applyRawTextFallback(expression, message, errors = []) {
@@ -811,7 +1155,7 @@ export class DslEditor extends MetadataDrivenComponent {
         });
         const finalNode = this.createEncapsulatedFrom(rawNode);
         this.virtualRoot.main = finalNode;
-        this.workspaceAST = this.cloneAST(finalNode);
+        this.workspaceAST = this.cloneAST(rawNode);
         this.astRoot = this.workspaceAST;
         this.expression = this.astRoot?.toExpression?.() || expression;
         this.maintainASTRelationships(this.virtualRoot.main);
@@ -968,7 +1312,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 处理“提升层级”操作
      */
     handleElevateExpression(nodeToWrap) {
-        console.log("DslEditor: Elevating expression for node:", nodeToWrap);
 
         // 如果没有节点可以包裹，则不执行任何操作
         if (!nodeToWrap) {
@@ -1010,25 +1353,38 @@ export class DslEditor extends MetadataDrivenComponent {
      * 扩展主表达式（添加逻辑操作符）
      */
     expandMainExpression() {
-        console.log("DslEditor: Expanding main expression");
-    
-        // 1. 设置正确的编辑上下文，指向 virtualRoot 的 main 槽位
+        this.enterMainEditMode();
+    }
+
+    /**
+     * 统一入口：进入主表达式编辑状态（合并预览/编辑）
+     */
+    enterMainEditMode() {
+        this.contextOverride = null;
+        this.slotExpectedType = typeof this.getExpectedTypeForSlot === 'function'
+            ? this.getExpectedTypeForSlot(this.virtualRoot, 'main')
+            : null;
+
         this.clearEditingPath();
         this.pushEditingPath({
             parentNode: this.virtualRoot,
             slot: 'main',
-            descriptor: '扩展主表达式'
+            descriptor: '编辑 main'
         });
-    
-        // 2. 将当前的主表达式加载到工作区，准备作为操作符的左操作数
-        this.workspaceAST = this.cloneAST(this.virtualRoot.main);
+        const highlightTarget = this.getHighlightTargetNode ? this.getHighlightTargetNode() : null;
+        this.selectedNode = highlightTarget?.metadata?.type === 'encapsulated' ? highlightTarget : null;
+
+        const mainNode = this.virtualRoot?.main || null;
+        const contentToEdit = mainNode?.metadata?.type === 'encapsulated'
+            ? mainNode.metadata.innerAST
+            : mainNode;
+
+        this.workspaceAST = this.cloneAST(contentToEdit);
         this.astRoot = this.workspaceAST;
         this.isExpressionCompleted = false;
-    
-        // 3. 重新渲染，此时工作区会显示主表达式的内容，等待用户选择操作符
+
+        this.updateExpressionFromAST({ skipRender: true });
         this.renderEditor();
-    
-        console.log("DslEditor: Main expression loaded into workspace for expansion.");
     }
 
     // 已迁移到 ui-workspace.js 的 renderNodeChainUI
@@ -1051,8 +1407,8 @@ export class DslEditor extends MetadataDrivenComponent {
         return renderPipelineBlock(this, node, container, renderNodeFn);
     }
 
-    renderFunctionCallNodeAST(node, container) {
-        return renderFunctionCallNodeAST(this, node, container);
+    renderFunctionCallNodeAST(node, container, options = undefined) {
+        return renderFunctionCallNodeAST(this, node, container, options);
     }
 
     /**
@@ -1065,8 +1421,8 @@ export class DslEditor extends MetadataDrivenComponent {
     /**
      * 渲染封装的完成表达式（胶囊样式）
      */
-    renderEncapsulatedExpression(node, container) {
-        return renderEncapsulatedExpression(this, node, container);
+    renderEncapsulatedExpression(node, container, options = {}) {
+        return renderEncapsulatedExpression(this, node, container, options);
     }
 /**
      * 渲染一个“待编辑”状态的占位符胶囊
@@ -1127,7 +1483,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 编辑子表达式（修复版：正确处理子表达式编辑范围）
      */
     editSubExpression(subNode) {
-        console.log("DslEditor: Editing sub-expression:", subNode);
     
         // 设置选中状态，用于高亮显示（持久选中）
         this.selectedNode = subNode;
@@ -1179,6 +1534,14 @@ export class DslEditor extends MetadataDrivenComponent {
         }
         if (parent.type === 'listTake' && parent.countExpression === subNode) {
             this.handleEnterEditModeForSlot(parent, 'countExpression');
+            return;
+        }
+        if (parent.type === 'listDistinct' && parent.keyExpression === subNode) {
+            this.handleEnterEditModeForSlot(parent, 'keyExpression');
+            return;
+        }
+        if (parent.type === 'listSelect' && parent.selectExpression === subNode) {
+            this.handleEnterEditModeForSlot(parent, 'selectExpression');
             return;
         }
 
@@ -1298,11 +1661,31 @@ export class DslEditor extends MetadataDrivenComponent {
             if (node.sortExpression) {
                 cloned.setSortExpression(this.cloneAST(node.sortExpression));
             }
+            if (node.direction) {
+                cloned.direction = node.direction;
+                cloned.setDirection?.(node.direction);
+            }
             return cloned;
         } else if (node.type === 'listTake') {
             const cloned = createListTakeNode(this.cloneAST(node.source));
             if (node.countExpression) {
                 cloned.setCountExpression(this.cloneAST(node.countExpression));
+            }
+            if (node.strategy) {
+                cloned.strategy = String(node.strategy || '').toLowerCase();
+                cloned.setStrategy?.(node.strategy);
+            }
+            return cloned;
+        } else if (node.type === 'listDistinct') {
+            const cloned = createListDistinctNode(this.cloneAST(node.source));
+            if (node.keyExpression) {
+                cloned.setKeyExpression(this.cloneAST(node.keyExpression));
+            }
+            return cloned;
+        } else if (node.type === 'listSelect') {
+            const cloned = createListSelectNode(this.cloneAST(node.source));
+            if (node.selectExpression) {
+                cloned.setSelectExpression(this.cloneAST(node.selectExpression));
             }
             return cloned;
         }
@@ -1332,6 +1715,10 @@ export class DslEditor extends MetadataDrivenComponent {
         return renderStaticValueInput(this, node, container);
     }
 
+    renderPropertyInput(node, container) {
+        return renderPropertyInput(this, node, container);
+    }
+
     /**
      * 渲染原始文本输入框（解析失败降级）
      */
@@ -1355,7 +1742,6 @@ export class DslEditor extends MetadataDrivenComponent {
      */
     exitSubEditor() {
         if (this.isSubEditor && this.parentEditor) {
-            console.log('DslEditor: Exiting sub-editor, returning to parent');
             // 清空子编辑器的表达式
             if (this.onChange) {
                 this.onChange("");
@@ -1370,14 +1756,13 @@ export class DslEditor extends MetadataDrivenComponent {
      */
     goBack() {
         // 如果是子编辑器且没有AST，则退出子编辑器
-        if (this.isSubEditor && !this.astRoot) {
+        if (this.isSubEditor && !this.workspaceAST) {
             this.exitSubEditor();
             return;
         }
 
-        if (!this.astRoot) return;
+        if (!this.workspaceAST) return;
 
-        console.log('DslEditor: Going back from AST:', this.astRoot);
 
         // 重置表达式完成状态
         this.isExpressionCompleted = false;
@@ -1386,17 +1771,15 @@ export class DslEditor extends MetadataDrivenComponent {
         const backResult = this.performASTGoBack();
 
         if (backResult.success) {
-            this.astRoot = backResult.newRoot;
+            this.workspaceAST = backResult.newRoot;
 
             // 如果是子编辑器，在回到根节点后检查是否需要退出
-            if (this.isSubEditor && !this.astRoot) {
+            if (this.isSubEditor && !this.workspaceAST) {
                 // 在子编辑器中，从context回到根节点后，再次点击back应该退出子编辑器
                 // 这里不直接退出，让用户再次点击back按钮来退出
             }
         }
 
-        console.log('DslEditor: After going back, new AST root:', this.astRoot);
-        console.log('DslEditor: Is sub-editor:', this.isSubEditor);
 
         this.updateExpressionFromAST();
         this.renderEditor();
@@ -1440,6 +1823,7 @@ export class DslEditor extends MetadataDrivenComponent {
     groupOptionsByType(options) {
         const groups = {
             '数据源': [],
+            '枚举值': [],
             '属性': [],
             '函数': [],
             '操作符': [],
@@ -1452,7 +1836,11 @@ export class DslEditor extends MetadataDrivenComponent {
                 case 'staticValue': // 静态值也是数据源
                     groups['数据源'].push(option);
                     break;
+                case 'enumValue':
+                    groups['枚举值'].push(option);
+                    break;
                 case 'property':
+                case 'propertyInput':
                     groups['属性'].push(option);
                     break;
                 case 'function':
@@ -1464,6 +1852,8 @@ export class DslEditor extends MetadataDrivenComponent {
                 case 'listQuery':
                 case 'listSort':
                 case 'listTake':
+                case 'listDistinct':
+                case 'listSelect':
                 case 'listPipeline':
                     groups['筛选'].push(option);
                     break;
@@ -1494,31 +1884,42 @@ export class DslEditor extends MetadataDrivenComponent {
         }
 
         const firstParam = func.parameters[0];
+        const actualType = this.resolveTypeAlias(typeName) || typeName;
+        const expectedType = this.resolveTypeAlias(firstParam.typeName) || firstParam.typeName;
 
         // 1. 精确类型匹配
-        if (firstParam.typeName === typeName) {
+        if (expectedType === actualType) {
             return true;
         }
 
         // 2. 通用Object类型匹配
-        if (firstParam.typeName === "Object") {
+        if (expectedType === "Object") {
             return true;
         }
 
         // 3. 基础类型的层次匹配
-        if (this.isBaseType(typeName) && this.isBaseType(firstParam.typeName)) {
-            return this.areBaseTypesCompatible(typeName, firstParam.typeName);
+        if (this.isBaseType(actualType) && this.isBaseType(expectedType)) {
+            return this.areBaseTypesCompatible(actualType, expectedType);
         }
 
         // 4. 集合类型的匹配
-        if (this.isCollectionType(typeName) && this.isCollectionType(firstParam.typeName)) {
-            const sourceInner = this.getCollectionInnerType(typeName);
-            const targetInner = this.getCollectionInnerType(firstParam.typeName);
-            return sourceInner === targetInner || targetInner === "Object";
+        if (this.isCollectionType(actualType) && this.isCollectionType(expectedType)) {
+            const sourceInner = this.getCollectionInnerType(actualType);
+            const targetInner = this.getCollectionInnerType(expectedType);
+            if (targetInner === "Object") {
+                return true;
+            }
+            if (sourceInner === targetInner) {
+                return true;
+            }
+            if (this.isNumericType(sourceInner) && this.isNumericType(targetInner)) {
+                return true;
+            }
+            return false;
         }
 
         // 5. 继承关系匹配 (简化版)
-        return this.isTypeInheritanceCompatible(typeName, firstParam.typeName);
+        return this.isTypeInheritanceCompatible(actualType, expectedType);
     }
 
 
@@ -1526,7 +1927,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 添加节点 (AST重构版)
      */
     addNode(option) {
-        console.log("DslEditor: Adding node (AST):", option);
     
         this.selectedNode = null;
     
@@ -1544,56 +1944,6 @@ export class DslEditor extends MetadataDrivenComponent {
     
         // 关键修复：统一在 addNode 的末尾触发状态更新和重新渲染
         this.triggerStateUpdate();
-    }
-
-    /**
-     * 处理静态值输入
-     */
-    handleStaticValueInput(value) {
-        console.log("DslEditor: Handling static value input:", value);
-
-        // 查找当前等待输入的静态值节点
-        let targetNode = null;
-
-        // 首先检查当前工作区的astRoot
-        if (this.astRoot && this.astRoot.metadata && this.astRoot.metadata.type === 'staticValue' && this.astRoot.metadata.isAwaitingInput) {
-            targetNode = this.astRoot;
-        }
-
-        // 如果没找到，检查编辑路径中的右操作数
-        if (!targetNode && this.editingPath && this.editingPath.length > 0) {
-            const top = this.editingPath[this.editingPath.length - 1];
-            if (top.slot === 'right' && top.parentNode && top.parentNode.rightOperand) {
-                const rightNode = top.parentNode.rightOperand;
-                if (rightNode.metadata && rightNode.metadata.type === 'staticValue' && rightNode.metadata.isAwaitingInput) {
-                    targetNode = rightNode;
-                }
-            }
-        }
-
-        if (targetNode) {
-            // 更新节点值
-            targetNode.value = value;
-            targetNode.metadata.staticValue = value;
-            targetNode.metadata.isAwaitingInput = false;
-            targetNode.updateCompleteness();
-
-            // 如果有父节点，更新父节点的完整性
-            if (targetNode.parent) {
-                targetNode.parent.updateCompleteness();
-            }
-
-            // 更新当前工作区指向
-            this.workspaceAST = targetNode;
-            this.astRoot = targetNode;
-
-            // 更新表达式
-            this.updateExpressionFromAST();
-
-            console.log("DslEditor: Static value updated:", targetNode);
-        } else {
-            console.warn("DslEditor: No awaiting static value node found");
-        }
     }
 
     /**
@@ -1619,7 +1969,6 @@ export class DslEditor extends MetadataDrivenComponent {
         // 重新渲染编辑器，这会触发选项重新计算和视觉提示
         this.renderEditor();
 
-        console.log("DslEditor: Expression encapsulated as completed sub-expression");
     }
 
 
@@ -1627,10 +1976,24 @@ export class DslEditor extends MetadataDrivenComponent {
      * 保存工作区（新架构）：将工作区内容写回父槽位或设置为主表达式
      */
     saveWorkspace() {
-        console.log("DslEditor: Saving workspace content.");
 
         if (!this.workspaceAST) {
             console.warn("DslEditor: saveWorkspace called with empty workspaceAST.");
+            return;
+        }
+
+        finalizeDraftInputs(this, this.workspaceAST);
+
+        if (findIncompleteNode(this.workspaceAST)) {
+            this.showExpressionError("工作区表达式不完整，无法保存。");
+            console.warn("DslEditor: saveWorkspace failed: workspaceAST is null or incomplete");
+            return;
+        }
+
+        const astValidation = validateAST(this.workspaceAST);
+        if (!astValidation?.isValid) {
+            const msg = (astValidation?.errors || []).map(e => String(e)).join('\n');
+            this.showExpressionError(msg || "表达式不合法，无法保存。");
             return;
         }
 
@@ -1638,7 +2001,11 @@ export class DslEditor extends MetadataDrivenComponent {
         if (this.editingPath && this.editingPath.length > 0) {
             this.saveCurrentLayer();
         } else {
-            console.warn("DslEditor: saveWorkspace called with no editing path.");
+            const mainNode = this.workspaceAST.metadata?.type === 'encapsulated'
+                ? this.cloneAST(this.workspaceAST)
+                : this.createEncapsulatedFrom(this.workspaceAST);
+            this.virtualRoot.main = mainNode;
+            this.ascend(this.virtualRoot);
         }
     }
 
@@ -1653,15 +2020,12 @@ export class DslEditor extends MetadataDrivenComponent {
      * 上升：在子表达式保存后，将父表达式置于工作区
      */
     ascend(parentNode) {
-        console.log("DslEditor: Ascending to parent node:", parentNode);
         
         // 决定性修复：ascend 的职责是加载指定节点到工作区进行“预览”
         if (parentNode.type === 'virtualRoot') {
-            // 如果上升到虚拟根，说明编辑会话结束，应预览最终的主表达式
-            console.log("DslEditor: Ascended to virtual root. Previewing main expression.");
-            this.workspaceAST = this.cloneAST(this.virtualRoot.main);
-            this.astRoot = this.workspaceAST;
-            this.clearEditingPath(); // 清除路径，表示当前不在任何槽位的编辑模式下
+            // 合并预览/编辑：回到虚拟根时直接进入主表达式编辑态
+            this.enterMainEditMode();
+            return;
         } else {
             // 如果上升到普通节点，则在工作区预览该节点
             this.workspaceAST = this.cloneAST(parentNode);
@@ -1924,19 +2288,12 @@ export class DslEditor extends MetadataDrivenComponent {
      * 基于严格AST结构添加操作符
      */
     addOperatorToASTStructure(operator) {
-        console.log("DslEditor: Adding operator to AST structure:", {
-            operator: operator,
-            currentWorkspaceAST: this.astRoot,
-            mainExpressionAST: this.mainExpressionAST
-        });
 
         // 分析当前AST结构
         const astAnalysis = this.analyzeCurrentASTStructure();
-        console.log("DslEditor: Current AST structure analysis:", astAnalysis);
 
         // 基于AST结构确定操作符添加策略
         const strategy = this.determineOperatorAdditionStrategy(astAnalysis, operator);
-        console.log("DslEditor: Operator addition strategy:", strategy);
 
         // 执行操作符添加策略
         return this.executeOperatorAdditionStrategy(astAnalysis, operator, strategy);
@@ -1946,14 +2303,9 @@ export class DslEditor extends MetadataDrivenComponent {
      * 分析当前AST结构
      */
     analyzeCurrentASTStructure() {
-        console.log("DslEditor: Analyzing AST structure:", {
-            mainExpressionAST: this.virtualRoot.main,
-            astRoot: this.astRoot
-        });
 
         // 关键修复：正确识别当前的编辑状态
         const currentExpression = this.getCurrentCompleteExpression();
-        console.log("DslEditor: Current complete expression:", currentExpression);
 
         const analysis = {
             hasMainExpression: !!this.virtualRoot.main,
@@ -1979,7 +2331,6 @@ export class DslEditor extends MetadataDrivenComponent {
             }
         }
 
-        console.log("DslEditor: AST structure analysis result:", analysis);
         return analysis;
     }
 
@@ -2050,7 +2401,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 确定操作符添加策略
      */
     determineOperatorAdditionStrategy(astAnalysis, operator) {
-        console.log("DslEditor: Determining strategy for operator:", operator, "with analysis:", astAnalysis);
 
         // 如果当前表达式不完整，不能添加操作符
         if (!astAnalysis.canAddOperator) {
@@ -2069,7 +2419,6 @@ export class DslEditor extends MetadataDrivenComponent {
         if (currentExpression.type === 'operator') {
             // 当前是操作符节点，检查优先级
             const needsNesting = this.needsNestedStructure(currentExpression.operator, operator);
-            console.log("DslEditor: Current operator:", currentExpression.operator, "new operator:", operator, "needs nesting:", needsNesting);
 
             if (needsNesting) {
                 return 'encapsulate_current_and_extend';
@@ -2089,7 +2438,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 执行操作符添加策略
      */
     executeOperatorAdditionStrategy(astAnalysis, operator, strategy) {
-        console.log("DslEditor: Executing operator addition strategy:", strategy);
 
         switch (strategy) {
             case 'create_new_main_expression':
@@ -2119,7 +2467,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 扩展封装表达式
      */
     extendEncapsulatedExpression(currentExpression, operator) {
-        console.log("DslEditor: Extending encapsulated expression:", currentExpression.value, "with operator:", operator);
 
         const operatorNode = createOperatorNode(operator);
         operatorNode.setLeftOperand(currentExpression);
@@ -2136,7 +2483,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 扩展操作符链
      */
     extendOperatorChain(currentExpression, operator) {
-        console.log("DslEditor: Extending operator chain:", currentExpression.operator, "with operator:", operator);
 
         const operatorNode = createOperatorNode(operator);
 
@@ -2154,7 +2500,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 封装当前表达式并扩展
      */
     encapsulateCurrentAndExtend(currentExpression, operator) {
-        console.log("DslEditor: Encapsulating current expression and extending with operator:", operator);
 
         const operatorNode = createOperatorNode(operator);
 
@@ -2176,7 +2521,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 从值节点创建操作符
      */
     createOperatorFromValue(currentExpression, operator) {
-        console.log("DslEditor: Creating operator from value:", currentExpression.value, "with operator:", operator);
 
         const operatorNode = createOperatorNode(operator);
         operatorNode.setLeftOperand(currentExpression);
@@ -2195,7 +2539,6 @@ export class DslEditor extends MetadataDrivenComponent {
      * 创建新的主表达式
      */
     createNewMainExpression(operator) {
-        console.log("DslEditor: Creating new main expression with operator:", operator);
 
         const operatorNode = createOperatorNode(operator);
 
@@ -2239,10 +2582,13 @@ export class DslEditor extends MetadataDrivenComponent {
             '<=': 4,
             '|': 5,
             '&': 6,
+            '~': 6,
             '+': 7,
             '-': 7,
             '*': 8,
-            '/': 8
+            '/': 8,
+            '\\': 8,
+            '%': 8
         };
 
         const currentPriority = operatorPriority[currentOperator] || 0;
@@ -2304,96 +2650,132 @@ export class DslEditor extends MetadataDrivenComponent {
     maintainASTRelationships(node, parent = null) {
         if (!node) return;
 
-        // 设置父节点关系
-        node.parent = parent;
+        const assignParents = (current, currentParent) => {
+            if (!current) return;
+            current.parent = currentParent;
 
-        // 计算并缓存类型匹配信息
-        // 关键：为主表达式根节点传入外部预期类型
-        let externalExpectedType = null;
-        if (node === this.virtualRoot.main) {
-            externalExpectedType = this.expectedType;
+            if (current.type === 'operator') {
+                if (current.leftOperand) assignParents(current.leftOperand, current);
+                if (current.rightOperand) assignParents(current.rightOperand, current);
+            }
+
+            if (current.type === 'functionCall') {
+                (current.args || []).forEach((arg) => {
+                    if (arg) assignParents(arg, current);
+                });
+            }
+
+            if (current.type === 'listQuery') {
+                if (current.source) assignParents(current.source, current);
+                if (current.filterExpression) assignParents(current.filterExpression, current);
+            }
+
+            if (current.type === 'listSort') {
+                if (current.source) assignParents(current.source, current);
+                if (current.sortExpression) assignParents(current.sortExpression, current);
+            }
+
+            if (current.type === 'listTake') {
+                if (current.source) assignParents(current.source, current);
+                if (current.countExpression) assignParents(current.countExpression, current);
+            }
+
+            if (current.type === 'listDistinct') {
+                if (current.source) assignParents(current.source, current);
+                if (current.keyExpression) assignParents(current.keyExpression, current);
+            }
+            if (current.type === 'listSelect') {
+                if (current.source) assignParents(current.source, current);
+                if (current.selectExpression) assignParents(current.selectExpression, current);
+            }
+
+            if (current.metadata && current.metadata.innerAST) {
+                // Keep innerAST connected to its encapsulated wrapper so clicks can resolve to the correct slot.
+                assignParents(current.metadata.innerAST, current);
+            }
+        };
+
+        const assignTypeMatch = (current, currentParent) => {
+            if (!current) return;
+            current.parent = currentParent;
+
+            let externalExpectedType = null;
+            if (current === this.virtualRoot.main) {
+                externalExpectedType = this.expectedType;
+            }
+            current._typeMatchInfo = this.calculateNodeTypeMatch(current, externalExpectedType);
+
+
+            if (current.type === 'operator') {
+                if (current.leftOperand) assignTypeMatch(current.leftOperand, current);
+                if (current.rightOperand) assignTypeMatch(current.rightOperand, current);
+            }
+
+            if (current.type === 'functionCall') {
+                (current.args || []).forEach((arg) => {
+                    if (arg) assignTypeMatch(arg, current);
+                });
+            }
+
+            if (current.type === 'listQuery') {
+                if (current.source) assignTypeMatch(current.source, current);
+                if (current.filterExpression) assignTypeMatch(current.filterExpression, current);
+            }
+
+            if (current.type === 'listSort') {
+                if (current.source) assignTypeMatch(current.source, current);
+                if (current.sortExpression) assignTypeMatch(current.sortExpression, current);
+            }
+
+            if (current.type === 'listTake') {
+                if (current.source) assignTypeMatch(current.source, current);
+                if (current.countExpression) assignTypeMatch(current.countExpression, current);
+            }
+
+            if (current.type === 'listDistinct') {
+                if (current.source) assignTypeMatch(current.source, current);
+                if (current.keyExpression) assignTypeMatch(current.keyExpression, current);
+            }
+            if (current.type === 'listSelect') {
+                if (current.source) assignTypeMatch(current.source, current);
+                if (current.selectExpression) assignTypeMatch(current.selectExpression, current);
+            }
+
+            if (current.metadata && current.metadata.innerAST) {
+                assignTypeMatch(current.metadata.innerAST, current);
+            }
+        };
+
+        if (!parent) {
+            assignParents(node, null);
+            refreshValueNodeReturnTypes(this, node);
+            refreshCompleteness(node);
+            assignTypeMatch(node, null);
+            return;
         }
-        node._typeMatchInfo = this.calculateNodeTypeMatch(node, externalExpectedType);
 
-        console.log("DslEditor: Maintaining AST relationships for node:", {
-            type: node.type,
-            value: node.value,
-            hasParent: !!node.parent,
-            parentOperator: node.parent?.operator,
-            typeMatchInfo: node._typeMatchInfo
-        });
-
-        // 递归处理子节点
-        if (node.type === 'operator') {
-            if (node.leftOperand) {
-                this.maintainASTRelationships(node.leftOperand, node);
-            }
-            if (node.rightOperand) {
-                this.maintainASTRelationships(node.rightOperand, node);
-            }
-        }
-
-        if (node.type === 'functionCall') {
-            const args = node.args || [];
-            args.forEach((arg) => {
-                if (arg) {
-                    this.maintainASTRelationships(arg, node);
-                }
-            });
-        }
-
-        if (node.type === 'listQuery') {
-            if (node.source) {
-                this.maintainASTRelationships(node.source, node);
-            }
-            if (node.filterExpression) {
-                this.maintainASTRelationships(node.filterExpression, node);
-            }
-        }
-
-        if (node.type === 'listSort') {
-            if (node.source) {
-                this.maintainASTRelationships(node.source, node);
-            }
-            if (node.sortExpression) {
-                this.maintainASTRelationships(node.sortExpression, node);
-            }
-        }
-
-        if (node.type === 'listTake') {
-            if (node.source) {
-                this.maintainASTRelationships(node.source, node);
-            }
-            if (node.countExpression) {
-                this.maintainASTRelationships(node.countExpression, node);
-            }
-        }
-
-        // 处理封装节点的内部AST
-        if (node.metadata && node.metadata.innerAST) {
-            // 关键修复：封装节点的内部AST应该保持其独立的父子关系结构
-            // 内部AST的根节点没有父节点（因为它被封装了）
-            this.maintainASTRelationships(node.metadata.innerAST, null);
-        }
+        assignParents(node, parent);
+        refreshValueNodeReturnTypes(this, node);
+        refreshCompleteness(node);
+        assignTypeMatch(node, parent);
     }
 
     /**
      * 从AST更新表达式
      */
-    updateExpressionFromAST() {
-        console.log("DslEditor: updateExpressionFromAST called");
+    updateExpressionFromAST(options = {}) {
+        this.assertAstAlias();
+        const { skipRender = false } = options;
 
         // 关键修复：在更新表达式时维护AST关系
-        if (this.astRoot) {
-            console.log("DslEditor: Maintaining AST relationships for astRoot");
+        if (this.workspaceAST) {
             try {
-                this.maintainASTRelationships(this.astRoot);
+                this.maintainASTRelationships(this.workspaceAST);
             } catch (error) {
-                console.error("DslEditor: Error maintaining AST relationships for astRoot:", error);
+                console.error("DslEditor: Error maintaining AST relationships for workspaceAST:", error);
             }
         }
         if (this.virtualRoot.main) {
-            console.log("DslEditor: Maintaining AST relationships for mainExpressionAST");
             try {
                 this.maintainASTRelationships(this.virtualRoot.main);
             } catch (error) {
@@ -2401,11 +2783,10 @@ export class DslEditor extends MetadataDrivenComponent {
             }
         }
 
-        this.expression = this.astRoot ? this.astRoot.toExpression() : "";
-        console.log("DslEditor: Expression updated from AST:", this.expression);
+        this.expression = this.computeCurrentExpression() || "";
 
         // 触发状态更新事件（用于实时监控）
-        this.triggerStateUpdate();
+        this.triggerStateUpdate({ skipRender });
         // 对外同步表达式（去重）
         this.emitExpressionChange(this.expression);
     }
@@ -2413,21 +2794,17 @@ export class DslEditor extends MetadataDrivenComponent {
     /**
      * 触发状态更新事件
      */
-    triggerStateUpdate() {
+    triggerStateUpdate(options = {}) {
+        const { skipRender = false } = options;
         // 详细状态日志（仅在需要时输出）
         if (window.DEBUG_DSL) {
-            console.log("DslEditor: Current state:", {
-                expression: this.expression,
-                astRoot: this.astRoot?.toExpression?.() || null,
-                workspaceAST: this.workspaceAST?.toExpression?.() || null,
-                mainExpressionAST: this.virtualRoot.main?.toExpression?.() || null,
-                editingPathDepth: this.editingPath?.length || 0,
-                isExpressionCompleted: this.isExpressionCompleted
-            });
         }
 
-        // 关键修复：状态更新时重新渲染编辑器
-        this.renderEditor();
+        // Avoid re-render while inline inputs are typing to keep focus stable.
+        if (!skipRender) {
+            // 关键修复：状态更新时重新渲染编辑器
+            this.renderEditor();
+        }
 
         // 触发全局状态更新（如果存在）
         if (typeof window.forceUpdateDebug === 'function') {
@@ -2447,6 +2824,107 @@ export class DslEditor extends MetadataDrivenComponent {
         } catch (e) {
             console.error("DslEditor: onChange handler threw an error:", e);
         }
+    }
+
+    computeCurrentExpression() {
+        const mainNode = this.virtualRoot?.main ?? null;
+        if (!mainNode && this.workspaceAST) {
+            return this.workspaceAST.toExpression?.() || "";
+        }
+
+        const top = this.peekEditingPath ? this.peekEditingPath() : null;
+        const isEditingMain = top?.parentNode?.type === 'virtualRoot' && top?.slot === 'main';
+        if (isEditingMain || !top?.parentNode) {
+            const fallbackNode = mainNode?.metadata?.innerAST ?? mainNode;
+            const expressionNode = this.workspaceAST ?? fallbackNode;
+            return expressionNode?.toExpression?.() || "";
+        }
+
+        if (!this.workspaceAST || !mainNode) {
+            const fallbackNode = mainNode?.metadata?.innerAST ?? mainNode;
+            return fallbackNode?.toExpression?.() || "";
+        }
+
+        const parentNode = top.parentNode;
+        const slot = top.slot;
+        const index = top.index;
+        const originalNode = this.getSlotNode(parentNode, slot, index);
+        const injectedNode = this.workspaceAST.metadata?.type === 'encapsulated'
+            ? this.workspaceAST
+            : this.createEncapsulatedFrom(this.workspaceAST);
+
+        const updated = this.setSlotNode(parentNode, slot, index, injectedNode);
+        const expressionSource = mainNode.metadata?.innerAST ?? mainNode;
+        const expression = expressionSource?.toExpression?.() || "";
+        if (updated) {
+            this.setSlotNode(parentNode, slot, index, originalNode);
+        }
+        return expression;
+    }
+
+    getSlotNode(parentNode, slot, index = null) {
+        if (!parentNode || !slot) return null;
+        if (parentNode.type === 'virtualRoot' && slot === 'main') return parentNode.main || null;
+        if (parentNode.type === 'operator') {
+            if (slot === 'left') return parentNode.leftOperand || null;
+            if (slot === 'right') return parentNode.rightOperand || null;
+        }
+        if (parentNode.type === 'functionCall' && slot === 'arg') {
+            const argIndex = typeof index === 'number' ? index : 0;
+            return (parentNode.args || [])[argIndex] || null;
+        }
+        if (parentNode.type === 'listQuery' && slot === 'filterExpression') return parentNode.filterExpression || null;
+        if (parentNode.type === 'listSort' && slot === 'sortExpression') return parentNode.sortExpression || null;
+        if (parentNode.type === 'listTake' && slot === 'countExpression') return parentNode.countExpression || null;
+        if (parentNode.type === 'listDistinct' && slot === 'keyExpression') return parentNode.keyExpression || null;
+        if (parentNode.type === 'listSelect' && slot === 'selectExpression') return parentNode.selectExpression || null;
+        return null;
+    }
+
+    setSlotNode(parentNode, slot, index, node) {
+        if (!parentNode || !slot) return false;
+        if (parentNode.type === 'virtualRoot' && slot === 'main') {
+            parentNode.main = node;
+            return true;
+        }
+        if (parentNode.type === 'operator') {
+            if (slot === 'left') {
+                parentNode.setLeftOperand?.(node);
+                return true;
+            }
+            if (slot === 'right') {
+                parentNode.setRightOperand?.(node);
+                return true;
+            }
+        }
+        if (parentNode.type === 'functionCall' && slot === 'arg') {
+            const argIndex = typeof index === 'number' ? index : 0;
+            if (typeof parentNode.setArg === 'function') {
+                parentNode.setArg(argIndex, node);
+                return true;
+            }
+        }
+        if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
+            parentNode.setFilterExpression?.(node);
+            return true;
+        }
+        if (parentNode.type === 'listSort' && slot === 'sortExpression') {
+            parentNode.setSortExpression?.(node);
+            return true;
+        }
+        if (parentNode.type === 'listTake' && slot === 'countExpression') {
+            parentNode.setCountExpression?.(node);
+            return true;
+        }
+        if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
+            parentNode.setKeyExpression?.(node);
+            return true;
+        }
+        if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
+            parentNode.setSelectExpression?.(node);
+            return true;
+        }
+        return false;
     }
 
 
@@ -2497,12 +2975,10 @@ export class DslEditor extends MetadataDrivenComponent {
             return null;
         }
 
-        console.log(`DslEditor: Getting type metadata for: "${typeName}"`);
 
         // 首先尝试直接匹配类型名
         let result = this.metadata.dsl.typeMetadata[typeName];
         if (result) {
-            console.log(`DslEditor: Found direct match for "${typeName}":`, result);
             return result;
         }
 
@@ -2513,7 +2989,6 @@ export class DslEditor extends MetadataDrivenComponent {
         if (aliasTypeName) {
             result = this.metadata.dsl.typeMetadata[aliasTypeName];
             if (result) {
-                console.log(`DslEditor: Found alias match for "${typeName}" -> "${aliasTypeName}":`, result);
                 return result;
             }
         }
@@ -2522,15 +2997,184 @@ export class DslEditor extends MetadataDrivenComponent {
         if (typeName.includes("<") && typeName.includes(">")) {
             const innerType = typeName.split("<")[1].replace(">", "");
             result = this.metadata.dsl.typeMetadata[innerType];
-            console.log(
-                `DslEditor: Extracted inner type "${innerType}" from "${typeName}":`,
-                result
-            );
             return result;
         }
 
-        console.log(`DslEditor: No metadata found for type: "${typeName}"`);
         return null;
+    }
+
+    getEnumOptionSources() {
+        const sources = new Set();
+        const metaSources = this.metadata?.enumOptionSources || this.metadata?.EnumOptionSources || [];
+        (metaSources || []).forEach((name) => {
+            if (name) sources.add(name);
+        });
+
+        const enumTypes = this.metadata?.dsl?.enumTypes || this.metadata?.dsl?.EnumTypes || [];
+        (enumTypes || []).forEach((entry) => {
+            const name = entry?.name ?? entry?.Name;
+            if (name) sources.add(name);
+        });
+
+        const relationTypes = this.metadata?.relationTypes || this.metadata?.RelationTypes || [];
+        if (Array.isArray(relationTypes) && relationTypes.length > 0) {
+            sources.add("TriggerRelationType");
+        }
+
+        return Array.from(sources);
+    }
+
+    resolveEnumSourceName(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return null;
+
+        const sources = this.getEnumOptionSources();
+        const directMatch = sources.find(name =>
+            String(name).toLowerCase() === normalized.toLowerCase()
+        );
+        if (directMatch) return directMatch;
+
+        const aliasMap = {
+            Rarity: "CardRarity",
+            Craft: "CardClass"
+        };
+        const alias = aliasMap[normalized];
+        if (!alias) return normalized;
+
+        const aliasMatch = sources.find(name =>
+            String(name).toLowerCase() === String(alias).toLowerCase()
+        );
+        return aliasMatch || alias;
+    }
+
+    seedEnumLocalizationFromRelationTypes() {
+        const relationTypes = this.metadata?.relationTypes || this.metadata?.RelationTypes || [];
+        if (!Array.isArray(relationTypes) || relationTypes.length === 0) return;
+        if (this.enumLocalizationCache.has("TriggerRelationType")) return;
+
+        const map = new Map();
+        relationTypes.forEach((item) => {
+            const value = item?.value ?? item?.Value;
+            if (value === undefined || value === null) return;
+            const label = item?.displayName ?? item?.DisplayName ?? String(value);
+            map.set(String(value), label);
+        });
+        this.enumLocalizationCache.set("TriggerRelationType", map);
+    }
+
+    async ensureEnumLocalization(enumName) {
+        if (!enumName) return null;
+        if (this.enumLocalizationCache.has(enumName)) {
+            return this.enumLocalizationCache.get(enumName);
+        }
+        if (this.enumLocalizationRequests.has(enumName)) {
+            return this.enumLocalizationRequests.get(enumName);
+        }
+
+        const request = ensureSharedEnumLocalization(enumName)
+            .then(({ raw }) => {
+                const entries = raw ? Object.entries(raw) : [];
+                const map = new Map(entries.map(([value, label]) => [value, label]));
+                this.enumLocalizationCache.set(enumName, map);
+                return map;
+            })
+            .catch((error) => {
+                console.warn(`DslEditor: Failed to load enum localization for ${enumName}:`, error);
+                const empty = new Map();
+                this.enumLocalizationCache.set(enumName, empty);
+                return empty;
+            })
+            .finally(() => {
+                this.enumLocalizationRequests.delete(enumName);
+            });
+
+        this.enumLocalizationRequests.set(enumName, request);
+        return request;
+    }
+
+    async preloadEnumLocalizations() {
+        this.seedEnumLocalizationFromRelationTypes();
+
+        const sources = this.getEnumOptionSources();
+        if (!sources.length) return;
+        await Promise.all(sources.map((name) => this.ensureEnumLocalization(name)));
+    }
+
+    getEnumValueOptions(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized || !this.isEnumType(normalized)) return [];
+
+        const enumSource = this.resolveEnumSourceName(normalized);
+        const labels = enumSource ? this.enumLocalizationCache.get(enumSource) : null;
+        const values = this.getEnumValues(normalized);
+        if (!values.length) return [];
+
+        return values.map((value) => {
+            const label = labels?.get(value) || value;
+            return {
+                type: "enumValue",
+                value,
+                label,
+                description: label !== value ? value : "",
+                returnType: normalized,
+                enumType: normalized,
+                displayValue: label
+            };
+        });
+    }
+
+    normalizeEnumToken(value) {
+        if (value === null || value === undefined) return "";
+        const raw = String(value).trim();
+        if (!raw) return "";
+        return raw.replace(/^['"]|['"]$/g, "");
+    }
+
+    getEnumLabelForValue(typeName, value) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return null;
+        const enumSource = this.resolveEnumSourceName(normalized);
+        const labels = enumSource ? this.enumLocalizationCache.get(enumSource) : null;
+        if (!labels) return null;
+        return labels.get(value) || null;
+    }
+
+    getEnumLabelReverseMap(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return null;
+        const enumSource = this.resolveEnumSourceName(normalized);
+        const labels = enumSource ? this.enumLocalizationCache.get(enumSource) : null;
+        if (!labels) return null;
+
+        const reverse = new Map();
+        const duplicates = new Set();
+        labels.forEach((label, value) => {
+            const key = this.normalizeEnumToken(label).toLowerCase();
+            if (!key) return;
+            if (reverse.has(key)) {
+                duplicates.add(key);
+                return;
+            }
+            reverse.set(key, value);
+        });
+        duplicates.forEach(key => reverse.delete(key));
+        return reverse;
+    }
+
+    resolveEnumValueFromInput(typeName, input) {
+        const normalized = this.normalizeTypeName(typeName);
+        const token = this.normalizeEnumToken(input);
+        if (!normalized || !token) return token;
+
+        const values = this.getEnumValues(normalized);
+        const direct = values.find(v => String(v).toLowerCase() === token.toLowerCase());
+        if (direct) return direct;
+
+        const reverse = this.getEnumLabelReverseMap(normalized);
+        const mapped = reverse?.get(token.toLowerCase());
+        if (mapped) return mapped;
+
+        return token;
     }
 
     /**
@@ -2574,8 +3218,14 @@ export class DslEditor extends MetadataDrivenComponent {
         return (
             normalized.startsWith("List<") ||
             normalized.startsWith("IEnumerable<") ||
+            normalized.startsWith("IReadOnlyList<") ||
+            normalized.startsWith("IReadOnlyCollection<") ||
+            normalized.startsWith("ICollection<") ||
             normalized === "List" ||
-            normalized === "IEnumerable"
+            normalized === "IEnumerable" ||
+            normalized === "IReadOnlyList" ||
+            normalized === "IReadOnlyCollection" ||
+            normalized === "ICollection"
         );
     }
 
@@ -2591,6 +3241,27 @@ export class DslEditor extends MetadataDrivenComponent {
         }
         const match = normalized.match(/<(.*)>/);
         return match ? match[1] : "Object";
+    }
+
+    isDictionaryType(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return false;
+        return (
+            normalized.startsWith("Dictionary<") ||
+            normalized.startsWith("IDictionary<") ||
+            normalized.startsWith("IReadOnlyDictionary<")
+        );
+    }
+
+    getDictionaryValueType(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!this.isDictionaryType(normalized)) {
+            return null;
+        }
+        const match = normalized.match(/<(.*)>/);
+        if (!match) return "Object";
+        const parts = match[1].split(",").map(part => part.trim());
+        return parts[1] || "Object";
     }
 
     // ----------------------------------------------------------------
@@ -2655,10 +3326,13 @@ export class DslEditor extends MetadataDrivenComponent {
      * @returns {boolean}
      */
     areTypesCompatible(actualType, expectedType) {
-        const a = this.normalizeTypeName(actualType);
-        const e = this.normalizeTypeName(expectedType);
+        const a = this.resolveTypeAlias(actualType);
+        const e = this.resolveTypeAlias(expectedType);
         if (!a || !e) {
             return false; // 如果任一类型为空，则不兼容
+        }
+        if (e === 'Object') {
+            return true; // Object 作为通配类型
         }
         if (a === e) {
             return true;
@@ -2674,7 +3348,19 @@ export class DslEditor extends MetadataDrivenComponent {
         if (this.isCollectionType(a) && this.isCollectionType(e)) {
             const ai = this.getCollectionInnerType(a);
             const ei = this.getCollectionInnerType(e);
-            return ei === 'Object' || ai === ei;
+            if (ei === 'Object' || ai === ei) {
+                return true;
+            }
+            return this.isNumericType(ai) && this.isNumericType(ei);
+        }
+
+        // 允许单个元素匹配列表期望类型（后端会将单个对象包装为列表）
+        if (!this.isCollectionType(a) && this.isCollectionType(e)) {
+            if (a.toLowerCase() === 'string') {
+                return false;
+            }
+            const ei = this.getCollectionInnerType(e);
+            return ei === 'Object' || a === ei;
         }
 
         // 未来可以扩展更多兼容性规则，例如继承关系
@@ -2704,6 +3390,7 @@ export class DslEditor extends MetadataDrivenComponent {
      * 检查是否为业务对象类型（可以进行比较操作的对象类型）
      */
     isBusinessObjectType(typeName) {
+        const normalized = this.resolveTypeAlias(typeName) || typeName;
         const businessObjectTypes = [
             'PlayerState',      // 玩家状态
             'CardInstance',     // 卡牌实例
@@ -2711,15 +3398,38 @@ export class DslEditor extends MetadataDrivenComponent {
             'EffectInstance',   // 效果实例
             'EventInstance'     // 事件实例
         ];
-        return businessObjectTypes.includes(typeName);
+        return businessObjectTypes.includes(normalized);
+    }
+
+    isEnumType(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return false;
+
+        const enumTypes = this.metadata?.dsl?.enumTypes || this.metadata?.dsl?.EnumTypes || [];
+        if (Array.isArray(enumTypes) && enumTypes.some(e =>
+            String(e.name ?? e.Name ?? '').toLowerCase() === normalized.toLowerCase()
+        )) {
+            return true;
+        }
+
+        const enumSource = this.resolveEnumSourceName(normalized);
+        if (!enumSource) return false;
+
+        const sources = this.getEnumOptionSources();
+        if (sources.some(name => String(name).toLowerCase() === enumSource.toLowerCase())) {
+            return true;
+        }
+
+        return this.enumLocalizationCache.has(enumSource);
     }
 
     /**
      * 检查是否为文本类型（包括枚举和GUID）
      */
     isTextType(typeName) {
-        const textTypes = ['String', 'Guid', 'CardType', 'Rarity', 'Craft', 'CardKeyword'];
-        return textTypes.includes(typeName);
+        const textTypes = ['String', 'Guid', 'CardType', 'Rarity', 'Craft', 'CardKeyword', 'CardRarity', 'CardClass', 'AbilityKeyword'];
+        if (textTypes.includes(typeName)) return true;
+        return this.isEnumType(typeName);
     }
 
     /**
@@ -2738,9 +3448,24 @@ export class DslEditor extends MetadataDrivenComponent {
      * 获取枚举类型的可用值
      */
     getEnumValues(typeName) {
-        const enumTypes = this.metadata?.dsl?.enumTypes || [];
-        const enumType = enumTypes.find(e => e.name === typeName);
-        return enumType?.values || [];
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return [];
+
+        const enumTypes = this.metadata?.dsl?.enumTypes || this.metadata?.dsl?.EnumTypes || [];
+        const enumType = (enumTypes || []).find(e =>
+            String(e.name ?? e.Name ?? '').toLowerCase() === normalized.toLowerCase()
+        );
+        if (enumType?.values?.length) {
+            return enumType.values;
+        }
+
+        const enumSource = this.resolveEnumSourceName(normalized);
+        const cached = enumSource ? this.enumLocalizationCache.get(enumSource) : null;
+        if (cached) {
+            return Array.from(cached.keys());
+        }
+
+        return [];
     }
 
     /**
@@ -2765,7 +3490,7 @@ export class DslEditor extends MetadataDrivenComponent {
             .map(f => ({
                 type: "function",
                 value: f.name,
-                label: f.name,
+                label: this.getReadableFunctionName(f.name),
                 description: f.description,
                 meta: f
             }));
@@ -2774,16 +3499,17 @@ export class DslEditor extends MetadataDrivenComponent {
     /**
      * 获取集合类型的函数
      */
-    getCollectionFunctions() {
+    getCollectionFunctions(typeName = null) {
         const functions = this.metadata?.dsl?.functions || [];
         const collectionFunctionNames = ['count', 'sum', 'min', 'max', 'contains', 'isEmpty'];
 
         return functions
             .filter(f => collectionFunctionNames.includes(f.name))
+            .filter(f => !typeName || this.isFunctionCompatibleWithType(f, typeName))
             .map(f => ({
                 type: "function",
                 value: f.name,
-                label: f.name,
+                label: this.getReadableFunctionName(f.name),
                 description: f.description,
                 meta: f
             }));
@@ -2796,8 +3522,8 @@ export class DslEditor extends MetadataDrivenComponent {
         return [{
             type: "listQuery",
             value: ".query",
-            label: "筛选 (.query)",
-            description: "筛选集合元素"
+            label: "查询 (.query)",
+            description: "查询集合元素"
         }];
     }
 
@@ -2846,10 +3572,28 @@ export class DslEditor extends MetadataDrivenComponent {
      */
 
     /**
+     * 格式化枚举值用于表达式
+     */
+    formatEnumLiteralValue(value) {
+        if (value === null || value === undefined) return "\"\"";
+        const raw = String(value);
+        if ((raw.startsWith('"') && raw.endsWith('"')) ||
+            (raw.startsWith("'") && raw.endsWith("'"))) {
+            return raw;
+        }
+        return `"${raw}"`;
+    }
+
+    /**
      * 格式化静态值用于表达式 (根据智能推断的类型)
      */
     formatStaticValue(value, inferredType) {
         if (!value) return '""'; // 空值默认为空字符串
+
+        const trimmedValue = String(value).trim();
+        if (this.isListLiteral(trimmedValue)) {
+            return trimmedValue;
+        }
 
         // 数值类型直接返回
         if (this.isNumericType(inferredType)) {
@@ -2884,6 +3628,15 @@ export class DslEditor extends MetadataDrivenComponent {
     inferStaticValueType(value) {
         if (!value) return "Object";
 
+        const trimmedValue = String(value).trim();
+        if (this.isListLiteral(trimmedValue)) {
+            const items = this.parseListLiteralItems(trimmedValue);
+            if (items.length > 0 && items.every(item => /^-?\d+$/.test(item))) {
+                return "List<Int32>";
+            }
+            return "List<String>";
+        }
+
         // 布尔值
         if (value === "true" || value === "false") {
             return "Boolean";
@@ -2909,10 +3662,41 @@ export class DslEditor extends MetadataDrivenComponent {
         return "String";
     }
 
+    isListLiteral(value) {
+        const trimmed = String(value ?? "").trim();
+        if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return false;
+        // Minimal shape check: [] or [a,b]
+        return trimmed.length >= 2;
+    }
+
+    parseListLiteralItems(value) {
+        const trimmed = String(value ?? "").trim();
+        if (!this.isListLiteral(trimmed)) return [];
+        const inner = trimmed.slice(1, -1).trim();
+        if (!inner) return [];
+        return inner.split(",").map(part => {
+            const token = part.trim();
+            if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+                return token.slice(1, -1).trim();
+            }
+            return token;
+        }).filter(part => part.length > 0);
+    }
+
     /**
      * 获取对象类型的属性
      */
     getObjectProperties(typeName) {
+        if (this.isDictionaryType(typeName)) {
+            return [{
+                type: "propertyInput",
+                value: "input",
+                label: "输入键名",
+                description: "输入字典键以读取对应值",
+                returnType: this.getDictionaryValueType(typeName) || "Object"
+            }];
+        }
+
         const typeMetadata = this.getTypeMetadata(typeName);
         if (!typeMetadata || !typeMetadata.properties) {
             return [];
@@ -2936,10 +3720,13 @@ export class DslEditor extends MetadataDrivenComponent {
      * 清空工作区（新设计）
      */
     clearWorkspace(preserveMainExpression = false) {
-        console.log(`DslEditor: Clearing workspace (preserveMainExpression: ${preserveMainExpression})`);
 
         if (!preserveMainExpression) {
             this.virtualRoot.main = null;
+        }
+
+        if (this.isLightWorkspace) {
+            this.clearLightWorkspaceFocus();
         }
 
         // 重置工作区到初始状态
@@ -2949,15 +3736,14 @@ export class DslEditor extends MetadataDrivenComponent {
         this.updateExpressionFromAST();
         this.renderEditor();
 
-        console.log("DslEditor: Workspace cleared and re-initialized");
     }
     /**
      * 统一的进入编辑模式的入口
      * @param {ASTNode} parentNode - 要编辑的槽位的父节点
      * @param {'left'|'right'|'innerAST'|'filterExpression'|'sortExpression'|'countExpression'} slot - 要编辑的槽位
      */
-    handleEnterEditModeForSlot(parentNode, slot, index = null) {
-        return handleEnterEditModeForSlot(this, parentNode, slot, index);
+    handleEnterEditModeForSlot(parentNode, slot, index = null, options = undefined) {
+        return handleEnterEditModeForSlot(this, parentNode, slot, index, options);
     }
 
     // handleEditMainExpression 已废除，逻辑统一到 handleEnterEditModeForSlot
@@ -2991,6 +3777,13 @@ export class DslEditor extends MetadataDrivenComponent {
 
         if (parentNode.type === 'listTake' && parentNode.countExpression === node) {
             return { slot: 'countExpression', index: null };
+        }
+
+        if (parentNode.type === 'listDistinct' && parentNode.keyExpression === node) {
+            return { slot: 'keyExpression', index: null };
+        }
+        if (parentNode.type === 'listSelect' && parentNode.selectExpression === node) {
+            return { slot: 'selectExpression', index: null };
         }
 
         if (parentNode.type === 'virtualRoot' && parentNode.main === node) {

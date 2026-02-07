@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -10,22 +11,42 @@ namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
     /// A committable event that represents a card evolving.
+    /// Source points to the evolution source (card or player), Target contains the evolved card.
     /// Its Commit method applies the actual state changes to the card instance.
     /// </summary>
     [GameEventMetadata("进化", "当一张卡牌进化时触发的事件。", EventType.Evolve)]
     public class EvolveEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("进化的卡牌", "被进化的卡牌。")]
-        public CardInstance? EvolvedCard => Source?.Card;
+        [GameEventParameter("进化来源", "能力进化时为来源卡牌，否则为进化卡牌所属的玩家。", DslDisplayTypeName = "事件源")]
+        public TargetInfo? EvolutionSource => Source;
+
+        [GameEventParameter("进化的卡牌", "被进化的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? EvolvedCard => Target.FirstOrDefault()?.Card;
 
         [GameEventParameter("是否超进化", "标识该进化是否来自超进化。")]
         public bool IsSuperEvolution { get; }
 
-        public EvolveEvent(CardInstance evolvedCard, bool isSuperEvolution = false)
-            : base(EventType.Evolve)
+        [GameEventParameter("是否手动进化", "进化是否由玩家通过进化点触发（否则为效果进化）。")]
+        public bool IsManualEvolution { get; }
+
+        public EvolveEvent(
+            CardInstance evolvedCard,
+            TargetInfo evolutionSource,
+            bool isSuperEvolution = false,
+            bool isManualEvolution = false,
+            Guid? eventId = null,
+            DateTime? timestamp = null)
+            : base(EventType.Evolve, eventId, timestamp)
         {
-            Source = TargetInfo.ForCard(evolvedCard);
+            if (evolutionSource == null)
+            {
+                throw new ArgumentNullException(nameof(evolutionSource));
+            }
+
+            Source = evolutionSource;
+            Target.Add(TargetInfo.ForCard(evolvedCard));
             IsSuperEvolution = isSuperEvolution;
+            IsManualEvolution = isManualEvolution;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -52,17 +73,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var cardId = EvolvedCard?.InstanceId;
-            if (!cardId.HasValue)
+            var card = EvolvedCard;
+            if (card == null)
             {
-                return "evolve";
+                return string.Empty;
             }
 
-            var cardToken = gameState.InGameIds.Format(InGameIdKind.Card, cardId.Value);
-            var ownerId = EvolvedCard?.OwnerPlayerId;
-            return ownerId.HasValue
-                ? $"evolve card={cardToken} player={gameState.InGameIds.Format(InGameIdKind.Player, ownerId.Value)}"
-                : $"evolve card={cardToken}";
+            return $"{AnnouncementTokens.Card(card)}进化了。";
         }
     }
 }

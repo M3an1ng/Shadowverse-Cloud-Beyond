@@ -1,0 +1,386 @@
+{
+  "1540101": {
+    "id": "1540101",
+    "name": "龙宫近卫队",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "海洋",
+    "cost": 2,
+    "attack": 1,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Storm",
+      "Ward",
+      "Clash||If|Allied-Turn|TimesPerTurn&1||+1/+1|ThisCard"
+    ]
+  },
+  "1540201": {
+    "id": "1540201",
+    "name": "纹章:潮汐鼓动·缇莉",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Card|Discard||If|TimesPerTurn&1||Damage|Enemy-Leader|2||Restore|Allied-Leader|2"
+    ]
+  },
+  "1540202": {
+    "id": "1540202",
+    "name": "纹章:潮汐脉搏·缇莉",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Card|Discard||If|TimesPerTurn&1||Damage|Random&1-Enemy-Follower|4||Damage|Enemy-Leader|1"
+    ]
+  },
+  "1541101": {
+    "id": "1541101",
+    "name": "休憩公主·乙姬",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 4,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Enhance&6||Summon|1540101|1",
+      "Enhance&8||Summon|1540101|1",
+      "Enhance&10||Summon|1540101|1",
+      "When|Allied-Trait:13-Follower|Destroy||+1/+1|ThisCard",
+      "Evolve||Summon|1540101|1"
+    ]
+  },
+  "1541102": {
+    "id": "1541102",
+    "name": "碧海之心·玛蒂亚",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Clash||If|TimesPerTurn&1||Discard|Random&1-Allied-Cost$Lowest-Card||Give|ThisCard|{Barrier}||Give|Allied-Field-Leader|{Barrier}",
+      "LastWords||Draw|2||Restore|Allied-Leader|4",
+      "SuperEvolve||Allied-Turn-Start-Until|Give|ThisCard|{Aura}||Allied-Turn-Start-Until|Give|Allied-Field-Leader|{Aura}||Discard|Select&1-Allied-Card"
+    ]
+  },
+  "1541103": {
+    "id": "1541103",
+    "name": "空蚀之天虹龙",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 10,
+    "attack": 5,
+    "defense": 10,
+    "countdown": 0,
+    "effects": [
+      "Storm",
+      "Clash||If|TimesPerTurn&1||FieldReturnToDeck|Other-Follower"
+    ]
+  },
+  "1541201": {
+    "id": "1541201",
+    "name": "潮汐脉搏·缇莉",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||If|{MaxPP}=10||Give|ThisCard|{NoEP}",
+      "Fanfare||Crest&0|{When|Allied-Card|Discard||If|TimesPerTurn&1||Damage|Random&1-Enemy-Follower|4||Damage|Enemy-Leader|1}",
+      "Evolve||Discard|Select&1-Allied-Card||Search|Random&1-Follower||Search|Random&1-Spell&Amulet"
+    ]
+  },
+  "1541203": {
+    "id": "1541203",
+    "name": "龙之驯从",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 12,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "ActivateInHand-When|ThisCard|Discard||Copy|ThisCard||ReturnToDeck|It||Cost-3|Allied-Deck-SameName&1541203-Card",
+      "Play||Give|Select&1-Allied-Field-Dragoncraft-Follower|{Ward}||If|{Cards|UnEvolved-It}=1||Evolve|It"
+    ]
+  },
+  "1541204": {
+    "id": "1541204",
+    "name": "巨龙连战",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 6,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1040402|1",
+      "Engage&2||Destroy|ThisCard||AuxSelect|Select&1-Allied-Field-Dragoncraft-Follower||SearchSummon|Random&1-Dragoncraft-Cost=X&Cost>X-Follower||X=Cost|It"
+    ]
+  },
+  "1541205": {
+    "id": "1541205",
+    "name": "清流的舞女·琳赛",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 3,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Turn-End||If|Overflow||Restore|Allied-Leader|3||Draw|1",
+      "Evolve||MaxPP|1"
+    ]
+  },
+  "1541206": {
+    "id": "1541206",
+    "name": "巨龙强袭",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "LastWords||Summon|1040402|1",
+      "Engage&4||HandSummon|Select&1-Allied-Dragoncraft-Follower||Give|It|{Rush}||Give|It|{When|Allied-Turn-End||FieldReturnToDeck|ThisCard||Draw|1}",
+      "When|Allied-Turn-Start||If|Overflow||Destroy|ThisCard"
+    ]
+  },
+  "1541301": {
+    "id": "1541301",
+    "name": "龙宫的宴请",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 2,
+    "effects": [
+      "ActivateInHand-When|ThisCard|Discard||AddToHand|1340401|1",
+      "When|Allied-Turn-Start||Summon|1340401|1||If|Overflow||Give|It|{Drain}"
+    ]
+  },
+  "1541302": {
+    "id": "1541302",
+    "name": "穹沧护卫",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 2,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Ward",
+      "Evolve||Destroy|Select&1-Enemy-Follower||Draw|1",
+      "LastWords||Discard|Random&1-Allied-Cost$Lowest-Card||Summon|1340401|1||Give|It|{Ward}"
+    ]
+  },
+  "1541304": {
+    "id": "1541304",
+    "name": "冰楔之霜银龙",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 4,
+    "defense": 7,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Turn-End||-3/-3|Field-Other-Follower",
+      "Aura",
+      "When|Enemy-Follower|EnterField||If|TimesPerTurn&1||-3/-3|It"
+    ]
+  },
+  "1541305": {
+    "id": "1541305",
+    "name": "回生之苍茂龙",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 8,
+    "attack": 3,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "ActivateInHand-When|Allied-Follower|Evolve||Cost-1|ThisCard",
+      "Drain",
+      "LastWords||EP|1||MaxPP|1"
+    ]
+  },
+  "1541306": {
+    "id": "1541306",
+    "name": "冰涸轮舞",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||ReturnToDeck|Select&1-Allied-Other-Card||Mode&1|{Draw|1}|{If|{Cards|Dragoncraft-Cost>6-It}=1||-3/-3|Random&1-Enemy-Field-Follower}",
+      "Play||Draw|1"
+    ]
+  },
+  "1541401": {
+    "id": "1541401",
+    "name": "引路人鱼",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 1,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Discard|Select&1-Allied-Other-Card",
+      "Fanfare||Draw|1",
+      "Fanfare||AddToHand|1340401|1||Change|If|Overflow||Summon|1340401|1"
+    ]
+  },
+  "1541403": {
+    "id": "1541403",
+    "name": "烧融之炎山龙",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 8,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Damage|Select&1-Enemy-Follower|10",
+      "LastWords||Damage|Random&1-Enemy-Follower|10",
+      "Rush"
+    ]
+  },
+  "1541404": {
+    "id": "1541404",
+    "name": "龙之睿智",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Discard|Random&1-Allied-Other-Cost$Highest-Card||Draw|2||Change|If|Overflow||Discard|Random&1-Allied-Other-Cost$Lowest-Card||Draw|2"
+    ]
+  },
+  "1541405": {
+    "id": "1541405",
+    "name": "巍魁之岩冢龙",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 9,
+    "attack": 6,
+    "defense": 7,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1541405|1",
+      "Ward",
+      "Evolve||Summon|1541405|1"
+    ]
+  },
+  "1541406": {
+    "id": "1541406",
+    "name": "破浪剑士",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Storm",
+      "Strike||If|Overflow||Discard|Random&1-Allied-Cost$Lowest-Card||Draw|1",
+      "Enhance&7||+2/+2|ThisCard"
+    ]
+  },
+  "1541407": {
+    "id": "1541407",
+    "name": "烧蚀龙息",
+    "cardSet": "神眷的棋盘",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 5,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||AuxSelect|Select&1-Enemy-Field-Follower||CardCount|X||Damage|It|10||If|{Defense|It}<11||SplitDamage|Enemy-Follower|X||X=Difference|Defense|It|10"
+    ]
+  }
+}

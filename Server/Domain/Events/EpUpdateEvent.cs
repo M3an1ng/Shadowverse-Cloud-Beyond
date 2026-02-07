@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events; // EventType, GameContext
@@ -17,11 +18,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("当前EP值", "更新后的当前EP值。")]
         public int CurrentEp { get; }
 
-        [GameEventParameter("目标玩家", "EP值被更新的玩家。")]
+        [GameEventParameter("目标玩家", "EP值被更新的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public EpUpdateEvent(PlayerState player, int currentEp)
-            : base(EventType.EpUpdated)
+        public EpUpdateEvent(PlayerState player, int currentEp, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.EpUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             CurrentEp = currentEp;
@@ -41,10 +42,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
-            return playerId.HasValue
-                ? $"ep player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} current={CurrentEp}"
-                : "ep";
+            var player = TargetPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}的EP变为 {AnnouncementTokens.Number(CurrentEp)}。";
         }
     }
 }

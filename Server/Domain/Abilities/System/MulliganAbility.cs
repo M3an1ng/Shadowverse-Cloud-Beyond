@@ -20,6 +20,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.System
 {
+    [Obsolete("System abilities are deprecated and will be removed. Use the event-driven flow with effect handlers instead.")]
     public class MulliganAbility : IAbility
     {
         private static readonly Guid _runtimeId = Guid.NewGuid();
@@ -30,8 +31,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public string Name => "Mulligan";
         private static readonly IReadOnlyList<AbilityKeywordConfig> SystemKeywords = Array.Empty<AbilityKeywordConfig>();
         public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => SystemKeywords;
-        public EffectKeyword PrimaryKeyword => EffectKeyword.None;
-        public string KeywordSummary => EffectKeyword.None.ToString();
+        public AbilityKeyword PrimaryKeyword => AbilityKeyword.None;
+        public string KeywordSummary => AbilityKeyword.None.ToString();
         public AbilityType Type => AbilityType.Triggered;
         public List<Target> Targets { get; } = new List<Target>();
 
@@ -52,6 +53,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
 
         public Guid? SourceBuffId => null; // System abilities are not granted by buffs.
 
+        public int TriggerCountThisTurn => 0;
+
+        public int TriggerCountThisGame => 0;
+
         public MulliganAbility(ILogger<MulliganAbility> logger)
         {
             _logger = logger;
@@ -64,6 +69,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             // So, if this method is reached, gameEvent.EventType is MulliganSubmitted.
             // No further event-specific checks needed here for this system ability.
             return Task.FromResult(true);
+        }
+
+        public Task<TargetAvailabilityResult> CheckTargetAvailabilityAsync(GameContext context)
+        {
+            return Task.FromResult(new TargetAvailabilityResult(true));
         }
 
         public bool CheckConditions(GameContext context)
@@ -127,7 +137,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             var effectConfig = new EffectConfig
             {
                 Type = EffectType.Mulligan, // Corresponds to MulliganEffectHandler
-                Parameters = new Dictionary<string, ValueConfig>
+                Parameters = new Dictionary<string, ValueConfig>(StringComparer.OrdinalIgnoreCase)
                 {
                     { nameof(MulliganEffectParams.CardUidsToReplace), new StaticValueConfig { Value = mulliganParams.CardUidsToReplace } },
                     { nameof(MulliganEffectParams.MulliganReason), new StaticValueConfig { Value = mulliganParams.MulliganReason } }
@@ -165,24 +175,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             _logger?.LogDebug("{AbilityName} triggered.", Name);
         }
 
-        public bool HasKeyword(EffectKeyword keyword)
+        public bool HasKeyword(AbilityKeyword keyword)
         {
             return false;
         }
 
-        public int? GetKeywordValue(EffectKeyword keyword)
+        public int? GetKeywordValue(AbilityKeyword keyword)
         {
             return null;
         }
 
         public int GetTriggerCountThisTurn(GameContext context)
         {
-            return 0;
+            return TriggerCountThisTurn;
         }
 
         public int GetTriggerCountThisGame(GameContext context)
         {
-            return 0;
+            return TriggerCountThisGame;
         }
 
         public void ResetTurnState(GameContext context)

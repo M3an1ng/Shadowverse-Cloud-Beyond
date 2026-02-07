@@ -1,5 +1,6 @@
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos;
@@ -22,17 +23,20 @@ public class DeckService : IDeckService
     private readonly IGuestDeckStore _guestStore;
     private readonly IDeckCodeService _deckCodeService;
     private readonly IDeckValidationService _deckValidation;
+    private readonly ILogger<DeckService> _logger;
 
     public DeckService(
         ApplicationDbContext db,
         IGuestDeckStore guestStore,
         IDeckCodeService deckCodeService,
-        IDeckValidationService deckValidation)
+        IDeckValidationService deckValidation,
+        ILogger<DeckService> logger)
     {
         _db = db;
         _guestStore = guestStore;
         _deckCodeService = deckCodeService;
         _deckValidation = deckValidation;
+        _logger = logger;
     }
 
     public async Task<bool> HasAnyDeckAsync(DeckOwner owner, CancellationToken cancellationToken)
@@ -197,7 +201,7 @@ public class DeckService : IDeckService
             var deck = _guestStore.Create(guestId.Value, request.Name.Trim(), request.Class, environment);
             if (request.Cards != null && request.Cards.Count > 0)
             {
-                var validation = await _deckValidation.ValidateAsync(request.Class, request.Cards, requireComplete: true, cancellationToken);
+                var validation = await _deckValidation.ValidateAsync(request.Class, request.Cards, environment, requireComplete: true, cancellationToken);
                 if (!validation.Success)
                 {
                     return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
@@ -235,7 +239,7 @@ public class DeckService : IDeckService
 
         if (request.Cards != null && request.Cards.Count > 0)
         {
-            var validation = await _deckValidation.ValidateAsync(request.Class, request.Cards, requireComplete: true, cancellationToken);
+            var validation = await _deckValidation.ValidateAsync(request.Class, request.Cards, environment, requireComplete: true, cancellationToken);
             if (!validation.Success)
             {
                 return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
@@ -283,7 +287,7 @@ public class DeckService : IDeckService
             var guestEnvironment = request.Environment ?? existing.Environment;
             if (request.Cards != null)
             {
-                var validation = await _deckValidation.ValidateAsync(targetClass, request.Cards, requireComplete: true, cancellationToken);
+                var validation = await _deckValidation.ValidateAsync(targetClass, request.Cards, guestEnvironment, requireComplete: true, cancellationToken);
                 if (!validation.Success)
                 {
                     return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
@@ -293,7 +297,7 @@ public class DeckService : IDeckService
             }
             else if (request.Class.HasValue && request.Class.Value != existing.Class && existing.Cards.Count > 0)
             {
-                var validation = await _deckValidation.ValidateAsync(targetClass, existing.Cards, requireComplete: false, cancellationToken);
+                var validation = await _deckValidation.ValidateAsync(targetClass, existing.Cards, guestEnvironment, requireComplete: false, cancellationToken);
                 if (!validation.Success)
                 {
                     return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
@@ -330,11 +334,23 @@ public class DeckService : IDeckService
             deckEntity.Name = request.Name.Trim();
         }
 
+        var ownerId = owner.IsGuest ? owner.GetGuestIdOrNull() : owner.GetUserIdOrNull();
+        var incomingEntries = request.Cards?.Count ?? 0;
+        var incomingTotal = request.Cards?.Sum(card => card.Count);
+        _logger.LogInformation(
+            "Deck update requested. DeckId={DeckId} OwnerType={OwnerType} OwnerId={OwnerId} ExistingEntries={ExistingEntries} IncomingEntries={IncomingEntries} IncomingTotal={IncomingTotal}",
+            deckId,
+            owner.IsGuest ? "Guest" : "User",
+            ownerId,
+            deckEntity.Cards.Count,
+            incomingEntries,
+            incomingTotal);
+
         var targetEnvironment = request.Environment ?? deckEntity.Environment;
         var targetDeckClass = request.Class ?? deckEntity.Class;
         if (request.Cards != null)
         {
-            var validation = await _deckValidation.ValidateAsync(targetDeckClass, request.Cards, requireComplete: true, cancellationToken);
+            var validation = await _deckValidation.ValidateAsync(targetDeckClass, request.Cards, targetEnvironment, requireComplete: true, cancellationToken);
             if (!validation.Success)
             {
                 return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
@@ -350,7 +366,7 @@ public class DeckService : IDeckService
                 Count = card.Count
             }).ToList();
 
-            var validation = await _deckValidation.ValidateAsync(targetDeckClass, currentCards, requireComplete: false, cancellationToken);
+            var validation = await _deckValidation.ValidateAsync(targetDeckClass, currentCards, targetEnvironment, requireComplete: false, cancellationToken);
             if (!validation.Success)
             {
                 return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
@@ -360,7 +376,36 @@ public class DeckService : IDeckService
         deckEntity.Class = targetDeckClass;
         deckEntity.Environment = targetEnvironment;
         deckEntity.Touch();
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            var deckStillExists = await _db.UserDecks
+                .AsNoTracking()
+                .AnyAsync(deck => deck.Id == deckId && deck.UserId == userId.Value, cancellationToken);
+            var dbCardCount = await _db.UserDeckCards
+                .AsNoTracking()
+                .CountAsync(card => card.DeckId == deckId, cancellationToken);
+            var trackedStates = _db.ChangeTracker.Entries()
+                .Select(entry => $"{entry.Entity.GetType().Name}:{entry.State}")
+                .ToArray();
+
+            _logger.LogError(
+                ex,
+                "Deck update concurrency conflict. DeckId={DeckId} OwnerType={OwnerType} OwnerId={OwnerId} ExistingEntries={ExistingEntries} IncomingEntries={IncomingEntries} IncomingTotal={IncomingTotal} DeckExists={DeckExists} DbCardCount={DbCardCount} TrackedStates={TrackedStates}",
+                deckId,
+                owner.IsGuest ? "Guest" : "User",
+                ownerId,
+                deckEntity.Cards.Count,
+                incomingEntries,
+                incomingTotal,
+                deckStillExists,
+                dbCardCount,
+                string.Join(", ", trackedStates));
+            return DeckOperationResult<DeckDetailDto>.Fail("Deck update conflict. Please reload and try again.");
+        }
 
         return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(deckEntity, isGuest: false));
     }
@@ -417,7 +462,7 @@ public class DeckService : IDeckService
                 return DeckOperationResult<string>.Fail("Deck not found.");
             }
 
-            var validation = await _deckValidation.ValidateAsync(deck.Class, deck.Cards, requireComplete: true, cancellationToken);
+            var validation = await _deckValidation.ValidateAsync(deck.Class, deck.Cards, deck.Environment, requireComplete: true, cancellationToken);
             if (!validation.Success)
             {
                 return DeckOperationResult<string>.Fail(validation.Error ?? "Deck validation failed.");
@@ -449,7 +494,7 @@ public class DeckService : IDeckService
             Count = card.Count
         }).ToList();
 
-        var validationResult = await _deckValidation.ValidateAsync(deckEntity.Class, entries, requireComplete: true, cancellationToken);
+        var validationResult = await _deckValidation.ValidateAsync(deckEntity.Class, entries, deckEntity.Environment, requireComplete: true, cancellationToken);
         if (!validationResult.Success)
         {
             return DeckOperationResult<string>.Fail(validationResult.Error ?? "Deck validation failed.");
@@ -466,13 +511,12 @@ public class DeckService : IDeckService
             return DeckOperationResult<DeckDetailDto>.Fail(error ?? "Deck code is invalid.");
         }
 
-        var validation = await _deckValidation.ValidateAsync(deckClass, cards, requireComplete: true, cancellationToken);
+        var targetEnvironment = request.Environment ?? DefaultEnvironment;
+        var validation = await _deckValidation.ValidateAsync(deckClass, cards, targetEnvironment, requireComplete: true, cancellationToken);
         if (!validation.Success)
         {
             return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
         }
-
-        var targetEnvironment = request.Environment ?? DefaultEnvironment;
 
         if (owner.IsGuest)
         {
@@ -643,23 +687,28 @@ public class DeckService : IDeckService
             deck.Cards.Clear();
         }
 
-        foreach (var entry in cards)
+        if (cards.Count == 0)
         {
-            deck.Cards.Add(new UserDeckCard
-            {
-                Id = Guid.NewGuid(),
-                DeckId = deck.Id,
-                CardDefinitionId = entry.CardDefinitionId,
-                Count = entry.Count
-            });
+            return;
         }
+
+        var newCards = cards.Select(entry => new UserDeckCard
+        {
+            Id = Guid.NewGuid(),
+            DeckId = deck.Id,
+            CardDefinitionId = entry.CardDefinitionId,
+            Count = entry.Count
+        }).ToList();
+
+        _db.UserDeckCards.AddRange(newCards);
+        deck.Cards.AddRange(newCards);
     }
 
     private async Task<DefaultDeckPlan?> BuildDefaultDeckPlanAsync(CancellationToken cancellationToken)
     {
         var cards = await _db.CardDefinitions
             .AsNoTracking()
-            .Where(card => card.Id > 0 && card.Type != CardType.Leader)
+            .Where(card => card.Id > 0 && card.Type != CardType.Leader && card.IsCollectible)
             .Select(card => new { card.Id, card.Class })
             .ToListAsync(cancellationToken);
 

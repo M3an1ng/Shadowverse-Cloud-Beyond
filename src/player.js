@@ -42,6 +42,10 @@ export function createPlayer(id, isAI = false) {
         hand: [],      // 手牌 (存储卡牌实例)
         field: [],     // 战场 (存储卡牌实例)
         graveyard: [], // 墓地 (存储卡牌实例)
+        emblem: [],    // 纹章区 (存储卡牌实例)
+        graveyardCount: 0, // 墓场计数
+        bloodPool: 0, // 血池
+        combo: 0, // 连击数
 
         maxFieldSize: 5, // 战场格子数量
         maxHandSize: 9,  // 手牌上限

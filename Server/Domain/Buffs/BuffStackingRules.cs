@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
     /// <summary>
     /// 简化的Buff叠加结果
-    /// 在简化系统中，大部分Buff都被允许添加，只有非叠加Buff需要替换处理
+    /// 在简化系统中，所有Buff都允许添加，不进行替换处理
     /// </summary>
     public class BuffStackingResult
     {
@@ -57,7 +57,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
         /// <summary>
         /// 简化的Buff叠加评估
-        /// 在简化系统中，大部分Buff都被允许添加，只有特殊的同名Buff规则
+        /// 在简化系统中，所有Buff都被允许添加，不执行替换
         /// </summary>
         /// <param name="newBuff">要添加的新Buff</param>
         /// <param name="existingBuffs">已存在的Buff列表</param>
@@ -68,21 +68,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             {
                 _logger.LogDebug("Evaluating buff stacking for {BuffId}. Existing buffs: {ExistingCount}. Simplified stacking system.",
                     newBuff.Id, existingBuffs.Count);
-
-                // 特殊规则：检查非叠加Buff
-                // 只有明确标记为IsNonStackable=true的能力创建的Buff才需要替换处理
-                if (CheckNonStackableBuff(newBuff, existingBuffs, out var buffsToReplace))
-                {
-                    _logger.LogDebug("Non-stackable buff detected for {BuffId}. Will replace {ReplaceCount} existing buffs",
-                        newBuff.Id, buffsToReplace.Count);
-
-                    return new BuffStackingResult
-                    {
-                        AllowAdd = true,
-                        BuffsToRemove = buffsToReplace,
-                        Reason = $"Non-stackable buff replacement: removing {buffsToReplace.Count} existing buffs from same ability"
-                    };
-                }
 
                 return new BuffStackingResult
                 {
@@ -101,42 +86,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 };
             }
         }
-
-        /// <summary>
-        /// 检查非叠加Buff规则
-        /// 只有明确标记为IsNonStackable=true的Buff才需要替换处理
-        /// </summary>
-        /// <param name="newBuff">新Buff</param>
-        /// <param name="existingBuffs">现有Buff列表</param>
-        /// <param name="buffsToReplace">需要替换的Buff列表</param>
-        /// <returns>是否需要进行替换</returns>
-        private bool CheckNonStackableBuff(Buff newBuff, List<Buff> existingBuffs, out List<Buff> buffsToReplace)
-        {
-            buffsToReplace = new List<Buff>();
-
-            // 检查新Buff是否标记为非叠加
-            if (!newBuff.IsNonStackable)
-            {
-                return false; // 可以叠加，无需替换
-            }
-
-            // 查找来自相同能力的现有Buff（不管它们是否也是非叠加的）
-            // 当新Buff是非叠加时，应该替换来自相同能力的所有现有Buff
-            var sameAbilityBuffs = existingBuffs
-                .Where(b => b.IsActive &&
-                           b.SourceAbilityId == newBuff.SourceAbilityId)
-                .ToList();
-
-            if (sameAbilityBuffs.Any())
-            {
-                buffsToReplace = sameAbilityBuffs;
-                return true; // 需要替换
-            }
-
-            return false; // 没有冲突的Buff
-        }
-
-
 
         /// <summary>
         /// 验证Buff是否有效（在简化系统中主要用于日志记录）

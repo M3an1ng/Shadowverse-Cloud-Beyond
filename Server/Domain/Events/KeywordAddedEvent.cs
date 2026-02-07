@@ -23,15 +23,28 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("添加的关键字", "被添加的关键字类型。")]
         public CardKeyword KeywordAdded { get; }
 
-        [GameEventParameter("目标卡牌", "获得关键字的卡牌。")]
+        [GameEventParameter("目标卡牌", "获得关键字的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? TargetCard => Source?.Card;
 
-        public KeywordAddedEvent(CardKeyword keywordAdded, CardInstance source)
-            : base(EventType.KeywordApplied)
+        [GameEventParameter("持续时间", "关键字持续时间类型。")]
+        public DurationType DurationType { get; }
+
+        [GameEventParameter("持续参数", "持续时间参数。")]
+        public int? DurationParameter { get; }
+
+        public string? EffectKey { get; }
+        public bool CanStack { get; }
+
+        public KeywordAddedEvent(CardKeyword keywordAdded, CardInstance source, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.KeywordApplied, eventId, timestamp)
         {
             KeywordAdded = keywordAdded;
             Source = TargetInfo.ForCard(source);
             Target.Add(TargetInfo.ForCard(source));
+            DurationType = durationType;
+            DurationParameter = durationParameter;
+            EffectKey = effectKey;
+            CanStack = canStack;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -47,12 +60,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 context: context,
                 target: card,
                 keywords: new List<CardKeyword> { KeywordAdded },
-                durationType: DurationType.Permanent,
-                durationParameter: null,
-                isNonStackable: false);
+                durationType: DurationType,
+                durationParameter: DurationParameter,
+                effectKey: EffectKey,
+                canStack: CanStack);
 
             return buffResult;
         }
     }
 }
-

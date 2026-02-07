@@ -29,6 +29,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [Description("添加到手牌")]
         AddedToHand = 11,
         [Description("添加到牌堆")]
-        AddedToDeck = 12
+        AddedToDeck = 12,
+        [Description("满场")]
+        Packed = 13,
     }
 }

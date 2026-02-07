@@ -1,26 +1,283 @@
 {
-  "1461301": {
-    "id": "1461301",
-    "name": "持矛锤的僧侣",
-    "cardSet": "星云基础",
+  "1560101": {
+    "id": "1560101",
+    "name": "纹章:天垂之辉迹·卡里俄涅",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "EngageCost&-99"
+    ]
+  },
+  "1560302": {
+    "id": "1560302",
+    "name": "独角兽",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "圣兽",
+    "cost": 3,
+    "attack": 3,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|EnterField||Restore|Allied-Leader|2"
+    ]
+  },
+  "1561101": {
+    "id": "1561101",
+    "name": "净天之角·赫忒尔",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 3,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1560302|1",
+      "When|Allied-Trait:17-Follower|Strike||Damage|Enemy-Follower|2",
+      "Evolve||AuxSelect|Select&1-Allied-Field-Trait:17-Follower||Mode&1|{Give|It|{Rush}}|{Give|It|{Ward}}"
+    ]
+  },
+  "1561103": {
+    "id": "1561103",
+    "name": "天垂之辉迹·卡里俄涅",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 8,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||SearchSummon|Random@4-Keyword&Engage-Cost<4-Amulet",
+      "SuperEvolve||Crest&0|{EngageCost&-99}"
+    ]
+  },
+  "1561104": {
+    "id": "1561104",
+    "name": "誓锋的黑骑士·伊诺缇亚",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Rush",
+      "CantStrike|Leader",
+      "When|Allied-Amulet|Engage||UnStriked|ThisCard",
+      "Strike||Restore|ThisCard|X||X=Damaged|ThisCard"
+    ]
+  },
+  "1561201": {
+    "id": "1561201",
+    "name": "被选中的勇士",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 5,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Enhance&10||Evolve|ThisCard||Enemy-Turn-End-Until|Give|ThisCard|{Ward}",
+      "Rush",
+      "When|Enemy-Turn-Start||Enemy-Turn-End-Until|Give|ThisCard|{CantTakeMoreDamage&1}",
+      "When|ThisCard|Evolve||Destroy|Random&1-Enemy-Attack$Highest-Follower"
+    ]
+  },
+  "1561202": {
+    "id": "1561202",
+    "name": "怒神官",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 5,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Evolve||Destroy|Select&1-Allied-Other-Follower||SearchSummon|Random&1-Cost=X-Amulet||X=Cost|It"
+    ]
+  },
+  "1561203": {
+    "id": "1561203",
+    "name": "蒙主恩召",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 6,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&0||Destroy|ThisCard||Destroy|Follower"
+    ]
+  },
+  "1561204": {
+    "id": "1561204",
+    "name": "圣兽契约",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 2,
+    "effects": [
+      "Engage&1||Countdown-1|ThisCard",
+      "LastWords||Summon|1260401|1"
+    ]
+  },
+  "1561206": {
+    "id": "1561206",
+    "name": "光明之翼·梅蒽丝",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 9,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Restore|Allied-Leader|3||Damage|Enemy-Follower|6",
+      "Ward"
+    ]
+  },
+  "1561301": {
+    "id": "1561301",
+    "name": "神力庇佑",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 4,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||AuxSelect|Select&1-Enemy-Field-Follower||Banish|It||+1/+3|Random&1-Allied-Field-Follower"
+    ]
+  },
+  "1561302": {
+    "id": "1561302",
+    "name": "神魔之邀",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&1||AuxSelect|Select&1-Allied-Hand-Card||ReturnToDeck|It||If|{Cards|It}>0||Mode&1|{Draw|1||Restore|Allied-Leader|1}|{Damage|Random&1-Enemy-Follower|4||Damage|Enemy-Leader|1}"
+    ]
+  },
+  "1561303": {
+    "id": "1561303",
+    "name": "神圣誓盟",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 7,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Summon|1060401|1||Summon|1560302|1||Summon|1260401|1||Repeat&2|Damage|Random&1-Enemy-Follower|X||X=Cards|Allied-Field-Trait:17-Follower"
+    ]
+  },
+  "1561305": {
+    "id": "1561305",
+    "name": "辉煌的教团骑士长",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "光迹",
+    "cost": 6,
+    "attack": 5,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||SearchSummon|Random&1-Havencraft-Cost<4-Follower||Give|It|{Ward}",
+      "When|Enemy-Turn-Start||+1/+1|Allied-Field-Havencraft-Cost<4-Follower",
+      "Evolve||Replicate|Fanfare"
+    ]
+  },
+  "1561306": {
+    "id": "1561306",
+    "name": "铃晶杖使",
+    "cardSet": "神眷的棋盘",
     "class": "Havencraft",
     "rarity": "Silver",
     "type": "Follower",
     "trait": "",
-    "cost": 4,
-    "attack": 4,
-    "defense": 5,
+    "cost": 3,
+    "attack": 1,
+    "defense": 2,
     "countdown": 0,
     "effects": [
-      "Evolve||Banish|Select&1-Enemy-Field-Follower||Change|SuperEvolve||Banish|Select&1-Enemy-Field-SameName&Select-Follower"
+      "Fanfare||Damage|Select&1-Enemy-Follower|1",
+      "Fanfare||SplitDamage|Enemy-Follower|2",
+      "Evolve||Replicate|Fanfare"
     ]
   },
-  "1461303": {
-    "id": "1461303",
-    "name": "白羽石像",
-    "cardSet": "星云基础",
+  "1561401": {
+    "id": "1561401",
+    "name": "胡狼勇士",
+    "cardSet": "神眷的棋盘",
     "class": "Havencraft",
-    "rarity": "Silver",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 5,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Enhance&6||AuxSelect|Select&1-Enemy-Field-Follower||Destroy|It",
+      "Enhance&6||Evolve|ThisCard",
+      "Rush"
+    ]
+  },
+  "1561402": {
+    "id": "1561402",
+    "name": "圣律法典",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Bronze",
     "type": "Amulet",
     "trait": "",
     "cost": 1,
@@ -28,93 +285,77 @@
     "defense": 0,
     "countdown": 3,
     "effects": [
-      "LastWords||Summon|1060401|1",
-      "Engage&1||Countdown-1|ThisCard"
+      "Engage&1||Countdown-1|ThisCard",
+      "LastWords||Draw|2"
     ]
   },
-  "1461304": {
-    "id": "1461304",
-    "name": "亚巴顿",
-    "cardSet": "星云基础",
-    "class": "Havencraft",
-    "rarity": "Silver",
-    "type": "Follower",
-    "trait": "",
-    "cost": 9,
-    "attack": 6,
-    "defense": 8,
-    "countdown": 0,
-    "effects": [
-      "Storm",
-      "Strike||Destroy|Allied-Amulet"
-    ]
-  },
-  "1461401": {
-    "id": "1461401",
-    "name": "圣枪战士",
-    "cardSet": "星云基础",
-    "class": "Havencraft",
-    "rarity": "Bronze",
-    "type": "Follower",
-    "trait": "",
-    "cost": 4,
-    "attack": 3,
-    "defense": 5,
-    "countdown": 0,
-    "effects": [
-      "Fanfare||+2/+0|Select&1-Allied-Field-Other-Follower",
-      "Evolve||Replicate|Fanfare"
-    ]
-  },
-  "1461402": {
-    "id": "1461402",
-    "name": "投影鸟像",
-    "cardSet": "星云基础",
-    "class": "Havencraft",
-    "rarity": "Bronze",
-    "type": "Amulet",
-    "trait": "",
-    "cost": 4,
-    "attack": 0,
-    "defense": 0,
-    "countdown": 2,
-    "effects": [
-      "LastWords||Summon|1060402|1",
-      "Engage&2||Countdown-2|ThisCard"
-    ]
-  },
-  "1461403": {
-    "id": "1461403",
-    "name": "受祝勇士",
-    "cardSet": "星云基础",
+  "1561403": {
+    "id": "1561403",
+    "name": "传教士",
+    "cardSet": "神眷的棋盘",
     "class": "Havencraft",
     "rarity": "Bronze",
     "type": "Follower",
     "trait": "",
     "cost": 2,
     "attack": 1,
-    "defense": 3,
+    "defense": 1,
     "countdown": 0,
     "effects": [
-      "Ward",
-      "Aura"
+      "Fanfare||Mode&1|{Search|Random&1-Amulet}|{AuxSelect|Select&1-Allied-Field-Amulet||SameNameToHand|It}",
+      "Evolve||AuxSelect|Select&1-Allied-Hand-Amulet||Cost-1|It"
     ]
   },
-  "1461404": {
-    "id": "1461404",
-    "name": "清泉修士",
-    "cardSet": "星云基础",
+  "1561405": {
+    "id": "1561405",
+    "name": "战争牧师",
+    "cardSet": "神眷的棋盘",
     "class": "Havencraft",
     "rarity": "Bronze",
     "type": "Follower",
     "trait": "",
-    "cost": 5,
-    "attack": 3,
-    "defense": 5,
+    "cost": 3,
+    "attack": 2,
+    "defense": 3,
     "countdown": 0,
     "effects": [
-      "Ward",
-      "Fanfare||Restore|Allied-Leader|5"
+      "Fanfare||Restore|Allied-Leader|2",
+      "Enhance&5||Draw|2",
+      "Ward"
+    ]
+  },
+  "1561406": {
+    "id": "1561406",
+    "name": "杰出的教团圣殿骑士",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "光迹",
+    "cost": 3,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|GetBuff||If|TimesPerTurn&1||Damage|Enemy-Leader|1",
+      "When|Enemy-Turn-Start||Enemy-Turn-End-Until|Give|ThisCard|{Clash||Damage|Opposing|1}"
+    ]
+  },
+  "1561407": {
+    "id": "1561407",
+    "name": "坚定的教团骑士",
+    "cardSet": "神眷的棋盘",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "光迹",
+    "cost": 2,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|GetBuff||If|TimesPerTurn&1||Restore|Allied-Leader|1",
+      "When|Enemy-Turn-Start||Enemy-Turn-End-Until|Give|ThisCard|{Clash||+1/+1|ThisCard}"
     ]
   }
 }

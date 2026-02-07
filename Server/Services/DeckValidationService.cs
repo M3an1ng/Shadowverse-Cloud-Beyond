@@ -20,14 +20,13 @@ public class DeckValidationService : IDeckValidationService
     public async Task<DeckOperationResult<List<DeckCardEntryDto>>> ValidateAsync(
         CardClass deckClass,
         IReadOnlyList<DeckCardEntryDto> cards,
+        DeckEnvironment environment,
         bool requireComplete,
         CancellationToken cancellationToken)
     {
         if (cards == null || cards.Count == 0)
         {
-            return requireComplete
-                ? DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck must contain cards.")
-                : DeckOperationResult<List<DeckCardEntryDto>>.Ok(new List<DeckCardEntryDto>());
+            return DeckOperationResult<List<DeckCardEntryDto>>.Ok(new List<DeckCardEntryDto>());
         }
 
         var normalized = cards
@@ -66,8 +65,14 @@ public class DeckValidationService : IDeckValidationService
 
         var cardIds = normalized.Select(entry => entry.CardDefinitionId).ToList();
         var cardDefinitions = await _db.CardDefinitions
+            .Include(card => card.CardSetDefinition)
             .Where(card => cardIds.Contains(card.Id))
-            .Select(card => new { card.Id, card.Class })
+            .Select(card => new
+            {
+                card.Id,
+                card.Class,
+                Environments = card.CardSetDefinition != null ? card.CardSetDefinition.Environments : new List<DeckEnvironment>()
+            })
             .ToListAsync(cancellationToken);
 
         if (cardDefinitions.Count != cardIds.Count)
@@ -80,6 +85,11 @@ public class DeckValidationService : IDeckValidationService
             if (card.Class != CardClass.Neutral && card.Class != deckClass)
             {
                 return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck contains cards outside its class.");
+            }
+
+            if (card.Environments != null && card.Environments.Count > 0 && !card.Environments.Contains(environment))
+            {
+                return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck contains cards outside the selected environment.");
             }
         }
 

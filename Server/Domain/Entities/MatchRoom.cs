@@ -30,6 +30,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public MatchDeckSelection HostDeckSelection { get; set; } = new();
         public MatchDeckSelection GuestDeckSelection { get; set; } = new();
         public MatchDeckSelection AiDeckSelection { get; set; } = new();
+        public DevMatchConfig? DevMatchConfig { get; set; }
     }
 
     public enum MatchStatus

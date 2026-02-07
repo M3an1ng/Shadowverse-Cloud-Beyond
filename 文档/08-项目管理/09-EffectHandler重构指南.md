@@ -138,7 +138,7 @@
 
 | Handler类 | 重构前状态 | 重构后状态 | 完成状态 |
 |-----------|------------|------------|----------|
-| AddCardToHandEffectHandler | 继承EffectHandlerBase，手动目标处理 | 继承EffectHandlerBase + ITargetProcessingService | ✅ [COMPLETED] |
+| GetTokenEffectHandler | 继承EffectHandlerBase，手动目标处理 | 继承EffectHandlerBase + ITargetProcessingService | ✅ [COMPLETED] |
 | ModifyPPEffectHandler | 继承EffectHandlerBase，手动目标处理 | 继承EffectHandlerBase + ITargetProcessingService | ✅ [COMPLETED] |
 | ModifyEPEffectHandler | 继承EffectHandlerBase，手动目标处理 | 继承EffectHandlerBase + ITargetProcessingService | ✅ [COMPLETED] |
 | ModifyPPMaxEffectHandler | 继承EffectHandlerBase，手动目标处理 | 继承EffectHandlerBase + ITargetProcessingService | ✅ [COMPLETED] |

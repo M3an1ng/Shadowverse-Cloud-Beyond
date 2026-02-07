@@ -62,6 +62,45 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         }
     }
 
+    /// <summary>
+    /// Represents ability keyword value modifiers (e.g., Act cost adjustments) granted by a Buff.
+    /// </summary>
+    public class AbilityKeywordBuffEffect : IBuffEffect
+    {
+        public List<AbilityKeywordModification> Modifications { get; init; } = new();
+
+        public AbilityKeywordBuffEffect(List<AbilityKeywordModification> modifications)
+        {
+            Modifications = modifications ?? throw new ArgumentNullException(nameof(modifications));
+        }
+    }
+
+    /// <summary>
+    /// Represents ability suppression rules applied by a Buff.
+    /// </summary>
+    public class AbilitySuppressionBuffEffect : IBuffEffect
+    {
+        public RemoveAbilityMode RemoveMode { get; }
+        public IReadOnlyList<long> AbilityDefinitionIds { get; }
+        public AbilityKeyword AbilityKeyword { get; }
+
+        public AbilitySuppressionBuffEffect(
+            RemoveAbilityMode removeMode,
+            IEnumerable<long>? abilityDefinitionIds = null,
+            AbilityKeyword abilityKeyword = AbilityKeyword.None)
+        {
+            RemoveMode = removeMode;
+            AbilityKeyword = abilityKeyword;
+
+            var ids = abilityDefinitionIds ?? Array.Empty<long>();
+            AbilityDefinitionIds = ids
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList()
+                .AsReadOnly();
+        }
+    }
+
 
     /// <summary>
     /// A buff effect that removes (suppresses) specific keywords from a card.
@@ -91,6 +130,14 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     public record StatModification(StatType Stat, int Value, ModifierLayer Layer);
 
     /// <summary>
+    /// Defines a single modification to a specific ability keyword value.
+    /// </summary>
+    /// <param name="Keyword">The ability keyword being modified (e.g., Act).</param>
+    /// <param name="Value">The value of the modification (can be positive or negative).</param>
+    /// <param name="Layer">The layer in which this modification applies (determines calculation order).</param>
+    public record AbilityKeywordModification(AbilityKeyword Keyword, int Value, ModifierLayer Layer);
+
+    /// <summary>
     /// Defines the layers for applying stat modifications to ensure correct calculation order.
     /// Example: Base -> Additive -> Multiplicative -> Set
     /// </summary>
@@ -113,7 +160,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     public enum StatType
     {
         Attack,
-        Defense,
+        Health,
         Cost
         // Add other relevant stats (MaxEP, etc.)
     }

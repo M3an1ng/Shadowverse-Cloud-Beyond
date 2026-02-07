@@ -1,0 +1,19 @@
+## 1. Implementation
+- [ ] 1.1 Add battle preview container markup in the game page
+- [ ] 1.2 Add positioning and responsive styles for the preview container
+- [ ] 1.3 Add a UI helper to render the preview slate from a card instance
+- [ ] 1.4 Wire card click handling to update the preview panel
+- [ ] 1.5 Add initial placeholder state for when no card is selected
+- [ ] 1.6 Expose buff source metadata on card instances for preview rendering
+- [ ] 1.7 Render buff source list between description and preview actions
+- [ ] 1.8 Style preview buff list to match preview slate
+- [ ] 1.9 Add aggregated buff stat summary line at top of buff list
+- [ ] 1.10 Expose card counter values on card instances for preview display
+- [ ] 1.11 Render counter summary list in battle preview with localized system labels
+- [ ] 1.12 Style counter summary list to match preview slate
+- [ ] 1.13 Expose ArtDetail on card instances for preview detail modal
+- [ ] 1.14 Add preview header detail button with disabled state when ArtDetail missing
+- [ ] 1.15 Render detail modal on click and dismiss on any click
+- [ ] 1.16 Manual smoke test in the battle UI
+- [x] 1.17 Extract shared preview slate renderer for battle/editor preview
+- [x] 1.18 Wire shared renderer with countdown + detail support in both preview contexts

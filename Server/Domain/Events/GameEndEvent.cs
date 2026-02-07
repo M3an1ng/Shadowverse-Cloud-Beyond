@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -17,8 +18,8 @@ public sealed class GameEndEvent : GameEventBase, ICommittableEvent, ILogAnnounc
     public Guid LoserId { get; }
     public string? Reason { get; }
 
-    public GameEndEvent(Guid winnerId, Guid loserId, string? reason = null)
-        : base(EventType.GameEnd)
+    public GameEndEvent(Guid winnerId, Guid loserId, string? reason = null, Guid? eventId = null, DateTime? timestamp = null)
+        : base(EventType.GameEnd, eventId, timestamp)
     {
         WinnerId = winnerId;
         LoserId = loserId;
@@ -44,10 +45,13 @@ public sealed class GameEndEvent : GameEventBase, ICommittableEvent, ILogAnnounc
 
     public string GetAnnouncement(GameState gameState)
     {
-        var winnerToken = gameState.InGameIds.Format(InGameIdKind.Player, WinnerId);
-        var loserToken = gameState.InGameIds.Format(InGameIdKind.Player, LoserId);
+        var winner = gameState.GetPlayerState(WinnerId);
+        var loser = gameState.GetPlayerState(LoserId);
+        var winnerToken = winner != null ? AnnouncementTokens.Player(winner) : AnnouncementTokens.PlayerId(WinnerId);
+        var loserToken = loser != null ? AnnouncementTokens.Player(loser) : AnnouncementTokens.PlayerId(LoserId);
+
         return string.IsNullOrWhiteSpace(Reason)
-            ? $"game_end winner={winnerToken} loser={loserToken}"
-            : $"game_end winner={winnerToken} loser={loserToken} reason={Reason}";
+            ? $"{winnerToken}获胜，{loserToken}败北。"
+            : $"{winnerToken}获胜，{loserToken}败北。原因：{Reason}";
     }
 }

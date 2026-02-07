@@ -31,12 +31,6 @@ export function showAddNodeMenu(editor, button) {
 
     const options = editor.getCurrentEditingOptions() || [];
 
-    console.log(
-        "DslEditor: Showing options menu with",
-        options.length,
-        "options:",
-        options
-    );
 
     if (options.length === 0) {
         const noOptions = document.createElement("div");
@@ -51,9 +45,9 @@ export function showAddNodeMenu(editor, button) {
             item.style.cssText = `
                 padding: 12px 16px;
                 cursor: pointer;
-                border-bottom: 1px solid #e9ecef;
-                background: #ffffff;
-                transition: background-color 0.15s ease;
+                border-bottom: 1px solid #2c3e52;
+                background: #223041;
+                transition: background-color 0.15s ease, color 0.15s ease;
             `;
 
             const label = document.createElement("span");
@@ -61,7 +55,7 @@ export function showAddNodeMenu(editor, button) {
             label.textContent = option.label;
             label.style.cssText = `
                 font-weight: 600;
-                color: #1a1a1a;
+                color: #e2e8f0;
                 font-size: 14px;
                 display: block;
             `;
@@ -73,7 +67,7 @@ export function showAddNodeMenu(editor, button) {
                 description.textContent = option.description;
                 description.style.cssText = `
                     font-size: 12px;
-                    color: #4a5568;
+                    color: #9fb3c8;
                     margin-top: 3px;
                     line-height: 1.3;
                 `;
@@ -81,25 +75,24 @@ export function showAddNodeMenu(editor, button) {
             }
 
             item.addEventListener("mouseenter", () => {
-                item.style.background = "#2196f3";
-                label.style.color = "#ffffff";
+                item.style.background = "#2f4b6c";
+                label.style.color = "#f8fafc";
                 if (option.description) {
                     const desc = item.querySelector('.dsl-option-description');
-                    if (desc) desc.style.color = "#e3f2fd";
+                    if (desc) desc.style.color = "#dbeafe";
                 }
             });
 
             item.addEventListener("mouseleave", () => {
-                item.style.background = "#ffffff";
-                label.style.color = "#1a1a1a";
+                item.style.background = "#223041";
+                label.style.color = "#e2e8f0";
                 if (option.description) {
                     const desc = item.querySelector('.dsl-option-description');
-                    if (desc) desc.style.color = "#4a5568";
+                    if (desc) desc.style.color = "#9fb3c8";
                 }
             });
 
             item.addEventListener("click", () => {
-                console.log("DslEditor: Option selected:", option);
                 editor.addNode(option);
                 removeMenu();
             });
@@ -108,10 +101,8 @@ export function showAddNodeMenu(editor, button) {
         };
 
         const groupedOptions = editor.groupOptionsByType(options);
-        console.log('DslEditor: Grouped options:', groupedOptions);
 
         Object.entries(groupedOptions).forEach(([groupName, groupOptions]) => {
-            console.log(`DslEditor: Rendering group "${groupName}" with ${groupOptions.length} options:`, groupOptions);
             const shouldRenderDirect = groupOptions.length === 1 && groupOptions[0].type === "listPipeline";
             if (shouldRenderDirect) {
                 menu.appendChild(createDirectOptionItem(groupOptions[0]));
@@ -124,14 +115,14 @@ export function showAddNodeMenu(editor, button) {
                     position: relative;
                     padding: 12px 16px;
                     cursor: pointer;
-                    border-bottom: 1px solid #e9ecef;
-                    background: #f8f9fa;
+                    border-bottom: 1px solid #2c3e52;
+                    background: #1b2a3b;
                     font-weight: 600;
-                    color: #495057;
+                    color: #e2e8f0;
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    transition: background-color 0.15s ease;
+                    transition: background-color 0.15s ease, color 0.15s ease;
                     font-size: 14px;
                 `;
 
@@ -141,15 +132,19 @@ export function showAddNodeMenu(editor, button) {
 
                 const arrow = document.createElement("span");
                 arrow.textContent = "▶";
-                arrow.style.cssText = "font-size: 12px; color: #495057; margin-left: 8px;";
+                arrow.style.cssText = "font-size: 12px; color: #9fb3c8; margin-left: 8px;";
                 groupItem.appendChild(arrow);
 
                 groupItem.addEventListener("mouseenter", () => {
-                    groupItem.style.background = "#e9ecef";
+                    groupItem.style.background = "#2b3e57";
+                    groupItem.style.color = "#f8fafc";
+                    arrow.style.color = "#e2e8f0";
                 });
 
                 groupItem.addEventListener("mouseleave", () => {
-                    groupItem.style.background = "#f8f9fa";
+                    groupItem.style.background = "#1b2a3b";
+                    groupItem.style.color = "#e2e8f0";
+                    arrow.style.color = "#9fb3c8";
                 });
 
                 let hoverTimeout;
@@ -231,10 +226,10 @@ export function showAddNodeMenu(editor, button) {
         max-height: ${maxMenuHeight}px;
         overflow-y: auto;
         overflow-x: hidden;
-        background: #ffffff;
-        border: 1px solid #bdc3c7;
+        background: #1b2a3b;
+        border: 1px solid #2c3e52;
         border-radius: 6px;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.35);
         min-width: 200px;
         max-width: 300px;
     `;
@@ -283,14 +278,14 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         max-height: ${maxSubmenuHeight}px;
         overflow-y: auto;
         overflow-x: hidden;
-        background: #ffffff;
-        border: 1px solid #bdc3c7;
+        background: #1b2a3b;
+        border: 1px solid #2c3e52;
         border-radius: 6px;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.35);
         z-index: 1002;
         padding: 6px 0;
         font-size: 14px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     `;
 
     options.forEach((option) => {
@@ -300,9 +295,9 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
             padding: 10px 16px;
             cursor: pointer;
             border-bottom: none;
-            background: #ffffff;
-            transition: background-color 0.15s ease;
-            border-radius: 3px;
+            background: #223041;
+            transition: background-color 0.15s ease, color 0.15s ease;
+            border-radius: 4px;
             margin: 2px 4px;
         `;
 
@@ -311,7 +306,7 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         label.textContent = option.label;
         label.style.cssText = `
             font-weight: 500;
-            color: #1a1a1a;
+            color: #e2e8f0;
             font-size: 14px;
             display: block;
         `;
@@ -323,7 +318,7 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
             description.textContent = option.description;
             description.style.cssText = `
                 font-size: 12px;
-                color: #4a5568;
+                color: #9fb3c8;
                 margin-top: 3px;
                 line-height: 1.3;
             `;
@@ -331,26 +326,25 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         }
 
         item.addEventListener("mouseenter", () => {
-            item.style.background = "#2196f3";
+            item.style.background = "#2f4b6c";
             item.style.borderRadius = "4px";
-            label.style.color = "#ffffff";
+            label.style.color = "#f8fafc";
             if (option.description) {
                 const desc = item.querySelector('.dsl-option-description');
-                if (desc) desc.style.color = "#e3f2fd";
+                if (desc) desc.style.color = "#dbeafe";
             }
         });
 
         item.addEventListener("mouseleave", () => {
-            item.style.background = "#ffffff";
-            label.style.color = "#1a1a1a";
+            item.style.background = "#223041";
+            label.style.color = "#e2e8f0";
             if (option.description) {
                 const desc = item.querySelector('.dsl-option-description');
-                if (desc) desc.style.color = "#4a5568";
+                if (desc) desc.style.color = "#9fb3c8";
             }
         });
 
         item.addEventListener("click", () => {
-            console.log("DslEditor: Option selected:", option);
             editor.addNode(option);
             mainMenu.remove();
             submenu.remove();
@@ -375,23 +369,23 @@ export function addScrollbarStyles(editor, element) {
         }
 
         .${uniqueClass}::-webkit-scrollbar-track {
-            background: #f1f1f1;
+            background: #1b2a3b;
             border-radius: 4px;
         }
 
         .${uniqueClass}::-webkit-scrollbar-thumb {
-            background: #c1c1c1;
+            background: #3a4b60;
             border-radius: 4px;
             transition: background 0.2s ease;
         }
 
         .${uniqueClass}::-webkit-scrollbar-thumb:hover {
-            background: #a1a1a1;
+            background: #4a607a;
         }
 
         .${uniqueClass} {
             scrollbar-width: thin;
-            scrollbar-color: #c1c1c1 #f1f1f1;
+            scrollbar-color: #3a4b60 #1b2a3b;
         }
     `;
 

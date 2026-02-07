@@ -32,7 +32,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <param name="context">The game context.</param>
         /// <returns>The opponent player's state.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the opponent is not found in the game state.</exception>
-        public static PlayerState GetOpponentPlayer(this GameContext context)
+        public static PlayerState GetIdlePlayer(this GameContext context)
         {
             return context.CurrentGameState.GetOpponentPlayerState(context.RequestingPlayerId)
                 ?? throw new InvalidOperationException($"Opponent for player with ID {context.RequestingPlayerId} not found in game state.");
@@ -45,6 +45,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <returns>The source IAbility instance, or null if the effect has no source ability or cannot be found.</returns>
         public static IAbility? GetCurrentAbility(this GameContext context)
         {
+            if (context.CurrentEffect?.SourceAbility != null)
+            {
+                return context.CurrentEffect.SourceAbility;
+            }
+
+            if (context.SourceAbility != null)
+            {
+                return context.SourceAbility;
+            }
+
             if (context.CurrentEffect?.sourceAbilityId == null)
             {
                 return null;
@@ -57,6 +67,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public static PlayerState GetSourceCardOwner(this GameContext context)
         {
             return context.CurrentGameState.GetPlayerState(context.SourceCard!.OwnerPlayerId)
+                ?? throw new InvalidOperationException($"Source card owner with ID {context.SourceCard.OwnerPlayerId} not found in game state.");
+        }
+
+        public static PlayerState GetSourceCardOpponent(this GameContext context)
+        {
+            return context.CurrentGameState.GetOpponentPlayerState(context.SourceCard!.OwnerPlayerId)
                 ?? throw new InvalidOperationException($"Source card owner with ID {context.SourceCard.OwnerPlayerId} not found in game state.");
         }
     }

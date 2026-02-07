@@ -9,6 +9,7 @@ public interface IDeckValidationService
     Task<DeckOperationResult<List<DeckCardEntryDto>>> ValidateAsync(
         CardClass deckClass,
         IReadOnlyList<DeckCardEntryDto> cards,
+        DeckEnvironment environment,
         bool requireComplete,
         CancellationToken cancellationToken);
 }

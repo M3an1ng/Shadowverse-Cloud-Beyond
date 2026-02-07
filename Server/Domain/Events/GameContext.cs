@@ -1,10 +1,11 @@
 using System;
-using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using AutoMapper;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Auras;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -13,6 +14,7 @@ using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Events.Services;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -31,6 +33,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public IMapper Mapper { get; }
         public IAbilityManager AbilityManager { get; }
         public IBuffManager BuffManager { get; }
+        public IAuraManager AuraManager { get; }
         public IBuffService BuffService { get; }
 
         /// <summary>
@@ -49,28 +52,48 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// This is used to align interactive prompts (e.g., Choose) with the transaction phase.
         /// </summary>
         public bool IsCancellable { get; init; }
+        public bool IsAuraRefresh { get; init; }
 
         [DslExposable("触发事件", Description = "触发当前能力的游戏事件")]
         public IGameEvent? TriggeringEvent { get; init; }
 
-        [DslExposable("源卡牌", Description = "触发当前效果的源卡牌")]
+        [DslExposable("本卡牌", Description = "当前效果的持有卡牌")]
         public CardInstance? SourceCard { get; init; }
 
-        [DslExposable("请求玩家", Description = "发起当前动作的玩家")]
+        public IAbility? SourceAbility { get; init; }
+
+        [DslExposable("本能力", Description = "当前处理的能力实例")]
+        public Ability? Ability => SourceAbility as Ability;
+
+        [DslExposable("活跃玩家", Description = "发起当前动作的玩家")]
         public PlayerState RequestingPlayer => this.GetRequestingPlayer();
 
-        [DslExposable("敌方玩家", Description = "未发起当前动作的玩家")]
-        public PlayerState OpponentPlayer => this.GetOpponentPlayer();
+        [DslExposable("闲置玩家", Description = "非当前动作的玩家")]
+        public PlayerState IdlePlayer => this.GetIdlePlayer();
 
-        [DslExposable("源卡牌拥有者", Description = "源卡牌归属的玩家")]
-        public PlayerState Owner => this.GetSourceCardOwner();
+        [DslExposable("我方玩家", Description = "本卡牌归属的玩家")]
+        public PlayerState Owner => SourceCard != null ? this.GetSourceCardOwner() : this.GetRequestingPlayer();
 
-        [DslExposable("当前效果", Description = "当前正在处理的效果请求（用于连锁能力/输出读取等）")]
+        [DslExposable("敌方玩家", Description = "本卡牌敌对的玩家")]
+        public PlayerState Opponent => SourceCard != null ? this.GetSourceCardOpponent() : this.GetIdlePlayer();
+
+        [DslExposable("当前效果", Description = "当前执行中的效果")]
         public Effect? CurrentEffect { get; init; }
 
-        [DslExposable("已选目标", Description = "当前效果携带的已选目标列表（连锁能力可用于复用或判断）")]
+        [DslExposable("事件历史", Description = "当前对局的事件历史读取器")]
+        public EventHistoryReader EventHistory { get; }
+
+        public IReadOnlyDictionary<string, List<TargetInfo>> ResolvedTargets { get; init; } = new Dictionary<string, List<TargetInfo>>();
+
+        [DslExposable("目标池", Description = "当前能力已解析的卡牌目标池")]
+        public IReadOnlyDictionary<string, List<CardInstance>> ResolvedTargetCards { get; init; } = new Dictionary<string, List<CardInstance>>();
+
         public IReadOnlyList<TargetInfo> SelectedTargets =>
             (IReadOnlyList<TargetInfo>?)CurrentEffect?.SelectedTargets ?? Array.Empty<TargetInfo>();
+
+        //[DslExposable("效果目标", Description = "当前效果携带的已选卡牌列表")]
+        //public IReadOnlyList<CardInstance> SelectedTargetCards =>
+        //    ExtractCardTargets(CurrentEffect?.SelectedTargets);
 
         public GameContext(
             IServiceProvider serviceProvider,
@@ -83,7 +106,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             CardInstance? sourceCard = null,
             Effect? currentEffect = null,
             IBuffService? buffService = null,
-            bool isCancellable = false)
+            bool isCancellable = false,
+            bool isAuraRefresh = false,
+            IReadOnlyDictionary<string, List<TargetInfo>>? resolvedTargets = null)
         {
             ServiceProvider = serviceProvider;
             Mapper = mapper;
@@ -94,15 +119,48 @@ namespace ShadowverseBeyond.Server.Domain.Events
             SourceCard = sourceCard;
             CurrentEffect = currentEffect;
             IsCancellable = isCancellable;
+            IsAuraRefresh = isAuraRefresh;
+            ResolvedTargets = resolvedTargets ?? new Dictionary<string, List<TargetInfo>>();
+            ResolvedTargetCards = ExtractCardTargets(ResolvedTargets);
 
             // Get managers directly from the GameState
             AbilityManager = currentGameState.AbilityManager;
             BuffManager = currentGameState.BuffManager;
+            AuraManager = currentGameState.AuraManager ?? NullAuraManager.Instance;
             BuffService = serviceProvider.GetRequiredService<IBuffService>();
+            EventHistory = new EventHistoryReader(serviceProvider.GetRequiredService<IEventHistoryService>(), currentGameState.GameId);
 
             // Set the ambient context upon creation.
             _accessor = accessor;
             _accessor.GameContext = this;
+        }
+
+        private static IReadOnlyList<CardInstance> ExtractCardTargets(IEnumerable<TargetInfo>? targets)
+        {
+            if (targets == null)
+            {
+                return Array.Empty<CardInstance>();
+            }
+
+            return targets
+                .Where(target => target.Type == TargetType.Card && target.Card != null)
+                .Select(target => target.Card!)
+                .ToList();
+        }
+
+        private static IReadOnlyDictionary<string, List<CardInstance>> ExtractCardTargets(IReadOnlyDictionary<string, List<TargetInfo>> targets)
+        {
+            if (targets == null || targets.Count == 0)
+            {
+                return new Dictionary<string, List<CardInstance>>();
+            }
+
+            return targets.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value
+                    .Where(target => target.Type == TargetType.Card && target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList());
         }
 
         /// <summary>

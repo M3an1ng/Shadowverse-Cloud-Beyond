@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -16,11 +17,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("新的SEP最大值", "更新后的SEP最大值。")]
         public int MaxSep { get; }
 
-        [GameEventParameter("目标玩家", "SEP最大值被更新的玩家。")]
+        [GameEventParameter("目标玩家", "SEP最大值被更新的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public SepMaxUpdateEvent(PlayerState player, int maxSep)
-            : base(EventType.SepMaxUpdated)
+        public SepMaxUpdateEvent(PlayerState player, int maxSep, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.SepMaxUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             MaxSep = maxSep;
@@ -40,10 +41,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
-            return playerId.HasValue
-                ? $"sep-max player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} max={MaxSep}"
-                : "sep-max";
+            var player = TargetPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}的SEP上限变为 {AnnouncementTokens.Number(MaxSep)}。";
         }
     }
 }

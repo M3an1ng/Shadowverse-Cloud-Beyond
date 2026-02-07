@@ -5,6 +5,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -16,11 +17,27 @@ namespace ShadowverseBeyond.Server.Controllers
     {
         private readonly ApplicationDbContext _context;
         private readonly ILogger<AbilitiesController> _logger;
+        private readonly IGameDataProvider _gameDataProvider;
+        private const string DataRevisionHeader = "X-Data-Revision";
 
-        public AbilitiesController(ApplicationDbContext context, ILogger<AbilitiesController> logger)
+        public AbilitiesController(
+            ApplicationDbContext context,
+            ILogger<AbilitiesController> logger,
+            IGameDataProvider gameDataProvider)
         {
             _context = context;
             _logger = logger;
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
+        }
+
+        private void AppendDataRevisionHeader()
+        {
+            Response.Headers[DataRevisionHeader] = _gameDataProvider.DataRevision.ToString();
+        }
+
+        public sealed class AbilityCountRequest
+        {
+            public List<int> CardIds { get; set; } = new();
         }
 
         /// <summary>
@@ -37,6 +54,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 _logger.LogInformation("Attempting to get all abilities");
 
                 var abilityEntities = await _context.CardAbilities
+                    .AsNoTracking()
                     .Where(ca => ca.IsActive)
                     .ToListAsync();
 
@@ -57,6 +75,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     };
                 }).ToList();
 
+                AppendDataRevisionHeader();
                 _logger.LogInformation("Successfully retrieved {Count} abilities", abilities.Count);
                 return Ok(abilities);
             }
@@ -83,6 +102,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 _logger.LogInformation("Attempting to get ability with ID: {AbilityId}", id);
 
                 var cardAbility = await _context.CardAbilities
+                    .AsNoTracking()
                     .FirstOrDefaultAsync(ca => ca.Id == id && ca.IsActive);
 
                 if (cardAbility == null)
@@ -146,6 +166,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     jsonConfig = jsonConfig
                 };
 
+                AppendDataRevisionHeader();
                 _logger.LogInformation("Successfully retrieved ability {AbilityId}", id);
                 return Ok(ability);
             }
@@ -209,6 +230,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 cardAbility.UpdateTimestamp();
 
                 await _context.SaveChangesAsync();
+                await _gameDataProvider.RefreshCacheAsync();
 
                 _logger.LogInformation("Ability {AbilityId} updated successfully", id);
                 return Ok(new { message = "Ability updated", id });
@@ -296,6 +318,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     cardDefinition.AbilityIds.Add(entity.Id);
                     await _context.SaveChangesAsync();
                 }
+                await _gameDataProvider.RefreshCacheAsync();
 
                 var createdKeywords = ExtractAbilityKeywords(entity.JsonConfig);
                 var created = new
@@ -318,6 +341,93 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 _logger.LogError(ex, "Error creating new ability");
                 return StatusCode(500, new { error = "Failed to create ability" });
+            }
+        }
+
+        /// <summary>
+        /// 获取指定卡牌的能力数量快照
+        /// </summary>
+        [HttpPost("counts")]
+        [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<ActionResult<IEnumerable<object>>> GetAbilityCounts([FromBody] AbilityCountRequest request)
+        {
+            try
+            {
+                var cardIds = request?.CardIds?
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToList() ?? new List<int>();
+
+                if (cardIds.Count == 0)
+                {
+                    AppendDataRevisionHeader();
+                    return Ok(new List<object>());
+                }
+
+                var cards = await _context.CardDefinitions
+                    .AsNoTracking()
+                    .Where(card => cardIds.Contains(card.Id))
+                    .Select(card => new { card.Id, card.AbilityIds })
+                    .ToListAsync();
+
+                var abilityIdsByCard = cards.ToDictionary(
+                    card => card.Id,
+                    card => card.AbilityIds ?? new List<long>());
+
+                var abilityIds = abilityIdsByCard.Values
+                    .SelectMany(ids => ids)
+                    .Distinct()
+                    .ToList();
+
+                var abilitiesByCard = await _context.CardAbilities
+                    .AsNoTracking()
+                    .Where(ability => ability.IsActive && cardIds.Contains(ability.CardId))
+                    .Select(ability => new { ability.Id, ability.CardId })
+                    .ToListAsync();
+
+                var activeAbilityIds = abilityIds.Count == 0
+                    ? new HashSet<long>()
+                    : new HashSet<long>(await _context.CardAbilities
+                        .AsNoTracking()
+                        .Where(ability => ability.IsActive && abilityIds.Contains(ability.Id))
+                        .Select(ability => ability.Id)
+                        .ToListAsync());
+
+                var abilitiesByCardId = abilitiesByCard
+                    .GroupBy(ability => ability.CardId)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Select(ability => ability.Id).ToHashSet());
+
+                var results = new List<object>(cardIds.Count);
+                foreach (var cardId in cardIds)
+                {
+                    var counted = abilitiesByCardId.TryGetValue(cardId, out var ids)
+                        ? new HashSet<long>(ids)
+                        : new HashSet<long>();
+
+                    if (abilityIdsByCard.TryGetValue(cardId, out var abilityList))
+                    {
+                        foreach (var abilityId in abilityList)
+                        {
+                            if (activeAbilityIds.Contains(abilityId))
+                            {
+                                counted.Add(abilityId);
+                            }
+                        }
+                    }
+
+                    results.Add(new { cardId, count = counted.Count });
+                }
+
+                AppendDataRevisionHeader();
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving ability counts snapshot");
+                return StatusCode(500, new { error = "Failed to retrieve ability counts" });
             }
         }
 

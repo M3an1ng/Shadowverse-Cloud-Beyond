@@ -73,6 +73,34 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             return derived.Keywords;
         }
 
+        public int GetEffectiveAbilityKeywordValue(CardInstance card, AbilityKeyword keyword, int baseValue, GameContext gameContext)
+        {
+            var value = baseValue;
+            var orderedBuffs = ResolveBuffManager(gameContext).GetBuffsForCard(card.InstanceId);
+
+            foreach (var buff in orderedBuffs)
+            {
+                if (!_buffEvaluator.IsApplicable(buff, card, gameContext))
+                {
+                    continue;
+                }
+
+                foreach (var effect in buff.Effects.OfType<AbilityKeywordBuffEffect>())
+                {
+                    var modifiers = effect.Modifications
+                        .Where(m => m.Keyword == keyword)
+                        .OrderBy(m => m.Layer);
+
+                    foreach (var mod in modifiers)
+                    {
+                        value = ApplyKeywordModification(value, mod);
+                    }
+                }
+            }
+
+            return Math.Max(0, value);
+        }
+
         private DerivedStateCacheEntry GetDerivedState(CardInstance card, GameContext gameContext)
         {
             var gameState = gameContext.CurrentGameState;
@@ -119,7 +147,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 }
 
                 var healthMods = buff.GetStatModifications()
-                    .Where(m => m.Stat == StatType.Defense)
+                    .Where(m => m.Stat == StatType.Health)
                     .OrderBy(m => m.Layer);
                 foreach (var mod in healthMods)
                 {
@@ -164,9 +192,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             return new DerivedStateCacheEntry
             {
                 RefreshCycleId = refreshCycleId,
-                Attack = Math.Max(0, attack),
-                MaxHealth = Math.Max(0, maxHealth),
-                Cost = Math.Max(0, cost),
+                Attack = attack,
+                MaxHealth = maxHealth,
+                Cost = cost,
                 WasSilenced = card.IsSilenced,
                 Keywords = card.IsSilenced ? [] : [.. grantedKeywords]
             };
@@ -179,6 +207,18 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 ModifierLayer.Additive => currentValue + modification.Value,
                 ModifierLayer.Multiplicative => (int)(currentValue * (modification.Value / 100.0)),
                 ModifierLayer.Set => modification.Value,
+                ModifierLayer.Base => modification.Value,
+                _ => currentValue,
+            };
+        }
+
+        private static int ApplyKeywordModification(int currentValue, AbilityKeywordModification modification)
+        {
+            return modification.Layer switch
+            {
+                ModifierLayer.Additive => currentValue + modification.Value,
+                ModifierLayer.Set => modification.Value,
+                ModifierLayer.Multiplicative => (int)(currentValue * (modification.Value / 100.0)),
                 ModifierLayer.Base => modification.Value,
                 _ => currentValue,
             };
@@ -216,56 +256,123 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public IReadOnlyList<BuffRemovedEvent> CollectEndOfTurnExpiryEvents(GameContext context)
         {
             var events = new List<BuffRemovedEvent>();
+            var currentPlayerId = context.CurrentGameState.CurrentPlayerId;
             foreach (var card in context.CurrentGameState.AllCards)
             {
                 var buffs = ResolveBuffManager(context).GetBuffsForCard(card.InstanceId);
                 foreach (var buff in buffs)
                 {
-                    if (buff.DurationType != DurationType.EndOfTurn)
+                    if (buff.DurationType != DurationType.EndOfTurn
+                        && buff.DurationType != DurationType.OwnerTurnEnd
+                        && buff.DurationType != DurationType.OpponentTurnEnd)
                     {
                         continue;
                     }
 
-                    var sourceCard = ResolveSourceCard(context, buff.SourceAbilityId);
-                    events.Add(new BuffRemovedEvent(buff, sourceCard, "duration_end_of_turn"));
+                    if (buff.DurationType == DurationType.OwnerTurnEnd || buff.DurationType == DurationType.OpponentTurnEnd)
+                    {
+                        if (!currentPlayerId.HasValue)
+                        {
+                            continue;
+                        }
+
+                        var isOwnerTurn = card.OwnerPlayerId == currentPlayerId.Value;
+                        if (buff.DurationType == DurationType.OwnerTurnEnd && !isOwnerTurn)
+                        {
+                            continue;
+                        }
+
+                        if (buff.DurationType == DurationType.OpponentTurnEnd && isOwnerTurn)
+                        {
+                            continue;
+                        }
+                    }
+
+                    var remaining = NormalizeDurationParameter(buff.DurationParameter);
+                    if (remaining <= 1)
+                    {
+                        var sourceCard = ResolveSourceCard(context, buff.SourceAbilityId);
+                        var reason = buff.DurationType switch
+                        {
+                            DurationType.OwnerTurnEnd => "duration_owner_turn_end",
+                            DurationType.OpponentTurnEnd => "duration_opponent_turn_end",
+                            _ => "duration_end_of_turn"
+                        };
+                        events.Add(new BuffRemovedEvent(buff, sourceCard, reason));
+                        continue;
+                    }
+
+                    buff.DurationParameter = remaining - 1;
                 }
             }
 
             return events;
         }
 
-        public IReadOnlyList<BuffRemovedEvent> CollectStartOfNextTurnExpiryEvents(GameContext context, PlayerState startingPlayer)
+        public IReadOnlyList<BuffRemovedEvent> CollectStartOfTurnExpiryEvents(GameContext context, PlayerState startingPlayer)
         {
             var events = new List<BuffRemovedEvent>();
             foreach (var card in context.CurrentGameState.AllCards)
             {
-                if (card.OwnerPlayerId != startingPlayer.PlayerId)
-                {
-                    continue;
-                }
-
                 var buffs = ResolveBuffManager(context).GetBuffsForCard(card.InstanceId);
                 foreach (var buff in buffs)
                 {
-                    if (buff.DurationType != DurationType.StartOfNextTurn)
+                    if (buff.DurationType != DurationType.StartOfTurn
+                        && buff.DurationType != DurationType.OwnerTurnStart
+                        && buff.DurationType != DurationType.OpponentTurnStart)
                     {
                         continue;
                     }
 
-                    var sourceCard = ResolveSourceCard(context, buff.SourceAbilityId);
-                    events.Add(new BuffRemovedEvent(buff, sourceCard, "duration_start_of_next_turn"));
+                    if (buff.DurationType == DurationType.OwnerTurnStart || buff.DurationType == DurationType.OpponentTurnStart)
+                    {
+                        var isOwnerTurn = card.OwnerPlayerId == startingPlayer.PlayerId;
+                        if (buff.DurationType == DurationType.OwnerTurnStart && !isOwnerTurn)
+                        {
+                            continue;
+                        }
+
+                        if (buff.DurationType == DurationType.OpponentTurnStart && isOwnerTurn)
+                        {
+                            continue;
+                        }
+                    }
+
+                    var remaining = NormalizeDurationParameter(buff.DurationParameter);
+                    if (remaining <= 1)
+                    {
+                        var sourceCard = ResolveSourceCard(context, buff.SourceAbilityId);
+                        var reason = buff.DurationType switch
+                        {
+                            DurationType.OwnerTurnStart => "duration_owner_turn_start",
+                            DurationType.OpponentTurnStart => "duration_opponent_turn_start",
+                            _ => "duration_start_of_turn"
+                        };
+                        events.Add(new BuffRemovedEvent(buff, sourceCard, reason));
+                        continue;
+                    }
+
+                    buff.DurationParameter = remaining - 1;
                 }
             }
 
             return events;
+        }
+
+        private static int NormalizeDurationParameter(int? durationParameter)
+        {
+            return durationParameter.HasValue && durationParameter.Value > 0
+                ? durationParameter.Value
+                : 1;
         }
         public DomainOperationResult ApplyKeywordBuff(
             GameContext context,
             CardInstance target,
             List<CardKeyword> keywords,
             Domain.Abilities.Common.DurationType durationType,
-            object? durationParameter,
-            bool isNonStackable = false)
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true)
         {
             var sourceAbility = context.GetCurrentAbility();
             if (context.SourceCard == null || sourceAbility == null)
@@ -278,10 +385,14 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     keywords: keywords,
                     durationType: durationType,
                     durationParameter: durationParameter,
-                    currentTurn: currentTurn,
-                    isNonStackable: isNonStackable);
+                    currentTurn: currentTurn);
 
-                return ApplyBuffProcess(systemKeywordBuff, context);
+                if (!string.IsNullOrWhiteSpace(effectKey) && systemKeywordBuff.SourceAbilityId != Guid.Empty)
+                {
+                    systemKeywordBuff.EffectKey = effectKey;
+                }
+
+                return ApplyBuffProcess(systemKeywordBuff, context, canStack);
             }
 
             var sourcePlayer = context.CurrentGameState.GetPlayerState(context.SourceCard.OwnerPlayerId);
@@ -297,19 +408,37 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 keywords: keywords,
                 durationType: durationType,
                 durationParameter: durationParameter,
-                currentTurn: sourcePlayer.TurnNumber,
-                isNonStackable: isNonStackable
+                currentTurn: sourcePlayer.TurnNumber
             );
 
-            return ApplyBuffProcess(keywordBuff, context);
+            if (!string.IsNullOrWhiteSpace(effectKey) && keywordBuff.SourceAbilityId != Guid.Empty)
+            {
+                keywordBuff.EffectKey = effectKey;
+            }
+
+            return ApplyBuffProcess(keywordBuff, context, canStack);
         }
 
         public DomainOperationResult ApplyRemoveKeywordBuff(
             GameContext context,
             CardInstance target,
-            List<CardKeyword> keywordsToRemove)
+            List<CardKeyword> keywordsToRemove,
+            DurationType durationType,
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true)
         {
             var sourceAbilityToRemove = context.GetCurrentAbility();
+            _logger.LogDebug(
+                "ApplyRemoveKeywordBuff: Target={TargetId} Keywords=[{Keywords}] DurationType={DurationType} DurationParameter={DurationParameter} EffectKey={EffectKey} CanStack={CanStack} SourceAbilityId={SourceAbilityId}",
+                target?.InstanceId,
+                string.Join(",", keywordsToRemove ?? new List<CardKeyword>()),
+                durationType,
+                durationParameter,
+                effectKey ?? "<null>",
+                canStack,
+                sourceAbilityToRemove?.RuntimeId ?? Guid.Empty);
+
             if (context.SourceCard == null || sourceAbilityToRemove == null)
             {
                 var requestingPlayer = context.CurrentGameState.GetPlayerState(context.RequestingPlayerId);
@@ -318,9 +447,16 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 var systemRemoveKeywordBuff = _buffFactory.CreateSystemRemoveKeywordBuff(
                     target: target,
                     keywordsToRemove: keywordsToRemove,
+                    durationType: durationType,
+                    durationParameter: durationParameter,
                     currentTurn: currentTurn);
 
-                return ApplyBuffProcess(systemRemoveKeywordBuff, context);
+                if (!string.IsNullOrWhiteSpace(effectKey) && systemRemoveKeywordBuff.SourceAbilityId != Guid.Empty)
+                {
+                    systemRemoveKeywordBuff.EffectKey = effectKey;
+                }
+
+                return ApplyBuffProcess(systemRemoveKeywordBuff, context, canStack);
             }
 
             var sourcePlayer = context.CurrentGameState.GetPlayerState(context.SourceCard.OwnerPlayerId);
@@ -334,10 +470,16 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 sourceCard: context.SourceCard,
                 sourceAbility: sourceAbilityToRemove,
                 keywordsToRemove: keywordsToRemove,
+                durationType: durationType,
+                durationParameter: durationParameter,
                 currentTurn: sourcePlayer.TurnNumber
             );
+            if (!string.IsNullOrWhiteSpace(effectKey) && removeKeywordBuff.SourceAbilityId != Guid.Empty)
+            {
+                removeKeywordBuff.EffectKey = effectKey;
+            }
 
-            return ApplyBuffProcess(removeKeywordBuff, context);
+            return ApplyBuffProcess(removeKeywordBuff, context, canStack);
         }
 
         public DomainOperationResult ApplyStatBuff(
@@ -345,8 +487,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             CardInstance target,
             List<StatModification> modifications,
             Domain.Abilities.Common.DurationType durationType,
-            object? durationParameter,
-            bool isNonStackable = false)
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true)
         {
             if (target == null)
             {
@@ -375,15 +518,19 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     statModifications: modifications,
                     durationType: durationType,
                     durationParameter: durationParameter,
-                    currentTurn: currentTurn,
-                    isNonStackable: isNonStackable);
+                    currentTurn: currentTurn);
 
                 var readableBuffId = context.CurrentGameState.InGameIds.Format(InGameIdKind.Buff, systemBuff.Id);
                 var readableTargetId = context.CurrentGameState.InGameIds.Format(InGameIdKind.Card, target.InstanceId);
                 _logger.LogInformation("[BuffService] System stat buff {BuffId} (guid={BuffGuid}, SourceAbilityId=EMPTY) -> Target {CardId} (guid={CardGuid})",
                     readableBuffId, systemBuff.Id, readableTargetId, target.InstanceId);
 
-                return ApplyBuffProcess(systemBuff, context);
+                if (!string.IsNullOrWhiteSpace(effectKey) && systemBuff.SourceAbilityId != Guid.Empty)
+                {
+                    systemBuff.EffectKey = effectKey;
+                }
+
+                return ApplyBuffProcess(systemBuff, context, canStack);
             }
 
             var statBuff = _buffFactory.CreateStatBuff(
@@ -393,14 +540,18 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 statModifications: modifications,
                 durationType: durationType,
                 durationParameter: durationParameter,
-                currentTurn: currentTurn,
-                isNonStackable: isNonStackable
+                currentTurn: currentTurn
             );
 
-            return ApplyBuffProcess(statBuff, context);
+            if (!string.IsNullOrWhiteSpace(effectKey) && statBuff.SourceAbilityId != Guid.Empty)
+            {
+                statBuff.EffectKey = effectKey;
+            }
+
+            return ApplyBuffProcess(statBuff, context, canStack);
         }
 
-        public DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context)
+        public DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context, bool canStack = true)
         {
             var result = new DomainOperationResult();
             if (buff == null)
@@ -409,8 +560,86 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 return new DomainOperationResult { Success = false, ErrorMessage = "Buff cannot be null." };
             }
 
+            var currentAbility = context.CurrentEffect?.SourceAbility ?? context.GetCurrentAbility();
+            if (currentAbility != null)
+            {
+                if (!buff.SourceCardInstanceId.HasValue && currentAbility.SourceCardId.HasValue)
+                {
+                    buff.SourceCardInstanceId = currentAbility.SourceCardId.Value;
+                }
+
+                if (string.IsNullOrWhiteSpace(buff.SourceCardName))
+                {
+                    var sourceCardName = currentAbility.SourceCard?.Name;
+                    if (string.IsNullOrWhiteSpace(sourceCardName) && buff.SourceCardInstanceId.HasValue)
+                    {
+                        sourceCardName = context.CurrentGameState.FindCardInstance(buff.SourceCardInstanceId.Value)?.Name;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(sourceCardName))
+                    {
+                        buff.SourceCardName = sourceCardName;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(buff.SourceAbilityName))
+                {
+                    buff.SourceAbilityName = currentAbility.Name;
+                }
+            }
+            else if (context.SourceCard != null)
+            {
+                buff.SourceCardInstanceId ??= context.SourceCard.InstanceId;
+                if (string.IsNullOrWhiteSpace(buff.SourceCardName))
+                {
+                    buff.SourceCardName = context.SourceCard.Name;
+                }
+            }
+
+            if (!buff.SourceEffectIndex.HasValue && context.CurrentEffect != null)
+            {
+                buff.SourceEffectIndex = context.CurrentEffect.EffectIndex;
+            }
+
+            if (string.IsNullOrWhiteSpace(buff.EffectKey) && buff.SourceAbilityId != Guid.Empty)
+            {
+                var effectIndex = buff.SourceEffectIndex ?? context.CurrentEffect?.EffectIndex;
+                if (effectIndex.HasValue)
+                {
+                    buff.EffectKey = $"{buff.SourceAbilityId:N}:{effectIndex.Value}";
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(buff.EffectKey))
+            {
+                _logger.LogInformation(
+                    "[BuffService] Buff {BuffId} has empty EffectKey after assignment. Target={TargetId} SourceAbilityId={SourceAbilityId} SourceEffectIndex={SourceEffectIndex} CurrentEffectIndex={CurrentEffectIndex} CurrentEffectAbilityId={CurrentEffectAbilityId} CachedSourceCardName={SourceCardName} CachedSourceAbilityName={SourceAbilityName}",
+                    buff.Id,
+                    buff.TargetCardInstanceId,
+                    buff.SourceAbilityId,
+                    buff.SourceEffectIndex,
+                    context.CurrentEffect?.EffectIndex,
+                    context.CurrentEffect?.SourceAbility?.RuntimeId ?? Guid.Empty,
+                    buff.SourceCardName ?? "<null>",
+                    buff.SourceAbilityName ?? "<null>");
+            }
+
             var cardId = buff.TargetCardInstanceId;
             var buffList = ResolveBuffManager(context).GetBuffsForCard(cardId);
+
+            if (!canStack && !string.IsNullOrWhiteSpace(buff.EffectKey))
+            {
+                var hasSameKey = buffList.Any(existing =>
+                    existing.IsActive &&
+                    !string.IsNullOrWhiteSpace(existing.EffectKey) &&
+                    string.Equals(existing.EffectKey, buff.EffectKey, StringComparison.Ordinal));
+
+                if (hasSameKey)
+                {
+                    _logger.LogInformation("Buff {BuffId} skipped due to CanStack=false and existing EffectKey {EffectKey}.", buff.Id, buff.EffectKey);
+                    return new DomainOperationResult { Success = true };
+                }
+            }
 
             var stackingResult = _stackingEngine.EvaluateStacking(buff, buffList);
 

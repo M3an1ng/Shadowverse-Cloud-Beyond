@@ -26,5 +26,8 @@ namespace ShadowverseBeyond.Server.Dtos
         public string Description { get; set; } = string.Empty;
         public double Min { get; set; }
         public double Max { get; set; }
+        public bool AllowDsl { get; set; } = true;
+        public string? DslType { get; set; }
+        public DslMode DslMode { get; set; } = DslMode.Optional;
     }
 }

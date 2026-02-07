@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>1928e720-d856-4fdb-9791-bd6419326aa1</UserSecretsId>
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish\**;artifacts\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,6 +26,7 @@
     </PackageReference>
     <PackageReference Include="Scrutor" Version="6.1.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
   </ItemGroup>
@@ -33,6 +35,13 @@
   <ItemGroup>
     <Compile Remove="Domain\Abilities\DSL\Functions\Tests\**\*.cs" />
     <None Include="Domain\Abilities\DSL\Functions\Tests\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="publish\**" />
+    <None Remove="publish\**" />
+    <Content Remove="artifacts\**" />
+    <None Remove="artifacts\**" />
   </ItemGroup>
 
 </Project>

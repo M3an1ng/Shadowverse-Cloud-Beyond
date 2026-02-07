@@ -1,5 +1,6 @@
 using ShadowverseBeyond.Server.Domain.Events; // For IGameEvent
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace ShadowverseBeyond.Server.Domain.Events.Services
@@ -12,6 +13,13 @@ namespace ShadowverseBeyond.Server.Domain.Events.Services
         /// <param name="gameId">游戏ID。</param>
         /// <param name="gameEvent">要存储的游戏事件。</param>
         Task StoreEventAsync(string gameId, IGameEvent gameEvent);
+
+        /// <summary>
+        /// 同步获取指定游戏的事件历史列表（按存储顺序）。
+        /// </summary>
+        /// <param name="gameId">游戏ID。</param>
+        /// <returns>该局游戏的事件列表。</returns>
+        IReadOnlyList<IGameEvent> GetEvents(string gameId);
 
         /// <summary>
         /// 根据事件ID异步检索一个游戏事件。

@@ -3,15 +3,15 @@ using Microsoft.Extensions.DependencyInjection; // Added for GetRequiredService
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For ValueConfig
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime; // For Runtime classes if needed (though AbilityContext is primary)
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId
-using ShadowverseBeyond.Server.Domain.Entities; // For CardInstance, GameState
 using ShadowverseBeyond.Server.Domain.Events;   // For IGameEvent
 using ShadowverseBeyond.Server.Domain.Constants; // Add using for CardKeyword enum
-using ShadowverseBeyond.Server.Dtos; // For GameStateDto, PlayerStateDto etc.
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Reflection; // Added for reflection
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers; // Added for Handler types
 // using ShadowverseBeyond.Server.Domain.Abilities.Effects.Parameters; // REMOVED - No longer needed
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // Keep this for ALL parameter types now
@@ -21,6 +21,13 @@ using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // For ExpressionNode
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
+using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Infrastructure.Logging;
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
+using Microsoft.AspNetCore.SignalR;
+using ShadowverseBeyond.Server.Hubs;
+using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 {
@@ -65,14 +72,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 return new GameStateActionResult { Success = false, ErrorMessage = "AbilityContext cannot be null." };
             }
 
+            var resolvedParameters = new Dictionary<string, object>();
+            var calculatedOutputs = new Dictionary<string, object?>();
+            var actionResult = new GameStateActionResult();
+
             try
             {
                 // 1. Resolve parameter values using IValueSourceResolver
-                var resolvedParameters = ResolveEffectParameters(effectConfig, context);
+                resolvedParameters = ResolveEffectParameters(effect, context);
 
                 // 2. Determine the correct handler and parameter type based on effectConfig.Type
-                GameStateActionResult actionResult;
-
                 // Find Handler and Parameter types from registry
                 _logger.LogDebug("🔧 [EffectExecutor] Looking for handler for effect type '{EffectType}'", effectConfig.Type);
                 if (_effectHandlerRegistry.TryGetHandler(effectConfig.Type, out var registration) && registration.HasValue)
@@ -85,41 +94,50 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     if (paramsObject == null)
                     {
                         _logger.LogError("Failed to create parameter object instance for type {ParamsType}", paramsType.Name);
-                        return new GameStateActionResult { Success = false, ErrorMessage = $"Failed to create parameter object for {paramsType.Name}" };
+                        actionResult = new GameStateActionResult { Success = false, ErrorMessage = $"Failed to create parameter object for {paramsType.Name}" };
                     }
-
-                    // 4. Populate Parameter instance from resolved values
-                    PopulateParameters(paramsObject, paramsType, resolvedParameters);
-
-                    // 5. Resolve Handler instance from DI container
-                    var handlerInstance = _serviceProvider.GetRequiredService(handlerType);
-                    if (handlerInstance == null)
+                    else
                     {
-                        _logger.LogError("Failed to resolve handler instance for type {HandlerType}", handlerType.Name);
-                        return new GameStateActionResult { Success = false, ErrorMessage = $"Failed to resolve handler {handlerType.Name}" };
+                        // 4. Populate Parameter instance from resolved values
+                        PopulateParameters(paramsObject, paramsType, resolvedParameters);
+
+                        // 5. Resolve Handler instance from DI container
+                        var handlerInstance = _serviceProvider.GetRequiredService(handlerType);
+                        if (handlerInstance == null)
+                        {
+                            _logger.LogError("Failed to resolve handler instance for type {HandlerType}", handlerType.Name);
+                            actionResult = new GameStateActionResult { Success = false, ErrorMessage = $"Failed to resolve handler {handlerType.Name}" };
+                        }
+                        else
+                        {
+                            // 6. Get the correct Apply(GameContext, TParams) method
+                            // 6. Get the correct Apply(Effect, GameContext, TParams) method
+                            var applyMethod = handlerType.GetMethod("Apply", new[] { typeof(Effect), typeof(GameContext), paramsType });
+                            if (applyMethod == null)
+                            {
+                                _logger.LogError("Could not find Apply(Effect, GameContext, {ParamsTypeName}) method on handler type {HandlerType}", paramsType.Name, handlerType.Name);
+                                actionResult = new GameStateActionResult { Success = false, ErrorMessage = $"Apply method not found on {handlerType.Name}" };
+                            }
+                            else
+                            {
+                                // 7. Invoke the Apply method
+                                var result = applyMethod.Invoke(handlerInstance, new object[] { effect, context, paramsObject });
+                                if (result is not GameStateActionResult)
+                                {
+                                    _logger.LogError("Apply method on {HandlerType} did not return a GameStateActionResult.", handlerType.Name);
+                                    actionResult = new GameStateActionResult { Success = false, ErrorMessage = $"Invalid return type from {handlerType.Name}" };
+                                }
+                                else
+                                {
+                                    _logger.LogDebug("🔧 [EffectExecutor] About to invoke handler method...");
+                                    actionResult = (GameStateActionResult)result;
+                                    _logger.LogDebug("🔧 [EffectExecutor] Handler execution completed. Success: {Success}, Events: {EventCount}",
+                                        actionResult.Success, actionResult.GeneratedEvents?.Count ?? 0);
+                                }
+                            }
+                        }
                     }
 
-                    // 6. Get the correct Apply(GameContext, TParams) method
-                    // 6. Get the correct Apply(Effect, GameContext, TParams) method
-                    var applyMethod = handlerType.GetMethod("Apply", new[] { typeof(Effect), typeof(GameContext), paramsType });
-                    if (applyMethod == null)
-                    {
-                        _logger.LogError("Could not find Apply(Effect, GameContext, {ParamsTypeName}) method on handler type {HandlerType}", paramsType.Name, handlerType.Name);
-                        return new GameStateActionResult { Success = false, ErrorMessage = $"Apply method not found on {handlerType.Name}" };
-                    }
-
-                    // 7. Invoke the Apply method
-                    var result = applyMethod.Invoke(handlerInstance, new object[] { effect, context, paramsObject });
-                    if (result is not GameStateActionResult)
-                    {
-                        _logger.LogError("Apply method on {HandlerType} did not return a GameStateActionResult.", handlerType.Name);
-                        return new GameStateActionResult { Success = false, ErrorMessage = $"Invalid return type from {handlerType.Name}" };
-                    }
-
-                    _logger.LogDebug("🔧 [EffectExecutor] About to invoke handler method...");
-                    actionResult = (GameStateActionResult)result;
-                    _logger.LogDebug("🔧 [EffectExecutor] Handler execution completed. Success: {Success}, Events: {EventCount}",
-                        actionResult.Success, actionResult.GeneratedEvents?.Count ?? 0);
                 }
                 else
                 {
@@ -130,10 +148,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 
                 // 8. Process the result from handler and populate the effect object with generated events
                 // This makes the events available for subsequent DSL evaluation via context.CurrentEffect.GeneratedEvents
-                if (actionResult.GeneratedEvents != null)
+                var mergedEvents = new List<IGameEvent>();
+                var mergedEventIds = new HashSet<Guid>();
+                if (effect.GeneratedEvents != null && effect.GeneratedEvents.Count > 0)
                 {
-                    effect.GeneratedEvents = actionResult.GeneratedEvents;
+                    foreach (var existingEvent in effect.GeneratedEvents)
+                    {
+                        if (mergedEventIds.Add(existingEvent.EventId))
+                        {
+                            mergedEvents.Add(existingEvent);
+                        }
+                    }
                 }
+                if (actionResult.GeneratedEvents != null && actionResult.GeneratedEvents.Count > 0)
+                {
+                    foreach (var newEvent in actionResult.GeneratedEvents)
+                    {
+                        if (mergedEventIds.Add(newEvent.EventId))
+                        {
+                            mergedEvents.Add(newEvent);
+                        }
+                    }
+                }
+                actionResult.GeneratedEvents = mergedEvents;
+                effect.GeneratedEvents = mergedEvents;
                 if (!actionResult.Success)
                 {
                     _logger.LogError("Effect handler for {EffectType} failed: {ErrorMessage}", effectConfig.Type, actionResult.ErrorMessage);
@@ -142,7 +180,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 }
 
                 // 9. Resolve Outputs and Create EffectCompletedEvent
-                var calculatedOutputs = new Dictionary<string, object?>();
+                calculatedOutputs = new Dictionary<string, object?>();
                 if (effectConfig.Outputs != null && effectConfig.Outputs.Any())
                 {
                     _logger.LogDebug("🔧 [EffectExecutor] Resolving {OutputCount} outputs for effect {EffectType}", effectConfig.Outputs.Count, effectConfig.Type);
@@ -183,15 +221,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                         calculatedOutputs["fusedIds"] = fusedIds;
                 }
 
+                var generatedEvents = actionResult.GeneratedEvents != null
+                    ? actionResult.GeneratedEvents.ToList()
+                    : new List<IGameEvent>();
+                var generatedCards = new List<CardInstance>();
+                var generatedCardSnapshots = new List<CardInstanceSnapshot>();
+
                 // Create EffectCompletedEvent
                 var effectCompletedEvent = new EffectCompletedEvent(
                     effectConfig.Type,
                     resolvedParameters, // These are the input parameters to the effect handler
                     effect.SelectedTargets.AsReadOnly(), // Get targets directly from the Effect DTO
+                    generatedEvents.AsReadOnly(),
+                    generatedCards,
+                    generatedCardSnapshots,
                     calculatedOutputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value).AsReadOnly(),
-                    context.RequestingPlayerId,
-                    context.SourceCard,
-                    null // sourceAbilityInstanceId (Guid?) - Ability.AbilityId is long
+                    actionResult.Success,
+                    context.SourceCard
                 );
 
                 actionResult.GeneratedEvents ??= new List<IGameEvent>();
@@ -210,7 +256,61 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             {
                 _logger.LogError(ex, "Error executing effect {EffectType} for ability on card {SourceCardId}",
                     effectConfig.Type, context.SourceCard?.InstanceId.ToString() ?? "N/A");
-                return new GameStateActionResult { Success = false, ErrorMessage = ex.Message };
+                actionResult.Success = false;
+                if (string.IsNullOrWhiteSpace(actionResult.ErrorMessage))
+                {
+                    actionResult.ErrorMessage = ex.Message;
+                }
+
+                var mergedEvents = new List<IGameEvent>();
+                var mergedEventIds = new HashSet<Guid>();
+                if (effect.GeneratedEvents != null && effect.GeneratedEvents.Count > 0)
+                {
+                    foreach (var existingEvent in effect.GeneratedEvents)
+                    {
+                        if (mergedEventIds.Add(existingEvent.EventId))
+                        {
+                            mergedEvents.Add(existingEvent);
+                        }
+                    }
+                }
+                if (actionResult.GeneratedEvents != null && actionResult.GeneratedEvents.Count > 0)
+                {
+                    foreach (var newEvent in actionResult.GeneratedEvents)
+                    {
+                        if (mergedEventIds.Add(newEvent.EventId))
+                        {
+                            mergedEvents.Add(newEvent);
+                        }
+                    }
+                }
+
+                var generatedEvents = mergedEvents
+                    .Where(e => e is not EffectCompletedEvent)
+                    .ToList();
+                var generatedCards = new List<CardInstance>();
+                var generatedCardSnapshots = new List<CardInstanceSnapshot>();
+
+                actionResult.GeneratedEvents = generatedEvents;
+                effect.GeneratedEvents = generatedEvents;
+
+                var fallbackOutputs = new Dictionary<string, object?>(calculatedOutputs);
+                fallbackOutputs["effectFailed"] = true;
+
+                var effectCompletedEvent = new EffectCompletedEvent(
+                    effectConfig.Type,
+                    resolvedParameters,
+                    effect.SelectedTargets.AsReadOnly(),
+                    generatedEvents.AsReadOnly(),
+                    generatedCards,
+                    generatedCardSnapshots,
+                    fallbackOutputs.AsReadOnly(),
+                    false,
+                    context.SourceCard
+                );
+
+                actionResult.GeneratedEvents.Add(effectCompletedEvent);
+                return actionResult;
             }
         }
 
@@ -218,20 +318,45 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 
         // Helper method to resolve parameters
         private Dictionary<string, object> ResolveEffectParameters(
-            EffectConfig effectConfig,
+            Effect effect,
             GameContext gameContext)
         {
+            var effectConfig = effect.EffectConfig;
             var resolvedParams = new Dictionary<string, object>();
+            var traceSettings = _serviceProvider.GetService<IConditionTraceSettings>();
+            var traceEntries = traceSettings?.IsEffectEnabledFor(gameContext) == true ? new List<ConditionTraceEntryDto>() : null;
 
             foreach (var paramKvp in effectConfig.Parameters)
             {
+                if (effectConfig.Type == EffectType.Draw
+                    && string.Equals(paramKvp.Key, "SearchTargets", StringComparison.OrdinalIgnoreCase))
+                {
+                    resolvedParams[paramKvp.Key] = paramKvp.Value;
+                    continue;
+                }
+
                 if (paramKvp.Value is ValueConfig valueConfig)
                 {
                     try
                     {
-                        // Use the correct Resolve method from IValueSourceResolver
-                        var resolvedValue = _valueSourceResolver.Resolve(valueConfig, gameContext);
-                        resolvedParams[paramKvp.Key] = resolvedValue;
+                        if (traceEntries != null && valueConfig is FormulaValueConfig formulaConfig)
+                        {
+                            var traceCollector = new DslTraceCollector();
+                            var resolvedValue = _valueSourceResolver.ResolveFormulaValueWithTrace(formulaConfig.Formula, gameContext, traceCollector);
+                            var traceOutput = DslTraceFormatter.Format(formulaConfig.Formula, traceCollector);
+                            traceEntries.Add(new ConditionTraceEntryDto
+                            {
+                                Expression = formulaConfig.Formula,
+                                Trace = traceOutput
+                            });
+                            resolvedParams[paramKvp.Key] = resolvedValue!;
+                        }
+                        else
+                        {
+                            // Use the correct Resolve method from IValueSourceResolver
+                            var resolvedValue = _valueSourceResolver.Resolve(valueConfig, gameContext);
+                            resolvedParams[paramKvp.Key] = resolvedValue;
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -247,7 +372,68 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     resolvedParams[paramKvp.Key] = paramKvp.Value;
                 }
             }
+
+            if (traceEntries != null)
+            {
+                var ability = effect.SourceAbility;
+                var effectTypeLabel = effectConfig.Type.ToString();
+                var message = $"能力 {ability?.Name ?? "UnknownAbility"} 的效果参数解析完成（效果类型：{effectTypeLabel}）。";
+                SendEffectTrace(gameContext, ability, traceEntries, effectTypeLabel, message);
+            }
+
             return resolvedParams;
+        }
+
+        private void SendEffectTrace(
+            GameContext context,
+            IAbility? ability,
+            List<ConditionTraceEntryDto> entries,
+            string effectType,
+            string message)
+        {
+            var traceSettings = _serviceProvider.GetService<IConditionTraceSettings>();
+            var hubContext = _serviceProvider.GetService<IHubContext<GameHub, IGameClient>>();
+            if (traceSettings == null || hubContext == null || context.CurrentGameState == null)
+            {
+                return;
+            }
+
+            var sourceCard = ability?.SourceCard;
+            var cardName = sourceCard?.Name ?? "UnknownCard";
+            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
+
+            var playerIds = new[]
+            {
+                context.CurrentGameState.Player1?.PlayerId,
+                context.CurrentGameState.Player2?.PlayerId
+            };
+
+            foreach (var playerId in playerIds.Where(id => id.HasValue).Select(id => id!.Value).Distinct())
+            {
+                if (playerId == Guid.Empty || !traceSettings.IsEffectEnabled(playerId))
+                {
+                    continue;
+                }
+
+                var dto = new ConditionTraceFailedDto
+                {
+                    GameId = context.CurrentGameState.GameId,
+                    AbilityRuntimeId = ability?.RuntimeId ?? Guid.Empty,
+                    AbilityName = ability?.Name ?? string.Empty,
+                    CardName = cardName,
+                    CardId = cardId,
+                    Success = true,
+                    TraceKind = "Effect",
+                    EffectType = effectType,
+                    ConditionId = string.Empty,
+                    Expression = entries.Count > 0 ? entries[0].Expression : string.Empty,
+                    Trace = entries.Count > 0 ? entries[0].Trace : string.Empty,
+                    Conditions = entries,
+                    Message = message
+                };
+
+                _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceSucceeded(dto);
+            }
         }
 
         // Helper method to populate a parameter object from a dictionary using reflection
@@ -262,6 +448,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     {
                         // Attempt direct assignment first
                         var value = kvp.Value;
+
+                        if (value is JsonElement jsonElement && property.PropertyType != typeof(JsonElement))
+                        {
+                            try
+                            {
+                                var options = new JsonSerializerOptions
+                                {
+                                    PropertyNameCaseInsensitive = true
+                                };
+                                options.Converters.Add(new LenientEffectKeywordConverter());
+                                options.Converters.Add(new JsonStringEnumConverter());
+
+                                var deserialized = JsonSerializer.Deserialize(
+                                    jsonElement.GetRawText(),
+                                    property.PropertyType,
+                                    options);
+                                value = deserialized;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to deserialize JsonElement for property {PropertyName} to type {PropertyType}.", property.Name, property.PropertyType.Name);
+                            }
+                        }
 
                         // 【修复】优先处理null值，特别是Guid?等可空类型
                         if (value == null)
@@ -282,6 +491,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                         if (property.PropertyType == typeof(object))
                         {
                             property.SetValue(paramsObject, value);
+                            continue;
+                        }
+
+                        if (TryConvertToList(property.PropertyType, value, out var listValue))
+                        {
+                            property.SetValue(paramsObject, listValue);
                             continue;
                         }
 
@@ -423,10 +638,188 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                    type == typeof(uint) || type == typeof(ulong) || type == typeof(ushort) || type == typeof(sbyte);
         }
 
+        private static bool TryConvertToList(Type targetType, object value, out object? result)
+        {
+            result = null;
+
+            if (!targetType.IsGenericType || targetType.GetGenericTypeDefinition() != typeof(List<>))
+            {
+                return false;
+            }
+
+            var elementType = targetType.GetGenericArguments()[0];
+            if (elementType != typeof(int))
+            {
+                return false;
+            }
+
+            if (value is IEnumerable<int> intEnumerable)
+            {
+                result = intEnumerable.ToList();
+                return true;
+            }
+
+            if (IsIntegerType(value.GetType()))
+            {
+                result = new List<int> { Convert.ToInt32(value) };
+                return true;
+            }
+
+            if (value is double doubleValue)
+            {
+                if (Math.Abs(doubleValue % 1) < double.Epsilon)
+                {
+                    result = new List<int> { Convert.ToInt32(doubleValue) };
+                    return true;
+                }
+            }
+
+            if (value is float floatValue)
+            {
+                if (Math.Abs(floatValue % 1) < float.Epsilon)
+                {
+                    result = new List<int> { Convert.ToInt32(floatValue) };
+                    return true;
+                }
+            }
+
+            if (value is decimal decimalValue)
+            {
+                if (decimalValue == decimal.Truncate(decimalValue))
+                {
+                    result = new List<int> { Convert.ToInt32(decimalValue) };
+                    return true;
+                }
+            }
+
+            if (value is JsonElement element)
+            {
+                if (element.ValueKind == JsonValueKind.Array)
+                {
+                    try
+                    {
+                        var parsed = JsonSerializer.Deserialize<List<int>>(element.GetRawText());
+                        result = parsed ?? new List<int>();
+                        return true;
+                    }
+                    catch
+                    {
+                        result = new List<int>();
+                        return true;
+                    }
+                }
+
+                if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number))
+                {
+                    result = new List<int> { number };
+                    return true;
+                }
+
+                if (element.ValueKind == JsonValueKind.String)
+                {
+                    result = ParseDelimitedIntList(element.GetString() ?? string.Empty);
+                    return true;
+                }
+            }
+
+            if (value is string text)
+            {
+                result = ParseDelimitedIntList(text);
+                return true;
+            }
+
+            if (value is global::System.Collections.IEnumerable enumerable)
+            {
+                var list = new List<int>();
+                foreach (var item in enumerable)
+                {
+                    if (item == null) continue;
+                    if (IsIntegerType(item.GetType()))
+                    {
+                        list.Add(Convert.ToInt32(item));
+                        continue;
+                    }
+                    if (item is string itemText && int.TryParse(itemText, out var parsed))
+                    {
+                        list.Add(parsed);
+                    }
+                }
+                result = list;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static List<int> ParseDelimitedIntList(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return new List<int>();
+            }
+
+            return text
+                .Split(new[] { ',', '，', ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(item => item.Trim())
+                .Where(item => item.Length > 0)
+                .Select(item => int.TryParse(item, out var parsed) ? parsed : (int?)null)
+                .Where(item => item.HasValue)
+                .Select(item => item!.Value)
+                .ToList();
+        }
+
         // Helper to check if a type is nullable
         private static bool IsNullableType(Type type)
         {
             return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
+        }
+
+        private static IReadOnlyList<CardInstance> CollectGeneratedCards(
+            IReadOnlyList<IGameEvent> generatedEvents)
+        {
+            if (generatedEvents == null || generatedEvents.Count == 0)
+            {
+                return new List<CardInstance>();
+            }
+
+            var results = new Dictionary<Guid, CardInstance>();
+            foreach (var gameEvent in generatedEvents)
+            {
+                if (gameEvent == null)
+                {
+                    continue;
+                }
+
+                foreach (var targetInfo in gameEvent.Target)
+                {
+                    var card = targetInfo?.Card;
+                    if (card == null)
+                    {
+                        continue;
+                    }
+
+                    if (!results.ContainsKey(card.InstanceId))
+                    {
+                        results[card.InstanceId] = card;
+                    }
+                }
+            }
+
+            return results.Values.ToList();
+        }
+
+        private static IReadOnlyList<CardInstanceSnapshot> CollectGeneratedCardSnapshots(
+            IReadOnlyList<CardInstance> generatedCards)
+        {
+            if (generatedCards == null || generatedCards.Count == 0)
+            {
+                return new List<CardInstanceSnapshot>();
+            }
+
+            return generatedCards
+                .Where(card => card != null)
+                .Select(CardInstanceSnapshot.From)
+                .ToList();
         }
 
         // Removed MapEffectTypeToEventType method as it's no longer needed.

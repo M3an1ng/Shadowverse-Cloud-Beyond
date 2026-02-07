@@ -23,6 +23,9 @@ using AutoMapper;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using Microsoft.Extensions.DependencyInjection;
+using ShadowverseBeyond.Server.Infrastructure.Logging;
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Query
 {
@@ -51,6 +54,14 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <inheritdoc />
         public QueryResult ExecuteQuery(string dsl, GameContext context, Dictionary<string, List<Abilities.Targets.TargetInfo>>? resolvedTargets = null)
         {
+            var tsc = new TargetSelectionContext(context, resolvedTargets);
+            var traceEntries = CreateTraceEntries(context);
+            var unifiedResult = ExecuteUnifiedDsl(dsl, tsc, traceEntries);
+            if (unifiedResult.Success)
+            {
+                return unifiedResult;
+            }
+
             try
             {
                 var queryConfig = _dslParser.Parse(dsl);
@@ -62,7 +73,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 return new QueryResult
                 {
                     Success = false,
-                    ErrorMessage = $"Failed to parse or execute DSL query: {ex.Message}"
+                    ErrorMessage = $"Failed to parse or execute DSL query: {ex.Message}",
+                    TraceEntries = traceEntries ?? new List<ConditionTraceEntryDto>()
                 };
             }
         }
@@ -76,13 +88,19 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
             // Create the TargetSelectionContext to pass through the pipeline.
             var tsc = new TargetSelectionContext(context, resolvedTargets);
+            var traceEntries = CreateTraceEntries(context);
+
+            if (queryConfig.Operations == null || queryConfig.Operations.Count == 0)
+            {
+                return ExecuteUnifiedDsl(queryConfig.SourcePoolExpression, tsc, traceEntries);
+            }
 
             List<object> currentPool;
 
             try
             {
                 // --- 1. Execute Source DSL to get initial pool ---
-                currentPool = ExecuteSourceDsl(queryConfig.SourcePoolExpression, tsc);
+                currentPool = ExecuteSourceDsl(queryConfig.SourcePoolExpression, tsc, traceEntries);
                 _logger.LogTrace("Initial pool size after DSL execution: {PoolSize}", currentPool.Count);
 
                 // --- 2. Apply Pipeline Operations ---
@@ -96,23 +114,31 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
                         if (operation is FilterOperation filterOp)
                         {
-                            currentPool = ApplyFilterOperation(currentPool, filterOp, tsc);
+                            currentPool = ApplyFilterOperation(currentPool, filterOp, tsc, traceEntries);
                         }
                         else if (operation is SortOperation sortOp)
                         {
-                            currentPool = ApplySortOperation(currentPool, sortOp, tsc);
+                            currentPool = ApplySortOperation(currentPool, sortOp, tsc, traceEntries);
+                        }
+                        else if (operation is DistinctOperation distinctOp)
+                        {
+                            currentPool = ApplyDistinctOperation(currentPool, distinctOp, tsc, traceEntries);
+                        }
+                        else if (operation is SelectOperation selectOp)
+                        {
+                            currentPool = ApplySelectOperation(currentPool, selectOp, tsc, traceEntries);
                         }
                         else if (operation is SelectionOperation selectionOp)
                         {
-                            currentPool = ApplySelectionOperation(currentPool, selectionOp, tsc);
+                            currentPool = ApplySelectionOperation(currentPool, selectionOp, tsc, traceEntries);
                         }
                         else if (operation is PostProcessingOperation postProcessingOp)
                         {
-                            currentPool = ApplyPostProcessingOperation(currentPool, postProcessingOp, tsc);
+                            currentPool = ApplyPostProcessingOperation(currentPool, postProcessingOp, tsc, traceEntries);
                         }
 
                         // Log after applying the operation OR if it was skipped
-                        if (operation is not FilterOperation && operation is not SortOperation && operation is not SelectionOperation && operation is not PostProcessingOperation)
+                        if (operation is not FilterOperation && operation is not SortOperation && operation is not DistinctOperation && operation is not SelectOperation && operation is not SelectionOperation && operation is not PostProcessingOperation)
                         {
                             _logger.LogWarning("Unsupported query operation type encountered: {OperationType}. Pool remains unchanged.", operation.GetType().FullName);
                         }
@@ -134,7 +160,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 return new QueryResult // Success result returned from try block
                 {
                     Results = resultsAsObjects.AsReadOnly(),
-                    Success = true
+                    Success = true,
+                    TraceEntries = traceEntries ?? new List<ConditionTraceEntryDto>()
                 };
             } // Correctly closing the try block here
             catch (Exception ex)
@@ -145,7 +172,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 {
                     Results = Array.Empty<object>(), // Empty results on error
                     Success = false,
-                    ErrorMessage = $"An error occurred during query execution: {ex.Message}"
+                    ErrorMessage = $"An error occurred during query execution: {ex.Message}",
+                    TraceEntries = traceEntries ?? new List<ConditionTraceEntryDto>()
                 };
             } // Closing brace for catch block
         } // Closing brace for ExecuteQuery method
@@ -157,7 +185,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <param name="dsl">The Domain Specific Language string defining the source.</param>
         /// <param name="tsc">The target selection context, containing game state and resolved targets.</param>
         /// <returns>A list of objects representing the initial card pool.</returns>
-        private List<object> ExecuteSourceDsl(string dsl, Abilities.Targets.TargetSelectionContext tsc)
+        private List<object> ExecuteSourceDsl(string dsl, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
         {
             _logger.LogDebug("Executing Source DSL with compiler: {Dsl}", dsl);
 
@@ -169,48 +197,89 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
             try
             {
+                TryAddTraceEntry(traceEntries, dsl, tsc, null);
                 // Compile the DSL using the TSC-aware overload.
                 // The 'item' parameter is null because the source DSL is context-dependent, not item-dependent.
                 _logger.LogDebug("[CONTEXT_TRACKING] In ExecuteSourceDsl for DSL '{Dsl}'. SourceCard in received TSC: {SourceCardInstanceId}",
                     dsl,
                     tsc.GameContext.SourceCard?.InstanceId);
-                var sourceGetter = _dslCompiler.CompileGetter<object>(dsl, tsc);
+                var sourceGetter = _dslCompiler.CompileGetterRuntime(
+                    dsl,
+                    tsc,
+                    selfType: null,
+                    IDslCompiler.SelfResolutionMode.ContextOnly);
                 var result = sourceGetter(null!); // Pass null for the item context
 
                 _logger.LogDebug("Source DSL evaluation successful. Result type: {ResultType}", result?.GetType().Name ?? "null");
 
-                // Process the result
-                if (result is List<object> objectList)
+                if (!DslCollectionCoercion.TryCoerceToObjectEnumerable(result, out var enumerable))
                 {
-                    _logger.LogDebug("DSL result is List<object>. Count: {Count}", objectList.Count);
-                    return objectList;
-                }
-                if (result is IEnumerable<object> objectEnumerable)
-                {
-                    var list = objectEnumerable.ToList();
-                    _logger.LogDebug("Converted IEnumerable<object> to List<object>. Count: {Count}", list.Count);
-                    return list;
-                }
-                if (result is System.Collections.IEnumerable enumerable && !(result is string))
-                {
-                    var list = enumerable.Cast<object>().ToList();
-                    _logger.LogDebug("Casted non-generic IEnumerable (Type: {ResultType}) to List<object>. Count: {Count}", result.GetType().Name, list.Count);
-                    return list;
-                }
-                if (result != null)
-                {
-                    // 【关键修复】将任何单个对象包装成列表，以统一处理
-                    _logger.LogDebug("Source DSL resulted in a single item (Type: {ResultType}). Wrapping it in a list.", result.GetType().Name);
-                    return new List<object> { result };
+                    throw new DslCollectionCoercionException($"Source DSL '{dsl}' evaluated to a string, which is not a valid collection.");
                 }
 
-                _logger.LogDebug("Source DSL evaluation resulted in null. Returning empty list.");
-                return new List<object>();
+                var list = enumerable.Cast<object>().ToList();
+                _logger.LogDebug("Source DSL normalized to list. Count: {Count}", list.Count);
+                return list;
+            }
+            catch (DslCollectionCoercionException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to compile or execute source DSL: {Dsl}", dsl);
                 return new List<object>();
+            }
+        }
+
+        private QueryResult ExecuteUnifiedDsl(string dsl, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
+        {
+            if (string.IsNullOrWhiteSpace(dsl))
+            {
+                return new QueryResult
+                {
+                    Results = Array.Empty<object>(),
+                    Success = true,
+                    TraceEntries = traceEntries ?? new List<ConditionTraceEntryDto>()
+                };
+            }
+
+            try
+            {
+                TryAddTraceEntry(traceEntries, dsl, tsc, null);
+                var getter = _dslCompiler.CompileGetterRuntime(
+                    dsl,
+                    tsc,
+                    selfType: null,
+                    IDslCompiler.SelfResolutionMode.ContextOnly);
+                var rawResult = getter(null!);
+
+                if (!DslCollectionCoercion.TryCoerceToObjectEnumerable(rawResult, out var enumerable))
+                {
+                    return new QueryResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"DSL query '{dsl}' evaluated to a string, which is not a valid collection."
+                    };
+                }
+
+                var results = enumerable.Cast<object>().ToList();
+                return new QueryResult
+                {
+                    Results = results.AsReadOnly(),
+                    Success = true,
+                    TraceEntries = traceEntries ?? new List<ConditionTraceEntryDto>()
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute unified DSL query: {Dsl}", dsl);
+                return new QueryResult
+                {
+                    Success = false,
+                    ErrorMessage = $"Failed to execute unified DSL query: {ex.Message}",
+                    TraceEntries = traceEntries ?? new List<ConditionTraceEntryDto>()
+                };
             }
         }
 
@@ -224,33 +293,18 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 throw new ArgumentNullException(nameof(queryConfig));
             }
 
-            if (queryConfig.Operations != null && queryConfig.Operations.Any())
+            if (queryConfig.Operations != null)
             {
                 return queryConfig;
             }
 
-            var dsl = queryConfig.SourcePoolExpression?.Trim();
-            if (string.IsNullOrWhiteSpace(dsl))
+            return queryConfig with
             {
-                return queryConfig;
-            }
-
-            if (dsl.Contains(".query(") || dsl.Contains(".orderBy(") || dsl.Contains(".take("))
-            {
-                try
-                {
-                    return _dslParser.Parse(dsl);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to normalize query DSL from SourcePoolExpression: {Dsl}", dsl);
-                }
-            }
-
-            return queryConfig;
+                Operations = new List<IQueryOperation>()
+            };
         }
 
-        private List<object> ApplyFilterOperation(List<object> pool, FilterOperation filterOp, Abilities.Targets.TargetSelectionContext tsc)
+        private List<object> ApplyFilterOperation(List<object> pool, FilterOperation filterOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
         {
             _logger.LogTrace("Applying filter operation with {FilterCount} filters.", filterOp.Filters?.Count ?? 0);
 
@@ -278,8 +332,9 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
                 try
                 {
-                    // Compile the DSL string into a high-performance delegate using the TSC-aware overload.
-                    var predicate = _dslCompiler.CompilePredicate<object>(dsl, tsc);
+                    TryAddTraceEntry(traceEntries, dsl, tsc, currentFilteredPool.FirstOrDefault());
+                    // Infer item type from current pool to keep self strongly typed when possible.
+                    var predicate = CompilePredicateWithInference(dsl, tsc, currentFilteredPool);
 
                     // Apply the compiled predicate to the pool
                     currentFilteredPool = currentFilteredPool.Where(item => predicate(item)).ToList();
@@ -305,7 +360,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
 
 
-        private List<object> ApplySortOperation(List<object> pool, SortOperation sortOp, Abilities.Targets.TargetSelectionContext tsc)
+        private List<object> ApplySortOperation(List<object> pool, SortOperation sortOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
         {
             _logger.LogTrace("Applying sort operation with {OrderingCount} criteria.", sortOp.Ordering?.Count ?? 0);
 
@@ -334,7 +389,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
                 try
                 {
-                    var keySelector = _dslCompiler.CompileGetter<object>(dsl, tsc);
+                    TryAddTraceEntry(traceEntries, dsl, tsc, pool.FirstOrDefault());
+                    var keySelector = CompileGetterWithInference(dsl, tsc, pool);
 
                     if (i == 0) // First criterion
                     {
@@ -359,8 +415,89 @@ namespace ShadowverseBeyond.Server.Domain.Query
             return sortedPool?.ToList() ?? pool;
         }
 
+        private List<object> ApplyDistinctOperation(List<object> pool, DistinctOperation distinctOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
+        {
+            _logger.LogTrace("Applying distinct operation.");
+
+            if (distinctOp.KeySelector == null)
+            {
+                _logger.LogWarning("Distinct operation is missing a key selector. Returning original pool.");
+                return pool;
+            }
+
+            Func<object, object?> keySelector;
+            if (distinctOp.KeySelector is FormulaValueConfig formulaConfig)
+            {
+                var dsl = formulaConfig.Formula;
+                if (string.IsNullOrWhiteSpace(dsl))
+                {
+                    _logger.LogWarning("Distinct key selector DSL is empty. Returning original pool.");
+                    return pool;
+                }
+
+                TryAddTraceEntry(traceEntries, dsl, tsc, pool.FirstOrDefault());
+                var getter = CompileGetterWithInference(dsl, tsc, pool);
+                keySelector = item => getter(item);
+            }
+            else if (distinctOp.KeySelector is StaticValueConfig staticConfig)
+            {
+                var staticValue = staticConfig.Value;
+                keySelector = _ => staticValue;
+            }
+            else
+            {
+                _logger.LogWarning("Distinct key selector uses an unsupported ValueConfig type: {Type}", distinctOp.KeySelector.GetType().Name);
+                return pool;
+            }
+
+            var seen = new HashSet<object?>();
+            var results = new List<object>();
+
+            foreach (var item in pool)
+            {
+                var key = keySelector(item);
+                if (!DslQueryOperations.IsAllowedDistinctKey(key))
+                {
+                    var keyType = key?.GetType().Name ?? "null";
+                    throw new InvalidOperationException($"Distinct key type '{keyType}' is not supported.");
+                }
+
+                if (seen.Add(key))
+                {
+                    results.Add(item);
+                }
+            }
+
+            return results;
+        }
+
+        private List<object> ApplySelectOperation(List<object> pool, SelectOperation selectOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
+        {
+            _logger.LogTrace("Applying select operation.");
+
+            if (selectOp.Selector is FormulaValueConfig formulaConfig)
+            {
+                TryAddTraceEntry(traceEntries, formulaConfig.Formula, tsc, pool.FirstOrDefault());
+            }
+
+            var selector = BuildProjectionSelector(selectOp.Selector, tsc, pool);
+            if (selector == null)
+            {
+                _logger.LogWarning("Select operation is missing a valid selector. Returning original pool.");
+                return pool;
+            }
+
+            var results = new List<object>();
+            foreach (var item in pool)
+            {
+                results.Add(selector(item) ?? (object?)null!);
+            }
+
+            return results;
+        }
+
         // Renamed to ApplySelectionOperationAsync and made async
-        private List<object> ApplySelectionOperation(List<object> pool, SelectionOperation selectionOp, Abilities.Targets.TargetSelectionContext tsc)
+        private List<object> ApplySelectionOperation(List<object> pool, SelectionOperation selectionOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
         {
             _logger.LogTrace("Applying selection operation: {Strategy}. CountSource provided: {HasCountSource}",
                 selectionOp.Strategy, selectionOp.CountSource != null);
@@ -381,8 +518,13 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 {
                     try
                     {
+                        TryAddTraceEntry(traceEntries, dsl, tsc, null);
                         // We pass 'null' for the item because count calculation is context-dependent, not item-dependent.
-                        var countGetter = _dslCompiler.CompileGetter<object>(dsl, tsc);
+                        var countGetter = _dslCompiler.CompileGetterRuntime(
+                            dsl,
+                            tsc,
+                            selfType: null,
+                            IDslCompiler.SelfResolutionMode.ContextOnly);
                         var resolvedCountRaw = countGetter(null!);
                         if (resolvedCountRaw is int resolvedCount && resolvedCount >= 0)
                         {
@@ -440,114 +582,158 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// <summary>
         /// Applies post-processing operations to the pool.
         /// </summary>
-        private List<object> ApplyPostProcessingOperation(List<object> pool, PostProcessingOperation postProcessingOp, Abilities.Targets.TargetSelectionContext tsc)
+        private List<object> ApplyPostProcessingOperation(List<object> pool, PostProcessingOperation postProcessingOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
         {
-            _logger.LogTrace("Applying Post Processing Operation: {Type}", postProcessingOp.Type);
+            _logger.LogTrace("Applying Post Processing Operation (projection).");
+
+            if (postProcessingOp.Projection is FormulaValueConfig formulaConfig)
+            {
+                TryAddTraceEntry(traceEntries, formulaConfig.Formula, tsc, pool.FirstOrDefault());
+            }
+
+            var selector = BuildProjectionSelector(postProcessingOp.Projection, tsc, pool);
+            if (selector == null)
+            {
+                _logger.LogWarning("Post-processing projection is missing or invalid. Returning original pool.");
+                return pool;
+            }
 
             var resultPool = new List<object>();
-
-            switch (postProcessingOp.Type)
+            foreach (var item in pool)
             {
-                case PostProcessingType.ToCardDefinitionDto:
-                    _logger.LogDebug("Processing PostProcessingType.ToCardDefinitionDto for {PoolCount} items.", pool.Count);
-                    foreach (var item in pool)
-                    {
-                        int? cardId = null;
-                        string? sourceDescription = null; // For logging
-
-                        if (item is CardInstance instance)
-                        {
-                            cardId = instance.CurrentDefinitionId; // Correct property name
-                            sourceDescription = $"CardInstance (InstanceId: {instance.InstanceId})";
-                        }
-                        else if (item is CardInstanceDto instanceDto)
-                        {
-                            cardId = instanceDto.CardId; // Correct property name
-                            sourceDescription = $"CardInstanceDto (InstanceId: {instanceDto.InstanceId})";
-                        }
-                        else if (item is CardDefinition definition) // If pool already contains definitions
-                        {
-                            cardId = definition.Id;
-                            sourceDescription = $"CardDefinition (Id: {definition.Id})";
-                            // Already a definition, map directly
-                            resultPool.Add(_mapper.Map<CardDefinitionDto>(definition));
-                            continue; // Skip repository lookup
-                        }
-                        else if (item is CardDefinitionDto definitionDto) // If pool already contains definition DTOs
-                        {
-                            // Already the target type, add directly
-                            resultPool.Add(definitionDto);
-                            sourceDescription = $"CardDefinitionDto (CardId: {definitionDto.CardId})"; // Correct property name
-                            cardId = definitionDto.CardId; // Correct property name
-                            continue; // Skip repository lookup
-                        }
-                        else if (item is int id) // If pool contains raw IDs
-                        {
-                            cardId = id;
-                            sourceDescription = $"int (Id: {id})";
-                        }
-                        // Add other potential source types if necessary
-
-                        if (cardId.HasValue)
-                        {
-                            try
-                            {
-                                var definition = GameDataProvider.Instance.GetCardDefinition(cardId.Value);
-                                if (definition != null)
-                                {
-                                    resultPool.Add(_mapper.Map<CardDefinitionDto>(definition));
-                                    _logger.LogTrace("Successfully converted item {SourceDescription} to CardDefinitionDto (CardId: {CardId})", sourceDescription, cardId.Value); // Log CardId
-                                }
-                                else
-                                {
-                                    _logger.LogWarning("Card definition not found in data provider for ID: {CardId}, originating from {SourceDescription}.", cardId.Value, sourceDescription);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Error retrieving card definition for ID: {CardId} from data provider, originating from {SourceDescription}.", cardId.Value, sourceDescription);
-                                // Skip this item on error
-                            }
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Could not determine CardId or item was already processed for item of type {ItemType} in pool during ToCardDefinitionDto conversion.", item?.GetType().Name ?? "null");
-                        }
-                    }
-                    return resultPool; // Return the new list of CardDefinitionDto objects
-
-                case PostProcessingType.ToCardInstanceDto:
-                    _logger.LogDebug("Processing PostProcessingType.ToCardInstanceDto for {PoolCount} items.", pool.Count);
-                    foreach (var item in pool)
-                    {
-                        if (item is CardInstanceDto instanceDto)
-                        {
-                            resultPool.Add(instanceDto); // Already the target type
-                        }
-                        else if (item is CardInstance instance)
-                        {
-                            resultPool.Add(_mapper.Map<CardInstanceDto>(instance));
-                            _logger.LogTrace("Converted CardInstance (InstanceId: {InstanceId}) to CardInstanceDto using complete mapping.", instance.InstanceId);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Item of type {ItemType} cannot be converted to CardInstanceDto. Keeping original item.", item?.GetType().Name ?? "null");
-                            if (item != null)
-                            {
-                                resultPool.Add(item); // Keep original if not convertible
-                            }
-                        }
-                    }
-                    return resultPool; // Return the new list
-
-                case PostProcessingType.None:
-                default:
-                    _logger.LogTrace("PostProcessingType is None or unsupported ({Type}). No post-processing applied.", postProcessingOp.Type);
-                    return pool; // Return original pool
+                resultPool.Add(selector(item) ?? (object?)null!);
             }
+
+            return resultPool;
         }
 
+        private Func<object, object?>? BuildProjectionSelector(ValueConfig? selectorConfig, Abilities.Targets.TargetSelectionContext tsc, IReadOnlyList<object>? pool = null)
+        {
+            if (selectorConfig == null)
+            {
+                return null;
+            }
 
+            if (selectorConfig is FormulaValueConfig formulaConfig)
+            {
+                var dsl = formulaConfig.Formula;
+                if (string.IsNullOrWhiteSpace(dsl))
+                {
+                    return null;
+                }
+
+                var getter = CompileGetterWithInference(dsl, tsc, pool);
+                return item => getter(item);
+            }
+
+            if (selectorConfig is StaticValueConfig staticConfig)
+            {
+                var staticValue = staticConfig.Value;
+                return _ => staticValue;
+            }
+
+            _logger.LogWarning("Projection selector uses an unsupported ValueConfig type: {Type}", selectorConfig.GetType().Name);
+            return null;
+        }
+
+        private List<ConditionTraceEntryDto>? CreateTraceEntries(GameContext context)
+        {
+            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
+            if (traceSettings?.IsTargetEnabledFor(context) == true)
+            {
+                return new List<ConditionTraceEntryDto>();
+            }
+
+            return null;
+        }
+
+        private void TryAddTraceEntry(List<ConditionTraceEntryDto>? entries, string expression, Abilities.Targets.TargetSelectionContext tsc, object? item)
+        {
+            if (entries == null || string.IsNullOrWhiteSpace(expression))
+            {
+                return;
+            }
+
+            var collector = new DslTraceCollector();
+            try
+            {
+                var getter = CompileGetterWithTraceInference(expression, tsc, item);
+                _ = getter(item!, collector);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to collect trace for DSL expression: {Expression}", expression);
+            }
+
+            var trace = DslTraceFormatter.Format(expression, collector);
+            entries.Add(new ConditionTraceEntryDto
+            {
+                Expression = expression,
+                Trace = trace
+            });
+        }
+
+        private Func<object, bool> CompilePredicateWithInference(string dsl, TargetSelectionContext tsc, IReadOnlyList<object>? pool)
+        {
+            var inferredType = InferSingleItemType(pool);
+            return _dslCompiler.CompilePredicateRuntime(
+                dsl,
+                tsc,
+                inferredType,
+                IDslCompiler.SelfResolutionMode.ItemOptional);
+        }
+
+        private Func<object, object?> CompileGetterWithInference(string dsl, TargetSelectionContext tsc, IReadOnlyList<object>? pool)
+        {
+            var inferredType = InferSingleItemType(pool);
+            return _dslCompiler.CompileGetterRuntime(
+                dsl,
+                tsc,
+                inferredType,
+                IDslCompiler.SelfResolutionMode.ItemOptional);
+        }
+
+        private Func<object, IDslTraceCollector?, object?> CompileGetterWithTraceInference(string dsl, TargetSelectionContext tsc, object? item)
+        {
+            return _dslCompiler.CompileGetterWithTraceRuntime(
+                dsl,
+                tsc,
+                item?.GetType(),
+                item == null
+                    ? IDslCompiler.SelfResolutionMode.ContextOnly
+                    : IDslCompiler.SelfResolutionMode.ItemOptional);
+        }
+
+        private static Type? InferSingleItemType(IReadOnlyList<object>? pool)
+        {
+            if (pool == null || pool.Count == 0)
+            {
+                return null;
+            }
+
+            Type? inferredType = null;
+            foreach (var item in pool)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                var itemType = item.GetType();
+                if (inferredType == null)
+                {
+                    inferredType = itemType;
+                    continue;
+                }
+
+                if (inferredType != itemType)
+                {
+                    return null;
+                }
+            }
+
+            return inferredType;
+        }
 
         // --- Common Helper Methods ---
 

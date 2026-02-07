@@ -1,4 +1,4 @@
-// File: Server/Domain/Abilities/Effects/Handlers/Parameters/DestroyUnitEffectParams.cs
+﻿// File: Server/Domain/Abilities/Effects/Handlers/Parameters/DestroyUnitEffectParams.cs
 using ShadowverseBeyond.Server.Domain.Entities; // For CardZone if needed later
 using ShadowverseBeyond.Server.Domain.Constants; // For potential enums like DestroyReason
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
@@ -8,7 +8,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// Parameters for the DestroyUnit effect.
     /// </summary>
-    [EffectMetadata("摧毁", "直接摧毁目标单位，触发其死亡效果。使用卡牌目标。")]
+    [EffectMetadata("破坏", "直接破坏目标单位。使用卡牌目标。")]
     public class DestroyEffectParams : BaseEffectParams
     {
         /// <summary>

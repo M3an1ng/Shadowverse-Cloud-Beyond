@@ -30,7 +30,6 @@ export class DynamicUIRenderer {
         this.registerDefaultComponents();
         this.isInitialized = true;
 
-        console.log('DynamicUIRenderer: Initialized successfully');
     }
 
     /**
@@ -47,7 +46,6 @@ export class DynamicUIRenderer {
         this.componentRegistry.set('TargetSelector', this.createTargetSelector.bind(this));
         this.componentRegistry.set('ValueConfigEditor', this.createValueConfigEditor.bind(this));
 
-        console.log('DynamicUIRenderer: Default components registered');
     }
 
     /**
@@ -443,8 +441,10 @@ export class DynamicUIRenderer {
         container.appendChild(label);
         container.appendChild(editorContainer);
 
+        const expectedType = this.getDefaultExpectedType(parameterMeta);
+
         // 异步初始化DSL编辑器
-        this.initializeDslEditor(editorContainer, value, onChange);
+        this.initializeDslEditor(editorContainer, value, onChange, { expectedType });
 
         return container;
     }
@@ -452,7 +452,7 @@ export class DynamicUIRenderer {
     /**
      * 初始化DSL表达式编辑器
      */
-    async initializeDslEditor(container, value, onChange) {
+    async initializeDslEditor(container, value, onChange, options = {}) {
         try {
             const dslEditor = new DslEditor();
             const handleChange = (expr) => {
@@ -464,7 +464,7 @@ export class DynamicUIRenderer {
                 }
             };
 
-            await dslEditor.render(container, value || '', handleChange);
+            await dslEditor.render(container, value || '', handleChange, options);
 
             // 缓存实例，便于外部读取表达式或清理
             container._dslEditor = dslEditor;
@@ -483,6 +483,11 @@ export class DynamicUIRenderer {
                 </div>
             `;
         }
+    }
+
+    getDefaultExpectedType(parameterMeta) {
+        if (!parameterMeta) return null;
+        return parameterMeta.typeName || parameterMeta.TypeName || null;
     }
 
     /**
@@ -505,7 +510,6 @@ export class DynamicUIRenderer {
      */
     registerComponent(type, renderFunction) {
         this.componentRegistry.set(type, renderFunction);
-        console.log(`DynamicUIRenderer: Registered custom component "${type}"`);
     }
 
     /**
@@ -716,6 +720,5 @@ export class DynamicUIRenderer {
         this.metadataManager = null;
         this.componentRegistry.clear();
         this.isInitialized = false;
-        console.log('DynamicUIRenderer: Cleaned up');
     }
 }

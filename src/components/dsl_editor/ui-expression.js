@@ -13,8 +13,16 @@ export function renderClickableMainExpression(editor, node, container) {
 
         valueSpan.textContent = node.value;
         valueSpan.className = "dsl-value-chip dsl-value-chip--main";
+        valueSpan.dataset.dslNode = "true";
+        valueSpan.__dslNode = node;
         valueSpan.dataset.nodeType = node.metadata?.type || node.type;
         valueSpan.classList.toggle("is-selected", editor.selectedNode === node);
+        valueSpan.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (typeof editor.editSubExpression === "function") {
+                editor.editSubExpression(node);
+            }
+        });
 
         container.appendChild(valueSpan);
     } else if (node.type === 'operator') {
@@ -41,11 +49,6 @@ export function renderClickableMainExpression(editor, node, container) {
 export function renderASTNodeRecursive(editor, node, container) {
     if (!node) return;
 
-    console.log("DslEditor: renderASTNodeRecursive called for:", {
-        type: node.type,
-        value: node.value,
-        metadataType: node.metadata?.type
-    });
 
     if (node.type === 'value' && (node.metadata?.type === 'property' || (node.metadata?.type === 'context' && node.value.includes('.')))) {
         editor.renderPropertyChainUI(node, container);
@@ -83,7 +86,7 @@ export function renderNodeContent(editor, node, container) {
         editor.renderOperatorNodeAST(node, container);
     } else if (node.type === 'functionCall') {
         editor.renderFunctionCallNodeAST(node, container);
-    } else if (node.type === 'listQuery' || node.type === 'listSort' || node.type === 'listTake') {
+    } else if (node.type === 'listQuery' || node.type === 'listSort' || node.type === 'listTake' || node.type === 'listDistinct' || node.type === 'listSelect') {
         editor.renderListQueryNodeAST(node, container);
     }
 }
@@ -125,10 +128,20 @@ export function renderClickableASTNode(editor, node, container, encapsulatedNode
         valueSpan.textContent = editor.getReadableValueLabel(node);
 
         valueSpan.className = "dsl-value-chip dsl-value-chip--sub";
+        valueSpan.dataset.dslNode = "true";
+        valueSpan.__dslNode = node;
         valueSpan.dataset.nodeType = node.metadata?.type || node.type;
         valueSpan.classList.toggle("is-highlighted", highlightTarget === node);
         valueSpan.classList.toggle("is-selected", editor.selectedNode === node);
         valueSpan.classList.toggle("is-parent-selected", editor.selectedNode !== node && isParentSelected);
+        if (node._typeMatchInfo && !node._typeMatchInfo.isTypeMatch && node._typeMatchInfo.needsCorrection) {
+            valueSpan.classList.add("dsl-value-node--error");
+            valueSpan.title = `类型不匹配：期望 ${node._typeMatchInfo.expectedType}，实际 ${node._typeMatchInfo.actualType}`;
+        }
+        valueSpan.addEventListener("click", (e) => {
+            e.stopPropagation();
+            editor.editSubExpression(node);
+        });
 
         container.appendChild(valueSpan);
     } else if (node.type === 'operator') {
@@ -149,7 +162,14 @@ export function renderClickableASTNode(editor, node, container, encapsulatedNode
         } else {
             editor.renderEmptySlotPlaceholder(node, 'right', container);
         }
-    } else if (node.type === 'listQuery' || node.type === 'listSort' || node.type === 'listTake') {
+    } else if (node.type === 'functionCall') {
+        editor.renderFunctionCallNodeAST(node, container, {
+            clickableArgs: true,
+            encapsulatedNode,
+            isParentSelected,
+            omitParensForSingleArg: true
+        });
+    } else if (node.type === 'listQuery' || node.type === 'listSort' || node.type === 'listTake' || node.type === 'listDistinct' || node.type === 'listSelect') {
         renderClickableListNode(editor, node, container, encapsulatedNode);
     }
 }
@@ -189,6 +209,12 @@ export function renderClickableListNode(editor, node, container, encapsulatedNod
     } else if (node.type === 'listTake') {
         expressionNode = node.countExpression;
         slotName = 'countExpression';
+    } else if (node.type === 'listDistinct') {
+        expressionNode = node.keyExpression;
+        slotName = 'keyExpression';
+    } else if (node.type === 'listSelect') {
+        expressionNode = node.selectExpression;
+        slotName = 'selectExpression';
     }
 
     if (expressionNode && expressionNode.metadata?.type !== 'empty') {

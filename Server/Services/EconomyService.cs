@@ -99,9 +99,17 @@ public partial class EconomyService : IEconomyService
         var random = new Random();
 
         // 获取所有可收集的卡片
+        var setDefinitionId = userCardPack.CardPackDefinition?.CardSetDefinitionId;
         var availableCards = await _context.CardDefinitions
-            .Where(cd => cd.IsCollectible)
+            .Where(cd => cd.IsCollectible && (!setDefinitionId.HasValue || cd.CardSetDefinitionId == setDefinitionId))
             .ToListAsync();
+
+        if (!availableCards.Any())
+        {
+            availableCards = await _context.CardDefinitions
+                .Where(cd => cd.IsCollectible)
+                .ToListAsync();
+        }
 
         if (!availableCards.Any())
         {

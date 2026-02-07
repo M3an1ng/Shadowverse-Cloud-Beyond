@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -15,11 +16,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("新的PP最大值", "更新后的PP最大值。")]
         public int MaxPp { get; }
 
-        [GameEventParameter("目标玩家", "PP最大值被更新的玩家。")]
+        [GameEventParameter("目标玩家", "PP最大值被更新的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public PpMaxUpdateEvent(PlayerState player, int maxPp)
-            : base(EventType.PpMaxUpdated)
+        public PpMaxUpdateEvent(PlayerState player, int maxPp, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.PpMaxUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             MaxPp = maxPp;
@@ -39,10 +40,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
-            return playerId.HasValue
-                ? $"pp-max player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} max={MaxPp}"
-                : "pp-max";
+            var player = TargetPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}的PP上限变为 {AnnouncementTokens.Number(MaxPp)}。";
         }
     }
 }

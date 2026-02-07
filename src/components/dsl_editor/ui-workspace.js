@@ -1,6 +1,7 @@
 // Phase B - 工作区 UI 渲染（第二阶段：方法级拆分迁移）
 import { renderPipelineEditorUI } from "./ui-pipeline.js";
 import { renderFavoritesToolbar } from "./ui-favorites.js";
+import { findIncompleteNode } from "./core.js";
 export { renderPipelineEditorUI };
 
 export function renderWorkspaceUI(editor, container) {
@@ -85,9 +86,10 @@ export function renderWorkspaceHeader(editor, container) {
   icon.style.fontSize = "16px";
 
   const text = document.createElement("span");
-  const top = typeof editor.peekEditingPath === 'function' ? editor.peekEditingPath() : null;
+  const top =
+    typeof editor.peekEditingPath === "function" ? editor.peekEditingPath() : null;
   if (editor.isPipelineInline) {
-    text.textContent = "管线编辑";
+    text.textContent = "筛选编辑";
   } else {
     text.textContent = top?.descriptor ? `工作区：${top.descriptor}` : "工作区：构建新表达式";
   }
@@ -105,9 +107,27 @@ export function renderWorkspaceHeader(editor, container) {
   rightGroup.style.cssText = "margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;";
 
   const hint = document.createElement("span");
-  const expected = editor.slotExpectedType || editor.expectedType || null;
+  const expectedFromPath = top?.parentNode
+    ? editor.getExpectedTypeForSlot(top.parentNode, top.slot, top.index)
+    : null;
+  const expectedFromFocus = editor.isLightWorkspace && editor.lightWorkspaceFocus?.parentNode
+    ? editor.getExpectedTypeForSlot(
+      editor.lightWorkspaceFocus.parentNode,
+      editor.lightWorkspaceFocus.slot,
+      editor.lightWorkspaceFocus.index
+    )
+    : null;
+  const expectedFromIncomplete = editor.isLightWorkspace
+    ? resolveExpectedTypeFromIncompleteNode(editor)
+    : null;
+  const expected = expectedFromFocus
+    || expectedFromPath
+    || expectedFromIncomplete
+    || editor.slotExpectedType
+    || editor.expectedType
+    || null;
   if (editor.isPipelineInline) {
-    hint.textContent = expected ? `目标类型：${editor.getDisplayTypeName(expected)}` : "从当前项 (self) 开始构建公式";
+    hint.textContent = expected ? `目标类型：${editor.getDisplayTypeName(expected)}` : "从当前项开始构建公式";
   } else {
     hint.textContent = expected ? `期望类型：${editor.getDisplayTypeName(expected)}` : "完成后将添加到上方的已完成表达式中";
   }
@@ -141,10 +161,70 @@ export function renderWorkspaceHeader(editor, container) {
   container.appendChild(workspaceHeader);
 }
 
+function resolveExpectedTypeFromIncompleteNode(editor) {
+  if (!editor?.workspaceAST || typeof editor.getExpectedTypeForSlot !== "function") return null;
+  const incomplete = findIncompleteNode(editor.workspaceAST);
+  if (!incomplete) return null;
+
+  if (incomplete.type === "value" && incomplete.metadata?.type === "empty") {
+    const info = editor.resolveEmptySlot?.(incomplete.parent, incomplete);
+    if (info?.slot) {
+      return editor.getExpectedTypeForSlot(incomplete.parent, info.slot, info.index);
+    }
+  }
+
+  if (incomplete.type === "operator") {
+    const slot = !incomplete.leftOperand ? "left" : !incomplete.rightOperand ? "right" : null;
+    if (slot) {
+      return editor.getExpectedTypeForSlot(incomplete, slot);
+    }
+  }
+
+  if (incomplete.type === "functionCall") {
+    const args = incomplete.args || [];
+    const params = incomplete.parameters || [];
+    let index = params.findIndex((p, i) => !p?.isOptional && !args[i]);
+    if (index < 0) {
+      index = args.findIndex(arg => !arg);
+    }
+    if (index >= 0) {
+      return editor.getExpectedTypeForSlot(incomplete, "arg", index);
+    }
+  }
+
+  if (incomplete.type === "listQuery") {
+    if (!incomplete.filterExpression || incomplete.filterExpression.metadata?.type === "empty") {
+      return editor.getExpectedTypeForSlot(incomplete, "filterExpression");
+    }
+  }
+  if (incomplete.type === "listSort") {
+    if (!incomplete.sortExpression || incomplete.sortExpression.metadata?.type === "empty") {
+      return editor.getExpectedTypeForSlot(incomplete, "sortExpression");
+    }
+  }
+  if (incomplete.type === "listTake") {
+    if (!incomplete.countExpression || incomplete.countExpression.metadata?.type === "empty") {
+      return editor.getExpectedTypeForSlot(incomplete, "countExpression");
+    }
+  }
+  if (incomplete.type === "listDistinct") {
+    if (!incomplete.keyExpression || incomplete.keyExpression.metadata?.type === "empty") {
+      return editor.getExpectedTypeForSlot(incomplete, "keyExpression");
+    }
+  }
+  if (incomplete.type === "listSelect") {
+    if (!incomplete.selectExpression || incomplete.selectExpression.metadata?.type === "empty") {
+      return editor.getExpectedTypeForSlot(incomplete, "selectExpression");
+    }
+  }
+
+  return null;
+}
+
 
 
 export function renderNodeChainUI(editor, container) {
-  if (!editor.astRoot) {
+  if (!editor.workspaceAST) {
     const placeholder = document.createElement("span");
     placeholder.className = "dsl-placeholder";
     placeholder.textContent = "点击 [+] 开始构建表达式";
@@ -154,7 +234,7 @@ export function renderNodeChainUI(editor, container) {
     container.appendChild(placeholder);
   } else {
     // 关键修复：使用 .call() 来确保 renderASTNodeRecursive 函数内部的 'this' 上下文正确指向 editor 实例
-    editor.renderASTNodeRecursive.call(editor, editor.astRoot, container);
+    editor.renderASTNodeRecursive.call(editor, editor.workspaceAST, container);
   }
 }
 
@@ -175,8 +255,50 @@ export function renderAddButtonUI(editor, container) {
 
   buttonContainer.appendChild(addBtn);
 
+  // 筛选编辑：仅保留 [+] 与 [−]
+  if (editor.isPipelineInline) {
+    if (editor.workspaceAST || editor.awaitingRightOperand) {
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "dsl-clear-btn";
+      clearBtn.textContent = "[×]";
+      clearBtn.title = "清空当前表达式";
+
+      clearBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        editor.clearWorkspace(true);
+      });
+
+      buttonContainer.appendChild(clearBtn);
+    }
+
+    if (editor.workspaceAST || editor.isSubEditor) {
+      const backBtn = document.createElement("button");
+      backBtn.className = "dsl-back-btn";
+      backBtn.textContent = "[−]";
+      backBtn.title = "退回上级";
+
+      if (editor.isSubEditor && !editor.workspaceAST) {
+        backBtn.title = "退出筛选编辑器";
+        backBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          editor.exitSubEditor();
+        });
+      } else {
+        backBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          editor.goBack();
+        });
+      }
+
+      buttonContainer.appendChild(backBtn);
+    }
+
+    container.appendChild(buttonContainer);
+    return;
+  }
+
   // 清空按钮（新增）
-  if (editor.astRoot || editor.awaitingRightOperand) {
+  if (editor.workspaceAST || editor.awaitingRightOperand) {
     const clearBtn = document.createElement("button");
     clearBtn.className = "dsl-clear-btn";
     clearBtn.textContent = "[×]";
@@ -191,13 +313,13 @@ export function renderAddButtonUI(editor, container) {
   }
 
   // 退回上级按钮（仅在有节点时显示，或者是子编辑器时总是显示）
-  if (editor.astRoot || editor.isSubEditor) {
+  if (editor.workspaceAST || editor.isSubEditor) {
     const backBtn = document.createElement("button");
     backBtn.className = "dsl-back-btn";
     backBtn.textContent = "[−]";
     backBtn.title = "退回上级";
 
-    if (editor.isSubEditor && !editor.astRoot) {
+    if (editor.isSubEditor && !editor.workspaceAST) {
       backBtn.title = "退出筛选编辑器";
       backBtn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -214,21 +336,21 @@ export function renderAddButtonUI(editor, container) {
   }
 
   // 完成表达式按钮（有AST时始终显示）
-  if (editor.astRoot) {
-    // 新增：“提升层级”按钮
-    // 只有当工作区是一个可封装的值节点时才显示
-    if (editor.workspaceAST && editor.workspaceAST.type === 'value') {
-        const elevateBtn = document.createElement("button");
-        elevateBtn.className = "dsl-elevate-btn";
-        elevateBtn.textContent = "()";
-        elevateBtn.title = "将当前项创建为独立表达式";
+  if (editor.workspaceAST) {
+    // “提升层级”按钮：只要当前工作区表达式完整即可显示
+    const isWorkspaceComplete = !findIncompleteNode(editor.workspaceAST);
+    if (isWorkspaceComplete) {
+      const elevateBtn = document.createElement("button");
+      elevateBtn.className = "dsl-elevate-btn";
+      elevateBtn.textContent = "()";
+      elevateBtn.title = "将当前项创建为独立表达式";
 
-        elevateBtn.addEventListener("click", (e) => {
-            e.preventDefault();
-            editor.handleElevateExpression(editor.workspaceAST);
-        });
+      elevateBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        editor.handleElevateExpression(editor.workspaceAST);
+      });
 
-        buttonContainer.appendChild(elevateBtn);
+      buttonContainer.appendChild(elevateBtn);
     }
 
     const completeBtn = document.createElement("button");

@@ -5,27 +5,27 @@ using ShadowverseBeyond.Server.Domain.Constants;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
 {
-    public sealed class LenientEffectKeywordConverter : JsonConverter<EffectKeyword>
+    public sealed class LenientEffectKeywordConverter : JsonConverter<AbilityKeyword>
     {
-        public override EffectKeyword Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        public override AbilityKeyword Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             if (reader.TokenType == JsonTokenType.Null)
             {
-                return EffectKeyword.None;
+                return AbilityKeyword.None;
             }
 
             if (reader.TokenType == JsonTokenType.StartArray)
             {
                 // Legacy compatibility: some payloads used `abilityTag: ["Fanfare"]`.
-                EffectKeyword first = EffectKeyword.None;
+                AbilityKeyword first = AbilityKeyword.None;
 
                 if (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
                 {
                     first = reader.TokenType switch
                     {
-                        JsonTokenType.String => Keywords.ParseEffectKeywordOrDefault(reader.GetString(), defaultValue: EffectKeyword.None),
-                        JsonTokenType.Number when reader.TryGetInt32(out var arrayNumeric) && Enum.IsDefined(typeof(EffectKeyword), arrayNumeric) => (EffectKeyword)arrayNumeric,
-                        _ => EffectKeyword.None
+                        JsonTokenType.String => Keywords.ParseEffectKeywordOrDefault(reader.GetString(), defaultValue: AbilityKeyword.None),
+                        JsonTokenType.Number when reader.TryGetInt32(out var arrayNumeric) && Enum.IsDefined(typeof(AbilityKeyword), arrayNumeric) => (AbilityKeyword)arrayNumeric,
+                        _ => AbilityKeyword.None
                     };
 
                     // Consume remaining items until EndArray
@@ -39,19 +39,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
 
             if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var numeric))
             {
-                return Enum.IsDefined(typeof(EffectKeyword), numeric) ? (EffectKeyword)numeric : EffectKeyword.None;
+                return Enum.IsDefined(typeof(AbilityKeyword), numeric) ? (AbilityKeyword)numeric : AbilityKeyword.None;
             }
 
             if (reader.TokenType == JsonTokenType.String)
             {
                 var text = reader.GetString();
-                return Keywords.ParseEffectKeywordOrDefault(text, defaultValue: EffectKeyword.None);
+                return Keywords.ParseEffectKeywordOrDefault(text, defaultValue: AbilityKeyword.None);
             }
 
-            return EffectKeyword.None;
+            return AbilityKeyword.None;
         }
 
-        public override void Write(Utf8JsonWriter writer, EffectKeyword value, JsonSerializerOptions options)
+        public override void Write(Utf8JsonWriter writer, AbilityKeyword value, JsonSerializerOptions options)
         {
             writer.WriteStringValue(value.ToString());
         }

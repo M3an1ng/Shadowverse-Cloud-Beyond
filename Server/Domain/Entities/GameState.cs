@@ -8,9 +8,11 @@ using System.Linq; // Added for FirstOrDefault
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For DomainOperationResult
 using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Auras;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 using ShadowverseBeyond.Server.Domain.Identifiers;
+using ShadowverseBeyond.Server.Domain.Constants;
 
 using System.Collections.Concurrent; // Added for ConcurrentDictionary
 
@@ -39,6 +41,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
 
+        public int TurnTimeoutSeconds { get; set; } = GameConstants.Timing.DefaultTurnTimeoutSeconds;
+        public DateTime? TurnStartedAtUtc { get; set; }
+        public DateTime? TurnEndsAtUtc { get; set; }
+
         public long StateRevision { get; private set; } = 0;
         public long BuffRevision { get; private set; } = 0;
         public long RefreshCycleId { get; private set; } = 0;
@@ -53,22 +59,28 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public string? GameMessage { get; set; } // Added
 
         // Keep direct references to players for easier access in game logic
-        [DslExposable("玩家1", Description = "游戏中的第一个玩家")]
         public PlayerState Player1 { get; set; }
 
-        [DslExposable("玩家2", Description = "游戏中的第二个玩家")]
         public PlayerState Player2 { get; set; }
 
         [DslExposable("先手玩家", Description = "游戏中先行动的玩家")]
         public PlayerState FirstPlayer => Player1.IsFirst ? Player1 : Player2;
 
+        [DslExposable("后手玩家", Description = "游戏中先行动的玩家")]
+        public PlayerState SecondPlayer => Player1.IsFirst ? Player2 : Player1;
+
         [DslExposable("当前玩家", Description = "目前进行回合的玩家")]
         public PlayerState CurrentPlayer => GetPlayerState(CurrentPlayerId.Value);
+
+        [DslExposable("非当前玩家", Description = "当前回合的对手玩家")]
+        public PlayerState NonCurrentPlayer => GetOpponentPlayerState(CurrentPlayerId.Value);
+
 
         // --- Core Game State Managers ---
         // These are initialized externally by the GameService to keep the domain model clean.
         public IAbilityManager AbilityManager { get; set; } = null!;
         public IBuffManager BuffManager { get; set; } = null!;
+        public IAuraManager AuraManager { get; set; } = NullAuraManager.Instance;
 
         // Derived property for convenience, especially for DTO mapping
         public bool IsGameOver => Status == GameStatus.Finished;
@@ -209,6 +221,22 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             _allCardInstancesById.TryGetValue(instanceId, out var card);
             return card;
+        }
+
+        /// <summary>
+        /// 获取当前已注册的所有卡牌实例ID（快照）。
+        /// </summary>
+        public IReadOnlyCollection<Guid> GetRegisteredCardInstanceIds()
+        {
+            return _allCardInstancesById.Keys.ToList();
+        }
+
+        /// <summary>
+        /// 获取当前已注册的所有卡牌实例（快照）。
+        /// </summary>
+        public IReadOnlyCollection<CardInstance> GetRegisteredCardInstances()
+        {
+            return _allCardInstancesById.Values.ToList();
         }
 
         /// <summary>

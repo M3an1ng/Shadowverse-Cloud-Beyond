@@ -37,11 +37,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// </summary>
         public string RemovalReason { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Whether this buff was non-stackable.
-        /// </summary>
-        public bool IsNonStackable { get; set; }
-
         // Constructor
         public BuffRemovedEventDto(
             Guid sourcePlayerId,
@@ -50,8 +45,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
             string removalReason,
             Guid? sourceCardInstanceId = null,
             string? buffDefinitionId = null,
-            string buffType = "Unknown",
-            bool isNonStackable = false)
+            string buffType = "Unknown")
             : base(sourcePlayerId, "BuffRemoved")
         {
             BuffId = buffId;
@@ -60,7 +54,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
             SourceCardInstanceId = sourceCardInstanceId;
             BuffDefinitionId = buffDefinitionId;
             BuffType = buffType;
-            IsNonStackable = isNonStackable;
         }
     }
 }

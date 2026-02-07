@@ -12,6 +12,7 @@ namespace ShadowverseBeyond.Server.Dtos.Dsl
         public List<DslContextObjectDto> ContextObjects { get; set; } = new List<DslContextObjectDto>();
         public List<DslFunctionDto> Functions { get; set; } = new List<DslFunctionDto>();
         public Dictionary<string, DslTypeDto> TypeMetadata { get; set; } = new Dictionary<string, DslTypeDto>();
+        public List<DslEnumTypeDto> EnumTypes { get; set; } = new List<DslEnumTypeDto>();
     }
 
     /// <summary>
@@ -57,6 +58,15 @@ namespace ShadowverseBeyond.Server.Dtos.Dsl
         public string Description { get; set; } = string.Empty;
         public string ReturnTypeName { get; set; } = string.Empty;
         public List<DslParameterDto> Parameters { get; set; } = new List<DslParameterDto>();
+    }
+
+    /// <summary>
+    /// DTO for an enum type exposed to the DSL editor.
+    /// </summary>
+    public class DslEnumTypeDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public List<string> Values { get; set; } = new List<string>();
     }
 
     /// <summary>

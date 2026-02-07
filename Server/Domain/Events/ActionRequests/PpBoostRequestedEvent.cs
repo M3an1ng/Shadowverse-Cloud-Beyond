@@ -23,8 +23,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("玩家ID", "发起PP+1请求的玩家ID。")]
         public Guid PlayerId { get; }
 
-        public PpBoostRequestedEvent(Guid playerId)
-            : base(EventType.PpBoostRequested)
+        public PpBoostRequestedEvent(Guid playerId, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.PpBoostRequested, eventId, timestamp)
         {
             PlayerId = playerId;
         }

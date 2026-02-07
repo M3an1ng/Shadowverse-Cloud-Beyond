@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -16,11 +17,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("新的EP最大值", "更新后的EP最大值。")]
         public int MaxEp { get; }
 
-        [GameEventParameter("目标玩家", "EP最大值被更新的玩家。")]
+        [GameEventParameter("目标玩家", "EP最大值被更新的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public EpMaxUpdateEvent(PlayerState player, int maxEp)
-            : base(EventType.EpMaxUpdated)
+        public EpMaxUpdateEvent(PlayerState player, int maxEp, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.EpMaxUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             MaxEp = maxEp;
@@ -40,10 +41,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
-            return playerId.HasValue
-                ? $"ep-max player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} max={MaxEp}"
-                : "ep-max";
+            var player = TargetPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}的EP上限变为 {AnnouncementTokens.Number(MaxEp)}。";
         }
     }
 }

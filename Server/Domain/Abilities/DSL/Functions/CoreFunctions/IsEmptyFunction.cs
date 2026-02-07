@@ -38,9 +38,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                 return false;
             }
 
-            var arg = args[0];
-            // 参数可以是null、集合或字符串
-            return arg == null || IsCollection(arg) || arg is string;
+            return true;
         }
 
         public override object? Execute(List<object?> args, GameContext context)
@@ -64,15 +62,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                 return string.IsNullOrEmpty(stringValue);
             }
 
-            // 集合检查
-            if (IsCollection(value))
-            {
-                var enumerable = ConvertToEnumerable(value);
-                return !enumerable.Any();
-            }
-
-            // 其他类型视为非空
-            return false;
+            var enumerable = ConvertToEnumerable(value);
+            return !enumerable.Any();
         }
     }
 }

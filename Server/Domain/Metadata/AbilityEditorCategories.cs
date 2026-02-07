@@ -6,10 +6,10 @@ namespace ShadowverseBeyond.Server.Domain.Metadata
         public const string BaseActionLabel = "基础行动";
 
         public const string PositionChangeId = "position-change";
-        public const string PositionChangeLabel = "位置变化";
+        public const string PositionChangeLabel = "位置移动";
 
         public const string TempStateId = "temp-state";
-        public const string TempStateLabel = "临时状态";
+        public const string TempStateLabel = "状态变化";
 
         public const string ResourceValueId = "resource-value";
         public const string ResourceValueLabel = "资源数值";

@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadowverse:World Beyond</title>
+    <link rel="icon" href="/favicon.jpg?v=2" type="image/jpeg">
+
+    <!-- Fonts -->
+    <link
+        href="https://fonts.loli.net/css2?family=Cinzel:wght@400;700;900&family=Rajdhani:wght@300;500;700&family=Inter:wght@300;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="src/styles/animations.css"> <!-- Legacy styles, to be refactored -->
+
+    <!-- defer 确保在 HTML 解析完成后执行脚本 -->
+    <!-- type="module" 启用 ES Module 功能 -->
+  <script type="module" crossorigin src="/assets/index-4FBkZfus.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DKOhY9kh.css">
+</head>
+
+<body>
+    <div class="noise-bg"></div>
+
+    <!-- Top Navigation Bar -->
+    <div class="top-nav-bar">
+        <div id="user-info-widget" class="user-widget">
+            <button id="user-info-toggle" class="icon-btn" type="button" aria-label="User Profile">
+                <svg viewBox="0 0 24 24" class="icon-svg">
+                    <path
+                        d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                </svg>
+            </button>
+            <div id="user-info-card" class="user-card-popup user-info-card" aria-hidden="true">
+                <button id="user-auth-logout" class="user-logout-btn" type="button">退出</button>
+                <div class="user-card-header">
+                    <div class="user-avatar-large" id="user-info-avatar" title="Upload avatar">
+                        <img id="user-info-avatar-img" class="user-avatar-img" alt="User avatar">
+                        <span id="user-info-avatar-text">G</span>
+                    </div>
+                    <div class="user-details">
+                        <div class="user-name-row">
+                            <div class="user-name" id="user-info-name">游客</div>
+                            <div class="user-role" id="user-info-role">GUEST</div>
+                        </div>
+                        <div id="user-id-inline" class="user-id-inline" role="button" tabindex="0" aria-expanded="false">
+                            <span class="label">ID</span>
+                            <span class="value" id="user-info-id" title="Click to reveal">********</span>
+                            <span class="hint">点击展示</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="user-card-body">
+                    <div id="user-info-resources" class="user-resources">
+                        <div class="resource-item">
+                            <span class="resource-label">金币</span>
+                            <span class="resource-value" id="user-info-coins">--</span>
+                        </div>
+                        <div class="resource-item is-placeholder">
+                            <span class="resource-label">资源位</span>
+                            <span class="resource-value">--</span>
+                        </div>
+                        <div class="resource-item is-placeholder">
+                            <span class="resource-label">资源位</span>
+                            <span class="resource-value">--</span>
+                        </div>
+                    </div>
+                    <div id="user-auth" class="user-auth">
+                        <div class="user-auth-row">
+                            <label class="user-auth-label" for="user-auth-username">用户名</label>
+                            <input id="user-auth-username" class="form-input user-auth-input" type="text"
+                                autocomplete="username" placeholder="输入用户名">
+                        </div>
+                        <div class="user-auth-row">
+                            <label class="user-auth-label" for="user-auth-password">密码</label>
+                            <input id="user-auth-password" class="form-input user-auth-input" type="password"
+                                autocomplete="current-password" placeholder="输入密码">
+                        </div>
+                        <div class="user-auth-actions">
+                            <button id="user-auth-register" class="btn btn-primary" type="button">注册</button>
+                            <button id="user-auth-login" class="btn" type="button">登录</button>
+                        </div>
+                        <div id="user-auth-status" class="user-auth-status" aria-live="polite"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="about-widget">
+            <button id="about-toggle" class="icon-btn" type="button" aria-label="About">
+                <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                    <path
+                        d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2zm0 4.2a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm1.5 11.3h-3v-1.6h.9v-4h-.9v-1.6H13a.5.5 0 0 1 .5.5v5.1h1v1.6z" />
+                </svg>
+            </button>
+            <div id="about-card" class="user-card-popup about-card-popup" aria-hidden="true">
+                <div class="about-card-header">
+                    <div class="about-title-group">
+                        <div class="about-card-title">星云</div>
+                        <div id="about-card-version" class="about-card-version">v0.0.1</div>
+                    </div>
+                </div>
+                <div class="about-card-body">
+                    <div class="about-meta">
+                        <div class="about-meta-row">
+                            <span class="about-meta-label">前端</span>
+                            <span class="about-meta-value">HTML / CSS / JS</span>
+                        </div>
+                        <div class="about-meta-row">
+                            <span class="about-meta-label">后端</span>
+                            <span class="about-meta-value">C# / .NET</span>
+                        </div>
+                    </div>
+                    <div class="about-block">
+                        <div class="about-block-title">更新日志</div>
+                        <ul id="about-changelog" class="about-changelog"></ul>
+                    </div>
+                    <div class="about-policy">
+                        仅用于学习与研究交流，不用于商业用途；相关素材版权归原作者所有，如有侵权请联系移除。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button id="dev-console-toggle" class="icon-btn" type="button" aria-label="Developer Console"
+            onclick="window.devConsole?.toggle()">
+            <svg viewBox="0 0 24 24" class="icon-svg">
+                <path
+                    d="M20 19V7H4v12h16zm0-16c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h16zm-7 14v-2h5v2h-5zM6 12l3.5-3.5 1.42 1.42L8.83 12l2.09 2.08L9.5 15.5 6 12z" />
+            </svg>
+        </button>
+    </div>
+
+    <!-- 主应用容器 -->
+    <div id="app-container">
+        <!-- 导航页面 -->
+        <div id="navigation-page" class="page active">
+            <!-- Background Elements -->
+            <div class="menu-grid-overlay"></div>
+            <div class="menu-route-overlay overlay-left" data-route="singleplayer" aria-hidden="true">
+                <img class="menu-route-image" src="/assets/background_1-DA1v3mWF.jpg" alt="">
+            </div>
+            <div class="menu-route-overlay overlay-right" data-route="card-editor" aria-hidden="true">
+                <img class="menu-route-image" src="/assets/background_2-COu8OpkI.jpg" alt="">
+            </div>
+            <div class="menu-route-overlay overlay-left" data-route="deck-builder" aria-hidden="true">
+                <img class="menu-route-image" src="/assets/background_3-Bv1VUZCR.jpg" alt="">
+            </div>
+            <div class="menu-route-overlay overlay-right" data-route="multiplayer" aria-hidden="true">
+                <img class="menu-route-image" src="/assets/background_4-CuofyCku.jpg" alt="">
+            </div>
+            <div class="menu-route-overlay overlay-left" data-route="dev-tools" aria-hidden="true">
+                <img class="menu-route-image" src="/assets/background_5-DwufBDdt.jpg" alt="">
+            </div>
+            <canvas id="menu-starry-sky" class="menu-starry-sky" aria-hidden="true"></canvas>
+            <div class="hud-line top"></div>
+            <div class="hud-line bottom"></div>
+
+            <div class="title-container">
+                <h1 class="main-title">SHADOWVERSE</h1>
+                <div class="hero-subtitle">WORLD BEYOND</div>
+                <div class="deco-line">
+                    <span class="line"></span>
+                    <span class="deco-text">CARD BATTLE DEVELOPMENT PLATFORM</span>
+                    <span class="line"></span>
+                </div>
+            </div>
+
+            <!-- Energy Connection Line (Redesigned) -->
+            <div class="energy-connection-system">
+                <div class="ec-main-stem">
+                    <div class="ec-stream vertical"></div>
+                </div>
+                <div class="ec-hub">
+                    <div class="ec-pulse"></div>
+                </div>
+                <div class="ec-horizontal-bus">
+                    <div class="ec-stream horizontal-left"></div>
+                    <div class="ec-stream horizontal-right"></div>
+                </div>
+                <div class="ec-drops">
+                    <!-- Drop lines corresponding to 5 buttons -->
+                    <div class="ec-drop-line" style="--delay: 0s"></div>
+                    <div class="ec-drop-line" style="--delay: 0s"></div>
+                    <div class="ec-drop-line center" style="--delay: 0s"></div>
+                    <div class="ec-drop-line" style="--delay: 0s"></div>
+                    <div class="ec-drop-line" style="--delay: 0s"></div>
+                </div>
+            </div>
+
+            <div class="nav-menu">
+                <!-- Battle Option -->
+                <div class="nav-item" data-route="singleplayer" role="button" tabindex="0">
+                    <div class="nav-content">
+                        <div class="nav-text">单人模式</div>
+                        <div class="nav-desc">
+                            <span class="desc-line">LINK START</span>
+                            <span class="desc-detail">体验实时卡牌对战 / 挑战 AI</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Editor Option -->
+                <div class="nav-item" data-route="card-editor" role="button" tabindex="0">
+                    <div class="nav-content">
+                        <div class="nav-text">卡牌工坊</div>
+                        <div class="nav-desc">
+                            <span class="desc-line">CONSTRUCT</span>
+                            <span class="desc-detail">设计专属卡牌 / 编辑能力</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Deck Builder Option -->
+                <div class="nav-item" data-route="deck-builder" role="button" tabindex="0">
+                    <div class="nav-content">
+                        <div class="nav-text">牌组编辑</div>
+                        <div class="nav-desc">
+                            <span class="desc-line">ASSEMBLE</span>
+                            <span class="desc-detail">构筑强力卡组 / 管理套牌</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Multiplayer Option -->
+                <div class="nav-item" data-route="multiplayer" role="button" tabindex="0">
+                    <div class="nav-content">
+                        <div class="nav-text">多人对战</div>
+                        <div class="nav-desc">
+                            <span class="desc-line">LINK UP</span>
+                            <span class="desc-detail">创建房间 / 局域网联机</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DevTools Option -->
+                <div class="nav-item" data-route="dev-tools" role="button" tabindex="0">
+                    <div class="nav-content">
+                        <div class="nav-text">系统核心</div>
+                        <div class="nav-desc">
+                            <span class="desc-line">SETTING</span>
+                            <span class="desc-detail">API 测试 / 数据监控</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Multiplayer panel (shown when route=multiplayer) -->
+            <div id="multiplayer-panel" class="mp-panel">
+                <div class="mp-header">
+                    <div class="mp-title-block">
+                        <div class="mp-subtitle">LINK UP</div>
+                        <div class="mp-title">多人对战</div>
+                    </div>
+                    <div class="mp-note">与其他玩家在线对战</div>
+                    <div class="mp-deck-switcher">
+                        <div class="mp-deck-label">当前卡组</div>
+                        <div class="mp-deck-controls">
+                            <button id="mp-deck-prev" class="mp-btn ghost" type="button">←</button>
+                            <div id="mp-deck-current" class="mp-deck-current">加载中...</div>
+                            <button id="mp-deck-next" class="mp-btn ghost" type="button">→</button>
+                        </div>
+                        <div id="mp-deck-output" class="mp-output"></div>
+                    </div>
+                </div>
+
+                <div class="mp-grid">
+                    <div class="mp-card">
+                        <div class="mp-card-title">创建房间</div>
+                        <p class="mp-card-desc">邀请好友加入，共享 GameId &amp; JoinCode</p>
+                        <button id="mp-create-host" class="mp-btn primary">创建房间</button>
+                        <div id="mp-create-output" class="mp-output"></div>
+                    </div>
+
+                    <div class="mp-card">
+                        <div class="mp-card-title">观战</div>
+                        <p class="mp-card-desc">输入房间 GameId，实时观战正在进行的对战</p>
+                        <div class="mp-field">
+                            <label for="mp-spectate-game">GameId</label>
+                            <input id="mp-spectate-game" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                                autocomplete="off">
+                        </div>
+                        <button id="mp-spectate-btn" class="mp-btn primary">开始观战</button>
+                        <div id="mp-spectate-output" class="mp-output"></div>
+                    </div>
+
+                    <div class="mp-card">
+                        <div class="mp-card-title">加入房间</div>
+                        <p class="mp-card-desc">输入房主提供的 GameId 与 JoinCode</p>
+                        <div class="mp-field">
+                            <label for="mp-join-game">GameId</label>
+                            <input id="mp-join-game" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                                autocomplete="off">
+                        </div>
+                        <div class="mp-field">
+                            <label for="mp-join-code">JoinCode</label>
+                            <input id="mp-join-code" type="text" placeholder="6位邀请码" autocomplete="off" maxlength="10">
+                        </div>
+                        <button id="mp-join-btn" class="mp-btn primary">加入并准备</button>
+                        <div id="mp-join-output" class="mp-output"></div>
+                    </div>
+                </div>
+
+                <div class="mp-footer">
+                    <div class="mp-hint">提示：创建房间后会自动就绪；对手加入并就绪后即可开始。</div>
+                    <div class="mp-actions">
+                        <button id="mp-go-game" class="mp-btn primary">进入对战</button>
+                        <button id="mp-back-btn" class="mp-btn ghost" data-route="navigation">← 返回主菜单</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Singleplayer panel (shown when route=singleplayer) -->
+            <div id="singleplayer-panel" class="mp-panel">
+                <div class="mp-header">
+                    <div class="mp-title-block">
+                        <div class="mp-subtitle">LINK START</div>
+                        <div class="mp-title">单人模式</div>
+                    </div>
+                    <div class="mp-note" id="sp-mode-note">以离线模式进行游戏</div>
+                    <div class="mp-deck-switcher">
+                        <div class="mp-deck-label">当前卡组</div>
+                        <div class="mp-deck-controls">
+                            <button id="sp-deck-prev" class="mp-btn ghost" type="button">←</button>
+                            <div id="sp-deck-current" class="mp-deck-current">加载中...</div>
+                            <button id="sp-deck-next" class="mp-btn ghost" type="button">→</button>
+                        </div>
+                        <div id="sp-deck-output" class="mp-output"></div>
+                    </div>
+                </div>
+
+                <div class="mp-grid">
+                    <div class="mp-card">
+                        <div class="mp-card-title">练习对战</div>
+                        <p class="mp-card-desc" id="sp-start-desc">确认玩家与 AI 卡组后开始</p>
+                        <div class="mp-field">
+                            <label for="sp-mode">对战模式</label>
+                            <select id="sp-mode">
+                                <option value="ai">人机对战</option>
+                                <option value="dual">本地双人</option>
+                            </select>
+                        </div>
+                        <div class="mp-field">
+                            <label for="sp-ai-deck" id="sp-ai-deck-label">AI 卡组</label>
+                            <select id="sp-ai-deck">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                        <button id="sp-start-btn" class="mp-btn primary">开始对战</button>
+                        <div id="sp-start-output" class="mp-output"></div>
+                    </div>
+                    <div class="mp-card">
+                        <div class="mp-card-title">地城解谜</div>
+                        <p class="mp-card-desc">挑战预设强敌与策略谜题</p>
+                        <button class="mp-btn ghost" type="button" disabled>暂未开放</button>
+                    </div>
+                    <div class="mp-card">
+                        <div class="mp-card-title">剧情关卡</div>
+                        <p class="mp-card-desc">体验故事篇章与角色剧情</p>
+                        <button class="mp-btn ghost" type="button" disabled>暂未开放</button>
+                    </div>
+                </div>
+
+                <div class="mp-footer">
+                    <div class="mp-hint" id="sp-mode-hint">提示：单人对战需要选择玩家与 AI 卡组。</div>
+                    <div class="mp-actions">
+                        <button id="sp-back-btn" class="mp-btn ghost" data-route="navigation">← 返回主菜单</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Meta progression panel (lightweight profile/status) -->
+            <div id="meta-progression-panel" class="meta-panel" aria-label="Meta progression status">
+                <div class="meta-header">
+                    <div>
+                        <div class="meta-subtitle">META</div>
+                        <div class="meta-title">元进度</div>
+                    </div>
+                    <button id="meta-refresh" class="meta-btn" type="button">刷新</button>
+                </div>
+                <div class="meta-field">
+                    <label for="meta-user-id">UserId</label>
+                    <input id="meta-user-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        autocomplete="off">
+                </div>
+                <div id="meta-summary" class="meta-summary">未加载</div>
+                <div class="meta-actions">
+                    <button id="meta-claim-daily" class="meta-btn" type="button" disabled>领取每日奖励</button>
+                </div>
+                <div class="meta-quests-title">任务</div>
+                <div id="meta-quests" class="meta-quests"></div>
+            </div>
+        </div>
+
+        <!-- 游戏对战页面 -->
+        <div id="game-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="navigation" aria-label="Back to Home">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">游戏对战</span>
+                    </button>
+                </div>
+            </div>
+            <div id="game-container">
+                <div id="battle-card-preview" class="card-preview-container battle-card-preview">
+                    <div class="preview-placeholder">
+                        <p class="tech-text-dim">NO CARD SELECTED</p>
+                    </div>
+                </div>
+                <!-- 对手信息区 (Top Right) -->
+                <div id="player2-info" class="player-info opponent-info">
+                    <div class="player-stats" id="player2-stats">
+                        <div class="stats-header">
+                            <div class="stats-avatar" id="player2-avatar">OPP</div>
+                            <div class="stats-info">
+                                <div class="class-name">NEUTRAL</div>
+                                <div class="player-name">OPPONENT</div>
+                            </div>
+                            <div class="hp-display" id="player2-hp">
+                                <span class="hp-value">20</span>
+                                <span class="hp-label">HP</span>
+                            </div>
+                        </div>
+                        <div class="emblem-zone" aria-label="Emblems">
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                        </div>
+                        <div class="resources-grid">
+                            <!-- PP -->
+                            <div class="pp-container">
+                                <div class="pp-header">
+                                    <span class="pp-label">PP</span>
+                                    <span class="pp-text">0 / 0</span>
+                                </div>
+                                <div class="pp-bar-segments" id="player2-pp-bar">
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                </div>
+                            </div>
+                            <!-- EP -->
+                            <div class="resource-box ep-box">
+                                <span class="resource-label ep-label">EP</span>
+                                <div class="ep-dots" id="player2-ep-dots">
+                                    <div class="ep-dot"></div>
+                                    <div class="ep-dot"></div>
+                                </div>
+                            </div>
+                            <!-- SEP -->
+                            <div class="resource-box sep-box">
+                                <span class="resource-label sep-label">SEP</span>
+                                <div class="sep-dots" id="player2-sep-dots">
+                                    <div class="sep-dot"></div>
+                                    <div class="sep-dot"></div>
+                                </div>
+                            </div>
+                            <!-- Deck/Grave -->
+                            <div class="resource-box deck-box">
+                                <span class="resource-label">DECK</span>
+                                <span class="resource-value" id="player2-deck-count">0</span>
+                            </div>
+                            <div class="resource-box grave-box">
+                                <span class="resource-label">GRAVE</span>
+                                <span class="resource-value" id="player2-grave-count">0</span>
+                            </div>
+                            <div class="resource-box blood-box">
+                                <span class="resource-label">BLOOD</span>
+                                <span class="resource-value" id="player2-blood-count">0</span>
+                            </div>
+                            <div class="resource-box combo-box">
+                                <span class="resource-label">COMBO</span>
+                                <span class="resource-value" id="player2-combo-count">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 对手手牌 (Top Center) -->
+                <div id="player2-hand" class="hand opponent-hand">
+                    <div class="card-back"></div>
+                    <div class="card-back"></div>
+                    <div class="card-back"></div>
+                </div>
+
+                <!-- 战场区 (Center) -->
+                <div id="battlefield">
+                    <div id="player2-field" class="field opponent-field"></div>
+                    <div id="player1-field" class="field player-field"></div>
+                </div>
+
+                <!-- 玩家手牌 (Bottom Center) -->
+                <div id="player1-hand" class="hand player-hand">
+                    <!-- 玩家手牌 -->
+                </div>
+
+                <!-- 玩家信息区 (Bottom Left) -->
+                <div id="player1-info" class="player-info player-info-self">
+                    <div class="player-stats" id="player1-stats">
+                        <div class="stats-header">
+                            <div class="stats-avatar" id="player1-avatar">YOU</div>
+                            <div class="stats-info">
+                                <div class="class-name">NEUTRAL</div>
+                                <div class="player-name">PLAYER</div>
+                            </div>
+                            <div class="hp-display" id="player1-hp">
+                                <span class="hp-value">20</span>
+                                <span class="hp-label">HP</span>
+                            </div>
+                        </div>
+                        <div class="emblem-zone" aria-label="Emblems">
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                            <div class="emblem-slot"></div>
+                        </div>
+                        <div class="resources-grid">
+                            <!-- PP -->
+                            <div class="pp-container">
+                                <div class="pp-header">
+                                    <span class="pp-label">PP</span>
+                                    <span class="pp-text">0 / 0</span>
+                                </div>
+                                <div class="pp-bar-segments" id="player1-pp-bar">
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                    <div class="pp-segment empty"></div>
+                                </div>
+                            </div>
+                            <!-- EP -->
+                            <div class="resource-box ep-box">
+                                <span class="resource-label ep-label">EP</span>
+                                <div class="ep-dots" id="player1-ep-dots">
+                                    <div class="ep-dot"></div>
+                                    <div class="ep-dot"></div>
+                                </div>
+                            </div>
+                            <!-- SEP -->
+                            <div class="resource-box sep-box">
+                                <span class="resource-label sep-label">SEP</span>
+                                <div class="sep-dots" id="player1-sep-dots">
+                                    <div class="sep-dot"></div>
+                                    <div class="sep-dot"></div>
+                                </div>
+                            </div>
+                            <!-- Deck/Grave -->
+                            <div class="resource-box deck-box">
+                                <span class="resource-label">DECK</span>
+                                <span class="resource-value" id="player1-deck-count">0</span>
+                            </div>
+                            <div class="resource-box grave-box">
+                                <span class="resource-label">GRAVE</span>
+                                <span class="resource-value" id="player1-grave-count">0</span>
+                            </div>
+                            <div class="resource-box blood-box">
+                                <span class="resource-label">BLOOD</span>
+                                <span class="resource-value" id="player1-blood-count">0</span>
+                            </div>
+                            <div class="resource-box combo-box">
+                                <span class="resource-label">COMBO</span>
+                                <span class="resource-value" id="player1-combo-count">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Turn Info Display -->
+                <div id="turn-info" class="turn-info-display">TURN 1</div>
+
+                <!-- Action Buttons -->
+                <button id="reconnect-button" class="action-button" style="display: none;">重新连接</button>
+                <button id="confirm-mulligan-button" class="action-button" style="display: none;">CONFIRM
+                    MULLIGAN</button>
+                <button id="spectator-toggle-view" class="action-button" style="display: none;">切换视角</button>
+                <div id="pp-boost-action" class="pp-boost-action">
+                    <div class="pp-boost-action-label">PP+1</div>
+                    <button class="pp-boost-button" id="player1-pp-boost-button" type="button">
+                        <span class="pp-boost-action-text">BOOST</span>
+                        <span class="pp-boost-count" id="player1-pp-boost-count">0</span>
+                    </button>
+                </div>
+                <button id="end-turn-button" class="action-button">
+                    <span class="end-turn-surface">
+                        <span class="end-turn-text">
+                            <span class="end-turn-label">END TURN</span>
+                            <span class="end-turn-countdown">03:00</span>
+                        </span>
+                        <span class="end-turn-indicator-trench indicator-trench-bottom" aria-hidden="true">
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                            <span class="end-turn-indicator-light"></span>
+                        </span>
+                        <span class="end-turn-sweep" aria-hidden="true"></span>
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 卡牌编辑器页面 -->
+        <div id="card-editor-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="navigation" aria-label="Back to Home">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">卡牌工坊</span>
+                    </button>
+                </div>
+            </div>
+            <div id="card-editor-container">
+                <!-- 卡牌编辑器内容将在这里动态加载 -->
+                <div class="loading-message">正在加载编辑器...</div>
+            </div>
+        </div>
+
+        <!-- 牌组编辑器页面 -->
+        <div id="deck-builder-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="navigation" aria-label="Back to Home">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">牌组编辑</span>
+                    </button>
+                </div>
+            </div>
+            <div id="deck-builder-container">
+                <!-- 牌组编辑器内容将在这里动态加载 -->
+                <div class="loading-message">正在加载编辑器...</div>
+            </div>
+        </div>
+
+                <!-- 开发者工具页面 -->
+        <div id="dev-tools-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="navigation" aria-label="Back to Home">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">开发者工具</span>
+                    </button>
+                </div>
+            </div>
+            <div id="dev-tools-lock" class="dev-tools-lock">
+                请先登录后再进入开发者工具。
+            </div>
+            <div id="dev-tools-container">
+                <div class="dev-tools-grid">
+                    <div class="tool-card tool-card-log-viewer">
+                        <h3>实时日志窗口</h3>
+                        <p>仅登录用户可访问</p>
+                        <button id="log-open-btn" class="tool-button" type="button">打开日志窗口</button>
+                    </div>
+                    <div class="tool-card">
+                        <h3>对战实验室</h3>
+                        <p>快速配置 AI / 本地双人对战参数</p>
+                        <button class="tool-button" data-route="dev-tools/match-lab" type="button">打开 Match Lab</button>
+                    </div>
+                    <div class="tool-card">
+                        <h3>开发者控制台</h3>
+                        <p>查看游戏状态和调试信息（条件追踪开关在控制台内）</p>
+                        <button class="tool-button" onclick="window.devConsole?.toggle()">打开控制台</button>
+                    </div>
+                    <div class="tool-card">
+                        <h3>API测试</h3>
+                        <p>测试后端API接口</p>
+                        <button class="tool-button" onclick="testMetadataAPI()">测试元数据API</button>
+                    </div>
+                    <div class="tool-card">
+                        <h3>数据库查看器</h3>
+                        <p>查看卡牌和能力数据</p>
+                        <button class="tool-button" onclick="openDataViewer()">打开查看器</button>
+                    </div>
+                </div>
+
+                <div id="log-viewer-modal" class="log-viewer-modal" aria-hidden="true">
+                    <div class="log-viewer-panel" role="dialog" aria-label="实时日志窗口">
+                        <div class="log-viewer-panel-header">
+                            <div class="log-viewer-panel-title">实时日志窗口</div>
+                            <button id="log-close-btn" class="tool-button" type="button">关闭</button>
+                        </div>
+                        <div id="devtools-log-viewer" class="devtools-log-viewer">
+                            <div class="log-viewer-header">
+                                <div></div>
+                                <div class="log-viewer-actions">
+                                    <button id="log-clear-btn" class="tool-button" type="button">清空</button>
+                                    <button id="log-export-btn" class="tool-button" type="button">导出 JSON</button>
+                                </div>
+                            </div>
+                            <div id="log-stream-lock" class="log-stream-lock">请先登录后再查看实时日志。</div>
+                            <div class="log-viewer-controls">
+                                <div class="log-levels">
+                                    <label class="log-level-chip"><input type="checkbox" name="log-level" value="Verbose" checked>Verbose</label>
+                                    <label class="log-level-chip"><input type="checkbox" name="log-level" value="Debug" checked>Debug</label>
+                                    <label class="log-level-chip"><input type="checkbox" name="log-level" value="Information" checked>Info</label>
+                                    <label class="log-level-chip"><input type="checkbox" name="log-level" value="Warning" checked>Warn</label>
+                                    <label class="log-level-chip"><input type="checkbox" name="log-level" value="Error" checked>Error</label>
+                                    <label class="log-level-chip"><input type="checkbox" name="log-level" value="Fatal" checked>Fatal</label>
+                                </div>
+                                <div class="log-search">
+                                    <label for="log-search-input">关键字</label>
+                                    <input id="log-search-input" class="form-input" type="text" placeholder="输入关键字过滤日志">
+                                </div>
+                                <label class="log-autoscroll">
+                                    <input id="log-auto-scroll" type="checkbox" checked>
+                                    自动滚动
+                                </label>
+                            </div>
+                            <div id="log-stream-status" class="log-stream-status" data-tone="neutral">等待连接</div>
+                            <div id="log-stream-list" class="log-stream-list" aria-live="polite"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Devtools Match Lab Page -->
+        <div id="dev-tools-match-lab-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="dev-tools" aria-label="Back to Devtools">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">对战实验室</span>
+                    </button>
+                </div>
+            </div>
+            <div id="dev-tools-match-lab-lock" class="dev-tools-lock" aria-hidden="true">
+                请先登录后再进入对战实验室。
+            </div>
+            <div id="dev-tools-match-lab-container" class="match-lab-container">
+                <div class="match-lab-grid">
+                    <div class="match-lab-card">
+                        <div class="match-lab-title">对战配置</div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-mode">对战模式</label>
+                            <select id="match-lab-mode" class="form-input">
+                                <option value="ai">人机对战</option>
+                                <option value="dual">本地双人</option>
+                            </select>
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-player-deck">玩家卡组</label>
+                            <select id="match-lab-player-deck" class="form-input"></select>
+                        </div>
+                        <div class="match-lab-field">
+                            <label id="match-lab-opponent-label" for="match-lab-opponent-deck">AI 卡组</label>
+                            <select id="match-lab-opponent-deck" class="form-input"></select>
+                        </div>
+                        <div class="match-lab-note">仅登录用户可用，配置不会影响正常模式。</div>
+                    </div>
+                    <div class="match-lab-card">
+                        <div class="match-lab-title">开局参数</div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-start-pp">起始 PP</label>
+                            <input id="match-lab-start-pp" class="form-input" type="number" min="0" max="10" placeholder="0">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-max-pp">最大 PP</label>
+                            <input id="match-lab-max-pp" class="form-input" type="number" min="0" max="10" placeholder="0">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-start-hp">起始 HP</label>
+                            <input id="match-lab-start-hp" class="form-input" type="number" min="1" max="20" placeholder="20">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-hand-size">起手数</label>
+                            <input id="match-lab-hand-size" class="form-input" type="number" min="0" max="9" placeholder="4">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-start-turn">起始回合</label>
+                            <input id="match-lab-start-turn" class="form-input" type="number" min="1" max="50" placeholder="1">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-pp-boost">PP+1 次数</label>
+                            <input id="match-lab-pp-boost" class="form-input" type="number" min="0" max="5" placeholder="默认">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-seed">随机种子</label>
+                            <input id="match-lab-seed" class="form-input" type="number" placeholder="可选">
+                        </div>
+                        <div class="match-lab-presets">
+                            <button id="match-lab-preset-standard" class="tool-button" type="button">标准开局</button>
+                            <button id="match-lab-preset-high-pp" class="tool-button" type="button">高费开局</button>
+                            <button id="match-lab-preset-high-hp" class="tool-button" type="button">高血开局</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="match-lab-actions">
+                    <button id="match-lab-start-btn" class="tool-button" type="button">启动对战</button>
+                    <div id="match-lab-status" class="match-lab-status" data-tone="neutral"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DSL Editor V2 Page -->
+        <div id="dsl-editor-v2-page" class="page">
+            <div id="dsl-editor-v2-container"></div>
+        </div>
+
+    </div>
+
+    <!-- (可选) 游戏结束遮罩 -->
+    <!-- <div id="game-over-overlay" class="hidden">
+        <h2 id="game-over-message"></h2>
+        <button id="restart-button">重新开始</button>
+    </div> -->
+</body>
+
+</html>
+
+
+
+

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
@@ -9,7 +9,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// 出牌效果参数
     /// 包含执行出牌操作所需的所有参数
     /// </summary>
-    [EffectMetadata("出牌", "强制打出指定的卡牌。忽略卡牌目标，按玩家范围结算。")]
+    [EffectMetadata("使用卡牌", "强制打出指定的卡牌。忽略卡牌目标，按玩家范围结算。")]
     public class PlayCardEffectParams : BaseEffectParams
     {
         [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择执行出牌的玩家（自己/对手/双方）。")]
@@ -30,7 +30,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// <summary>
         /// 卡牌定义ID（用于获取卡牌基础信息）
         /// </summary>
-        [ParameterMetadata("卡牌定义ID", UiControlType.NumberStepper, DefaultValue = 0, Min = 1, Description = "卡牌定义的ID，用于获取卡牌基础信息。")]
+        [ParameterMetadata("卡牌定义ID", UiControlType.CardDefinitionPicker, DefaultValue = 0, Min = 1, Description = "卡牌定义的ID，用于获取卡牌基础信息。")]
         public int CardDefinitionId { get; set; }
 
         /// <summary>

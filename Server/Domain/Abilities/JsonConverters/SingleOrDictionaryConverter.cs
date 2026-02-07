@@ -13,7 +13,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
     /// </summary>
     public class SingleTargetConfigToDictionaryConverter : JsonConverter<Dictionary<string, TargetConfig>>
     {
-        private const string DefaultKey = "default";
+        private const string SingleTargetKey = "target1";
 
         public override Dictionary<string, TargetConfig>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
@@ -40,7 +40,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
                     }
                     return new Dictionary<string, TargetConfig>
                     {
-                        { DefaultKey, single }
+                        { SingleTargetKey, single }
                     };
                 }
 

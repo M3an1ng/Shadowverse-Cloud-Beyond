@@ -6,6 +6,9 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Domain.Buffs;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -70,11 +73,24 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "TriggerRelationType", typeof(TriggerRelationType) },
                 { "EventType", typeof(EventType) },
                 { "CardZone", typeof(CardZone) },
+                { "CardMoveReason", typeof(CardMoveReason) },
+                { "EffectType", typeof(EffectType) },
+                { "TargetType", typeof(TargetType) },
+                { "CounterOperation", typeof(CounterOperation) },
                 { "FailureHandling", typeof(FailureHandling) },
                 { "CardKeyword", typeof(CardKeyword) },
-                { "AbilityKeyword", typeof(EffectKeyword) },
+                { "AbilityKeyword", typeof(AbilityKeyword) },
                 { "PlayerScope", typeof(PlayerScope) },
-                { "CardSourceMode", typeof(CardSourceMode) }
+                { "CardSourceMode", typeof(CardSourceMode) },
+                { "DurationType", typeof(DurationType) },
+                { "DamageDistributionMode", typeof(DamageDistributionMode) },
+                { "KeywordOperation", typeof(KeywordOperation) },
+                { "DamageKind", typeof(DamageKind) },
+                { "ModifierLayer", typeof(ModifierLayer) },
+                { "StatType", typeof(StatType) },
+                { "PlayMode", typeof(PlayMode) },
+                { "RemoveAbilityMode", typeof(RemoveAbilityMode) },
+
             };
 
             return enumTypes.TryGetValue(enumName, out var type) ? type : null;
@@ -118,12 +134,11 @@ namespace ShadowverseBeyond.Server.Controllers
 
                 // CardClass
                 { "Neutral", "中立" },
-                { "Forestcraft", "妖精" },
+                { "Forestcraft", "精灵" },
                 { "Swordcraft", "皇家护卫" },
                 { "Runecraft", "巫师" },
                 { "Dragoncraft", "龙族" },
-                { "Shadowcraft", "死灵法师" },
-                { "Bloodcraft", "吸血鬼" },
+                { "Abysscraft", "梦魇" },
                 { "Havencraft", "主教" },
                 { "Portalcraft", "复仇者" },
 
@@ -173,7 +188,18 @@ namespace ShadowverseBeyond.Server.Controllers
                 // CardSourceMode
                 { "Definition", "定义" },
                 { "Instance", "实例" },
-                { "Copy", "复制" }
+                { "Copy", "复制" },
+
+                // ModifierLayer
+                { "Base", "基础" },
+                { "Additive", "修正" },
+                { "Set", "设置" },
+                { "Multiplicative", "倍乘" },
+
+                // StatType
+                { "Attack", "攻击力" },
+                { "Health", "生命值" },
+                { "Cost", "费用" }
             };
 
             return defaultLocalizations.TryGetValue(enumValue, out var localized) ? localized : enumValue;

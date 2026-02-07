@@ -50,6 +50,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         public bool NeedsResolution { get; private set; } = true;
 
         /// <summary>
+        /// 上次解析所绑定的触发事件ID
+        /// </summary>
+        public Guid? LastResolvedEventId { get; private set; }
+
+        /// <summary>
         /// 是否启用
         /// </summary>
         public bool IsEnabled { get; set; } = true;
@@ -85,15 +90,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// This is used when the final targets are determined by a higher-level process, such as player choice validation.
         /// </summary>
         /// <param name="targets">The final list of resolved targets.</param>
-        public void SetResolvedTargets(List<TargetInfo> targets)
+        /// <param name="triggeringEventId">The triggering event ID used for this resolution.</param>
+        public void SetResolvedTargets(List<TargetInfo> targets, Guid? triggeringEventId)
         {
             ResolvedTargets = targets ?? new List<TargetInfo>();
             NeedsResolution = false; // Mark as resolved
+            LastResolvedEventId = triggeringEventId;
         }
 
         public void MarkForResolution()
         {
             NeedsResolution = true;
+            LastResolvedEventId = null;
         }
 
         public void Reset()
@@ -103,6 +111,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             LastResolutionTime = null;
             NeedsResolution = true;
             ResolutionHistory.Clear();
+            LastResolvedEventId = null;
         }
 
         public bool AreTargetsValid(GameContext context)

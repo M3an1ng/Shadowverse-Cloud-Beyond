@@ -56,11 +56,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public string? DslExpression { get; set; }
 
         /// <summary>
-        /// 是否不可叠加（默认false，允许叠加）
-        /// </summary>
-        public bool IsNonStackable { get; set; } = false;
-
-        /// <summary>
         /// 默认持续时间类型
         /// </summary>
         [Required]
@@ -182,13 +177,19 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 errors.Add("DefaultDurationType cannot be empty");
 
             // 验证持续时间类型
-            var validDurationTypes = new[] { "Permanent", "UntilEndOfTurn", "LimitedTurns", "UntilTriggered", "Instant" };
+            var validDurationTypes = new[]
+            {
+                "Permanent",
+                "UntilEndOfTurn",
+                "StartOfTurn",
+                "OwnerTurnStart",
+                "OwnerTurnEnd",
+                "OpponentTurnStart",
+                "OpponentTurnEnd",
+                "Instant"
+            };
             if (!validDurationTypes.Contains(DefaultDurationType))
                 errors.Add($"Invalid DefaultDurationType: {DefaultDurationType}");
-
-            // 验证LimitedTurns类型必须有参数
-            if (DefaultDurationType == "LimitedTurns" && (!DefaultDurationParameter.HasValue || DefaultDurationParameter.Value <= 0))
-                errors.Add("LimitedTurns duration type requires a positive DefaultDurationParameter");
 
             return (errors.Count == 0, errors);
         }
@@ -207,7 +208,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 BuffType = BuffType,
                 JsonConfig = JsonConfig,
                 DslExpression = DslExpression,
-                IsNonStackable = IsNonStackable,
                 DefaultDurationType = DefaultDurationType,
                 DefaultDurationParameter = DefaultDurationParameter,
                 Priority = Priority,

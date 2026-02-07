@@ -184,7 +184,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// </summary>
         protected static bool IsCollection(object? value)
         {
-            return value is IEnumerable && !(value is string);
+            return DslCollectionCoercion.IsCollectionValue(value);
         }
 
         /// <summary>
@@ -192,13 +192,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// </summary>
         protected static IEnumerable<object?> ConvertToEnumerable(object? value)
         {
-            return value switch
+            if (!DslCollectionCoercion.TryCoerceToObjectEnumerable(value, out var enumerable))
             {
-                IEnumerable enumerable when !(value is string) =>
-                    enumerable.Cast<object?>(),
-                null => Enumerable.Empty<object?>(),
-                _ => new[] { value }
-            };
+                throw new InvalidOperationException("String values cannot be treated as collections.");
+            }
+
+            return enumerable;
         }
 
         /// <summary>

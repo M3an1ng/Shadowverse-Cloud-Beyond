@@ -74,6 +74,11 @@
     margin-top: 6px;
 }
 
+.dsl-pipeline-inline-input .dsl-pipeline-select-label {
+    display: block;
+    margin-bottom: 4px;
+}
+
 .dsl-pipeline-inline-field {
     width: 100%;
     padding: 8px 10px;
@@ -123,6 +128,39 @@
     --dsl-error-soft: #ffebee;
     --dsl-error-soft-2: #ffcdd2;
     --dsl-error-text: #c62828;
+}
+
+.dsl-nodes-container {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+.dsl-nodes-container > * {
+    flex: 0 0 auto;
+}
+
+.dsl-nodes-container::-webkit-scrollbar {
+    height: 6px;
+}
+
+.dsl-nodes-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.dsl-nodes-container::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 999px;
+}
+
+.dsl-nodes-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.35);
 }
 
 .dsl-value-chip {
@@ -251,6 +289,12 @@
     font-weight: 600;
 }
 
+.dsl-value-node--error {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #e74c3c;
+}
+
 .dsl-encapsulated-expression {
     --dsl-encap-shadow: 0 2px 4px rgba(39, 174, 96, 0.2);
     --dsl-encap-shadow-hover: 0 4px 8px rgba(39, 174, 96, 0.3);
@@ -267,6 +311,31 @@
     position: relative;
     cursor: pointer;
     transition: all 0.2s ease;
+}
+
+.main-expression .expression-content {
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+.main-expression .expression-content::-webkit-scrollbar {
+    height: 6px;
+}
+
+.main-expression .expression-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.main-expression .expression-content::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 999px;
+}
+
+.main-expression .expression-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.35);
 }
 
 .dsl-encapsulated-expression:hover {
@@ -319,6 +388,18 @@
 .dsl-encapsulated-badge.has-issue {
     background: var(--dsl-error);
     animation: pulse 2s infinite;
+}
+
+.dsl-workspace .dsl-encapsulated-expression.has-issue {
+    --dsl-encap-shadow: 0 2px 4px rgba(39, 174, 96, 0.2);
+    --dsl-encap-shadow-hover: 0 4px 8px rgba(39, 174, 96, 0.3);
+    background: linear-gradient(135deg, var(--dsl-accent-soft) 0%, var(--dsl-accent-soft-2) 100%);
+    border-color: var(--dsl-accent);
+    color: var(--dsl-accent-text);
+}
+
+.dsl-workspace .dsl-encapsulated-badge {
+    display: none;
 }
 
 .dsl-placeholder-capsule {
@@ -414,6 +495,24 @@
     font-size: 12px;
     width: 80px;
     background: #fff3e0;
+}
+
+.dsl-property-input-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: #f1f8ff;
+    border: 1px solid #c5ddf7;
+}
+
+.dsl-property-input-prefix {
+    font-size: 12px;
+    color: #2d4a6b;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 .dsl-rawtext-input-container {
@@ -915,8 +1014,23 @@
     background: transparent;
     border: none;
     box-shadow: none;
-    padding: 0;
-    margin: 0;
     color: inherit;
     font-weight: inherit;
+}
+
+/* Ensure inner nodes keep a reasonable hitbox inside capsules */
+.dsl-encapsulated-expression .dsl-value-chip,
+.dsl-encapsulated-expression .dsl-property-chain,
+.dsl-nested-encapsulated-expression .dsl-value-chip,
+.dsl-nested-encapsulated-expression .dsl-property-chain {
+    padding: 2px 4px;
+    margin: 0 2px;
+    cursor: pointer;
+}
+
+.dsl-encapsulated-expression .dsl-value-node,
+.dsl-nested-encapsulated-expression .dsl-value-node {
+    padding: 2px 4px;
+    margin: 0 2px;
+    cursor: pointer;
 }

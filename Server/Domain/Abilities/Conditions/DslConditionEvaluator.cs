@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
@@ -44,18 +45,51 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Conditions
 
             try
             {
-                // Compile the expression to get a cached, high-performance delegate.
-                // The 'item' context is null because conditions are generally context-wide, not item-specific.
-                var predicate = _dslCompiler.CompilePredicate<object>(config.Expression);
+                var tsc = new TargetSelectionContext(context, null);
+                var predicate = _dslCompiler.CompilePredicateRuntime(
+                    config.Expression,
+                    tsc,
+                    selfType: null,
+                    IDslCompiler.SelfResolutionMode.ContextOnly);
 
                 // Execute the compiled delegate
-                var result = predicate(null!, context);
+                var result = predicate(null!);
                 _logger.LogDebug("Compiled DSL condition '{Expression}' evaluated to {Result}", config.Expression, result);
                 return result;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error compiling or evaluating DSL condition: {Expression}", config.Expression);
+                return false;
+            }
+        }
+
+        public bool EvaluateWithTrace(ConditionConfig config, GameContext context, IDslTraceCollector traceCollector)
+        {
+            if (string.IsNullOrWhiteSpace(config.Expression))
+            {
+                _logger.LogDebug("ConditionConfig has empty expression, returning true");
+                return true;
+            }
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
+            try
+            {
+                var tsc = new TargetSelectionContext(context, null);
+                var predicate = _dslCompiler.CompilePredicateWithTraceRuntime(
+                    config.Expression,
+                    tsc,
+                    selfType: null,
+                    IDslCompiler.SelfResolutionMode.ContextOnly);
+
+                var result = predicate(null!, traceCollector);
+                _logger.LogDebug("Compiled DSL condition '{Expression}' evaluated to {Result} with trace", config.Expression, result);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error compiling or evaluating DSL condition with trace: {Expression}", config.Expression);
                 return false;
             }
         }

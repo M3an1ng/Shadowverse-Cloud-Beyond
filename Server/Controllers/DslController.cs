@@ -99,6 +99,13 @@ namespace ShadowverseBeyond.Server.Controllers
                         IsPrefix = unary.IsPrefix,
                         Operand = MapExpressionNode(unary.Operand)
                     };
+                case ParenthesizedExpressionNode parenthesized:
+                    return new DslAstNodeDto
+                    {
+                        NodeType = parenthesized.NodeType,
+                        DataType = parenthesized.DataType,
+                        Inner = MapExpressionNode(parenthesized.Inner)
+                    };
                 case FunctionCallNode call:
                     return new DslAstNodeDto
                     {
@@ -108,6 +115,79 @@ namespace ShadowverseBeyond.Server.Controllers
                         IsMethodCall = call.IsMethodCall,
                         Receiver = call.Receiver != null ? MapExpressionNode(call.Receiver) : null,
                         Arguments = call.Arguments?.Select(MapExpressionNode).ToList()
+                    };
+                case QueryFilterNode queryFilter:
+                    return new DslAstNodeDto
+                    {
+                        NodeType = "FunctionCall",
+                        DataType = queryFilter.DataType,
+                        Name = "query",
+                        IsMethodCall = true,
+                        Receiver = MapExpressionNode(queryFilter.Source),
+                        Arguments = new List<DslAstNodeDto> { MapExpressionNode(queryFilter.Filter) }
+                    };
+                case QueryOrderByNode queryOrderBy:
+                    var orderings = queryOrderBy.Orderings?
+                        .Select(o => new DslQueryOrderingDto
+                        {
+                            Expression = MapExpressionNode(o.Expression),
+                            Direction = o.Direction == OrderingDirection.Descending ? "desc" : "asc"
+                        })
+                        .ToList() ?? new List<DslQueryOrderingDto>();
+                    var orderingArgs = orderings.Select(o => o.Expression).ToList();
+                    return new DslAstNodeDto
+                    {
+                        NodeType = "FunctionCall",
+                        DataType = queryOrderBy.DataType,
+                        Name = "orderBy",
+                        IsMethodCall = true,
+                        Receiver = MapExpressionNode(queryOrderBy.Source),
+                        Arguments = orderingArgs,
+                        QueryOrderings = orderings
+                    };
+                case QueryTakeNode queryTake:
+                    var takeCount = queryTake.Selection?.CountExpression != null
+                        ? MapExpressionNode(queryTake.Selection.CountExpression)
+                        : null;
+                    var takeArgs = takeCount != null ? new List<DslAstNodeDto> { takeCount } : new List<DslAstNodeDto>();
+                    return new DslAstNodeDto
+                    {
+                        NodeType = "FunctionCall",
+                        DataType = queryTake.DataType,
+                        Name = "take",
+                        IsMethodCall = true,
+                        Receiver = MapExpressionNode(queryTake.Source),
+                        Arguments = takeArgs,
+                        QueryTakeStrategy = queryTake.Selection?.Strategy.ToString().ToLowerInvariant(),
+                        QueryTakeCount = takeCount
+                    };
+                case QueryDistinctNode queryDistinct:
+                    var distinctKey = queryDistinct.KeySelector != null
+                        ? MapExpressionNode(queryDistinct.KeySelector)
+                        : null;
+                    var distinctArgs = distinctKey != null ? new List<DslAstNodeDto> { distinctKey } : new List<DslAstNodeDto>();
+                    return new DslAstNodeDto
+                    {
+                        NodeType = "FunctionCall",
+                        DataType = queryDistinct.DataType,
+                        Name = "distinct",
+                        IsMethodCall = true,
+                        Receiver = MapExpressionNode(queryDistinct.Source),
+                        Arguments = distinctArgs
+                    };
+                case QuerySelectNode querySelect:
+                    var selectExpr = querySelect.Selector != null
+                        ? MapExpressionNode(querySelect.Selector)
+                        : null;
+                    var selectArgs = selectExpr != null ? new List<DslAstNodeDto> { selectExpr } : new List<DslAstNodeDto>();
+                    return new DslAstNodeDto
+                    {
+                        NodeType = "FunctionCall",
+                        DataType = querySelect.DataType,
+                        Name = "select",
+                        IsMethodCall = true,
+                        Receiver = MapExpressionNode(querySelect.Source),
+                        Arguments = selectArgs
                     };
                 case MemberAccessNode memberAccess:
                     return new DslAstNodeDto

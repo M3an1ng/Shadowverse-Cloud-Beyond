@@ -100,7 +100,7 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         /// <summary>
         /// Represents a follower card that occupies the field.
         /// </summary>
-        [Description("随从")]
+        [Description("从者")]
         Follower,
 
         /// <summary>
@@ -129,7 +129,7 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
     {
         [Description("中立")]
         Neutral = 0,
-        [Description("妖精")]
+        [Description("精灵")]
         Forestcraft = 1,
         [Description("皇家护卫")]
         Swordcraft = 2,
@@ -137,14 +137,12 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         Runecraft = 3,
         [Description("龙族")]
         Dragoncraft = 4,
-        [Description("死灵法师")]
-        Shadowcraft = 5,
-        [Description("吸血鬼")]
-        Bloodcraft = 6,
+        [Description("梦魇")]
+        Abysscraft = 5,
         [Description("主教")]
-        Havencraft = 7,
+        Havencraft = 6,
         [Description("复仇者")]
-        Portalcraft = 8,
+        Portalcraft = 7,
     }
 
     /// <summary>
@@ -161,7 +159,6 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
     /// </summary>
     public enum CardRarity
     {
-        [Description("特殊")]
         Special,
         [Description("青铜")]
         Bronze,
@@ -188,14 +185,16 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         Graveyard = 4,
         [Description("额外区")]
         Extra = 5,
+        [Description("纹章")]
+        Emblem = 6,
 
         // Transient or non-prioritized zones
         [Description("打出中")]
-        Playing = 6, // Temporary zone during card resolution
-        [Description("纹章")]
-        Emblem = 7,
+        Playing = 7,
         [Description("移出游戏")]
         Removed = 8,
+        [Description("准备中")]
+        Staging = 9, // Temporary zone during card creation
         [Description("无")]
         None = 100
     }

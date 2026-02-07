@@ -35,9 +35,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             IAbility sourceAbility,
             List<StatModification> statModifications,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false)
+            int? durationParameter,
+            int currentTurn)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -52,8 +51,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter,
-                isNonStackable: isNonStackable
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created stat buff {BuffId} with {Count} modifications on target {TargetId}",
@@ -67,9 +65,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             CardInstance target,
             List<StatModification> statModifications,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false)
+            int? durationParameter,
+            int currentTurn)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (statModifications == null || !statModifications.Any()) throw new ArgumentException("Stat modifications cannot be null or empty", nameof(statModifications));
@@ -83,8 +80,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter,
-                isNonStackable: isNonStackable
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created system stat buff {BuffId} with {Count} modifications on target {TargetId}",
@@ -100,9 +96,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             IAbility sourceAbility,
             List<CardKeyword> keywords,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false)
+            int? durationParameter,
+            int currentTurn)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -118,8 +113,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter,
-                isNonStackable: isNonStackable
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created keyword buff {BuffId} adding keywords [{Keywords}] to target {TargetId}",
@@ -133,9 +127,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             CardInstance target,
             List<CardKeyword> keywords,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false)
+            int? durationParameter,
+            int currentTurn)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (keywords == null || !keywords.Any()) throw new ArgumentException("Keywords cannot be null or empty", nameof(keywords));
@@ -150,8 +143,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter,
-                isNonStackable: isNonStackable
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created system keyword buff {BuffId} adding keywords [{Keywords}] to target {TargetId}",
@@ -167,9 +159,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             IAbility sourceAbility,
             List<IBuffEffect> effects,
             DurationType durationType,
-            object? durationParameter,
+            int? durationParameter,
             int currentTurn,
-            bool isNonStackable = false)
+            string? definitionId = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -180,9 +172,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
                 effects: effects,
+                definitionId: definitionId,
                 durationType: durationType,
-                durationParameter: durationParameter,
-                isNonStackable: isNonStackable
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created composite buff {BuffId} with {EffectCount} effects on target {TargetId}",
@@ -255,12 +247,16 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 durationParameter: originalBuff.DurationParameter,
                 removalTrigger: originalBuff.RemovalTrigger,
                 removalCondition: originalBuff.RemovalCondition,
-                applicabilityCondition: originalBuff.ApplicabilityCondition,
-                isNonStackable: originalBuff.IsNonStackable
+                applicabilityCondition: originalBuff.ApplicabilityCondition
             )
             {
                 IsActive = originalBuff.IsActive
             };
+            newBuff.SourceEffectIndex = originalBuff.SourceEffectIndex;
+            newBuff.EffectKey = originalBuff.EffectKey;
+            newBuff.SourceCardInstanceId = originalBuff.SourceCardInstanceId;
+            newBuff.SourceCardName = originalBuff.SourceCardName;
+            newBuff.SourceAbilityName = originalBuff.SourceAbilityName;
 
             if (newTarget != null)
             {
@@ -281,6 +277,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             CardInstance? sourceCard,
             IAbility sourceAbility,
             List<Constants.CardKeyword> keywordsToRemove,
+            DurationType durationType,
+            int? durationParameter,
             int currentTurn)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
@@ -295,9 +293,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
                 effects: effects,
-                durationType: Abilities.Common.DurationType.Permanent, // Suppression is always permanent
-                durationParameter: null,
-                isNonStackable: true // A card can't have the same keyword suppressed twice by the same source
+                durationType: durationType,
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created remove keyword buff {BuffId} removing keywords [{Keywords}] from target {TargetId}",
@@ -310,6 +307,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public Buff CreateSystemRemoveKeywordBuff(
             CardInstance target,
             List<CardKeyword> keywordsToRemove,
+            DurationType durationType,
+            int? durationParameter,
             int currentTurn)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
@@ -323,9 +322,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 targetCardInstanceId: target.InstanceId,
                 currentTurn: currentTurn,
                 effects: effects,
-                durationType: Abilities.Common.DurationType.Permanent,
-                durationParameter: null,
-                isNonStackable: true
+                durationType: durationType,
+                durationParameter: durationParameter
             );
 
             _logger.LogDebug("Created system remove keyword buff {BuffId} removing keywords [{Keywords}] from target {TargetId}",
@@ -352,6 +350,15 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                         break;
                     case AbilityBuffEffect ability:
                         cloned.Add(new AbilityBuffEffect(new List<AbilityConfig>(ability.GrantedAbilityConfigs)));
+                        break;
+                    case AbilityKeywordBuffEffect abilityKeyword:
+                        cloned.Add(new AbilityKeywordBuffEffect(new List<AbilityKeywordModification>(abilityKeyword.Modifications)));
+                        break;
+                    case AbilitySuppressionBuffEffect suppression:
+                        cloned.Add(new AbilitySuppressionBuffEffect(
+                            suppression.RemoveMode,
+                            suppression.AbilityDefinitionIds,
+                            suppression.AbilityKeyword));
                         break;
                     default:
                         _logger.LogWarning("Unknown buff effect type {EffectType}; reusing effect instance in copy.", effect.GetType().Name);
@@ -419,8 +426,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     currentTurn: currentTurn,
                     effects: effects,
                     durationType: durationType,
-                    durationParameter: durationParameter,
-                    isNonStackable: buffDefinition.IsNonStackable
+                    durationParameter: durationParameter
                 );
 
                 _logger.LogDebug("Successfully created buff: {BuffId} from definition: {BuffDefinitionId}",
@@ -444,8 +450,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             {
                 "permanent" => DurationType.Permanent,
                 "untilendofturn" => DurationType.EndOfTurn,
-                "limitedturns" => DurationType.LimitedTurns,
-                "untiltriggered" => DurationType.SpecificEvent,
+                "startofturn" => DurationType.StartOfTurn,
+                "owneturnstart" => DurationType.OwnerTurnStart,
+                "owneturnend" => DurationType.OwnerTurnEnd,
+                "opponentturnstart" => DurationType.OpponentTurnStart,
+                "opponentturnend" => DurationType.OpponentTurnEnd,
                 _ => DurationType.Permanent
             };
         }

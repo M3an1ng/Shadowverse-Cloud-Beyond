@@ -45,18 +45,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var player = targetInfo.Player;
-                    if (player.BloodPool < parameters.Amount)
+                    var oldValue = player.BloodPool;
+                    if (!player.TryConsumeCounter(PlayerState.BloodPoolCounterKey, parameters.Amount))
                     {
                         return new DomainOperationResult { Success = false, ErrorMessage = "Not enough blood pool to consume." };
                     }
 
-                    player.BloodPool = Math.Max(0, player.BloodPool - parameters.Amount);
-                    return new DomainOperationResult { Success = true };
+                    var newValue = player.BloodPool;
+                    var result = new DomainOperationResult { Success = true };
+                    result.GeneratedEvents.Add(new CounterChangedEvent(player, PlayerState.BloodPoolCounterKey, oldValue, newValue));
+                    return result;
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
-                context.CurrentGameState,
-                context.RequestingPlayerId,
+                context,
                 parameters.PlayerScope);
 
             var serviceResult = _targetProcessingService.ProcessTargets(

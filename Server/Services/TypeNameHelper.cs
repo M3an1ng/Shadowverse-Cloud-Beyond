@@ -61,6 +61,23 @@ namespace ShadowverseBeyond.Server.Services
 
             return type.IsEnum ? type.Name : null;
         }
+
+        public static string GetDslTypeName(Type type)
+        {
+            if (type == null) throw new ArgumentNullException(nameof(type));
+
+            var underlying = Nullable.GetUnderlyingType(type);
+            if (underlying != null)
+            {
+                return GetDslTypeName(underlying);
+            }
+
+            if (type.IsEnum)
+            {
+                return type.Name;
+            }
+
+            return GetCleanTypeName(type);
+        }
     }
 }
-

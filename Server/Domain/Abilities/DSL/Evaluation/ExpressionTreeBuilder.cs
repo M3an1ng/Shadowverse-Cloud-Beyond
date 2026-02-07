@@ -1,15 +1,20 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text.Json.Nodes;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser; // For TokenType
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Domain.Entities; // Added for CardInstance casting
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 
@@ -26,6 +31,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         private readonly ParameterExpression? _tscParam; // Nullable TargetSelectionContext parameter
         private readonly ParameterExpression _dbContextParam;
         private readonly IFunctionRegistry _functionRegistry;
+        private readonly ParameterExpression? _traceCollectorParam;
+
+        private static readonly MethodInfo TraceCaptureMethod = typeof(DslTraceHelper)
+            .GetMethod(nameof(DslTraceHelper.Capture))!;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ExpressionTreeBuilder"/> class with a unified context.
@@ -39,7 +48,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             ParameterExpression gameContextParam,
             ParameterExpression dbContextParam,
             IFunctionRegistry functionRegistry)
-            : this(selfParam, gameContextParam, null, dbContextParam, functionRegistry)
+            : this(selfParam, gameContextParam, null, dbContextParam, functionRegistry, null)
         {
         }
 
@@ -51,13 +60,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             ParameterExpression gameContextParam,
             ParameterExpression? tscParam, // Nullable
             ParameterExpression dbContextParam,
-            IFunctionRegistry functionRegistry)
+            IFunctionRegistry functionRegistry,
+            ParameterExpression? traceCollectorParam = null)
         {
             _selfParam = selfParam ?? throw new ArgumentNullException(nameof(selfParam));
             _gameContextParam = gameContextParam ?? throw new ArgumentNullException(nameof(gameContextParam));
             _tscParam = tscParam; // Can be null
             _dbContextParam = dbContextParam ?? throw new ArgumentNullException(nameof(dbContextParam));
             _functionRegistry = functionRegistry ?? throw new ArgumentNullException(nameof(functionRegistry));
+            _traceCollectorParam = traceCollectorParam;
         }
 
         /// <summary>
@@ -72,22 +83,55 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         private Expression VisitNode(ExpressionNode node)
         {
-            return node switch
+            var expression = node switch
             {
                 LiteralNode literal => VisitLiteral(literal),
                 IdentifierNode identifier => VisitIdentifier(identifier),
                 BinaryOperationNode binaryOp => VisitBinaryOperator(binaryOp),
                 MemberAccessNode memberAccess => VisitMemberAccess(memberAccess),
                 UnaryOperationNode unaryOp => VisitUnaryOperator(unaryOp),
+                ParenthesizedExpressionNode parenthesized => VisitParenthesizedExpression(parenthesized),
                 FunctionCallNode funcCall => VisitFunctionCall(funcCall),
+                QueryFilterNode queryFilter => VisitQueryFilter(queryFilter),
+                QueryOrderByNode queryOrderBy => VisitQueryOrderBy(queryOrderBy),
+                QueryDistinctNode queryDistinct => VisitQueryDistinct(queryDistinct),
+                QuerySelectNode querySelect => VisitQuerySelect(querySelect),
+                QueryTakeNode queryTake => VisitQueryTake(queryTake),
                 _ => throw new NotSupportedException($"AST node type '{node.GetType().Name}' is not supported for expression tree building.")
             };
+
+            return WrapTrace(node, expression);
+        }
+
+        private Expression VisitParenthesizedExpression(ParenthesizedExpressionNode node)
+        {
+            return VisitNode(node.Inner);
         }
 
         private Expression VisitLiteral(LiteralNode node)
         {
             // Convert a DSL literal value into an Expression Tree constant.
             return Expression.Constant(node.Value);
+        }
+
+        private Expression WrapTrace(ExpressionNode node, Expression expression)
+        {
+            if (_traceCollectorParam == null || !ShouldTrace(node))
+            {
+                return expression;
+            }
+
+            var captureMethod = TraceCaptureMethod.MakeGenericMethod(expression.Type);
+            var expressionText = node.ToString() ?? string.Empty;
+            return Expression.Call(captureMethod, _traceCollectorParam, Expression.Constant(expressionText), expression);
+        }
+
+        private static bool ShouldTrace(ExpressionNode node)
+        {
+            return node is not LiteralNode
+                && node is not BinaryOperationNode
+                && node is not UnaryOperationNode
+                && node is not ParenthesizedExpressionNode;
         }
 
         private Expression VisitIdentifier(IdentifierNode node)
@@ -151,18 +195,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     return _dbContextParam;
 
                 case "player":
-                    var getPlayerMethod = typeof(GameContextExtensions).GetMethod(
-                        "GetRequestingPlayer",
-                        new[] { typeof(GameContext) }
-                    )!;
-                    return Expression.Call(null, getPlayerMethod, gameContextSource);
+                    return Expression.Property(gameContextSource, nameof(GameContext.Owner));
 
                 case "opponent":
-                    var getOpponentMethod = typeof(GameContextExtensions).GetMethod(
-                        "GetOpponentPlayer",
-                        new[] { typeof(GameContext) }
-                    )!;
-                    return Expression.Call(null, getOpponentMethod, gameContextSource);
+                    return Expression.Property(gameContextSource, nameof(GameContext.Opponent));
 
                 case "state":
                     return Expression.Property(gameContextSource, nameof(GameContext.CurrentGameState));
@@ -193,12 +229,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         private Expression BuildMemberAccess(Expression instance, string memberName)
         {
-            // If the instance is 'self' of type object, cast it to CardInstance for property access.
-            // This is crucial for the generic CompilePredicate<object> to work with strongly-typed members.
+            // If the instance is 'self' of type object, avoid forcing a CardInstance cast.
+            // Use runtime member access so CardInstanceSnapshot and other object-backed values work.
             Expression targetInstance = instance;
             if (targetInstance == _selfParam && targetInstance.Type == typeof(object))
             {
-                targetInstance = Expression.Convert(targetInstance, typeof(CardInstance));
+                return BuildRuntimeMemberAccess(targetInstance, memberName);
             }
 
             var directAccess = TryBuildMemberAccess(targetInstance, memberName);
@@ -211,6 +247,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             if (dictionaryAccess != null)
             {
                 return dictionaryAccess;
+            }
+
+            if (typeof(IGameEvent).IsAssignableFrom(targetInstance.Type))
+            {
+                return BuildEventParameterAccess(targetInstance, memberName);
+            }
+
+            if (targetInstance.Type == typeof(object))
+            {
+                return BuildRuntimeMemberAccess(targetInstance, memberName);
             }
 
             // Fallback logic specifically for CardInstance: if a property is not found on the instance,
@@ -228,6 +274,45 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}'.");
+        }
+
+        private Expression BuildEventParameterAccess(Expression instance, string memberName)
+        {
+            var method = typeof(EventParameterAccessor).GetMethod(
+                nameof(EventParameterAccessor.Resolve),
+                BindingFlags.Public | BindingFlags.Static);
+            if (method == null)
+            {
+                throw new InvalidOperationException("Cannot resolve EventParameterAccessor.Resolve.");
+            }
+
+            var eventInstance = instance.Type == typeof(IGameEvent)
+                ? instance
+                : Expression.Convert(instance, typeof(IGameEvent));
+
+            return Expression.Call(
+                null,
+                method,
+                _gameContextParam,
+                eventInstance,
+                Expression.Constant(memberName));
+        }
+
+        private static Expression BuildRuntimeMemberAccess(Expression instance, string memberName)
+        {
+            var method = typeof(DslRuntimeMemberAccess).GetMethod(
+                nameof(DslRuntimeMemberAccess.GetValue),
+                BindingFlags.Public | BindingFlags.Static);
+            if (method == null)
+            {
+                throw new InvalidOperationException("Cannot resolve DslRuntimeMemberAccess.GetValue.");
+            }
+
+            return Expression.Call(
+                null,
+                method,
+                Expression.Convert(instance, typeof(object)),
+                Expression.Constant(memberName));
         }
 
         private static Expression? TryBuildMemberAccess(Expression instance, string memberName)
@@ -324,6 +409,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var left = VisitNode(node.Left);
             var right = VisitNode(node.Right);
 
+            if (node.Operator == TokenType.DivideCeil)
+            {
+                return BuildDynamicBinaryOperation(left, right, node.Operator);
+            }
+
+            if (RequiresDynamicOperation(left, right))
+            {
+                return BuildDynamicBinaryOperation(left, right, node.Operator);
+            }
+
             if (IsSetOperator(node.Operator, left.Type, right.Type))
             {
                 return BuildSetOperation(left, right, node.Operator);
@@ -349,6 +444,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                         TokenType.Minus => Expression.Subtract(promotedLeft, promotedRight),
                         TokenType.Multiply => Expression.Multiply(promotedLeft, promotedRight),
                         TokenType.Divide => Expression.Divide(promotedLeft, promotedRight),
+                        TokenType.Modulo => Expression.Modulo(promotedLeft, promotedRight),
                         TokenType.GreaterThan => Expression.GreaterThan(promotedLeft, promotedRight),
                         TokenType.GreaterEqual => Expression.GreaterThanOrEqual(promotedLeft, promotedRight),
                         TokenType.LessThan => Expression.LessThan(promotedLeft, promotedRight),
@@ -362,30 +458,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         private static bool IsSetOperator(TokenType operatorType, Type leftType, Type rightType)
         {
-            return operatorType == TokenType.SetUnion
-                || operatorType == TokenType.SetIntersect
-                || (operatorType == TokenType.Minus && IsCollectionType(leftType) && IsCollectionType(rightType));
-        }
+            if (operatorType == TokenType.SetUnion || operatorType == TokenType.SetIntersect || operatorType == TokenType.SetDifference)
+            {
+                return true;
+            }
 
-        private static bool IsCollectionType(Type type)
-        {
-            return TryGetEnumerableElementType(type, out _);
+            return false;
         }
 
         private Expression BuildSetOperation(Expression left, Expression right, TokenType operatorType)
         {
-            if (!TryGetEnumerableElementType(left.Type, out var leftElementType)
-                || !TryGetEnumerableElementType(right.Type, out var rightElementType))
+            if (!TryResolveSetOperand(left.Type, out var leftElementType)
+                || !TryResolveSetOperand(right.Type, out var rightElementType))
             {
                 throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
             }
 
-            if (!leftElementType.IsAssignableFrom(rightElementType))
-            {
-                throw new InvalidOperationException($"Set operator '{operatorType}' requires compatible collection element types.");
-            }
-
-            var elementType = leftElementType;
+            var elementType = ResolveCompatibleElementType(leftElementType, rightElementType, operatorType);
             var leftEnumerable = EnsureEnumerableOrEmpty(left, elementType);
             var rightEnumerable = EnsureEnumerableOrEmpty(right, elementType);
 
@@ -393,7 +482,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             {
                 TokenType.SetUnion => nameof(DslSetOperators.Union),
                 TokenType.SetIntersect => nameof(DslSetOperators.Intersect),
-                TokenType.Minus => nameof(DslSetOperators.Except),
+                TokenType.SetDifference => nameof(DslSetOperators.Except),
                 _ => throw new NotSupportedException($"Unsupported set operator '{operatorType}'.")
             };
 
@@ -424,67 +513,100 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         private static Expression EnsureEnumerableOf(Expression source, Type elementType)
         {
             var targetType = typeof(IEnumerable<>).MakeGenericType(elementType);
-            if (targetType.IsAssignableFrom(source.Type))
+            if (source.Type == typeof(string))
             {
-                if (source.Type == targetType)
-                {
-                    return source;
-                }
-                return Expression.Convert(source, targetType);
+                throw new InvalidOperationException("String values cannot be treated as collections.");
             }
 
-            if (typeof(IEnumerable).IsAssignableFrom(source.Type))
+            if (source.Type == typeof(object))
             {
+                var coerceMethod = typeof(DslCollectionCoercion).GetMethod(
+                    nameof(DslCollectionCoercion.CoerceToObjectEnumerableOrSingle),
+                    BindingFlags.Public | BindingFlags.Static);
+                if (coerceMethod == null)
+                {
+                    throw new InvalidOperationException("Cannot resolve DslCollectionCoercion.CoerceToObjectEnumerableOrSingle.");
+                }
+
+                var coerced = Expression.Call(null, coerceMethod, Expression.Convert(source, typeof(object)));
+                if (targetType.IsAssignableFrom(coerced.Type))
+                {
+                    return Expression.Convert(coerced, targetType);
+                }
+
                 var castMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Cast), BindingFlags.Public | BindingFlags.Static);
                 if (castMethod == null)
                 {
                     throw new InvalidOperationException("Cannot resolve Enumerable.Cast.");
                 }
-                return Expression.Call(null, castMethod.MakeGenericMethod(elementType), source);
+                return Expression.Call(null, castMethod.MakeGenericMethod(elementType), coerced);
             }
 
-            return Expression.Convert(source, targetType);
+            if (DslCollectionCoercion.TryGetEnumerableElementType(source.Type, out _))
+            {
+                if (targetType.IsAssignableFrom(source.Type))
+                {
+                    if (source.Type == targetType)
+                    {
+                        return source;
+                    }
+                    return Expression.Convert(source, targetType);
+                }
+
+                if (typeof(IEnumerable).IsAssignableFrom(source.Type))
+                {
+                    var castMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Cast), BindingFlags.Public | BindingFlags.Static);
+                    if (castMethod == null)
+                    {
+                        throw new InvalidOperationException("Cannot resolve Enumerable.Cast.");
+                    }
+                    return Expression.Call(null, castMethod.MakeGenericMethod(elementType), source);
+                }
+            }
+
+            var arrayExpression = Expression.NewArrayInit(elementType, Expression.Convert(source, elementType));
+            return Expression.Convert(arrayExpression, targetType);
         }
 
-        private static bool TryGetEnumerableElementType(Type type, out Type elementType)
+        private static bool TryResolveSetOperand(Type operandType, out Type elementType)
         {
-            elementType = typeof(object);
-            if (type == typeof(string))
+            if (operandType == typeof(string))
             {
+                elementType = typeof(string);
                 return false;
             }
 
-            if (type.IsArray)
+            if (DslCollectionCoercion.TryGetEnumerableElementType(operandType, out elementType))
             {
-                elementType = type.GetElementType() ?? typeof(object);
                 return true;
             }
 
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            elementType = operandType;
+            return true;
+        }
+
+        private static Type ResolveCompatibleElementType(Type leftElementType, Type rightElementType, TokenType operatorType)
+        {
+            if (leftElementType.IsAssignableFrom(rightElementType))
             {
-                elementType = type.GetGenericArguments()[0];
-                return true;
+                return leftElementType;
             }
 
-            var enumerableInterface = type.GetInterfaces()
-                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
-            if (enumerableInterface != null)
+            if (rightElementType.IsAssignableFrom(leftElementType))
             {
-                elementType = enumerableInterface.GetGenericArguments()[0];
-                return true;
+                return rightElementType;
             }
 
-            if (typeof(IEnumerable).IsAssignableFrom(type))
-            {
-                elementType = typeof(object);
-                return true;
-            }
-
-            return false;
+            throw new InvalidOperationException($"Set operator '{operatorType}' requires compatible collection element types.");
         }
 
         private Expression BuildEqualsExpression(Expression left, Expression right)
         {
+            if (RequiresDynamicOperation(left, right))
+            {
+                return BuildDynamicBinaryOperation(left, right, TokenType.Equal);
+            }
+
             // Case 1: Enum comparison (e.g., self.CardType == "Follower")
             if (left.Type.IsEnum && right is ConstantExpression rightConst && rightConst.Value is string rightString)
             {
@@ -531,6 +653,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var leftUnderlying = Nullable.GetUnderlyingType(left.Type);
             var rightUnderlying = Nullable.GetUnderlyingType(right.Type);
 
+            // Numeric promotion (e.g., double vs int) to avoid invalid binary operators.
+            if (IsNumericType(leftUnderlying ?? left.Type) && IsNumericType(rightUnderlying ?? right.Type))
+            {
+                var promotedType = GetNumericPromotionType(leftUnderlying ?? left.Type, rightUnderlying ?? right.Type);
+                var targetType = (leftIsNullable || rightIsNullable)
+                    ? typeof(Nullable<>).MakeGenericType(promotedType)
+                    : promotedType;
+
+                left = Expression.Convert(left, targetType);
+                right = Expression.Convert(right, targetType);
+                return (left, right);
+            }
+
             if (leftIsNullable && !rightIsNullable && leftUnderlying == right.Type)
             {
                 right = Expression.Convert(right, left.Type);
@@ -548,9 +683,57 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
         }
 
+        private static bool IsNumericType(Type type)
+        {
+            return type == typeof(sbyte)
+                || type == typeof(byte)
+                || type == typeof(short)
+                || type == typeof(ushort)
+                || type == typeof(int)
+                || type == typeof(uint)
+                || type == typeof(long)
+                || type == typeof(ulong)
+                || type == typeof(float)
+                || type == typeof(double)
+                || type == typeof(decimal);
+        }
+
+        private static Type GetNumericPromotionType(Type leftType, Type rightType)
+        {
+            // Prefer double for mixed numeric comparisons (matches SumFunction return type).
+            if (leftType == typeof(double) || rightType == typeof(double))
+            {
+                return typeof(double);
+            }
+
+            if (leftType == typeof(float) || rightType == typeof(float))
+            {
+                return typeof(double);
+            }
+
+            if (leftType == typeof(decimal) || rightType == typeof(decimal))
+            {
+                return typeof(double);
+            }
+
+            // Default to long for integral comparisons.
+            if (leftType == typeof(long) || rightType == typeof(long)
+                || leftType == typeof(ulong) || rightType == typeof(ulong))
+            {
+                return typeof(long);
+            }
+
+            return typeof(int);
+        }
+
         private Expression VisitUnaryOperator(UnaryOperationNode node)
         {
             var operand = VisitNode(node.Operand);
+
+            if (operand.Type == typeof(object))
+            {
+                return BuildDynamicUnaryOperation(operand, node.Operator);
+            }
 
             return node.Operator switch
             {
@@ -621,6 +804,268 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
             return convertedCall;
         }
+
+        private Expression VisitQueryFilter(QueryFilterNode node)
+        {
+            var sourceExpression = VisitNode(node.Source);
+            var elementType = ResolveQueryableElementType(sourceExpression.Type);
+            var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
+
+            var predicateLambda = BuildPredicateLambda(node.Filter, elementType);
+            var whereMethod = GetEnumerableMethod(nameof(Enumerable.Where), 2).MakeGenericMethod(elementType);
+            return Expression.Call(null, whereMethod, enumerableSource, predicateLambda);
+        }
+
+        private Expression VisitQueryOrderBy(QueryOrderByNode node)
+        {
+            var sourceExpression = VisitNode(node.Source);
+            var elementType = ResolveQueryableElementType(sourceExpression.Type);
+            var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
+
+            if (node.Orderings == null || node.Orderings.Count == 0)
+            {
+                return enumerableSource;
+            }
+
+            Expression? orderedExpression = null;
+            for (var i = 0; i < node.Orderings.Count; i++)
+            {
+                var ordering = node.Orderings[i];
+                var keySelector = BuildKeySelectorLambda(ordering.Expression, elementType);
+
+                if (i == 0)
+                {
+                    var orderMethodName = ordering.Direction == OrderingDirection.Descending
+                        ? nameof(Enumerable.OrderByDescending)
+                        : nameof(Enumerable.OrderBy);
+                    var orderByMethod = GetEnumerableMethod(orderMethodName, 2).MakeGenericMethod(elementType, typeof(object));
+                    orderedExpression = Expression.Call(null, orderByMethod, enumerableSource, keySelector);
+                }
+                else
+                {
+                    var thenMethodName = ordering.Direction == OrderingDirection.Descending
+                        ? nameof(Enumerable.ThenByDescending)
+                        : nameof(Enumerable.ThenBy);
+                    var thenByMethod = GetEnumerableMethod(thenMethodName, 2).MakeGenericMethod(elementType, typeof(object));
+                    orderedExpression = Expression.Call(null, thenByMethod, orderedExpression!, keySelector);
+                }
+            }
+
+            return orderedExpression ?? enumerableSource;
+        }
+
+        private Expression VisitQueryDistinct(QueryDistinctNode node)
+        {
+            var sourceExpression = VisitNode(node.Source);
+            var elementType = ResolveQueryableElementType(sourceExpression.Type);
+            var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
+
+            var keySelector = BuildKeySelectorLambda(node.KeySelector, elementType);
+            var distinctMethod = typeof(DslQueryOperations).GetMethod(nameof(DslQueryOperations.DistinctBy), BindingFlags.Public | BindingFlags.Static);
+            if (distinctMethod == null)
+            {
+                throw new InvalidOperationException("Cannot resolve query distinct method 'DistinctBy'.");
+            }
+
+            var genericMethod = distinctMethod.MakeGenericMethod(elementType);
+            return Expression.Call(null, genericMethod, enumerableSource, keySelector);
+        }
+
+        private Expression VisitQuerySelect(QuerySelectNode node)
+        {
+            var sourceExpression = VisitNode(node.Source);
+            var elementType = ResolveQueryableElementType(sourceExpression.Type);
+            var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
+
+            var selector = BuildKeySelectorLambda(node.Selector, elementType);
+            var selectMethod = GetEnumerableMethod(nameof(Enumerable.Select), 2).MakeGenericMethod(elementType, typeof(object));
+            return Expression.Call(null, selectMethod, enumerableSource, selector);
+        }
+
+
+        private Expression VisitQueryTake(QueryTakeNode node)
+        {
+            var sourceExpression = VisitNode(node.Source);
+            var elementType = ResolveQueryableElementType(sourceExpression.Type);
+            var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
+
+            if (node.Selection == null || node.Selection.Strategy == SelectionStrategy.All)
+            {
+                return enumerableSource;
+            }
+
+            var countExpression = BuildCountExpression(node.Selection.CountExpression);
+            var methodName = node.Selection.Strategy switch
+            {
+                SelectionStrategy.Random => nameof(DslQueryOperations.TakeRandom),
+                SelectionStrategy.Last => nameof(DslQueryOperations.TakeLast),
+                _ => nameof(DslQueryOperations.TakeFirst)
+            };
+
+            var takeMethod = typeof(DslQueryOperations).GetMethod(methodName, BindingFlags.Public | BindingFlags.Static);
+            if (takeMethod == null)
+            {
+                throw new InvalidOperationException($"Cannot resolve query take method '{methodName}'.");
+            }
+
+            var genericMethod = takeMethod.MakeGenericMethod(elementType);
+            return Expression.Call(null, genericMethod, enumerableSource, countExpression);
+        }
+
+        private LambdaExpression BuildPredicateLambda(ExpressionNode filterExpression, Type elementType)
+        {
+            var elementParam = Expression.Parameter(elementType, "item");
+            var builder = new ExpressionTreeBuilder(elementParam, _gameContextParam, _tscParam, _dbContextParam, _functionRegistry);
+            var body = builder.Build(filterExpression);
+            var booleanBody = EnsureBooleanExpression(body);
+            return Expression.Lambda(booleanBody, elementParam);
+        }
+
+        private LambdaExpression BuildKeySelectorLambda(ExpressionNode keyExpression, Type elementType)
+        {
+            var elementParam = Expression.Parameter(elementType, "item");
+            var builder = new ExpressionTreeBuilder(elementParam, _gameContextParam, _tscParam, _dbContextParam, _functionRegistry);
+            var body = builder.Build(keyExpression);
+            if (body.Type != typeof(object))
+            {
+                body = Expression.Convert(body, typeof(object));
+            }
+            return Expression.Lambda(body, elementParam);
+        }
+
+        private Expression BuildCountExpression(ExpressionNode? countExpression)
+        {
+            if (countExpression == null)
+            {
+                return Expression.Constant(0);
+            }
+
+            var rawCount = VisitNode(countExpression);
+            if (rawCount.Type == typeof(int))
+            {
+                return rawCount;
+            }
+
+            var method = typeof(TypeConverter).GetMethod(nameof(TypeConverter.ConvertToInt), new[] { typeof(object), typeof(int) });
+            if (method == null)
+            {
+                throw new InvalidOperationException("Cannot resolve TypeConverter.ConvertToInt.");
+            }
+
+            var converted = Expression.Convert(rawCount, typeof(object));
+            return Expression.Call(null, method, converted, Expression.Constant(0));
+        }
+
+        private static Expression EnsureBooleanExpression(Expression expression)
+        {
+            if (expression.Type == typeof(bool))
+            {
+                return expression;
+            }
+
+            if (expression.Type == typeof(bool?))
+            {
+                return Expression.Coalesce(expression, Expression.Constant(false));
+            }
+
+            var method = typeof(TypeConverter).GetMethod(nameof(TypeConverter.ConvertToBool), new[] { typeof(object) });
+            if (method == null)
+            {
+                throw new InvalidOperationException("Cannot resolve TypeConverter.ConvertToBool.");
+            }
+
+            return Expression.Call(null, method, Expression.Convert(expression, typeof(object)));
+        }
+
+        private static Type ResolveQueryableElementType(Type sourceType)
+        {
+            if (sourceType == typeof(string))
+            {
+                throw new InvalidOperationException("String values cannot be treated as collections.");
+            }
+
+            return DslCollectionCoercion.TryGetEnumerableElementType(sourceType, out var elementType)
+                ? elementType
+                : typeof(object);
+        }
+
+        private static MethodInfo GetEnumerableMethod(string name, int parameterCount)
+        {
+            var method = typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == name && m.GetParameters().Length == parameterCount);
+            if (method == null)
+            {
+                throw new InvalidOperationException($"Cannot resolve Enumerable.{name}.");
+            }
+
+            return method;
+        }
+
+        private static bool RequiresDynamicOperation(Expression left, Expression right)
+        {
+            return left.Type == typeof(object) || right.Type == typeof(object);
+        }
+
+        private static Expression BuildDynamicBinaryOperation(Expression left, Expression right, TokenType operatorType)
+        {
+            var leftObj = Expression.Convert(left, typeof(object));
+            var rightObj = Expression.Convert(right, typeof(object));
+
+            MethodInfo method = operatorType switch
+            {
+                TokenType.Plus => GetDynamicMethod(nameof(DynamicOperations.Add)),
+                TokenType.Minus => GetDynamicMethod(nameof(DslRuntimeBinaryOperations.ApplyMinus)),
+                TokenType.Multiply => GetDynamicMethod(nameof(DynamicOperations.Multiply)),
+                TokenType.Divide => GetDynamicMethod(nameof(DynamicOperations.Divide)),
+                TokenType.DivideCeil => GetDynamicMethod(nameof(DynamicOperations.CeilingDivide)),
+                TokenType.Modulo => GetDynamicMethod(nameof(DynamicOperations.Modulo)),
+                TokenType.GreaterThan => GetDynamicMethod(nameof(DynamicOperations.IsGreaterThan)),
+                TokenType.GreaterEqual => GetDynamicMethod(nameof(DynamicOperations.IsGreaterThanOrEqual)),
+                TokenType.LessThan => GetDynamicMethod(nameof(DynamicOperations.IsLessThan)),
+                TokenType.LessEqual => GetDynamicMethod(nameof(DynamicOperations.IsLessThanOrEqual)),
+                TokenType.Equal => GetDynamicMethod(nameof(DynamicOperations.AreEqual)),
+                TokenType.NotEqual => GetDynamicMethod(nameof(DynamicOperations.AreEqual)),
+                TokenType.SetUnion => GetDynamicMethod(nameof(DynamicOperations.SetUnion)),
+                TokenType.SetIntersect => GetDynamicMethod(nameof(DynamicOperations.SetIntersect)),
+                TokenType.SetDifference => GetDynamicMethod(nameof(DynamicOperations.SetDifference)),
+                TokenType.And => GetDynamicMethod(nameof(DynamicOperations.LogicalAnd)),
+                TokenType.Or => GetDynamicMethod(nameof(DynamicOperations.LogicalOr)),
+                _ => throw new NotSupportedException($"Binary operator '{operatorType}' is not supported for dynamic evaluation.")
+            };
+
+            var call = Expression.Call(null, method, leftObj, rightObj);
+            return operatorType == TokenType.NotEqual ? Expression.Not(call) : call;
+        }
+
+        private static Expression BuildDynamicUnaryOperation(Expression operand, TokenType operatorType)
+        {
+            var operandObj = Expression.Convert(operand, typeof(object));
+            MethodInfo method = operatorType switch
+            {
+                TokenType.Not => GetDynamicMethod(nameof(DynamicOperations.LogicalNot)),
+                TokenType.Minus => GetDynamicMethod(nameof(DynamicOperations.Negate)),
+                _ => throw new NotSupportedException($"Unary operator '{operatorType}' is not supported for dynamic evaluation.")
+            };
+
+            return Expression.Call(null, method, operandObj);
+        }
+
+        private static MethodInfo GetDynamicMethod(string name)
+        {
+            var method = typeof(DynamicOperations).GetMethod(name, BindingFlags.Public | BindingFlags.Static);
+            if (method != null)
+            {
+                return method;
+            }
+
+            method = typeof(DslRuntimeBinaryOperations).GetMethod(name, BindingFlags.Public | BindingFlags.Static);
+            if (method != null)
+            {
+                return method;
+            }
+
+            throw new InvalidOperationException($"Cannot resolve dynamic DSL operation '{name}'.");
+        }
     }
 
     internal static class DslDictionaryAccess
@@ -669,6 +1114,252 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             return default;
+        }
+    }
+
+    internal static class EventParameterAccessor
+    {
+        public static object? Resolve(GameContext context, IGameEvent? gameEvent, string name)
+        {
+            if (gameEvent == null || string.IsNullOrWhiteSpace(name))
+            {
+                return null;
+            }
+
+            var eventType = gameEvent.GetType();
+            if (EventParameterCache.TryGetBinding(eventType, name, out var binding))
+            {
+                try
+                {
+                    return binding.Getter(gameEvent);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            if (gameEvent is IRawEventBackedGameEvent rawBacked
+                && TryGetJsonValue(rawBacked.OutputPayload, name, out var node))
+            {
+                return node;
+            }
+
+            var prop = eventType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (prop == null || prop.GetIndexParameters().Length != 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return prop.GetValue(gameEvent);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool TryGetJsonValue(JsonObject obj, string name, out JsonNode? node)
+        {
+            node = null;
+            foreach (var kv in obj)
+            {
+                if (!string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                node = kv.Value;
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    internal static class DslRuntimeMemberAccess
+    {
+        private static readonly ConcurrentDictionary<(Type Type, string Member), Func<object, object?>> MemberAccessorCache = new();
+        private static readonly ConcurrentDictionary<(Type Type, string Member), Func<object, object?>> DefinitionAccessorCache = new();
+
+        public static object? GetValue(object? instance, string memberName)
+        {
+            if (instance == null || string.IsNullOrWhiteSpace(memberName))
+            {
+                return null;
+            }
+
+            if (memberName.Equals("Count", StringComparison.OrdinalIgnoreCase)
+                && instance is ICollection collection)
+            {
+                return collection.Count;
+            }
+
+            if (memberName.Equals("IsEmpty", StringComparison.OrdinalIgnoreCase)
+                && instance is ICollection collectionIsEmpty)
+            {
+                return collectionIsEmpty.Count == 0;
+            }
+
+            if (instance is JsonObject jsonObject)
+            {
+                foreach (var kv in jsonObject)
+                {
+                    if (string.Equals(kv.Key, memberName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return kv.Value;
+                    }
+                }
+            }
+
+            if (instance is IReadOnlyDictionary<string, object?> readOnlyDictionary)
+            {
+                if (readOnlyDictionary.TryGetValue(memberName, out var value))
+                {
+                    return value;
+                }
+
+                foreach (var entry in readOnlyDictionary)
+                {
+                    if (string.Equals(entry.Key, memberName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return entry.Value;
+                    }
+                }
+            }
+
+            if (instance is IReadOnlyDictionary<string, int> readOnlyIntDictionary)
+            {
+                if (readOnlyIntDictionary.TryGetValue(memberName, out var value))
+                {
+                    return value;
+                }
+
+                foreach (var entry in readOnlyIntDictionary)
+                {
+                    if (string.Equals(entry.Key, memberName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return entry.Value;
+                    }
+                }
+            }
+
+            if (instance is IDictionary dictionary)
+            {
+                if (dictionary.Contains(memberName))
+                {
+                    return dictionary[memberName];
+                }
+
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key is string key
+                        && string.Equals(key, memberName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return entry.Value;
+                    }
+                }
+            }
+
+            var type = instance.GetType();
+            var normalizedMember = memberName.ToUpperInvariant();
+
+            var accessor = MemberAccessorCache.GetOrAdd(
+                (type, normalizedMember),
+                static key => BuildMemberAccessor(key.Type, key.Member));
+
+            return accessor(instance);
+        }
+
+        private static Func<object, object?> BuildMemberAccessor(Type instanceType, string normalizedMember)
+        {
+            var flags = BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance;
+
+            var property = instanceType.GetProperty(normalizedMember, flags);
+            if (property != null && property.GetIndexParameters().Length == 0)
+            {
+                return CreatePropertyGetter(instanceType, property);
+            }
+
+            var field = instanceType.GetField(normalizedMember, flags);
+            if (field != null)
+            {
+                return CreateFieldGetter(instanceType, field);
+            }
+
+            if (typeof(CardInstance).IsAssignableFrom(instanceType))
+            {
+                return instance =>
+                {
+                    var card = instance as CardInstance;
+                    var definition = card?.CurrentDefinition;
+                    if (definition == null)
+                    {
+                        return null;
+                    }
+
+                    return GetDefinitionMemberValue(definition, normalizedMember);
+                };
+            }
+
+            return static _ => null;
+        }
+
+        private static object? GetDefinitionMemberValue(object definition, string normalizedMember)
+        {
+            var definitionType = definition.GetType();
+            var accessor = DefinitionAccessorCache.GetOrAdd(
+                (definitionType, normalizedMember),
+                static key => BuildDefinitionAccessor(key.Type, key.Member));
+
+            return accessor(definition);
+        }
+
+        private static Func<object, object?> BuildDefinitionAccessor(Type definitionType, string normalizedMember)
+        {
+            var flags = BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance;
+
+            var property = definitionType.GetProperty(normalizedMember, flags);
+            if (property != null && property.GetIndexParameters().Length == 0)
+            {
+                return CreatePropertyGetter(definitionType, property);
+            }
+
+            var field = definitionType.GetField(normalizedMember, flags);
+            if (field != null)
+            {
+                return CreateFieldGetter(definitionType, field);
+            }
+
+            return static _ => null;
+        }
+
+        private static Func<object, object?> CreatePropertyGetter(Type declaringType, PropertyInfo propertyInfo)
+        {
+            var instanceParam = Expression.Parameter(typeof(object), "instance");
+            var typedInstance = Expression.Convert(instanceParam, declaringType);
+            var access = Expression.Property(typedInstance, propertyInfo);
+            var boxed = Expression.Convert(access, typeof(object));
+            return Expression.Lambda<Func<object, object?>>(boxed, instanceParam).Compile();
+        }
+
+        private static Func<object, object?> CreateFieldGetter(Type declaringType, FieldInfo fieldInfo)
+        {
+            var instanceParam = Expression.Parameter(typeof(object), "instance");
+            var typedInstance = Expression.Convert(instanceParam, declaringType);
+            var access = Expression.Field(typedInstance, fieldInfo);
+            var boxed = Expression.Convert(access, typeof(object));
+            return Expression.Lambda<Func<object, object?>>(boxed, instanceParam).Compile();
+        }
+    }
+
+    internal static class DslRuntimeBinaryOperations
+    {
+        public static object? ApplyMinus(object? left, object? right)
+        {
+            return DynamicOperations.Subtract(left, right);
         }
     }
 }

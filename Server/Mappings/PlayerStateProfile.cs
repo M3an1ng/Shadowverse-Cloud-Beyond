@@ -23,10 +23,9 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.GraveyardCount, opt => opt.MapFrom(src => src.GraveyardCount))
                 .ForMember(dest => dest.BloodPool, opt => opt.MapFrom(src => src.BloodPool))
                 .ForMember(dest => dest.LeaderCard, opt => opt.MapFrom(src => src.Leader))
-                // 【BUG修复】在将领域实体映射到DTO时，从Field列表中过滤掉主战者。
-                // 这确保了前端渲染时不会将主战者错误地当作场上的卡牌。
-                // 后端的领域模型中，主战者仍然在Field列表中，以确保目标选择逻辑的正确性。
-                .ForMember(dest => dest.Field, opt => opt.MapFrom(src => src.Field.Where(card => src.Leader != null && card.InstanceId != src.Leader.InstanceId)));
+                // Field 已不再包含主战者；这里保留防御性过滤，避免遗留状态误入前端。
+                .ForMember(dest => dest.Field, opt => opt.MapFrom(src => src.Field.Where(card => card == null || !card.IsLeader)))
+                .ForMember(dest => dest.Emblem, opt => opt.MapFrom(src => src.Emblem));
         }
     }
 }

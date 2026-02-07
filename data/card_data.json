@@ -1,68 +1,10 @@
 [
   {
-    "id": 1001,
-    "name": "哥布林",
-    "cost": 1,
-    "type": "Follower",
-    "attack": 1,
-    "health": 2,
-    "description": "一个普通的哥布林。",
-    "keywords": [],
-    "effects": [],
-    "art": "goblin_base.png",
-    "isEvolved": false,
-    "isCollectible": true
-  },
-  {
-    "id": 1002,
-    "name": "战士",
-    "cost": 2,
-    "type": "Follower",
-    "attack": 2,
-    "health": 2,
-    "description": "久经沙场的战士。",
-    "keywords": [
-      "Storm"
-    ],
-    "effects": [],
-    "art": "fighter_base.png",
-    "isEvolved": false,
-    "isCollectible": true
-  },
-  {
-    "id": 1003,
-    "name": "骑士",
-    "cost": 3,
-    "type": "Follower",
-    "attack": 3,
-    "health": 3,
-    "description": "忠诚的骑士。",
-    "keywords": [],
-    "effects": [],
-    "art": "knight_base.png",
-    "isEvolved": false,
-    "isCollectible": true
-  },
-  {
-    "id": 1004,
-    "name": "重装哥布林",
-    "cost": 4,
-    "type": "Follower",
-    "attack": 2,
-    "health": 5,
-    "description": "穿戴重甲，更加耐打。",
-    "keywords": [],
-    "effects": [],
-    "art": "armored_goblin_base.png",
-    "isEvolved": false,
-    "isCollectible": true
-  },
-  {
     "id": 0,
     "name": "主战者",
     "cost": 0,
     "type": "Leader",
-    "rarity": "Special",
+    "rarity": "Bronze",
     "class": "Neutral",
     "attack": 0,
     "health": 20,
@@ -70,82 +12,5153 @@
     "keywords": [],
     "effects": [],
     "art": null,
-    "isEvolved": false,
-    "isCollectible": false
+    "isCollectible": true
   },
   {
-    "id": 1005,
-    "name": "护盾卫士",
-    "cost": 1,
+    "id": 1401301,
+    "name": "治愈的旋律",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Spell",
+    "cost": 3,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "治愈的旋律-治疗",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "治愈的旋律-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1401302,
+    "name": "商队猛犸象",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
     "type": "Follower",
-    "attack": 1,
-    "health": 1,
-    "description": "守护者不会让你轻易通过。",
+    "cost": 7,
+    "attack": 10,
+    "health": 10,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1401303,
+    "name": "哥布林杀手·路西乌斯&汀娜",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "哥布林杀手·路西乌斯&汀娜-进化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventBool((\"IsSuperEvolution\"))) == (false)"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方中立随从并摧毁"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query(((((self.Type) == (\"Follower\")) and ((self.Class) == (\"Neutral\")))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "哥布林杀手·路西乌斯&汀娜-超进化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 2,
+              "maxCount": 2,
+              "prompt": "选择2个敌方中立随从并摧毁"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query(((((self.Type) == (\"Follower\")) and ((self.Class) == (\"Neutral\")))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1401401,
+    "name": "侦探的放大镜",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 2,
+    "health": null,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "侦探的放大镜-自毁",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "侦探的放大镜-破除守护",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从移除守护"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Remove"
+              },
+              "keyword": {
+                "value": "Ward"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1401402,
+    "name": "叮当天使·莉亚",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 0,
+    "health": 2,
+    "description": "",
     "keywords": [
       "Ward"
     ],
     "effects": [],
-    "art": "goblin_base.png",
-    "isEvolved": false,
+    "abilities": [
+      {
+        "name": "叮当天使·莉亚-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "叮当天使·莉亚-进化抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
     "isCollectible": true
   },
   {
-    "id": 1006,
-    "name": "摇铃天使",
-    "cost": 2,
+    "id": 1401403,
+    "name": "激震的歌利亚",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
     "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 5,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1401404,
+    "name": "不屈的剑斗士",
+    "card_set": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "不屈的剑斗士-爆能",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 4
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventString((\"PlayMode\"))) == (\"Enhance\")"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 3
+              },
+              "healthModifier": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1411301,
+    "name": "旋律的演奏者",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "旋律的演奏者-进化召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1010402
+              },
+              "summonCount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "旋律的演奏者-超进化疾走",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query(((((self.Type) == (\"Follower\")) and (contains((self.Tribe), (\"妖精\"))))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Add"
+              },
+              "keyword": {
+                "value": "Storm"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1411302,
+    "name": "流水庭院",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "cost": 2,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "流水庭院-妖精入场回复",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Summon"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.SummonedCard != null) and (context.triggeringEvent.SummonedCard.OwnerPlayerId == context.owner.PlayerId) and (context.triggeringEvent.SummonedCard.CurrentDefinitionId == 1010402))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "流水庭院-妖精入场倒计时",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Summon"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.SummonedCard != null) and (context.triggeringEvent.SummonedCard.OwnerPlayerId == context.owner.PlayerId) and (context.triggeringEvent.SummonedCard.CurrentDefinitionId == 1010402))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetCountdown",
+            "parameters": {
+              "changeAmount": {
+                "value": -1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "流水庭院-启动召唤",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1010402
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true,
+    "countdown": 3
+  },
+  {
+    "id": 1411303,
+    "name": "冒险精灵·小梅",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "冒险精灵·小梅-连击伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(context.owner.PlayedCardCountThisTurn) >= (2)"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1411401,
+    "name": "自由牧者",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "自由牧者-战吼强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方费用为1的随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query((((((self.Type) == (\"Follower\")) and ((self.Cost) == (1))) and ((self.InstanceId) != (context.sourceCard.InstanceId)))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "自由牧者-爆能强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 4
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventString((\"PlayMode\"))) == (\"Enhance\")"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 1
+              },
+              "healthModifier": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1411402,
+    "name": "林中旅程",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "林中旅程-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "林中旅程-连击衍生物",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "(context.owner.PlayedCardCountThisTurn) >= (2)"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1210402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1411403,
+    "name": "妖精召集令",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "妖精召集令-加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1010402
+              },
+              "amount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1411404,
+    "name": "大自然的警告",
+    "card_set": "星云基础",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 2,
+    "health": null,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "大自然的警告-启动",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          },
+          {
+            "type": "Choose",
+            "parameters": {
+              "abilityConfigs": {
+                "value": [
+              {
+                "name": "大自然的警告-伤害",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "playerChoiceOptions": {
+                      "isRequired": true,
+                      "minCount": 1,
+                      "maxCount": 1,
+                      "prompt": "选择1个已攻击的敌方随从"
+                    },
+                    "requireValidTarget": false,
+                    "query": {
+                      "sourcePoolExpression": "context.opponentPlayer.field.query(((((self.Type) == (\"Follower\")) and ((self.AttacksThisTurn) > (0)))))"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "Damage",
+                    "parameters": {
+                      "damageAmount": {
+                        "value": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "大自然的警告-回手",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "playerChoiceOptions": {
+                      "isRequired": true,
+                      "minCount": 1,
+                      "maxCount": 1,
+                      "prompt": "选择1个友方随从"
+                    },
+                    "requireValidTarget": false,
+                    "query": {
+                      "sourcePoolExpression": "context.owner.field.query((((self.Type) == (\"Follower\"))))"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "Return",
+                    "parameters": {
+                      "targetZone": {
+                        "value": "Hand"
+                      }
+                    }
+                  }
+                ]
+              }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1010402,
+    "name": "妖精",
+    "card_set": "衍生物",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Rush"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "妖精"
+    ]
+  },
+  {
+    "id": 1210402,
+    "name": "森林的奥秘",
+    "card_set": "衍生物",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 0,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "森林的奥秘-治疗",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "tribe": []
+  },
+  {
+    "id": 1421301,
+    "name": "见习骑士",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "见习骑士-战吼进化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(count((context.owner.field), (\"IsEvolved\"))) > (0)"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Evolve"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1421303,
+    "name": "历战近卫",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "历战近卫-进化召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1020401
+              },
+              "summonCount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "历战近卫-超进化激励",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query(((((self.Type) == (\"Follower\")) and (contains((self.Tribe), (\"士兵\"))))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Add"
+              },
+              "keyword": {
+                "value": "Rush"
+              }
+            }
+          },
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 1
+              },
+              "healthModifier": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1421304,
+    "name": "陷阵骑将",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 8,
+    "attack": 5,
+    "health": 6,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "陷阵骑将-攻击护盾",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "AttackEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Attack"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.TargetCard) != (null)) and ((context.triggeringEvent.TargetCard.Type) == (\"Follower\"))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetAttackTimes",
+            "parameters": {
+              "maxAttacksPerTurn": {
+                "value": 2
+              }
+            }
+          },
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Add"
+              },
+              "keyword": {
+                "value": "Shield"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1421401,
+    "name": "须臾剑士",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1421402,
+    "name": "动员令",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "动员令-加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1020401
+              },
+              "amount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1421404,
+    "name": "月夜暗杀者",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 3,
+    "health": 4,
+    "description": "",
+    "keywords": [
+      "Ambush"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "月夜暗杀者-爆能摧毁",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 6
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventString((\"PlayMode\"))) == (\"Enhance\")"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1421405,
+    "name": "军备锻造",
+    "card_set": "星云基础",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 3,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "军备锻造-强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 2
+              },
+              "healthModifier": {
+                "value": 2
+              }
+            }
+          },
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Add"
+              },
+              "keyword": {
+                "$type": "FormulaValueConfig",
+                "formula": "if((context.owner.CanSuperEvolve), (\"Shield\"), (\"None\"))"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1020401,
+    "name": "骑士",
+    "card_set": "衍生物",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "士兵"
+    ]
+  },
+  {
+    "id": 1431301,
+    "name": "辉彩元素使",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "辉彩元素使-进化土之印",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "AddEarthSigil",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 2
+              },
+              "tokenDefinitionId": {
+                "value": 1030401
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "辉彩元素使-进化伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "辉彩元素使-超进化土之秘术",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          },
+          {
+            "keyword": "EarthRitual",
+            "value": 2
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "EarthRite",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 2
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "辉彩元素使-超进化土之秘术-召唤",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [],
+                "effects": [
+                  {
+                    "type": "Summon",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "cardSourceMode": {
+                        "value": "Definition"
+                      },
+                      "cardDefinitionId": {
+                        "value": 1030404
+                      },
+                      "summonCount": {
+                        "value": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1431302,
+    "name": "魔焰毁灭者",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 10,
+    "attack": 8,
+    "health": 6,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "魔焰毁灭者-魔力增幅减费",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SpellBoost"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SpellBoost"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "costModifier": {
+                "value": -1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1431303,
+    "name": "流水药剂师",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "流水药剂师-战吼选择",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Choose",
+            "parameters": {
+              "abilityConfigs": {
+                "value": [
+              {
+                "name": "流水药剂师-土之印",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [],
+                "effects": [
+                  {
+                    "type": "AddEarthSigil",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "amount": {
+                        "value": 2
+                      },
+                      "tokenDefinitionId": {
+                        "value": 1030401
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "流水药剂师-土之秘术",
+                "type": "Triggered",
+                "abilityKeywords": [
+                  {
+                    "keyword": "EarthRitual",
+                    "value": 2
+                  }
+                ],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [],
+                "effects": [
+                  {
+                    "type": "EarthRite",
+                    "onFailure": "SkipEffect",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "amount": {
+                        "value": 2
+                      }
+                    },
+                    "chainedAbilities": [
+                      {
+                        "name": "流水药剂师-土之秘术-回复",
+                        "type": "Triggered",
+                        "abilityKeywords": [],
+                        "trigger": {
+                          "eventTypes": [
+                            "EffectCompleted"
+                          ],
+                          "relationType": "Any"
+                        },
+                        "conditions": [],
+                        "targets": [
+                          {
+                            "query": {
+                              "sourcePoolExpression": "context.owner.leader"
+                            }
+                          }
+                        ],
+                        "effects": [
+                          {
+                            "type": "Heal",
+                            "parameters": {
+                              "healAmount": {
+                                "value": 4
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1431401,
+    "name": "魔女的炼金炉",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "EarthSigil"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "魔女的炼金炉-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "魔女的炼金炉-启动土之印",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "AddEarthSigil",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 1
+              },
+              "tokenDefinitionId": {
+                "value": 1030401
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1431402,
+    "name": "智慧光辉",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "智慧光辉-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1431403,
+    "name": "疾风爆裂",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "疾风爆裂-魔力增幅",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SpellBoost"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SpellBoost"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": []
+      },
+      {
+        "name": "疾风爆裂-伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "$type": "FormulaValueConfig",
+                "formula": "context.sourceCard.Spellboost"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1431404,
+    "name": "尘土化形",
+    "card_set": "星云基础",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "尘土化形-土之秘术",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EarthRitual",
+            "value": 1
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "(count((context.owner.field), (\"Earthsigil\"))) >= (1)"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "EarthRite",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 1
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "尘土化形-土之秘术-召唤",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [],
+                "effects": [
+                  {
+                    "type": "Summon",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "cardSourceMode": {
+                        "value": "Definition"
+                      },
+                      "cardDefinitionId": {
+                        "value": 1030404
+                      },
+                      "summonCount": {
+                        "value": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "尘土化形-基础召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "(count((context.owner.field), (\"Earthsigil\"))) < (1)"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1030403
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1030401,
+    "name": "大地之魔片",
+    "card_set": "衍生物",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "EarthSigil"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "大地之魔片-启动土之印",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "AddEarthSigil",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 1
+              },
+              "tokenDefinitionId": {
+                "value": 1030401
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "tribe": []
+  },
+  {
+    "id": 1030403,
+    "name": "泥尘巨像",
+    "card_set": "衍生物",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "巨像"
+    ]
+  },
+  {
+    "id": 1030404,
+    "name": "守护者巨像",
+    "card_set": "衍生物",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 3,
+    "health": 3,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "巨像"
+    ]
+  },
+  {
+    "id": 1440401,
+    "name": "飞龙",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441301,
+    "name": "新手龙骑士",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 1,
+    "health": 3,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "新手龙骑士-战吼召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventString((\"PlayMode\"))) != (\"Enhance\")"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1240402
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "新手龙骑士-爆能召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 6
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventString((\"PlayMode\"))) == (\"Enhance\")"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1440401
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441302,
+    "name": "龙之灵视",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "cost": 3,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "龙之灵视-抉择",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Choose",
+            "parameters": {
+              "selectionCount": {
+                "value": 1
+              },
+              "abilityConfigs": {
+                "value": [
+              {
+                "name": "龙之灵视-抉择-提升PP上限",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [],
+                "effects": [
+                  {
+                    "type": "Ramp",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "modifyAmount": {
+                        "value": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "龙之灵视-抉择-抽牌",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [],
+                "effects": [
+                  {
+                    "type": "Draw",
+                    "parameters": {
+                      "playerScope": {
+                        "value": "Self"
+                      },
+                      "drawAmount": {
+                        "value": 2
+                      }
+                    }
+                  }
+                ]
+              }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441303,
+    "name": "猛击的龙族勇士",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "猛击的龙族勇士-进化伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventBool((\"IsSuperEvolution\"))) == (false)"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 4
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "猛击的龙族勇士-超进化伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 4
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441401,
+    "name": "龙人碎击",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "龙人碎击-伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "(context.owner.MaxPlayPoints) < (7)"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "龙人碎击-觉醒伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Awake"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [
+          {
+            "expression": "(context.owner.MaxPlayPoints) >= (7)"
+          }
+        ],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 4
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441402,
+    "name": "烈焰火蜥蜴",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "烈焰火蜥蜴-战吼伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441403,
+    "name": "潜泳纵队",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "潜泳纵队-召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1340401
+              },
+              "summonCount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1441404,
+    "name": "凶鲨战士",
+    "card_set": "星云基础",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 8,
+    "attack": 6,
+    "health": 6,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "凶鲨战士-战吼伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 6
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1240402,
+    "name": "炽炎幼龙",
+    "card_set": "衍生物",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Pressure"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false
+  },
+  {
+    "id": 1340401,
+    "name": "大海虎鲸",
+    "card_set": "衍生物",
+    "class": "Dragoncraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [
+      "Rush"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "海洋"
+    ]
+  },
+  {
+    "id": 1451301,
+    "name": "灵魂转化",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "cost": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "灵魂转化-破坏",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从并破坏"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "灵魂转化-抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1451302,
+    "name": "呼魂女巫",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "呼魂女巫-进化召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1050403
+              },
+              "summonCount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "呼魂女巫-超进化死灵术",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          },
+          {
+            "keyword": "Necromance",
+            "value": 8
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Necromancy",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 8
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "呼魂女巫-超进化死灵术-必杀",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "context.sourceCard"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "SetKeyword",
+                    "parameters": {
+                      "operation": {
+                        "value": "Add"
+                      },
+                      "keyword": {
+                        "value": "Bane"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1451303,
+    "name": "魅惑的魅魔·莉莉姆",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "魅惑的魅魔·莉莉姆-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1050402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1451402,
+    "name": "禁约掘墓人",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "禁约掘墓人-战吼伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "parameters": {
+              "damageAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "禁约掘墓人-战吼衍生物",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1250402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1451403,
+    "name": "迷魂归途",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "迷魂归途-亡者召还",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Reanimate",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "maxCost": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1451404,
+    "name": "恶毒的小木乃伊",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "恶毒的小木乃伊-死灵术疾走",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Necromance",
+            "value": 4
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Necromancy",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 4
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "恶毒的小木乃伊-死灵术疾走-赋予",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "context.sourceCard"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "SetKeyword",
+                    "parameters": {
+                      "operation": {
+                        "value": "Add"
+                      },
+                      "keyword": {
+                        "value": "Storm"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1451405,
+    "name": "狂猎恶魔",
+    "card_set": "星云基础",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 6,
+    "attack": 3,
+    "health": 6,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "狂猎恶魔-血祭吸血",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Sacrifice",
+            "value": 3
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Sacrifice",
+            "onFailure": "SkipEffect",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "amount": {
+                "value": 3
+              }
+            },
+            "chainedAbilities": [
+              {
+                "name": "狂猎恶魔-血祭吸血-赋予",
+                "type": "Triggered",
+                "abilityKeywords": [],
+                "trigger": {
+                  "eventTypes": [
+                    "EffectCompleted"
+                  ],
+                  "relationType": "Any"
+                },
+                "conditions": [],
+                "targets": [
+                  {
+                    "query": {
+                      "sourcePoolExpression": "context.sourceCard"
+                    }
+                  }
+                ],
+                "effects": [
+                  {
+                    "type": "SetKeyword",
+                    "parameters": {
+                      "operation": {
+                        "value": "Add"
+                      },
+                      "keyword": {
+                        "value": "Drain"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1050402,
+    "name": "蝙蝠",
+    "card_set": "衍生物",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Drain"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": []
+  },
+  {
+    "id": 1050403,
+    "name": "怨灵",
+    "card_set": "衍生物",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "怨灵-离场消失",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Destroy",
+            "Return",
+            "Tuck"
+          ],
+          "timing": "Before",
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "ReplaceEvent",
+            "parameters": {
+              "replacementEventType": {
+                "value": "Vanish"
+              },
+              "replacementParams.VanishedCard": {
+                "$type": "FormulaValueConfig",
+                "formula": "context.sourceCard"
+              },
+              "replacementParams.OriginalZone": {
+                "value": "Field"
+              },
+              "replacementParams.VanishReason": {
+                "value": "LeaveFieldIntercept"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "怨灵-回合结束消失",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnEnd"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.Source) != (null)) and ((context.triggeringEvent.Source.InstanceId) == (context.owner.PlayerId))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Vanish"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "亡者"
+    ]
+  },
+  {
+    "id": 1250402,
+    "name": "骸骨士兵",
+    "card_set": "衍生物",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "亡者"
+    ]
+  },
+  {
+    "id": 1461301,
+    "name": "持矛锤的僧侣",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 4,
+    "health": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "持矛锤的僧侣-进化消失",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从并消失"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Vanish"
+          }
+        ]
+      },
+      {
+        "name": "持矛锤的僧侣-超进化消失",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从并消失"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query((((self.Type) == (\"Follower\"))))"
+            }
+          },
+          {
+            "query": {
+              "sourcePoolExpression": "context.opponentPlayer.field.query(((((self.Type) == (\"Follower\")) && ((count((AbilityTargets.target1.query((((self.Card.Name) == (self.Name))))))) > (0)))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Vanish",
+            "targetSelector": [
+              "target2"
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1461303,
+    "name": "白羽石像",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "白羽石像-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1060401
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "白羽石像-启动倒计时",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 1
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetCountdown",
+            "parameters": {
+              "changeAmount": {
+                "value": -1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true,
+    "countdown": 3
+  },
+  {
+    "id": 1461304,
+    "name": "亚巴顿",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 9,
+    "attack": 6,
+    "health": 8,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "亚巴顿-攻击破坏护符",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "AttackEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Attack"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query((((self.Type) == (\"Amulet\"))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1461401,
+    "name": "圣枪战士",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 3,
+    "health": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "圣枪战士-战吼强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query(((((self.Type) == (\"Follower\")) and ((self.InstanceId) != (context.sourceCard.InstanceId)))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "圣枪战士-进化强化",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.owner.field.query(((((self.Type) == (\"Follower\")) and ((self.InstanceId) != (context.sourceCard.InstanceId)))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1461402,
+    "name": "投影鸟像",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 4,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "投影鸟像-谢幕曲",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1060402
+              },
+              "summonCount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "投影鸟像-启动倒计时",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 2
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetCountdown",
+            "parameters": {
+              "changeAmount": {
+                "value": -2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true,
+    "countdown": 2
+  },
+  {
+    "id": 1461403,
+    "name": "受祝勇士",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 1,
+    "health": 3,
+    "description": "",
+    "keywords": [
+      "Ward",
+      "Aura"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1461404,
+    "name": "清泉修士",
+    "card_set": "星云基础",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 5,
+    "attack": 3,
+    "health": 5,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "清泉修士-战吼治疗",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "value": 5
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1060401,
+    "name": "神圣猎鹰",
+    "card_set": "衍生物",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "圣兽"
+    ]
+  },
+  {
+    "id": 1060402,
+    "name": "壮丽大神隼",
+    "card_set": "衍生物",
+    "class": "Havencraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 6,
+    "attack": 4,
+    "health": 4,
+    "description": "",
+    "keywords": [
+      "Storm"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "圣兽"
+    ]
+  },
+  {
+    "id": 1470301,
+    "name": "纹章:加速引擎",
+    "card_set": "衍生物",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Crest",
+    "cost": 0,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "纹章:加速引擎-创造物入场疾走",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "Summon"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Emblem"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((((context.triggeringEvent.SummonedCard) != (null)) and ((context.triggeringEvent.SummonedCard.OwnerPlayerId) == (context.owner.PlayerId))) and ((context.triggeringEvent.SummonedCard.Type) == (\"Follower\"))) and (contains((context.triggeringEvent.SummonedCard.Tribe), (\"创造物\")))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.triggeringEvent.SummonedCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "SetKeyword",
+            "parameters": {
+              "operation": {
+                "value": "Add"
+              },
+              "keyword": {
+                "value": "Rush"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "countdown": 1
+  },
+  {
+    "id": 1470401,
+    "name": "古老的创造物",
+    "card_set": "衍生物",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 3,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Rush"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "创造物"
+    ]
+  },
+  {
+    "id": 1470402,
+    "name": "解析的创造物",
+    "card_set": "衍生物",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "解析的创造物-谢幕曲抽牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "创造物"
+    ]
+  },
+  {
+    "id": 1470403,
+    "name": "公转的创造物",
+    "card_set": "衍生物",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 1,
+    "health": 4,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "创造物"
+    ]
+  },
+  {
+    "id": 1471302,
+    "name": "人偶剧场",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "cost": 2,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "人偶剧场-战吼加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1070405
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "人偶剧场-回合结束加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnEnd"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.Source) != (null)) and ((context.triggeringEvent.Source.InstanceId) == (context.owner.PlayerId))"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1070405
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true,
+    "countdown": 2
+  },
+  {
+    "id": 1471303,
+    "name": "加速引擎",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "cost": 1,
+    "health": null,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "加速引擎-启动破坏",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "加速引擎-启动添加纹章",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 0
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "AddEmblem",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1470301
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1471304,
+    "name": "战地机械师",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 4,
+    "attack": 5,
+    "health": 4,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "战地机械师-进化加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1470401
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "战地机械师-超进化加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1470401
+              },
+              "amount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1471401,
+    "name": "创造物防壁",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "cost": 6,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "创造物防壁-加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1470403
+              },
+              "amount": {
+                "value": 4
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1471402,
+    "name": "调频分析员",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "调频分析员-爆能加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 4
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "(eventString((\"PlayMode\"))) == (\"Enhance\")"
+          }
+        ],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1470402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "调频分析员-创造物入手强化",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "AddCardToHand"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "eventCards((\"CardsToAdd\")).query((((((self.OwnerPlayerId) == (context.owner.PlayerId)) and ((self.Type) == (\"Follower\"))) and (contains((self.Tribe), (\"创造物\"))))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "ModifyStatus",
+            "parameters": {
+              "attackModifier": {
+                "value": 1
+              },
+              "healthModifier": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1471403,
+    "name": "人偶长矛手",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 2,
     "attack": 2,
     "health": 1,
-    "description": "战吼：抽取 1 张卡牌。",
+    "description": "",
     "keywords": [],
-    "effects": [
+    "effects": [],
+    "abilities": [
       {
-        "trigger": "Fanfare",
-        "action": "drawCards",
-        "value": 1
+        "name": "人偶长矛手-战吼加入手牌",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1070402
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
       }
     ],
-    "art": "fighter_base.png",
-    "isEvolved": false,
+    "art": null,
     "isCollectible": true
   },
   {
-    "id": 2001,
-    "name": "智慧之光",
-    "cost": 1,
-    "type": "Spell",
-    "description": "抽取 1 张卡牌。",
+    "id": 1471404,
+    "name": "镜像刻录者",
+    "card_set": "星云基础",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 2,
+    "health": 3,
+    "description": "",
     "keywords": [],
-    "effects": [
+    "effects": [],
+    "abilities": [
       {
-        "trigger": "OnPlay",
-        "action": "drawCards",
-        "value": 1
+        "name": "镜像刻录者-战吼复制",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方手牌随从"
+            },
+            "requireValidTarget": false,
+            "query": {
+              "sourcePoolExpression": "context.owner.hand.query(((((self.Type) == (\"Follower\")) and ((self.Cost) < (3)))))"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "GetToken",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Copy"
+              }
+            }
+          }
+        ]
       }
     ],
-    "art": "spell_placeholder.png",
+    "art": null,
     "isCollectible": true
   },
   {
-    "id": 2002,
-    "name": "天使之箭",
-    "cost": 1,
-    "type": "Spell",
-    "description": "对 1 个敌方目标造成 1 点伤害。",
-    "keywords": [],
-    "effects": [
+    "id": 1070405,
+    "name": "悬丝傀儡",
+    "card_set": "衍生物",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 0,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Rush"
+    ],
+    "effects": [],
+    "abilities": [
       {
-        "trigger": "OnPlay",
-        "action": "dealDamage",
-        "value": 1
+        "name": "悬丝傀儡-敌方回合结束破坏",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnEnd"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.Source) != (null)) and ((context.triggeringEvent.Source.InstanceId) != (context.owner.PlayerId))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
       }
     ],
-    "art": "spell_placeholder_snipe.png",
-    "requiresTarget": true,
-    "validTargets": [
-      "EnemyFollower",
-      "EnemyLeader"
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "人偶"
+    ]
+  },
+  {
+    "id": 1070402,
+    "name": "改良型·悬丝傀儡",
+    "card_set": "衍生物",
+    "class": "Portalcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 3,
+    "health": 3,
+    "description": "",
+    "keywords": [
+      "Rush"
     ],
-    "isCollectible": true
+    "effects": [],
+    "abilities": [
+      {
+        "name": "改良型·悬丝傀儡-敌方回合结束破坏",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnEnd"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "((context.triggeringEvent.Source) != (null)) and ((context.triggeringEvent.Source.InstanceId) != (context.owner.PlayerId))"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "tribe": [
+      "人偶"
+    ]
   }
 ]

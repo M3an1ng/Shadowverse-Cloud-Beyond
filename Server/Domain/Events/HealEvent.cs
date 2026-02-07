@@ -12,20 +12,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// <summary>
     /// Event triggered when healing is applied to a target.
     /// </summary>
-    [GameEventMetadata("治疗", "当对目标进行治疗时触发的事件。", EventType.Heal)]
+    [GameEventMetadata("回复", "当对目标进行治疗时触发的事件。", EventType.Heal)]
     public class HealEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("治疗量", "治疗的数值。")]
+        [GameEventParameter("回复量", "回复的数值。")]
         public int HealAmount { get; }
 
-        [GameEventParameter("治疗来源", "提供治疗的卡牌。")]
+        [GameEventParameter("回复来源", "提供回复的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? HealSource => Source?.Card;
 
-        [GameEventParameter("治疗目标", "接受治疗的卡牌。")]
+        [GameEventParameter("回复目标", "接受回复的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? HealTarget => Target.FirstOrDefault()?.Card;
 
-        public HealEvent(CardInstance target, int healAmount, CardInstance source)
-            : base(EventType.Heal)
+        public HealEvent(CardInstance target, int healAmount, CardInstance source, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Heal, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(target));
             HealAmount = healAmount;
@@ -43,7 +43,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var card = HealTarget;
             int oldHealth = card.CurrentHealth;
             int actualHealing = Math.Min(HealAmount, card.Damage);
-            int newHealth = Math.Max(0, oldHealth + actualHealing);
+            int newHealth = oldHealth + actualHealing;
 
             if (actualHealing > 0)
             {
@@ -55,17 +55,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var targetId = HealTarget?.InstanceId;
-            var sourceId = HealSource?.InstanceId;
-            if (!targetId.HasValue || HealAmount <= 0)
+            var target = HealTarget;
+            if (target == null || HealAmount <= 0)
             {
-                return "heal";
+                return string.Empty;
             }
 
-            var targetToken = gameState.InGameIds.Format(InGameIdKind.Card, targetId.Value);
-            return sourceId.HasValue
-                ? $"heal target={targetToken} amount={HealAmount} source={gameState.InGameIds.Format(InGameIdKind.Card, sourceId.Value)}"
-                : $"heal target={targetToken} amount={HealAmount}";
+            var source = HealSource;
+            return source != null
+                ? $"{AnnouncementTokens.Card(source)}为{AnnouncementTokens.Card(target)}回复 {AnnouncementTokens.Number(HealAmount)} 点生命。"
+                : $"{AnnouncementTokens.Card(target)}回复 {AnnouncementTokens.Number(HealAmount)} 点生命。";
         }
     }
 }

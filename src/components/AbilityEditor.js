@@ -10,7 +10,10 @@ import { TriggerConfigEditor } from './TriggerConfigEditor.js';
 import { ConditionConfigEditor } from './ConditionConfigEditor.js';
 import { TargetConfigEditor } from './TargetConfigEditor.js';
 import { EffectConfigEditor } from './EffectConfigEditor.js';
+import { StatusConfigEditor } from './StatusConfigEditor.js';
 import { validateDslExpression } from '../dslValidation.js';
+import { getBlockingLoader } from './blockingLoader.js';
+import { ensureEnumLocalization } from '../enumLocalizationCache.js';
 
 /**
  * 主要的能力编辑器组件
@@ -22,15 +25,19 @@ export class AbilityEditor extends MetadataDrivenComponent {
         this.ability = null;
         this.onChange = null;
         this.container = null;
+        this.options = {};
         
         // 子编辑器实例
         this.triggerEditor = new TriggerConfigEditor();
         this.conditionEditor = new ConditionConfigEditor();
         this.targetEditor = new TargetConfigEditor();
         this.effectEditor = new EffectConfigEditor();
-        
+        this.statusEditor = new StatusConfigEditor();
+        this.editorMode = 'effect';
+
         // 向导状态
         this.currentStepIndex = 0;
+        this.blockingLoader = null;
         this.steps = [
             { id: 'basic', label: '基础信息', description: '定义名称与类型' },
             { id: 'trigger', label: '触发时机', description: '何时发动能力' },
@@ -46,22 +53,27 @@ export class AbilityEditor extends MetadataDrivenComponent {
      * @param {Object} ability - 能力配置对象
      * @param {Function} onChange - 配置变化回调
      */
-    async render(container, ability = {}, onChange = () => {}) {
+    async render(container, ability = {}, onChange = () => {}, options = {}) {
         await this.initialize();
         
         this.container = container;
         this.ability = this.normalizeAbility(ability);
         this.onChange = onChange;
+        this.options = options || {};
+        this.applyLockedTrigger();
+        this.editorMode = this.resolveEditorMode();
+        this.configureStepsForMode();
 
         this.clearContainer(container);
         
         try {
             // 创建编辑器主体结构
             this.renderEditorStructure();
-            
-            // 渲染当前步骤
-            await this.renderCurrentStep();
-            
+
+            await this.runWithBlockingLoader("正在加载编辑器...", async () => {
+                // 渲染当前步骤
+                await this.renderCurrentStep();
+            });
         } catch (error) {
             console.error('AbilityEditor: Render failed:', error);
             this.showError(`渲染能力编辑器失败: ${error.message}`, container);
@@ -72,6 +84,19 @@ export class AbilityEditor extends MetadataDrivenComponent {
      * 标准化能力配置对象
      */
     normalizeAbility(ability) {
+        const auraConfig = this.normalizeAuraConfig(ability);
+        const rawTrigger = ability.trigger || ability.Trigger || {};
+        const trigger = {
+            ...rawTrigger,
+            eventTypes: rawTrigger.eventTypes || rawTrigger.EventTypes || [],
+            relationType: rawTrigger.relationType || rawTrigger.RelationType || 'Any',
+            timing: rawTrigger.timing || rawTrigger.Timing || 'On',
+            validZones: rawTrigger.validZones || rawTrigger.ValidZones || [],
+            revalidateZoneBeforeExecution: rawTrigger.revalidateZoneBeforeExecution ?? rawTrigger.RevalidateZoneBeforeExecution ?? false
+        };
+        const legacyExecutionKind = ability.executionKind || ability.ExecutionKind || '';
+        const normalizedType = ability.type || ability.Type
+            || (String(legacyExecutionKind).toLowerCase() === 'aura' ? 'Continuous' : '');
         return {
             id: ability.id || '',
             name: ability.name || '',
@@ -80,16 +105,31 @@ export class AbilityEditor extends MetadataDrivenComponent {
             abilityType: ability.abilityType || 1,
             priority: ability.priority || 0,
             isActive: ability.isActive !== false,
-            trigger: ability.trigger || {
-                eventTypes: [],
-                relationType: '',
-                timing: 'On',
-                validZones: [],
-                revalidateZoneBeforeExecution: false
-            },
+            cardName: ability.cardName || ability.CardName || ability.card?.name || '',
+            abilitySequence: ability.abilitySequence ?? ability.sequence ?? null,
+            type: normalizedType,
+            executionKind: legacyExecutionKind,
+            trigger,
             conditions: ability.conditions || [],
             targets: ability.targets || [],
-            effects: (ability.effects && ability.effects.length > 0) ? ability.effects : [{ type: '', parameters: {} }]
+            effects: (ability.effects && ability.effects.length > 0) ? ability.effects : [{ type: '', parameters: {} }],
+            auraConfig,
+            auras: ability.auras || ability.Auras || [],
+            counterRegistrations: ability.counterRegistrations || ability.CounterRegistrations || []
+        };
+    }
+
+    applyLockedTrigger() {
+        const locked = this.options?.lockedTrigger;
+        if (!locked) {
+            return;
+        }
+
+        const eventTypes = Array.isArray(locked.eventTypes) ? locked.eventTypes : [];
+        this.ability.trigger = {
+            ...this.ability.trigger,
+            ...locked,
+            eventTypes: eventTypes.length > 0 ? eventTypes : this.ability.trigger?.eventTypes || []
         };
     }
 
@@ -133,7 +173,18 @@ export class AbilityEditor extends MetadataDrivenComponent {
     isCostKeyword(keyword) {
         if (!keyword || typeof keyword !== 'string') return false;
         const normalized = keyword.toLowerCase();
-        return ['enhance', 'act', 'necromance', 'sacrifice'].includes(normalized);
+        return ['enhance', 'act', 'necromance', 'sacrifice', 'earthritual'].includes(normalized);
+    }
+
+    getDefaultAbilityName() {
+        const rawName = (this.ability.cardName || '').trim();
+        const seqRaw = this.ability.abilitySequence;
+        const seq = Number.isFinite(seqRaw)
+            ? seqRaw
+            : parseInt(seqRaw, 10);
+        const sequence = Number.isFinite(seq) && seq > 0 ? seq : 1;
+        const baseName = rawName || 'Ability';
+        return `${baseName}${sequence}`;
     }
 
     /**
@@ -224,7 +275,13 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 await this.triggerEditor.render(
                     contentArea,
                     this.ability.trigger,
-                    (config) => this.updateAbility({ trigger: config })
+                    (config) => this.updateAbility({ trigger: config }),
+                    {
+                        ...this.getTriggerEditorOptions(),
+                        lockedConfig: this.options?.lockedTrigger,
+                        lockMessage: this.options?.lockedTriggerMessage,
+                        lockValidZones: this.options?.lockValidZones
+                    }
                 );
                 break;
             case 'targets':
@@ -232,7 +289,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     contentArea,
                     this.ability.targets,
                     (targets) => this.updateAbility({ targets: targets }),
-                    { trigger: this.ability.trigger }
+                    { trigger: this.ability.trigger, ...this.getTargetEditorOptions() }
                 );
                 break;
             case 'conditions':
@@ -240,16 +297,33 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     contentArea,
                     this.ability.conditions,
                     (conditions) => this.updateAbility({ conditions: conditions }),
-                    { trigger: this.ability.trigger }
+                    { trigger: this.ability.trigger, ...this.getConditionEditorOptions() }
                 );
                 break;
             case 'effects':
-                await this.effectEditor.render(
-                    contentArea,
-                    this.ability.effects,
-                    (effects) => this.updateAbility({ effects: effects }),
-                    { trigger: this.ability.trigger, targets: this.ability.targets }
-                );
+                if (this.isAuraMode()) {
+                    const auraConfig = this.ability.auraConfig || { buffConfigs: [] };
+                    await this.statusEditor.render(
+                        contentArea,
+                        auraConfig.buffConfigs || [],
+                        (buffConfigs) => {
+                            this.updateAbility({
+                                auraConfig: {
+                                    ...auraConfig,
+                                    buffConfigs: buffConfigs || []
+                                }
+                            });
+                        },
+                        this.getStatusEditorOptions()
+                    );
+                } else {
+                    await this.effectEditor.render(
+                        contentArea,
+                        this.ability.effects,
+                        (effects) => this.updateAbility({ effects: effects }),
+                        { trigger: this.ability.trigger, targets: this.ability.targets }
+                    );
+                }
                 break;
         }
 
@@ -295,8 +369,12 @@ export class AbilityEditor extends MetadataDrivenComponent {
      * 处理下一步
      */
     async handleNext() {
+        if (this.currentStepIndex < this.steps.length && this.steps[this.currentStepIndex].id === 'targets') {
+            await this.flushTargetEditorsWithLoader();
+        }
+
         // 验证当前步骤
-        const errors = this.validateCurrentStep();
+        const errors = await this.validateCurrentStep();
         if (errors.length > 0) {
             alert('请修正以下问题后再继续:\n' + errors.join('\n'));
             return;
@@ -322,7 +400,9 @@ export class AbilityEditor extends MetadataDrivenComponent {
      * 处理完成
      */
     async handleFinish() {
-        const validation = this.validateAbilityBeforeSave();
+        await this.flushTargetEditorsWithLoader();
+
+        const validation = await this.validateAbilityBeforeSave();
         if (validation.errors.length > 0) {
             alert('请修正以下问题后再完成:\n' + validation.errors.map(i => `- ${i.message}`).join('\n'));
             return;
@@ -335,7 +415,9 @@ export class AbilityEditor extends MetadataDrivenComponent {
         try {
             const finalConfig = this.buildFinalConfig();
             if (this.onChange) {
-                await this.onChange(finalConfig);
+                await this.runWithBlockingLoader("正在保存...", async () => {
+                    await this.onChange(finalConfig);
+                });
             }
         } catch (error) {
             console.error('AbilityEditor: Save failed:', error);
@@ -357,7 +439,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
     /**
      * 验证当前步骤
      */
-    validateCurrentStep() {
+    async validateCurrentStep() {
         const currentStepId = this.steps[this.currentStepIndex].id;
         const errors = [];
 
@@ -369,49 +451,67 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 errors.push(...this.triggerEditor.validateConfig());
                 break;
             case 'targets':
-                errors.push(...this.collectTargetDslIssues().errors);
+                errors.push(...(await this.collectTargetDslIssues()).errors);
                 break;
             case 'conditions':
                 errors.push(...this.conditionEditor.validateConditions());
-                errors.push(...this.collectConditionDslIssues().errors);
+                errors.push(...(await this.collectConditionDslIssues()).errors);
                 break;
             case 'effects':
-                errors.push(...this.effectEditor.validateEffects());
-                errors.push(...this.collectEffectDslIssues().errors);
+                if (this.isAuraMode()) {
+                    errors.push(...this.statusEditor.validateBuffConfigs());
+                } else {
+                    errors.push(...this.effectEditor.validateEffects());
+                    errors.push(...(await this.collectEffectDslIssues()).errors);
+                }
                 break;
         }
 
         return errors;
     }
 
-    collectConditionDslIssues() {
+    async collectConditionDslIssues() {
         const issues = { errors: [], warns: [], infos: [] };
         const pushError = (message) => issues.errors.push(message);
+        const triggeringEventContext = this.getTriggeringEventContextForDsl();
 
-        (this.ability.conditions || []).forEach((condition, index) => {
-            if (condition?.isEnabled === false) return;
+        const conditions = this.ability.conditions || [];
+        for (let index = 0; index < conditions.length; index++) {
+            const condition = conditions[index];
+            if (condition?.isEnabled === false) continue;
             const expr = condition?.expression || '';
-            const res = validateDslExpression(this.metadata, expr, { expectedType: 'Boolean', allowEmpty: false });
+            const res = await validateDslExpression(this.metadata, expr, {
+                expectedType: 'Boolean',
+                allowEmpty: false,
+                triggeringEventContext
+            });
             for (const issue of res.issues) {
                 pushError(`条件 #${index + 1}: ${issue.message}`);
             }
-        });
+        }
 
         return issues;
     }
 
-    collectTargetDslIssues() {
+    async collectTargetDslIssues() {
         const issues = { errors: [], warns: [], infos: [] };
         const pushError = (message) => issues.errors.push(message);
         const pushWarn = (message) => issues.warns.push(message);
+        const triggeringEventContext = this.getTriggeringEventContextForDsl();
 
-        (this.ability.targets || []).forEach((target, index) => {
+        const targets = this.ability.targets || [];
+        for (let index = 0; index < targets.length; index++) {
+            const target = targets[index];
             if (target?.isEnabled === false) {
-                return;
+                continue;
             }
             const sourceExpr = target?.query?.sourcePoolExpression || '';
             if (sourceExpr.trim()) {
-                const res = validateDslExpression(this.metadata, sourceExpr, { expectedType: 'List<CardInstance>', allowEmpty: false });
+                const res = await validateDslExpression(this.metadata, sourceExpr, {
+                    expectedType: 'List<CardInstance>',
+                    allowEmpty: false,
+                    triggeringEventContext
+                });
                 for (const issue of res.issues) {
                     pushError(`目标 #${index + 1} 起始卡池: ${issue.message}`);
                 }
@@ -420,29 +520,34 @@ export class AbilityEditor extends MetadataDrivenComponent {
             }
 
             const operations = target?.query?.operations || [];
-            operations.forEach((op, opIdx) => {
-                if (op?.$type !== 'FilterOperation') return;
-                (op.filters || []).forEach((filter, filterIdx) => {
+            for (let opIdx = 0; opIdx < operations.length; opIdx++) {
+                const op = operations[opIdx];
+                if (op?.$type !== 'FilterOperation') continue;
+                const filters = op.filters || [];
+                for (let filterIdx = 0; filterIdx < filters.length; filterIdx++) {
+                    const filter = filters[filterIdx];
                     const filterExpr = filter?.valueSource?.formula || '';
-                    const res = validateDslExpression(this.metadata, filterExpr, { expectedType: 'Boolean', allowEmpty: false });
+                    const res = await validateDslExpression(this.metadata, filterExpr, { expectedType: 'Boolean', allowEmpty: false });
                     for (const issue of res.issues) {
                         pushError(`目标 #${index + 1} 筛选 #${opIdx + 1}.${filterIdx + 1}: ${issue.message}`);
                     }
-                });
-            });
-        });
+                }
+            }
+        }
 
         return issues;
     }
 
-    collectEffectDslIssues() {
+    async collectEffectDslIssues() {
         const issues = { errors: [], warns: [], infos: [] };
         const pushError = (message) => issues.errors.push(message);
+        const triggeringEventContext = this.getTriggeringEventContextForDsl();
 
         const effects = this.ability.effects || [];
-        effects.forEach((effect, index) => {
-            if (effect?.isEnabled === false) return;
-            if (!effect?.type) return;
+        for (let index = 0; index < effects.length; index++) {
+            const effect = effects[index];
+            if (effect?.isEnabled === false) continue;
+            if (!effect?.type) continue;
 
             const effectMeta = (this.metadata?.effects || []).find(e => e.effectTypeName === effect.type);
             const paramsMeta = effectMeta?.parameters || [];
@@ -457,19 +562,35 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     const name = p.propertyName || p.PropertyName || p.name;
                     return String(name) === String(paramName);
                 });
-                const expectedType = meta?.typeName || meta?.TypeName || null;
+                const expectedType = meta?.dslType || meta?.DslType || meta?.typeName || meta?.TypeName || null;
 
-                const res = validateDslExpression(this.metadata, formula, { expectedType, allowEmpty: false });
+                const res = await validateDslExpression(this.metadata, formula, {
+                    expectedType,
+                    allowEmpty: false,
+                    triggeringEventContext
+                });
                 for (const issue of res.issues) {
                     pushError(`效果 #${index + 1} 参数 ${paramName} 公式: ${issue.message}`);
                 }
             }
-        });
+        }
 
         return issues;
     }
 
-    validateAbilityBeforeSave() {
+    getTriggeringEventContextForDsl() {
+        const trigger = this.ability?.trigger || null;
+        const eventTypes = Array.isArray(trigger?.eventTypes) ? trigger.eventTypes : [];
+        if (!eventTypes.length) {
+            return null;
+        }
+        return {
+            eventTypes,
+            timing: trigger?.timing || 'On'
+        };
+    }
+
+    async validateAbilityBeforeSave() {
         const issues = { errors: [], warns: [], infos: [] };
         const pushError = (message) => issues.errors.push({ severity: 'error', message });
         const pushWarn = (message) => issues.warns.push({ severity: 'warn', message });
@@ -479,24 +600,32 @@ export class AbilityEditor extends MetadataDrivenComponent {
             pushError(msg);
         }
 
-        (this.ability.effects || []).forEach((effect, index) => {
-            if (effect?.isEnabled === false) {
-                return;
+        if (this.isAuraMode()) {
+            for (const msg of this.statusEditor.validateBuffConfigs()) {
+                pushError(msg);
             }
-            if (!effect?.type) {
-                pushError(`效果 #${index + 1}: 必须选择效果类型`);
-            }
-        });
+        } else {
+            (this.ability.effects || []).forEach((effect, index) => {
+                if (effect?.isEnabled === false) {
+                    return;
+                }
+                if (!effect?.type) {
+                    pushError(`效果 #${index + 1}: 必须选择效果类型`);
+                }
+            });
+        }
 
-        const conditionIssues = this.collectConditionDslIssues();
+        const conditionIssues = await this.collectConditionDslIssues();
         for (const err of conditionIssues.errors) pushError(err);
 
-        const targetIssues = this.collectTargetDslIssues();
+        const targetIssues = await this.collectTargetDslIssues();
         for (const err of targetIssues.errors) pushError(err);
         for (const warn of targetIssues.warns) pushWarn(warn);
 
-        const effectIssues = this.collectEffectDslIssues();
-        for (const err of effectIssues.errors) pushError(err);
+        if (!this.isAuraMode()) {
+            const effectIssues = await this.collectEffectDslIssues();
+            for (const err of effectIssues.errors) pushError(err);
+        }
 
         return issues;
     }
@@ -513,7 +642,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         header.className = 'step-header';
         header.innerHTML = `
             <h4>基础信息配置</h4>
-            <p class="step-intro">首先，让我们定义这个能力的基本属性。这些信息将帮助玩家在游戏中识别和理解这个能力。</p>
+            <p class="step-intro">定义这个能力的基本属性。该部分信息将用于游戏系统如何识别和处理这个能力。</p>
         `;
         wrapper.appendChild(header);
 
@@ -522,7 +651,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         formGrid.className = 'form-grid-layout';
 
         // 1. 能力名称 (全宽)
-        const defaultName = `Ability_${new Date().getTime().toString().slice(-6)}`;
+        const defaultName = this.getDefaultAbilityName();
         const nameInput = this.createTextInput(
             this.ability.name,
             (value) => this.updateAbility({ name: value }),
@@ -531,11 +660,21 @@ export class AbilityEditor extends MetadataDrivenComponent {
         nameInput.className = 'form-input large-input';
         const nameLabel = document.createElement('span');
         nameLabel.innerHTML = '能力名称';
-        const nameGroup = this.createFormGroup(nameLabel, nameInput, '给能力起一个响亮的名字，留空将自动生成');
+        const nameGroup = this.createFormGroup(nameLabel, nameInput, '留空将自动生成');
         nameGroup.className += ' full-width';
         formGrid.appendChild(nameGroup);
 
-        // 2. 能力关键字 (半宽)
+        // 2. 激活状态 (开关) - 置于关键字上方
+        const activeSwitch = this.createToggleSwitch(
+            this.ability.isActive,
+            (checked) => this.updateAbility({ isActive: checked }),
+            '立即启用此能力'
+        );
+        const activeGroup = this.createFormGroup('状态', activeSwitch);
+        // activeGroup.className += ' full-width'; // 不再强制全宽，使其适应网格布局
+        formGrid.appendChild(activeGroup);
+
+        // 3. 能力关键字 (全宽，横向排列)
         const abilityTagOptions = await this.loadAbilityTagOptions();
         const keywordOptions = abilityTagOptions.filter(opt => opt.value && String(opt.value).toLowerCase() !== 'none');
         const keywordContainer = document.createElement('div');
@@ -587,7 +726,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             const valueInput = document.createElement('input');
             valueInput.type = 'number';
             valueInput.className = 'keyword-value-input';
-            valueInput.placeholder = this.isCostKeyword(keyword) ? '费用' : '';
+            valueInput.placeholder = this.isCostKeyword(keyword) ? '数值' : '';
             valueInput.disabled = !this.isCostKeyword(keyword) || !isChecked;
             valueInput.classList.toggle('hidden', !this.isCostKeyword(keyword) || !isChecked);
             if (entry && entry.value !== null && entry.value !== undefined) {
@@ -605,18 +744,98 @@ export class AbilityEditor extends MetadataDrivenComponent {
             keywordContainer.appendChild(item);
         });
 
-        const tagGroup = this.createFormGroup('能力关键字', keywordContainer, '可多选，部分关键字可填写费用参数');
+        const tagGroup = this.createFormGroup('能力关键字', keywordContainer, '可多选，部分关键字可填写数值参数');
+        tagGroup.classList.add('full-width');
         formGrid.appendChild(tagGroup);
 
-        // 3. 激活状态 (开关) - 移到右侧与能力类型并排，或者单独一行
-        const activeSwitch = this.createToggleSwitch(
-            this.ability.isActive,
-            (checked) => this.updateAbility({ isActive: checked }),
-            '立即启用此能力'
+        // 4. 变量注册 (全宽)
+        const counterGroup = document.createElement('div');
+        counterGroup.className = 'counter-registration-group';
+
+        const counterList = document.createElement('div');
+        counterList.className = 'counter-registration-list';
+
+        const updateCounters = (next) => {
+            this.updateAbility({ counterRegistrations: next });
+            renderCounters(next);
+        };
+
+        const renderCounters = (items) => {
+            counterList.innerHTML = '';
+            const list = Array.isArray(items) ? items : [];
+
+            const headerRow = document.createElement('div');
+            headerRow.className = 'counter-registration-row counter-registration-row--header';
+            headerRow.innerHTML = '<span>变量名</span><span>初始值</span><span>操作</span>';
+            counterList.appendChild(headerRow);
+
+            if (list.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'counter-registration-empty';
+                empty.textContent = '暂无注册变量';
+                counterList.appendChild(empty);
+                return;
+            }
+
+            list.forEach((entry, index) => {
+                const row = document.createElement('div');
+                row.className = 'counter-registration-row';
+
+                const nameInput = this.createTextInput(entry?.name || '', (value) => {
+                    const next = list.map((item, idx) => idx === index ? { ...item, name: value } : item);
+                    updateCounters(next);
+                }, { placeholder: '变量名称' });
+                nameInput.classList.add('counter-registration-input');
+
+                const valueInput = this.createNumberInput(entry?.initialValue ?? 0, (value) => {
+                    const normalized = Number.isFinite(value) ? Math.trunc(value) : 0;
+                    const next = list.map((item, idx) => idx === index ? { ...item, initialValue: normalized } : item);
+                    updateCounters(next);
+                }, { step: 1, placeholder: '0' });
+                valueInput.classList.add('counter-registration-input');
+
+                const removeBtn = this.createButton('移除', () => {
+                    const next = list.filter((_, idx) => idx !== index);
+                    updateCounters(next);
+                }, 'danger');
+                removeBtn.classList.add('btn-small');
+
+                row.appendChild(nameInput);
+                row.appendChild(valueInput);
+                row.appendChild(removeBtn);
+                counterList.appendChild(row);
+            });
+        };
+
+        const addButton = this.createButton('添加变量', () => {
+            const next = Array.isArray(this.ability.counterRegistrations) ? [...this.ability.counterRegistrations] : [];
+            next.push({ name: '', initialValue: 0 });
+            updateCounters(next);
+        }, 'secondary');
+        addButton.classList.add('btn-small');
+
+        const counterActions = document.createElement('div');
+        counterActions.className = 'counter-registration-actions';
+        counterActions.appendChild(addButton);
+
+        counterGroup.appendChild(counterList);
+        counterGroup.appendChild(counterActions);
+        renderCounters(this.ability.counterRegistrations || []);
+
+        const counterForm = this.createFormGroup('变量注册', counterGroup, '在能力生效时初始化计数器；同名计数器已存在则跳过。');
+        counterForm.classList.add('full-width');
+        formGrid.appendChild(counterForm);
+
+        // 5. 能力描述 (全宽)
+        const descriptionInput = this.createTextInput(
+            this.ability.description,
+            (value) => this.updateAbility({ description: value }),
+            { multiline: true, placeholder: '请输入能力描述...' }
         );
-        const activeGroup = this.createFormGroup('状态', activeSwitch);
-        // activeGroup.className += ' full-width'; // 不再强制全宽，使其适应网格布局
-        formGrid.appendChild(activeGroup);
+        descriptionInput.classList.add('form-textarea');
+        const descriptionGroup = this.createFormGroup('能力描述', descriptionInput, '留空表示无描述');
+        descriptionGroup.classList.add('full-width');
+        formGrid.appendChild(descriptionGroup);
 
         wrapper.appendChild(formGrid);
         container.appendChild(wrapper);
@@ -654,15 +873,136 @@ export class AbilityEditor extends MetadataDrivenComponent {
         this.ability = { ...this.ability, ...updates };
     }
 
+    resolveEditorMode() {
+        const explicit = this.options?.mode || this.options?.editorMode;
+        if (explicit) {
+            return String(explicit).toLowerCase();
+        }
+        const abilityType = String(this.ability?.type || '').toLowerCase();
+        if (abilityType === 'continuous') {
+            return 'aura';
+        }
+        const executionKind = String(this.ability?.executionKind || '').toLowerCase();
+        if (executionKind === 'aura') {
+            return 'aura';
+        }
+        const hasAuras = Array.isArray(this.ability?.auras) && this.ability.auras.length > 0;
+        const hasBuffs = Array.isArray(this.ability?.auraConfig?.buffConfigs) && this.ability.auraConfig.buffConfigs.length > 0;
+        if (hasAuras || hasBuffs) {
+            return 'aura';
+        }
+        return 'effect';
+    }
+
+    isAuraMode() {
+        return this.editorMode === 'aura';
+    }
+
+    configureStepsForMode() {
+        if (!this.isAuraMode()) {
+            this.steps = [
+                { id: 'basic', label: '基础信息', description: '定义名称与类型' },
+                { id: 'trigger', label: '触发时机', description: '何时发动能力' },
+                { id: 'targets', label: '目标选择', description: '选择卡牌目标' },
+                { id: 'conditions', label: '发动条件', description: '额外的限制' },
+                { id: 'effects', label: '效果配置', description: '具体产生的影响' }
+            ];
+            return;
+        }
+
+        this.steps = [
+            { id: 'basic', label: '基础信息', description: '定义名称与类型' },
+            { id: 'trigger', label: '刷新事件', description: '何时刷新光环状态' },
+            { id: 'targets', label: '生效目标', description: '光环作用对象' },
+            { id: 'conditions', label: '生效条件', description: '满足条件才生效' },
+            { id: 'effects', label: '状态配置', description: '配置光环状态效果' }
+        ];
+    }
+
+    getTriggerEditorOptions() {
+        if (!this.isAuraMode()) return {};
+        return {
+            title: '刷新事件配置',
+            intro: '选择会触发光环状态刷新的事件。',
+            eventLabel: '刷新事件',
+            eventHelp: '选择触发光环刷新的游戏事件（可多选）',
+            hideTiming: true,
+            hideRelationType: false,
+            hideCountLimit: true
+        };
+    }
+
+    getTargetEditorOptions() {
+        if (!this.isAuraMode()) return {};
+        return {
+            title: '生效目标配置',
+            intro: '设置光环会影响哪些卡牌实例。',
+            hideValidation: true,
+            hidePlayerChoice: true
+        };
+    }
+
+    getConditionEditorOptions() {
+        if (!this.isAuraMode()) return {};
+        return {
+            title: '生效条件配置',
+            intro: '仅当满足条件时，光环状态才会生效。',
+            hideHelp: false
+        };
+    }
+
+    getStatusEditorOptions() {
+        if (!this.isAuraMode()) return {};
+        return {
+            title: '状态配置',
+            intro: '配置光环产生的状态（属性/关键词/能力）'
+        };
+    }
+
+    normalizeAuraConfig(ability) {
+        const rawAuras = ability.auras || ability.Auras || [];
+        const rawAura = Array.isArray(rawAuras) && rawAuras.length > 0 ? rawAuras[0] : null;
+        const rawBuffConfigs = rawAura?.buffConfigs ?? rawAura?.BuffConfigs ?? null;
+        const rawTemplate = rawAura?.buffTemplate ?? rawAura?.BuffTemplate ?? null;
+        const buffConfigs = Array.isArray(rawBuffConfigs) && rawBuffConfigs.length > 0
+            ? rawBuffConfigs
+            : this.convertBuffTemplateToConfigs(rawTemplate);
+
+        return {
+            name: rawAura?.name ?? rawAura?.Name ?? '',
+            isEnabled: rawAura?.isEnabled ?? rawAura?.IsEnabled ?? true,
+            buffConfigs: buffConfigs || []
+        };
+    }
+
+    convertBuffTemplateToConfigs(template) {
+        if (!template || typeof template !== 'object') {
+            return [];
+        }
+        return [
+            {
+                key: '',
+                durationType: template.durationType ?? template.DurationType ?? 'Permanent',
+                durationParameter: template.durationParameter ?? template.DurationParameter ?? 0,
+                canStack: template.canStack ?? template.CanStack ?? false,
+                statModifiers: template.statModifiers ?? template.StatModifiers ?? [],
+                keywordModifiers: template.keywordModifiers ?? template.KeywordModifiers ?? [],
+                grantedAbilities: template.grantedAbilities ?? template.GrantedAbilities ?? []
+            }
+        ];
+    }
+
     async loadAbilityTagOptions() {
         // ... (保持原有逻辑)
         try {
             if (this._abilityTagOptionsCache) {
                 return this._abilityTagOptionsCache;
             }
-            const res = await fetch('/api/localization/enums/AbilityKeyword');
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
+            const { raw } = await ensureEnumLocalization('AbilityKeyword');
+            const data = raw || {};
+            if (Object.keys(data).length === 0) {
+                throw new Error('Empty enum localization');
+            }
             const options = Object.entries(data).map(([value, label]) => ({ value, label }));
             options.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
             this._abilityTagOptionsCache = options;
@@ -699,38 +1039,120 @@ export class AbilityEditor extends MetadataDrivenComponent {
         }
     }
 
+    stripUiFields(value) {
+        if (Array.isArray(value)) {
+            return value
+                .map((item) => this.stripUiFields(item))
+                .filter((item) => item !== undefined);
+        }
+        if (!value || typeof value !== 'object') {
+            return value;
+        }
+
+        const cleaned = {};
+        for (const [key, val] of Object.entries(value)) {
+            if (key.startsWith('_')) continue;
+            const next = this.stripUiFields(val);
+            if (next !== undefined) {
+                cleaned[key] = next;
+            }
+        }
+        return cleaned;
+    }
+
     buildFinalConfig() {
         // 处理默认值
         const finalName = (this.ability.name && this.ability.name.trim() !== '')
             ? this.ability.name
-            : `Ability_${new Date().getTime().toString().slice(-6)}`;
+            : this.getDefaultAbilityName();
             
+        const { cardName, abilitySequence, ...baseAbility } = this.ability;
         const finalAbility = {
-            ...this.ability,
+            ...baseAbility,
             name: finalName,
             priority: this.ability.priority || 0,
             description: this.ability.description || ''
         };
+        const cleanedAbility = this.stripUiFields(finalAbility);
+        const finalizedEffects = this.effectEditor?.buildEffectsForSave
+            ? this.effectEditor.buildEffectsForSave(cleanedAbility.effects, this.metadata)
+            : cleanedAbility.effects;
+        const isAuraMode = this.isAuraMode();
+        const auraConfig = this.ability?.auraConfig || {};
+        const finalizedBuffConfigs = this.statusEditor?.buildBuffConfigsForSave
+            ? this.statusEditor.buildBuffConfigsForSave(auraConfig.buffConfigs || [])
+            : (auraConfig.buffConfigs || []);
+        const auraPayload = {
+            name: auraConfig.name || cleanedAbility.name || '',
+            isEnabled: auraConfig.isEnabled !== false,
+            buffConfigs: finalizedBuffConfigs
+        };
 
+        const nextType = isAuraMode ? 'Continuous' : (cleanedAbility.type || 'Triggered');
+        delete cleanedAbility.executionKind;
+        cleanedAbility.type = nextType;
         return {
-            ...finalAbility,
+            ...cleanedAbility,
             jsonConfig: JSON.stringify({
-                name: finalAbility.name,
-                description: finalAbility.description,
-                abilityKeywords: finalAbility.abilityKeywords,
-                type: "Triggered",
-                trigger: finalAbility.trigger,
-                conditions: finalAbility.conditions,
-                targets: finalAbility.targets,
-                effects: finalAbility.effects,
-                isActive: finalAbility.isActive,
+                name: cleanedAbility.name,
+                description: cleanedAbility.description,
+                abilityKeywords: cleanedAbility.abilityKeywords,
+                type: nextType,
+                trigger: cleanedAbility.trigger,
+                conditions: cleanedAbility.conditions,
+                targets: cleanedAbility.targets,
+                effects: isAuraMode ? [] : finalizedEffects,
+                auras: isAuraMode ? [auraPayload] : (cleanedAbility.auras || []),
+                counterRegistrations: cleanedAbility.counterRegistrations,
+                isActive: cleanedAbility.isActive,
                 version: "1.0"
             })
         };
     }
 
     cleanup() {
+        this.blockingLoader?.cleanup();
         if (this.conditionEditor) this.conditionEditor.cleanup();
         // 其他清理...
+    }
+
+    async flushTargetEditorsWithLoader() {
+        if (!this.targetEditor?.flushDslEditors) {
+            return;
+        }
+
+        const shouldShowLoader = typeof this.targetEditor.hasPendingDslRenders === 'function'
+            ? this.targetEditor.hasPendingDslRenders()
+            : true;
+
+        if (shouldShowLoader) {
+            await this.runWithBlockingLoader("正在同步目标DSL...", async () => {
+                await this.targetEditor.flushDslEditors();
+            });
+            return;
+        }
+
+        await this.targetEditor.flushDslEditors();
+    }
+
+    async runWithBlockingLoader(message, task) {
+        const root = this.container?.querySelector('.ability-editor.wizard-mode');
+        if (!root) {
+            return task();
+        }
+
+        const minVisibleMs = 300;
+        const startTime = Date.now();
+        this.blockingLoader = this.blockingLoader || getBlockingLoader(root);
+        this.blockingLoader?.show(message);
+
+        try {
+            return await task();
+        } finally {
+            const elapsed = Date.now() - startTime;
+            const delayMs = elapsed + minVisibleMs;
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            this.blockingLoader?.hide();
+        }
     }
 }

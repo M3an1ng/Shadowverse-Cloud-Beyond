@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos; // For CardInstanceDto, CardDefinitionDto if needed directly
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // Added for CardQueryConfig
 using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // Added for TargetSelectionContext
 
 namespace ShadowverseBeyond.Server.Domain.Query
@@ -29,6 +30,11 @@ namespace ShadowverseBeyond.Server.Domain.Query
         /// 如果查询失败，包含错误信息。
         /// </summary>
         public string? ErrorMessage { get; init; }
+
+        /// <summary>
+        /// Optional trace entries captured during query evaluation.
+        /// </summary>
+        public IReadOnlyList<ConditionTraceEntryDto> TraceEntries { get; init; } = Array.Empty<ConditionTraceEntryDto>();
 
         /// <summary>
         /// 辅助方法，尝试将结果列表转换为指定的类型 T。

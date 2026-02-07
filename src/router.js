@@ -14,10 +14,10 @@ class Router {
         this.routes = new Map();
         this.beforeRouteChange = null;
         this.afterRouteChange = null;
-        
+
         // 初始化路由配置
         this.initializeRoutes();
-        
+
         // 绑定事件监听器
         this.bindEventListeners();
     }
@@ -28,45 +28,67 @@ class Router {
     initializeRoutes() {
         this.routes.set('navigation', {
             element: document.getElementById('navigation-page'),
-            title: '影之诗 Beyond',
+            title: '影之诗 星云',
             init: null,
             cleanup: null
         });
 
         this.routes.set('game', {
             element: document.getElementById('game-page'),
-            title: '游戏对战 - 影之诗 Beyond',
+            title: '游戏对战 - 影之诗 星云',
             init: this.initGamePage.bind(this),
             cleanup: this.cleanupGamePage.bind(this)
         });
 
+        this.routes.set('singleplayer', {
+            element: document.getElementById('navigation-page'),
+            title: '单人模式 - 影之诗 星云',
+            init: this.initSingleplayer.bind(this),
+            cleanup: this.cleanupSingleplayer.bind(this)
+        });
+
         this.routes.set('card-editor', {
             element: document.getElementById('card-editor-page'),
-            title: '卡牌编辑器 - 影之诗 Beyond',
+            title: '卡牌工坊 - 影之诗 星云',
             init: this.initCardEditorPage.bind(this),
-            cleanup: null
+            cleanup: this.cleanupCardEditorPage.bind(this)
         });
 
         this.routes.set('deck-builder', {
             element: document.getElementById('deck-builder-page'),
-            title: '牌组编辑 - 影之诗 Beyond',
+            title: '牌组编辑 - 影之诗 星云',
             init: this.initDeckBuilderPage.bind(this),
             cleanup: null
         });
 
         this.routes.set('multiplayer', {
             element: document.getElementById('navigation-page'), // reuse navigation container for now
-            title: '多人对战 - 影之诗 Beyond',
+            title: '多人对战 - 影之诗 星云',
             init: this.initMultiplayer.bind(this),
             cleanup: this.cleanupMultiplayer.bind(this)
         });
 
         this.routes.set('dev-tools', {
             element: document.getElementById('dev-tools-page'),
-            title: '开发者工具 - 影之诗 Beyond',
+            title: '系统核心 - 影之诗 星云',
             init: this.initDevToolsPage.bind(this),
+            cleanup: this.cleanupDevToolsPage.bind(this)
+        });
+
+        this.routes.set('dev-tools/match-lab', {
+            element: document.getElementById('dev-tools-match-lab-page'),
+            title: '对战实验室 - 影之诗 星云',
+            init: this.initDevToolsMatchLabPage.bind(this),
+            cleanup: this.cleanupDevToolsMatchLabPage.bind(this)
+        });
+
+        this.routes.set('dsl-editor-v2', {
+            element: document.getElementById('dsl-editor-v2-page'),
+            title: 'DSL Editor V2 - 影之诗 星云',
+            init: this.initDslEditorV2Page.bind(this),
             cleanup: null
         });
+
     }
 
     /**
@@ -150,20 +172,18 @@ class Router {
             await this.afterRouteChange(oldRoute, route);
         }
 
-        console.log(`Router: Navigated from "${oldRoute}" to "${route}"`);
     }
 
     /**
      * 初始化游戏页面
      */
     async initGamePage() {
-        console.log('Router: Initializing game page...');
-        
+
         // 动态导入游戏相关模块
         try {
             // 这里可以延迟加载游戏模块
             // const gameModule = await import('./gameManager.js');
-            
+
             // 如果游戏还未初始化，则初始化
             if (window.gameInitialized !== true) {
                 // 触发游戏初始化
@@ -179,8 +199,7 @@ class Router {
      * 清理游戏页面
      */
     async cleanupGamePage() {
-        console.log('Router: Cleaning up game page...');
-        
+
         // 这里可以清理游戏相关资源
         // 例如断开SignalR连接等
         try {
@@ -196,15 +215,14 @@ class Router {
      * 初始化卡牌编辑器页面
      */
     async initCardEditorPage() {
-        console.log('Router: Initializing card editor page...');
-        
+
         try {
             // 动态导入卡牌编辑器模块
             const editorModule = await import('./cardEditor.js');
             await editorModule.initializeCardEditor();
         } catch (error) {
             console.error('Router: Failed to initialize card editor:', error);
-            
+
             // 显示错误信息
             const container = document.getElementById('card-editor-container');
             if (container) {
@@ -219,19 +237,30 @@ class Router {
         }
     }
 
+    async cleanupCardEditorPage() {
+        try {
+            const editorModule = await import('./cardEditor.js');
+            if (typeof editorModule.cleanupCardEditor === 'function') {
+                editorModule.cleanupCardEditor();
+            }
+        } catch (error) {
+            console.error('Router: Failed to cleanup card editor:', error);
+        }
+    }
+
+
     /**
      * 初始化牌组编辑器页面
      */
     async initDeckBuilderPage() {
-        console.log('Router: Initializing deck builder page...');
-        
+
         try {
             // 动态导入牌组编辑器模块
             const deckBuilderModule = await import('./deckBuilder.js');
             await deckBuilderModule.initializeDeckBuilder();
         } catch (error) {
             console.error('Router: Failed to initialize deck builder:', error);
-            
+
             // 显示错误信息
             const container = document.getElementById('deck-builder-container');
             if (container) {
@@ -250,7 +279,6 @@ class Router {
      * 初始化多人对战（展示多人面板）
      */
     async initMultiplayer() {
-        console.log('Router: Initializing multiplayer page...');
         document.body.classList.add('show-multiplayer');
         const panel = document.getElementById('multiplayer-panel');
         if (panel) {
@@ -269,13 +297,76 @@ class Router {
     }
 
     /**
+     * 初始化单人对战（展示单人面板）
+     */
+    async initSingleplayer() {
+        document.body.classList.add('show-singleplayer');
+        const panel = document.getElementById('singleplayer-panel');
+        if (panel) {
+            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    async cleanupSingleplayer() {
+        document.body.classList.remove('show-singleplayer');
+    }
+
+    /**
      * 初始化开发者工具页面
      */
     async initDevToolsPage() {
-        console.log('Router: Initializing dev tools page...');
-        
-        // 开发者工具页面的初始化逻辑
-        // 这里可以加载各种调试工具
+
+        try {
+            const module = await import('./devToolsLogViewer.js');
+            await module.initializeDevToolsLogViewer();
+        } catch (error) {
+            console.error('Router: Failed to initialize dev tools:', error);
+        }
+    }
+
+    async cleanupDevToolsPage() {
+        try {
+            const module = await import('./devToolsLogViewer.js');
+            await module.cleanupDevToolsLogViewer();
+        } catch (error) {
+            console.error('Router: Failed to cleanup dev tools:', error);
+        }
+    }
+
+    async initDevToolsMatchLabPage() {
+
+        try {
+            const module = await import('./devToolsMatchLab.js');
+            await module.initializeDevToolsMatchLab();
+        } catch (error) {
+            console.error('Router: Failed to initialize match lab:', error);
+        }
+    }
+
+    async cleanupDevToolsMatchLabPage() {
+        try {
+            const module = await import('./devToolsMatchLab.js');
+            await module.cleanupDevToolsMatchLab();
+        } catch (error) {
+            console.error('Router: Failed to cleanup match lab:', error);
+        }
+    }
+
+    /**
+     * 初始化 DSL Editor V2 页面
+     */
+    async initDslEditorV2Page() {
+
+        try {
+            const { DslEditorV2 } = await import('./components/DslEditorV2.js');
+            const container = document.getElementById('dsl-editor-v2-container');
+            if (container) {
+                const editor = new DslEditorV2();
+                await editor.render(container);
+            }
+        } catch (error) {
+            console.error('Router: Failed to initialize DSL Editor V2:', error);
+        }
     }
 
     /**
@@ -301,11 +392,10 @@ class Router {
 export const router = new Router();
 
 // 全局函数，供HTML中的按钮调用
-window.testMetadataAPI = async function() {
+window.testMetadataAPI = async function () {
     try {
         const response = await fetch('/api/AbilityEditorMetadata');
         const data = await response.json();
-        console.log('Metadata API Response:', data);
         alert('API测试成功！请查看控制台输出。');
     } catch (error) {
         console.error('API测试失败:', error);
@@ -313,14 +403,23 @@ window.testMetadataAPI = async function() {
     }
 };
 
-window.openDataViewer = function() {
+window.openDataViewer = function () {
     alert('数据库查看器功能正在开发中...');
 };
 
 // 初始化路由
-document.addEventListener('DOMContentLoaded', () => {
+const initRouter = () => {
+
     // 根据URL hash确定初始路由
     const hash = window.location.hash.slice(1);
+
     const initialRoute = hash && router.routes.has(hash) ? hash : 'navigation';
+
     router.navigateTo(initialRoute, false);
-});
+};
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initRouter);
+} else {
+    initRouter();
+}

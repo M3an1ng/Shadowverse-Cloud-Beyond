@@ -67,7 +67,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("事件ID", Description = "事件的唯一标识符")]
         public Guid EventId { get; }
 
-        [DslExposable("时间戳", Description = "事件创建的时间戳")]
         public DateTime Timestamp { get; }
 
         [DslExposable("事件源", Description = "事件的来源（玩家或卡牌）")]

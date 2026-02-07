@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
@@ -69,7 +70,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 return BadRequest("JoinCode 不能为空");
             }
 
-            var result = _matchService.TryJoin(id, request.JoinCode);
+            var result = _matchService.TryJoin(id, request.JoinCode, request.PlayerId);
             return MapResult(result, includeTokens: true);
         }
 
@@ -170,7 +171,7 @@ namespace ShadowverseBeyond.Server.Controllers
                         return BadRequest(decodeError ?? "AI deck code is invalid.");
                     }
 
-                    var aiValidation = await _deckValidation.ValidateAsync(aiDeckClass, aiCards, requireComplete: true, cancellationToken);
+                    var aiValidation = await _deckValidation.ValidateAsync(aiDeckClass, aiCards, DeckEnvironment.Open, requireComplete: true, cancellationToken);
                     if (!aiValidation.Success)
                     {
                         return BadRequest(aiValidation.Error ?? "AI deck validation failed.");
@@ -347,6 +348,7 @@ namespace ShadowverseBeyond.Server.Controllers
         public class JoinMatchRequest
         {
             public string JoinCode { get; set; } = string.Empty;
+            public Guid? PlayerId { get; set; }
         }
 
         public class SeatRequest

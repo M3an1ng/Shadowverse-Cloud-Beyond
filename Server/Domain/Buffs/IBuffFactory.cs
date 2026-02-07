@@ -28,7 +28,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="durationType">持续时间类型</param>
         /// <param name="durationParameter">持续时间参数</param>
         /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
         Buff CreateStatBuff(
             CardInstance target,
@@ -36,9 +35,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             IAbility sourceAbility,
             List<StatModification> statModifications,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
+            int? durationParameter,
+            int currentTurn);
 
         /// <summary>
         /// 创建系统属性修改Buff（无来源能力）。
@@ -48,15 +46,13 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="durationType">持续时间类型</param>
         /// <param name="durationParameter">持续时间参数</param>
         /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
         Buff CreateSystemStatBuff(
             CardInstance target,
             List<StatModification> statModifications,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
+            int? durationParameter,
+            int currentTurn);
 
         /// <summary>
         /// 创建关键字Buff
@@ -68,7 +64,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="durationType">持续时间类型</param>
         /// <param name="durationParameter">持续时间参数</param>
         /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
         Buff CreateKeywordBuff(
             CardInstance target,
@@ -76,9 +71,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             IAbility sourceAbility,
             List<CardKeyword> keywords,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
+            int? durationParameter,
+            int currentTurn);
 
         /// <summary>
         /// 创建系统关键字Buff（无来源能力）。
@@ -88,15 +82,13 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="durationType">持续时间类型</param>
         /// <param name="durationParameter">持续时间参数</param>
         /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
         Buff CreateSystemKeywordBuff(
             CardInstance target,
             List<CardKeyword> keywords,
             DurationType durationType,
-            object? durationParameter,
-            int currentTurn,
-            bool isNonStackable = false);
+            int? durationParameter,
+            int currentTurn);
 
         /// <summary>
         /// 创建复合Buff（包含多种效果）
@@ -108,7 +100,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="durationType">持续时间类型</param>
         /// <param name="durationParameter">持续时间参数</param>
         /// <param name="currentTurn">当前回合</param>
-        /// <param name="isNonStackable">是否不可叠加</param>
         /// <returns>创建的Buff实例</returns>
         Buff CreateCompositeBuff(
             CardInstance target,
@@ -116,9 +107,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             IAbility sourceAbility,
             List<IBuffEffect> effects,
             DurationType durationType,
-            object? durationParameter,
+            int? durationParameter,
             int currentTurn,
-            bool isNonStackable = false);
+            string? definitionId = null);
 
         /// <summary>
         /// 根据BuffDefinition创建Buff实例（使用缓存）
@@ -153,6 +144,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             CardInstance? sourceCard,
             IAbility sourceAbility,
             List<CardKeyword> keywordsToRemove,
+            DurationType durationType,
+            int? durationParameter,
             int currentTurn);
 
         /// <summary>
@@ -165,6 +158,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         Buff CreateSystemRemoveKeywordBuff(
             CardInstance target,
             List<CardKeyword> keywordsToRemove,
+            DurationType durationType,
+            int? durationParameter,
             int currentTurn);
 
     }

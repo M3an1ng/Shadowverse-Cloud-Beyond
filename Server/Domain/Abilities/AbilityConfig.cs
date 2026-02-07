@@ -11,6 +11,7 @@ using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
+using ShadowverseBeyond.Server.Domain.Abilities.Auras;
 using ShadowverseBeyond.Server.Domain.Constants;
 using System.Text.Json.Serialization;
 
@@ -21,6 +22,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     /// </summary>
     public class AbilityConfig
     {
+        private Dictionary<string, ValueConfig> _properties = new(StringComparer.OrdinalIgnoreCase);
         [JsonIgnore] // This will be populated from the database entity's Id, not the JSON config.
         public long Id { get; set; }
         public int CardId { get; set; } // 添加 CardId 属性
@@ -46,19 +48,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         [JsonConverter(typeof(SingleTargetConfigToDictionaryConverter))]
         public Dictionary<string, TargetConfig> Targets { get; set; } = new();
+
+        public Dictionary<string, ValueConfig> Properties
+        {
+            get => _properties;
+            set
+            {
+                if (value == null)
+                {
+                    _properties = new Dictionary<string, ValueConfig>(StringComparer.OrdinalIgnoreCase);
+                    return;
+                }
+
+                _properties = new Dictionary<string, ValueConfig>(value, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
         public List<EffectConfig> Effects { get; set; } = new();
+        public List<AuraConfig> Auras { get; set; } = new();
         public bool IsEnabled { get; set; } = true;
         public string Version { get; set; } = "1.0";
+        public List<CounterRegistrationConfig> CounterRegistrations { get; set; } = new();
 
         [JsonIgnore]
-        public EffectKeyword PrimaryKeyword => AbilityKeywords.FirstOrDefault()?.Keyword ?? EffectKeyword.None;
+        public AbilityKeyword PrimaryKeyword => AbilityKeywords.FirstOrDefault()?.Keyword ?? AbilityKeyword.None;
 
-        public bool HasKeyword(EffectKeyword keyword)
+        public bool HasKeyword(AbilityKeyword keyword)
         {
             return AbilityKeywords.Any(k => k.Keyword == keyword);
         }
 
-        public int? GetKeywordValue(EffectKeyword keyword)
+        public int? GetKeywordValue(AbilityKeyword keyword)
         {
             return AbilityKeywords.FirstOrDefault(k => k.Keyword == keyword)?.Value;
         }
@@ -70,12 +90,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return;
             }
 
-            var enhanceEntry = AbilityKeywords.FirstOrDefault(k => k.Keyword == EffectKeyword.Enhance);
+            var enhanceEntry = AbilityKeywords.FirstOrDefault(k => k.Keyword == AbilityKeyword.Enhance);
             if (enhanceEntry == null)
             {
                 AbilityKeywords.Add(new AbilityKeywordConfig
                 {
-                    Keyword = EffectKeyword.Enhance,
+                    Keyword = AbilityKeyword.Enhance,
                     Value = ActivateCost
                 });
             }
@@ -85,4 +105,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
         }
     } // End of AbilityConfig class
+
+    public class CounterRegistrationConfig
+    {
+        public string Name { get; set; } = string.Empty;
+        public int InitialValue { get; set; }
+    }
 } // End of namespace

@@ -52,7 +52,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found for target card." };
                     }
 
-                    return ownerPlayer.EvolveCard(cardToEvolve);
+                    return cardToEvolve.ApplyEvolution(ownerPlayer, ctx.SourceCard, isManualEvolution: false);
                 };
 
             var serviceResult = _targetProcessingService.ProcessTargets(

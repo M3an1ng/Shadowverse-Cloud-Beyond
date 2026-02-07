@@ -10,7 +10,7 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     public interface IMatchService
     {
         MatchOperationResult Create(Guid? hostPlayerId = null, bool useAiFallback = false, TimeSpan? ttl = null);
-        MatchOperationResult TryJoin(string gameId, string joinCode);
+        MatchOperationResult TryJoin(string gameId, string joinCode, Guid? guestPlayerId = null);
         MatchOperationResult MarkReady(string gameId, Guid playerId);
         MatchOperationResult SubmitDeckSelection(string gameId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null);
         MatchOperationResult Start(string gameId, Guid playerId);

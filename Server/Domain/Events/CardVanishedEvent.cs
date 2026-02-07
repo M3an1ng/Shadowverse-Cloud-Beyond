@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events; // EventType, GameContext
@@ -21,13 +22,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("消失原因", "卡牌消失的原因。")]
         public string VanishReason { get; }
 
-        [GameEventParameter("消失的卡牌", "被消失的卡牌。")]
-        public CardInstance? VanishedCard => Source?.Card;
+        [GameEventParameter("消失来源", "导致消失的卡牌。", DslDisplayTypeName = "事件源")]
+        public CardInstance? VanishSource => Source?.Card;
 
-        public CardVanishedEvent(CardInstance card, CardZone originalZone, string vanishReason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("消失的卡牌", "被消失的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? VanishedCard => Target.FirstOrDefault()?.Card;
+
+        public CardVanishedEvent(CardInstance card, CardZone originalZone, string vanishReason = "Effect", CardInstance? sourceCard = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Vanish, eventId, timestamp)
         {
-            Source = TargetInfo.ForCard(card);
+            if (sourceCard != null)
+            {
+                Source = TargetInfo.ForCard(sourceCard);
+            }
+            Target.Add(TargetInfo.ForCard(card));
             OriginalZone = originalZone;
             VanishReason = vanishReason;
         }
@@ -54,10 +62,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var targetId = VanishedCard?.InstanceId;
-            return targetId.HasValue
-                ? $"vanish target={gameState.InGameIds.Format(InGameIdKind.Card, targetId.Value)}"
-                : "vanish";
+            var card = VanishedCard;
+            if (card == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Card(card)}消失了。";
         }
     }
 }

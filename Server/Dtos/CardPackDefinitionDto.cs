@@ -1,4 +1,7 @@
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos.Enums;
+using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Dtos;
 
@@ -16,6 +19,56 @@ public class CardPackDefinitionDto
     /// 卡包名称
     /// </summary>
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 卡包缩写
+    /// </summary>
+    public string Abbreviation { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 卡包区域编号 (0-9)
+    /// </summary>
+    public int Region { get; set; }
+
+    /// <summary>
+    /// 卡包区域内序号 (0-99)
+    /// </summary>
+    public int Sequence { get; set; }
+
+    /// <summary>
+    /// 三位卡包编号
+    /// </summary>
+    public string PackCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 关联的卡牌集合ID
+    /// </summary>
+    [JsonPropertyName("card_set_definition_id")]
+    public int CardSetDefinitionId { get; set; }
+
+    /// <summary>
+    /// 关联的卡牌集合名称
+    /// </summary>
+    [JsonPropertyName("card_set_name")]
+    public string CardSetName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 关联的卡牌集合缩写
+    /// </summary>
+    [JsonPropertyName("card_set_abbr")]
+    public string CardSetAbbr { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 关联的卡牌集合三位码
+    /// </summary>
+    [JsonPropertyName("card_set_code")]
+    public string CardSetCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 卡牌集合所属环境列表
+    /// </summary>
+    [JsonPropertyName("card_set_environment")]
+    public List<DeckEnvironment> CardSetEnvironments { get; set; } = new();
 
     /// <summary>
     /// 卡包描述
@@ -78,6 +131,15 @@ public class CardPackDefinitionDto
         {
             Id = definition.Id,
             Name = definition.Name,
+            Abbreviation = definition.Abbreviation,
+            Region = definition.Region,
+            Sequence = definition.Sequence,
+            PackCode = definition.PackCode,
+            CardSetDefinitionId = definition.CardSetDefinitionId,
+            CardSetName = definition.CardSetDefinition?.Name ?? string.Empty,
+            CardSetAbbr = definition.CardSetDefinition?.Abbreviation ?? string.Empty,
+            CardSetCode = definition.CardSetDefinition?.SetCode ?? string.Empty,
+            CardSetEnvironments = definition.CardSetDefinition?.Environments ?? new List<DeckEnvironment>(),
             Description = definition.Description,
             Price = definition.Price,
             CardCount = definition.CardCount,

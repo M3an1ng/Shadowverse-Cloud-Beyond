@@ -62,12 +62,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
                 case JsonValueKind.False:
                     return false;
                 case JsonValueKind.Array:
-                    return jsonElement.EnumerateArray().Select(ConvertJsonElement).ToList();
+                    return jsonElement;
                 case JsonValueKind.Null:
                     return null;
                 default:
-                    // For other types like Object, just return the string representation for now.
-                    return jsonElement.ToString();
+                    // Preserve complex structures for downstream typed deserialization.
+                    return jsonElement;
             }
         }
     }

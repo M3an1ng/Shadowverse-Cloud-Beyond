@@ -10,6 +10,11 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Infrastructure.Logging;
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
+using Microsoft.AspNetCore.SignalR;
+using ShadowverseBeyond.Server.Hubs;
+using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 
 using System.Threading.Tasks;
 
@@ -59,6 +64,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// Contains the details of the choice required from the player if the status is 'PendingPlayerChoice'.
         /// </summary>
         public PlayerChoiceRequest? ChoiceRequest { get; set; }
+
+        /// <summary>
+        /// Indicates the player cancelled a required choice during resolution.
+        /// </summary>
+        public bool WasCancelled { get; set; }
     }
 
     /// <summary>
@@ -88,23 +98,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         {
             var finalResult = new TargetResolutionResult();
             var queryExecutor = context.ServiceProvider.GetRequiredService<IQueryExecutor>();
+            var triggeringEventId = context.TriggeringEvent?.EventId ?? Guid.Empty;
 
-            // Seed previous (parent) targets for chained abilities so their target DSL can reference them.
-            // Convention: Ability target DSL can access them via `AbilityTargets.previous`.
-            // Note: This is only for DSL resolution, and is intentionally NOT returned in finalResult.ResolvedTargets
-            // to avoid polluting downstream "default targets" aggregation.
             var resolvedTargetsForQuery = new Dictionary<string, List<TargetInfo>>();
-            if (context.CurrentEffect?.SelectedTargets != null && context.CurrentEffect.SelectedTargets.Any())
-            {
-                resolvedTargetsForQuery["previous"] = context.CurrentEffect.SelectedTargets.ToList();
-            }
+            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
+            var traceEntries = traceSettings?.IsTargetEnabledFor(context) == true ? new List<ConditionTraceEntryDto>() : null;
 
             // Iterate through the ability's runtime Target objects.
             foreach (var target in ability.Targets)
             {
+                if (triggeringEventId == Guid.Empty || target.LastResolvedEventId != triggeringEventId)
+                {
+                    target.MarkForResolution();
+                }
+
                 if (!target.Config.IsEnabled)
                 {
-                    target.SetResolvedTargets(new List<TargetInfo>());
+                    target.SetResolvedTargets(new List<TargetInfo>(), triggeringEventId);
                     resolvedTargetsForQuery[target.Key] = target.ResolvedTargets;
                     continue;
                 }
@@ -118,12 +128,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 // Execute the query to get potential targets.
                 // We pass the currently resolved targets from our finalResult for dependent queries.
                 var queryResult = queryExecutor.ExecuteQuery(target.Config.Query, context, resolvedTargetsForQuery);
+                if (traceEntries != null && queryResult.TraceEntries.Count > 0)
+                {
+                    traceEntries.AddRange(queryResult.TraceEntries);
+                }
 
                 if (!queryResult.Success)
                 {
                     finalResult.Status = ResolutionStatus.Failed;
                     finalResult.ErrorMessage = $"Failed to execute query for target '{target.Key}': {queryResult.ErrorMessage}";
                     _logger.LogError(finalResult.ErrorMessage);
+                    SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
                     return finalResult; // Abort on failure.
                 }
 
@@ -136,21 +151,40 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 .Select(t => t!) // Add this line to explicitly cast away nullability
                 .ToList();
 
-                potentialTargets = ApplyAbilityTargetKeywordRules(potentialTargets, target.Config, context);
+                var candidateTargets = ApplyAbilityTargetKeywordRules(potentialTargets, target.Config, context, applyChoiceRestrictions: false);
 
                 // Check if this specific target requires player choice.
                 if (target.Config.PlayerChoiceOptions?.IsRequired == true)
                 {
-                    if (!potentialTargets.Any())
+                    var selectableTargets = ApplyAbilityTargetKeywordRules(candidateTargets, target.Config, context, applyChoiceRestrictions: true);
+
+                    var minSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions.MinCount);
+
+                    if (!selectableTargets.Any() || selectableTargets.Count < minSelectionCount)
                     {
-                        finalResult.Status = ResolutionStatus.Failed;
-                        finalResult.ErrorMessage = $"No valid selectable targets for ability '{ability.KeywordSummary}' (target key '{target.Key}').";
-                        _logger.LogInformation(finalResult.ErrorMessage);
-                        return finalResult;
+                        if (target.Config.RequireValidTarget)
+                        {
+                            finalResult.Status = ResolutionStatus.Failed;
+                            finalResult.ErrorMessage = selectableTargets.Count == 0
+                                ? $"No valid selectable targets for ability '{ability.KeywordSummary}' (target key '{target.Key}')."
+                                : $"Not enough selectable targets for ability '{ability.KeywordSummary}' (target key '{target.Key}'): requires {minSelectionCount}, but only {selectableTargets.Count} available.";
+                            _logger.LogInformation(finalResult.ErrorMessage);
+                            SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
+                            return finalResult;
+                        }
+
+                        _logger.LogInformation(
+                            "Selectable targets ({Available}) below minimum ({Min}) for ability {AbilityKeywords} (target key '{TargetKey}'), RequireValidTarget=false. Skipping target selection.",
+                            selectableTargets.Count,
+                            minSelectionCount,
+                            ability.KeywordSummary,
+                            target.Key);
+                        target.SetResolvedTargets(new List<TargetInfo>(), triggeringEventId);
+                        resolvedTargetsForQuery[target.Key] = target.ResolvedTargets;
+                        continue;
                     }
 
-                    var minSelectionCount = target.Config.PlayerChoiceOptions.MinCount;
-                    var maxSelectionCount = Math.Min(potentialTargets.Count, target.Config.PlayerChoiceOptions.MaxCount);
+                    var maxSelectionCount = Math.Min(selectableTargets.Count, target.Config.PlayerChoiceOptions.MaxCount);
                     var message = BuildPlayerChoicePrompt(minSelectionCount, maxSelectionCount);
 
                     var choiceRequest = new PlayerChoiceRequest
@@ -159,8 +193,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                         SourceAbilityRuntimeId = ability.RuntimeId,
                         TargetKey = target.Key,
                         RequestingPlayerId = context.RequestingPlayerId,
-                        SelectableTargetIds = potentialTargets.Select(t => t.InstanceId).ToList(),
-                        SelectableCardInstances = potentialTargets
+                        SelectableTargetIds = selectableTargets.Select(t => t.InstanceId).ToList(),
+                        SelectableCardInstances = selectableTargets
                             .Where(t => t.Type == TargetType.Card && t.Card != null)
                             .Select(t => context.Mapper.Map<CardInstanceDto>(t.Card!))
                             .ToList(),
@@ -178,40 +212,54 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     if (choiceResult.WasCancelled)
                     {
                         finalResult.Status = ResolutionStatus.Failed;
+                        finalResult.WasCancelled = true;
                         finalResult.ErrorMessage = $"Player cancelled target selection for ability '{ability.KeywordSummary}'.";
                         _logger.LogInformation(finalResult.ErrorMessage);
+                        SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
                         return finalResult;
                     }
 
                     // Filter the potential targets based on the player's selection.
-                    var chosenTargets = potentialTargets
-                        .Where(t => choiceResult.ChosenTargetIds.Contains(t.InstanceId))
+                    var chosenTargetIdSet = new HashSet<Guid>(choiceResult.ChosenTargetIds);
+                    var chosenTargets = selectableTargets
+                        .Where(t => chosenTargetIdSet.Contains(t.InstanceId))
                         .ToList();
 
-                    target.SetResolvedTargets(chosenTargets);
+                    if (target.Config.PlayerChoiceOptions?.IsInverseSelection == true)
+                    {
+                        chosenTargets = candidateTargets
+                            .Where(t => !chosenTargetIdSet.Contains(t.InstanceId))
+                            .ToList();
+                    }
+
+                    target.SetResolvedTargets(chosenTargets, triggeringEventId);
                     resolvedTargetsForQuery[target.Key] = chosenTargets;
                     // --- END REFACTOR ---
                 }
                 else
                 {
                     // Auto-select targets and, crucially, update the state of the Target object itself.
-                    target.SetResolvedTargets(potentialTargets);
-                    resolvedTargetsForQuery[target.Key] = potentialTargets;
+                    target.SetResolvedTargets(candidateTargets, triggeringEventId);
+                    resolvedTargetsForQuery[target.Key] = candidateTargets;
                 }
             }
 
             // If we've looped through all targets without needing player choice, the resolution is complete.
             finalResult.Status = ResolutionStatus.Completed;
             // Collect the final results from the now-updated Target objects within the ability.
-            // Deliberately exclude the seeded `previous` group from the final return value.
             finalResult.ResolvedTargets = new Dictionary<string, List<TargetInfo>>();
             foreach (var target in ability.Targets)
             {
                 finalResult.ResolvedTargets[target.Key] = target.ResolvedTargets;
             }
 
+            var totalCount = GetResolvedTargetCount(finalResult.ResolvedTargets);
+            var successMessage = $"能力 {ability.Name} 目标解析完成，选中 {totalCount} 个目标。";
+            SendTargetTrace(context, ability, true, traceEntries, totalCount, successMessage);
+
             return finalResult;
         }
+
 
         /// <summary>
         /// Performs a non-blocking check to see if an ability has valid targets, based on its configuration.
@@ -255,7 +303,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     .Select(t => t!)
                     .ToList();
 
-                potentialTargets = ApplyAbilityTargetKeywordRules(potentialTargets, target.Config, context);
+                var applyChoiceRestrictions = target.Config.PlayerChoiceOptions?.IsRequired == true;
+                potentialTargets = ApplyAbilityTargetKeywordRules(
+                    potentialTargets,
+                    target.Config,
+                    context,
+                    applyChoiceRestrictions: applyChoiceRestrictions);
+
+                if (applyChoiceRestrictions)
+                {
+                    var minSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions!.MinCount);
+                    if (potentialTargets.Count < minSelectionCount)
+                    {
+                        _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': requires {Min} targets but only {Available} available.",
+                            ability.KeywordSummary, target.Key, minSelectionCount, potentialTargets.Count);
+                        return new TargetAvailabilityResult(false, $"目标数量不足，至少需要{minSelectionCount}个目标。");
+                    }
+                }
 
                 if (!potentialTargets.Any())
                 {
@@ -271,9 +335,93 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             return new TargetAvailabilityResult(true);
         }
 
-        private static List<TargetInfo> ApplyAbilityTargetKeywordRules(List<TargetInfo> potentialTargets, TargetConfig config, GameContext context)
+        private static int GetResolvedTargetCount(Dictionary<string, List<TargetInfo>>? resolvedTargets)
         {
-            var requiresChoice = config.PlayerChoiceOptions?.IsRequired == true;
+            if (resolvedTargets == null || resolvedTargets.Count == 0)
+            {
+                return 0;
+            }
+
+            var total = 0;
+            foreach (var entry in resolvedTargets.Values)
+            {
+                total += entry?.Count ?? 0;
+            }
+
+            return total;
+        }
+
+        private void SendTargetTrace(
+            GameContext context,
+            IAbility ability,
+            bool success,
+            List<ConditionTraceEntryDto>? entries,
+            int targetCount,
+            string message)
+        {
+            if (entries == null)
+            {
+                return;
+            }
+
+            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
+            var hubContext = context.ServiceProvider.GetService<IHubContext<GameHub, IGameClient>>();
+            if (traceSettings == null || hubContext == null || context.CurrentGameState == null)
+            {
+                return;
+            }
+
+            var sourceCard = ability.SourceCard;
+            var cardName = sourceCard?.Name ?? "UnknownCard";
+            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
+
+            var playerIds = new[]
+            {
+                context.CurrentGameState.Player1?.PlayerId,
+                context.CurrentGameState.Player2?.PlayerId
+            };
+
+            foreach (var playerId in playerIds.Where(id => id.HasValue).Select(id => id!.Value).Distinct())
+            {
+                if (playerId == Guid.Empty || !traceSettings.IsTargetEnabled(playerId))
+                {
+                    continue;
+                }
+
+                var dto = new ConditionTraceFailedDto
+                {
+                    GameId = context.CurrentGameState.GameId,
+                    AbilityRuntimeId = ability.RuntimeId,
+                    AbilityName = ability.Name ?? string.Empty,
+                    CardName = cardName,
+                    CardId = cardId,
+                    Success = success,
+                    TraceKind = "Target",
+                    TargetCount = targetCount,
+                    ConditionId = string.Empty,
+                    Expression = entries.Count > 0 ? entries[0].Expression : string.Empty,
+                    Trace = entries.Count > 0 ? entries[0].Trace : string.Empty,
+                    Conditions = entries,
+                    Message = message
+                };
+
+                if (success)
+                {
+                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceSucceeded(dto);
+                }
+                else
+                {
+                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceFailed(dto);
+                }
+            }
+        }
+
+        private static List<TargetInfo> ApplyAbilityTargetKeywordRules(
+            List<TargetInfo> potentialTargets,
+            TargetConfig config,
+            GameContext context,
+            bool applyChoiceRestrictions)
+        {
             var abilityOwnerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
 
             // Ability targeted: only enforce for opponent target selection by default.
@@ -290,7 +438,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     return false;
                 }
 
-                if (!requiresChoice)
+                if (!applyChoiceRestrictions)
                 {
                     return true;
                 }

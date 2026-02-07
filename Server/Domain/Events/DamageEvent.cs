@@ -26,27 +26,40 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("伤害值", "造成的伤害数值。")]
         public int Damage { get; }
 
-        [GameEventParameter("伤害来源", "造成伤害的卡牌。")]
+        [GameEventParameter("实际伤害值", "实际造成的伤害数值（考虑护盾、超进化免伤等）。")]
+        public int ActualDamage { get; private set; }
+
+        [GameEventParameter("伤害来源", "造成伤害的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? DamageSource => Source?.Card;
 
-        [GameEventParameter("伤害目标", "受到伤害的卡牌。")]
+        [GameEventParameter("伤害目标", "受到伤害的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DamageTarget => Target.FirstOrDefault()?.Card;
 
         [GameEventParameter("伤害类型", "伤害来源类型（战斗/能力等）。")]
         public DamageKind Kind { get; }
 
+        [GameEventParameter("反击伤害", "是否为反击（被动）造成的伤害。")]
+        public bool IsCounterAttack { get; }
+
         public DamageEvent(CardInstance target, int damage, CardInstance source)
-            : this(target, damage, source, DamageKind.Unknown)
+            : this(target, damage, source, DamageKind.Unknown, null, null, false)
         {
         }
 
-        public DamageEvent(CardInstance target, int damage, CardInstance source, DamageKind kind, Guid? eventId = null, DateTime? timestamp = null)
+        public DamageEvent(CardInstance target, int damage, CardInstance source, Guid? eventId, DateTime? timestamp)
+            : this(target, damage, source, DamageKind.Unknown, eventId, timestamp, false)
+        {
+        }
+
+        public DamageEvent(CardInstance target, int damage, CardInstance source, DamageKind kind, Guid? eventId = null, DateTime? timestamp = null, bool isCounterAttack = false)
             : base(EventType.Damage, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(target));
             Damage = damage;
+            ActualDamage = damage;
             Source = TargetInfo.ForCard(source);
             Kind = kind;
+            IsCounterAttack = isCounterAttack;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -59,17 +72,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var result = new DomainOperationResult { Success = true };
             var card = DamageTarget;
 
-            if (card.IsSuperEvolved && card.IsFollower && card.OwnerPlayerId == context.CurrentGameState.CurrentPlayerId)
-            {
-                return result;
-            }
-
             int oldHealth = card.CurrentHealth;
             int intendedDamage = this.Damage;
             var targetKeywords = context.BuffService.GetEffectiveKeywords(card, context);
-            var hasShield = intendedDamage >= 0 && targetKeywords.Contains(CardKeyword.Shield);
-            int actualDamage = hasShield ? 0 : Math.Max(0, Math.Min(intendedDamage, oldHealth));
-            int newHealth = Math.Max(0, oldHealth - actualDamage);
+            var hasShield = targetKeywords.Contains(CardKeyword.Shield);
+            var rawDamage = hasShield ? 0 : Math.Max(0, intendedDamage);
+            int newHealth = oldHealth - rawDamage;
+            ActualDamage = rawDamage;
 
             if (hasShield)
             {
@@ -78,28 +87,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             // Generate the atomic HealthChangedEvent; it will apply state in its Commit
-            if (actualDamage > 0)
-            {
-                result.GeneratedEvents.Add(new HealthChangedEvent(card, oldHealth, newHealth, -actualDamage));
-            }
+            result.GeneratedEvents.Add(new HealthChangedEvent(card, oldHealth, newHealth, -rawDamage));
 
-            if (actualDamage > 0 && Kind == DamageKind.Combat && DamageSource != null)
+            if (Kind == DamageKind.Combat && DamageSource != null)
             {
                 var sourceKeywords = context.BuffService.GetEffectiveKeywords(DamageSource, context);
-
-                if (sourceKeywords.Contains(CardKeyword.Drain))
-                {
-                    var owner = context.CurrentGameState.GetPlayerState(DamageSource.OwnerPlayerId);
-                    if (owner?.Leader != null)
-                    {
-                        result.GeneratedEvents.Add(new HealEvent(owner.Leader, actualDamage, DamageSource));
-                    }
-                }
-
-                if (sourceKeywords.Contains(CardKeyword.Bane) && card.IsFollower && newHealth > 0)
-                {
-                    result.GeneratedEvents.Add(new DestroyEvent(card, DamageSource, "DestroyedByBane"));
-                }
 
                 if (DamageSource.IsSuperEvolved && card.IsFollower && newHealth <= 0)
                 {
@@ -108,6 +100,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     {
                         result.GeneratedEvents.Add(new DamageEvent(defenderOwner.Leader, 1, DamageSource, DamageKind.Ability));
                     }
+                }
+
+
+                if (sourceKeywords.Contains(CardKeyword.Drain) && !IsCounterAttack)
+                {
+                    var owner = context.CurrentGameState.GetPlayerState(DamageSource.OwnerPlayerId);
+                    if (owner?.Leader != null)
+                    {
+                        result.GeneratedEvents.Add(new HealEvent(owner.Leader, rawDamage, DamageSource));
+                    }
+                }
+
+                if (sourceKeywords.Contains(CardKeyword.Bane) && card.IsFollower && newHealth > 0)
+                {
+                    result.GeneratedEvents.Add(new DestroyEvent(card, DamageSource, "DestroyedByBane"));
                 }
             }
 
@@ -139,17 +146,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var targetId = DamageTarget?.InstanceId;
-            var sourceId = DamageSource?.InstanceId;
-            if (!targetId.HasValue || Damage <= 0)
+            var target = DamageTarget;
+            if (target == null)
             {
-                return "damage";
+                return string.Empty;
             }
 
-            var targetToken = gameState.InGameIds.Format(InGameIdKind.Card, targetId.Value);
-            return sourceId.HasValue
-                ? $"damage target={targetToken} amount={Damage} source={gameState.InGameIds.Format(InGameIdKind.Card, sourceId.Value)}"
-                : $"damage target={targetToken} amount={Damage}";
+            var amount = Math.Max(0, ActualDamage);
+            var source = DamageSource;
+            return source != null
+                ? $"{AnnouncementTokens.Card(source)}对{AnnouncementTokens.Card(target)}造成 {AnnouncementTokens.Number(amount)} 点伤害。"
+                : $"{AnnouncementTokens.Card(target)}受到 {AnnouncementTokens.Number(amount)} 点伤害。";
         }
     }
 }

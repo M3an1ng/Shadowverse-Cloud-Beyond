@@ -101,7 +101,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
 
                 case "spell":
                     // 法术可能在手牌中就有效果（如显示可用目标）
-                    config.WithZones(CardZone.Hand, CardZone.Playing);
+                    config.WithZones(CardZone.Hand, CardZone.Staging);
                     break;
 
                 default:

@@ -1,4 +1,4 @@
-using System.Linq;
+using System;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -13,21 +13,24 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("复制卡牌", "复制一张卡牌实例并放置到打出区。", EventType.CopyCard, visibility: EventMetadataVisibility.System)]
     public sealed class CopyCardEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("目标玩家", "复制卡牌的目标玩家。")]
+        [GameEventParameter("目标玩家", "复制卡牌的目标玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        [GameEventParameter("复制源卡牌", "作为复制源的卡牌实例。")]
-        public CardInstance? SourceCard => Target.FirstOrDefault()?.Card;
+        [GameEventParameter("复制源卡牌", "作为复制源的卡牌实例。", DslDisplayTypeName = "事件源")]
+        public CardInstance? SourceCard { get; }
 
-        [GameEventParameter("复制结果", "复制后的卡牌实例。")]
-        public CardInstance? CopiedCard { get; }
+        [GameEventParameter("复制结果", "复制后的卡牌实例。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? CopiedCard => Target.FirstOrDefault()?.Card;
 
-        public CopyCardEvent(PlayerState player, CardInstance sourceCard, CardInstance copiedCard)
-            : base(EventType.CopyCard)
+        public CopyCardEvent(PlayerState player, CardInstance sourceCard, CardInstance copiedCard, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.CopyCard, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
-            Target.Add(TargetInfo.ForCard(sourceCard));
-            CopiedCard = copiedCard;
+            SourceCard = sourceCard;
+            if (copiedCard != null)
+            {
+                Target.Add(TargetInfo.ForCard(copiedCard));
+            }
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -62,7 +65,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 context.CurrentGameState,
                 sourceCard,
                 player.PlayerId,
-                CardZone.Playing,
+                CardZone.Staging,
                 exactCopy: true,
                 copyInstance: copiedCard);
             if (copy == null)
@@ -78,11 +81,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
-            var sourceId = SourceCard?.InstanceId;
-            return playerId.HasValue && sourceId.HasValue
-                ? $"copy-card player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} source={gameState.InGameIds.Format(InGameIdKind.Card, sourceId.Value)}"
-                : "copy-card";
+            var player = TargetPlayer;
+            var source = SourceCard;
+            if (player == null || source == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}复制了{AnnouncementTokens.Card(source)}。";
         }
     }
 }

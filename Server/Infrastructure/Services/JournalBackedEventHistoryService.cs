@@ -36,6 +36,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
         public Task StoreEventAsync(string gameId, IGameEvent gameEvent)
             => _memory.StoreEventAsync(gameId, gameEvent);
 
+        public IReadOnlyList<IGameEvent> GetEvents(string gameId)
+            => _memory.GetEvents(gameId);
+
         public async Task<IGameEvent?> GetEventByIdAsync(string gameId, Guid eventId)
         {
             var cached = await _memory.GetEventByIdAsync(gameId, eventId);

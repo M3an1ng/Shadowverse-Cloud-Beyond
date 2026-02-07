@@ -3,6 +3,9 @@ import { defineConfig } from 'vite';
 // https://vitejs.dev/config/
 export default defineConfig({
   server: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
     watch: {
       // Prevent frequent full reloads caused by backend/log file writes under the monorepo root.
       ignored: [
@@ -10,6 +13,7 @@ export default defineConfig({
         '**/Server/Logs/**',
         '**/Server/bin/**',
         '**/Server/obj/**',
+        '**/Server/publish/**',
         '**/Server.Tests/bin/**',
         '**/Server.Tests/obj/**',
         '**/openspec/**',
@@ -32,6 +36,11 @@ export default defineConfig({
       '/gamehub': {
         target: 'http://localhost:5100', // 同样指向后端 HTTP 地址
         ws: true, // 必须开启，让 Vite 代理 WebSocket 连接
+        changeOrigin: true,
+      },
+      '/loghub': {
+        target: 'http://localhost:5100',
+        ws: true,
         changeOrigin: true,
       }
       // 如果还有其他需要代理的路径，可以在这里继续添加

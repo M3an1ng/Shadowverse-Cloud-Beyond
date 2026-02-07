@@ -1,17 +1,15 @@
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+﻿using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
     /// <summary>
     /// 移除Buff效果参数
     /// </summary>
-    [EffectMetadata("移除Buff", "移除目标身上的增益或减益效果。使用卡牌目标。")]
     public class RemoveBuffEffectParams : BaseEffectParams
     {
         /// <summary>
         /// 要移除的Buff名称（为空则移除所有Buff）
         /// </summary>
-        [ParameterMetadata("Buff名称", UiControlType.TextInput, DefaultValue = "", Description = "要移除的Buff名称。留空表示移除所有Buff。")]
         public string? BuffName { get; set; }
 
         /// <summary>

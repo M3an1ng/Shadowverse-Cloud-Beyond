@@ -1,0 +1,856 @@
+[
+  {
+    "id": 1500101,
+    "name": "纹章:曙光的神使",
+    "card_set": "衍生物",
+    "class": "Neutral",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "cost": 0,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "纹章:曙光的神使-回合结束破坏抽牌治疗",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnEnd"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Emblem"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "context.triggeringEvent.Source != null and context.triggeringEvent.Source.InstanceId == owner.PlayerId"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\").take(random 1)"
+            }
+          },
+          {
+            "query": {
+              "sourcePoolExpression": "owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy",
+            "targetSelector": [
+              "target1"
+            ]
+          },
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "drawAmount": {
+                "value": 2
+              }
+            }
+          },
+          {
+            "type": "Heal",
+            "targetSelector": [
+              "target2"
+            ],
+            "parameters": {
+              "healAmount": {
+                "value": 3
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": false,
+    "countdown": 6
+  },
+  {
+    "id": 1501101,
+    "name": "寡言的宿敌",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "cost": 2,
+    "attack": 2,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "寡言的宿敌-进化伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "EvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Evolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          },
+          {
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\" and self.InstanceId != AbilityTargets.target1.find(1).Card.InstanceId)"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "targetSelector": [
+              "target2"
+            ],
+            "parameters": {
+              "damageAmount": {
+                "value": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "寡言的宿敌-超进化伤害",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+            }
+          },
+          {
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\" and self.InstanceId != AbilityTargets.target1.find(1).Card.InstanceId)"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Damage",
+            "targetSelector": [
+              "target2"
+            ],
+            "parameters": {
+              "damageAmount": {
+                "value": 4
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501103,
+    "name": "曙光的神使",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "cost": 7,
+    "attack": 5,
+    "health": 5,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "曙光的神使-战吼破坏超进化随从",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个敌方超进化随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\" and self.IsSuperEvolved == true)"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "曙光的神使-超进化赋予纹章",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "SuperEvolveEffect"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "SuperEvolve"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "AddEmblem",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Definition"
+              },
+              "cardDefinitionId": {
+                "value": 1500101
+              },
+              "amount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501201,
+    "name": "命运的预言诗",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Gold",
+    "type": "Spell",
+    "cost": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "命运的预言诗-赋予进化并洗回",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "playerChoiceOptions": {
+              "isRequired": true,
+              "minCount": 1,
+              "maxCount": 1,
+              "prompt": "选择1个友方手牌随从"
+            },
+            "requireValidTarget": true,
+            "query": {
+              "sourcePoolExpression": "owner.hand.query(self.Type == \"Follower\")"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "GrantAbility",
+            "targetSelector": [
+              "target1"
+            ],
+            "parameters": {
+              "abilityConfigs": {
+                "value": [
+                  {
+                    "name": "命运的预言诗-赋予-战吼进化",
+                    "type": "Triggered",
+                    "abilityKeywords": [
+                      {
+                        "keyword": "Fanfare"
+                      }
+                    ],
+                    "trigger": {
+                      "eventTypes": [
+                        "PlayCard"
+                      ],
+                      "relationType": "TargetSelf"
+                    },
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "query": {
+                          "sourcePoolExpression": "context.sourceCard"
+                        }
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "type": "Evolve"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "durationType": {
+                "value": "Permanent"
+              },
+              "durationParameter": {
+                "value": 0
+              },
+              "isNonStackable": {
+                "value": true
+              }
+            }
+          },
+          {
+            "type": "Shuffle",
+            "targetSelector": [
+              "target1"
+            ]
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501202,
+    "name": "冒险的歧路",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "cost": 3,
+    "health": null,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "冒险的歧路-启动摧毁",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 1
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Destroy"
+          }
+        ]
+      },
+      {
+        "name": "冒险的歧路-启动抉择",
+        "type": "Activated",
+        "abilityKeywords": [
+          {
+            "keyword": "Act",
+            "value": 1
+          },
+          {
+            "keyword": "Choose"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Act"
+          ],
+          "relationType": "SourceSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Choose",
+            "parameters": {
+              "selectionCount": {
+                "value": 1
+              },
+              "abilityConfigs": {
+                "value": [
+                  {
+                    "name": "冒险的歧路-选择-强化",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any"
+                    },
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "playerChoiceOptions": {
+                          "isRequired": true,
+                          "minCount": 1,
+                          "maxCount": 1,
+                          "prompt": "选择1个友方随从"
+                        },
+                        "requireValidTarget": true,
+                        "query": {
+                          "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\")"
+                        }
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "type": "ModifyStatus",
+                        "parameters": {
+                          "attackModifier": {
+                            "value": 1
+                          },
+                          "healthModifier": {
+                            "value": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "name": "冒险的歧路-选择-破坏",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any"
+                    },
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "playerChoiceOptions": {
+                          "isRequired": true,
+                          "minCount": 1,
+                          "maxCount": 1,
+                          "prompt": "选择1个敌方随从"
+                        },
+                        "requireValidTarget": true,
+                        "query": {
+                          "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+                        }
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "type": "Destroy"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501302,
+    "name": "异国的歌唱者",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 1,
+    "health": 2,
+    "description": "",
+    "keywords": [],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "异国的歌唱者-战吼检索随从",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "useSearchMode": {
+                "value": true
+              },
+              "searchTargets": {
+                "$type": "FormulaValueConfig",
+                "formula": "owner.deck.query(self.Type == \\\"Follower\\\").take(random 1)"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "异国的歌唱者-谢幕曲检索法术护符",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Lastword"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "Destroy"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [],
+        "targets": [],
+        "effects": [
+          {
+            "type": "Draw",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "useSearchMode": {
+                "value": true
+              },
+              "searchTargets": {
+                "$type": "FormulaValueConfig",
+                "formula": "owner.deck.query(self.Type == \\\"Spell\\\" or self.Type == \\\"Amulet\\\").take(random 1)"
+              },
+              "drawAmount": {
+                "value": 1
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501303,
+    "name": "巨人军团",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "cost": 6,
+    "attack": 4,
+    "health": 4,
+    "description": "",
+    "keywords": [
+      "Ward"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "巨人军团-战吼复制召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Fanfare"
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf"
+        },
+        "conditions": [],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Copy"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "巨人军团-爆能复制召唤",
+        "type": "Triggered",
+        "abilityKeywords": [
+          {
+            "keyword": "Enhance",
+            "value": 8
+          }
+        ],
+        "trigger": {
+          "eventTypes": [
+            "PlayCard"
+          ],
+          "relationType": "TargetSelf",
+          "validZones": [
+            "Hand"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "eventString(\"PlayMode\") == \"Enhance\""
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "context.sourceCard"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Copy"
+              }
+            }
+          },
+          {
+            "type": "Summon",
+            "parameters": {
+              "playerScope": {
+                "value": "Self"
+              },
+              "cardSourceMode": {
+                "value": "Copy"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501401,
+    "name": "篝火之夜",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "cost": 2,
+    "health": null,
+    "description": "",
+    "keywords": [
+      "Countdown"
+    ],
+    "effects": [],
+    "abilities": [
+      {
+        "name": "篝火之夜-回合开始治疗",
+        "type": "Triggered",
+        "abilityKeywords": [],
+        "trigger": {
+          "eventTypes": [
+            "TurnStart"
+          ],
+          "relationType": "Any",
+          "validZones": [
+            "Field"
+          ]
+        },
+        "conditions": [
+          {
+            "expression": "context.triggeringEvent.Source != null and context.triggeringEvent.Source.InstanceId == owner.PlayerId"
+          }
+        ],
+        "targets": [
+          {
+            "query": {
+              "sourcePoolExpression": "owner.leader"
+            }
+          }
+        ],
+        "effects": [
+          {
+            "type": "Heal",
+            "parameters": {
+              "healAmount": {
+                "$type": "FormulaValueConfig",
+                "formula": "context.sourceCard.Countdown"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "art": null,
+    "isCollectible": true,
+    "countdown": 2
+  },
+  {
+    "id": 1501402,
+    "name": "雇佣刺客",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 3,
+    "attack": 2,
+    "health": 3,
+    "description": "",
+    "keywords": [
+      "Bane"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  },
+  {
+    "id": 1501403,
+    "name": "夜之兽",
+    "card_set": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "cost": 1,
+    "attack": 1,
+    "health": 1,
+    "description": "",
+    "keywords": [
+      "Aura"
+    ],
+    "effects": [],
+    "abilities": [],
+    "art": null,
+    "isCollectible": true
+  }
+]

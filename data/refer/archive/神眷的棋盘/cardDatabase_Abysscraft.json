@@ -1,0 +1,425 @@
+{
+  "1550101": {
+    "id": "1550101",
+    "name": "纹章:诺斯费拉图",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-SameName&1050402-Follower|Clash||If|Enemy-Turn||Transform|It|1551103"
+    ]
+  },
+  "1550103": {
+    "id": "1550103",
+    "name": "纹章:僭夺永恒的决意",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "LastWords||AddToHand|1550104|1"
+    ]
+  },
+  "1550104": {
+    "id": "1550104",
+    "name": "僭夺永恒的决意",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Legendary",
+    "type": "Spell",
+    "trait": "",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||+2/+2|Select&1-Allied-Field-Follower||Give|It|{Strike||Damage|Enemy-Follower&Leader|2}||AddLabel|It|Label1550104||If|{Cards|SameName&1551104-It}>0||Crest&1|{LastWords||AddToHand|1550104|1}"
+    ]
+  },
+  "1550201": {
+    "id": "1550201",
+    "name": "纹章:从魔饲育者",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 3,
+    "effects": [
+      "When|Enemy-Turn-End||If|Sacrifice&3||Summon|1050402|1"
+    ]
+  },
+  "1550402": {
+    "id": "1550402",
+    "name": "荃梦魇影",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1251401|1",
+      "Evolve||Summon|1250402|3"
+    ]
+  },
+  "1551101": {
+    "id": "1551101",
+    "name": "厄洛托丝",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||If|{Cards|Allied-Field-Follower}<4|Necromancy&3||Reanimate|3",
+      "Fanfare||If|{Cards|Allied-Field-Follower}<3|Necromancy&3||Reanimate|3",
+      "Fanfare||If|{Cards|Allied-Field-Follower}<2|Necromancy&3||Reanimate|3",
+      "Fanfare||If|{Cards|Allied-Field-Follower}<1|Necromancy&3||Reanimate|3",
+      "When|Allied-Turn-End||Give|ThisCard|{Barrier}",
+      "Evolve||+2/+0|Allied-Field-Other-Follower||Give|Allied-Field-Other-Follower|{Rush}",
+      "Ward"
+    ]
+  },
+  "1551103": {
+    "id": "1551103",
+    "name": "诺斯费拉图",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 10,
+    "attack": 7,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&0|{When|Allied-SameName&1050402-Follower|Clash||If|Enemy-Turn||Transform|It|1551103}",
+      "Fanfare||Transform|Field-Follower|1050402",
+      "Aura",
+      "When|Enemy-Leader|Restore||If|Enemy-Turn||Restore|ThisCard|X||Restore|Allied-Leader|X||X=LastRestore"
+    ]
+  },
+  "1551104": {
+    "id": "1551104",
+    "name": "血之悲愿·茉拉艾儿",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fuse|Keyword&Sacrifice-Card",
+      "Fanfare||Damage|Allied-Leader|2",
+      "Fanfare||If|{Fuse&Cards}>0||Damage|Enemy-Follower&Leader|2",
+      "SuperEvolve||If|Sacrifice&6||AddToHand|1550104|1",
+      "Rush",
+      "Bane"
+    ]
+  },
+  "1551201": {
+    "id": "1551201",
+    "name": "从魔饲育者",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 3,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Evolve||Damage|Select&1-Enemy-Follower|3",
+      "Evolve||Damage|Allied-Leader|3",
+      "Evolve||Crest&3|{When|Enemy-Turn-End||If|Sacrifice&3||Summon|1050402|1}"
+    ]
+  },
+  "1551202": {
+    "id": "1551202",
+    "name": "血契之灾龙",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 8,
+    "attack": 8,
+    "defense": 8,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||If|Sacrifice&8||Give|ThisCard|{CanAttackTimes&2}",
+      "Rush",
+      "Ward",
+      "Strike||Restore|Allied-Leader|2||Damage|Enemy-Leader|2||Give|ThisCard|{Barrier}"
+    ]
+  },
+  "1551203": {
+    "id": "1551203",
+    "name": "窃血者",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Ward",
+      "Bane",
+      "LastWords||If|Necromancy&4||Restore|Allied-Leader|4",
+      "Fanfare||Damage|Select&1-Enemy-Follower|4||Change|Enhance&9||Damage|Enemy-Follower|4"
+    ]
+  },
+  "1551204": {
+    "id": "1551204",
+    "name": "万疆魔帝·路德维希",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||If|{NamingCount&BloodPool}>29||Damage|Enemy-Follower&Leader|6||Restore|Allied-Leader|3||Draw|1",
+      "Ward",
+      "LastWords||If|{NamingCount&Shadows}>29||Damage|Enemy-Follower&Leader|6||Restore|Allied-Leader|3||Draw|1"
+    ]
+  },
+  "1551205": {
+    "id": "1551205",
+    "name": "铭魂的死灵法师",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 2,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Enhance&8||Reanimate|3||Reanimate|2||Reanimate|1||Evolve|ThisCard",
+      "When|Allied-Turn-End||Give|Allied-Field-Trait:5-Follower|{LastWords||Restore|Allied-Leader|1}||+1/+1|That||AddLabel|That|Label1551205",
+      "When|ThisCard|Evolve||SplitDamage|Enemy-Follower&Leader|X||X=Cards|Allied-Field-Follower"
+    ]
+  },
+  "1551301": {
+    "id": "1551301",
+    "name": "哀叹的眷族",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Ward",
+      "LastWords||Restore|Allied-Leader|2",
+      "Evolve||If|Sacrifice&6||Summon|1551301|1||Evolve|It"
+    ]
+  },
+  "1551303": {
+    "id": "1551303",
+    "name": "贪婪从魔·露提",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 1,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Enhance&5||+3/+3|ThisCard||Give|ThisCard|{Barrier}",
+      "Evolve||Damage|Allied-Leader|2",
+      "Evolve||Mode&1|{Draw|2}|{Destroy|Select&1-Enemy-Follower}"
+    ]
+  },
+  "1551304": {
+    "id": "1551304",
+    "name": "怨念缝合怪",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 3,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1350402|1",
+      "LastWords||Replicate|Fanfare",
+      "SuperEvolve||Replicate|Fanfare"
+    ]
+  },
+  "1551305": {
+    "id": "1551305",
+    "name": "噬魂巨蝠",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Mode&1|{If|Necromancy&4||Summon|1050403|4}|{If|Sacrifice&4||Summon|1050402|4}"
+    ]
+  },
+  "1551306": {
+    "id": "1551306",
+    "name": "邪奏的恶魔",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 3,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Damage|Allied-Leader|2",
+      "Fanfare||AuxSelect|Select&1-Enemy-Field-Follower||AddLabel|It|Label1551306"
+    ]
+  },
+  "1551401": {
+    "id": "1551401",
+    "name": "双生啮噬",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Summon|1050402|2||Damage|Leader|2"
+    ]
+  },
+  "1551402": {
+    "id": "1551402",
+    "name": "月影死神",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1251401|1",
+      "Evolve||Summon|1250402|3"
+    ]
+  },
+  "1551403": {
+    "id": "1551403",
+    "name": "利爪的猛击",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Damage|Select&1-Enemy-Follower&Leader|3",
+      "Play||Damage|Allied-Leader|2"
+    ]
+  },
+  "1551404": {
+    "id": "1551404",
+    "name": "血色婚礼",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Damage|Allied-Leader|2",
+      "Engage&0||Destroy|ThisCard||AuxSelect|Select&2-Allied-Field-Follower||+1/+1|It||Give|It|{Rush}"
+    ]
+  },
+  "1551405": {
+    "id": "1551405",
+    "name": "坚韧战尸",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Enhance&4||Give|ThisCard|{Rush}||Give|ThisCard|{Bane}",
+      "LastWords||If|Necromancy&2||AddToHand|1350402|1"
+    ]
+  },
+  "1551406": {
+    "id": "1551406",
+    "name": "命定的别离",
+    "cardSet": "神眷的棋盘",
+    "class": "Abysscraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Damage|Leader|1",
+      "Play||AddToHand|1250402|1"
+    ]
+  }
+}

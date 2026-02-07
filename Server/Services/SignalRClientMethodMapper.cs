@@ -49,10 +49,15 @@ namespace ShadowverseBeyond.Server.Services
                     TurnStartedEventDto e => clientProxy.TurnStarted(e), // Added handler for TurnStarted event
                     PpUpdateEventDto e => clientProxy.PpUpdate(e),
                     HandUpdatedEventDto e => clientProxy.HandUpdated(e), // Restored for mulligan functionality
+                    CardInstanceUpdatedEventDto e => clientProxy.CardInstanceUpdated(e),
+                    CounterChangedEventDto e => clientProxy.CounterChanged(e),
                     DeckUpdateEventDto e => clientProxy.DeckUpdate(e), // Restored case
                     AttackDeclaredEventDto e => clientProxy.AttackDeclared(e),
                     DamageDealtEventDto e => clientProxy.DamageDealt(e),
+                    HealAppliedEventDto e => clientProxy.HealApplied(e),
                     UnitDestroyedEventDto e => clientProxy.UnitDestroyed(e),
+                    CardVanishedEventDto e => clientProxy.CardVanished(e),
+                    CardReturnedDto e => clientProxy.CardReturned(e),
                     GameOverEventDto e => clientProxy.GameOver(e),
                     TurnEndedEventDto e => clientProxy.TurnEnded(e),
                     ErrorOccurredEventDto e => clientProxy.ReceiveError(e.ErrorMessage),
@@ -68,8 +73,11 @@ namespace ShadowverseBeyond.Server.Services
                     EpMaxUpdateEventDto e => clientProxy.EpMaxUpdate(e),
                     SepMaxUpdateEventDto e => clientProxy.SepMaxUpdate(e),
                     GraveyardUpdateEventDto e => clientProxy.GraveyardUpdate(e),
+                    EmblemUpdatedEventDto e => clientProxy.EmblemUpdated(e),
                     HealthChangedEventDto e => clientProxy.HealthChanged(e),
                     StatChangeEventDto e => clientProxy.StatChange(e),
+                    KeywordAddedEventDto e => clientProxy.KeywordAdded(e),
+                    KeywordRemovedEventDto e => clientProxy.KeywordRemoved(e),
                     MulliganCompletedEventDto e => clientProxy.PlayerMulliganCompleted(e),
                     AttackStateUpdatedEventDto e => clientProxy.AttackStateUpdated(e), // 【BUG修复】添加缺失的事件映射
                     EvolveStateUpdatedEventDto e => clientProxy.EvolveStateUpdated(e),

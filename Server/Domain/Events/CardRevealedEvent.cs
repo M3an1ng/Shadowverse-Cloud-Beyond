@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -11,11 +12,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("公开", "当一张卡牌被公开时触发的事件。", EventType.CardRevealed)]
     public sealed class CardRevealedEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("公开卡牌", "被公开的卡牌实例。")]
+        [GameEventParameter("公开卡牌", "被公开的卡牌实例。", DslDisplayTypeName = "事件目标")]
         public CardInstance? RevealedCard => Target.FirstOrDefault()?.Card;
 
-        public CardRevealedEvent(PlayerState revealingPlayer, CardInstance revealedCard)
-            : base(EventType.CardRevealed)
+        public CardRevealedEvent(PlayerState revealingPlayer, CardInstance revealedCard, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.CardRevealed, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(revealingPlayer);
             Target.Add(TargetInfo.ForCard(revealedCard));
@@ -30,8 +31,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public string GetAnnouncement(GameState gameState)
         {
             var card = RevealedCard;
-            if (card == null) return "reveal";
-            return $"reveal card={gameState.InGameIds.Format(InGameIdKind.Card, card.InstanceId)}";
+            if (card == null)
+            {
+                return string.Empty;
+            }
+
+            var player = Source?.Player;
+            return player != null
+                ? $"{AnnouncementTokens.Player(player)}公开了{AnnouncementTokens.Card(card)}。"
+                : $"{AnnouncementTokens.Card(card)}被公开。";
         }
     }
 }

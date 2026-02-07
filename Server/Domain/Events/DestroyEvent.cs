@@ -19,10 +19,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("摧毁原因", "卡牌被摧毁的原因。")]
         public string Reason { get; }
 
-        [GameEventParameter("摧毁来源", "导致摧毁的卡牌。")]
+        [GameEventParameter("摧毁来源", "导致摧毁的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? DestroySource => Source?.Card;
 
-        [GameEventParameter("被摧毁的卡牌", "被摧毁的目标卡牌。")]
+        [GameEventParameter("被摧毁的卡牌", "被摧毁的目标卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DestroyTarget => Target.FirstOrDefault()?.Card;
 
         public DestroyEvent(CardInstance target, CardInstance source, string reason, Guid? eventId = null, DateTime? timestamp = null)
@@ -77,17 +77,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var targetId = DestroyTarget?.InstanceId;
-            var sourceId = DestroySource?.InstanceId;
-            if (!targetId.HasValue)
+            var target = DestroyTarget;
+            if (target == null)
             {
-                return "destroy";
+                return string.Empty;
             }
 
-            var targetToken = gameState.InGameIds.Format(InGameIdKind.Card, targetId.Value);
-            return sourceId.HasValue
-                ? $"destroy target={targetToken} source={gameState.InGameIds.Format(InGameIdKind.Card, sourceId.Value)}"
-                : $"destroy target={targetToken}";
+            var source = DestroySource;
+            return source != null
+                ? $"{AnnouncementTokens.Card(source)}破坏了{AnnouncementTokens.Card(target)}。"
+                : $"{AnnouncementTokens.Card(target)}被破坏。";
         }
 
         private static bool IsAbilityDestroyReason(string reason)

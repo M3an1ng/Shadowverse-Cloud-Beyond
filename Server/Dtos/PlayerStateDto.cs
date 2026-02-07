@@ -40,6 +40,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public List<CardInstanceDto> Field { get; set; } = new(); // Represents card instances (followers, amulets) on the player's field
         public List<CardInstanceDto> Graveyard { get; set; } = new(); // Represents card instances in the graveyard
         public List<CardInstanceDto> Extra { get; set; } = new List<CardInstanceDto>();
+        public List<CardInstanceDto> Emblem { get; set; } = new();
 
         // Turn State
         public int PlayedCardCountThisTurn { get; set; }

@@ -15,6 +15,7 @@ using ShadowverseBeyond.Server.Domain.Events; // For IEventProcessor
 using AutoMapper; // Added for IMapper
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic; // Added for List<>
 using ShadowverseBeyond.Server.Models; // For GameActionContext
@@ -66,7 +67,11 @@ namespace ShadowverseBeyond.Server.Services
                         return;
                     }
 
-                    var gameStateDto = _mapper.Map<GameStateDto>(gameStateEntity);
+                    GameStateDto gameStateDto;
+                    using (var gameContext = new GameContext(scopedServiceProvider, _mapper, contextAccessor, gameStateEntity, aiPlayerId, CancellationToken.None))
+                    {
+                        gameStateDto = _mapper.Map<GameStateDto>(gameStateEntity);
+                    }
 
                     // 1. Decide to use PP+1
                     var usePpBoost = await _aiService.DecidePpBoostAsync(gameStateDto, aiPlayerId);

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
@@ -43,10 +44,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public static PlayModeResolution Resolve(
             CardInstance card,
             PlayerState player,
+            GameContext context,
             IEnumerable<AbilityConfig> abilityConfigs)
         {
             if (card == null) throw new ArgumentNullException(nameof(card));
             if (player == null) throw new ArgumentNullException(nameof(player));
+            if (context == null) throw new ArgumentNullException(nameof(context));
             if (abilityConfigs == null) throw new ArgumentNullException(nameof(abilityConfigs));
 
             var modes = new List<PlayModeAvailabilityDto>();
@@ -55,7 +58,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var baseCost = Math.Max(0, card.CurrentCost);
             modes.Add(BuildAvailability(PlayMode.Base, baseCost, currentPp));
 
-            var (selectedEnhanceCost, minEnhanceCost) = ResolveEnhanceCost(abilityConfigs, currentPp);
+            var (selectedEnhanceCost, minEnhanceCost) = ResolveEnhanceCost(card, context, abilityConfigs, currentPp);
             if (minEnhanceCost.HasValue)
             {
                 var isDisabled = IsEnhanceDisabled(card);
@@ -92,13 +95,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         }
 
         private static (int? SelectedCost, int? MinCost) ResolveEnhanceCost(
+            CardInstance card,
+            GameContext context,
             IEnumerable<AbilityConfig> abilityConfigs,
             int currentPp)
         {
-            var costs = abilityConfigs
-                .Select(c => c.GetKeywordValue(EffectKeyword.Enhance))
-                .Where(value => value.HasValue && value.Value > 0)
-                .Select(value => value!.Value)
+            var costs = card.GetEnhanceCostCandidates(context, abilityConfigs)
+                .Where(value => value > 0)
                 .Distinct()
                 .ToList();
 

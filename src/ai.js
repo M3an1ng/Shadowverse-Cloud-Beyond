@@ -16,12 +16,10 @@ import { playCard, getPlayerState, getCurrentPlayerId, findCardInstanceByUid, se
 // TODO: Move constants like MAX_FIELD_SIZE to a dedicated constants.js file
 const MAX_FIELD_SIZE = 5; // Define locally for now
 
-console.log("ai.js loaded");
 
 // --- 主 AI 逻辑入口 ---
 // 这个函数应该在轮到 AI 时被 turnManager 调用
 export function runAILogic(currentGameState) { // 接收当前游戏状态
-    console.log("AI Turn: Running AI logic...");
     if (!currentGameState || !currentGameState.players) {
         console.error("AI Error: Missing game state or players for decision making.");
         setTimeout(endTurnRequest, 500); // Failsafe: Request server to end turn
@@ -38,7 +36,6 @@ export function runAILogic(currentGameState) { // 接收当前游戏状态
 
     // 确保现在是AI的回合
     if (currentGameState.currentPlayerId !== aiPlayer.id) {
-        console.log(`AI: Skipping logic, it is not my turn. (Current turn: ${currentGameState.currentPlayerId})`);
         // This case should not happen if called correctly, but as a safeguard:
         // We don't end the turn here, as it's not our turn to end.
         return;
@@ -47,23 +44,16 @@ export function runAILogic(currentGameState) { // 接收当前游戏状态
     // --- 逐步执行 AI 动作 ---
     try {
         // 1. 出牌决策
-        console.log("AI: Deciding card to play...");
         // Pass gameState for context if needed by future, more complex decisions
         aiDecideAndPlayCard(aiPlayer, currentGameState);
-        console.log("AI_TRACE: Finished aiDecideAndPlayCard."); // ADDED LOG
 
         // 2. 进化决策 (V0.1)
-        console.log("AI: Deciding evolves...");
         aiDecideAndEvolve(aiPlayer, currentGameState); // Call the new evolve logic function
-        console.log("AI_TRACE: Finished aiDecideAndEvolve."); // ADDED LOG
 
         // 3. 攻击决策
-        console.log("AI: Deciding attacks...");
         aiDecideAndAttack(aiPlayer, currentGameState); // Call the attack logic function
-        console.log("AI_TRACE: Finished aiDecideAndAttack."); // ADDED LOG
 
         // 4. 结束回合 (总是在最后执行)
-        console.log("AI: Actions processing finished. Ending turn shortly.");
         // Add a short delay before ending turn to simulate thinking/allow UI updates
         setTimeout(endTurnRequest, 1000); // Request server to end turn
 
@@ -90,7 +80,6 @@ function aiDecideAndPlayCard(aiPlayer, gameStateRef) { // Keep gameStateRef for 
 
     // 检查战场空间
     if (aiPlayer.field.length >= MAX_FIELD_SIZE) {
-        console.log(`AI PlayCard: Field is full (${aiPlayer.field.length}/${MAX_FIELD_SIZE}), cannot play follower.`);
         return; // 战场已满，无法出随从
     }
 
@@ -102,7 +91,6 @@ function aiDecideAndPlayCard(aiPlayer, gameStateRef) { // Keep gameStateRef for 
     );
 
     if (playableFollowers.length === 0) {
-        console.log("AI PlayCard: No playable followers found in hand (or not enough PP).");
         return; // 没有可出的随从
     }
 
@@ -119,17 +107,14 @@ function aiDecideAndPlayCard(aiPlayer, gameStateRef) { // Keep gameStateRef for 
 
     // 打出找到的牌
     if (cardToPlay) {
-        console.log(`AI PlayCard: Choosing to play highest cost follower: ${cardToPlay.name} (Cost: ${cardToPlay.cost}, UID: ${cardToPlay.uid})`);
         try {
             // playCard is imported and assumed to handle the logic based on card UID and current game state correctly
             playCard(cardToPlay.uid);
-            console.log(`AI PlayCard: Successfully initiated play for ${cardToPlay.name}.`);
             // No need to render here, playCard handles it.
         } catch(error) {
              console.error(`AI PlayCard Error: Failed to execute playCard for ${cardToPlay.name} (UID: ${cardToPlay.uid}):`, error);
         }
     } else {
-        console.log("AI PlayCard: No suitable follower found to play after filtering.");
     }
 }
 
@@ -141,15 +126,12 @@ function aiDecideAndPlayCard(aiPlayer, gameStateRef) { // Keep gameStateRef for 
  * @returns {boolean} 如果成功执行了进化则返回 true, 否则返回 false
  */
 function aiDecideAndEvolve(aiPlayer, currentGameState) { // 注意: 签名已调整以保持文件内一致性
-    console.log(`AI [${aiPlayer.id}]: Deciding evolution... EP: ${aiPlayer.ep}, Can Evolve This Turn: ${aiPlayer.canEvolveThisTurn}`);
 
     // 1. 检查全局进化权限和 EP
     if (!aiPlayer.canEvolveThisTurn) {
-        console.log(`AI [${aiPlayer.id}]: Cannot evolve this turn (Flag is false).`);
         return false;
     }
     if (aiPlayer.ep < 1) { // 假设进化固定消耗 1 EP
-        console.log(`AI [${aiPlayer.id}]: Cannot evolve this turn (Not enough EP: ${aiPlayer.ep}).`);
         return false;
     }
 
@@ -160,32 +142,24 @@ function aiDecideAndEvolve(aiPlayer, currentGameState) { // 注意: 签名已调
         // 确保 cardInstance 有效
         if (!cardInstance) continue;
 
-        console.log(`AI [${aiPlayer.id}]: Evaluating follower ${cardInstance.name} (UID: ${cardInstance.uid}) for evolution.`);
 
         // 3. 检查资格
         if (!cardInstance.isEvolved) {
-            console.log(`  - ${cardInstance.name}: Not evolved. Checking definition...`);
             // Check the canEvolve property directly on the instance, which is hydrated from the DTO.
             if (cardInstance.canEvolve === true) {
-                console.log(`  - ${cardInstance.name}: Instance property 'canEvolve' is true.`);
                 // 4. 选择目标 (第一个符合条件的)
                 targetFollower = cardInstance;
-                console.log(`AI [${aiPlayer.id}]: Found eligible evolution target: ${targetFollower.name} (UID: ${targetFollower.uid})`);
                 break; // 找到目标，停止搜索
             } else {
-                 console.log(`  - ${cardInstance.name}: Instance property 'canEvolve' is false or missing.`);
             }
         } else {
-             console.log(`  - ${cardInstance.name}: Already evolved.`);
         }
     }
 
     // 5. 如果找到目标，执行进化
     if (targetFollower) {
-        console.log(`AI [${aiPlayer.id}]: Choosing to evolve ${targetFollower.name} (UID: ${targetFollower.uid}).`);
         try {
             evolveCard(targetFollower.uid); // 使用导入的函数
-            console.log(`AI [${aiPlayer.id}]: Successfully initiated evolution for ${targetFollower.name}.`);
             // evolveCard 内部会处理 EP 消耗和 canEvolveThisTurn 标志的设置
             return true; // 表示尝试了进化
         } catch (error) {
@@ -194,13 +168,11 @@ function aiDecideAndEvolve(aiPlayer, currentGameState) { // 注意: 签名已调
         }
     } else {
         // 6. 未找到目标
-        console.log(`AI [${aiPlayer.id}]: No eligible follower found on the field to evolve.`);
         return false;
     }
 }
 // --- 新增: AI 攻击决策函数 (V0.1) ---
 function aiDecideAndAttack(aiPlayer, currentGameState) {
-    console.log(`AI: ${aiPlayer.id} deciding attacks...`);
 
     const opponentId = currentGameState.players.find(p => p.id !== aiPlayer.id)?.id;
     if (!opponentId) {
@@ -212,9 +184,7 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
 
     // 1. Find AI attackers that haven't attacked yet this turn (canAttack is true)
     const availableAttackers = aiPlayer.field.filter(card => card && card.canAttack);
-    console.log(`AI: Found ${availableAttackers.length} available attackers:`, availableAttackers.map(a => a.name));
     if (availableAttackers.length === 0) {
-        console.log("AI: No available attackers to make decisions for.");
         return;
     }
 
@@ -235,17 +205,14 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
 
         if (hasWard) {
             validTargets = opponentFollowers.filter(f => f.keywords?.includes('Ward'));
-            console.log(`AI Attacker ${attacker.name}: Opponent has Ward. Valid targets (${validTargets.length}):`, validTargets.map(t => `${t.name}(${t.currentHealth})`));
         } else {
             validTargets = [...opponentFollowers]; // Add all followers
             if (opponentLeader && opponentLeader.currentHealth > 0) { // Ensure leader isn't already defeated
                  validTargets.push(opponentLeader);
             }
-            console.log(`AI Attacker ${attacker.name}: Opponent has no Ward. Valid targets (${validTargets.length}):`, validTargets.map(t => `${t.name}(${t.currentHealth})`));
         }
 
         if (validTargets.length === 0) {
-            console.log(`AI Attacker ${attacker.name}: No valid targets found.`);
             continue; // Skip to the next attacker
         }
 
@@ -273,22 +240,18 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
             // Fallback/Default case (e.g., leader vs leader, though impossible)
             return 0;
         });
-         console.log(`AI Attacker ${attacker.name}: Sorted valid targets:`, validTargets.map(t => `${t.name}(${t.currentHealth})`));
 
         // 4. Select the highest priority target
         const target = validTargets[0];
-         console.log(`AI Attacker ${attacker.name}(${attacker.currentAttack}/${attacker.currentHealth}) chooses highest priority target: ${target.name}(${target.currentAttack || 'N/A'}/${target.currentHealth})`);
 
         // 5. Execute attack
         // Ensure the attacker can still attack (might have been destroyed by a previous effect this turn?)
         const currentAttackerState = findCardInstanceByUid(attacker.uid);
         if (!currentAttackerState || !currentAttackerState.canAttack) {
-            console.log(`AI: Attacker ${attacker.name} is no longer valid or cannot attack before its turn in the loop.`);
             continue; // Skip attack if attacker became invalid
         }
 
         try {
-            console.log(`AI: Requesting Attack via sendGameAction. Attacker UID: ${currentAttackerState.uid}, Target UID: ${target.uid}`);
             const attackActionData = {
                 actionType: "Attack",
                 attackerUid: currentAttackerState.uid,
@@ -303,7 +266,6 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
         // Loop continues to the next available attacker from the initial list.
     }
 
-    console.log(`AI: ${aiPlayer.id} finished attack decisions for this turn's logic run.`);
 }
 
 // function aiDecideAndEvolve(aiPlayer, gameStateRef) { ... } // Placeholder removed
@@ -319,7 +281,6 @@ export function performAIMulligan(aiPlayerState) {
         return;
     }
 
-    console.log(`AI [${aiPlayerState.id}]: Performing mulligan decision... Hand:`, aiPlayerState.hand.map(c => `${c.name}(${c.cost})`));
 
     // Simple Strategy: Replace all cards with cost > 3
     const costThreshold = 3;
@@ -327,12 +288,10 @@ export function performAIMulligan(aiPlayerState) {
         .filter(card => card && card.cost > costThreshold)
         .map(card => card.uid);
 
-    console.log(`AI [${aiPlayerState.id}]: Decided to replace ${uidsToReplace.length} card(s) with cost > ${costThreshold}. UIDs:`, uidsToReplace);
 
     // Call the handleMulligan function from gameManager
     try {
         submitMulligan(uidsToReplace); // Use imported submitMulligan
-        console.log(`AI [${aiPlayerState.id}]: Mulligan request submitted.`);
     } catch (error) {
         console.error(`AI [${aiPlayerState.id}]: Error calling handleMulligan:`, error);
         // Failsafe: Still signal completion even if call fails

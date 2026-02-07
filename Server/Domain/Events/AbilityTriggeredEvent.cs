@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -26,11 +27,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("能力关键字", "能力的关键字列表。")]
         public IReadOnlyList<string> AbilityKeywords { get; }
 
-        [GameEventParameter("能力拥有者", "拥有此能力的卡牌。")]
+        [GameEventParameter("能力拥有者", "拥有此能力的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? AbilityOwner => Source?.Card;
 
-        public AbilityTriggeredEvent(IAbility triggeredAbility, IGameEvent triggeringEvent)
-            : base(EventType.AbilityTriggered)
+        public AbilityTriggeredEvent(IAbility triggeredAbility, IGameEvent triggeringEvent, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.AbilityTriggered, eventId, timestamp)
         {
             TriggeredAbility = triggeredAbility;
             TriggeringEvent = triggeringEvent;

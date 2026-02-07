@@ -1,14 +1,43 @@
 import { findIncompleteNode } from "./core.js";
+import { isListOperationNode } from "./pipeline.js";
 import { getOptionsForType as getOptionsForTypeFromModule } from "./operators.js";
+import { prepareEditorForRecommendations } from "./ast-normalize.js";
+
+function resolveExpectedType(editor) {
+    if (!editor) return null;
+    if (editor.isLightWorkspace && editor.lightWorkspaceFocus) {
+        return editor.normalizeTypeName(editor.slotExpectedType || editor.expectedType);
+    }
+    const top = typeof editor.peekEditingPath === "function" ? editor.peekEditingPath() : null;
+    if (top?.parentNode && typeof editor.getExpectedTypeForSlot === "function") {
+        return editor.normalizeTypeName(editor.getExpectedTypeForSlot(top.parentNode, top.slot, top.index));
+    }
+    return editor.normalizeTypeName(editor.slotExpectedType || editor.expectedType);
+}
+
+function resolveQueryableItemType(editor, sourceType) {
+    if (!editor || !sourceType) return null;
+    const innerType = editor.getCollectionInnerType(sourceType);
+    if (innerType) return innerType;
+    if (typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(sourceType)) {
+        return sourceType;
+    }
+    return null;
+}
 
 export function getCurrentEditingOptions(editor) {
-    console.log("DslEditor: getCurrentEditingOptions called");
-    console.log("DslEditor: astRoot:", editor.astRoot);
-    console.log("DslEditor: isExpressionCompleted:", editor.isExpressionCompleted);
 
-    if (!editor.astRoot || (editor.astRoot.type === 'value' && editor.astRoot.metadata?.type === 'empty')) {
+    prepareEditorForRecommendations(editor);
+
+    if (editor.isLightWorkspace && editor.lightWorkspaceFocus?.parentNode) {
+        const focusedOptions = getOptionsForLightFocus(editor, editor.lightWorkspaceFocus);
+        if (focusedOptions && focusedOptions.length > 0) {
+            return focusedOptions;
+        }
+    }
+
+    if (!editor.workspaceAST || (editor.workspaceAST.type === 'value' && editor.workspaceAST.metadata?.type === 'empty')) {
         // 空表达式，提供数据源选项
-        console.log("DslEditor: No AST root or empty node, returning data source options");
         const opts = getDataSourceOptions(editor);
         // 关键 UX：即使存在 expectedType，也不能在“起点选择”阶段做严格过滤。
         // 例如 expectedType=Boolean 时，玩家需要从上下文对象/事件字段起步，再通过比较/逻辑运算构造布尔表达式。
@@ -16,29 +45,46 @@ export function getCurrentEditingOptions(editor) {
     }
 
     // 找到当前需要编辑的位置
-    const incompleteNode = findIncompleteNode(editor.astRoot);
-    console.log("DslEditor: Found incomplete node:", incompleteNode);
+    const incompleteNode = findIncompleteNode(editor.workspaceAST);
     if (incompleteNode) {
         const options = getOptionsForIncompleteNode(editor, incompleteNode);
-        console.log("DslEditor: Returning options for incomplete node:", options);
         return options;
     }
 
     // 关键修复：基于整个表达式的根节点来决定后续选项
-    console.log("DslEditor: Using root node for options:", editor.astRoot);
-    console.log("DslEditor: Root node structure:", {
-        type: editor.astRoot.type,
-        value: editor.astRoot.value,
-        returnType: editor.astRoot.returnType,
-        metadata: editor.astRoot.metadata,
-        expression: editor.astRoot.toExpression?.() || null
-    });
 
     // 使用根节点获取选项，这样可以基于整个表达式的返回类型来决定后续操作
-    const options = getOptionsForCompleteNode(editor, editor.astRoot);
-    console.log("DslEditor: Returning options for complete expression:", options);
+    const options = getOptionsForCompleteNode(editor, editor.workspaceAST);
     return options;
 }
+
+function getLightFocusSlotNode(focus) {
+    if (!focus?.parentNode || !focus.slot) return null;
+    const { parentNode, slot, index } = focus;
+    if (parentNode.type === 'virtualRoot' && slot === 'main') return parentNode.main;
+    if (parentNode.type === 'operator') {
+        return slot === 'left' ? parentNode.leftOperand : slot === 'right' ? parentNode.rightOperand : null;
+    }
+    if (parentNode.type === 'functionCall' && slot === 'arg') {
+        const argIndex = typeof index === 'number' ? index : 0;
+        return (parentNode.args || [])[argIndex] || null;
+    }
+    if (parentNode.type === 'listQuery' && slot === 'filterExpression') return parentNode.filterExpression;
+    if (parentNode.type === 'listSort' && slot === 'sortExpression') return parentNode.sortExpression;
+    if (parentNode.type === 'listTake' && slot === 'countExpression') return parentNode.countExpression;
+    if (parentNode.type === 'listDistinct' && slot === 'keyExpression') return parentNode.keyExpression;
+    if (parentNode.type === 'listSelect' && slot === 'selectExpression') return parentNode.selectExpression;
+    return null;
+}
+
+function getOptionsForLightFocus(editor, focus) {
+    const slotNode = getLightFocusSlotNode(focus);
+    if (!slotNode || (slotNode.type === 'value' && slotNode.metadata?.type === 'empty')) {
+        return getOptionsForIncompleteNode(editor, focus.parentNode);
+    }
+    return getOptionsForCompleteNode(editor, slotNode);
+}
+
 
 export function getOptionsForIncompleteNode(editor, node) {
     if (node.type === 'functionCall') {
@@ -47,7 +93,10 @@ export function getOptionsForIncompleteNode(editor, node) {
         const args = node.args || [];
         const argIndex = params.findIndex((p, i) => !p?.isOptional && !args[i]);
         if (argIndex >= 0) {
-            editor.slotExpectedType = editor.normalizeTypeName(params[argIndex]?.typeName) || null;
+            const expected = typeof editor.getExpectedTypeForSlot === "function"
+                ? editor.getExpectedTypeForSlot(node, "arg", argIndex)
+                : params[argIndex]?.typeName;
+            editor.slotExpectedType = editor.normalizeTypeName(expected) || null;
         }
         return getDataSourceOptions(editor);
     }
@@ -57,7 +106,7 @@ export function getOptionsForIncompleteNode(editor, node) {
             if (editor.isLogicalOperator(node.operator)) {
                 // 逻辑操作符需要布尔表达式
                 return getBooleanExpressionOptions(editor);
-            } else if (['|', '&', '-'].includes(node.operator)) {
+            } else if (['|', '&', '~'].includes(node.operator)) {
                 const leftType = node.leftOperand ? editor.calculateASTReturnType(node.leftOperand) : null;
                 if (leftType && editor.isCollectionType(leftType)) {
                     editor.slotExpectedType = leftType;
@@ -65,6 +114,24 @@ export function getOptionsForIncompleteNode(editor, node) {
                 return getDataSourceOptions(editor);
             } else {
                 // 比较操作符需要兼容类型的值
+                const leftType = node.leftOperand ? editor.calculateASTReturnType(node.leftOperand) : null;
+                if (leftType) {
+                    const normalizedLeft = editor.normalizeTypeName(leftType);
+                    if (['contains', 'startsWith', 'endsWith'].includes(node.operator)) {
+                        if (editor.isCollectionType?.(normalizedLeft)) {
+                            const inner = editor.getCollectionInnerType?.(normalizedLeft);
+                            editor.slotExpectedType = editor.normalizeTypeName(inner) || normalizedLeft;
+                        } else if (editor.isTextType?.(normalizedLeft)) {
+                            editor.slotExpectedType = 'String';
+                        } else {
+                            editor.slotExpectedType = normalizedLeft;
+                        }
+                    } else {
+                        editor.slotExpectedType = normalizedLeft;
+                    }
+                } else if (['contains', 'startsWith', 'endsWith'].includes(node.operator)) {
+                    editor.slotExpectedType = 'String';
+                }
                 return getDataSourceOptions(editor);
             }
         }
@@ -73,9 +140,10 @@ export function getOptionsForIncompleteNode(editor, node) {
     if (node.type === 'listQuery') {
         editor.slotExpectedType = 'Boolean';
         if (!editor.contextOverride?.name) {
-            const innerType = editor.getCollectionInnerType(node.source?.returnType);
-            if (innerType) {
-                editor.contextOverride = { name: 'self', displayName: '当前项 (self)', typeName: innerType };
+            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+            const itemType = resolveQueryableItemType(editor, sourceType);
+            if (itemType) {
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
             }
         }
         return getBooleanExpressionOptions(editor);
@@ -83,9 +151,10 @@ export function getOptionsForIncompleteNode(editor, node) {
 
     if (node.type === 'listSort') {
         if (!editor.contextOverride?.name) {
-            const innerType = editor.getCollectionInnerType(node.source?.returnType);
-            if (innerType) {
-                editor.contextOverride = { name: 'self', displayName: '当前项 (self)', typeName: innerType };
+            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+            const itemType = resolveQueryableItemType(editor, sourceType);
+            if (itemType) {
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
             }
         }
         return getDataSourceOptions(editor);
@@ -96,22 +165,40 @@ export function getOptionsForIncompleteNode(editor, node) {
         return getDataSourceOptions(editor);
     }
 
+    if (node.type === 'listDistinct') {
+        if (!editor.contextOverride?.name) {
+            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+            const itemType = resolveQueryableItemType(editor, sourceType);
+            if (itemType) {
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+            }
+        }
+        return getDataSourceOptions(editor);
+    }
+
+    if (node.type === 'listSelect') {
+        if (!editor.contextOverride?.name) {
+            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+            const itemType = resolveQueryableItemType(editor, sourceType);
+            if (itemType) {
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+            }
+        }
+        return getDataSourceOptions(editor);
+    }
+
     // 默认提供数据源选项
     return getDataSourceOptions(editor);
 }
 
 export function getOptionsForCompleteNode(editor, node) {
-    console.log("DslEditor: getOptionsForCompleteNode called with node:", node);
 
     // 关键修复：基于表达式的最后一个节点来提供选项
     const lastNode = editor.findLastNodeInExpression(node);
-    console.log("DslEditor: Found last node:", lastNode);
 
     if (lastNode && lastNode !== node) {
         // 如果最后一个节点不是根节点，基于最后节点的类型提供选项
         const lastNodeType = editor.getNodeActualReturnType(lastNode);
-        console.log("DslEditor: Last node type:", lastNodeType);
-        console.log("DslEditor: Providing options based on last node type:", lastNodeType);
 
         const baseOptions = getOptionsForType(editor, lastNodeType);
         return appendTriggeringEventFieldOptions(editor, baseOptions, lastNode);
@@ -120,73 +207,78 @@ export function getOptionsForCompleteNode(editor, node) {
     // 回退：检查是否是封装的表达式或操作符节点
     const isEncapsulated = node.metadata && node.metadata.type === "encapsulated";
     const isOperatorNode = node.type === 'operator';
-    console.log("DslEditor: Node is encapsulated:", isEncapsulated, "isOperatorNode:", isOperatorNode);
 
     if (isEncapsulated || isOperatorNode) {
         // 封装的表达式或操作符节点：基于实际返回类型提供适当的操作符
         const actualReturnType = editor.getNodeActualReturnType(node);
-        console.log("DslEditor: Encapsulated/Operator expression return type:", actualReturnType);
-        console.log("DslEditor: Providing options based on actual return type:", actualReturnType);
 
         const baseOptions = getOptionsForType(editor, actualReturnType);
         return appendTriggeringEventFieldOptions(editor, baseOptions, node);
     } else {
         // 未封装的表达式：只能继续属性访问或完成表达式
         const actualReturnType = editor.getNodeActualReturnType(node);
-        console.log("DslEditor: Non-encapsulated expression return type:", actualReturnType);
 
         const typeOptions = getOptionsForType(editor, actualReturnType);
-        console.log("DslEditor: Returning options for non-encapsulated expression:", typeOptions);
         return appendTriggeringEventFieldOptions(editor, typeOptions, node);
     }
 }
 
 export function getOptionsForType(editor, type) {
-    console.log("DslEditor: Getting options for type:", type);
 
-    const options = [];
+    const typeOptions = getOptionsForTypeFromModule(editor, type);
+    const options = typeOptions.filter(option =>
+        option.type === 'operator' ||
+        option.type === 'function' ||
+        option.type === 'query' ||
+        option.type === 'listQuery' ||
+        option.type === 'listSort' ||
+        option.type === 'listTake' ||
+        option.type === 'listDistinct' ||
+        option.type === 'listSelect' ||
+        option.type === 'listPipeline' ||
+        option.type === 'property' ||
+        option.type === 'propertyInput' ||
+        option.type === 'enumValue'
+    );
 
-    if (type === 'Int32') {
-        // 数值类型：提供数值操作符和比较操作符
-        options.push(
-            { type: 'operator', operator: '+', label: '加法 (+)', description: '数值相加' },
-            { type: 'operator', operator: '-', label: '减法 (-)', description: '数值相减' },
-            { type: 'operator', operator: '*', label: '乘法 (*)', description: '数值相乘' },
-            { type: 'operator', operator: '/', label: '除法 (/)', description: '数值相除' },
-            { type: 'operator', operator: '>', label: '大于 (>)', description: '比较两个数值' },
-            { type: 'operator', operator: '<', label: '小于 (<)', description: '比较两个数值' },
-            { type: 'operator', operator: '>=', label: '大于等于 (>=)', description: '比较两个数值' },
-            { type: 'operator', operator: '<=', label: '小于等于 (<=)', description: '比较两个数值' },
-            { type: 'operator', operator: '==', label: '等于 (==)', description: '比较两个值是否相等' },
-            { type: 'operator', operator: '!=', label: '不等于 (!=)', description: '比较两个值是否不相等' }
+    if (editor.isPipelineInline && editor.isLightWorkspace) {
+        return options.filter(option =>
+            option.type !== 'listPipeline' && option.type !== 'listQuery'
         );
-    } else if (type === 'Boolean') {
-        // 布尔类型：提供逻辑操作符
-        options.push(
-            { type: 'operator', operator: '&&', label: '逻辑与 (&&)', description: '两个条件都为真' },
-            { type: 'operator', operator: '||', label: '逻辑或 (||)', description: '至少一个条件为真' }
-        );
-    } else {
-        // 其他类型：使用原有逻辑
-        const typeOptions = getOptionsForTypeFromModule(editor, type);
-        const allowedOptions = typeOptions.filter(option =>
-            option.type === 'operator' ||
-            option.type === 'function' ||
-            option.type === 'query' ||
-            option.type === 'listQuery' ||
-            option.type === 'property'
-        );
-        options.push(...allowedOptions);
     }
 
-    console.log("DslEditor: Generated options for type", type, ":", options);
+    const hasPipeline = hasListPipelineInEditor(editor);
+    if (hasPipeline) {
+        return options.filter(option => option.type !== 'listPipeline');
+    }
+
     return options;
+}
+
+function hasListPipelineInEditor(editor) {
+    if (!editor) return false;
+    const root = editor.virtualRoot?.main || editor.workspaceAST;
+    return containsListOperation(root);
+}
+
+function containsListOperation(node) {
+    if (!node) return false;
+    if (node.metadata?.type === 'encapsulated' && node.metadata?.innerAST) {
+        return containsListOperation(node.metadata.innerAST);
+    }
+    if (isListOperationNode(node)) return true;
+    if (node.type === 'operator') {
+        return containsListOperation(node.leftOperand) || containsListOperation(node.rightOperand);
+    }
+    if (node.type === 'functionCall') {
+        return (node.args || []).some(arg => containsListOperation(arg));
+    }
+    return false;
 }
 
 export function getBooleanExpressionOptions(editor) {
     let options = [];
 
-    console.log("DslEditor: Getting boolean expression options");
 
     // 1. 上下文对象 (Context Object) - 可以构建布尔表达式
     const contextObjects = getContextObjectsForOptions(editor);
@@ -215,7 +307,7 @@ export function getBooleanExpressionOptions(editor) {
         .map(f => ({
             type: "function",
             value: f.name,
-            label: f.name,
+            label: typeof editor.getReadableFunctionName === "function" ? editor.getReadableFunctionName(f.name) : f.name,
             description: f.description,
             returnType: f.returnType,
             meta: f
@@ -228,7 +320,6 @@ export function getBooleanExpressionOptions(editor) {
 export function getDataSourceOptions(editor) {
     let options = [];
 
-    console.log("DslEditor: Getting data source options");
 
     // 1. 上下文对象 (Context Object)
     const contextObjects = getContextObjectsForOptions(editor);
@@ -240,13 +331,29 @@ export function getDataSourceOptions(editor) {
         returnType: obj.typeName
     })));
 
-    // 2. 静态值 (Static Value) - 数据源的一种
-    options.push({
-        type: "staticValue",
-        value: "input",
-        label: "输入值",
-        description: "输入常量值 (数值、文本、布尔值等)"
-    });
+    const expectedType = resolveExpectedType(editor);
+    const enumOptions = expectedType && typeof editor.getEnumValueOptions === "function"
+        && typeof editor.isEnumType === "function" && editor.isEnumType(expectedType)
+        ? editor.getEnumValueOptions(expectedType)
+        : [];
+    const hideStaticValue = expectedType
+        && typeof editor.isEnumType === "function"
+        && editor.isEnumType(expectedType)
+        && enumOptions.length > 0;
+
+    if (enumOptions.length > 0) {
+        options.push(...enumOptions);
+    }
+
+    if (!hideStaticValue) {
+        // 2. 静态值 (Static Value) - 数据源的一种
+        options.push({
+            type: "staticValue",
+            value: "input",
+            label: "输入值",
+            description: "输入常量值 (数值、文本、布尔值等)"
+        });
+    }
 
     // 3. 触发事件字段不再作为全局选项暴露
 
@@ -275,6 +382,9 @@ export function getTriggeringEventFieldOptions(editor) {
     const ctx = editor.triggeringEventContext;
     const eventTypes = ctx?.eventTypes || [];
     if (!Array.isArray(eventTypes) || eventTypes.length === 0) return [];
+    if (eventTypes.length !== 1) {
+        return editor.getObjectProperties?.("GameEventBase") || [];
+    }
 
     const timing = (ctx?.timing || 'On').toString();
     const allowOutput = timing.toLowerCase() === 'after';
@@ -285,7 +395,6 @@ export function getTriggeringEventFieldOptions(editor) {
     );
     if (!ev) return [];
 
-    const eventDisplayName = ev.displayName || ev.DisplayName || String(selected);
     const parameters = ev.parameters || ev.Parameters || [];
 
     const normalizeScope = (s) => String(s || 'both').toLowerCase();
@@ -297,34 +406,26 @@ export function getTriggeringEventFieldOptions(editor) {
         return true;
     };
 
-    const normalizeReturnType = (t) => editor.normalizeTypeName(t) || 'Object';
-    const mapEventAccessor = (typeName) => {
-        const t = normalizeReturnType(typeName);
-        if (t === 'Boolean') return 'eventBool';
-        if (t === 'String') return 'eventString';
-        if (t === 'Guid') return 'eventGuid';
-        return 'eventInt';
-    };
-
     return parameters
         .filter(p => scopeAllowed(p.scope ?? p.Scope))
         .map(p => {
             const propertyName = p.propertyName || p.PropertyName || p.name;
             const fieldDisplayName = p.displayName || p.DisplayName || propertyName;
-            const typeName = normalizeReturnType(p.typeName || p.TypeName || p.type);
+            const typeName = editor.normalizeTypeName(p.typeName || p.TypeName || p.type) || 'Object';
+            const typeOverride = p.dslDisplayTypeName || p.DslDisplayTypeName;
+            const displayType = typeOverride
+                ? (editor.isCollectionType(typeName) ? `${typeOverride}列表` : typeOverride)
+                : editor.getDisplayTypeName(typeName);
             const scope = normalizeScope(p.scope || p.Scope);
-            const accessor = mapEventAccessor(typeName);
-            const expression = `${accessor}(\"${propertyName}\")`;
             return {
-                type: 'eventField',
-                value: expression,
-                label: `${eventDisplayName}.${fieldDisplayName}`,
-                description: `${p.description || p.Description || ''}（${scope}，${editor.getDisplayTypeName(typeName)}）`,
+                type: 'property',
+                value: propertyName,
+                label: fieldDisplayName,
+                description: `${p.description || p.Description || ''}（${scope}，${displayType}）`,
                 returnType: typeName,
                 meta: {
                     eventType: selected,
                     propertyName,
-                    displayValue: `${eventDisplayName}.${fieldDisplayName}`,
                     scope
                 }
             };

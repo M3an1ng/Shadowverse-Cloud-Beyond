@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
 
@@ -18,6 +20,36 @@ public class CardPackDefinition
     [Required]
     [StringLength(100)]
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 卡包缩写
+    /// </summary>
+    [Required]
+    [StringLength(20)]
+    public string Abbreviation { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 卡包区域编号 (0-9)
+    /// </summary>
+    [Range(0, 9)]
+    public int Region { get; set; }
+
+    /// <summary>
+    /// 卡包区域内序号 (0-99)
+    /// </summary>
+    [Range(0, 99)]
+    public int Sequence { get; set; }
+
+    /// <summary>
+    /// 由区域与序号拼接的三位码
+    /// </summary>
+    [NotMapped]
+    public string PackCode => $"{Region}{Sequence:D2}";
+
+    /// <summary>
+    /// 关联的卡牌集合定义ID
+    /// </summary>
+    public int CardSetDefinitionId { get; set; }
 
     /// <summary>
     /// 卡包描述
@@ -66,6 +98,11 @@ public class CardPackDefinition
     /// 用户购买的此类型卡包列表
     /// </summary>
     public List<UserCardPack> UserCardPacks { get; set; } = new();
+
+    /// <summary>
+    /// 关联的卡牌集合定义
+    /// </summary>
+    public CardSetDefinition CardSetDefinition { get; set; } = null!;
 
     /// <summary>
     /// 获取卡包类型

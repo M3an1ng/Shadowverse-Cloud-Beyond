@@ -107,9 +107,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
         public string Scope { get; set; } = "self";
 
         /// <summary>
+        /// 触发关系
+        /// </summary>
+        public string Relation { get; set; } = "any";
+
+        /// <summary>
         /// 触发时序
         /// </summary>
         public string Timing { get; set; } = "after";
+
+        /// <summary>
+        /// 触发区域列表
+        /// </summary>
+        public List<string> Zones { get; set; } = new();
 
         /// <summary>
         /// 触发条件表达式
@@ -142,7 +152,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
             {
                 EventTypes = new List<string>(this.EventTypes),
                 Scope = this.Scope,
+                Relation = this.Relation,
                 Timing = this.Timing,
+                Zones = new List<string>(this.Zones),
                 Condition = this.Condition?.Clone() as ExpressionNode,
                 IsOptional = this.IsOptional,
                 Location = this.Location,

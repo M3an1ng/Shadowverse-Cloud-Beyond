@@ -39,9 +39,13 @@ export function createCardInstance(cardDto) {
         rarity: cardDto.Rarity,
         class: cardDto.Class,
         description: cardDto.Description,
+        artPreview: cardDto.ArtPreview ?? cardDto.artPreview ?? null,
+        artDetail: cardDto.ArtDetail ?? cardDto.artDetail ?? null,
         keywords: cardDto.Keywords || [],
         tribe: cardDto.Tribe || [],
+        earthsigil: cardDto.Earthsigil ?? cardDto.earthsigil ?? cardDto.EarthSigil ?? 0,
         canEvolve: cardDto.CanEvolve ?? cardDto.canEvolve,
+        effectDescriptions: cardDto.EffectDescriptions ?? cardDto.effectDescriptions ?? [],
 
         // 运行时状态 (由服务器在DTO中提供)
         uid: instanceId,
@@ -50,11 +54,17 @@ export function createCardInstance(cardDto) {
         currentHealth: cardDto.CurrentHealth,
         isEvolved: cardDto.IsEvolved,
         canAttack: cardDto.CanAttack,
+        fieldTurn: cardDto.FieldTurn ?? cardDto.fieldTurn ?? 0,
         hasActAbility: cardDto.HasActAbility ?? false,
+        actAbilities: cardDto.ActAbilities ?? cardDto.actAbilities ?? [],
         actLastUsedTurnNumber: cardDto.ActLastUsedTurnNumber ?? null,
+        fusionAbilities: cardDto.FusionAbilities ?? cardDto.fusionAbilities ?? [],
         ownerId: cardDto.OwnerPlayerId,
         zone: cardDto.Zone,
         countdown: cardDto.CurrentCountdown,
+        buffSummaries: cardDto.BuffSummaries ?? cardDto.buffSummaries ?? [],
+        buffStatSummary: cardDto.BuffStatSummary ?? cardDto.buffStatSummary ?? null,
+        counters: cardDto.Counters ?? cardDto.counters ?? cardDto.CounterMap ?? cardDto.counterMap ?? {},
 
         // 纯前端状态 (在本地初始化和管理)
         turnPlayed: null,

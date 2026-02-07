@@ -40,9 +40,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
                     AddParsed(result, ParseKeywordText(element.GetString()));
                     break;
                 case JsonValueKind.Number:
-                    if (element.TryGetInt32(out var numeric) && Enum.IsDefined(typeof(EffectKeyword), numeric))
+                    if (element.TryGetInt32(out var numeric) && Enum.IsDefined(typeof(AbilityKeyword), numeric))
                     {
-                        result.Add(new AbilityKeywordConfig { Keyword = (EffectKeyword)numeric });
+                        result.Add(new AbilityKeywordConfig { Keyword = (AbilityKeyword)numeric });
                     }
                     break;
                 case JsonValueKind.Object:
@@ -57,9 +57,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
                                 AddParsed(result, ParseKeywordText(item.GetString()));
                                 break;
                             case JsonValueKind.Number:
-                                if (item.TryGetInt32(out var arrayNumeric) && Enum.IsDefined(typeof(EffectKeyword), arrayNumeric))
+                                if (item.TryGetInt32(out var arrayNumeric) && Enum.IsDefined(typeof(AbilityKeyword), arrayNumeric))
                                 {
-                                    result.Add(new AbilityKeywordConfig { Keyword = (EffectKeyword)arrayNumeric });
+                                    result.Add(new AbilityKeywordConfig { Keyword = (AbilityKeyword)arrayNumeric });
                                 }
                                 break;
                             case JsonValueKind.Object:
@@ -84,8 +84,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
             var keywordName = trimmed;
             var value = ParseInlineValue(trimmed, out keywordName);
 
-            var keyword = Keywords.ParseEffectKeywordOrDefault(keywordName, EffectKeyword.None);
-            if (keyword == EffectKeyword.None)
+            var keyword = Keywords.ParseEffectKeywordOrDefault(keywordName, AbilityKeyword.None);
+            if (keyword == AbilityKeyword.None)
             {
                 return null;
             }
@@ -104,8 +104,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
                 return null;
             }
 
-            var keyword = Keywords.ParseEffectKeywordOrDefault(keywordText, EffectKeyword.None);
-            if (keyword == EffectKeyword.None)
+            var keyword = Keywords.ParseEffectKeywordOrDefault(keywordText, AbilityKeyword.None);
+            if (keyword == AbilityKeyword.None)
             {
                 return null;
             }
@@ -209,7 +209,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
 
         private static void AddParsed(List<AbilityKeywordConfig> list, AbilityKeywordConfig? keyword)
         {
-            if (keyword == null || keyword.Keyword == EffectKeyword.None)
+            if (keyword == null || keyword.Keyword == AbilityKeyword.None)
             {
                 return;
             }

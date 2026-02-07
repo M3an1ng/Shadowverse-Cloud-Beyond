@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using AutoMapper; // Added for IMapper
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
 {
@@ -62,6 +63,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         public bool IsEnabled { get; set; } = true;
 
         /// <summary>
+        /// 是否需要重新评估（事件阶段状态）
+        /// </summary>
+        public bool NeedsEvaluation { get; private set; } = true;
+
+        /// <summary>
+        /// 上次评估绑定的触发事件ID
+        /// </summary>
+        public Guid? LastEvaluatedEventId { get; private set; }
+
+        /// <summary>
+        /// 事件阶段锁定的评估结果
+        /// </summary>
+        public bool? LastResolvedResult { get; private set; }
+
+        /// <summary>
         /// 评估历史
         /// </summary>
         public List<ConditionEvaluationResult> EvaluationHistory { get; } = new();
@@ -100,7 +116,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             try
             {
                 // 使用IConditionEvaluator进行实际的条件评估
-                result = EvaluateConditionLogic(context);
+                result = EvaluateConditionLogic(context, null);
             }
             catch (Exception ex)
             {
@@ -134,16 +150,129 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         }
 
         /// <summary>
+        /// 尝试读取事件阶段内已锁定的评估结果。
+        /// </summary>
+        public bool TryGetResolvedResult(Guid triggeringEventId, out bool result)
+        {
+            result = false;
+            if (triggeringEventId == Guid.Empty)
+            {
+                return false;
+            }
+
+            if (LastEvaluatedEventId != triggeringEventId)
+            {
+                MarkForEvaluation();
+                return false;
+            }
+
+            if (NeedsEvaluation || !LastResolvedResult.HasValue)
+            {
+                return false;
+            }
+
+            result = LastResolvedResult.Value;
+            return true;
+        }
+
+        /// <summary>
+        /// 写入事件阶段锁定的评估结果。
+        /// </summary>
+        public void SetResolvedResult(bool result, Guid triggeringEventId)
+        {
+            if (triggeringEventId == Guid.Empty)
+            {
+                return;
+            }
+
+            LastResolvedResult = result;
+            LastEvaluatedEventId = triggeringEventId;
+            NeedsEvaluation = false;
+        }
+
+        /// <summary>
+        /// 将条件标记为需要重新评估。
+        /// </summary>
+        public void MarkForEvaluation()
+        {
+            NeedsEvaluation = true;
+            LastEvaluatedEventId = null;
+            LastResolvedResult = null;
+        }
+
+        /// <summary>
+        /// 清理指定触发事件的锁定结果。
+        /// </summary>
+        public void ClearResolvedForEvent(Guid triggeringEventId)
+        {
+            if (triggeringEventId == Guid.Empty)
+            {
+                return;
+            }
+
+            if (LastEvaluatedEventId == triggeringEventId)
+            {
+                MarkForEvaluation();
+            }
+        }
+
+        /// <summary>
+        /// 评估条件（带追踪）
+        /// </summary>
+        public bool Evaluate(GameContext context, IDslTraceCollector traceCollector)
+        {
+            if (!IsEnabled)
+                return false;
+
+            var startTime = DateTime.UtcNow;
+            bool result;
+
+            try
+            {
+                result = EvaluateConditionLogic(context, traceCollector);
+            }
+            catch (Exception ex)
+            {
+                result = false;
+                RecordEvaluationResult(new ConditionEvaluationResult
+                {
+                    Success = false,
+                    Result = false,
+                    ErrorMessage = ex.Message,
+                    EvaluationTime = startTime,
+                    Duration = DateTime.UtcNow - startTime
+                });
+                throw;
+            }
+
+            EvaluationCount++;
+            LastEvaluationTime = DateTime.UtcNow;
+            LastEvaluationResult = result;
+
+            RecordEvaluationResult(new ConditionEvaluationResult
+            {
+                Success = true,
+                Result = result,
+                EvaluationTime = startTime,
+                Duration = DateTime.UtcNow - startTime
+            });
+
+            return result;
+        }
+
+        /// <summary>
         /// 实际的条件评估逻辑
         /// </summary>
         /// <param name="context">统一的游戏上下文</param>
         /// <returns>评估结果</returns>
-        private bool EvaluateConditionLogic(GameContext context)
+        private bool EvaluateConditionLogic(GameContext context, IDslTraceCollector? traceCollector)
         {
             try
             {
                 // 直接使用GameContext，IConditionEvaluator已经更新为使用GameContext
-                var result = _conditionEvaluator.Evaluate(Config, context);
+                var result = traceCollector != null && _conditionEvaluator is DslConditionEvaluator dslEvaluator
+                    ? dslEvaluator.EvaluateWithTrace(Config, context, traceCollector)
+                    : _conditionEvaluator.Evaluate(Config, context);
 
                 _logger?.LogDebug("Condition {ConditionId} evaluated to {Result}", Config.Id, result);
                 return result;
@@ -180,6 +309,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             LastEvaluationTime = null;
             LastEvaluationResult = null;
             EvaluationHistory.Clear();
+            MarkForEvaluation();
         }
 
         /// <summary>
@@ -189,6 +319,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         {
             LastEvaluationResult = null;
             LastEvaluationTime = null;
+            MarkForEvaluation();
         }
 
 

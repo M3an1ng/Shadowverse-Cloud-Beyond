@@ -49,9 +49,9 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             // TODO: Set ZoneIndex
 
             gameState.RegisterCardInstance(cardInstance);
-            var readableCardId = gameState.InGameIds.Format(InGameIdKind.Card, instanceId);
-            _logger.LogInformation("Created and registered new card instance {CardId} (guid={InstanceId}, Def: {DefinitionId}) for player {OwnerPlayerId} in zone {InitialZone}",
-                readableCardId, instanceId, cardDefinitionId, ownerPlayerId, initialZone);
+            // var readableCardId = gameState.InGameIds.Format(InGameIdKind.Card, instanceId);
+            // _logger.LogInformation("Created and registered new card instance {CardId} (guid={InstanceId}, Def: {DefinitionId}) for player {OwnerPlayerId} in zone {InitialZone}",
+            //     readableCardId, instanceId, cardDefinitionId, ownerPlayerId, initialZone);
 
             var abilityConfigs = GameDataProvider.Instance.GetAbilityConfigs(cardDefinition.Id);
             if (abilityConfigs != null && abilityConfigs.Any())
@@ -78,7 +78,10 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                         ownerPlayer.Hand.Add(cardInstance);
                         break;
                     case CardZone.Field:
-                        ownerPlayer.Field.Add(cardInstance);
+                        if (cardDefinition.Type != CardType.Leader)
+                        {
+                            ownerPlayer.Field.Add(cardInstance);
+                        }
                         break;
                     case CardZone.Graveyard:
                         ownerPlayer.Graveyard.Add(cardInstance);
@@ -93,8 +96,8 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                         _logger.LogWarning("Attempted to add card {InstanceId} to an unhandled zone: {InitialZone}", instanceId, initialZone);
                         break;
                 }
-                _logger.LogInformation("Added card instance {CardId} (guid={InstanceId}) to Player {OwnerPlayerId}'s {InitialZone} list.",
-                    readableCardId, instanceId, ownerPlayerId, initialZone);
+                // _logger.LogInformation("Added card instance {CardId} (guid={InstanceId}) to Player {OwnerPlayerId}'s {InitialZone} list.",
+                //     readableCardId, instanceId, ownerPlayerId, initialZone);
             }
             else
             {
@@ -149,9 +152,16 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                 newCardCopy.ResetAttackState();
                 newCardCopy.ResetActState();
 
+                if (gameState.FindCardInstance(newCardCopy.InstanceId) == null)
+                {
+                    gameState.RegisterCardInstance(newCardCopy);
+                }
+
+                var runtimeBuffManager = gameState.BuffManager ?? _buffManager;
+
                 // Use the BuffFactory to create deep copies of each buff.
                 // Use the BuffFactory to create deep copies of each buff and register them to the new card.
-                var originalBuffs = _buffManager.GetBuffsForCard(originalCardToCopy.InstanceId);
+                var originalBuffs = runtimeBuffManager.GetBuffsForCard(originalCardToCopy.InstanceId);
                 foreach (var buff in originalBuffs)
                 {
                     // Use the enhanced factory method to create a copy already retargeted to the new card.
@@ -160,7 +170,7 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                     // TODO: This path is currently dead code. If it's ever used,
                     // it needs a GameContext to correctly register buffs with abilities.
                     // For now, we pass the available GameState to satisfy the method signature.
-                    _buffManager.RegisterBuffInstance(buffCopy, gameState);
+                    runtimeBuffManager.RegisterBuffInstance(buffCopy, gameState);
                 }
 
                 // When making an exact copy, the new card should also get a fresh set of abilities based on its definition.
@@ -176,7 +186,7 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                 }
 
                 _logger.LogInformation("Created an exact copy of card {OriginalInstanceId} as {NewInstanceId}. Copied {BuffCount} buffs and {Damage} damage.",
-                   originalCardToCopy.InstanceId, newInstanceId, _buffManager.GetBuffsForCard(newCardCopy.InstanceId).Count, newCardCopy.Damage);
+                   originalCardToCopy.InstanceId, newInstanceId, runtimeBuffManager.GetBuffsForCard(newCardCopy.InstanceId).Count, newCardCopy.Damage);
             }
             // If not exactCopy, it's a fresh instance based on its definition, which is the default state.
 
@@ -199,7 +209,10 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                         ownerPlayer.Hand.Add(newCardCopy);
                         break;
                     case CardZone.Field:
-                        ownerPlayer.Field.Add(newCardCopy);
+                        if (!newCardCopy.IsLeader)
+                        {
+                            ownerPlayer.Field.Add(newCardCopy);
+                        }
                         break;
                     case CardZone.Graveyard:
                         ownerPlayer.Graveyard.Add(newCardCopy);
@@ -219,10 +232,10 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             {
                 _logger.LogWarning("Could not find owner player state for ID {OwnerPlayerId} to add copied card to zone list.", newOwnerPlayerId);
             }
-            var readableNewId = gameState.InGameIds.Format(InGameIdKind.Card, newInstanceId);
-            var readableOriginalId = gameState.InGameIds.Format(InGameIdKind.Card, originalCardToCopy.InstanceId);
-            _logger.LogInformation("Created and registered a copy {NewCardId} (guid={NewInstanceId}, Def: {DefinitionId}) of card {OriginalCardId} (guid={OriginalInstanceId}) for player {NewOwnerPlayerId} in zone {InitialZone}. ExactCopy: {ExactCopy}",
-                readableNewId, newInstanceId, newCardCopy.CurrentDefinitionId, readableOriginalId, originalCardToCopy.InstanceId, newOwnerPlayerId, initialZone, exactCopy);
+            // var readableNewId = gameState.InGameIds.Format(InGameIdKind.Card, newInstanceId);
+            // var readableOriginalId = gameState.InGameIds.Format(InGameIdKind.Card, originalCardToCopy.InstanceId);
+            // _logger.LogInformation("Created and registered a copy {NewCardId} (guid={NewInstanceId}, Def: {DefinitionId}) of card {OriginalCardId} (guid={OriginalInstanceId}) for player {NewOwnerPlayerId} in zone {InitialZone}. ExactCopy: {ExactCopy}",
+            //     readableNewId, newInstanceId, newCardCopy.CurrentDefinitionId, readableOriginalId, originalCardToCopy.InstanceId, newOwnerPlayerId, initialZone, exactCopy);
 
             return newCardCopy;
         }

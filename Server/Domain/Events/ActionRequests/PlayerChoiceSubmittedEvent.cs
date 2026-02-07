@@ -24,8 +24,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("选择结果", "玩家提交的选择结果。")]
         public SubmitTargetChoiceActionDto Choice { get; }
 
-        public PlayerChoiceSubmittedEvent(PlayerState requestingPlayer, SubmitTargetChoiceActionDto choice)
-            : base(EventType.PlayerChoiceSubmitted)
+        public PlayerChoiceSubmittedEvent(PlayerState requestingPlayer, SubmitTargetChoiceActionDto choice, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.PlayerChoiceSubmitted, eventId, timestamp)
         {
             // The source of this event is the player who made the choice.
             Source = TargetInfo.ForPlayer(requestingPlayer);

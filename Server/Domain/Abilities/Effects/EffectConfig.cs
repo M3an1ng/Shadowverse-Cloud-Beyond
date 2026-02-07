@@ -2,6 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Effects;
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
@@ -14,6 +15,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
     /// </summary>
     public class EffectConfig
     {
+        private Dictionary<string, ValueConfig> _parameters = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>
         /// 效果唯一标识
         /// </summary>
@@ -37,6 +39,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// </summary>
         public int ExecutionOrder { get; set; } = 0; // Default to 0 if not specified
 
+        /// <summary>
+        /// 效果重复次数。0 表示只执行一次；1 表示额外再执行 1 次，以此类推。
+        /// </summary>
+        public int RepeatCount { get; set; } = 0;
+
+        /// <summary>
+        /// 重复执行的条件（为空则默认满足）。
+        /// </summary>
+        public ConditionConfig? RepeatCondition { get; set; }
+
         /// 效果数值
         /// </summary>
         //public ValueConfig Amount { get; set; } = new();
@@ -45,7 +57,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// 效果参数
         /// </summary>
         // M12 V1.1: 使用 ValueConfig 以支持动态参数值
-        public Dictionary<string, ValueConfig> Parameters { get; set; } = new();
+        public Dictionary<string, ValueConfig> Parameters
+        {
+            get => _parameters;
+            set
+            {
+                if (value == null)
+                {
+                    _parameters = new Dictionary<string, ValueConfig>(StringComparer.OrdinalIgnoreCase);
+                    return;
+                }
+
+                // Validate case-insensitive duplicates by rehydrating with the comparer.
+                _parameters = new Dictionary<string, ValueConfig>(value, StringComparer.OrdinalIgnoreCase);
+            }
+        }
 
         /// <summary>
         /// 目标选择器：用于从父级能力已解析的目标池(ResolvedTargets)中选择目标。
@@ -59,7 +85,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// <summary>
         /// 失败时的处理策略
         /// </summary>
-        public FailureHandling OnFailure { get; set; } = FailureHandling.SkipEffect;
+        public FailureHandling OnFailure { get; set; } = FailureHandling.CompleteWithFailure;
 
         /// <summary>
         /// 效果表达式（DSL语法）

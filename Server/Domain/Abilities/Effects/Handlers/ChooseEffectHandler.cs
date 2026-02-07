@@ -18,7 +18,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
         public override GameStateActionResult Apply(Effect effect, GameContext context, ChooseEffectParams parameters)
         {
-            // No-op: the branch decision is resolved during effect generation (Ability.CreateEffectsAsync).
+            // No-op: the branch decision is resolved during decision event processing.
             return new GameStateActionResult { Success = true };
         }
     }

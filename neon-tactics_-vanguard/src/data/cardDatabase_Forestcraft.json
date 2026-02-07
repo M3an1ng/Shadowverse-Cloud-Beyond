@@ -1,119 +1,446 @@
 {
-  "1411301": {
-    "id": "1411301",
-    "name": "旋律的演奏者",
-    "cardSet": "星云基础",
+  "1510103": {
+    "id": "1510103",
+    "name": "纹章:季神·芙罗拉",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=1||+0/+1|It",
+      "When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=2||+1/+0|It",
+      "When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=3||Give|It|{Ward}",
+      "When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=4||-1/-1|Random&1-Enemy-Field-Follower"
+    ]
+  },
+  "1510105": {
+    "id": "1510105",
+    "name": "纹章:“悠然可爱”·春",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Turn-End||AddToHand|1010402|1",
+      "When|Allied-Turn-End||If|Combo&4||Countdown+1|ThisCard"
+    ]
+  },
+  "1510107": {
+    "id": "1510107",
+    "name": "四季的茶话会",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Legendary",
+    "type": "Spell",
+    "trait": "四季",
+    "cost": 4,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||PP|X||X=Cards|Allied-Field-Crest",
+      "Play||SameSummon|Allied-ThisMatch@Destroy-Crest"
+    ]
+  },
+  "1510201": {
+    "id": "1510201",
+    "name": "纹章:艾蔻",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Turn-End||Give|ThisCard|{When|Allied-Card|Play||If|Combo&4||Destroy|ThisCard}",
+      "LastWords||Summon|1511202|1||Give|It|{Storm}"
+    ]
+  },
+  "1510203": {
+    "id": "1510203",
+    "name": "纹章:“傲雪淩霜”·冬",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Turn-End||Destroy|Random&1-Enemy-Follower",
+      "When|Allied-Turn-End||If|Combo&4||Countdown+1|ThisCard"
+    ]
+  },
+  "1510205": {
+    "id": "1510205",
+    "name": "纹章:“炽烈激情”·夏",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Turn-End||Damage|Random&1-Enemy-Follower|1||Damage|Enemy-Leader|1||If|Combo&4||Countdown+1|ThisCard"
+    ]
+  },
+  "1510302": {
+    "id": "1510302",
+    "name": "纹章:“馥郁柔和”·秋",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Turn-End||Draw|1",
+      "When|Allied-Turn-End||If|Combo&4||Countdown+1|ThisCard"
+    ]
+  },
+  "1511101": {
+    "id": "1511101",
+    "name": "季神·芙罗拉",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&0|{When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=1||+0/+1|It}|{When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=2||+1/+0|It}|{When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=3||Give|It|{Ward}}|{When|Allied-Forestcraft-Follower|EnterField||If|{Cards|Allied-Field-Card}=4||-1/-1|Random&1-Enemy-Field-Follower}",
+      "Fanfare||Summon|1010402|2"
+    ]
+  },
+  "1511102": {
+    "id": "1511102",
+    "name": "御风领主·萝洁爱尔",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 2,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||SearchSummon|Random&1-Cost=3-Follower||Give|It|{Ward}||Give|It|{Clash||ReturnToHand|ThisCard}||AddLabel|It|Label1511102||SearchSummon|Random&1-Cost=2-Follower||Give|It|{Ward}||Give|It|{Clash||ReturnToHand|ThisCard}||AddLabel|It|Label1511102||SearchSummon|Random&1-Cost=1-Follower||Give|It|{Ward}||Give|It|{Clash||ReturnToHand|ThisCard}||AddLabel|It|Label1511102",
+      "When|Allied-Follower|LeaveField||SplitDamage|Enemy-Follower|3",
+      "SuperEvolve||Give|Allied-Field-Follower|{Aura}"
+    ]
+  },
+  "1511103": {
+    "id": "1511103",
+    "name": "“悠然可爱”·春",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 1,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&1|{When|Allied-Turn-End||AddToHand|1010402|1}|{When|Allied-Turn-End||If|Combo&4||Countdown+1|ThisCard}",
+      "Fanfare||If|Combo&4||Restore|Allied-Leader|3",
+      "SuperEvolve||AddToHand|1510107|1"
+    ]
+  },
+  "1511201": {
+    "id": "1511201",
+    "name": "禁忌探索",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 9,
+    "effects": [
+      "LastWords||Search|Random&1-Forestcraft-Cost<4-Follower||Allied-Turn-End-Until|Cost$0|It",
+      "When|Allied-Card|Play||Countdown-1|ThisCard"
+    ]
+  },
+  "1511202": {
+    "id": "1511202",
+    "name": "艾蔻",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Rush",
+      "Clash||Crest&0|{When|Allied-Turn-End||Give|ThisCard|{When|Allied-Card|Play||If|Combo&4||Destroy|ThisCard}}|{LastWords||Summon|1511202|1||Give|It|{Storm}}||Change|If|{Cards|Allied-Field-SameName&1510201-Crest}>0||Damage|Enemy-Leader|2"
+    ]
+  },
+  "1511203": {
+    "id": "1511203",
+    "name": "狐樱花",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 1,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "When|Field-ThisCard|Increased||InOrder&1|{Damage|Enemy-Follower|1}|{Give|ThisCard|{Storm}}|{Draw|1}",
+      "SuperEvolve||+1/+1|ThisCard"
+    ]
+  },
+  "1511204": {
+    "id": "1511204",
+    "name": "“炽烈激情”·夏",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 1,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&1|{When|Allied-Turn-End||Damage|Random&1-Enemy-Follower|1||Damage|Enemy-Leader|1||If|Combo&4||Countdown+1|ThisCard}",
+      "Bane"
+    ]
+  },
+  "1511205": {
+    "id": "1511205",
+    "name": "森友合击",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Mode&1|{+0/$1|Select&1-Enemy-Field-Follower}|{AuxSelect|Select&1-Enemy-Field-Follower||Damage|Enemy-Follower|1}||Change|If|Combo&5||+0/$1|Select&1-Enemy-Field-Follower||Damage|Enemy-Follower|1",
+      "Play||If|Combo&3||Draw|1"
+    ]
+  },
+  "1511301": {
+    "id": "1511301",
+    "name": "自然默化者",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 2,
+    "defense": 8,
+    "countdown": 0,
+    "effects": [
+      "Rush",
+      "Ward",
+      "Clash||Give|Opposing|{When|Enemy-Turn-End||Destroy|ThisCard||Restore|Enemy-Leader|X||X=Defense|ThisCard}||AddLabel|Opposing|Label1511305",
+      "Evolve||UnStriked|ThisCard"
+    ]
+  },
+  "1511302": {
+    "id": "1511302",
+    "name": "希望的萌芽",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Summon|1010402|1||Give|It|{LastWords||Restore|Allied-Leader|1}||AddLabel|It|Label1511301A",
+      "Play||Summon|1010402|1||Give|It|{LastWords||Draw|1}||AddLabel|It|Label1511301B"
+    ]
+  },
+  "1511303": {
+    "id": "1511303",
+    "name": "游牧之地",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||SearchSummon|Random&1-Forestcraft-Cost<4-Cost$Highest-Follower",
+      "Engage&1||Destroy|ThisCard",
+      "Engage&1||+1/+1|Select&1-Allied-Field-Follower||Change|If|Combo&3||+1/+1|Allied-Field-Follower"
+    ]
+  },
+  "1511304": {
+    "id": "1511304",
+    "name": "指挥的奇迹",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Mode&1|{+1/+2|Select&1-Allied-Field-Follower}|{AddToDeck|1511304|2||Draw|2}|{Banish|Allied-Deck-SameName&1511304-Card}"
+    ]
+  },
+  "1511306": {
+    "id": "1511306",
+    "name": "“傲雪淩霜”·冬",
+    "cardSet": "神眷的棋盘",
     "class": "Forestcraft",
     "rarity": "Silver",
     "type": "Follower",
     "trait": "",
     "cost": 4,
-    "attack": 5,
+    "attack": 1,
     "defense": 4,
     "countdown": 0,
     "effects": [
-      "Evolve||Summon|1010402|3",
-      "SuperEvolve||Give|Allied-Field-Trait:1-Follower|{Storm}"
+      "Fanfare||Crest&1|{When|Allied-Turn-End||Destroy|Random&1-Enemy-Follower}|{When|Allied-Turn-End||If|Combo&4||Countdown+1|ThisCard}",
+      "Evolve||-1/-1|Enemy-Field-Follower"
     ]
   },
-  "1411302": {
-    "id": "1411302",
-    "name": "流水庭院",
-    "cardSet": "星云基础",
-    "class": "Forestcraft",
-    "rarity": "Silver",
-    "type": "Amulet",
-    "trait": "",
-    "cost": 2,
-    "attack": 0,
-    "defense": 0,
-    "countdown": 3,
-    "effects": [
-      "When|Allied-Trait:1-Follower|EnterField||Restore|Allied-Leader|1||Countdown-1|ThisCard",
-      "Engage&0||Summon|1010402|1"
-    ]
-  },
-  "1411303": {
-    "id": "1411303",
-    "name": "冒险精灵·小梅",
-    "cardSet": "星云基础",
-    "class": "Forestcraft",
-    "rarity": "Silver",
-    "type": "Follower",
-    "trait": "",
-    "cost": 1,
-    "attack": 1,
-    "defense": 1,
-    "countdown": 0,
-    "effects": [
-      "Fanfare||If|Combo&3||Damage|Select&1-Enemy-Follower|3"
-    ]
-  },
-  "1411401": {
-    "id": "1411401",
-    "name": "自由牧者",
-    "cardSet": "星云基础",
+  "1511401": {
+    "id": "1511401",
+    "name": "拾果龙",
+    "cardSet": "神眷的棋盘",
     "class": "Forestcraft",
     "rarity": "Bronze",
     "type": "Follower",
     "trait": "",
-    "cost": 1,
+    "cost": 4,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|Increased||If|TimesPerTurn&1||+1/+1|Allied-Field-Other-Follower"
+    ]
+  },
+  "1511403": {
+    "id": "1511403",
+    "name": "“馥郁柔和”·秋",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 1,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&1|{When|Allied-Turn-End||Draw|1}|{When|Allied-Turn-End||If|Combo&4||Countdown+1|ThisCard}",
+      "NoEP"
+    ]
+  },
+  "1511404": {
+    "id": "1511404",
+    "name": "秘园妖精",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
     "attack": 1,
     "defense": 1,
     "countdown": 0,
     "effects": [
-      "Fanfare||+1/+0|Select&1-Allied-Field-Other-Cost=1-Follower",
-      "Enhance&4||+1/+1|Allied-Field-Follower"
+      "Fanfare||Mode&1|{+1/+1|Select&1-Allied-Field-Follower}|{AddToHand|1010402|1||Allied-Turn-End-Until|Cost$0|It}"
     ]
   },
-  "1411402": {
-    "id": "1411402",
-    "name": "林中旅程",
-    "cardSet": "星云基础",
+  "1511405": {
+    "id": "1511405",
+    "name": "魇梦妖精",
+    "cardSet": "神眷的棋盘",
+    "class": "Forestcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1010402|3||Give|That|{Strike||Damage|Opposing|3}||AddLabel|That|Label1511405||PP|3"
+    ]
+  },
+  "1511406": {
+    "id": "1511406",
+    "name": "妖精的团结",
+    "cardSet": "神眷的棋盘",
     "class": "Forestcraft",
     "rarity": "Bronze",
     "type": "Spell",
     "trait": "",
-    "cost": 2,
+    "cost": 3,
     "attack": 0,
     "defense": 0,
     "countdown": 0,
     "effects": [
-      "Play||Draw|1",
-      "Play||If|Combo&3||AddToHand|1210402|1"
+      "Play||Search|Random@2-Cost<2-Follower||Allied-Turn-End-Until|Cost$0|It"
     ]
   },
-  "1411403": {
-    "id": "1411403",
-    "name": "妖精召集令",
-    "cardSet": "星云基础",
+  "1511407": {
+    "id": "1511407",
+    "name": "白梦妖精",
+    "cardSet": "神眷的棋盘",
     "class": "Forestcraft",
     "rarity": "Bronze",
-    "type": "Spell",
+    "type": "Follower",
     "trait": "",
-    "cost": 1,
-    "attack": 0,
-    "defense": 0,
+    "cost": 3,
+    "attack": 2,
+    "defense": 3,
     "countdown": 0,
     "effects": [
-      "Play||AddToHand|1010402|2"
-    ]
-  },
-  "1411404": {
-    "id": "1411404",
-    "name": "大自然的警告",
-    "cardSet": "星云基础",
-    "class": "Forestcraft",
-    "rarity": "Bronze",
-    "type": "Amulet",
-    "trait": "",
-    "cost": 2,
-    "attack": 0,
-    "defense": 0,
-    "countdown": 0,
-    "effects": [
-      "Engage&0||Destroy|ThisCard",
-      "Engage&0||Mode&1|{Damage|Enemy-Striked-Follower|2}|{ReturnToHand|Select&1-Allied-Follower}"
+      "Ward",
+      "When|ThisCard|LeaveField||AddToHand|1210402|1",
+      "Evolve||Summon|1511407|1||Give|It|{Rush}"
     ]
   }
 }

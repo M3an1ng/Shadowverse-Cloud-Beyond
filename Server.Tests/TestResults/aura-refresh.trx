@@ -1,0 +1,82 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="2b218368-5755-4fe0-9b51-a82bc578774f" name="Administrator@DESKTOP-PHQQDIM 2026-01-30 23:09:21" runUser="DESKTOP-PHQQDIM\Administrator" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-01-30T23:09:21.3534688+08:00" queuing="2026-01-30T23:09:21.3534692+08:00" start="2026-01-30T23:09:09.7184247+08:00" finish="2026-01-30T23:09:21.3606012+08:00" />
+  <TestSettings name="default" id="1651d391-8cd3-4aff-b80b-d8dcad269308">
+    <Deployment runDeploymentRoot="Administrator_DESKTOP-PHQQDIM_2026-01-30_23_09_21" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="5659306b-38fa-404a-817e-6848f1986249" testId="709d9494-9ab6-4ac7-0bd3-3a06ef19cc83" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.AuraConfig_conditions_gate_application" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0252736" startTime="2026-01-30T23:09:21.1634504+08:00" endTime="2026-01-30T23:09:21.1634506+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5659306b-38fa-404a-817e-6848f1986249" />
+    <UnitTestResult executionId="357aa943-fb8c-495c-a87b-03cc119bba62" testId="1e3cb672-d335-ab51-b510-fa8aa8db3464" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_refreshes_on_card_moved_entering_and_leaving_field" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0178922" startTime="2026-01-30T23:09:21.2697870+08:00" endTime="2026-01-30T23:09:21.2697917+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="357aa943-fb8c-495c-a87b-03cc119bba62" />
+    <UnitTestResult executionId="dccebbf4-6d54-4d6e-9113-6daa2daaeacf" testId="1256ed2e-5477-07f2-29b3-76c34f73abcf" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_refresh_guard_skips_buff_applied_loop" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0202039" startTime="2026-01-30T23:09:21.2276316+08:00" endTime="2026-01-30T23:09:21.2276317+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="dccebbf4-6d54-4d6e-9113-6daa2daaeacf" />
+    <UnitTestResult executionId="7ad888b8-db77-47bd-9858-a47906dace17" testId="63dfb3a8-5f72-6211-e2f0-2759d6401917" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.AuraConfig_uses_ability_targets_by_default" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0234614" startTime="2026-01-30T23:09:21.1155736+08:00" endTime="2026-01-30T23:09:21.1155738+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7ad888b8-db77-47bd-9858-a47906dace17" />
+    <UnitTestResult executionId="ec02e9e0-0f5d-4d26-b75b-7e07aaaf34b4" testId="b1956830-48f0-5fd9-f5a0-9d6499ead586" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_refreshes_on_transform_type_change" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0237426" startTime="2026-01-30T23:09:21.2073198+08:00" endTime="2026-01-30T23:09:21.2073199+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ec02e9e0-0f5d-4d26-b75b-7e07aaaf34b4" />
+    <UnitTestResult executionId="d4ed5739-3e15-421b-a485-c213ddfa0c59" testId="6dd502ec-75c2-476b-04f7-bbd9f86b388b" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_stacking_applies_multiple_effect_keys" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0224412" startTime="2026-01-30T23:09:21.1380803+08:00" endTime="2026-01-30T23:09:21.1380805+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d4ed5739-3e15-421b-a485-c213ddfa0c59" />
+    <UnitTestResult executionId="fef3ccd8-b055-4a6f-98e9-28f230b2c7e8" testId="583f0e82-30c6-2da5-5d07-0670282ca9b7" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_is_removed_when_source_leaves_field" computerName="DESKTOP-PHQQDIM" duration="00:00:00.3634365" startTime="2026-01-30T23:09:21.0925237+08:00" endTime="2026-01-30T23:09:21.0925380+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="fef3ccd8-b055-4a6f-98e9-28f230b2c7e8" />
+    <UnitTestResult executionId="7efa0009-0019-48a1-8552-a50648df7007" testId="37d9ebc3-3ed6-52ab-a682-95f347aa0754" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.AuraConfig_overrides_targets_and_conditions" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0199569" startTime="2026-01-30T23:09:21.1837877+08:00" endTime="2026-01-30T23:09:21.1837879+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7efa0009-0019-48a1-8552-a50648df7007" />
+    <UnitTestResult executionId="1658d08e-5c5b-4fac-b61a-2f565cef0171" testId="f5373646-44f7-d84d-026b-4c36b1cba792" testName="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_is_removed_when_source_is_silenced" computerName="DESKTOP-PHQQDIM" duration="00:00:00.0240807" startTime="2026-01-30T23:09:21.2517897+08:00" endTime="2026-01-30T23:09:21.2517901+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1658d08e-5c5b-4fac-b61a-2f565cef0171" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.AuraConfig_overrides_targets_and_conditions" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="37d9ebc3-3ed6-52ab-a682-95f347aa0754">
+      <Execution id="7efa0009-0019-48a1-8552-a50648df7007" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="AuraConfig_overrides_targets_and_conditions" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_refresh_guard_skips_buff_applied_loop" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="1256ed2e-5477-07f2-29b3-76c34f73abcf">
+      <Execution id="dccebbf4-6d54-4d6e-9113-6daa2daaeacf" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="Aura_refresh_guard_skips_buff_applied_loop" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_refreshes_on_transform_type_change" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="b1956830-48f0-5fd9-f5a0-9d6499ead586">
+      <Execution id="ec02e9e0-0f5d-4d26-b75b-7e07aaaf34b4" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="Aura_refreshes_on_transform_type_change" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_is_removed_when_source_is_silenced" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="f5373646-44f7-d84d-026b-4c36b1cba792">
+      <Execution id="1658d08e-5c5b-4fac-b61a-2f565cef0171" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="Aura_is_removed_when_source_is_silenced" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_refreshes_on_card_moved_entering_and_leaving_field" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="1e3cb672-d335-ab51-b510-fa8aa8db3464">
+      <Execution id="357aa943-fb8c-495c-a87b-03cc119bba62" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="Aura_refreshes_on_card_moved_entering_and_leaving_field" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_is_removed_when_source_leaves_field" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="583f0e82-30c6-2da5-5d07-0670282ca9b7">
+      <Execution id="fef3ccd8-b055-4a6f-98e9-28f230b2c7e8" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="Aura_is_removed_when_source_leaves_field" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.AuraConfig_uses_ability_targets_by_default" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="63dfb3a8-5f72-6211-e2f0-2759d6401917">
+      <Execution id="7ad888b8-db77-47bd-9858-a47906dace17" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="AuraConfig_uses_ability_targets_by_default" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.Aura_stacking_applies_multiple_effect_keys" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="6dd502ec-75c2-476b-04f7-bbd9f86b388b">
+      <Execution id="d4ed5739-3e15-421b-a485-c213ddfa0c59" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="Aura_stacking_applies_multiple_effect_keys" />
+    </UnitTest>
+    <UnitTest name="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests.AuraConfig_conditions_gate_application" storage="d:\workspace\shadowverse-beyond\server.tests\bin\debug\net8.0\shadowversebeyond.server.tests.dll" id="709d9494-9ab6-4ac7-0bd3-3a06ef19cc83">
+      <Execution id="5659306b-38fa-404a-817e-6848f1986249" />
+      <TestMethod codeBase="D:\workspace\Shadowverse-beyond\Server.Tests\bin\Debug\net8.0\ShadowverseBeyond.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ShadowverseBeyond.Server.Tests.AuraRefreshIntegrationTests" name="AuraConfig_conditions_gate_application" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="709d9494-9ab6-4ac7-0bd3-3a06ef19cc83" executionId="5659306b-38fa-404a-817e-6848f1986249" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1e3cb672-d335-ab51-b510-fa8aa8db3464" executionId="357aa943-fb8c-495c-a87b-03cc119bba62" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1256ed2e-5477-07f2-29b3-76c34f73abcf" executionId="dccebbf4-6d54-4d6e-9113-6daa2daaeacf" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="63dfb3a8-5f72-6211-e2f0-2759d6401917" executionId="7ad888b8-db77-47bd-9858-a47906dace17" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b1956830-48f0-5fd9-f5a0-9d6499ead586" executionId="ec02e9e0-0f5d-4d26-b75b-7e07aaaf34b4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6dd502ec-75c2-476b-04f7-bbd9f86b388b" executionId="d4ed5739-3e15-421b-a485-c213ddfa0c59" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="583f0e82-30c6-2da5-5d07-0670282ca9b7" executionId="fef3ccd8-b055-4a6f-98e9-28f230b2c7e8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="37d9ebc3-3ed6-52ab-a682-95f347aa0754" executionId="7efa0009-0019-48a1-8552-a50648df7007" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f5373646-44f7-d84d-026b-4c36b1cba792" executionId="1658d08e-5c5b-4fac-b61a-2f565cef0171" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="列表中未列出的结果" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="所有已加载的结果" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="9" executed="9" passed="9" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.4.5+1caef2f33e (64-bit .NET 8.0.23)&#xD;
+[xUnit.net 00:00:07.47]   Discovering: ShadowverseBeyond.Server.Tests&#xD;
+[xUnit.net 00:00:07.55]   Discovered:  ShadowverseBeyond.Server.Tests&#xD;
+[xUnit.net 00:00:07.56]   Starting:    ShadowverseBeyond.Server.Tests&#xD;
+[xUnit.net 00:00:08.14]   Finished:    ShadowverseBeyond.Server.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

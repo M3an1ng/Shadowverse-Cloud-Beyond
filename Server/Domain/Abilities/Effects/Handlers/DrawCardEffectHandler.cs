@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
@@ -32,7 +33,49 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, DrawCardEffectParams parameters)
         {
             const string effectName = "DrawCardEffect";
-            Logger.LogDebug("{EffectName}: Starting with DrawAmount={Amount}.", effectName, parameters.DrawAmount);
+            Logger.LogDebug("{EffectName}: Starting with DrawAmount={Amount}, SearchMode={SearchMode}.", effectName, parameters.DrawAmount, parameters.UseSearchMode);
+
+            if (parameters.UseSearchMode)
+            {
+                if (parameters.SearchTargets == null)
+                {
+                    return new GameStateActionResult { Success = false, ErrorMessage = "SearchTargets is null." };
+                }
+
+                Func<TargetInfo, GameContext, DomainOperationResult> drawSearchAction =
+                    (targetInfo, ctx) =>
+                    {
+                        if (targetInfo.Type != Common.TargetType.Player || targetInfo.Player == null)
+                        {
+                            Logger.LogWarning("{EffectName}: Target is not a player or player data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                            return new DomainOperationResult { Success = false, ErrorMessage = "DrawCard search mode can only be applied to players." };
+                        }
+
+                        var drawEvent = new DrawEvent(targetInfo.Player, parameters.SearchTargets, ctx.SourceCard);
+                        return new DomainOperationResult
+                        {
+                            Success = true,
+                            GeneratedEvents = new List<IGameEvent> { drawEvent }
+                        };
+                    };
+
+                var searchPlayerTargets = PlayerScopeResolver.ResolvePlayerTargets(
+                    context,
+                    parameters.PlayerScope);
+
+                var searchResult = _targetProcessingService.ProcessTargets(
+                    context,
+                    searchPlayerTargets,
+                    drawSearchAction,
+                    effectName);
+
+                if (!searchResult.Success && string.IsNullOrEmpty(searchResult.ErrorMessage))
+                {
+                    searchResult.ErrorMessage = "Failed to process targets for draw card search mode, or no valid targets found.";
+                }
+
+                return searchResult;
+            }
 
             if (parameters.DrawAmount <= 0)
             {
@@ -56,8 +99,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
-                context.CurrentGameState,
-                context.RequestingPlayerId,
+                context,
                 parameters.PlayerScope);
 
             var serviceResult = _targetProcessingService.ProcessTargets(
@@ -75,5 +117,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         }
 
         // CreateEffectCompletedEvent method is removed as this responsibility has moved to EffectExecutor.
+
     }
 }

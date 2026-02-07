@@ -41,6 +41,7 @@ using ShadowverseBeyond.Server.Domain.Factories;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Infrastructure.Logging;
 
 // REMOVED: Static Serilog configuration block (Lines 23-39)
 try // Wrap application startup in try-finally to ensure logs are flushed
@@ -48,6 +49,11 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Starting web application"); // Serilog startup message
 
     var builder = WebApplication.CreateBuilder(args);
+
+    // Log stream buffer + sink for dev-tools viewer
+    builder.Services.AddSingleton<LogStreamBuffer>();
+    builder.Services.AddSingleton<LogStreamSink>();
+    builder.Services.AddSingleton<IConditionTraceSettings, ConditionTraceSettings>();
 
     // --- Serilog Integration ---
     // Configure Serilog using the standard ASP.NET Core configuration pipeline
@@ -60,6 +66,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         .ReadFrom.Configuration(context.Configuration) // Read levels and other settings from appsettings.*.json
         .ReadFrom.Services(services)                   // Allow DI for Serilog extensions
         .Enrich.FromLogContext()                       // Standard context enrichment
+        .WriteTo.Sink(services.GetRequiredService<LogStreamSink>()) // Stream logs to dev-tools viewer
                                                        // 【修复日志重复】删除重复的Console配置，只保留appsettings.Development.json中的配置
                                                        // .WriteTo.Console()                          // 删除：避免与配置文件中的Console配置重复
         .WriteTo.File(                                 // Explicitly configure file sink
@@ -125,6 +132,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddSingleton<IDeckCodeService, DeckCodeService>();
     builder.Services.AddScoped<IDeckValidationService, DeckValidationService>();
     builder.Services.AddScoped<IDeckService, DeckService>();
+    builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
+    builder.Services.AddScoped<IGuestDeckMigrationService, GuestDeckMigrationService>();
     Log.Information("Registered deck services.");
 
     // Register GameDataProvider for data caching and preloading
@@ -468,6 +477,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     var app = builder.Build();
     Log.Information("builder.Build() completed.");
 
+    // Attach the hub context after the app is built to avoid DI/logging circular dependencies during startup.
+    var logStreamSink = app.Services.GetRequiredService<LogStreamSink>();
+    var logHubContext = app.Services.GetRequiredService<IHubContext<LogStreamHub>>();
+    logStreamSink.AttachHubContext(logHubContext);
+    Log.Information("Attached LogStreamHub context to LogStreamSink.");
+
     // --- Initialize Static Service Providers ---
     // This must be done after app is built but before it runs.
     var gameContextAccessor = app.Services.GetRequiredService<IGameContextAccessor>();
@@ -486,12 +501,23 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     // Serve default files (like index.html) from the configured web root
     // Configure options for UseDefaultFiles to use the same physical file provider
+    var workspaceRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, ".."));
+    var frontendMode = builder.Configuration["Frontend:Mode"];
+    var useSourceFrontend = app.Environment.IsDevelopment()
+        || string.Equals(frontendMode, "source", StringComparison.OrdinalIgnoreCase);
+    var prodIndex = Path.Combine(workspaceRoot, "index.prod.html");
+    var defaultIndex = useSourceFrontend
+        ? "index.html"
+        : (File.Exists(prodIndex) && !string.Equals(frontendMode, "source", StringComparison.OrdinalIgnoreCase)
+            ? "index.prod.html"
+            : "index.html");
     var defaultFilesOptions = new DefaultFilesOptions
     {
-        FileProvider = new PhysicalFileProvider(
-            System.IO.Path.Combine(builder.Environment.ContentRootPath, "..")),
+        FileProvider = new PhysicalFileProvider(workspaceRoot),
         RequestPath = ""
     };
+    defaultFilesOptions.DefaultFileNames.Clear();
+    defaultFilesOptions.DefaultFileNames.Add(defaultIndex);
     app.UseDefaultFiles(defaultFilesOptions);
 
     // Serve static files (CSS, JS, images, data) from the workspace root directory (one level up from the project's ContentRootPath)
@@ -558,6 +584,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     // Map SignalR Hub
     app.MapHub<GameHub>("/gamehub");
+    app.MapHub<LogStreamHub>("/loghub");
 
     // Map API Controllers
     app.MapControllers();

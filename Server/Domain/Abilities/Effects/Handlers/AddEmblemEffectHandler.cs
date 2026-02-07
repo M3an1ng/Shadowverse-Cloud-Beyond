@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Factories;
@@ -41,8 +42,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, AddEmblemEffectParams parameters)
         {
             const string effectName = "AddEmblemEffect";
-            Logger.LogDebug("{EffectName}: Starting with CardDefinitionId={CardDefId}, Amount={Amount}.",
-                effectName, parameters.CardDefinitionId, parameters.Amount);
+            var cardDefinitionIds = parameters.CardDefinitionId?.Where(id => id > 0).ToList() ?? new List<int>();
+            var cardIdText = cardDefinitionIds.Count > 0 ? string.Join(",", cardDefinitionIds) : "[]";
+            Logger.LogDebug("{EffectName}: Starting with CardDefinitionIds={CardDefIds}, Amount={Amount}.",
+                effectName, cardIdText, parameters.Amount);
 
             if (parameters.CardSourceMode == CardSourceMode.Instance)
             {
@@ -82,14 +85,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         };
                     }
 
-                    var cardsToAdd = group.ToList();
-                    if (parameters.PreventDuplicate)
-                    {
-                        var existingIds = new HashSet<int>(owner.Emblem.Select(card => card.BaseDefinitionId));
-                        cardsToAdd = cardsToAdd
-                            .Where(card => !existingIds.Contains(card.BaseDefinitionId))
-                            .ToList();
-                    }
+                    var cardsToAdd = FilterEmblemAdditions(owner, group, parameters.PreventDuplicate);
 
                     if (cardsToAdd.Count == 0)
                     {
@@ -102,30 +98,133 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 return instanceResult;
             }
 
-            if (parameters.CardDefinitionId <= 0 || parameters.Amount <= 0)
+            if (parameters.CardSourceMode == CardSourceMode.Copy)
             {
-                Logger.LogWarning("{EffectName}: Invalid parameters CardDefinitionId={CardDefId} or Amount={Amount}.",
-                    effectName, parameters.CardDefinitionId, parameters.Amount);
-                return new GameStateActionResult { Success = false, ErrorMessage = "Invalid CardDefinitionId or Amount." };
+                var targetCards = effect.SelectedTargets
+                    .Where(target => target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList();
+
+                if (targetCards.Count == 0)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "AddEmblem copy mode requires card targets."
+                    };
+                }
+
+                if (targetCards.Any(card => card.CardType != CardType.Crest))
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "AddEmblem can only accept crest cards."
+                    };
+                }
+
+                var copyResult = new GameStateActionResult { Success = true };
+                foreach (var group in targetCards.GroupBy(card => card.OwnerPlayerId))
+                {
+                    var owner = context.CurrentGameState.GetPlayerState(group.Key);
+                    if (owner == null)
+                    {
+                        return new GameStateActionResult
+                        {
+                            Success = false,
+                            ErrorMessage = $"AddEmblem copy mode owner not found for player {group.Key}."
+                        };
+                    }
+
+                    var availableSlots = GetAvailableEmblemSlots(owner);
+                    if (availableSlots <= 0)
+                    {
+                        continue;
+                    }
+
+                    HashSet<int>? existingIds = null;
+                    if (parameters.PreventDuplicate)
+                    {
+                        existingIds = new HashSet<int>(owner.Emblem.Select(card => card.BaseDefinitionId));
+                    }
+
+                    var copies = new List<CardInstance>();
+                    foreach (var card in group)
+                    {
+                        if (availableSlots <= 0)
+                        {
+                            break;
+                        }
+
+                        if (parameters.PreventDuplicate)
+                        {
+                            var definitionId = card.BaseDefinitionId;
+                            if (existingIds!.Contains(definitionId))
+                            {
+                                continue;
+                            }
+                            existingIds.Add(definitionId);
+                        }
+
+                        var copiesToCreate = Math.Max(0, parameters.Amount);
+                        if (parameters.PreventDuplicate)
+                        {
+                            copiesToCreate = Math.Min(copiesToCreate, 1);
+                        }
+
+                        for (int i = 0; i < copiesToCreate; i++)
+                        {
+                            if (availableSlots <= 0)
+                            {
+                                break;
+                            }
+
+                            var copy = new CardInstance(Guid.NewGuid(), card.CurrentDefinitionId, owner.PlayerId)
+                            {
+                                CurrentZone = CardZone.Staging
+                            };
+                            copyResult.GeneratedEvents.Add(new CopyCardEvent(owner, card, copy));
+                            copies.Add(copy);
+                            availableSlots -= 1;
+                        }
+                    }
+
+                    if (copies.Count > 0)
+                    {
+                        copyResult.GeneratedEvents.Add(new AddEmblemEvent(owner, copies));
+                    }
+                }
+
+                return copyResult;
             }
 
-            var definition = GameDataProvider.Instance?.GetCardDefinition(parameters.CardDefinitionId);
-            if (definition == null)
+            if (cardDefinitionIds.Count == 0 || parameters.Amount <= 0)
             {
-                return new GameStateActionResult
-                {
-                    Success = false,
-                    ErrorMessage = $"CardDefinition {parameters.CardDefinitionId} not found for AddEmblem."
-                };
+                Logger.LogWarning("{EffectName}: Invalid parameters CardDefinitionIds={CardDefIds} or Amount={Amount}.",
+                    effectName, cardIdText, parameters.Amount);
+                return new GameStateActionResult { Success = false, ErrorMessage = "Invalid CardDefinitionId list or Amount." };
             }
 
-            if (definition.Type != CardType.Crest)
+            foreach (var cardDefinitionId in cardDefinitionIds)
             {
-                return new GameStateActionResult
+                var definition = GameDataProvider.Instance?.GetCardDefinition(cardDefinitionId);
+                if (definition == null)
                 {
-                    Success = false,
-                    ErrorMessage = "AddEmblem can only accept crest cards."
-                };
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"CardDefinition {cardDefinitionId} not found for AddEmblem."
+                    };
+                }
+
+                if (definition.Type != CardType.Crest)
+                {
+                    return new GameStateActionResult
+                    {
+                        Success = false,
+                        ErrorMessage = "AddEmblem can only accept crest cards."
+                    };
+                }
             }
 
             Func<TargetInfo, GameContext, DomainOperationResult> createAddEmblemEventAction =
@@ -138,23 +237,48 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var player = targetInfo.Player;
-                    if (parameters.PreventDuplicate &&
-                        player.Emblem.Any(card => card.BaseDefinitionId == parameters.CardDefinitionId))
+                    var availableSlots = GetAvailableEmblemSlots(player);
+                    if (availableSlots <= 0)
                     {
                         result.Success = true;
                         return result;
                     }
 
                     var cardsToAdd = new List<CardInstance>();
-                    for (int i = 0; i < parameters.Amount; i++)
+                    foreach (var cardDefinitionId in cardDefinitionIds)
                     {
-                        var newCard = _cardFactory.CreateAndRegisterNewCard(
-                            ctx.CurrentGameState,
-                            parameters.CardDefinitionId,
-                            player.PlayerId,
-                            CardZone.Playing
-                        );
-                        cardsToAdd.Add(newCard);
+                        if (availableSlots <= 0)
+                        {
+                            break;
+                        }
+
+                        if (parameters.PreventDuplicate &&
+                            player.Emblem.Any(card => card.BaseDefinitionId == cardDefinitionId))
+                        {
+                            continue;
+                        }
+
+                        var maxToAdd = Math.Min(parameters.Amount, availableSlots);
+                        if (parameters.PreventDuplicate)
+                        {
+                            maxToAdd = Math.Min(maxToAdd, 1);
+                        }
+
+                        for (int i = 0; i < maxToAdd; i++)
+                        {
+                            var newCard = _cardFactory.CreateAndRegisterNewCard(
+                                ctx.CurrentGameState,
+                                cardDefinitionId,
+                                player.PlayerId,
+                                CardZone.Staging
+                            );
+                            cardsToAdd.Add(newCard);
+                            availableSlots -= 1;
+                            if (availableSlots <= 0)
+                            {
+                                break;
+                            }
+                        }
                     }
 
                     if (cardsToAdd.Count > 0)
@@ -168,8 +292,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
-                context.CurrentGameState,
-                context.RequestingPlayerId,
+                context,
                 parameters.PlayerScope);
 
             var serviceResult = _targetProcessingService.ProcessTargets(
@@ -184,6 +307,52 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             }
 
             return serviceResult;
+        }
+
+        private static int GetAvailableEmblemSlots(PlayerState owner)
+        {
+            return Math.Max(0, GameConstants.Emblem.MaxEmblemSize - owner.Emblem.Count);
+        }
+
+        private static List<CardInstance> FilterEmblemAdditions(
+            PlayerState owner,
+            IEnumerable<CardInstance> candidates,
+            bool preventDuplicate)
+        {
+            var availableSlots = GetAvailableEmblemSlots(owner);
+            if (availableSlots <= 0)
+            {
+                return new List<CardInstance>();
+            }
+
+            HashSet<int>? existingIds = null;
+            if (preventDuplicate)
+            {
+                existingIds = new HashSet<int>(owner.Emblem.Select(card => card.BaseDefinitionId));
+            }
+
+            var selected = new List<CardInstance>();
+            foreach (var card in candidates)
+            {
+                if (availableSlots <= 0)
+                {
+                    break;
+                }
+
+                if (preventDuplicate)
+                {
+                    if (existingIds!.Contains(card.BaseDefinitionId))
+                    {
+                        continue;
+                    }
+                    existingIds.Add(card.BaseDefinitionId);
+                }
+
+                selected.Add(card);
+                availableSlots -= 1;
+            }
+
+            return selected;
         }
     }
 }

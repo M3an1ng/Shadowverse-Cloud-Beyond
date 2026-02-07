@@ -61,7 +61,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     // 通过事件表达意图，由 CardVanishedEvent / CardMovedEvent.Commit 执行状态变更
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new CardVanishedEvent(card, card.CurrentZone, "Effect"));
+                    result.GeneratedEvents.Add(new CardVanishedEvent(card, card.CurrentZone, "Effect", ctx.SourceCard));
                     return result;
                 };
 

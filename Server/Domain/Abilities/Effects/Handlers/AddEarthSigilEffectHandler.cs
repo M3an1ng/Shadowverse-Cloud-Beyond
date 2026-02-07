@@ -56,8 +56,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     if (earthSigil != null)
                     {
-                        earthSigil.AddCounter(CardInstance.EarthsigilCounterKey, parameters.Amount);
-                        return new DomainOperationResult { Success = true };
+                        var oldValue = earthSigil.GetCounter(CardInstance.EarthsigilCounterKey);
+                        var newValue = earthSigil.AddCounter(CardInstance.EarthsigilCounterKey, parameters.Amount);
+
+                        var result = new DomainOperationResult { Success = true };
+                        if (newValue != oldValue)
+                        {
+                            result.GeneratedEvents.Add(new CounterChangedEvent(earthSigil, CardInstance.EarthsigilCounterKey, oldValue, newValue));
+                        }
+
+                        return result;
                     }
 
                     if (parameters.TokenDefinitionId <= 0)
@@ -69,18 +77,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         ctx.CurrentGameState,
                         parameters.TokenDefinitionId,
                         player.PlayerId,
-                        CardZone.Playing);
+                        CardZone.Staging);
 
                     token.SetCounter(CardInstance.EarthsigilCounterKey, parameters.Amount);
 
-                    var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new SummonEvent(player, token));
-                    return result;
+                    var summonResult = new DomainOperationResult { Success = true };
+                    var expectedPosition = player.Field.Count + 1;
+                    summonResult.GeneratedEvents.Add(new SummonEvent(player, token, expectedPosition));
+                    return summonResult;
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
-                context.CurrentGameState,
-                context.RequestingPlayerId,
+                context,
                 parameters.PlayerScope);
 
             var serviceResult = _targetProcessingService.ProcessTargets(

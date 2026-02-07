@@ -5,26 +5,40 @@
 
 import { router } from './router.js';
 import { getDeckOwnerQuery } from './userSession.js';
+import { showCardDetailModal } from './components/CardDetailMockup.js';
 
 const DEFAULT_ENVIRONMENT = 'open';
 const ENVIRONMENT_OPTIONS = [
     {
         value: 'open',
         label: '开放环境',
-        description: '所有卡包可用'
+        description: '所有卡牌集合可用'
     }
 ];
 
 const CLASS_OPTIONS = [
-    { value: 'neutral', label: '中立' },
     { value: 'forestcraft', label: '妖精' },
     { value: 'swordcraft', label: '皇家护卫' },
     { value: 'runecraft', label: '巫师' },
     { value: 'dragoncraft', label: '龙族' },
-    { value: 'shadowcraft', label: '死灵法师' },
-    { value: 'bloodcraft', label: '吸血鬼' },
+    { value: 'abysscraft', label: '梦魇' },
     { value: 'havencraft', label: '主教' },
     { value: 'portalcraft', label: '复仇者' }
+];
+
+const TYPE_OPTIONS = [
+    { value: 'follower', label: '从者' },
+    { value: 'spell', label: '法术' },
+    { value: 'amulet', label: '护符' },
+    { value: 'crest', label: '纹章' },
+    { value: 'leader', label: '主战者' }
+];
+
+const RARITY_OPTIONS = [
+    { value: 'bronze', label: '青铜' },
+    { value: 'silver', label: '白银' },
+    { value: 'gold', label: '黄金' },
+    { value: 'legend', label: '传说' }
 ];
 
 // --- State Management ---
@@ -40,13 +54,17 @@ const state = {
     },
     filters: {
         cost: null,
-        class: null,
+        class: '',
+        type: '',
+        rarity: '',
+        set: '',
         search: ''
     },
     pagination: {
         currentPage: 1,
         itemsPerPage: 10 // Fixed limit to prevent scrolling
-    }
+    },
+    newDeckId: null
 };
 
 async function apiGetJson(url) {
@@ -79,7 +97,12 @@ async function apiPutJson(url, body) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body ?? {})
     });
-    const payload = await response.json();
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (err) {
+        // ignore parse errors; fall back to status text
+    }
     if (!response.ok) {
         const message = payload?.message || payload?.Message || response.statusText;
         throw new Error(message || `HTTP ${response.status}`);
@@ -102,7 +125,6 @@ let container = null;
 // --- Initialization ---
 
 export async function initializeDeckBuilder() {
-    console.log("DeckBuilder: Initializing...");
     container = document.getElementById('deck-builder-container');
     if (!container) {
         console.error("DeckBuilder: Container not found!");
@@ -142,7 +164,13 @@ async function loadDecks() {
 async function loadCards() {
     const cards = await apiGetJson('/api/cards');
     const filtered = Array.isArray(cards)
-        ? cards.filter(card => Number(card?.id) > 0 && String(card?.type || '').toLowerCase() !== 'leader')
+        ? cards.filter(card => {
+            const collectible = card?.isCollectible ?? card?.IsCollectible;
+            if (collectible !== true) return false;
+            const rarity = normalizeEnumValue(card?.rarity ?? card?.Rarity ?? '');
+            if (rarity === 'special') return false;
+            return Number(card?.id) > 0 && String(card?.type || '').toLowerCase() !== 'leader';
+        })
         : [];
 
     state.availableCards = filtered;
@@ -167,12 +195,33 @@ function normalizeEnumValue(value) {
     return String(value).trim().toLowerCase();
 }
 
-function normalizeEnvironment(value) {
-    if (value === null || value === undefined || value === '') return DEFAULT_ENVIRONMENT;
+function getCardRarityClass(card) {
+    const rarity = normalizeEnumValue(card?.rarity ?? card?.Rarity ?? '');
+    if (!rarity || rarity === 'special') return '';
+    if (rarity === 'legendary') return 'rarity-legend';
+    return `rarity-${rarity}`;
+}
+
+function normalizeEnvironmentValue(value, fallback = '') {
+    if (value === null || value === undefined || value === '') return fallback;
     if (typeof value === 'number') {
         return value === 0 ? DEFAULT_ENVIRONMENT : String(value);
     }
     return normalizeEnumValue(value);
+}
+
+function normalizeEnvironment(value) {
+    return normalizeEnvironmentValue(value, DEFAULT_ENVIRONMENT);
+}
+
+function normalizeEnvironmentList(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map(item => normalizeEnvironmentValue(item))
+            .filter(Boolean);
+    }
+    const single = normalizeEnvironmentValue(value);
+    return single ? [single] : [];
 }
 
 function getEnvironmentLabel(value) {
@@ -187,8 +236,154 @@ function getClassLabel(value) {
     return match?.label || formatClassName(value);
 }
 
-function getCardSet(card) {
-    return card?.card_set ?? card?.cardSet ?? card?.cardSetName ?? '';
+function getTypeLabel(value) {
+    const normalized = normalizeEnumValue(value);
+    const match = TYPE_OPTIONS.find(option => option.value === normalized);
+    return match?.label || formatEnumLabel(normalized);
+}
+
+function getRarityLabel(value) {
+    const normalized = normalizeEnumValue(value);
+    const match = RARITY_OPTIONS.find(option => option.value === normalized);
+    return match?.label || formatEnumLabel(normalized);
+}
+
+function formatEnumLabel(value) {
+    if (!value) return '';
+    return String(value)
+        .split('_')
+        .filter(Boolean)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+}
+
+function getCardSetInfo(card) {
+    const name = card?.card_set ?? card?.cardSet ?? card?.card_set_name ?? card?.cardSetName ?? '';
+    const code = card?.card_set_code ?? card?.cardSetCode ?? '';
+    const abbr = card?.card_set_abbr ?? card?.cardSetAbbr ?? '';
+    const environment = card?.card_set_environment ?? card?.cardSetEnvironment ?? card?.card_set_environments ?? card?.cardSetEnvironments ?? null;
+    return {
+        name: name == null ? '' : String(name).trim(),
+        code: code == null ? '' : String(code).trim(),
+        abbr: abbr == null ? '' : String(abbr).trim(),
+        environments: normalizeEnvironmentList(environment)
+    };
+}
+
+function getCardSetLabel(info) {
+    if (!info) return '';
+    return info.name || '';
+}
+
+function getLibraryFilterSourceCards() {
+    const source = Array.isArray(state.availableCards) ? state.availableCards : [];
+    if (!state.currentDeck) return source;
+    return source.filter(card => {
+        if (!isCardAllowedByEnvironment(card, state.currentDeck.environment)) return false;
+        if (!isCardAllowedByClass(card, state.currentDeck.class)) return false;
+        return true;
+    });
+}
+
+function buildEnumFilterOptions(cards, getter, baseOptions, labelResolver) {
+    const valueSet = new Set();
+    cards.forEach(card => {
+        const value = normalizeEnumValue(getter(card));
+        if (value) {
+            valueSet.add(value);
+        }
+    });
+
+    const ordered = [];
+    baseOptions.forEach(option => {
+        if (valueSet.has(option.value)) {
+            ordered.push({ value: option.value, label: option.label });
+            valueSet.delete(option.value);
+        }
+    });
+
+    const remainder = Array.from(valueSet)
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+        .map(value => ({
+            value,
+            label: labelResolver(value)
+        }));
+
+    return ordered.concat(remainder);
+}
+
+function buildSetFilterOptions(cards) {
+    const setMap = new Map();
+    cards.forEach(card => {
+        const info = getCardSetInfo(card);
+        const value = info.name;
+        if (!value) return;
+        const key = value.toLowerCase();
+        if (!setMap.has(key)) {
+            setMap.set(key, {
+                value,
+                label: getCardSetLabel(info)
+            });
+        }
+    });
+
+    return Array.from(setMap.values())
+        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }))
+        .map(option => ({ value: option.value.toLowerCase(), label: option.label }));
+}
+
+function buildSelectOptions(options, selectedValue) {
+    return options.map(option => {
+        const value = option.value ?? '';
+        const label = option.label ?? value;
+        const selected = selectedValue && value === selectedValue ? 'selected' : '';
+        return `<option value="${value}" ${selected}>${label}</option>`;
+    }).join('');
+}
+
+function populateLibraryFilters() {
+    const classFilter = document.getElementById('library-class-filter');
+    const typeFilter = document.getElementById('library-type-filter');
+    const rarityFilter = document.getElementById('library-rarity-filter');
+    const setFilter = document.getElementById('library-set-filter');
+
+    if (!classFilter || !typeFilter || !rarityFilter || !setFilter) return;
+
+    const source = getLibraryFilterSourceCards();
+    const classOptions = buildEnumFilterOptions(
+        source,
+        card => card?.class ?? card?.Class ?? card?.cardClass ?? card?.card_class,
+        CLASS_OPTIONS,
+        getClassLabel
+    );
+    const typeOptions = buildEnumFilterOptions(
+        source,
+        card => card?.type ?? card?.Type ?? card?.cardType ?? card?.card_type,
+        TYPE_OPTIONS,
+        getTypeLabel
+    );
+    const rarityOptions = buildEnumFilterOptions(
+        source,
+        card => card?.rarity ?? card?.Rarity,
+        RARITY_OPTIONS,
+        getRarityLabel
+    );
+    const setOptions = buildSetFilterOptions(source);
+
+    const classValues = new Set(classOptions.map(option => option.value));
+    const typeValues = new Set(typeOptions.map(option => option.value));
+    const rarityValues = new Set(rarityOptions.map(option => option.value));
+    const setValues = new Set(setOptions.map(option => option.value));
+
+    if (state.filters.class && !classValues.has(state.filters.class)) state.filters.class = '';
+    if (state.filters.type && !typeValues.has(state.filters.type)) state.filters.type = '';
+    if (state.filters.rarity && !rarityValues.has(state.filters.rarity)) state.filters.rarity = '';
+    if (state.filters.set && !setValues.has(state.filters.set)) state.filters.set = '';
+
+    classFilter.innerHTML = '<option value="">ALL CLASSES</option>' + buildSelectOptions(classOptions, state.filters.class);
+    typeFilter.innerHTML = '<option value="">ALL TYPES</option>' + buildSelectOptions(typeOptions, state.filters.type);
+    rarityFilter.innerHTML = '<option value="">ALL RARITIES</option>' + buildSelectOptions(rarityOptions, state.filters.rarity);
+    setFilter.innerHTML = '<option value="">ALL SETS</option>' + buildSelectOptions(setOptions, state.filters.set);
 }
 
 function isCardAllowedByEnvironment(card, environment) {
@@ -196,12 +391,13 @@ function isCardAllowedByEnvironment(card, environment) {
     if (normalized === DEFAULT_ENVIRONMENT) {
         return true;
     }
-    // TODO: Add concrete environment rules when formats are defined.
-    return true;
+    const setEnvironments = getCardSetInfo(card).environments;
+    if (!setEnvironments || setEnvironments.length === 0) return true;
+    return setEnvironments.includes(normalized);
 }
 
 function isCardAllowedByClass(card, deckClass) {
-    const cardClass = normalizeEnumValue(card?.class ?? card?.cardClass);
+    const cardClass = normalizeEnumValue(card?.class ?? card?.Class ?? card?.cardClass ?? card?.card_class);
     const targetClass = normalizeEnumValue(deckClass);
     if (!cardClass || !targetClass) return true;
     if (cardClass === 'neutral') return true;
@@ -247,8 +443,8 @@ function renderDeckSelection() {
                             </div>
                         </div>
                         <div class="deck-actions-overlay">
-                            <button class="btn-primary edit-deck-btn" data-id="${deckId}">Edit Deck</button>
-                            <button class="btn-icon delete-deck-btn" data-id="${deckId}">Delete</button>
+                            <button class="deck-action-btn edit-deck-btn" data-id="${deckId}">Edit Deck</button>
+                            <button class="deck-action-btn delete-deck-btn" data-id="${deckId}">Delete</button>
                         </div>
                     </div>
                 `;
@@ -458,7 +654,7 @@ function renderDeckBuilder() {
                 <!-- Action Bar -->
                 <div class="deck-action-bar">
                     <button class="btn-secondary small">Save</button>
-                    <button class="btn-secondary small">Craft Missing</button>
+                    <button class="btn-secondary small">CRAFT MISSING</button>
                     <button class="btn-secondary small">Auto Edit</button>
                     <div class="spacer"></div>
                     <div class="filter-bar-mini">
@@ -476,6 +672,25 @@ function renderDeckBuilder() {
 
             <!-- Bottom Section: Library -->
             <div class="library-section">
+                <div class="library-search-row">
+                    <div class="search-section">
+                        <input type="text" id="card-search-input" placeholder="SEARCH LIBRARY..." class="search-input tech-input">
+                        <div class="filter-section">
+                            <select id="library-class-filter" class="filter-select tech-select">
+                                <option value="">ALL CLASSES</option>
+                            </select>
+                            <select id="library-type-filter" class="filter-select tech-select">
+                                <option value="">ALL TYPES</option>
+                            </select>
+                            <select id="library-rarity-filter" class="filter-select tech-select">
+                                <option value="">ALL RARITIES</option>
+                            </select>
+                            <select id="library-set-filter" class="filter-select tech-select">
+                                <option value="">ALL SETS</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
                 <div class="library-grid" id="library-grid">
                     <!-- Library cards injected here -->
                 </div>
@@ -488,18 +703,13 @@ function renderDeckBuilder() {
                     <div class="footer-center">
                         <span class="page-indicator">1 / 18</span>
                     </div>
-                    <div class="footer-right">
-                        <div class="search-bar">
-                            <input type="text" placeholder="Search cards..." id="card-search-input">
-                            <span class="search-icon">🔍</span>
-                        </div>
-                        <button class="btn-secondary">Filter</button>
-                    </div>
+                    <div class="footer-right"></div>
                 </div>
             </div>
         </div>
     `;
 
+    populateLibraryFilters();
     renderLibrary();
     renderDeckList();
     renderManaCurve();
@@ -507,6 +717,31 @@ function renderDeckBuilder() {
     // Event Listeners
     document.getElementById('card-search-input').addEventListener('input', (e) => {
         state.filters.search = e.target.value;
+        state.pagination.currentPage = 1;
+        renderLibrary();
+    });
+
+    document.getElementById('library-class-filter').addEventListener('change', (e) => {
+        state.filters.class = e.target.value;
+        state.pagination.currentPage = 1;
+        renderLibrary();
+    });
+
+    document.getElementById('library-type-filter').addEventListener('change', (e) => {
+        state.filters.type = e.target.value;
+        state.pagination.currentPage = 1;
+        renderLibrary();
+    });
+
+    document.getElementById('library-rarity-filter').addEventListener('change', (e) => {
+        state.filters.rarity = e.target.value;
+        state.pagination.currentPage = 1;
+        renderLibrary();
+    });
+
+    document.getElementById('library-set-filter').addEventListener('change', (e) => {
+        state.filters.set = e.target.value;
+        state.pagination.currentPage = 1;
         renderLibrary();
     });
 
@@ -519,12 +754,27 @@ function renderDeckBuilder() {
             document.querySelectorAll('.cost-btn').forEach(b => b.classList.remove('active'));
             if (state.filters.cost) btn.classList.add('active');
             
+            state.pagination.currentPage = 1;
             renderLibrary();
         });
     });
 
     document.getElementById('back-to-selection-btn').addEventListener('click', () => {
+        if (!state.currentDeck) {
+            renderDeckSelection();
+            return;
+        }
+        if (getDeckCardCount(state.currentDeck) > 0) {
+            saveDeck().catch(err => alert(`保存失败：${err.message}`));
+            return;
+        }
+        const deckId = state.currentDeck.deckId || state.currentDeck.id;
+        const isNewDeck = state.currentDeck.isNew === true;
         state.currentDeck = null;
+        if (deckId && isNewDeck) {
+            deleteDeck(deckId, true).catch(err => alert(`删除失败：${err.message}`));
+            return;
+        }
         renderDeckSelection();
     });
 
@@ -537,19 +787,59 @@ function renderDeckBuilder() {
 }
 
 function getFilteredCards() {
-    return state.availableCards.filter(card => {
+    const filtered = state.availableCards.filter(card => {
         if (state.currentDeck) {
             if (!isCardAllowedByEnvironment(card, state.currentDeck.environment)) return false;
             if (!isCardAllowedByClass(card, state.currentDeck.class)) return false;
         }
         if (state.filters.cost && card.cost !== state.filters.cost) return false;
+        if (state.filters.class) {
+            const cardClass = normalizeEnumValue(card?.class ?? card?.Class ?? card?.cardClass ?? card?.card_class);
+            if (cardClass !== state.filters.class) return false;
+        }
+        if (state.filters.type) {
+            const cardType = normalizeEnumValue(card?.type ?? card?.Type ?? card?.cardType ?? card?.card_type);
+            if (cardType !== state.filters.type) return false;
+        }
+        if (state.filters.rarity) {
+            const rarity = normalizeEnumValue(card?.rarity ?? card?.Rarity ?? '');
+            if (rarity !== state.filters.rarity) return false;
+        }
+        if (state.filters.set) {
+            const info = getCardSetInfo(card);
+            const setValue = normalizeEnumValue(info.name);
+            if (!setValue || setValue !== state.filters.set) return false;
+        }
         const name = String(card.name || '').toLowerCase();
         if (state.filters.search && !name.includes(state.filters.search.toLowerCase())) return false;
         return true;
     });
+
+    return filtered.sort((a, b) => {
+        const costA = Number(a.cost ?? 0);
+        const costB = Number(b.cost ?? 0);
+        if (costA !== costB) return costA - costB;
+        const nameA = String(a.name ?? '');
+        const nameB = String(b.name ?? '');
+        const nameCompare = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        if (nameCompare !== 0) return nameCompare;
+        return Number(a.id ?? 0) - Number(b.id ?? 0);
+    });
 }
 
-function renderLibrary() {
+function getLibraryPageCapacity(grid) {
+    const sampleCard = grid.querySelector('.library-card');
+    if (!sampleCard) return null;
+    const gridStyle = window.getComputedStyle(grid);
+    const gap = parseFloat(gridStyle.gap || gridStyle.rowGap || '0');
+    const cardRect = sampleCard.getBoundingClientRect();
+    const gridRect = grid.getBoundingClientRect();
+    const columns = Math.max(1, Math.floor((gridRect.width + gap) / (cardRect.width + gap)));
+    const rows = Math.max(1, Math.floor((gridRect.height + gap) / (cardRect.height + gap)));
+    return Math.max(1, columns * rows);
+}
+
+function renderLibrary(skipCapacitySync = false) {
     const grid = document.getElementById('library-grid');
     if (!grid) return;
 
@@ -565,8 +855,14 @@ function renderLibrary() {
     grid.innerHTML = paginatedCards.map(card => {
         const attack = card.attack ?? '-';
         const health = card.health ?? '-';
+        const preview = card.artPreview ?? card.ArtPreview ?? '';
+        const previewUrl = preview ? encodeURI(preview) : '';
+        const rarityClass = getCardRarityClass(card);
+        const cardClassName = `library-card${previewUrl ? ' has-art' : ''}${rarityClass ? ` ${rarityClass}` : ''}`;
+        const styleAttr = previewUrl ? ` style="--library-card-art: url('${previewUrl}');"` : '';
         return `
-        <div class="library-card" data-card-id="${card.id}">
+        <div class="${cardClassName}" data-card-id="${card.id}"${styleAttr}>
+            <button class="card-detail-btn" data-card-id="${card.id}" type="button">DETAIL</button>
             <div class="card-cost">${card.cost ?? '-'}</div>
             <div class="card-name">${card.name ?? '-'}</div>
             <div class="card-stats">${attack}/${health}</div>
@@ -577,6 +873,16 @@ function renderLibrary() {
         `;
     }).join('');
 
+    if (!skipCapacitySync && paginatedCards.length > 0) {
+        const capacity = getLibraryPageCapacity(grid);
+        if (capacity && capacity !== state.pagination.itemsPerPage) {
+            state.pagination.itemsPerPage = capacity;
+            state.pagination.currentPage = 1;
+            renderLibrary(true);
+            return;
+        }
+    }
+
     // Update Footer Pagination UI
     const footerCenter = document.querySelector('.library-footer .footer-center');
     if (footerCenter) {
@@ -585,11 +891,38 @@ function renderLibrary() {
             <span class="page-indicator">${state.pagination.currentPage} / ${totalPages}</span>
             <button class="btn-secondary small btn-next" ${state.pagination.currentPage === totalPages ? 'disabled' : ''}>></button>
         `;
+
+        const prevBtn = footerCenter.querySelector('.btn-prev');
+        const nextBtn = footerCenter.querySelector('.btn-next');
+        prevBtn?.addEventListener('click', () => {
+            if (state.pagination.currentPage <= 1) return;
+            state.pagination.currentPage -= 1;
+            renderLibrary(true);
+        });
+        nextBtn?.addEventListener('click', () => {
+            if (state.pagination.currentPage >= totalPages) return;
+            state.pagination.currentPage += 1;
+            renderLibrary(true);
+        });
     }
 
     // Add click listeners
     grid.querySelectorAll('.library-card').forEach(el => {
-        el.addEventListener('click', () => addCardToDeck(Number(el.dataset.cardId)));
+        el.addEventListener('click', (event) => {
+            if (event.target.closest('.card-detail-btn')) {
+                return;
+            }
+            addCardToDeck(Number(el.dataset.cardId));
+        });
+    });
+
+    grid.querySelectorAll('.card-detail-btn').forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const cardId = Number(btn.dataset.cardId);
+            const card = state.cardIndex.get(cardId);
+            openCardDetailModal(card);
+        });
     });
 }
 
@@ -607,23 +940,43 @@ function renderDeckList() {
         .sort((a, b) => (a.card.cost ?? 0) - (b.card.cost ?? 0));
 
     // Render as vertical cards (miniature) for horizontal scroll
-    list.innerHTML = deckCards.map(item => `
-        <div class="deck-card-mini" data-card-id="${item.entry.cardDefinitionId}">
+    list.innerHTML = deckCards.map(item => {
+        const preview = item.card.artPreview ?? item.card.ArtPreview ?? '';
+        const previewUrl = preview ? encodeURI(preview) : '';
+        const visualClass = `mini-visual${previewUrl ? ' has-art' : ''}`;
+        const visualStyle = previewUrl ? ` style="background-image: url('${previewUrl}');"` : '';
+        const rarityClass = getCardRarityClass(item.card);
+        return `
+        <div class="deck-card-mini${rarityClass ? ` ${rarityClass}` : ''}" data-card-id="${item.entry.cardDefinitionId}">
+            <button class="mini-detail-btn" data-card-id="${item.entry.cardDefinitionId}" type="button">DETAIL</button>
             <div class="mini-cost">${item.card.cost ?? '-'}</div>
-            <div class="mini-visual"></div>
+            <div class="${visualClass}"${visualStyle}></div>
             <div class="mini-name">${item.card.name ?? '-'}</div>
             <div class="mini-count">x${item.entry.count}</div>
             <div class="mini-overlay">
                 <span class="remove-icon">-</span>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 
     // Add remove listeners
     list.querySelectorAll('.deck-card-mini').forEach(el => {
         el.addEventListener('click', (e) => {
+            if (e.target.closest('.mini-detail-btn')) {
+                return;
+            }
             e.stopPropagation();
             removeCardFromDeck(Number(el.dataset.cardId));
+        });
+    });
+
+    list.querySelectorAll('.mini-detail-btn').forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const cardId = Number(btn.dataset.cardId);
+            const card = state.cardIndex.get(cardId);
+            openCardDetailModal(card);
         });
     });
 }
@@ -652,6 +1005,19 @@ function renderManaCurve() {
     `).join('');
 }
 
+function openCardDetailModal(card) {
+    if (!card) {
+        return;
+    }
+
+    const preview = card.artPreview ?? card.ArtPreview ?? '';
+    const detail = card.artDetail ?? card.ArtDetail ?? '';
+    const previewUrl = preview ? encodeURI(preview).replace(/'/g, '%27') : '';
+    const detailUrl = detail ? encodeURI(detail).replace(/'/g, '%27') : '';
+
+    showCardDetailModal(card, { previewUrl, detailUrl });
+}
+
 // --- Logic ---
 
 function updateDeckCountDisplay() {
@@ -661,10 +1027,12 @@ function updateDeckCountDisplay() {
     }
 }
 
-async function deleteDeck(deckId) {
+async function deleteDeck(deckId, skipConfirm = false) {
     if (!deckId) return;
-    const ok = window.confirm("确定要删除该卡组吗？");
-    if (!ok) return;
+    if (!skipConfirm) {
+        const ok = window.confirm("确定要删除该卡组吗？");
+        if (!ok) return;
+    }
     const query = getDeckOwnerQuery();
     await apiDelete(`/api/decks/${deckId}?${query}`);
     await loadDecks();
@@ -679,18 +1047,30 @@ async function createNewDeck(environment, deckClass) {
         environment: normalizeEnvironment(environment)
     };
     const created = await apiPostJson(`/api/decks?${query}`, payload);
+    const createdId = created?.deckId ?? created?.id ?? null;
+    state.newDeckId = createdId;
     await loadDecks();
-    await editDeck(created.deckId);
+    if (createdId) {
+        await editDeck(createdId);
+    }
 }
 
 async function editDeck(deckId) {
     const query = getDeckOwnerQuery();
     const deck = await apiGetJson(`/api/decks/${deckId}?${query}`);
+    const deckClass = normalizeEnumValue(deck?.class ?? deck?.Class ?? deck?.cardClass ?? deck?.card_class);
+    const resolvedDeckId = deck?.deckId ?? deck?.id ?? deckId;
+    const isNewDeck = state.newDeckId && resolvedDeckId && String(state.newDeckId) === String(resolvedDeckId);
     state.currentDeck = {
         ...deck,
         environment: normalizeEnvironment(deck.environment),
+        class: deckClass,
         cards: Array.isArray(deck.cards) ? deck.cards : []
     };
+    state.currentDeck.isNew = Boolean(isNewDeck);
+    if (isNewDeck) {
+        state.newDeckId = null;
+    }
     renderDeckBuilder();
 }
 
@@ -751,6 +1131,7 @@ async function saveDeck() {
     };
     await apiPutJson(`/api/decks/${deckId}?${query}`, payload);
     await loadDecks();
+    document.dispatchEvent(new CustomEvent('deckListUpdated'));
     state.currentDeck = null;
     renderDeckSelection();
 }

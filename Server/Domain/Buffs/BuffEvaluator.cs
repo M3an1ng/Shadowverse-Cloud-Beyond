@@ -33,21 +33,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 return false;
             }
 
-            if (buff.ApplicabilityCondition == null)
-            {
-                return true;
-            }
-
-            try
-            {
-                return _conditionEvaluator.Evaluate(buff.ApplicabilityCondition, context);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to evaluate ApplicabilityCondition for Buff {BuffId} on Card {CardId}.",
-                    buff.Id, target.InstanceId);
-                return false;
-            }
+            // ApplicabilityCondition is deprecated for runtime evaluation.
+            // Conditional buffs should be modeled as refreshable auras instead.
+            return true;
         }
     }
 }

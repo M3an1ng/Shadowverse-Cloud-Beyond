@@ -6,8 +6,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 using ShadowverseBeyond.Server.Domain.Events;
 
@@ -16,99 +14,77 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     /// <summary>
     /// Sum函数实现 - 计算总和
     /// 支持用法：
-    /// - sum(value1, value2, ...) - 返回多个值的总和
-    /// - sum(collection) - 返回集合中所有数值的总和
-    /// - sum(collection, property) - 返回集合中指定属性值的总和
+    /// - sum(collection) - 返回数值集合中所有数值的总和
     /// </summary>
     public class SumFunction : BaseDslFunction
     {
         public override string Name => "sum";
 
-        public override string Description => "计算集合中所有数值的总和。可选择性地对集合中对象的特定属性进行求和。";
+        public override string Description => "计算数值集合中所有数值的总和。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
         {
-            new DslParameterInfo("collection", typeof(IEnumerable), "要求和的目标集合。"),
-            new DslParameterInfo("property", typeof(string), "（可选）一个属性名称。如果提供，则对该属性的值进行求和。", isOptional: true, defaultValue: null)
+            new DslParameterInfo("collection", typeof(IEnumerable<double>), "要求和的数值集合。")
         };
 
-        protected override int GetMinimumArgumentCount() => 1;
+        public override Type ReturnType => typeof(double);
+
+        protected override int? GetExpectedArgumentCount() => 1;
 
         protected override bool ValidateArgumentTypes(List<object?> args)
         {
-            if (args.Count == 0)
+            if (args.Count != 1)
             {
                 return false;
             }
 
-            // 如果只有一个参数，检查是否为集合或数值
-            if (args.Count == 1)
+            var collection = args[0];
+            if (collection == null)
             {
-                var arg = args[0];
-                return arg == null || IsCollection(arg) || IsNumeric(arg);
+                return true;
             }
 
-            // 如果有两个参数，第一个应该是集合，第二个应该是属性名
-            if (args.Count == 2)
+            if (!IsCollection(collection))
             {
-                var firstArg = args[0];
-                var secondArg = args[1];
-
-                return (firstArg == null || IsCollection(firstArg)) &&
-                       (secondArg == null || secondArg is string);
+                return false;
             }
 
-            // 如果有多个参数，都应该是数值类型
-            return args.All(arg => arg == null || IsNumeric(arg));
+            var enumerable = ConvertToEnumerable(collection);
+            foreach (var item in enumerable)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                if (!IsNumeric(item))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         public override object? Execute(List<object?> args, GameContext context)
         {
-            if (args.Count == 0)
+            if (args.Count != 1)
             {
                 return 0;
             }
 
-            // 如果只有一个参数
-            if (args.Count == 1)
+            var collection = args[0];
+            if (collection == null)
             {
-                var arg = args[0];
-                if (arg == null)
-                {
-                    return 0;
-                }
-
-                // 如果是集合，返回集合中所有值的总和
-                if (IsCollection(arg))
-                {
-                    return GetSumFromCollection(ConvertToEnumerable(arg));
-                }
-
-                // 如果是单个数值，直接返回
-                return ConvertToDouble(arg);
+                return 0;
             }
 
-            // 如果有两个参数，第一个是集合，第二个是属性名
-            if (args.Count == 2)
+            if (!IsCollection(collection))
             {
-                var collection = args[0];
-                var propertyName = ConvertToString(args[1]);
-
-                if (collection == null || !IsCollection(collection))
-                {
-                    return 0;
-                }
-
-                if (string.IsNullOrEmpty(propertyName))
-                {
-                    return GetSumFromCollection(ConvertToEnumerable(collection));
-                }
-
-                return GetSumFromCollectionByProperty(ConvertToEnumerable(collection), propertyName);
+                return 0;
             }
 
-            // 如果有多个参数，返回所有参数的总和
-            return GetSumFromValues(args);
+            return GetSumFromCollection(ConvertToEnumerable(collection));
         }
 
         /// <summary>
@@ -116,7 +92,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// </summary>
         private static bool IsNumeric(object? value)
         {
-            return value is int or double or float or decimal;
+            return value is sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal;
         }
 
         /// <summary>
@@ -133,49 +109,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                     continue;
                 }
 
-                sum += ConvertToDouble(item);
-            }
-
-            return sum;
-        }
-
-        /// <summary>
-        /// 从集合中根据属性计算总和
-        /// </summary>
-        private static double GetSumFromCollectionByProperty(IEnumerable<object?> collection, string propertyName)
-        {
-            double sum = 0;
-
-            foreach (var item in collection)
-            {
-                if (item == null)
+                if (!IsNumeric(item))
                 {
                     continue;
                 }
 
-                var propertyValue = GetPropertyValue(item, propertyName);
-                if (propertyValue != null)
-                {
-                    sum += ConvertToDouble(propertyValue);
-                }
-            }
-
-            return sum;
-        }
-
-        /// <summary>
-        /// 从多个值中计算总和
-        /// </summary>
-        private static double GetSumFromValues(List<object?> values)
-        {
-            double sum = 0;
-
-            foreach (var value in values)
-            {
-                if (value != null)
-                {
-                    sum += ConvertToDouble(value);
-                }
+                sum += ConvertToDouble(item);
             }
 
             return sum;

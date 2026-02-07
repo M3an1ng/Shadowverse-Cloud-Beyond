@@ -19,6 +19,13 @@ namespace ShadowverseBeyond.Server.Services
     {
         private readonly IReadOnlyDictionary<EffectType, EffectUIMetadataDto> _metadataCache;
         private readonly IEffectHandlerRegistry _effectHandlerRegistry;
+        private static readonly HashSet<EffectType> HiddenEffectTypes = new()
+        {
+            // EffectType.EarthRite,
+            // EffectType.Necromancy,
+            // EffectType.Sacrifice
+            EffectType.SetStatus
+        };
         private static readonly IReadOnlyDictionary<EffectType, string> EffectCategoryMap = new Dictionary<EffectType, string>
         {
             { EffectType.Attack, AbilityEditorCategories.BaseActionId },
@@ -27,6 +34,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.Evolve, AbilityEditorCategories.BaseActionId },
             { EffectType.Play, AbilityEditorCategories.BaseActionId },
             { EffectType.Fusion, AbilityEditorCategories.BaseActionId },
+            { EffectType.SuperEvolve, AbilityEditorCategories.BaseActionId },
 
             { EffectType.Summon, AbilityEditorCategories.PositionChangeId },
             { EffectType.GetToken, AbilityEditorCategories.PositionChangeId },
@@ -35,28 +43,40 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.Return, AbilityEditorCategories.PositionChangeId },
             { EffectType.Vanish, AbilityEditorCategories.PositionChangeId },
             { EffectType.Destroy, AbilityEditorCategories.PositionChangeId },
-            { EffectType.Transform, AbilityEditorCategories.PositionChangeId },
-            { EffectType.Reveal, AbilityEditorCategories.PositionChangeId },
+            { EffectType.Transform, AbilityEditorCategories.TempStateId },
+            { EffectType.Reveal, AbilityEditorCategories.TurnFlowId },
             { EffectType.AddDeck, AbilityEditorCategories.PositionChangeId },
+            { EffectType.AddEmblem, AbilityEditorCategories.PositionChangeId },
+            { EffectType.Reanimate, AbilityEditorCategories.PositionChangeId },
 
             { EffectType.AddBuff, AbilityEditorCategories.TempStateId },
             { EffectType.RemoveBuff, AbilityEditorCategories.TempStateId },
             { EffectType.SetKeyword, AbilityEditorCategories.TempStateId },
+            { EffectType.SetAttackTimes, AbilityEditorCategories.TempStateId },
+            { EffectType.ResetAttackTimes, AbilityEditorCategories.TempStateId },
+            { EffectType.AddAura, AbilityEditorCategories.TempStateId },
 
             { EffectType.SetPP, AbilityEditorCategories.ResourceValueId },
             { EffectType.Ramp, AbilityEditorCategories.ResourceValueId },
             { EffectType.SetEP, AbilityEditorCategories.ResourceValueId },
             { EffectType.SetEPMax, AbilityEditorCategories.ResourceValueId },
-            { EffectType.SetStatus, AbilityEditorCategories.ResourceValueId },
+            { EffectType.ModifyStatus, AbilityEditorCategories.ResourceValueId },
+            { EffectType.SpellBoost, AbilityEditorCategories.ResourceValueId },
             { EffectType.AddEarthSigil, AbilityEditorCategories.ResourceValueId },
             { EffectType.EarthRite, AbilityEditorCategories.ResourceValueId },
+            { EffectType.Necromancy, AbilityEditorCategories.ResourceValueId },
+            { EffectType.Sacrifice, AbilityEditorCategories.ResourceValueId },
+            { EffectType.SetStatus, AbilityEditorCategories.ResourceValueId },
 
             { EffectType.TurnStart, AbilityEditorCategories.TurnFlowId },
             { EffectType.TurnEnd, AbilityEditorCategories.TurnFlowId },
             { EffectType.Mulligan, AbilityEditorCategories.TurnFlowId },
+            { EffectType.SetCountdown, AbilityEditorCategories.TurnFlowId },
 
             { EffectType.RewriteEventParams, AbilityEditorCategories.SpecialId },
-            { EffectType.ReplaceEvent, AbilityEditorCategories.SpecialId }
+            { EffectType.ReplaceEvent, AbilityEditorCategories.SpecialId },
+            { EffectType.Choose, AbilityEditorCategories.SpecialId },
+            { EffectType.Random, AbilityEditorCategories.SpecialId }
         };
 
         public EffectUIMetadataService(IEffectHandlerRegistry effectHandlerRegistry)
@@ -85,6 +105,11 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var effectType in allEffectTypes)
             {
+                if (HiddenEffectTypes.Contains(effectType))
+                {
+                    continue;
+                }
+
                 // 使用EffectHandlerRegistry获取对应的参数类型
                 if (!_effectHandlerRegistry.TryGetHandler(effectType, out var registration) || !registration.HasValue)
                 {
@@ -129,6 +154,8 @@ namespace ShadowverseBeyond.Server.Services
                     var inferredEnumName = TypeNameHelper.TryGetEnumName(prop.PropertyType);
                     var enumName = paramMeta.EnumName ?? inferredEnumName;
                     var optionsProviderKey = paramMeta.OptionsProviderKey;
+                    var dslType = paramMeta.DslType ?? TypeNameHelper.GetDslTypeName(prop.PropertyType);
+                    var allowDsl = paramMeta.AllowDsl && paramMeta.DslMode != DslMode.Disabled;
 
                     // If the control is not a dropdown, keep option source fields empty to reduce noise.
                     if (paramMeta.ControlType != UiControlType.Dropdown)
@@ -148,7 +175,10 @@ namespace ShadowverseBeyond.Server.Services
                         DefaultValue = paramMeta.DefaultValue,
                         Description = paramMeta.Description,
                         Min = paramMeta.Min,
-                        Max = paramMeta.Max
+                        Max = paramMeta.Max,
+                        AllowDsl = allowDsl,
+                        DslType = dslType,
+                        DslMode = paramMeta.DslMode
                     });
                 }
 

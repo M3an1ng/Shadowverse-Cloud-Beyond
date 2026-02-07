@@ -444,7 +444,7 @@
     height: 160px;
     z-index: 20;
     perspective: 1000px;
-    bottom: -20px; /* Default for player hand */
+    bottom: -10px; /* Default for player hand */
     transition: bottom 0.3s;
 }
 
@@ -463,16 +463,216 @@
 /* Action Buttons (End Turn) */
 #end-turn-button, #end-turn-btn {
     position: absolute;
-    bottom: 40px;
+    bottom: 30px;
     right: 40px;
-    width: 120px;
-    height: 50px;
+    width: 140px;
+    height: 54px;
+    padding: 0;
+    display: grid;
+    place-items: center;
     font-size: var(--text-base);
-    background-color: var(--color-text);
-    color: var(--color-background);
+    font-family: 'Orbitron', 'JetBrains Mono', monospace;
+    background: transparent;
+    color: #0a0a0a;
     font-weight: 900;
     z-index: 50;
-    box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+    border: none;
+    cursor: pointer;
+    overflow: visible;
+}
+
+#end-turn-button::before,
+#end-turn-button::after {
+    content: none;
+}
+
+#end-turn-button:hover .end-turn-surface {
+    transform: none;
+}
+
+#end-turn-button:active .end-turn-surface {
+    transform: none;
+}
+
+#end-turn-button .end-turn-surface {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #ffffff 0%, #f5f5f5 48%, #e0e0e0 52%, #f5f5f5 100%);
+    background-size: 200% 200%;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow:
+        inset 2px 2px 0 rgba(255, 255, 255, 0.9),
+        inset -1px -1px 3px rgba(0, 0, 0, 0.12),
+        0 20px 40px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-bottom: 6px;
+    transition: transform 0.3s ease;
+}
+
+#end-turn-button .end-turn-surface::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+        45deg,
+        rgba(0, 0, 0, 0.03) 0px,
+        rgba(0, 0, 0, 0.03) 1px,
+        transparent 1px,
+        transparent 2px
+    );
+    opacity: 0.55;
+    pointer-events: none;
+    z-index: 1;
+}
+
+#end-turn-button .end-turn-dot {
+    position: absolute;
+    top: 4px;
+    width: 4px;
+    height: 4px;
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+    z-index: 3;
+}
+
+#end-turn-button .end-turn-dot-left {
+    left: 8px;
+}
+
+#end-turn-button .end-turn-dot-right {
+    right: 8px;
+}
+
+#end-turn-button .end-turn-text {
+    position: relative;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    margin-top: 0;
+}
+
+#end-turn-button .end-turn-label {
+    font-size: 0.95rem;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: -0.03em;
+    text-shadow: 2px 2px 0 rgba(255, 255, 255, 0.95), -1px -1px 0 rgba(0, 0, 0, 0.1);
+    transition: color 0.3s ease;
+}
+
+#end-turn-button .end-turn-countdown {
+    margin-top: 2px;
+    font-size: 0.55rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: rgba(10, 10, 10, 0.6);
+    opacity: 0;
+    line-height: 1;
+    transition: opacity 0.2s ease, transform 0.3s ease, color 0.3s ease;
+}
+
+#end-turn-button.turn-timer-active .end-turn-countdown {
+    opacity: 1;
+}
+
+#end-turn-button.turn-timer-warning .end-turn-countdown {
+    color: #f97316;
+    transform: scale(1.08);
+}
+
+#end-turn-button.turn-timer-warning .end-turn-label {
+    color: #f97316;
+}
+
+#end-turn-button.turn-timer-critical .end-turn-label {
+    color: #ff003c;
+    animation: end-turn-text-pulse 0.9s ease-in-out infinite;
+}
+
+#end-turn-button.turn-timer-critical .end-turn-countdown {
+    color: #ff003c;
+}
+
+#end-turn-button .end-turn-indicator-trench,
+#end-turn-button .indicator-trench-bottom {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 0 4px;
+    background: #000000;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8), 0 1px 0 rgba(255, 255, 255, 0.6);
+    z-index: 2;
+    pointer-events: none;
+}
+
+#end-turn-button .end-turn-indicator-light {
+    flex: 1 1 0%;
+    min-width: 5px;
+    height: 2px;
+    border-radius: 1px;
+    background: rgba(255, 255, 255, 0.2);
+    transition: background-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+    opacity: 0.4;
+    transform: scaleY(0.85);
+}
+
+#end-turn-button .end-turn-indicator-light.is-active {
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 3px rgba(255, 255, 255, 0.3);
+    opacity: 1;
+    transform: scaleY(1);
+}
+
+#end-turn-button.turn-timer-warning .end-turn-indicator-light.is-active {
+    background: #f97316;
+    box-shadow: 0 0 5px rgba(249, 115, 22, 0.5);
+}
+
+#end-turn-button.turn-timer-critical .end-turn-indicator-light.is-active {
+    background: #ff003c;
+    box-shadow: 0 0 10px #ff003c;
+}
+
+#end-turn-button .end-turn-sweep {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
+    transform: translateX(-120%) skewX(-25deg);
+    transition: transform 1s ease;
+    opacity: 0.6;
+    z-index: 2;
+    pointer-events: none;
+}
+
+#end-turn-button:hover .end-turn-sweep {
+    transform: translateX(120%) skewX(-25deg);
+}
+
+
+@keyframes end-turn-text-pulse {
+    0%,
+    100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.02);
+    }
 }
 
 #spectator-toggle-view {
@@ -497,8 +697,8 @@
 }
 
 #end-turn-button:hover, #end-turn-btn:hover {
-    transform: scale(1.05);
-    box-shadow: 0 0 30px rgba(255, 255, 255, 0.4);
+    transform: none;
+    box-shadow: none;
 }
 
 #confirm-mulligan-button {
@@ -516,6 +716,30 @@
     font-weight: 900;
     letter-spacing: 0.05em;
     text-transform: uppercase;
+}
+
+#reconnect-button {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 110;
+    padding: var(--space-4) var(--space-8);
+    font-size: var(--text-xl);
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    border: 2px solid var(--color-primary);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+#reconnect-button:hover {
+    background-color: var(--color-background);
+    color: var(--color-primary);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
+    transform: translate(-50%, -50%) scale(1.05);
 }
 
 #confirm-mulligan-button:hover {
@@ -549,4 +773,39 @@
     transform: translate(-50%, -50%) scale(1.2);
     z-index: 100; /* Bring to front briefly */
     text-shadow: 0 0 30px var(--color-primary);
+}
+
+/* Turn Start Banner (uses turn-info element) */
+#turn-info.turn-start-friendly {
+    color: var(--color-success);
+    text-shadow: 0 0 22px rgba(0, 0, 0, 0.45);
+}
+
+#turn-info.turn-start-enemy {
+    color: var(--color-accent);
+    text-shadow: 0 0 22px rgba(0, 0, 0, 0.45);
+}
+
+#turn-info.turn-start-active {
+    animation: turn-start-wipe 1.3s ease-out forwards;
+    will-change: clip-path, opacity;
+}
+
+@keyframes turn-start-wipe {
+    0% {
+        opacity: 0;
+        clip-path: inset(0 100% 0 0);
+    }
+    15% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+    }
+    80% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+    }
+    100% {
+        opacity: 0;
+        clip-path: inset(0 0 0 100%);
+    }
 }

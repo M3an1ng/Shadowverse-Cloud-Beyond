@@ -297,7 +297,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
 ## 8. 示例实现
 
-*   光环 Buff (使用预定义 Buff，包含 `ApplicabilityCondition`)
+*   光环 Buff（使用 `AuraConfig` + `BuffTemplate`，运行时直接产出 Buff 并由 AuraManager 刷新/移除）
 *   条件增益 Buff
 *   赋予关键字 Buff (使用 `BuffKeyword` 快捷效果)
 *   赋予临时能力 Buff (使用预定义 Buff，包含 `AbilityBuffEffect`)

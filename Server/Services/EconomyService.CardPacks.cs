@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
+using System.Collections.Generic;
 
 namespace ShadowverseBeyond.Server.Services;
 
@@ -8,12 +10,28 @@ public partial class EconomyService
 {
     #region 卡包系统
 
-    public async Task<List<CardPackDefinitionDto>> GetAvailableCardPacksAsync()
+    public async Task<List<CardPackDefinitionDto>> GetAvailableCardPacksAsync(DeckEnvironment? environment = null, bool includeInactive = false)
     {
-        var cardPacks = await _context.CardPackDefinitions
-            .Where(cpd => cpd.IsActive)
-            .OrderBy(cpd => cpd.Price)
+        var query = _context.CardPackDefinitions
+            .Include(cpd => cpd.CardSetDefinition)
+            .AsQueryable();
+
+        if (!includeInactive)
+        {
+            query = query.Where(cpd => cpd.IsActive);
+        }
+
+        var cardPacks = await query
+            .OrderBy(cpd => cpd.Region)
+            .ThenBy(cpd => cpd.Sequence)
             .ToListAsync();
+
+        if (environment.HasValue)
+        {
+            cardPacks = cardPacks
+                .Where(cpd => (cpd.CardSetDefinition?.Environments ?? new List<DeckEnvironment>()).Contains(environment.Value))
+                .ToList();
+        }
 
         return cardPacks.Select(CardPackDefinitionDto.FromEntity).ToList();
     }
@@ -25,6 +43,7 @@ public partial class EconomyService
             return await _transactionService.ExecuteInTransactionAsync(async () =>
             {
                 var cardPackDefinition = await _context.CardPackDefinitions
+                    .Include(cpd => cpd.CardSetDefinition)
                     .FirstOrDefaultAsync(cpd => cpd.Id == cardPackDefinitionId && cpd.IsActive);
 
                 if (cardPackDefinition == null)
@@ -78,6 +97,7 @@ public partial class EconomyService
             {
                 var userCardPack = await _context.UserCardPacks
                     .Include(ucp => ucp.CardPackDefinition)
+                    .ThenInclude(cpd => cpd.CardSetDefinition)
                     .FirstOrDefaultAsync(ucp => ucp.Id == cardPackId && ucp.UserId == userId);
 
                 if (userCardPack == null)
@@ -117,6 +137,7 @@ public partial class EconomyService
     {
         var query = _context.UserCardPacks
             .Include(ucp => ucp.CardPackDefinition)
+            .ThenInclude(cpd => cpd.CardSetDefinition)
             .Where(ucp => ucp.UserId == userId);
 
         if (unopenedOnly)
@@ -133,4 +154,3 @@ public partial class EconomyService
 
     #endregion
 }
-

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 

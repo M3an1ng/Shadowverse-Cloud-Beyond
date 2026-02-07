@@ -1,4 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
@@ -44,6 +45,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         /// <param name="buffId">The ID of the source buff.</param>
         void UnregisterAbilitiesFromBuff(Guid buffId);
+
+        /// <summary>
+        /// Gets the runtime ability IDs associated with a buff.
+        /// </summary>
+        IReadOnlyList<Guid> GetAbilityRuntimeIdsForBuff(Guid buffId);
         /// <summary>
         /// Clears all registered abilities from the manager.
         /// </summary>
@@ -57,9 +63,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         List<IAbility> GetAbilitiesForCard(Guid cardInstanceId);
 
         /// <summary>
+        /// Gets all effective (non-suppressed) abilities associated with a specific card instance ID.
+        /// </summary>
+        List<IAbility> GetEffectiveAbilitiesForCard(Guid cardInstanceId, GameContext context);
+
+        /// <summary>
+        /// Determines whether a specific ability is suppressed in the current context.
+        /// </summary>
+        bool IsAbilitySuppressed(IAbility ability, GameContext context);
+
+        /// <summary>
         /// Gets a specific ability instance by its unique runtime ID.
         /// </summary>
         IAbility? GetAbilityByRuntimeId(Guid runtimeId);
+
+        /// <summary>
+        /// Attempts to get a tombstone snapshot for an ability that may have been unregistered.
+        /// </summary>
+        bool TryGetAbilitySnapshot(Guid runtimeId, out AbilitySnapshot snapshot);
+
+        /// <summary>
+        /// Clears all stored ability tombstone snapshots for the current transaction.
+        /// </summary>
+        void ClearAbilityTombstones();
 
         /// <summary>
         /// Gets a registered system ability instance by its type.
@@ -82,6 +108,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// including condition checks and target resolution.
         /// </summary>
         /// <param name="isCancellable">Indicates if any player choice prompted by this ability can be cancelled.</param>
-        Task<AbilityProcessResult> ProcessSingleAbilityAsync(IAbility ability, GameContext context, bool isCancellable);
+        Task<AbilityProcessResult> ProcessSingleAbilityAsync(IAbility ability, GameContext context, bool isCancellable, bool deferTargetResolution, bool recordTrigger = true);
+
+        /// <summary>
+        /// Refreshes aura-only abilities for the given ability instance.
+        /// </summary>
+        DomainOperationResult RefreshAuraForAbility(IAbility ability, GameContext context);
     }
 }

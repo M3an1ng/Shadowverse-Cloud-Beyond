@@ -83,6 +83,11 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         /// 检查数据提供者是否已初始化
         /// </summary>
         bool IsInitialized { get; }
+
+        /// <summary>
+        /// 数据缓存版本标识，用于客户端缓存失效。
+        /// </summary>
+        Guid DataRevision { get; }
     }
 
     /// <summary>

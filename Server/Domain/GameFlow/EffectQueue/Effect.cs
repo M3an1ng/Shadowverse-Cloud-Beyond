@@ -5,7 +5,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
-using ShadowverseBeyond.Server.Domain.Effects; // Required for EventType
+using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities; // Required for EventType
 
 namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
 {
@@ -22,6 +23,18 @@ namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
         public Guid Id { get; set; } = Guid.NewGuid();
 
         /// <summary>
+        /// Effect index within the source ability's effect list.
+        /// Used to scope non-stackable buffs to a specific effect.
+        /// </summary>
+        [DslExposable("效果排序", Description = "当前效果位于整个能力序列中的第几个")]
+        public int EffectIndex { get; set; }
+
+        /// <summary>
+        /// Current execution index for repeat-capable effects.
+        /// </summary>
+        public int ExecutionIndex { get; set; }
+
+        /// <summary>
         /// 发起请求的玩家ID
         /// </summary>
         public Guid RequestingPlayerId { get; set; }
@@ -35,10 +48,29 @@ namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
         /// 【架构改进】效果请求携带的目标ID列表。
         /// 在效果出队时，此列表将被用于填充GameContext.SelectedTargets。
         /// </summary>
-        [DslExposable("已选目标", Description = "该效果执行时使用的目标列表")]
         public List<TargetInfo> SelectedTargets { get; set; } = new List<TargetInfo>();
 
+        /// <summary>
+        /// 能力级已解析目标池，用于构建该效果。
+        /// </summary>
+        public IReadOnlyDictionary<string, List<TargetInfo>> ResolvedTargets { get; set; } = new Dictionary<string, List<TargetInfo>>();
 
+        /// <summary>
+        /// Whether this effect should resolve targets when execution begins.
+        /// Used to defer target resolution for non-player-action triggers.
+        /// </summary>
+        public bool ResolveTargetsOnExecution { get; set; }
+
+        /// <summary>
+        /// Optional source ability reference used when deferred resolution cannot
+        /// retrieve the ability from the AbilityManager (e.g., chained abilities).
+        /// </summary>
+        public IAbility? SourceAbility { get; set; }
+
+        [DslExposable("源能力", Description = "当前效果（包括连锁能力）的源能力")]
+        public Ability? Ability => SourceAbility as Ability;
+
+        [DslExposable("类型", Description = "当前效果的类型")]
         public EffectType Type => EffectConfig.Type;
 
         /// <summary>
@@ -66,8 +98,20 @@ namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
         /// This is populated by the EffectExecutor after the handler runs,
         /// making the results available for subsequent DSL evaluations (e.g., in Outputs).
         /// </summary>
-        [DslExposable("生成事件", Description = "该效果执行后生成的事件列表（包含 EffectCompletedEvent）")]
+        [DslExposable("生成事件", Description = "该效果执行后生成的事件列表")]
         public List<IGameEvent> GeneratedEvents { get; set; } = new();
+
+        /// <summary>
+        /// Decision outputs resolved during effect generation (Random/Choose).
+        /// These values are merged into EffectCompletedEvent outputs.
+        /// </summary>
+        public Dictionary<string, object?> DecisionOutputs { get; } = new();
+
+        /// <summary>
+        /// Decision branch abilities resolved during effect generation (Random/Choose).
+        /// These abilities execute as part of the effect result, not as chained abilities.
+        /// </summary>
+        public List<IAbility> DecisionAbilities { get; set; } = new();
 
         // Removed ChainedEffects, CompletionEvents, and PendingEffectsCount as they are obsolete
         // with the new EffectExecutor and ChainedAbilities in EffectConfig.

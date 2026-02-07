@@ -49,6 +49,16 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         List<CardKeyword> GetEffectiveKeywords(CardInstance card, GameContext gameContext);
 
         /// <summary>
+        /// Calculates the effective value of an ability keyword (e.g., Act) for a card instance.
+        /// </summary>
+        /// <param name="card">The card instance.</param>
+        /// <param name="keyword">The ability keyword to evaluate.</param>
+        /// <param name="baseValue">The base value before buff modifiers.</param>
+        /// <param name="gameContext">The current game context for condition evaluation.</param>
+        /// <returns>The effective keyword value after applying buff modifiers.</returns>
+        int GetEffectiveAbilityKeywordValue(CardInstance card, AbilityKeyword keyword, int baseValue, GameContext gameContext);
+
+        /// <summary>
         /// Creates and applies a keyword buff to a target card.
         /// </summary>
         /// <param name="context">The current game context.</param>
@@ -56,15 +66,15 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="keywords">The keywords to add.</param>
         /// <param name="durationType">The duration of the buff.</param>
         /// <param name="durationParameter">The parameter for the duration (e.g., number of turns).</param>
-        /// <param name="isNonStackable">Whether the buff is non-stackable.</param>
         /// <returns>The result of the domain operation.</returns>
         DomainOperationResult ApplyKeywordBuff(
             GameContext context,
             CardInstance target,
             List<CardKeyword> keywords,
             DurationType durationType,
-            object? durationParameter,
-            bool isNonStackable = false);
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true);
 
         /// <summary>
         /// Removes buffs that grant a specific keyword from a target card.
@@ -75,15 +85,20 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         DomainOperationResult ApplyRemoveKeywordBuff(
             GameContext context,
             CardInstance target,
-            List<CardKeyword> keywordsToRemove);
+            List<CardKeyword> keywordsToRemove,
+            DurationType durationType,
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true);
 
         DomainOperationResult ApplyStatBuff(
             GameContext context,
             CardInstance target,
             List<StatModification> modifications,
             DurationType durationType,
-            object? durationParameter,
-            bool isNonStackable = false);
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true);
 
         /// <summary>
         /// Registers a new Buff instance, applying stacking rules and storing it.
@@ -91,7 +106,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         /// <param name="buff">The Buff instance to register.</param>
         /// <returns>A DomainOperationResult containing generated events (e.g., BuffAppliedEvent, BuffRemovedEvent for replacements).</returns>
-        DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context);
+        DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context, bool canStack = true);
 
         /// <summary>
         /// Unregisters a specific Buff instance, typically when it expires or is explicitly removed.
@@ -134,6 +149,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary>
         /// Collects buff removal events for StartOfNextTurn expiry.
         /// </summary>
-        IReadOnlyList<BuffRemovedEvent> CollectStartOfNextTurnExpiryEvents(GameContext context, PlayerState startingPlayer);
+        IReadOnlyList<BuffRemovedEvent> CollectStartOfTurnExpiryEvents(GameContext context, PlayerState startingPlayer);
     }
 }

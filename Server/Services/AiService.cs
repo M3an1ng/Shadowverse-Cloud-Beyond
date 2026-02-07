@@ -19,6 +19,7 @@ using System; // For Exception, ArgumentNullException
 using System.Collections.Generic;
 using System.Linq; // For Linq methods
 using System.Text.Json; // For deep copy using JSON serialization
+using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 
@@ -68,7 +69,7 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <inheritdoc />
-        public Task<PlayCardActionDto?> DecidePlayCardAsync(GameStateDto gameState, Guid aiPlayerId)
+        public async Task<PlayCardActionDto?> DecidePlayCardAsync(GameStateDto gameState, Guid aiPlayerId)
         {
             _logger.LogDebug("[AiService:{GameId}] DecidePlayCardAsync called for AI {PlayerId}.", gameState?.GameId ?? "Unknown", aiPlayerId);
             var gameId = gameState?.GameId ?? "Unknown"; // Get gameId for logging
@@ -76,15 +77,15 @@ namespace ShadowverseBeyond.Server.Services
             if (states == null)
             {
                 _logger.LogError("[AiService:{GameId}] Could not get player states for AI {PlayerId}.", gameId, aiPlayerId);
-                return Task.FromResult<PlayCardActionDto?>(null);
+                return null;
             }
             var (aiState, opponentState) = states.Value;
 
-            var playableCards = GetPlayableCards(aiState);
+            var playableCards = await GetPlayableCardsAsync(gameId, aiPlayerId, aiState);
             if (!playableCards.Any())
             {
                 _logger.LogDebug("[AiService:{GameId}] No playable cards found for AI {PlayerId}.", gameId, aiPlayerId);
-                return Task.FromResult<PlayCardActionDto?>(null);
+                return null;
             }
 
             // V1 Logic: Prioritize playing the highest-cost follower if possible
@@ -93,14 +94,15 @@ namespace ShadowverseBeyond.Server.Services
                 .OrderByDescending(c => c.Cost)
                 .ToList();
 
-            if (aiState.Field.Count < GameConstants.Field.MaxFieldSize && playableFollowers.Any())
+            var aiFieldCount = aiState.Field.Count(c => c != null && c.Type != CardType.Leader);
+            if (aiFieldCount < GameConstants.Field.MaxFieldSize && playableFollowers.Any())
             {
                 var cardToPlay = playableFollowers.First();
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to play Follower: {CardName} ({CardInstanceId}), Cost: {Cost}.", // Changed Uid to InstanceId in log message
                     gameId, aiPlayerId, cardToPlay.Name, cardToPlay.InstanceId, cardToPlay.Cost); // Changed Uid to InstanceId
                 // Followers generally don't require a target when played, unless they have a specific Fanfare.
                 // Simple V1 plays without target.
-                return Task.FromResult<PlayCardActionDto?>(new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = null }); // Changed Uid to InstanceId
+                return new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = null };
             }
 
             // If no follower can be played, try playing the highest-cost spell
@@ -140,12 +142,12 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to play Spell: {CardName} ({CardInstanceId}), Cost: {Cost}, Target: {TargetUid}.", // Changed Uid to InstanceId in log message
                     gameId, aiPlayerId, cardToPlay.Name, cardToPlay.InstanceId, cardToPlay.Cost, targetUid.ToString() ?? "None"); // Changed Uid to InstanceId
 
-                return Task.FromResult<PlayCardActionDto?>(new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = targetUid.HasValue ? new List<Guid> { targetUid.Value } : null }); // Changed Uid to InstanceId
+                return new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = targetUid.HasValue ? new List<Guid> { targetUid.Value } : null };
             }
 
             // If neither follower nor spell can be played (e.g., amulets only, field full, no PP), play nothing.
             _logger.LogDebug("[AiService:{GameId}] AI {PlayerId} decided not to play any card this turn.", gameId, aiPlayerId);
-            return Task.FromResult<PlayCardActionDto?>(null);
+            return null;
         }
 
         /// <inheritdoc />
@@ -254,7 +256,7 @@ namespace ShadowverseBeyond.Server.Services
             var (aiState, opponentState) = states.Value;
 
             var readyUnit = aiState.Field
-                .Where(u => u != null && u.CanAttack && u.CanPerformAttackDto(aiState.PlayerId, gameState.CurrentPlayerId == aiState.PlayerId))
+                .Where(u => u != null && u.CanPerformAttackDto(aiState.PlayerId, gameState.CurrentPlayerId == aiState.PlayerId))
                 .Select(u => new { Unit = u, SortAttack = u.CurrentAttack })
                 .OrderByDescending(x => x.SortAttack)
                 .Select(x => x.Unit)
@@ -337,18 +339,45 @@ namespace ShadowverseBeyond.Server.Services
         /// <summary>
         /// Gets cards from the AI's hand that can currently be played based on Play Points.
         /// </summary>
-        private List<CardInstanceDto> GetPlayableCards(PlayerStateDto aiState) // Changed return type
+        private async Task<List<CardInstanceDto>> GetPlayableCardsAsync(string gameId, Guid aiPlayerId, PlayerStateDto aiState)
         {
             // Ensure aiState and Hand are not null before accessing
             if (aiState?.Hand == null)
             {
                 _logger.LogWarning("[AiService:Helper] AI state or hand is null in GetPlayableCards.");
-                return new List<CardInstanceDto>(); // Return empty list of correct type
+                return new List<CardInstanceDto>();
             }
             // Return playable CardInstanceDto directly
-            return aiState.Hand
-                .Where(card => card != null && card.Cost <= aiState.CurrentPP) // Filter playable instances
-                .ToList(); // Return List<CardInstanceDto>
+            var costPlayable = aiState.Hand
+                .Where(card => card != null && card.Cost <= aiState.CurrentPP)
+                .ToList();
+
+            if (!costPlayable.Any())
+            {
+                return new List<CardInstanceDto>();
+            }
+
+            using var scope = _serviceScopeFactory.CreateScope();
+            var gameService = scope.ServiceProvider.GetRequiredService<IGameService>();
+            var playable = new List<CardInstanceDto>();
+
+            foreach (var card in costPlayable)
+            {
+                try
+                {
+                    var result = await gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, card.InstanceId, CancellationToken.None);
+                    if (result.IsPlayable)
+                    {
+                        playable.Add(card);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[AiService:{GameId}] Failed to check playability for card {CardInstanceId}. Skipping.", gameId, card.InstanceId);
+                }
+            }
+
+            return playable;
         }
         /// <summary>
         /// Selects the best target for an attacking unit based on V1 AI logic.
@@ -364,17 +393,44 @@ namespace ShadowverseBeyond.Server.Services
             }
             // Ensure opponent field is not null before accessing
             // Corrected default list type to match PlayerStateDto.Field
-            var opponentField = opponentState.Field ?? new List<CardInstanceDto>();
+            var opponentField = opponentState.Field?
+                .Where(u => u != null && u.Type == CardType.Follower && u.Zone == CardZone.Field)
+                .ToList() ?? new List<CardInstanceDto>();
 
+            bool IsFollowerUnattackable(CardInstanceDto target)
+            {
+                return target.HasKeyword(CardKeyword.Ambush) || target.HasKeyword(CardKeyword.Pressure);
+            }
+
+            bool CanAttackLeader(CardInstanceDto attackerCard, CardInstanceDto? leaderCard, bool hasWardFollowers)
+            {
+                if (leaderCard == null)
+                {
+                    return false;
+                }
+
+                if (hasWardFollowers)
+                {
+                    return false;
+                }
+
+                if (attackerCard.FieldTurn == 0 && !attackerCard.HasStorm())
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+            var hasWardFollowers = opponentField.Any(u => u.HasKeyword(CardKeyword.Ward));
 
             // 1. Prioritize units with Ward
             var wardTargets = opponentField
-                // Corrected Keywords check for case-insensitivity and Contains signature
-                .Where(u => u != null && (u.Keywords?.Any(k => k == CardKeyword.Ward) ?? false)) // Compare enum directly
-                                                                                                 // Removed redundant null check on non-nullable int CurrentAttack
-                .Select(u => new { Unit = u, SortAttack = u.CurrentAttack }) // Project before ordering
-                .OrderByDescending(x => x.SortAttack) // Order by projected value
-                .Select(x => x.Unit) // Select original unit back // Prioritize highest attack among Ward units
+                .Where(u => u != null && u.HasKeyword(CardKeyword.Ward))
+                .Where(u => !IsFollowerUnattackable(u))
+                .Select(u => new { Unit = u, SortAttack = u.CurrentAttack })
+                .OrderByDescending(x => x.SortAttack)
+                .Select(x => x.Unit)
                 .ToList();
 
             if (wardTargets.Any())
@@ -383,10 +439,16 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} targeting Ward unit {TargetUid}", attacker?.InstanceId.ToString() ?? "Unknown", target.InstanceId); // Fix: Use InstanceId for both attacker and target
                 return target.InstanceId; // Fix: Use InstanceId // Convert Guid to string for return type
             }
+            else if (hasWardFollowers)
+            {
+                _logger.LogDebug("[AiService:Helper] Ward followers exist but none are attackable. Attacker {AttackerUid} cannot select a target.",
+                    attacker?.InstanceId.ToString() ?? "Unknown");
+                return null;
+            }
 
             // 2. If no Ward, prioritize highest attack non-Ward follower
             var highestAttackFollower = opponentField
-                 .Where(u => u != null) // Add null check
+                 .Where(u => u != null && !IsFollowerUnattackable(u))
                                         // Removed redundant null check on non-nullable int CurrentAttack
                 .Select(u => new { Unit = u, SortAttack = u.CurrentAttack }) // Project before ordering
                 .OrderByDescending(x => x.SortAttack) // Order by projected value
@@ -399,18 +461,9 @@ namespace ShadowverseBeyond.Server.Services
                 return highestAttackFollower.InstanceId; // Fix: Use InstanceId // Convert Guid to string for return type
             }
 
-            // 3. If opponent has no units on field, attack the opponent leader
-            // Check if the attacker itself can attack the leader (some units might be restricted)
-            // V1 only attacks the leader if the attacker is allowed to do so.
-            if (!opponentField.Any())
+            // 3. If no valid follower targets, consider attacking the opponent leader.
+            if (CanAttackLeader(attacker, opponentState.LeaderCard, hasWardFollowers))
             {
-                if (!attacker.CanAttackLeader())
-                {
-                    _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} cannot attack leader this turn. Skipping leader target.",
-                        attacker?.InstanceId.ToString() ?? "Unknown");
-                    return null;
-                }
-
                 if (opponentState.LeaderCard != null)
                 {
                     _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} targeting opponent leader {TargetUid}", attacker?.InstanceId.ToString() ?? "Unknown", opponentState.LeaderCard.InstanceId);
@@ -426,6 +479,7 @@ namespace ShadowverseBeyond.Server.Services
             _logger.LogWarning("[AiService:Helper] No target found for attacker {AttackerUid}, opponent has state but no units or leader target applicable?", attacker?.InstanceId.ToString() ?? "Unknown"); // Fix: Use InstanceId
             return null;
         }
+
 
         #endregion Helper Methods
 

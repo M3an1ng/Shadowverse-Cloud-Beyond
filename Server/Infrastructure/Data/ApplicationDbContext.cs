@@ -5,9 +5,11 @@
 // - 配置管理系统: 文档/05-游戏系统/09-配置管理系统.md
 //
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Persistence.Entities;
+using System.Text.Json;
 
 namespace ShadowverseBeyond.Server.Infrastructure.Data; // Added ShadowverseBeyond prefix
 
@@ -72,6 +74,11 @@ public class ApplicationDbContext : DbContext
   /// Gets or sets the DbSet for CardPackDefinition entities. Represents the CardPackDefinitions table.
   /// </summary>
   public DbSet<CardPackDefinition> CardPackDefinitions { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for CardSetDefinition entities. Represents the CardSetDefinitions table.
+  /// </summary>
+  public DbSet<CardSetDefinition> CardSetDefinitions { get; set; } = null!;
 
   /// <summary>
   /// Gets or sets the DbSet for UserCardPack entities. Represents the UserCardPacks table.
@@ -153,6 +160,8 @@ public class ApplicationDbContext : DbContext
     // 配置经济系统实体
     ConfigureEconomyEntities(modelBuilder);
 
+    ConfigureCardSetDefinition(modelBuilder);
+
     // 配置卡组相关实体
     ConfigureDeckEntities(modelBuilder);
 
@@ -219,6 +228,14 @@ public class ApplicationDbContext : DbContext
                 c => c.ToList()
             )
         );
+
+      entity.HasIndex(e => e.CardSetDefinitionId);
+
+      entity.HasOne(e => e.CardSetDefinition)
+            .WithMany(set => set.CardDefinitions)
+            .HasForeignKey(e => e.CardSetDefinitionId)
+            .OnDelete(DeleteBehavior.SetNull);
+
     });
   }
 
@@ -322,6 +339,31 @@ public class ApplicationDbContext : DbContext
     });
   }
 
+  private void ConfigureCardSetDefinition(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<CardSetDefinition>(entity =>
+    {
+      entity.ToTable("CardSetDefinitions");
+      entity.HasKey(e => e.Id);
+
+      entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.Abbreviation).HasMaxLength(20);
+
+      var envProperty = entity.Property(e => e.Environments)
+        .HasConversion(
+          v => SerializeEnvironments(v),
+          v => DeserializeEnvironments(v));
+      envProperty.Metadata.SetValueComparer(new ValueComparer<List<DeckEnvironment>>(
+          (c1, c2) => c1 != null && c2 != null && c1.SequenceEqual(c2),
+          c => c == null ? 0 : c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+          c => c == null ? new List<DeckEnvironment>() : c.ToList()));
+
+      entity.HasIndex(e => new { e.Region, e.Sequence }).IsUnique();
+      entity.HasCheckConstraint("CK_CardSetDefinitions_Region", "Region >= 0 AND Region <= 9");
+      entity.HasCheckConstraint("CK_CardSetDefinitions_Sequence", "Sequence >= 0 AND Sequence <= 99");
+    });
+  }
+
   /// <summary>
   /// 配置经济系统相关实体
   /// </summary>
@@ -371,7 +413,19 @@ public class ApplicationDbContext : DbContext
       entity.HasKey(e => e.Id);
 
       entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.Abbreviation).HasMaxLength(20).IsRequired();
       entity.Property(e => e.Description).HasMaxLength(500).IsRequired();
+
+      entity.HasIndex(e => new { e.Region, e.Sequence }).IsUnique();
+      entity.HasIndex(e => e.CardSetDefinitionId).IsUnique();
+
+      entity.HasCheckConstraint("CK_CardPackDefinitions_Region", "Region >= 0 AND Region <= 9");
+      entity.HasCheckConstraint("CK_CardPackDefinitions_Sequence", "Sequence >= 0 AND Sequence <= 99");
+
+      entity.HasOne(e => e.CardSetDefinition)
+        .WithOne(set => set.CardPackDefinition)
+        .HasForeignKey<CardPackDefinition>(e => e.CardSetDefinitionId)
+        .OnDelete(DeleteBehavior.Restrict);
     });
 
     // 配置UserCardPack实体
@@ -673,5 +727,51 @@ public class ApplicationDbContext : DbContext
       entity.Property(e => e.PayloadHash).HasMaxLength(64).IsRequired();
       entity.Property(e => e.Payload).IsRequired();
     });
+  }
+
+  private static string SerializeEnvironments(List<DeckEnvironment>? environments)
+  {
+    var normalized = environments == null || environments.Count == 0
+      ? new List<DeckEnvironment> { DeckEnvironment.Open }
+      : environments.Distinct().ToList();
+    return JsonSerializer.Serialize(normalized);
+  }
+
+  private static List<DeckEnvironment> DeserializeEnvironments(string? raw)
+  {
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+      return new List<DeckEnvironment> { DeckEnvironment.Open };
+    }
+
+    var trimmed = raw.Trim();
+    if (!trimmed.StartsWith("["))
+    {
+      if (int.TryParse(trimmed, out var numeric) && Enum.IsDefined(typeof(DeckEnvironment), numeric))
+      {
+        return new List<DeckEnvironment> { (DeckEnvironment)numeric };
+      }
+
+      if (Enum.TryParse(trimmed, true, out DeckEnvironment parsed))
+      {
+        return new List<DeckEnvironment> { parsed };
+      }
+
+      return new List<DeckEnvironment> { DeckEnvironment.Open };
+    }
+
+    try
+    {
+      var parsed = JsonSerializer.Deserialize<List<DeckEnvironment>>(trimmed);
+      if (parsed != null && parsed.Count > 0)
+      {
+        return parsed;
+      }
+    }
+    catch
+    {
+    }
+
+    return new List<DeckEnvironment> { DeckEnvironment.Open };
   }
 }

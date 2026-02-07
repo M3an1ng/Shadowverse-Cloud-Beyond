@@ -26,6 +26,7 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.PlayCard, AbilityEditorCategories.BaseActionId },
             { EventType.Act, AbilityEditorCategories.BaseActionId },
             { EventType.Fusion, AbilityEditorCategories.BaseActionId },
+            { EventType.Enhance, AbilityEditorCategories.BaseActionId },
 
             { EventType.Summon, AbilityEditorCategories.PositionChangeId },
             { EventType.CreateCard, AbilityEditorCategories.PositionChangeId },
@@ -34,19 +35,26 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.CardRevealed, AbilityEditorCategories.PositionChangeId },
             { EventType.AddCardToHand, AbilityEditorCategories.PositionChangeId },
             { EventType.Draw, AbilityEditorCategories.PositionChangeId },
+            { EventType.DeckEmptyOnDraw, AbilityEditorCategories.PositionChangeId },
             { EventType.Discard, AbilityEditorCategories.PositionChangeId },
             { EventType.Return, AbilityEditorCategories.PositionChangeId },
             { EventType.Vanish, AbilityEditorCategories.PositionChangeId },
             { EventType.Destroy, AbilityEditorCategories.PositionChangeId },
             { EventType.Transform, AbilityEditorCategories.PositionChangeId },
             { EventType.AddDeck, AbilityEditorCategories.PositionChangeId },
+            { EventType.Tuck, AbilityEditorCategories.PositionChangeId },
+            { EventType.Shuffle, AbilityEditorCategories.PositionChangeId },
+            { EventType.CardBurned, AbilityEditorCategories.PositionChangeId },
+            { EventType.CardPacked, AbilityEditorCategories.PositionChangeId },
 
             { EventType.BuffApplied, AbilityEditorCategories.TempStateId },
             { EventType.BuffRemoved, AbilityEditorCategories.TempStateId },
             { EventType.KeywordApplied, AbilityEditorCategories.TempStateId },
             { EventType.KeywordRemoved, AbilityEditorCategories.TempStateId },
+            { EventType.AbilityGranted, AbilityEditorCategories.TempStateId },
             { EventType.SilenceApplied, AbilityEditorCategories.TempStateId },
             { EventType.SilenceRemoved, AbilityEditorCategories.TempStateId },
+            { EventType.SpellBoost, AbilityEditorCategories.TempStateId },
 
             { EventType.PpUpdated, AbilityEditorCategories.ResourceValueId },
             { EventType.PpMaxUpdated, AbilityEditorCategories.ResourceValueId },
@@ -58,6 +66,7 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.StatChanged, AbilityEditorCategories.ResourceValueId },
             { EventType.HealthChanged, AbilityEditorCategories.ResourceValueId },
             { EventType.HandUpdated, AbilityEditorCategories.ResourceValueId },
+            { EventType.CounterChanged, AbilityEditorCategories.ResourceValueId },
 
             { EventType.TurnStart, AbilityEditorCategories.TurnFlowId },
             { EventType.TurnEnd, AbilityEditorCategories.TurnFlowId },
@@ -149,7 +158,8 @@ namespace ShadowverseBeyond.Server.Services
                         DisplayName = parameter.DisplayName,
                         Description = parameter.Description,
                         TypeName = TypeNameHelper.GetCleanTypeName(parameter.PropertyType),
-                        Scope = parameter.Scope
+                        Scope = parameter.Scope,
+                        DslDisplayTypeName = parameter.DslDisplayTypeName
                     });
                 }
 

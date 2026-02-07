@@ -31,6 +31,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.
         TextArea,
 
         /// <summary>
+        /// 授予能力列表编辑器，用于管理 AbilityConfig 列表。
+        /// </summary>
+        AbilityListEditor,
+
+        /// <summary>
+        /// 能力定义选择器（卡牌 -> 能力列表），返回能力定义ID。
+        /// </summary>
+        AbilityDefinitionPicker,
+
+        /// <summary>
+        /// 卡牌定义选择器（卡牌列表），返回卡牌定义ID。
+        /// </summary>
+        CardDefinitionPicker,
+
+        /// <summary>
         /// 一个复合控件，用于定义一个目标选择器（TargetSelector）。
         /// </summary>
         TargetSelector,

@@ -9,6 +9,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Domain.Constants;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -44,8 +45,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     {
                         return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found for target card." };
                     }
-
-                    return ownerPlayer.SuperEvolveCard(cardToEvolve);
+                    return cardToEvolve.ApplySuperEvolution(ownerPlayer, ctx.SourceCard, isManualEvolution: false);
                 };
 
             var serviceResult = _targetProcessingService.ProcessTargets(

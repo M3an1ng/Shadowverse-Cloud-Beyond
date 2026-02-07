@@ -278,6 +278,40 @@
     opacity: 1;
 }
 
+.deck-action-btn {
+    min-width: 120px;
+    height: 36px;
+    padding: 0 18px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-family: var(--db-font-mono);
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.deck-action-btn:hover {
+    border-color: var(--db-accent-gold);
+    color: var(--db-accent-gold);
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.deck-action-btn.delete-deck-btn {
+    border-color: rgba(239, 68, 68, 0.5);
+    color: var(--db-accent-red);
+}
+
+.deck-action-btn.delete-deck-btn:hover {
+    border-color: var(--db-accent-red);
+    color: #fff;
+    background: rgba(239, 68, 68, 0.15);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.35);
+}
+
 /* --- Create New Deck Card --- */
 .deck-card.create-new-deck {
     height: 160px;
@@ -602,7 +636,8 @@
     flex: 0 0 110px; /* Fixed width, don't shrink */
     height: 150px;
     background: #1a1a1a;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    --db-card-border: rgba(255, 255, 255, 1);
+    border: 1px solid var(--db-card-border);
     position: relative;
     cursor: pointer;
     transition: all var(--transition-fast);
@@ -611,6 +646,7 @@
     align-items: center;
     justify-content: center;
     border-radius: 4px;
+    overflow: hidden;
 }
 
 .deck-card-mini:hover {
@@ -639,6 +675,33 @@
     height: 100%;
     background: linear-gradient(135deg, #222, #111);
     /* Placeholder for card art */
+}
+
+.mini-visual.has-art {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+.mini-detail-btn {
+    position: absolute;
+    top: 4px;
+    right: 28px;
+    z-index: 4;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-family: var(--db-font-mono);
+    font-size: 0.55rem;
+    padding: 2px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.mini-detail-btn:hover {
+    border-color: var(--db-accent-cyan);
+    color: var(--db-accent-cyan);
 }
 
 .mini-name {
@@ -699,12 +762,45 @@
     overflow: hidden;
 }
 
+.library-search-row {
+    padding: 16px 30px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.25);
+}
+
+.library-search-row .search-section {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    width: 100%;
+}
+
+.library-search-row .search-input {
+    flex: 0 0 auto;
+    width: 10.5em;
+    min-width: 9em;
+}
+
+.library-search-row .filter-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.library-search-row .filter-select {
+    width: max-content;
+    min-width: 5.5em;
+}
+
 .library-grid {
     flex: 1;
     overflow-y: auto;
-    padding: 20px 30px;
+    padding: 16px 30px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     gap: 16px;
 }
 
@@ -825,7 +921,9 @@
     position: relative;
     aspect-ratio: 2/3;
     background: #1a1a1a;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background-image: var(--library-card-art, none);
+    --db-card-border: rgba(255, 255, 255, 1);
+    border: 2px solid var(--db-card-border);
     border-radius: 6px;
     overflow: hidden;
     cursor: pointer;
@@ -835,10 +933,87 @@
     justify-content: flex-end;
 }
 
+.library-card.has-art {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
 .library-card:hover {
     transform: translateY(-4px);
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
     border-color: var(--db-accent-cyan);
+}
+
+/* Rarity Borders */
+.deck-card-mini.rarity-bronze,
+.library-card.rarity-bronze {
+    --db-card-border: #be7936;
+}
+
+.deck-card-mini.rarity-silver,
+.library-card.rarity-silver {
+    --db-card-border: #c0c0c0;
+}
+
+.deck-card-mini.rarity-gold,
+.library-card.rarity-gold {
+    --db-card-border: #ffc800;
+}
+
+.deck-card-mini.rarity-legend,
+.deck-card-mini.rarity-legendary,
+.library-card.rarity-legend,
+.library-card.rarity-legendary {
+    --db-card-border: transparent;
+}
+
+/* Legendary (虹卡) accent */
+.deck-card-mini.rarity-legend,
+.deck-card-mini.rarity-legendary {
+    border-width: 1px;
+    border-color: transparent;
+    background-image:
+        linear-gradient(#1a1a1a, #1a1a1a),
+        conic-gradient(
+            from 0deg,
+            #ffd24d,
+            #ff6ad5,
+            #7c83ff,
+            #3dffdf,
+            #ffd24d
+        );
+    background-clip: padding-box, border-box;
+    background-origin: padding-box, border-box;
+    box-shadow:
+        0 0 8px rgba(255, 210, 77, 0.45),
+        0 0 14px rgba(0, 255, 204, 0.3),
+        0 0 18px rgba(255, 106, 213, 0.25);
+}
+
+.library-card.rarity-legend,
+.library-card.rarity-legendary {
+    border-width: 2px;
+    border-color: transparent;
+    background-image:
+        var(--library-card-art, none),
+        conic-gradient(
+            from 0deg,
+            #ffd24d,
+            #ff6ad5,
+            #7c83ff,
+            #3dffdf,
+            #ffd24d
+        );
+    background-clip: padding-box, border-box;
+    background-origin: padding-box, border-box;
+    background-size: cover, 100% 100%;
+    background-position: center, center;
+    background-repeat: no-repeat, no-repeat;
+    box-shadow:
+        0 0 10px rgba(255, 210, 77, 0.5),
+        0 0 18px rgba(0, 255, 204, 0.35),
+        0 0 26px rgba(255, 106, 213, 0.3);
 }
 
 /* Card Visual Placeholder */
@@ -848,6 +1023,31 @@
     inset: 0;
     background: linear-gradient(to bottom, #2a2a2a, #111);
     z-index: 0;
+}
+
+.library-card.has-art::before {
+    background: linear-gradient(to bottom, rgba(10, 10, 10, 0.2), rgba(0, 0, 0, 0.9));
+}
+
+.card-detail-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 4;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-family: var(--db-font-mono);
+    font-size: 0.6rem;
+    padding: 4px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.card-detail-btn:hover {
+    border-color: var(--db-accent-cyan);
+    color: var(--db-accent-cyan);
 }
 
 /* Card Cost Badge */
@@ -930,3 +1130,5 @@
 .library-card:hover .add-icon {
     transform: scale(1);
 }
+
+/* --- Card Detail Modal --- */

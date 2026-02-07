@@ -1,4 +1,4 @@
-namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
+﻿namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
     /// <summary>
     /// Base class for effect parameter objects, containing common parameters

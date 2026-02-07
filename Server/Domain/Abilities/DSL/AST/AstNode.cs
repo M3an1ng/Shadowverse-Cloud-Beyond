@@ -132,6 +132,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
         T VisitIdentifier(IdentifierNode node);
         T VisitBinaryOperation(BinaryOperationNode node);
         T VisitUnaryOperation(UnaryOperationNode node);
+        T VisitParenthesizedExpression(ParenthesizedExpressionNode node);
         T VisitFunctionCall(FunctionCallNode node);
         T VisitBlock(BlockNode node);
         T VisitConditionalExpression(ConditionalExpressionNode node);
@@ -158,6 +159,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
         public virtual T VisitIdentifier(IdentifierNode node) => DefaultVisit(node);
         public virtual T VisitBinaryOperation(BinaryOperationNode node) => DefaultVisit(node);
         public virtual T VisitUnaryOperation(UnaryOperationNode node) => DefaultVisit(node);
+        public virtual T VisitParenthesizedExpression(ParenthesizedExpressionNode node) => DefaultVisit(node);
         public virtual T VisitFunctionCall(FunctionCallNode node) => DefaultVisit(node);
         public virtual T VisitBlock(BlockNode node) => DefaultVisit(node);
         public virtual T VisitConditionalExpression(ConditionalExpressionNode node) => DefaultVisit(node);

@@ -11,6 +11,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
     public interface IDslCompiler
     {
         /// <summary>
+        /// Defines how 'self' is allowed to appear in an expression at runtime.
+        /// </summary>
+        public enum SelfResolutionMode
+        {
+            ContextOnly = 0,
+            ItemOptional = 1,
+            ItemRequired = 2
+        }
+
+        /// <summary>
         /// Compiles a DSL expression into a predicate that evaluates against a game context.
         /// Used for conditions that only depend on the global game state.
         /// </summary>
@@ -32,6 +42,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         /// Used for filters in queries that depend on pre-selected targets.
         /// </summary>
         Func<TItem, bool> CompilePredicate<TItem>(string dslExpression, TargetSelectionContext tsc);
+
+        /// <summary>
+        /// Compiles a DSL expression into a predicate with optional trace collection.
+        /// </summary>
+        Func<TItem, IDslTraceCollector?, bool> CompilePredicateWithTrace<TItem>(string dslExpression, TargetSelectionContext tsc);
 
         /// <summary>
         /// Compiles a DSL expression into a function that returns a strongly-typed value.
@@ -56,5 +71,46 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         /// Used for sort keys or dynamic values that depend on pre-selected targets.
         /// </summary>
         Func<TItem, object> CompileGetter<TItem>(string dslExpression, TargetSelectionContext tsc);
+
+        /// <summary>
+        /// Compiles a DSL expression into a getter with optional trace collection.
+        /// </summary>
+        Func<TItem, IDslTraceCollector?, object> CompileGetterWithTrace<TItem>(string dslExpression, TargetSelectionContext tsc);
+
+        /// <summary>
+        /// Compiles a predicate delegate using an optional runtime self type.
+        /// </summary>
+        Func<object, bool> CompilePredicateRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            SelfResolutionMode selfResolutionMode = SelfResolutionMode.ItemOptional);
+
+        /// <summary>
+        /// Compiles a predicate-with-trace delegate using an optional runtime self type.
+        /// </summary>
+        Func<object, IDslTraceCollector?, bool> CompilePredicateWithTraceRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            SelfResolutionMode selfResolutionMode = SelfResolutionMode.ItemOptional);
+
+        /// <summary>
+        /// Compiles a getter delegate using an optional runtime self type.
+        /// </summary>
+        Func<object, object?> CompileGetterRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            SelfResolutionMode selfResolutionMode = SelfResolutionMode.ItemOptional);
+
+        /// <summary>
+        /// Compiles a getter-with-trace delegate using an optional runtime self type.
+        /// </summary>
+        Func<object, IDslTraceCollector?, object?> CompileGetterWithTraceRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            SelfResolutionMode selfResolutionMode = SelfResolutionMode.ItemOptional);
     }
 }

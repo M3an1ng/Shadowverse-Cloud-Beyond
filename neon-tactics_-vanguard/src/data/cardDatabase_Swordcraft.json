@@ -1,8 +1,306 @@
 {
-  "1421301": {
-    "id": "1421301",
-    "name": "见习骑士",
-    "cardSet": "星云基础",
+  "1520101": {
+    "id": "1520101",
+    "name": "纹章:金鳞御币尊",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 3,
+    "effects": [
+      "When|Allied-Trait:8-Card|Play||Countdown+1|ThisCard",
+      "When|Enemy-Turn-End||Summon|1521102|1",
+      "When|Enemy-Turn-End||Countdown-2|ThisCard"
+    ]
+  },
+  "1520102": {
+    "id": "1520102",
+    "name": "纹章:犬王默武",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Field-Follower|Increased||If|TimesPerTurn&3|{Cards|Allied-Field-Card}<5||Summon|1520401|1"
+    ]
+  },
+  "1520201": {
+    "id": "1520201",
+    "name": "纹章:巴沙洛缪的号令",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": []
+  },
+  "1520203": {
+    "id": "1520203",
+    "name": "巡洋突击兵",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "士兵",
+    "cost": 2,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|EnterField||AddToHand|1120403|1",
+      "When|Allied-SameName&1120403-Card|Play||Give|ThisCard|{Bane}",
+      "Evolve||PP|1"
+    ]
+  },
+  "1520204": {
+    "id": "1520204",
+    "name": "恶浪海贼",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "士兵",
+    "cost": 2,
+    "attack": 1,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|EnterField||AddToHand|1120401|1",
+      "When|Allied-SameName&1120401-Card|Play||Give|ThisCard|{Barrier}",
+      "Evolve||PP|1"
+    ]
+  },
+  "1520205": {
+    "id": "1520205",
+    "name": "维京战士",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "士兵",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|EnterField||AddToHand|1120402|1",
+      "When|Allied-SameName&1120402-Card|Play||Draw|1",
+      "Evolve||PP|1"
+    ]
+  },
+  "1520206": {
+    "id": "1520206",
+    "name": "加农炮水手",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "士兵",
+    "cost": 2,
+    "attack": 2,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|EnterField||AddToHand|1120405|1",
+      "When|Allied-SameName&1120405-Card|Play||SplitDamage|Enemy-Follower|2",
+      "Evolve||PP|1"
+    ]
+  },
+  "1520401": {
+    "id": "1520401",
+    "name": "战犬新兵",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "士兵",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Rush"
+    ]
+  },
+  "1521101": {
+    "id": "1521101",
+    "name": "千锋总军·玛鲁塞卡",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||+1/+1|Allied-Field-Follower",
+      "Evolve||+2/+2|Allied-Hand-Follower",
+      "SuperEvolve||+3/+3|Allied-Deck-Follower"
+    ]
+  },
+  "1521102": {
+    "id": "1521102",
+    "name": "金鳞御币尊",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&3|{When|Allied-Trait:8-Card|Play||Countdown+1|ThisCard}|{When|Enemy-Turn-End||Summon|1521102|1}|{When|Enemy-Turn-End||Countdown-2|ThisCard}",
+      "Strike||If|{Cards|Opposing}>0||AddToHand|1120402@1120403@1120405@1120401|1"
+    ]
+  },
+  "1521103": {
+    "id": "1521103",
+    "name": "犬王默武",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1520401|1",
+      "When|Allied-Other-Follower|EnterField||+1/+1|It",
+      "SuperEvolve||Crest&0|{When|Allied-Field-Follower|Increased||If|TimesPerTurn&3|{Cards|Allied-Field-Card}<5||Summon|1520401|1}"
+    ]
+  },
+  "1521201": {
+    "id": "1521201",
+    "name": "璨金王·内布梅什",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 3,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1220402|1",
+      "Fanfare||AddToHand|1120401|1||AddToHand|1120403|1",
+      "Evolve||AuxSelect|Select&1-Allied-Field-Trait:2-Follower||Repeat&2|CopySummon|It||Change|SuperEvolve||CardCount|0",
+      "Evolve||CardCount|0||Change|SuperEvolve||AuxSelect|Select&1-Allied-Field-Trait:2-Follower||Repeat&3|CopySummon|It",
+      "SuperEvolve"
+    ]
+  },
+  "1521202": {
+    "id": "1521202",
+    "name": "巴沙洛缪的号令",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 4,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Mode&2|{Summon|1520206|1}|{Summon|1520204|1}|{Summon|1520205|1}|{Summon|1520203|1}"
+    ]
+  },
+  "1521203": {
+    "id": "1521203",
+    "name": "暴乱镇压者",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 8,
+    "defense": 7,
+    "countdown": 0,
+    "effects": [
+      "Rush",
+      "CanAttackTimes&2",
+      "Strike||If|{Cards|Field-Evolved-Follower-Opposing}>0||SuperEvolve|ThisCard"
+    ]
+  },
+  "1521204": {
+    "id": "1521204",
+    "name": "漂浪骑士·芭澜",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Mode&1|{Destroy|Enemy-UnStriked-Follower}|{Destroy|Enemy-Striked-Follower}",
+      "When|Enemy-Follower|Destroy||+1/+1|ThisCard"
+    ]
+  },
+  "1521206": {
+    "id": "1521206",
+    "name": "未来新星·米丽",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Barrier",
+      "When|Allied-Field-DifferentName&1521206-Follower|Increased||If|{Cards|Keyword&Barrier-ThisCard}>0||+1/+1|ThisCard",
+      "Evolve||Damage|Select&1-Enemy-Follower|X||X=Attack|ThisCard",
+      "SuperEvolve||SplitDamage|Enemy-Follower|X||X=Attack|ThisCard"
+    ]
+  },
+  "1521301": {
+    "id": "1521301",
+    "name": "友伴大汪",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 1,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1520401|1",
+      "Enhance&5||Summon|1520401|1",
+      "Enhance&5||+1/+0|Allied-Field-Follower",
+      "When|Allied-Trait:2-Follower|EnterField||Give|It|{Ward}"
+    ]
+  },
+  "1521302": {
+    "id": "1521302",
+    "name": "世家大族",
+    "cardSet": "神眷的棋盘",
     "class": "Swordcraft",
     "rarity": "Silver",
     "type": "Follower",
@@ -12,47 +310,154 @@
     "defense": 2,
     "countdown": 0,
     "effects": [
-      "Fanfare||If|{Cards|Allied-Field-Evolved-Follower}>0||Evolve|ThisCard"
+      "Fanfare||AddToHand|1120402|1",
+      "When|Allied-Trait:8-Card|Play||+1/+1|Allied-Hand&Deck-SameName&1521302-Follower"
     ]
   },
-  "1421303": {
-    "id": "1421303",
-    "name": "历战近卫",
-    "cardSet": "星云基础",
+  "1521303": {
+    "id": "1521303",
+    "name": "典当行",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Silver",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1120401|1",
+      "Engage&0||Destroy|ThisCard",
+      "Engage&0||Discard|Select&2-Allied-Card",
+      "Engage&0||Draw|2"
+    ]
+  },
+  "1521304": {
+    "id": "1521304",
+    "name": "沙漠盗贼",
+    "cardSet": "神眷的棋盘",
     "class": "Swordcraft",
     "rarity": "Silver",
     "type": "Follower",
     "trait": "",
     "cost": 4,
-    "attack": 5,
-    "defense": 4,
+    "attack": 3,
+    "defense": 2,
     "countdown": 0,
     "effects": [
-      "Evolve||Summon|1020401|3",
-      "SuperEvolve||Give|Allied-Field-Trait:2-Follower|{Rush}||+1/+2|Allied-Field-Trait:2-Follower"
+      "Fanfare||AddToHand|1120405|2",
+      "Rush",
+      "When|Allied-Trait:8-Card|Play||If|TimesPerTurn&1||Summon|1521304|1"
     ]
   },
-  "1421304": {
-    "id": "1421304",
-    "name": "陷阵骑将",
-    "cardSet": "星云基础",
+  "1521305": {
+    "id": "1521305",
+    "name": "安详之眠",
+    "cardSet": "神眷的棋盘",
     "class": "Swordcraft",
     "rarity": "Silver",
-    "type": "Follower",
+    "type": "Spell",
     "trait": "",
-    "cost": 8,
-    "attack": 5,
-    "defense": 6,
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
     "countdown": 0,
     "effects": [
-      "Storm",
-      "Strike||If|{Cards|Opposing}>0||Give|ThisCard|{CanAttackTimes&2}||Give|ThisCard|{Barrier}"
+      "Play||Give|Select&1-Allied-Field-Follower|{When|Turn-End||+1/+1|ThisCard||Restore|ThisCard|X||X=Damaged|ThisCard}||AddLabel|It|Label1521305"
     ]
   },
-  "1421401": {
-    "id": "1421401",
-    "name": "须臾剑士",
-    "cardSet": "星云基础",
+  "1521402": {
+    "id": "1521402",
+    "name": "嬉闹小黄",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Draw|1||If|{Cards|Allied-Field-Attack>OrigAttack&Defense>OrigDefense-Follower}>0||Draw|1"
+    ]
+  },
+  "1521403": {
+    "id": "1521403",
+    "name": "黄金雕像",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 4,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Destroy|Select&1-Enemy-Follower||Summon|1521403|1",
+      "Engage&0||Destroy|ThisCard",
+      "Engage&0||AddToHand|1120405@1120401@1120402@1120403|1"
+    ]
+  },
+  "1521404": {
+    "id": "1521404",
+    "name": "铜爪儿",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 3,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1120405|1||AddToHand|1120403|1",
+      "Strike||Destroy|Damaged-Opposing",
+      "Enhance&7||PP|6"
+    ]
+  },
+  "1521405": {
+    "id": "1521405",
+    "name": "猎犬",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 3,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Enhance&6||Summon|1521405|2",
+      "Enhance&6||+1/+1|Allied-Field-Follower",
+      "Rush"
+    ]
+  },
+  "1521406": {
+    "id": "1521406",
+    "name": "绒冕大帝",
+    "cardSet": "神眷的棋盘",
+    "class": "Swordcraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1120403|1",
+      "LastWords||AddToHand|1120401|1"
+    ]
+  },
+  "1521407": {
+    "id": "1521407",
+    "name": "慷慨小白",
+    "cardSet": "神眷的棋盘",
     "class": "Swordcraft",
     "rarity": "Bronze",
     "type": "Follower",
@@ -62,56 +467,8 @@
     "defense": 1,
     "countdown": 0,
     "effects": [
-      "Storm"
-    ]
-  },
-  "1421402": {
-    "id": "1421402",
-    "name": "动员令",
-    "cardSet": "星云基础",
-    "class": "Swordcraft",
-    "rarity": "Bronze",
-    "type": "Spell",
-    "trait": "",
-    "cost": 2,
-    "attack": 0,
-    "defense": 0,
-    "countdown": 0,
-    "effects": [
-      "Play||AddToHand|1020401|2"
-    ]
-  },
-  "1421404": {
-    "id": "1421404",
-    "name": "月夜暗杀者",
-    "cardSet": "星云基础",
-    "class": "Swordcraft",
-    "rarity": "Bronze",
-    "type": "Follower",
-    "trait": "",
-    "cost": 4,
-    "attack": 3,
-    "defense": 4,
-    "countdown": 0,
-    "effects": [
-      "Enhance&6||Destroy|Select&1-Enemy-Follower",
-      "Ambush"
-    ]
-  },
-  "1421405": {
-    "id": "1421405",
-    "name": "军备锻造",
-    "cardSet": "星云基础",
-    "class": "Swordcraft",
-    "rarity": "Bronze",
-    "type": "Spell",
-    "trait": "",
-    "cost": 3,
-    "attack": 0,
-    "defense": 0,
-    "countdown": 0,
-    "effects": [
-      "Play||+2/+2|Select&1-Allied-Field-Follower||If|Unlock-SuperEvolve||Give|It|{Barrier}"
+      "Enhance&4||Evolve|ThisCard",
+      "When|ThisCard|Evolve||+1/+1|Allied-Field-Other-Follower"
     ]
   }
 }

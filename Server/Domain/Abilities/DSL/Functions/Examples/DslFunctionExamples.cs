@@ -296,7 +296,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Examples
         }, new JsonSerializerOptions { WriteIndented = true });
 
         /// <summary>
-        /// 示例9：ApplyBuff效果与IsNonStackable参数
+        /// 示例9：ApplyBuff效果与CanStack参数
         /// 效果：应用一个不可叠加的攻击力增强Buff
         /// </summary>
         public static string NonStackableBuffExample => JsonSerializer.Serialize(new
@@ -319,7 +319,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Examples
                         BuffType = "ModifyAttack",
                         ModifyAttackAmount = 3,
                         Duration = "UntilEndOfTurn",
-                        IsNonStackable = true  // 关键参数：标记为不可叠加
+                        CanStack = false  // 关键参数：标记为不可叠加
                     }
                 }
             }
@@ -349,7 +349,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Examples
                         BuffType = "AddKeyword",
                         Keyword = "Rush",
                         Duration = "Permanent",
-                        IsNonStackable = false  // 明确标记为可叠加（也可以省略，默认为false）
+                        CanStack = true  // 明确标记为可叠加（也可以省略，默认为true）
                     }
                 }
             }

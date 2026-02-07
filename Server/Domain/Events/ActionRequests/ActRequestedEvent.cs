@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
@@ -29,8 +32,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("启动动作", "启动动作的详细信息。")]
         public ActActionDto ActionDto { get; }
 
-        public ActRequestedEvent(Guid playerId, ActActionDto actionDto)
-            : base(EventType.ActRequested)
+        public ActRequestedEvent(Guid playerId, ActActionDto actionDto, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.ActRequested, eventId, timestamp)
         {
             PlayerId = playerId;
             ActionDto = actionDto;
@@ -66,11 +69,40 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "Act can only be used while the card is on the field." };
             }
 
-            var hasActAbility = context.AbilityManager
-                .GetAbilitiesForCard(card.InstanceId)
-                .Any(a => a.Type == AbilityType.Activated);
+            var abilities = context.AbilityManager.GetEffectiveAbilitiesForCard(card.InstanceId, context)
+                ?? new List<IAbility>();
+            var hasActAbility = abilities
+                .Any(a => a.AbilityKeywords?.Any(k => k.Keyword == AbilityKeyword.Act) == true);
 
-            if (!hasActAbility)
+            Ability? selectedAbility = null;
+            if (ActionDto.AbilityRuntimeId.HasValue && ActionDto.AbilityRuntimeId.Value != Guid.Empty)
+            {
+                var ability = context.AbilityManager.GetAbilityByRuntimeId(ActionDto.AbilityRuntimeId.Value) as Ability;
+                if (ability == null)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected Act ability not found." };
+                }
+
+                var sourceCardId = ability.SourceCardId ?? ability.SourceCard?.InstanceId;
+                if (sourceCardId != card.InstanceId)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected Act ability does not belong to this card." };
+                }
+
+                if (!ability.HasKeyword(AbilityKeyword.Act))
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected ability is not an Act ability." };
+                }
+
+                if (context.AbilityManager.IsAbilitySuppressed(ability, context))
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected Act ability is suppressed." };
+                }
+
+                selectedAbility = ability;
+            }
+
+            if (!hasActAbility && selectedAbility == null)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has no Act ability." };
             }
@@ -86,11 +118,16 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has already used Act this turn." };
             }
 
+            var paidCost = selectedAbility != null
+                ? card.GetActCostForAbility(selectedAbility, context)
+                : card.GetActCost(context);
+
             // Trigger actual activated abilities (data-driven via TriggerConfig listening to EventType.Act).
-            result.GeneratedEvents.Add(new ActInvokedEvent(owner, card));
+            result.GeneratedEvents.Add(new ActInvokedEvent(owner, card, paidCost, selectedAbility?.RuntimeId));
 
             result.Success = true;
             return result;
         }
+
     }
 }

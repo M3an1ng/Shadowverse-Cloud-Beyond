@@ -10,13 +10,443 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder; // Needed for WebApplication extension method input
 using System;                   // Needed for Exception
 using Microsoft.Extensions.Hosting;
-using ShadowverseBeyond.Server.Dtos; // Needed for IHostEnvironment via WebApplication
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyond prefix
 {
     public static class DataSeeder
     {
+        private const int AbilityIndexWidth = 3;
+
+        private record CardPackSeedDto
+        {
+            [JsonPropertyName("id")]
+            public int? Id { get; init; }
+
+            [JsonPropertyName("name")]
+            public string Name { get; init; } = string.Empty;
+
+            [JsonPropertyName("abbreviation")]
+            public string Abbreviation { get; init; } = string.Empty;
+
+            [JsonPropertyName("region")]
+            public int Region { get; init; }
+
+            [JsonPropertyName("sequence")]
+            public int Sequence { get; init; }
+
+            [JsonPropertyName("environment")]
+            public string Environment { get; init; } = "Open";
+
+            [JsonPropertyName("environments")]
+            public List<string> Environments { get; init; } = new();
+
+            [JsonPropertyName("description")]
+            public string Description { get; init; } = string.Empty;
+
+            [JsonPropertyName("price")]
+            public int Price { get; init; }
+
+            [JsonPropertyName("cardCount")]
+            public int CardCount { get; init; } = 5;
+
+            [JsonPropertyName("isActive")]
+            public bool IsActive { get; init; } = true;
+
+            [JsonPropertyName("aliases")]
+            public List<string> Aliases { get; init; } = new();
+        }
+
+        private record CardDataSeedDto
+        {
+            [JsonPropertyName("id")]
+            public int CardId { get; init; }
+
+            [JsonPropertyName("name")]
+            public string Name { get; init; } = string.Empty;
+
+            [JsonPropertyName("type")]
+            public CardType Type { get; init; }
+
+            [JsonPropertyName("rarity")]
+            public string Rarity { get; init; } = "Common";
+
+            [JsonPropertyName("card_set")]
+            public string CardSet { get; init; } = "Legacy";
+
+            [JsonPropertyName("class")]
+            public string Class { get; init; } = "Neutral";
+
+            [JsonPropertyName("cost")]
+            public int Cost { get; init; }
+
+            [JsonPropertyName("attack")]
+            public int? Attack { get; init; }
+
+            [JsonPropertyName("health")]
+            public int? Health { get; init; }
+
+            [JsonPropertyName("countdown")]
+            public int? Countdown { get; init; }
+
+            [JsonPropertyName("description")]
+            public string? Description { get; init; }
+
+            [JsonPropertyName("isCollectible")]
+            public bool IsCollectible { get; init; } = true;
+
+            [JsonPropertyName("keywords")]
+            public List<string> Keywords { get; init; } = new List<string>();
+
+            [JsonPropertyName("tribe")]
+            public List<string>? Tribe { get; init; }
+
+            [JsonPropertyName("abilities")]
+            public List<JsonElement>? Abilities { get; init; }
+        }
+
+        private static string NormalizePackKey(string value)
+        {
+            return value.Trim().ToLowerInvariant();
+        }
+
+        private static async Task<List<CardPackSeedDto>> LoadCardPackSeedsAsync(string dataDirectory, JsonSerializerOptions jsonOptions, ILogger logger)
+        {
+            var seedPath = Path.Combine(dataDirectory, "card_pack_definitions.json");
+            if (!File.Exists(seedPath))
+            {
+                logger.LogWarning("Card pack seed file not found at {SeedPath}.", seedPath);
+                return new List<CardPackSeedDto>();
+            }
+
+            try
+            {
+                var jsonData = await File.ReadAllTextAsync(seedPath);
+                var seeds = JsonSerializer.Deserialize<List<CardPackSeedDto>>(jsonData, jsonOptions);
+                return seeds ?? new List<CardPackSeedDto>();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to read card pack seed file at {SeedPath}.", seedPath);
+                return new List<CardPackSeedDto>();
+            }
+        }
+
+        private static CardSetDefinition BuildCardSetEntity(CardPackSeedDto seed)
+        {
+            var abbreviation = string.IsNullOrWhiteSpace(seed.Abbreviation) ? string.Empty : seed.Abbreviation.Trim();
+            var environments = ResolveSeedEnvironments(seed);
+
+            return new CardSetDefinition
+            {
+                Name = seed.Name.Trim(),
+                Abbreviation = abbreviation,
+                Region = seed.Region,
+                Sequence = seed.Sequence,
+                Environments = environments,
+                CreatedAt = DateTime.UtcNow
+            };
+        }
+
+        private static CardPackDefinition BuildCardPackEntity(CardPackSeedDto seed, CardSetDefinition setDefinition)
+        {
+            var abbreviation = string.IsNullOrWhiteSpace(seed.Abbreviation) ? "UNK" : seed.Abbreviation.Trim();
+            var description = string.IsNullOrWhiteSpace(seed.Description) ? seed.Name : seed.Description;
+
+            return new CardPackDefinition
+            {
+                Id = seed.Id ?? 0,
+                Name = seed.Name.Trim(),
+                Abbreviation = abbreviation,
+                Region = seed.Region,
+                Sequence = seed.Sequence,
+                Description = description,
+                Price = seed.Price,
+                CardCount = seed.CardCount,
+                IsActive = seed.IsActive,
+                CreatedAt = DateTime.UtcNow,
+                CardSetDefinitionId = setDefinition.Id,
+                CardSetDefinition = setDefinition
+            };
+        }
+
+        private static List<DeckEnvironment> ResolveSeedEnvironments(CardPackSeedDto seed)
+        {
+            var rawValues = new List<string>();
+            if (seed.Environments != null && seed.Environments.Count > 0)
+            {
+                rawValues.AddRange(seed.Environments);
+            }
+            else if (!string.IsNullOrWhiteSpace(seed.Environment))
+            {
+                rawValues.Add(seed.Environment);
+            }
+
+            var resolved = new List<DeckEnvironment>();
+            foreach (var raw in rawValues)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+                if (Enum.TryParse<DeckEnvironment>(raw, true, out var parsed))
+                {
+                    resolved.Add(parsed);
+                }
+            }
+
+            if (resolved.Count == 0)
+            {
+                resolved.Add(DeckEnvironment.Open);
+            }
+
+            return resolved;
+        }
+
+        private static Dictionary<string, CardSetDefinition> BuildSetLookup(
+            IEnumerable<CardSetDefinition> definitions,
+            IEnumerable<CardPackSeedDto> seeds)
+        {
+            var lookup = new Dictionary<string, CardSetDefinition>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var definition in definitions)
+            {
+                if (!string.IsNullOrWhiteSpace(definition.Name))
+                {
+                    lookup[NormalizePackKey(definition.Name)] = definition;
+                }
+            }
+
+            foreach (var seed in seeds)
+            {
+                if (string.IsNullOrWhiteSpace(seed.Name)) continue;
+                var key = NormalizePackKey(seed.Name);
+                if (!lookup.TryGetValue(key, out var definition)) continue;
+
+                foreach (var alias in seed.Aliases ?? new List<string>())
+                {
+                    if (string.IsNullOrWhiteSpace(alias)) continue;
+                    lookup[NormalizePackKey(alias)] = definition;
+                }
+            }
+
+            return lookup;
+        }
+
+        private static CardSetDefinition? ResolveSetDefinition(
+            string? cardSet,
+            Dictionary<string, CardSetDefinition> setLookup)
+        {
+            if (string.IsNullOrWhiteSpace(cardSet))
+            {
+                return null;
+            }
+
+            var key = NormalizePackKey(cardSet);
+            return setLookup.TryGetValue(key, out var definition) ? definition : null;
+        }
+
+        private static async Task<List<CardSetDefinition>> EnsureCardSetDefinitionsAsync(
+            ApplicationDbContext context,
+            List<CardPackSeedDto> packSeeds,
+            ILogger logger)
+        {
+            var existingDefinitions = await context.CardSetDefinitions.ToListAsync();
+            if (existingDefinitions.Count == 0)
+            {
+                var seedsToAdd = packSeeds.Count > 0
+                    ? packSeeds
+                    : new List<CardPackSeedDto>
+                    {
+                        new CardPackSeedDto
+                        {
+                            Name = "Legacy",
+                            Abbreviation = "LEG",
+                            Region = 9,
+                            Sequence = 99,
+                            Environment = "Open"
+                        }
+                    };
+
+                var newDefinitions = seedsToAdd
+                    .Where(seed => !string.IsNullOrWhiteSpace(seed.Name))
+                    .Select(BuildCardSetEntity)
+                    .ToList();
+                context.CardSetDefinitions.AddRange(newDefinitions);
+                await context.SaveChangesAsync();
+                existingDefinitions.AddRange(newDefinitions);
+                logger.LogInformation("Seeded {Count} card set definitions.", newDefinitions.Count);
+            }
+            else if (packSeeds.Count > 0)
+            {
+                var existingNames = new HashSet<string>(
+                    existingDefinitions.Select(d => d.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                var missingSeeds = packSeeds.Where(seed => !existingNames.Contains(seed.Name)).ToList();
+                if (missingSeeds.Count > 0)
+                {
+                    var newDefinitions = missingSeeds
+                        .Where(seed => !string.IsNullOrWhiteSpace(seed.Name))
+                        .Select(BuildCardSetEntity)
+                        .ToList();
+                    context.CardSetDefinitions.AddRange(newDefinitions);
+                    await context.SaveChangesAsync();
+                    existingDefinitions.AddRange(newDefinitions);
+                    logger.LogInformation("Added {Count} missing card set definitions.", newDefinitions.Count);
+                }
+            }
+
+            if (!existingDefinitions.Any(def => def.Name.Equals("Legacy", StringComparison.OrdinalIgnoreCase)))
+            {
+                var legacy = new CardSetDefinition
+                {
+                    Name = "Legacy",
+                    Abbreviation = "LEG",
+                    Region = 9,
+                    Sequence = 99,
+                    Environments = new List<DeckEnvironment> { DeckEnvironment.Open },
+                    CreatedAt = DateTime.UtcNow
+                };
+                context.CardSetDefinitions.Add(legacy);
+                await context.SaveChangesAsync();
+                existingDefinitions.Add(legacy);
+                logger.LogInformation("Added fallback Legacy card set definition.");
+            }
+
+            return existingDefinitions;
+        }
+
+        private static async Task<List<CardPackDefinition>> EnsureCardPackDefinitionsAsync(
+            ApplicationDbContext context,
+            List<CardPackSeedDto> packSeeds,
+            Dictionary<string, CardSetDefinition> setLookup,
+            ILogger logger)
+        {
+            var existingDefinitions = await context.CardPackDefinitions
+                .Include(pack => pack.CardSetDefinition)
+                .ToListAsync();
+
+            CardSetDefinition ResolveOrCreateSet(CardPackSeedDto seed)
+            {
+                var key = NormalizePackKey(seed.Name);
+                if (setLookup.TryGetValue(key, out var existingSet))
+                {
+                    return existingSet;
+                }
+
+                var created = BuildCardSetEntity(seed);
+                context.CardSetDefinitions.Add(created);
+                setLookup[key] = created;
+                return created;
+            }
+            if (existingDefinitions.Count == 0)
+            {
+                var seedsToAdd = packSeeds.Count > 0
+                    ? packSeeds
+                    : new List<CardPackSeedDto>
+                    {
+                        new CardPackSeedDto
+                        {
+                            Name = "Legacy",
+                            Abbreviation = "LEG",
+                            Region = 9,
+                            Sequence = 99,
+                            Environment = "Open",
+                            Description = "Legacy or unmapped packs",
+                            Price = 0,
+                            CardCount = 0,
+                            IsActive = false
+                        }
+                    };
+
+                var newDefinitions = seedsToAdd
+                    .Where(seed => !string.IsNullOrWhiteSpace(seed.Name))
+                    .Select(seed => BuildCardPackEntity(seed, ResolveOrCreateSet(seed)))
+                    .ToList();
+                context.CardPackDefinitions.AddRange(newDefinitions);
+                await context.SaveChangesAsync();
+                existingDefinitions.AddRange(newDefinitions);
+                logger.LogInformation("Seeded {Count} card pack definitions.", newDefinitions.Count);
+            }
+            else if (packSeeds.Count > 0)
+            {
+                var existingNames = new HashSet<string>(
+                    existingDefinitions.Select(d => d.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                var missingSeeds = packSeeds.Where(seed => !existingNames.Contains(seed.Name)).ToList();
+                if (missingSeeds.Count > 0)
+                {
+                    var newDefinitions = missingSeeds
+                        .Where(seed => !string.IsNullOrWhiteSpace(seed.Name))
+                        .Select(seed => BuildCardPackEntity(seed, ResolveOrCreateSet(seed)))
+                        .ToList();
+                    context.CardPackDefinitions.AddRange(newDefinitions);
+                    await context.SaveChangesAsync();
+                    existingDefinitions.AddRange(newDefinitions);
+                    logger.LogInformation("Added {Count} missing card pack definitions.", newDefinitions.Count);
+                }
+            }
+
+            var updated = false;
+            foreach (var pack in existingDefinitions)
+            {
+                if (pack.CardSetDefinitionId != 0 && pack.CardSetDefinition != null)
+                {
+                    continue;
+                }
+
+                var key = NormalizePackKey(pack.Name);
+                if (setLookup.TryGetValue(key, out var setDefinition))
+                {
+                    pack.CardSetDefinitionId = setDefinition.Id;
+                    pack.CardSetDefinition = setDefinition;
+                    updated = true;
+                }
+            }
+
+            if (updated)
+            {
+                await context.SaveChangesAsync();
+                logger.LogInformation("Backfilled card set references for existing pack definitions.");
+            }
+
+            return existingDefinitions;
+        }
+
+        private static async Task BackfillCardSetLinksAsync(
+            ApplicationDbContext context,
+            Dictionary<string, CardSetDefinition> setLookup,
+            Dictionary<int, CardPackDefinition> packBySetId,
+            CardSetDefinition? legacySet,
+            ILogger logger)
+        {
+            var cardsToUpdate = await context.CardDefinitions
+                .Where(card => card.CardSetDefinitionId == null || card.CardSetDefinitionId == 0)
+                .ToListAsync();
+
+            if (cardsToUpdate.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var card in cardsToUpdate)
+            {
+                var setDefinition = ResolveSetDefinition(card.CardSet, setLookup) ?? legacySet;
+                if (setDefinition == null)
+                {
+                    continue;
+                }
+
+                card.CardSetDefinitionId = setDefinition.Id;
+                card.CardSet = setDefinition.Name;
+
+                if (packBySetId.TryGetValue(setDefinition.Id, out var packDefinition))
+                {
+                }
+            }
+
+            await context.SaveChangesAsync();
+            logger.LogInformation("Backfilled card set links for {Count} card definitions.", cardsToUpdate.Count);
+        }
+
         // Changed signature to accept WebApplication for easier service/environment access
         public static async Task SeedDatabaseAsync(WebApplication app)
         {
@@ -29,9 +459,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 var environment = services.GetRequiredService<IHostEnvironment>(); // Get environment for path resolving
 
                 // Construct the path relative to the application's content root
-                var jsonFilePath = Path.Combine(environment.ContentRootPath, "..", "data", "card_data.json");
-                // Normalize path for logging consistency
-                jsonFilePath = Path.GetFullPath(jsonFilePath);
+                var dataDirectory = Path.Combine(environment.ContentRootPath, "..", "data");
+                dataDirectory = Path.GetFullPath(dataDirectory);
 
 
                 var jsonOptions = new JsonSerializerOptions
@@ -39,46 +468,74 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     PropertyNameCaseInsensitive = true,
                     Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
                 };
-                var entityJsonOptions = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-                };
 
                 try
                 {
                     logger.LogInformation("Checking if database seeding is required...");
                     var existingCardCount = await context.CardDefinitions.CountAsync();
+                    var packSeeds = await LoadCardPackSeedsAsync(dataDirectory, jsonOptions, logger);
+                    var setDefinitions = await EnsureCardSetDefinitionsAsync(context, packSeeds, logger);
+                    var setLookup = BuildSetLookup(setDefinitions, packSeeds);
+                    var packDefinitions = await EnsureCardPackDefinitionsAsync(context, packSeeds, setLookup, logger);
+                    var packBySetId = packDefinitions
+                        .Where(pack => pack.CardSetDefinitionId != 0)
+                        .GroupBy(pack => pack.CardSetDefinitionId)
+                        .ToDictionary(group => group.Key, group => group.First());
+                    var legacySet = ResolveSetDefinition("Legacy", setLookup)
+                        ?? setDefinitions.FirstOrDefault();
 
-                    // 临时：强制重新种子数据以确保包含主战者卡牌
                     if (existingCardCount > 0)
                     {
-                        logger.LogInformation("Database contains {Count} card definitions. Clearing and reseeding to ensure data completeness...", existingCardCount);
-
-                        // 清除现有数据
-                        context.CardDefinitions.RemoveRange(context.CardDefinitions);
-                        await context.SaveChangesAsync();
-                        logger.LogInformation("Cleared existing card definitions.");
-                    }
-
-                    logger.LogInformation("Database is empty. Proceeding with data seeding from {FilePath}...", jsonFilePath);
-
-                    if (!File.Exists(jsonFilePath))
-                    {
-                        logger.LogError("Seed data file not found at {FilePath}. Cannot seed database.", jsonFilePath);
+                        logger.LogInformation("Database already contains {Count} card definitions. Backfilling set links.", existingCardCount);
+                        await BackfillCardSetLinksAsync(context, setLookup, packBySetId, legacySet, logger);
                         return;
                     }
 
-                    logger.LogInformation("Reading seed data file...");
-                    string jsonData = await File.ReadAllTextAsync(jsonFilePath);
-                    logger.LogInformation("Seed data file read successfully.");
+                    logger.LogInformation("Database is empty. Proceeding with data seeding from card_data files in {Directory}...", dataDirectory);
 
-                    logger.LogInformation("Deserializing JSON data...");
-                    var cardDtos = JsonSerializer.Deserialize<List<CardDefinitionDto>>(jsonData, jsonOptions);
-
-                    if (cardDtos == null || !cardDtos.Any())
+                    if (!Directory.Exists(dataDirectory))
                     {
-                        logger.LogWarning("No card data found after deserializing {FilePath}, or the file format is incorrect.", jsonFilePath);
+                        logger.LogError("Seed data directory not found at {Directory}. Cannot seed database.", dataDirectory);
+                        return;
+                    }
+
+                    var cardDataFiles = Directory
+                        .GetFiles(dataDirectory, "card_data*.json", SearchOption.TopDirectoryOnly)
+                        .OrderBy(path => Path.GetFileName(path))
+                        .ToArray();
+                    if (cardDataFiles.Length == 0)
+                    {
+                        logger.LogError("No card_data*.json files found in {Directory}. Cannot seed database.", dataDirectory);
+                        return;
+                    }
+
+                    logger.LogInformation("Reading seed data files: {Files}", string.Join(", ", cardDataFiles.Select(Path.GetFileName)));
+                    var cardDtosById = new Dictionary<int, CardDataSeedDto>();
+                    foreach (var cardDataFile in cardDataFiles)
+                    {
+                        logger.LogInformation("Reading seed data file: {FilePath}", cardDataFile);
+                        var jsonData = await File.ReadAllTextAsync(cardDataFile);
+                        var fileCards = JsonSerializer.Deserialize<List<CardDataSeedDto>>(jsonData, jsonOptions);
+                        if (fileCards == null || fileCards.Count == 0)
+                        {
+                            logger.LogWarning("No card data found in {FilePath}.", cardDataFile);
+                            continue;
+                        }
+                        foreach (var cardDto in fileCards)
+                        {
+                            if (!cardDtosById.TryAdd(cardDto.CardId, cardDto))
+                            {
+                                logger.LogWarning("Duplicate CardId {CardId} found in {FilePath}. Keeping the first occurrence.",
+                                    cardDto.CardId, cardDataFile);
+                            }
+                        }
+                        logger.LogInformation("Loaded {Count} cards from {FilePath}.", fileCards.Count, cardDataFile);
+                    }
+
+                    var cardDtos = cardDtosById.Values.ToList();
+                    if (!cardDtos.Any())
+                    {
+                        logger.LogWarning("No card data found after deserializing card_data files, or the file format is incorrect.");
                         return;
                     }
                     logger.LogInformation("Successfully deserialized {Count} card DTOs.", cardDtos.Count);
@@ -94,22 +551,33 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     }
                     logger.LogInformation("Mapping {ValidCount} valid DTOs to CardDefinition entities...", validCount);
 
-                    var cardEntities = validCardDtos.Select(dto => new CardDefinition
+                    var cardEntities = validCardDtos.Select(dto =>
                     {
-                        Id = dto.CardId,
-                        Name = dto.Name,
-                        Cost = dto.Cost,
-                        Type = dto.Type,
-                        Rarity = Enum.TryParse<CardRarity>(dto.Rarity, true, out var rarity) ? rarity : CardRarity.Bronze,
-                        CardSet = dto.CardSet,
-                        Attack = dto.Attack,
-                        Health = dto.Health,
-                        Countdown = dto.Countdown,
-                        Description = dto.Description ?? string.Empty,
-                        Keywords = dto.Keywords,
-                        Tribe = dto.Tribe,
-                        Class = Enum.TryParse<CardClass>(dto.Class, true, out var cardClass) ? cardClass : CardClass.Neutral,
-                        AbilityIds = new List<long>()
+                        var setDefinition = ResolveSetDefinition(dto.CardSet, setLookup) ?? legacySet;
+                        var normalizedCardSet = setDefinition?.Name ?? dto.CardSet;
+                        var packDefinition = setDefinition != null && packBySetId.TryGetValue(setDefinition.Id, out var pack)
+                            ? pack
+                            : null;
+
+                        return new CardDefinition
+                        {
+                            Id = dto.CardId,
+                            Name = dto.Name,
+                            Cost = dto.Cost,
+                            Type = dto.Type,
+                            Rarity = Enum.TryParse<CardRarity>(dto.Rarity, true, out var rarity) ? rarity : CardRarity.Bronze,
+                            CardSet = normalizedCardSet,
+                            CardSetDefinitionId = setDefinition?.Id,
+                            Attack = dto.Attack,
+                            Health = dto.Health,
+                            Countdown = dto.Countdown,
+                            Description = dto.Description ?? string.Empty,
+                            IsCollectible = dto.IsCollectible,
+                            Keywords = dto.Keywords,
+                            Tribe = dto.Tribe,
+                            Class = Enum.TryParse<CardClass>(dto.Class, true, out var cardClass) ? cardClass : CardClass.Neutral,
+                            AbilityIds = new List<long>()
+                        };
                     }).ToList();
                     // Note: Removed filtering logic that discarded entities with ID 0,
                     // as 0 is now a valid ID for the Leader card.
@@ -129,82 +597,82 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     await context.SaveChangesAsync();
                     logger.LogInformation("Successfully seeded {Count} card definitions into the database.", cardEntities.Count.ToString());
 
-                    // --- BEGIN SEEDING CARD ABILITIES ---
-                    logger.LogInformation("Seeding CardAbility data from SQL script...");
-                    var abilityScriptPath = Path.Combine(environment.ContentRootPath, "..", "Server", "Infrastructure", "Data", "SeedData", "CardAbilitySeedData.sql");
-                    abilityScriptPath = Path.GetFullPath(abilityScriptPath);
+                    // --- BEGIN SEEDING CARD ABILITIES FROM CARD_DATA ---
+                    logger.LogInformation("Seeding CardAbility data from card_data abilities...");
+                    var abilityEntities = new List<AbilityDefinition>();
+                    var abilityIdsByCard = new Dictionary<int, List<long>>();
+                    var abilityIdSet = new HashSet<long>();
 
-                    if (!File.Exists(abilityScriptPath))
+                    foreach (var cardDto in validCardDtos)
                     {
-                        logger.LogWarning("CardAbility seed script not found at: {ScriptPath}", abilityScriptPath);
+                        if (cardDto.Abilities == null || cardDto.Abilities.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        for (int index = 0; index < cardDto.Abilities.Count; index++)
+                        {
+                            var abilityJson = cardDto.Abilities[index];
+                            // Deterministic ability ID generation by appending a fixed-width index after CardId.
+                            var abilityId = BuildAbilityId(cardDto.CardId, index);
+
+                            if (!abilityIdSet.Add(abilityId))
+                            {
+                                throw new InvalidOperationException($"Duplicate ability ID detected during seeding: {abilityId}. CardId={cardDto.CardId}, Index={index}");
+                            }
+
+                            var abilityName = GetJsonString(abilityJson, "name") ?? $"{cardDto.Name}-Ability-{index + 1}";
+                            var abilityDescription = GetJsonString(abilityJson, "description") ?? string.Empty;
+                            var abilityType = ParseAbilityType(GetJsonString(abilityJson, "type"));
+                            var priority = GetJsonInt32(abilityJson, "priority") ?? 0;
+
+                            abilityEntities.Add(new AbilityDefinition
+                            {
+                                Id = abilityId,
+                                CardId = cardDto.CardId,
+                                Name = abilityName,
+                                Description = abilityDescription,
+                                AbilityType = (int)abilityType,
+                                Priority = priority,
+                                IsActive = true,
+                                JsonConfig = abilityJson.GetRawText(),
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            });
+
+                            if (!abilityIdsByCard.TryGetValue(cardDto.CardId, out var abilityIds))
+                            {
+                                abilityIds = new List<long>();
+                                abilityIdsByCard[cardDto.CardId] = abilityIds;
+                            }
+                            abilityIds.Add(abilityId);
+                        }
+                    }
+
+                    if (abilityEntities.Count > 0)
+                    {
+                        await context.CardAbilities.AddRangeAsync(abilityEntities);
+                        await context.SaveChangesAsync();
+                        logger.LogInformation("Successfully seeded {Count} card abilities into the database.", abilityEntities.Count);
                     }
                     else
                     {
-                        logger.LogInformation("Reading CardAbility seed script from: {ScriptPath}", abilityScriptPath);
-                        var sqlScript = await File.ReadAllTextAsync(abilityScriptPath);
-                        logger.LogInformation("CardAbility seed script read successfully. Length: {Length} characters.", sqlScript.Length);
-
-                        var statements = sqlScript.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-                        logger.LogInformation("Split SQL script into {Count} statements.", statements.Length);
-
-                        // Use a transaction to ensure all statements succeed or fail together.
-                        await using var transaction = await context.Database.BeginTransactionAsync();
-                        logger.LogInformation("Database transaction started for CardAbility seeding.");
-                        try
-                        {
-                            int totalRowsAffected = 0;
-                            // Simpler, more robust approach: execute the entire script at once.
-                            if (!string.IsNullOrWhiteSpace(sqlScript))
-                            {
-                                logger.LogInformation("Executing the entire CardAbility SQL script at once...");
-                                // To prevent EF Core from interpreting curly braces in JSON as string format placeholders,
-                                // we must escape them by doubling them up.
-                                var escapedSqlScript = sqlScript.Replace("{", "{{").Replace("}", "}}");
-                                totalRowsAffected = await context.Database.ExecuteSqlRawAsync(escapedSqlScript);
-                                logger.LogInformation("SQL script executed. Total rows affected reported by ExecuteSqlRawAsync: {TotalRowsAffected}", totalRowsAffected);
-                            }
-                            else
-                            {
-                                logger.LogWarning("SQL script is empty. No CardAbility data will be seeded.");
-                            }
-
-                            await transaction.CommitAsync();
-                            logger.LogInformation("Database transaction committed successfully.");
-
-                            var finalAbilityCount = await context.CardAbilities.CountAsync();
-                            logger.LogInformation("Verification: Found {Count} entries in the CardAbilities table after seeding.", finalAbilityCount);
-                        }
-                        catch (Exception ex)
-                        {
-                            await transaction.RollbackAsync();
-                            logger.LogError(ex, "Error executing CardAbility seed script. Transaction rolled back.");
-                            throw; // Re-throw to indicate a critical failure in seeding.
-                        }
+                        logger.LogInformation("No abilities found in card_data. Skipping CardAbilities seeding.");
                     }
-                    // --- END SEEDING CARD ABILITIES ---
+                    // --- END SEEDING CARD ABILITIES FROM CARD_DATA ---
 
                     // --- UPDATE CARD ABILITY ASSOCIATIONS ---
                     logger.LogInformation("Updating card ability associations...");
 
-                    // 获取所有卡牌能力，按卡牌ID分组
-                    var cardAbilities = await context.CardAbilities
-                        .GroupBy(ca => ca.CardId)
-                        .Select(g => new { CardId = g.Key, AbilityIds = g.Select(ca => ca.Id).ToList() })
-                        .ToListAsync();
-
-                    // 更新每张卡牌的AbilityIds字段
-                    foreach (var cardAbilityGroup in cardAbilities)
+                    foreach (var cardDefinition in cardEntities)
                     {
-                        var cardDefinition = await context.CardDefinitions
-                            .FirstOrDefaultAsync(cd => cd.Id == cardAbilityGroup.CardId);
-
-                        if (cardDefinition != null)
+                        if (abilityIdsByCard.TryGetValue(cardDefinition.Id, out var abilityIds))
                         {
-                            cardDefinition.AbilityIds = cardAbilityGroup.AbilityIds;
+                            cardDefinition.AbilityIds = abilityIds;
                             logger.LogInformation("Updated card {CardId} with {Count} ability IDs: [{AbilityIds}]",
-                                cardAbilityGroup.CardId,
-                                cardAbilityGroup.AbilityIds.Count,
-                                string.Join(", ", cardAbilityGroup.AbilityIds));
+                                cardDefinition.Id,
+                                abilityIds.Count,
+                                string.Join(", ", abilityIds));
                         }
                     }
 
@@ -214,7 +682,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 }
                 catch (JsonException jsonEx)
                 {
-                    logger.LogError(jsonEx, "Error deserializing seed data from {FilePath}. Please check the JSON format.", jsonFilePath);
+                    logger.LogError(jsonEx, "Error deserializing seed data from {Directory}. Please check the JSON format.", dataDirectory);
                     // Optionally rethrow or handle to prevent app startup? For now, log and continue.
                 }
                 catch (DbUpdateException dbEx)
@@ -224,7 +692,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 }
                 catch (IOException ioEx)
                 {
-                    logger.LogError(ioEx, "Error reading seed data file from {FilePath}.", jsonFilePath);
+                    logger.LogError(ioEx, "Error reading seed data files from {Directory}.", dataDirectory);
                     // Optionally rethrow or handle
                 }
                 catch (Exception ex)
@@ -233,6 +701,67 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     // Optionally rethrow or handle to prevent app startup
                 }
             }
+        }
+
+        private static string? GetJsonString(JsonElement element, string propertyName)
+        {
+            if (element.ValueKind == JsonValueKind.Object &&
+                element.TryGetProperty(propertyName, out var value) &&
+                value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString();
+            }
+
+            return null;
+        }
+
+        private static int? GetJsonInt32(JsonElement element, string propertyName)
+        {
+            if (element.ValueKind == JsonValueKind.Object &&
+                element.TryGetProperty(propertyName, out var value) &&
+                value.ValueKind == JsonValueKind.Number &&
+                value.TryGetInt32(out var number))
+            {
+                return number;
+            }
+
+            return null;
+        }
+
+        private static AbilityType ParseAbilityType(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return AbilityType.Triggered;
+            }
+
+            return Enum.TryParse<AbilityType>(value, true, out var parsed)
+                ? parsed
+                : AbilityType.Triggered;
+        }
+
+        private static long BuildAbilityId(int cardId, int index)
+        {
+            var maxIndex = 1;
+            for (int i = 0; i < AbilityIndexWidth; i++)
+            {
+                maxIndex *= 10;
+            }
+
+            if (index >= maxIndex)
+            {
+                throw new InvalidOperationException(
+                    $"Ability index {index} exceeds the fixed width of {AbilityIndexWidth} digits for CardId {cardId}.");
+            }
+
+            var suffix = index.ToString($"D{AbilityIndexWidth}");
+            var idText = $"{cardId}{suffix}";
+            if (!long.TryParse(idText, out var abilityId))
+            {
+                throw new InvalidOperationException($"Failed to build ability ID from CardId {cardId} and index {index}.");
+            }
+
+            return abilityId;
         }
     }
 }

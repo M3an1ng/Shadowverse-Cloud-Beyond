@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+﻿using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters // Corrected namespace
@@ -15,7 +15,7 @@ public class ModifyPPMaxEffectParams : BaseEffectParams // Corrected base class
         /// <summary>
         /// The amount to modify the player's maximum Play Points by (usually positive, e.g., 1 for GainPPOrb).
         /// </summary>
-        [ParameterMetadata("修改量", UiControlType.ValueConfigEditor, DefaultValue = 1, Min = 1, Description = "要修改的最大PP数量。通常为正数，如获得PP水晶时为1。")]
+        [ParameterMetadata("修改量", UiControlType.NumberStepper, DefaultValue = 1, Min = 1, Description = "要修改的最大PP数量。通常为正数，如获得PP水晶时为1。")]
         public int ModifyAmount { get; set; } = 1; // Default to 1 for common GainPPOrb case
     }
 }

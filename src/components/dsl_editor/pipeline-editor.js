@@ -1,13 +1,111 @@
-import { createValueNode } from "./core.js";
+import { createValueNode, validateAST, findIncompleteNode } from "./core.js";
 import { PIPELINE_STAGE_META, isListOperationNode, extractListPipeline, rebuildListChainFromStages, createStageNode } from "./pipeline.js";
+import { finalizeDraftInputs } from "./ast-normalize.js";
 
 export function createPipelineEditState() {
     return {
         node: null,
         slot: null,
         editor: null,
-        draftExpression: ""
+        draftExpression: "",
+        draftCountValue: ""
     };
+}
+
+function createPipelineContextState() {
+    return {
+        pipelineOpen: false,
+        pipelineOpenSource: null,
+        pipelineEditState: createPipelineEditState()
+    };
+}
+
+function ensurePipelineContextInfra(editor) {
+    if (!editor.pipelineContextStore) {
+        editor.pipelineContextStore = new Map();
+    }
+    if (!editor.pipelineNodeIds) {
+        editor.pipelineNodeIds = new WeakMap();
+    }
+    if (!Number.isFinite(editor.pipelineNodeIdSeed)) {
+        editor.pipelineNodeIdSeed = 1;
+    }
+}
+
+function getStableNodeId(editor, node) {
+    if (!node || (typeof node !== "object" && typeof node !== "function")) return "none";
+    let nodeId = editor.pipelineNodeIds.get(node);
+    if (!nodeId) {
+        nodeId = `n${editor.pipelineNodeIdSeed++}`;
+        editor.pipelineNodeIds.set(node, nodeId);
+    }
+    return nodeId;
+}
+
+function getCurrentPipelineContextKey(editor) {
+    const top = typeof editor.peekEditingPath === "function" ? editor.peekEditingPath() : null;
+    if (top?.parentNode && top?.slot) {
+        const parentId = getStableNodeId(editor, top.parentNode);
+        const indexPart = typeof top.index === "number" ? String(top.index) : "";
+        return `path:${parentId}:${top.slot}:${indexPart}`;
+    }
+
+    if (editor.isLightWorkspace && editor.lightWorkspaceFocus?.parentNode && editor.lightWorkspaceFocus?.slot) {
+        const focus = editor.lightWorkspaceFocus;
+        const parentId = getStableNodeId(editor, focus.parentNode);
+        const indexPart = typeof focus.index === "number" ? String(focus.index) : "";
+        return `light:${parentId}:${focus.slot}:${indexPart}`;
+    }
+
+    const rootNode = editor.virtualRoot?.main || editor.workspaceAST || null;
+    return `root:${getStableNodeId(editor, rootNode)}`;
+}
+
+export function markPipelineContextDirty(editor) {
+    if (editor.isPipelineInline) return;
+    ensurePipelineContextInfra(editor);
+    if (!editor.pipelineActiveContextKey) {
+        syncPipelineContext(editor);
+    }
+    if (!editor.pipelineActiveContextKey) return;
+    editor.pipelineContextStore.set(editor.pipelineActiveContextKey, {
+        pipelineOpen: Boolean(editor.pipelineOpen),
+        pipelineOpenSource: editor.pipelineOpenSource || null,
+        pipelineEditState: editor.pipelineEditState || createPipelineEditState()
+    });
+}
+
+export function syncPipelineContext(editor) {
+    if (editor.isPipelineInline) return null;
+    ensurePipelineContextInfra(editor);
+
+    const nextKey = getCurrentPipelineContextKey(editor);
+    const currentKey = editor.pipelineActiveContextKey;
+    const hasBootstrappedState = editor.pipelineContextStore.has(nextKey);
+
+    if (currentKey && currentKey !== nextKey) {
+        markPipelineContextDirty(editor);
+    }
+
+    if (currentKey === nextKey) {
+        return nextKey;
+    }
+
+    // 首次进入上下文时，沿用当前实例上的兼容字段，避免覆盖旧调用路径预先设置的状态
+    if (!currentKey && !hasBootstrappedState) {
+        editor.pipelineContextStore.set(nextKey, {
+            pipelineOpen: Boolean(editor.pipelineOpen),
+            pipelineOpenSource: editor.pipelineOpenSource || null,
+            pipelineEditState: editor.pipelineEditState || createPipelineEditState()
+        });
+    }
+
+    const state = editor.pipelineContextStore.get(nextKey) || createPipelineContextState();
+    editor.pipelineOpen = Boolean(state.pipelineOpen);
+    editor.pipelineOpenSource = state.pipelineOpenSource || null;
+    editor.pipelineEditState = state.pipelineEditState || createPipelineEditState();
+    editor.pipelineActiveContextKey = nextKey;
+    return nextKey;
 }
 
 export function unwrapEncapsulatedNode(editor, node) {
@@ -19,12 +117,13 @@ export function unwrapEncapsulatedNode(editor, node) {
 }
 
 export function getPipelineContext(editor) {
-    const root = unwrapEncapsulatedNode(editor, editor.astRoot);
+    syncPipelineContext(editor);
+    const root = unwrapEncapsulatedNode(editor, editor.workspaceAST);
     if (!root) return null;
     if (!editor.pipelineOpen) return null;
     if (root.type === "value" && root.metadata?.type === "rawText") {
         const rawText = String(root.value || root.metadata?.rawText || "");
-        if (/\.(query|orderBy|take)\s*\(/i.test(rawText)) {
+        if (/\.(query|orderBy|take|distinct|select)\s*\(/i.test(rawText)) {
             return {
                 root,
                 source: null,
@@ -37,6 +136,7 @@ export function getPipelineContext(editor) {
         const pipeline = extractListPipeline(root);
         if (!pipeline) return null;
         editor.pipelineOpenSource = pipeline.source || null;
+        markPipelineContextDirty(editor);
         return {
             root,
             source: pipeline.source,
@@ -46,13 +146,19 @@ export function getPipelineContext(editor) {
     }
 
     const returnType = root.returnType || editor.calculateASTReturnType(root);
-    if (returnType && !editor.isCollectionType(returnType)) {
+    const allowSingleton = returnType
+        && !editor.isCollectionType(returnType)
+        && typeof editor.isBusinessObjectType === "function"
+        && editor.isBusinessObjectType(returnType);
+    if (returnType && !editor.isCollectionType(returnType) && !allowSingleton) {
         editor.pipelineOpen = false;
         editor.pipelineOpenSource = null;
+        markPipelineContextDirty(editor);
         return null;
     }
 
     editor.pipelineOpenSource = root;
+    markPipelineContextDirty(editor);
     return {
         root,
         source: root,
@@ -62,18 +168,24 @@ export function getPipelineContext(editor) {
 }
 
 export function openPipelineFromCurrent(editor) {
-    const root = unwrapEncapsulatedNode(editor, editor.astRoot);
+    syncPipelineContext(editor);
+    const root = unwrapEncapsulatedNode(editor, editor.workspaceAST);
     if (!root) {
         editor.showExpressionError("当前没有可编辑的集合表达式。");
         return;
     }
     const returnType = root.returnType || editor.calculateASTReturnType(root);
-    if (!editor.isCollectionType(returnType)) {
-        editor.showExpressionError("当前表达式不是集合，无法打开管线。");
+    const allowSingleton = returnType
+        && !editor.isCollectionType(returnType)
+        && typeof editor.isBusinessObjectType === "function"
+        && editor.isBusinessObjectType(returnType);
+    if (!editor.isCollectionType(returnType) && !allowSingleton) {
+        editor.showExpressionError("当前表达式不是集合或实体对象，无法打开筛选。");
         return;
     }
     editor.pipelineOpen = true;
     editor.pipelineOpenSource = root;
+    markPipelineContextDirty(editor);
 }
 
 export function getPipelineStageLabel(editor, stage) {
@@ -90,25 +202,63 @@ export function getPipelineStageSummary(editor, stage) {
         const rawText = stage.rawText || stage.node.value || stage.node.metadata?.rawText || "";
         return rawText ? `原始: ${rawText}` : "原始片段";
     }
+    const typeIssue = typeof editor.getPipelineStageTypeIssue === "function"
+        ? editor.getPipelineStageTypeIssue(stage)
+        : null;
+    if (typeIssue) {
+        const expectedDisplay = editor.getDisplayTypeName?.(typeIssue.expectedType) || typeIssue.expectedType;
+        const actualDisplay = editor.getDisplayTypeName?.(typeIssue.actualType) || typeIssue.actualType;
+        if (stage.node.type === "listQuery") {
+            return `查询条件需为 ${expectedDisplay}，当前为 ${actualDisplay}`;
+        }
+        if (stage.node.type === "listSort") {
+            return `排序键需为 ${expectedDisplay}，当前为 ${actualDisplay}`;
+        }
+        if (stage.node.type === "listTake") {
+            return `数量需为 ${expectedDisplay}，当前为 ${actualDisplay}`;
+        }
+        if (stage.node.type === "listDistinct") {
+            return `去重键需为 ${expectedDisplay}，当前为 ${actualDisplay}`;
+        }
+        if (stage.node.type === "listSelect") {
+            return `投影需为 ${expectedDisplay}，当前为 ${actualDisplay}`;
+        }
+        return `类型不匹配：期望 ${expectedDisplay}，实际 ${actualDisplay}`;
+    }
     let exprNode = null;
     if (stage.node.type === "listQuery") exprNode = stage.node.filterExpression;
     if (stage.node.type === "listSort") exprNode = stage.node.sortExpression;
     if (stage.node.type === "listTake") exprNode = stage.node.countExpression;
+    if (stage.node.type === "listDistinct") exprNode = stage.node.keyExpression;
+    if (stage.node.type === "listSelect") exprNode = stage.node.selectExpression;
     const readable = exprNode ? editor.toReadableText(exprNode) : null;
     if (stage.node.type === "listQuery") {
-        return readable ? `条件: ${readable}` : "未设置筛选条件";
+        return readable ? `查询条件: ${readable}` : "未设置查询条件";
     }
     if (stage.node.type === "listSort") {
-        return readable ? `排序键: ${readable}` : "未设置排序键";
+        const direction = String(stage.node.direction || 'asc').toLowerCase();
+        const suffix = direction === 'desc' ? '（降序）' : '（升序）';
+        return readable ? `排序键: ${readable}${suffix}` : "未设置排序键";
     }
     if (stage.node.type === "listTake") {
         const strategy = String(stage.node.strategy || 'first').toLowerCase();
-        const label = strategy === 'random'
-            ? '随机取'
-            : strategy === 'last'
-                ? '取后'
-                : '取前';
+        const label = strategy === 'all'
+            ? '全部'
+            : strategy === 'random'
+                ? '随机取'
+                : strategy === 'last'
+                    ? '取后'
+                    : '取前';
+        if (strategy === 'all') {
+            return "全部保留";
+        }
         return readable ? `${label}: ${readable}` : "未设置数量";
+    }
+    if (stage.node.type === "listDistinct") {
+        return readable ? `去重键: ${readable}` : "未设置去重键";
+    }
+    if (stage.node.type === "listSelect") {
+        return readable ? `投影: ${readable}` : "未设置投影";
     }
     return readable || "未设置";
 }
@@ -118,6 +268,8 @@ export function getPipelineStageSlot(editor, node) {
     if (node.type === "listQuery") return "filterExpression";
     if (node.type === "listSort") return "sortExpression";
     if (node.type === "listTake") return "countExpression";
+    if (node.type === "listDistinct") return "keyExpression";
+    if (node.type === "listSelect") return "selectExpression";
     return null;
 }
 
@@ -126,6 +278,8 @@ export function getPipelineStageExpressionNode(editor, node, slot) {
     if (slot === "filterExpression") return node.filterExpression;
     if (slot === "sortExpression") return node.sortExpression;
     if (slot === "countExpression") return node.countExpression;
+    if (slot === "keyExpression") return node.keyExpression;
+    if (slot === "selectExpression") return node.selectExpression;
     return null;
 }
 
@@ -138,16 +292,43 @@ export function getPipelineStageExpressionText(editor, node, slot) {
     return exprNode.toExpression?.() || "";
 }
 
+function setPipelineStageSlot(stageNode, slot, valueNode) {
+    if (!stageNode || !slot) return;
+    if (slot === "filterExpression") {
+        stageNode.setFilterExpression(valueNode);
+    } else if (slot === "sortExpression") {
+        stageNode.setSortExpression(valueNode);
+    } else if (slot === "countExpression") {
+        stageNode.setCountExpression(valueNode);
+    } else if (slot === "keyExpression") {
+        stageNode.setKeyExpression(valueNode);
+    } else if (slot === "selectExpression") {
+        stageNode.setSelectExpression(valueNode);
+    }
+}
+
+function applyPipelineStageAst(editor, stageNode, slot, ast) {
+    if (!stageNode || !slot || !ast) return;
+    const cloned = typeof editor.cloneAST === "function" ? editor.cloneAST(ast) : ast;
+    const encapsulated = editor.createEncapsulatedFrom(cloned);
+    setPipelineStageSlot(stageNode, slot, encapsulated);
+}
+
 export function isPipelineStageEditing(editor, stage) {
+    syncPipelineContext(editor);
     return Boolean(editor.pipelineEditState?.node && stage?.node === editor.pipelineEditState.node);
 }
 
 export function editPipelineStage(editor, stage) {
+    syncPipelineContext(editor);
     if (!stage?.node) return;
     if (stage.type === "raw") return;
     editor.pipelineOpen = true;
     if (stage.node.type === "listTake" && !stage.node.strategy) {
         stage.node.strategy = "first";
+    }
+    if (stage.node.type === "listSort" && !stage.node.direction) {
+        stage.node.direction = "asc";
     }
     const slot = getPipelineStageSlot(editor, stage.node);
     if (!slot) return;
@@ -156,21 +337,34 @@ export function editPipelineStage(editor, stage) {
         editor.pipelineEditState.node = null;
         editor.pipelineEditState.slot = null;
         editor.pipelineEditState.draftExpression = "";
+        editor.pipelineEditState.draftCountValue = "";
+        markPipelineContextDirty(editor);
         editor.renderEditor();
         return;
     }
-    if (!current.editor) {
-        current.editor = new editor.constructor();
-        current.editor.isSubEditor = true;
-        current.editor.parentEditor = editor;
-    }
+    current.editor = new editor.constructor();
+    current.editor.isSubEditor = true;
+    current.editor.parentEditor = editor;
     editor.pipelineEditState = {
         node: stage.node,
         slot,
         editor: current.editor,
-        draftExpression: getPipelineStageExpressionText(editor, stage.node, slot)
+        draftExpression: getPipelineStageExpressionText(editor, stage.node, slot),
+        draftCountValue: getPipelineStageCountValue(editor, stage.node)
     };
+    markPipelineContextDirty(editor);
     editor.renderEditor();
+}
+
+function getPipelineStageCountValue(editor, stageNode) {
+    if (!stageNode || stageNode.type !== "listTake") return "";
+    const countNode = stageNode.countExpression;
+    if (!countNode) return "";
+    const unwrapped = unwrapEncapsulatedNode(editor, countNode);
+    if (!unwrapped || unwrapped.type !== "value") return "";
+    const staticValue = unwrapped.metadata?.staticValue ?? unwrapped.value;
+    const raw = staticValue != null ? String(staticValue).trim() : "";
+    return /^-?\d+$/.test(raw) ? raw : "";
 }
 
 function syncInlineSuggestionEditor(editor, inlineEditor, expectedType, contextOverride) {
@@ -180,102 +374,50 @@ function syncInlineSuggestionEditor(editor, inlineEditor, expectedType, contextO
     inlineEditor.slotExpectedType = expectedType;
     inlineEditor.triggeringEventContext = editor.triggeringEventContext;
     inlineEditor.contextOverride = contextOverride;
-}
-
-function getPropertyChainSuggestionContext(inlineEditor, expression, caret) {
-    const prefix = expression.slice(0, caret);
-    const match = prefix.match(/([A-Za-z_][A-Za-z0-9_.]*)$/);
-    if (!match) return null;
-    const chainText = match[1];
-    if (!chainText.includes(".")) return null;
-
-    const endsWithDot = chainText.endsWith(".");
-    const segments = chainText.split(".");
-    const partial = endsWithDot ? "" : segments.pop();
-    const chainSegments = segments.filter(Boolean);
-    if (chainSegments.length === 0) return null;
-
-    const ctx = inlineEditor.getDslContextObject(chainSegments[0]);
-    if (!ctx) return null;
-
-    let currentType = inlineEditor.normalizeTypeName(ctx.typeName) || "Object";
-    for (let i = 1; i < chainSegments.length; i++) {
-        const seg = chainSegments[i];
-        const meta = inlineEditor.getTypeMetadata(currentType);
-        const prop = (meta?.properties || []).find(p =>
-            String(p.name || "").toLowerCase() === String(seg || "").toLowerCase()
-        );
-        if (!prop) return null;
-        currentType = inlineEditor.normalizeTypeName(prop.typeName) || "Object";
-    }
-
-    const options = inlineEditor.getObjectProperties(currentType) || [];
-    const partialLower = String(partial || "").toLowerCase();
-    const filtered = partialLower
-        ? options.filter(option =>
-            String(option.value || "").toLowerCase().startsWith(partialLower) ||
-            String(option.label || "").toLowerCase().startsWith(partialLower)
-        )
-        : options;
-
-    const replaceStart = match.index + chainText.length - String(partial || "").length;
-    return {
-        mode: "property",
-        options: filtered,
-        replaceStart,
-        replaceEnd: caret
-    };
-}
-
-function getGeneralSuggestionContext(inlineEditor, expression, caret) {
-    const trimmed = String(expression || "").trim();
-    inlineEditor.astRoot = trimmed ? inlineEditor.buildAstFromExpression(trimmed) : null;
-    inlineEditor.isExpressionCompleted = false;
-    const options = inlineEditor.getCurrentEditingOptions?.() || [];
-
-    const prefix = expression.slice(0, caret);
-    const tokenMatch = prefix.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
-    const token = tokenMatch ? tokenMatch[1] : "";
-    const tokenLower = token.length >= 2 ? token.toLowerCase() : "";
-    const filtered = tokenLower
-        ? options.filter(option =>
-            String(option.label || "").toLowerCase().includes(tokenLower) ||
-            String(option.value || "").toLowerCase().includes(tokenLower)
-        )
-        : options;
-
-    return {
-        mode: "general",
-        options: filtered,
-        replaceStart: caret,
-        replaceEnd: caret
-    };
-}
-
-function buildSuggestionInsert(option, expectedType) {
-    if (!option) return { text: "", caretOffset: 0 };
-    if (option.type === "operator") {
-        const token = option.operator || option.value || "";
-        return { text: ` ${token} `, caretOffset: 0 };
-    }
-    if (option.type === "function") {
-        const name = option.value || option.name || option.label || "";
-        return { text: `${name}()`, caretOffset: -1 };
-    }
-    if (option.type === "eventField") {
-        return { text: option.value || "", caretOffset: 0 };
-    }
-    if (option.type === "staticValue") {
-        if (expectedType === "Boolean") return { text: "true", caretOffset: 0 };
-        if (expectedType === "Int32" || expectedType === "Number") return { text: "0", caretOffset: 0 };
-        return { text: "\"\"", caretOffset: -1 };
-    }
-    return { text: option.value || option.label || "", caretOffset: 0 };
+    inlineEditor.enumLocalizationCache = editor.enumLocalizationCache;
+    inlineEditor.enumLocalizationRequests = editor.enumLocalizationRequests;
 }
 
 export function renderPipelineStageInlineEditor(editor, stage, container) {
+    syncPipelineContext(editor);
     if (!isPipelineStageEditing(editor, stage)) return;
     const state = editor.pipelineEditState;
+    if (stage?.node?.type === "listTake") {
+        const strategy = String(stage.node.strategy || "first").toLowerCase();
+        if (strategy !== "all") {
+            const inputWrap = document.createElement("div");
+            inputWrap.className = "dsl-pipeline-inline-input";
+
+            const inputId = `dsl-take-count-${Math.random().toString(36).slice(2, 10)}`;
+            const label = document.createElement("label");
+            label.textContent = "数量";
+            label.className = "dsl-pipeline-select-label";
+            label.htmlFor = inputId;
+            inputWrap.appendChild(label);
+
+            const input = document.createElement("input");
+            input.type = "number";
+            input.min = "0";
+            input.step = "1";
+            input.placeholder = "输入数量";
+            input.id = inputId;
+            input.value = state.draftCountValue || "";
+            input.className = "dsl-pipeline-inline-field";
+
+            input.addEventListener("input", (event) => {
+                state.draftCountValue = event.target.value;
+            });
+
+            inputWrap.appendChild(input);
+            container.appendChild(inputWrap);
+        } else {
+            const hint = document.createElement("div");
+            hint.className = "dsl-pipeline-empty-state";
+            hint.textContent = "当前策略无需填写数量。";
+            container.appendChild(hint);
+        }
+        return;
+    }
     const inlineEditor = state.editor || new editor.constructor();
     state.editor = inlineEditor;
 
@@ -284,195 +426,139 @@ export function renderPipelineStageInlineEditor(editor, stage, container) {
     inlineEditor.pipelineOpen = false;
     inlineEditor.pipelineOpenSource = null;
     inlineEditor.isPipelineInline = true;
+    inlineEditor.isLightWorkspace = true;
 
     const slot = state.slot;
     const expectedType = slot === "filterExpression"
         ? "Boolean"
         : slot === "countExpression"
             ? "Int32"
-            : null;
+            : slot === "sortExpression" || slot === "keyExpression"
+                ? "NonEntity"
+            : slot === "selectExpression"
+                ? "Object"
+                : null;
 
-    const sourceType = state.node?.source?.returnType || editor.calculateASTReturnType(state.node?.source);
-    const innerType = editor.getCollectionInnerType(sourceType);
-    const shouldScopeToSelf = slot === "filterExpression" || slot === "sortExpression";
+    const sourceType = state.node?.source?.returnType
+        || editor.calculateASTReturnType(state.node?.source)
+        || editor.pipelineOpenSource?.returnType
+        || editor.calculateASTReturnType(editor.pipelineOpenSource);
+    let innerType = editor.getCollectionInnerType(sourceType);
+    const shouldScopeToSelf = slot === "filterExpression" || slot === "sortExpression" || slot === "keyExpression" || slot === "selectExpression";
+    if (!innerType && sourceType && typeof editor.isBusinessObjectType === "function"
+        && editor.isBusinessObjectType(sourceType)) {
+        innerType = sourceType;
+    }
+    if (shouldScopeToSelf && !innerType) {
+        innerType = "Object";
+    }
     const contextOverride = shouldScopeToSelf && innerType
-        ? { name: "self", displayName: "当前项 (self)", typeName: innerType }
+        ? { name: "self", displayName: "当前项", typeName: innerType }
         : null;
 
     syncInlineSuggestionEditor(editor, inlineEditor, expectedType, contextOverride);
 
-    const inputRow = document.createElement("div");
-    inputRow.className = "dsl-pipeline-inline-input";
+    const initialExpression = state.draftExpression ?? getPipelineStageExpressionText(editor, state.node, state.slot);
+    state.draftExpression = initialExpression;
 
-    const input = document.createElement("input");
-    input.className = "dsl-pipeline-inline-field";
-    input.placeholder = expectedType
-        ? `输入${editor.getDisplayTypeName(expectedType)}表达式`
-        : "输入公式";
-    input.value = state.draftExpression ?? getPipelineStageExpressionText(editor, state.node, state.slot);
-    state.draftExpression = input.value;
-    inputRow.appendChild(input);
+    const workspaceHost = document.createElement("div");
+    workspaceHost.className = "dsl-pipeline-inline-workspace";
+    container.appendChild(workspaceHost);
 
-    const tooltip = document.createElement("div");
-    tooltip.className = "dsl-options-dropdown dsl-inline-tooltip";
-    tooltip.style.display = "none";
-    inputRow.appendChild(tooltip);
-
-    container.appendChild(inputRow);
-
-    let suggestionContext = null;
-    let flatOptions = [];
-    let activeIndex = 0;
-    let hideTimer = null;
-
-    const applySuggestion = (option) => {
-        const value = input.value || "";
-        const caret = input.selectionStart ?? value.length;
-        const context = suggestionContext || { replaceStart: caret, replaceEnd: caret };
-        const insert = buildSuggestionInsert(option, expectedType);
-        const before = value.slice(0, context.replaceStart);
-        const after = value.slice(context.replaceEnd);
-        const next = `${before}${insert.text}${after}`;
-
-        input.value = next;
-        state.draftExpression = next;
-        const caretOffset = insert.caretOffset || 0;
-        const caretPos = before.length + insert.text.length + caretOffset;
-        input.setSelectionRange(caretPos, caretPos);
-        input.focus();
-        updateSuggestions();
-    };
-
-    const renderSuggestions = (context) => {
-        tooltip.innerHTML = "";
-        flatOptions = [];
-        activeIndex = 0;
-
-        const options = context?.options || [];
-        if (options.length === 0) {
-            tooltip.style.display = "none";
-            return;
-        }
-
-        const grouped = inlineEditor.groupOptionsByType(options);
-        Object.entries(grouped).forEach(([groupName, groupOptions]) => {
-            const groupEl = document.createElement("div");
-            groupEl.className = "dsl-inline-tooltip-group";
-            groupEl.textContent = groupName;
-            tooltip.appendChild(groupEl);
-
-            groupOptions.forEach((option) => {
-                if (option.type === "listPipeline") return;
-                const item = document.createElement("div");
-                item.className = "dsl-option";
-                item.dataset.index = String(flatOptions.length);
-
-                const label = document.createElement("span");
-                label.className = "dsl-option-label";
-                label.textContent = option.label || option.value || "未命名";
-                item.appendChild(label);
-
-                if (option.description) {
-                    const description = document.createElement("div");
-                    description.className = "dsl-option-description";
-                    description.textContent = option.description;
-                    item.appendChild(description);
-                }
-
-                item.addEventListener("mouseenter", () => {
-                    const idx = Number(item.dataset.index);
-                    if (!Number.isNaN(idx)) {
-                        activeIndex = idx;
-                        updateActiveItem();
-                    }
-                });
-
-                item.addEventListener("mousedown", (event) => {
-                    event.preventDefault();
-                });
-
-                item.addEventListener("click", () => {
-                    applySuggestion(option);
-                });
-
-                tooltip.appendChild(item);
-                flatOptions.push(option);
-            });
-        });
-
-        updateActiveItem();
-        tooltip.style.display = flatOptions.length > 0 ? "block" : "none";
-    };
-
-    const updateActiveItem = () => {
-        const items = tooltip.querySelectorAll(".dsl-option");
-        items.forEach((item) => item.classList.remove("is-active"));
-        const activeItem = items[activeIndex];
-        if (activeItem) {
-            activeItem.classList.add("is-active");
-            activeItem.scrollIntoView({ block: "nearest" });
-        }
-    };
-
-    const updateSuggestions = () => {
-        const value = input.value || "";
-        const caret = input.selectionStart ?? value.length;
-        const propertyContext = getPropertyChainSuggestionContext(inlineEditor, value, caret);
-        suggestionContext = propertyContext || getGeneralSuggestionContext(inlineEditor, value, caret);
-        renderSuggestions(suggestionContext);
-    };
-
-    const scheduleHide = () => {
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => {
-            tooltip.style.display = "none";
-        }, 120);
-    };
-
-    input.addEventListener("input", (event) => {
-        state.draftExpression = event.target.value;
-        updateSuggestions();
-    });
-
-    input.addEventListener("focus", () => {
-        if (hideTimer) clearTimeout(hideTimer);
-        updateSuggestions();
-    });
-
-    input.addEventListener("blur", () => {
-        scheduleHide();
-    });
-
-    input.addEventListener("keydown", (event) => {
-        if (tooltip.style.display !== "block" || flatOptions.length === 0) return;
-        if (event.key === "ArrowDown") {
-            event.preventDefault();
-            activeIndex = (activeIndex + 1) % flatOptions.length;
-            updateActiveItem();
-        } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            activeIndex = (activeIndex - 1 + flatOptions.length) % flatOptions.length;
-            updateActiveItem();
-        } else if (event.key === "Enter" || event.key === "Tab") {
-            event.preventDefault();
-            const option = flatOptions[activeIndex];
-            if (option) {
-                applySuggestion(option);
+    inlineEditor
+        .render(
+            workspaceHost,
+            initialExpression,
+            (expression) => {
+                state.draftExpression = expression;
+            },
+            {
+                expectedType,
+                triggeringEventContext: editor.triggeringEventContext
             }
-        }
-    });
-
-    updateSuggestions();
+        )
+        .catch((error) => {
+            console.error("Pipeline inline DSL render failed:", error);
+        });
 }
 
 export function commitPipelineStageEdit(editor) {
+    syncPipelineContext(editor);
     const state = editor.pipelineEditState;
     if (!state?.node || !state.slot) return;
-    const trimmed = String(state.draftExpression || "").trim();
-    applyPipelineStageExpression(editor, state.node, state.slot, state.draftExpression);
+    if (state.node.type === "listTake") {
+        const strategy = String(state.node.strategy || "first").toLowerCase();
+        const trimmedCount = String(state.draftCountValue || "").trim();
+        const previousExpression = String(state.draftExpression || "").trim();
+        if (strategy === "all") {
+            state.node.countExpression = null;
+        } else if (trimmedCount) {
+            const normalized = /^-?\d+$/.test(trimmedCount) ? trimmedCount : String(parseInt(trimmedCount, 10) || "");
+            if (normalized) {
+                const valueNode = createValueNode(normalized, "Int32", {
+                    type: "staticValue",
+                    staticValue: normalized,
+                    isAwaitingInput: false
+                });
+                state.node.setCountExpression?.(valueNode);
+            }
+        } else if (!previousExpression) {
+            const placeholder = createValueNode("", "Void", { type: "empty" });
+            state.node.setCountExpression?.(placeholder);
+        }
+
+        editor.pipelineEditState.node = null;
+        editor.pipelineEditState.slot = null;
+        editor.pipelineEditState.draftExpression = "";
+        editor.pipelineEditState.draftCountValue = "";
+        markPipelineContextDirty(editor);
+
+        const shouldRemove = strategy !== "all" && !trimmedCount && !previousExpression;
+        if (shouldRemove) {
+            const pipeline = getPipelineContext(editor);
+            const index = pipeline?.stages?.findIndex(stage => stage.node === state.node);
+            if (typeof index === "number" && index >= 0) {
+                removePipelineStage(editor, index);
+                return;
+            }
+        }
+
+        editor.updateExpressionFromAST();
+        return;
+    }
+    const inlineEditor = state.editor;
+    const inlineAst = inlineEditor?.workspaceAST || null;
+    const isEmptyAst = inlineAst?.type === "value" && inlineAst.metadata?.type === "empty";
+    let expression = state.editor?.expression ?? state.draftExpression ?? "";
+    if (isEmptyAst) {
+        expression = "";
+    }
+
+    let trimmed = String(expression || "").trim();
+
+    if (inlineEditor && inlineAst && !isEmptyAst) {
+        finalizeDraftInputs(inlineEditor, inlineAst);
+        if (findIncompleteNode(inlineAst)) {
+            inlineEditor.showExpressionError("工作区表达式不完整，无法保存。");
+            return;
+        }
+        const astValidation = validateAST(inlineAst);
+        if (!astValidation?.isValid) {
+            const msg = (astValidation?.errors || []).map(e => String(e)).join('\n');
+            inlineEditor.showExpressionError(msg || "表达式不合法，无法保存。");
+            return;
+        }
+        applyPipelineStageAst(editor, state.node, state.slot, inlineAst);
+        trimmed = String(inlineAst?.toExpression?.() || "").trim();
+    } else {
+        applyPipelineStageExpression(editor, state.node, state.slot, expression);
+    }
+
     editor.pipelineEditState.node = null;
     editor.pipelineEditState.slot = null;
     editor.pipelineEditState.draftExpression = "";
+    editor.pipelineEditState.draftCountValue = "";
+    markPipelineContextDirty(editor);
     if (!trimmed) {
         const pipeline = getPipelineContext(editor);
         const index = pipeline?.stages?.findIndex(stage => stage.node === state.node);
@@ -485,10 +571,13 @@ export function commitPipelineStageEdit(editor) {
 }
 
 export function cancelPipelineStageEdit(editor) {
+    syncPipelineContext(editor);
     if (!editor.pipelineEditState) return;
     editor.pipelineEditState.node = null;
     editor.pipelineEditState.slot = null;
     editor.pipelineEditState.draftExpression = "";
+    editor.pipelineEditState.draftCountValue = "";
+    markPipelineContextDirty(editor);
     editor.renderEditor();
 }
 
@@ -497,26 +586,14 @@ export function applyPipelineStageExpression(editor, stageNode, slot, expression
     const trimmed = String(expression || "").trim();
     if (!trimmed) {
         const placeholder = createValueNode("", "Void", { type: "empty" });
-        if (slot === "filterExpression") {
-            stageNode.setFilterExpression(placeholder);
-        } else if (slot === "sortExpression") {
-            stageNode.setSortExpression(placeholder);
-        } else if (slot === "countExpression") {
-            stageNode.setCountExpression(placeholder);
-        }
+        setPipelineStageSlot(stageNode, slot, placeholder);
         return;
     }
 
     const ast = editor.buildAstFromExpression(trimmed);
     if (!ast) return;
     const encapsulated = editor.createEncapsulatedFrom(ast);
-    if (slot === "filterExpression") {
-        stageNode.setFilterExpression(encapsulated);
-    } else if (slot === "sortExpression") {
-        stageNode.setSortExpression(encapsulated);
-    } else if (slot === "countExpression") {
-        stageNode.setCountExpression(encapsulated);
-    }
+    setPipelineStageSlot(stageNode, slot, encapsulated);
 }
 
 export function getPipelineStageTypeIssue(editor, stage) {
@@ -528,17 +605,34 @@ export function getPipelineStageTypeIssue(editor, stage) {
         exprNode = stage.node.filterExpression;
         expectedType = "Boolean";
     } else if (stage.node.type === "listTake") {
+        const strategy = String(stage.node.strategy || "").toLowerCase();
+        if (strategy === "all") return null;
         exprNode = stage.node.countExpression;
         expectedType = "Int32";
+    } else if (stage.node.type === "listSort") {
+        exprNode = stage.node.sortExpression;
+        expectedType = "NonEntity";
+    } else if (stage.node.type === "listDistinct") {
+        exprNode = stage.node.keyExpression;
+        expectedType = "NonEntity";
+    } else if (stage.node.type === "listSelect") {
+        exprNode = stage.node.selectExpression;
+        expectedType = "Object";
     }
 
     if (!exprNode || !expectedType) return null;
+    if (exprNode.metadata?.type === "empty") return null;
     const actualType = editor.calculateASTReturnType(exprNode);
     if (!actualType) return null;
 
     let hasIssue = false;
     if (expectedType === "Int32") {
         hasIssue = !editor.isNumericType(actualType);
+    } else if (expectedType === "NonEntity") {
+        const isEntity = typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(actualType);
+        const isCollection = typeof editor.isCollectionType === "function" && editor.isCollectionType(actualType);
+        const isDictionary = typeof editor.isDictionaryType === "function" && editor.isDictionaryType(actualType);
+        hasIssue = isEntity || isCollection || isDictionary;
     } else if (!editor.areTypesCompatible(actualType, expectedType)) {
         hasIssue = true;
     }
@@ -548,6 +642,7 @@ export function getPipelineStageTypeIssue(editor, stage) {
 }
 
 export function insertPipelineStage(editor, stageType, insertIndex = null) {
+    syncPipelineContext(editor);
     const pipeline = getPipelineContext(editor);
     if (!pipeline || !pipeline.source) return;
     const newNode = createStageNode(stageType, pipeline.source);
@@ -559,13 +654,13 @@ export function insertPipelineStage(editor, stageType, insertIndex = null) {
 
     const newRoot = rebuildListChainFromStages(pipeline.source, stages);
     editor.workspaceAST = newRoot;
-    editor.astRoot = newRoot;
-    editor.maintainASTRelationships(editor.astRoot);
+    editor.maintainASTRelationships(editor.workspaceAST);
     editor.updateExpressionFromAST();
     editor.renderEditor();
 }
 
 export function removePipelineStage(editor, index) {
+    syncPipelineContext(editor);
     const pipeline = getPipelineContext(editor);
     if (!pipeline) return;
     const stages = Array.isArray(pipeline.stages) ? [...pipeline.stages] : [];
@@ -577,13 +672,13 @@ export function removePipelineStage(editor, index) {
         : pipeline.source;
 
     editor.workspaceAST = newRoot;
-    editor.astRoot = newRoot;
-    editor.maintainASTRelationships(editor.astRoot);
+    editor.maintainASTRelationships(editor.workspaceAST);
     editor.updateExpressionFromAST();
     editor.renderEditor();
 }
 
 export function movePipelineStage(editor, fromIndex, toIndex) {
+    syncPipelineContext(editor);
     const pipeline = getPipelineContext(editor);
     if (!pipeline) return;
     const stages = Array.isArray(pipeline.stages) ? [...pipeline.stages] : [];
@@ -596,8 +691,7 @@ export function movePipelineStage(editor, fromIndex, toIndex) {
 
     const newRoot = rebuildListChainFromStages(pipeline.source, stages);
     editor.workspaceAST = newRoot;
-    editor.astRoot = newRoot;
-    editor.maintainASTRelationships(editor.astRoot);
+    editor.maintainASTRelationships(editor.workspaceAST);
     editor.updateExpressionFromAST();
     editor.renderEditor();
 }

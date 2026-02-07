@@ -29,7 +29,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         {
             new DslParameterInfo("source", typeof(object), "列表/数组/可枚举集合。"),
             new DslParameterInfo("index", typeof(int), "索引（从1开始）。"),
-            new DslParameterInfo("defaultValue", typeof(object), "越界时返回的默认值（TargetInfo 或 CardInstance）。", isOptional: true)
         };
 
         protected override int GetMinimumArgumentCount() => 2;

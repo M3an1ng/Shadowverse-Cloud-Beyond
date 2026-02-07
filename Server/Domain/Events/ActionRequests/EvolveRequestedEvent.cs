@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using AutoMapper;
@@ -22,7 +23,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
     [GameEventMetadata(
         "进化请求",
         "当玩家请求进行进化时触发的事件。",
-        EventType.Evolve,
+        EventType.EvolveRequested,
         AbilityEditorCategories.SystemRequestId,
         AbilityEditorCategories.SystemRequestLabel,
         EventMetadataVisibility.Hidden)]
@@ -34,8 +35,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("进化动作", "进化动作的详细信息。")]
         public EvolveActionDto ActionDto { get; }
 
-        public EvolveRequestedEvent(Guid playerId, EvolveActionDto actionDto)
-            : base(EventType.Evolve) // Use Evolve event type for triggering purposes
+        public EvolveRequestedEvent(Guid playerId, EvolveActionDto actionDto, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.EvolveRequested, eventId, timestamp) // Use Evolve event type for triggering purposes
         {
             PlayerId = playerId;
             ActionDto = actionDto;
@@ -43,8 +44,6 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
         public DomainOperationResult Commit(GameContext context)
         {
-            var result = new DomainOperationResult();
-
             // =================================================================
             // 1. Resolve Entities from IDs
             // =================================================================
@@ -104,24 +103,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             // =================================================================
             // 3. State Changes
             // =================================================================
-
-            // 3.1) 消耗 EP
-            if (!hasFreeEvolve)
-            {
-                var epResult = requestingPlayer.ConsumeEvolutionPoints(GameConstants.Evolution.EvolutionPointCost);
-                result.GeneratedEvents.AddRange(epResult.GeneratedEvents);
-            }
-
-            // 3.2) 设置本回合进化限制
-            requestingPlayer.ApplyEvolutionRightUsed();
-            result.GeneratedEvents.Add(new EvolveStateUpdatedEvent(requestingPlayer, false));
-
-            // 3.3) 生成卡牌进化与身材变化事件
-            var evolveResult = cardToEvolve.ApplyEvolution();
-            result.GeneratedEvents.AddRange(evolveResult.GeneratedEvents);
-
-            result.Success = true;
-            return result;
+            var evolveResult = requestingPlayer.EvolveCard(cardToEvolve, evolutionSourceCard: null, isManualEvolution: true);
+            return evolveResult;
         }
     }
 }

@@ -92,7 +92,7 @@ public class DecksController : ControllerBase
     {
         if (!TryGetDeckOwner(userId, guestId, out var owner, out var error))
         {
-            return BadRequest(error);
+            return BadRequest(new { message = error });
         }
 
         var result = await _deckService.UpdateAsync(owner, deckId, request, cancellationToken);
@@ -100,10 +100,10 @@ public class DecksController : ControllerBase
         {
             if (IsNotFound(result.Error))
             {
-                return NotFound(result.Error);
+                return NotFound(new { message = result.Error ?? "Deck not found." });
             }
 
-            return BadRequest(result.Error ?? "Failed to update deck.");
+            return BadRequest(new { message = result.Error ?? "Failed to update deck." });
         }
 
         return Ok(result.Data);

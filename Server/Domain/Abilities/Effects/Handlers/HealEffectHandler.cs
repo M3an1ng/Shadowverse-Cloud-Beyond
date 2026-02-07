@@ -37,8 +37,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
             if (parameters.HealAmount <= 0)
             {
-                Logger.LogInformation("{EffectName}: HealAmount is {HealAmount}. No healing will be applied.", effectName, parameters.HealAmount);
-                return new GameStateActionResult { Success = true };
+                Logger.LogInformation("{EffectName}: HealAmount is {HealAmount}. Emitting zero-heal events.", effectName, parameters.HealAmount);
             }
 
             Func<TargetInfo, GameContext, DomainOperationResult> healAction =

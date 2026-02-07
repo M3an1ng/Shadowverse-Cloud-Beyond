@@ -1,4 +1,4 @@
-// File: Server/Domain/Entities/CardInstance.cs
+﻿// File: Server/Domain/Entities/CardInstance.cs
 //
 // 相关文档:
 // - 数据库设计: 文档/04-数据库设计/01-实体关系图.md
@@ -21,7 +21,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // For IConditionEva
 using ShadowverseBeyond.Server.Domain.Abilities; // For Ability class
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For AbilityType
 using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
-using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId
+using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetInfo
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For DomainOperationResult
 using ShadowverseBeyond.Server.Services; // For GameDataProvider static instance
 using Microsoft.Extensions.DependencyInjection;
@@ -46,6 +46,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Unique identifier for this card instance within the current game.
         /// Now unified with DTO to use Guid type for consistency.
         /// </summary>
+        [DslExposable("卡牌ID", Description = "卡牌的唯一标识符")]
         public Guid InstanceId { get; set; } = Guid.Empty;
 
         /// <summary>
@@ -68,6 +69,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// The player who owns this card instance.
         /// </summary>
+        [DslExposable("拥有者ID", Description = "拥有者的唯一标识符")]
         public Guid OwnerPlayerId { get; set; } // Changed from string to Guid
 
         /// <summary>
@@ -83,7 +85,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("卡牌类型", Description = "卡牌的类型（随从、法术、护符等）")]
         public CardType CardType => CurrentDefinition?.Type ?? CardType.Follower;
 
-        [DslExposable("基础费用", Description = "卡牌的基础费用")]
         public int BaseCost => CurrentDefinition?.Cost ?? 0;
 
         /// <summary>
@@ -93,13 +94,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Future enhancement: Calculate as BaseCost + buff modifications.
         /// </summary>
         [DslExposable("当前费用", Description = "卡牌当前的费用（包含效果修正）")]
-        public int CurrentCost => GameServiceProvider.BuffService.GetEffectiveCost(this, GameServiceProvider.CurrentGameContext
-            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider."));
+        public int CurrentCost => Math.Max(0, GameServiceProvider.BuffService.GetEffectiveCost(this, GameServiceProvider.CurrentGameContext
+            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider.")));
 
         /// <summary>
         /// Base attack from CardDefinition (before any buffs or effects).
         /// </summary>
-        [DslExposable("基础攻击力", Description = "卡牌的基础攻击力")]
         public int BaseAttack => CurrentDefinition?.Attack ?? 0;
 
         /// <summary>
@@ -108,8 +108,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Future enhancement: Calculate as BaseAttack + buff modifications.
         /// </summary>
         [DslExposable("当前攻击力", Description = "卡牌当前的攻击力（包含效果修正）")]
-        public int CurrentAttack => GameServiceProvider.BuffService.GetEffectiveAttack(this, GameServiceProvider.CurrentGameContext
-            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider."));
+        public int CurrentAttack => Math.Max(0, GameServiceProvider.BuffService.GetEffectiveAttack(this, GameServiceProvider.CurrentGameContext
+            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider.")));
 
         /// <summary>
         /// Current health value (for units/leaders).
@@ -118,12 +118,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int Damage = 0;
 
         [DslExposable("当前生命值", Description = "卡牌当前的生命值")]
-        public int CurrentHealth => Math.Max(0, MaxHealth - Damage);
+        public int CurrentHealth => MaxHealth - Damage;
 
         /// <summary>
         /// Base health from CardDefinition (before any buffs or effects).
         /// </summary>
-        [DslExposable("基础生命值", Description = "卡牌的基础生命值")]
         public int BaseHealth => CurrentDefinition?.Health ?? 0;
 
         /// <summary>
@@ -142,6 +141,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// 是否处于超进化状态（进化的强化版，继承进化触发）。
         /// </summary>
+        [DslExposable("是否已超进化", Description = "该单位是否已超进化")]
         public bool IsSuperEvolved { get; private set; } = false;
 
         /// <summary>
@@ -151,6 +151,18 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("关键字", Description = "卡牌当前拥有的关键字列表")]
         public List<CardKeyword> Keywords => GameServiceProvider.BuffService.GetEffectiveKeywords(this, GameServiceProvider.CurrentGameContext
             ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider."));
+
+        /// <summary>
+        /// Gets the effect keywords aggregated from this card's abilities (deduplicated).
+        /// This does not filter by silence or ability enablement.
+        /// </summary>
+        [DslExposable("效果关键字", Description = "卡牌能力的效果关键字集合（去重，不包含None）")]
+        public List<AbilityKeyword> AbilityKeywords => GetEffectiveAbilities()
+            .SelectMany(a => a.AbilityKeywords ?? Array.Empty<AbilityKeywordConfig>())
+            .Select(k => k.Keyword)
+            .Where(k => k != AbilityKeyword.None)
+            .Distinct()
+            .ToList();
 
         /// <summary>
         /// Base keywords from the card's current definition.
@@ -200,6 +212,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// Number of attacks made this turn.
         /// </summary>
+        [DslExposable("当前攻击次数", Description = "该卡牌在回合中攻击的次数")]
         public int AttacksThisTurn { get; set; } = 0;
 
         /// <summary>
@@ -215,25 +228,171 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public Dictionary<string, object> AbilityState { get; private set; } = [];
 
         private readonly List<string> _additionalTribes = new();
+        private readonly List<string> _additionalNames = new();
 
-        private readonly CardCounters _counters = new(SystemCounterKeys);
+        private readonly Counters _counters;
 
-        [DslExposable("计数器", Description = "卡牌上的系统与临时计数器")]
-        public CardCounters Counters => _counters;
+        public Counters Counters => _counters;
 
-        [DslExposable("计数字典", Description = "计数器的只读字典视图")]
-        public IReadOnlyDictionary<string, object?> CounterMap => _counters;
+        [DslExposable("变量", Description = "卡牌上的系统与临时计数器")]
+        public IReadOnlyDictionary<string, int> CounterMap => _counters;
+
+        // [DslExposable("重置前快照", Description = "卡牌上一次重置前保存的轻量快照")]
+        // public CardInstanceResetSnapshot? LastPreResetSnapshot { get; private set; }
 
         [DslExposable("魔力增幅", Description = "spellboost 计数器数值")]
         public int Spellboost => GetCounter(SpellboostCounterKey);
 
-        [DslExposable("土之印计数", Description = "earthsigil 计数器数值")]
+        [DslExposable("土之印", Description = "earthsigil 计数器数值")]
         public int Earthsigil => GetCounter(EarthsigilCounterKey);
 
         /// <summary>
         /// Whether this card currently has at least one Activated (Act) ability.
         /// </summary>
-        public bool HasActAbility => Abilities.Any(a => a.Type == AbilityType.Activated);
+        public bool HasActAbility =>
+            GetEffectiveAbilities().Any(a => a.AbilityKeywords.Any(k => k.Keyword == AbilityKeyword.Act));
+
+        /// <summary>
+        /// Whether this card currently has at least one Enhance ability.
+        /// </summary>
+        public bool HasEnhanceAbility =>
+            GetEffectiveAbilities().Any(a => a.AbilityKeywords.Any(k => k.Keyword == AbilityKeyword.Enhance));
+
+        private IReadOnlyList<Ability> GetEffectiveAbilities()
+        {
+            var context = GameServiceProvider.CurrentGameContext;
+            if (context?.AbilityManager != null)
+            {
+                return context.AbilityManager
+                    .GetEffectiveAbilitiesForCard(InstanceId, context)
+                    .OfType<Ability>()
+                    .ToList();
+            }
+
+            return Abilities;
+        }
+
+        /// <summary>
+        /// Computes the Act cost for this card, applying buff-based keyword modifiers.
+        /// </summary>
+        public int GetActCost(GameContext context)
+        {
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            var actAbilities = context.AbilityManager?
+                .GetEffectiveAbilitiesForCard(InstanceId, context)
+                .Where(a => a.HasKeyword(AbilityKeyword.Act))
+                .ToList()
+                ?? new List<IAbility>();
+
+            if (actAbilities.Count == 0)
+            {
+                return 0;
+            }
+
+            var buffService = context.BuffService;
+            var costs = actAbilities
+                .Select(a => GetActCostForAbility(a, context))
+                .Where(value => value > 0)
+                .DefaultIfEmpty(0)
+                .Max();
+
+            return costs;
+        }
+
+        /// <summary>
+        /// Computes the Act cost for a specific ability on this card.
+        /// </summary>
+        public int GetActCostForAbility(IAbility ability, GameContext context)
+        {
+            if (ability == null)
+            {
+                throw new ArgumentNullException(nameof(ability));
+            }
+
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            var baseValue = ability.GetKeywordValue(AbilityKeyword.Act)
+                ?? (ability as Ability)?.Config?.ActivateCost
+                ?? 0;
+
+            return context.BuffService.GetEffectiveAbilityKeywordValue(this, AbilityKeyword.Act, baseValue, context);
+        }
+
+        /// <summary>
+        /// Computes the Enhance cost for a specific ability on this card, applying buff-based keyword modifiers.
+        /// </summary>
+        public int GetEnhanceCostForAbility(IAbility ability, GameContext context)
+        {
+            if (ability == null)
+            {
+                throw new ArgumentNullException(nameof(ability));
+            }
+
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            var baseValue = ability.GetKeywordValue(AbilityKeyword.Enhance) ?? 0;
+            return context.BuffService.GetEffectiveAbilityKeywordValue(this, AbilityKeyword.Enhance, baseValue, context);
+        }
+
+        /// <summary>
+        /// Computes all Enhance costs for this card, applying buff-based keyword modifiers.
+        /// Falls back to ability configs if runtime abilities are not available.
+        /// </summary>
+        public IReadOnlyList<int> GetEnhanceCostCandidates(GameContext context, IEnumerable<AbilityConfig>? fallbackConfigs = null)
+        {
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            var costs = new List<int>();
+            var enhanceAbilities = context.AbilityManager?
+                .GetEffectiveAbilitiesForCard(InstanceId, context)
+                .Where(a => a.HasKeyword(AbilityKeyword.Enhance))
+                .ToList()
+                ?? new List<IAbility>();
+
+            if (enhanceAbilities.Count > 0)
+            {
+                foreach (var ability in enhanceAbilities)
+                {
+                    var cost = GetEnhanceCostForAbility(ability, context);
+                    if (cost > 0)
+                    {
+                        costs.Add(cost);
+                    }
+                }
+            }
+            else if (fallbackConfigs != null)
+            {
+                foreach (var config in fallbackConfigs)
+                {
+                    var baseValue = config.GetKeywordValue(AbilityKeyword.Enhance);
+                    if (!baseValue.HasValue || baseValue.Value <= 0)
+                    {
+                        continue;
+                    }
+
+                    var cost = context.BuffService.GetEffectiveAbilityKeywordValue(this, AbilityKeyword.Enhance, baseValue.Value, context);
+                    if (cost > 0)
+                    {
+                        costs.Add(cost);
+                    }
+                }
+            }
+
+            return costs.Distinct().ToList();
+        }
 
         /// <summary>
         /// The owner's turn number when this card last used Act. Null if never used.
@@ -291,13 +450,41 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// A private, cached accessor for the card's static definition.
         /// This avoids repeated lookups in the GameDataProvider within the same instance context.
         /// </summary>
-        [DslExposable("卡牌原型", Description = "卡牌的原型，包含卡牌在无附加效果情况下的基础属性和定义")]
+        [DslExposable("原始卡牌", Description = "卡牌的原型，包含卡牌在无附加效果情况下的基础属性和定义")]
         public CardDefinition? CurrentDefinition => GameDataProvider.Instance?.GetCardDefinition(CurrentDefinitionId);
 
         /// <summary>
         /// Gets the card's name from its definition.
         /// </summary>
         public string Name => CurrentDefinition?.Name ?? $"Card_{CurrentDefinitionId}";
+
+        /// <summary>
+        /// Gets the list of card names this instance can be treated as.
+        /// Includes the base definition name plus any runtime aliases.
+        /// </summary>
+        [DslExposable("卡名列表", Description = "卡牌可被视为的名称列表（包含基础名称）")]
+        public List<string> CardNames
+        {
+            get
+            {
+                var baseName = Name;
+                if (_additionalNames.Count == 0)
+                {
+                    return new List<string> { baseName };
+                }
+
+                var combined = new List<string> { baseName };
+                foreach (var alias in _additionalNames)
+                {
+                    if (!combined.Any(existing => string.Equals(existing, alias, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        combined.Add(alias);
+                    }
+                }
+
+                return combined;
+            }
+        }
 
         /// <summary>
         /// Gets the card's description from its definition.
@@ -317,6 +504,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <summary>
         /// Gets the card's tribe names from its definition.
         /// </summary>
+        [DslExposable("卡牌种类", Description = "卡牌所属的种类")]
+
         public List<string> Tribe
         {
             get
@@ -352,6 +541,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             OwnerPlayerId = ownerPlayerId;
 
             var baseDef = GameDataProvider.Instance?.GetCardDefinition(definitionId);
+            _counters = new Counters(SystemCounterKeys, BuildInitialCounterDefaults(baseDef));
             InitializeCountdown(baseDef);
             ResetCounters();
         }
@@ -363,6 +553,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             InstanceId = Guid.Empty;
             OwnerPlayerId = Guid.Empty; // Use Guid.Empty for default
+            _counters = new Counters(SystemCounterKeys);
             ResetCounters();
         }
 
@@ -381,7 +572,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         /// <param name="abilityTag">能力标签</param>
         /// <returns>匹配的能力列表</returns>
-        public IEnumerable<Ability> GetAbilitiesByKeyword(EffectKeyword abilityTag)
+        public IEnumerable<Ability> GetAbilitiesByKeyword(AbilityKeyword abilityTag)
         {
             return Abilities.Where(a => a.HasKeyword(abilityTag));
         }
@@ -391,9 +582,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         /// <param name="abilityTag">能力标签</param>
         /// <returns>是否拥有该能力</returns>
-        public bool HasAbility(EffectKeyword abilityTag)
+        public bool HasAbility(AbilityKeyword abilityTag)
         {
-            return Abilities.Any(a => a.HasKeyword(abilityTag));
+            return GetEffectiveAbilities().Any(a => a.HasKeyword(abilityTag));
         }
 
         /// <summary>
@@ -403,6 +594,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public bool CanPerformAttack(GameState gameState, PlayerState attackerPlayer, CardInstance target, bool forceAttack = false)
         {
             if (forceAttack) return true;
+
+            if (!IsFollower && !IsLeader)
+            {
+                return false;
+            }
 
             // Basic state checks
             if (gameState.IsGameOver ||
@@ -417,6 +613,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Target validation logic
             var opponentPlayer = gameState.GetOpponentPlayerState(attackerPlayer.PlayerId);
             if (opponentPlayer == null || target.OwnerPlayerId != opponentPlayer.PlayerId) return false;
+
+            if (!target.IsFollower && !target.IsLeader)
+            {
+                return false;
+            }
 
             var opponentField = opponentPlayer.Field;
             var wardFollowers = opponentField.Where(f => f.HasKeyword(CardKeyword.Ward)).ToList();
@@ -474,16 +675,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
 
-            // 记录攻击：直接通过内部 Apply 方法更新攻击计数与可攻击状态
-            var oldCanAttack = this.CanAttack;
-            this.ApplyAttackPerformed();
-            if (oldCanAttack != this.CanAttack)
-            {
-                result.GeneratedEvents.Add(new AttackStateUpdatedEvent(this, this.CanAttack));
-            }
-
-            result.GeneratedEvents.Add(new AttackEvent(this, target));
+            // Attack count consumption is committed in AttackEvent.Commit to keep request preflight reversible.
+            result.GeneratedEvents.Add(new AttackEvent(this, target, consumeAttackCount: true));
             result.GeneratedEvents.Add(new ClashEvent(this, target));
+            result.GeneratedEvents.Add(new CombatResolutionEvent(this, target));
+            result.Success = true;
             return result;
         }
 
@@ -498,12 +694,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
             // Determine damage values
-            result.GeneratedEvents.Add(new DamageEvent(target, CurrentAttack, this, DamageKind.Combat));
+            var damageToTarget = IsSuperEvolveDamageImmune(target) ? 0 : CurrentAttack;
+            result.GeneratedEvents.Add(new DamageEvent(target, damageToTarget, this, DamageKind.Combat));
 
             // Generate DamageEvent for the attacker (counter-attack)
             if (target.CardType == CardType.Follower)
             {
-                result.GeneratedEvents.Add(new DamageEvent(this, target.CurrentAttack, target, DamageKind.Combat));
+                var damageToAttacker = IsSuperEvolveDamageImmune(this) ? 0 : target.CurrentAttack;
+                result.GeneratedEvents.Add(new DamageEvent(this, damageToAttacker, target, DamageKind.Combat, isCounterAttack: true));
             }
 
             result.Success = true;
@@ -524,12 +722,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         /// <summary>
-        /// Applies evolution to this card instance using a new card definition.
-        /// This method performs a "transformation" rather than just buffing stats.
+        /// Applies evolution to this card instance.
         /// </summary>
-        /// <param name="evolvedDefinition">The definition of the card to evolve into.</param>
+        /// <param name="evolutionOwner">进化卡牌所属的玩家。</param>
+        /// <param name="evolutionSourceCard">能力进化时的来源卡牌（系统/手动进化时为 null）。</param>
+        /// <param name="isManualEvolution">true 表示通过进化点手动进化；false 表示通过效果进化。</param>
         /// <returns>A result object containing generated events.</returns>
-        public DomainOperationResult ApplyEvolution()
+        public DomainOperationResult ApplyEvolution(PlayerState evolutionOwner, CardInstance? evolutionSourceCard, bool isManualEvolution = false)
         {
             var result = new DomainOperationResult();
 
@@ -542,7 +741,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // This method now only generates the event.
             // The actual state change is handled by the event's Commit method.
-            result.GeneratedEvents.Add(new EvolveEvent(this, false));
+            var evolutionSource = evolutionSourceCard != null
+                ? TargetInfo.ForCard(evolutionSourceCard)
+                : TargetInfo.ForPlayer(evolutionOwner);
+            result.GeneratedEvents.Add(new EvolveEvent(this, evolutionSource, false, isManualEvolution));
             result.Success = true;
 
             return result;
@@ -552,7 +754,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Applies super evolution (enhanced evolution) to this card instance.
         /// Generates both evolve-related events and the stat change event for +3/+3.
         /// </summary>
-        public DomainOperationResult ApplySuperEvolution()
+        public DomainOperationResult ApplySuperEvolution(PlayerState evolutionOwner, CardInstance? evolutionSourceCard, bool isManualEvolution = false)
         {
             var result = new DomainOperationResult();
 
@@ -564,8 +766,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             // 触发普通进化事件（便于沿用进化触发），同时触发超进化专用事件
-            result.GeneratedEvents.Add(new EvolveEvent(this, true));
-            result.GeneratedEvents.Add(new SuperEvolveEvent(this));
+            var evolutionSource = evolutionSourceCard != null
+                ? TargetInfo.ForCard(evolutionSourceCard)
+                : TargetInfo.ForPlayer(evolutionOwner);
+            result.GeneratedEvents.Add(new EvolveEvent(this, evolutionSource, true, isManualEvolution));
+            result.GeneratedEvents.Add(new SuperEvolveEvent(this, evolutionSource, isManualEvolution));
             result.Success = true;
 
             return result;
@@ -608,7 +813,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             var result = new DomainOperationResult();
-            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 2, healthModifier: 2, costModifier: 0));
+            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 2, healthModifier: 2, costModifier: 0, durationType: DurationType.Permanent));
             result.Success = true;
             return result;
         }
@@ -618,7 +823,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             IsEvolved = true;
             IsSuperEvolved = true;
             var result = new DomainOperationResult();
-            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 3, healthModifier: 3, costModifier: 0));
+            result.GeneratedEvents.Add(new StatChangedEvent(this, attackModifier: 3, healthModifier: 3, costModifier: 0, durationType: DurationType.Permanent));
             result.Success = true;
             return result;
         }
@@ -687,6 +892,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             ActsThisTurn = source.ActsThisTurn;
             MaxActsPerTurn = source.MaxActsPerTurn;
             AbilityState = new Dictionary<string, object>(source.AbilityState);
+            _additionalNames.Clear();
+            _additionalNames.AddRange(source._additionalNames);
             _additionalTribes.Clear();
             _additionalTribes.AddRange(source._additionalTribes);
             _counters.CopyFrom(source._counters);
@@ -716,12 +923,18 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             ActsThisTurn = 0;
             MaxActsPerTurn = 1;
             AbilityState.Clear();
+            _additionalNames.Clear();
             _additionalTribes.Clear();
             ResetCounters();
 
             var baseDef = GameDataProvider.Instance?.GetCardDefinition(BaseDefinitionId);
             InitializeCountdown(baseDef);
         }
+
+        // internal void CapturePreResetSnapshot()
+        // {
+        //     LastPreResetSnapshot = CardInstanceResetSnapshot.From(this);
+        // }
         #endregion
 
         public int GetCounter(string key)
@@ -747,6 +960,24 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         private void ResetCounters()
         {
             _counters.Reset();
+        }
+
+        private static IReadOnlyDictionary<string, int> BuildInitialCounterDefaults(CardDefinition? definition)
+        {
+            if (definition?.Keywords == null || definition.Keywords.Count == 0)
+            {
+                return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var defaults = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var hasEarthsigil = definition.Keywords.Any(keyword =>
+                string.Equals(keyword, nameof(CardKeyword.EarthSigil), StringComparison.OrdinalIgnoreCase));
+            if (hasEarthsigil)
+            {
+                defaults[EarthsigilCounterKey] = 1;
+            }
+
+            return defaults;
         }
 
         /// <summary>
@@ -832,6 +1063,26 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             _additionalTribes.Add(tribe);
         }
 
+        public void AddCardNameAlias(string cardName)
+        {
+            if (string.IsNullOrWhiteSpace(cardName))
+            {
+                return;
+            }
+
+            if (string.Equals(cardName, Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (_additionalNames.Any(existing => string.Equals(existing, cardName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            _additionalNames.Add(cardName);
+        }
+
 
 
 
@@ -853,16 +1104,28 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (amount <= 0) return result;
 
             // Only generate the DamageEvent; actual state change happens via HealthChangedEvent.Commit
+            var normalizedAmount = IsSuperEvolveDamageImmune(this) ? 0 : amount;
             if (source != null)
             {
-                result.GeneratedEvents.Add(new DamageEvent(this, amount, source, DamageKind.Ability));
+                result.GeneratedEvents.Add(new DamageEvent(this, normalizedAmount, source, DamageKind.Ability));
             }
             else
             {
                 // Allow self-damage event if source is null by falling back to self
-                result.GeneratedEvents.Add(new DamageEvent(this, amount, this, DamageKind.Ability));
+                result.GeneratedEvents.Add(new DamageEvent(this, normalizedAmount, this, DamageKind.Ability));
             }
             return result;
+        }
+
+        private static bool IsSuperEvolveDamageImmune(CardInstance target)
+        {
+            if (!target.IsSuperEvolved || !target.IsFollower)
+            {
+                return false;
+            }
+
+            var context = GameServiceProvider.CurrentGameContext;
+            return context != null && target.OwnerPlayerId == context.CurrentGameState.CurrentPlayerId;
         }
 
         /// <summary>
@@ -874,16 +1137,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult Heal(int amount, CardInstance? source = null)
         {
             var result = new DomainOperationResult { Success = true };
-            if (amount <= 0) return result;
+            var normalizedAmount = Math.Max(0, amount);
 
             // Only generate the HealEvent; actual state change happens via HealthChangedEvent.Commit
             if (source != null)
             {
-                result.GeneratedEvents.Add(new HealEvent(this, amount, source));
+                result.GeneratedEvents.Add(new HealEvent(this, normalizedAmount, source));
             }
             else
             {
-                result.GeneratedEvents.Add(new HealEvent(this, amount, this));
+                result.GeneratedEvents.Add(new HealEvent(this, normalizedAmount, this));
             }
             return result;
         }
@@ -901,6 +1164,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // 1. Unregister all old abilities associated with this card instance.
             abilityManager.UnregisterCardAbilities(this.InstanceId);
+
+            var auraResult = context.AuraManager.UnregisterBySourceCard(this.InstanceId, context);
+            if (!auraResult.Success)
+            {
+                return auraResult;
+            }
+            result.GeneratedEvents.AddRange(auraResult.GeneratedEvents);
 
             // 2. Perform the basic transformation on the card instance
             this.BaseDefinitionId = newDefinition.Id;

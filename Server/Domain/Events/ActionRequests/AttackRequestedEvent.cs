@@ -21,7 +21,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
     [GameEventMetadata(
         "攻击请求",
         "当玩家请求进行攻击时触发的事件。",
-        EventType.Attack,
+        EventType.AttackRequested,
         AbilityEditorCategories.SystemRequestId,
         AbilityEditorCategories.SystemRequestLabel,
         EventMetadataVisibility.Hidden)]
@@ -33,8 +33,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("攻击动作", "攻击动作的详细信息。")]
         public AttackActionDto ActionDto { get; }
 
-        public AttackRequestedEvent(Guid playerId, AttackActionDto actionDto)
-            : base(EventType.Attack) // Use Attack event type for triggering purposes
+        public AttackRequestedEvent(Guid playerId, AttackActionDto actionDto, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.AttackRequested, eventId, timestamp) // Use Attack event type for triggering purposes
         {
             PlayerId = playerId;
             ActionDto = actionDto;

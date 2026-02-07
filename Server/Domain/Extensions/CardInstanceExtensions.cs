@@ -211,6 +211,10 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
             if (!attacker.CanAttack)
                 return false;
 
+            // 类型检查：仅随从或主战者可以攻击
+            if (attacker.Type != CardType.Follower && attacker.Type != CardType.Leader)
+                return false;
+
             // 回合检查：必须是攻击者的回合
             if (!isCurrentPlayerTurn || attacker.OwnerPlayerId != currentPlayerId)
                 return false;

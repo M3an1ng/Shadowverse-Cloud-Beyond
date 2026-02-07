@@ -34,6 +34,11 @@ namespace ShadowverseBeyond.Server.Dtos
         public string Name { get; init; } = string.Empty;
 
         /// <summary>
+        /// List of card names this instance can be treated as.
+        /// </summary>
+        public List<string> CardNames { get; set; } = new();
+
+        /// <summary>
         /// Play point cost of the card.
         /// </summary>
         public int Cost { get; init; }
@@ -58,6 +63,17 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Tribe of the card.
         /// </summary>
         public List<string> Tribe { get; init; } = new();
+
+        /// <summary>
+        /// Earthsigil counter value (for earth sigil cards).
+        /// </summary>
+        public int Earthsigil { get; init; }
+
+        /// <summary>
+        /// Counter values attached to this card instance for preview display.
+        /// </summary>
+        [JsonPropertyName("counters")]
+        public Dictionary<string, int> Counters { get; set; } = new();
 
         /// <summary>
         /// Base attack value (from CardDefinition).
@@ -116,9 +132,19 @@ namespace ShadowverseBeyond.Server.Dtos
         public bool HasActAbility { get; set; }
 
         /// <summary>
+        /// Act ability summaries for action button rendering.
+        /// </summary>
+        public List<AbilityActionSummaryDto> ActAbilities { get; set; } = new();
+
+        /// <summary>
         /// The owner's turn number when this card last used Act. Null if never used.
         /// </summary>
         public int? ActLastUsedTurnNumber { get; set; }
+
+        /// <summary>
+        /// Fusion ability summaries for action button rendering.
+        /// </summary>
+        public List<AbilityActionSummaryDto> FusionAbilities { get; set; } = new();
 
         /// <summary>
         /// Number of attacks made by this follower instance this turn.
@@ -186,6 +212,26 @@ namespace ShadowverseBeyond.Server.Dtos
         /// </summary>
         public CardDefinitionDto? EvolvedState { get; set; }
 
+        /// <summary>
+        /// Preview art asset path for the card.
+        /// </summary>
+        public string? ArtPreview { get; init; }
+
+        /// <summary>
+        /// Detail art asset path for the card.
+        /// </summary>
+        public string? ArtDetail { get; init; }
+
+        /// <summary>
+        /// Buff summaries grouped by EffectKey for UI preview display.
+        /// </summary>
+        public List<BuffSummaryDto> BuffSummaries { get; init; } = new();
+
+        /// <summary>
+        /// Aggregated stat changes from buffs for UI preview display.
+        /// </summary>
+        public BuffStatSummaryDto? BuffStatSummary { get; init; }
+
         // --- Added Constructor ---
         /// <summary>
         /// <summary>
@@ -205,6 +251,7 @@ namespace ShadowverseBeyond.Server.Dtos
             // CardId in CardDefinitionDto is now int, assign directly.
             CardId = definition.CardId;
             Name = definition.Name;
+            CardNames = new List<string> { definition.Name };
             Cost = definition.Cost;
             Type = definition.Type;
             // Handle nullable types from definition using ??

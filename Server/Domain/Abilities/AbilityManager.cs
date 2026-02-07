@@ -4,8 +4,10 @@
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 // - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
 //
+using ShadowverseBeyond.Server.Domain.Abilities.Auras;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Add using for IConditionFactory
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Add using for IEffectExecutor
+using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using Microsoft.Extensions.Logging;
@@ -21,8 +23,11 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Exceptions;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Factories;
+using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Domain.Constants; // Added for IAbility
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Hubs;
+using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -37,6 +42,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private readonly List<IAbility> _allAbilities = new();
         private readonly ConcurrentDictionary<Guid, IAbility> _abilitiesByRuntimeId = new(); // 新增：按RuntimeId索引能力
         private readonly ConcurrentDictionary<Guid, List<Guid>> _abilityRuntimeIdsByBuffId = new(); // 新增：按BuffId索引能力运行时ID
+        private readonly ConcurrentDictionary<Guid, AbilitySnapshot> _abilityTombstones = new();
         private readonly ILogger<AbilityManager>? _logger;
         private readonly IAbilityFactory _abilityFactory;
         // Removed: _eventProcessor to break circular dependency
@@ -67,6 +73,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>创建的能力列表</returns>
         public List<Ability> CreateAbilitiesForCard(CardInstance cardInstance, List<AbilityConfig> abilityConfigs, Guid? sourceBuffId = null)
         {
+            InitializeCountersFromConfigs(cardInstance, abilityConfigs);
+
             // 1. Use the factory to create the list of abilities, passing the optional sourceBuffId
             var abilities = _abilityFactory.CreateAbilities(cardInstance, abilityConfigs, sourceBuffId);
 
@@ -76,11 +84,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 RegisterAbility(ability);
             }
 
-            _logger?.LogInformation("[AbilityManager] Created and registered {Count} abilities for card {CardName} ({CardId}) from source BuffId {BuffId}. Total Abilities: {TotalCount}",
-                abilities.Count, cardInstance.Name, cardInstance.InstanceId, sourceBuffId ?? Guid.Empty, _allAbilities.Count);
+            // _logger?.LogInformation("[AbilityManager] Created and registered {Count} abilities for card {CardName} ({CardId}) from source BuffId {BuffId}. Total Abilities: {TotalCount}",
+            //     abilities.Count, cardInstance.Name, cardInstance.InstanceId, sourceBuffId ?? Guid.Empty, _allAbilities.Count);
 
             // 3. Return the list of abilities created by the factory
             return abilities;
+        }
+
+        private static void InitializeCountersFromConfigs(CardInstance cardInstance, IEnumerable<AbilityConfig> abilityConfigs)
+        {
+            if (cardInstance == null || abilityConfigs == null)
+            {
+                return;
+            }
+
+            foreach (var config in abilityConfigs)
+            {
+                if (config?.CounterRegistrations == null || config.CounterRegistrations.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var registration in config.CounterRegistrations)
+                {
+                    if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                    {
+                        continue;
+                    }
+
+                    cardInstance.Counters.TryInitialize(registration.Name, registration.InitialValue);
+                }
+            }
         }
 
         /// <summary>
@@ -103,20 +137,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             // 按事件类型索引能力
             // Ensure TriggerConfig is used for event types
-            if (ability.TriggerConfig != null && ability.TriggerConfig.EventTypes != null)
+            foreach (var eventType in GetAbilityEventTypesForIndexing(ability))
             {
-                foreach (var eventType in ability.TriggerConfig.EventTypes)
-                {
-                    var eventTypeString = eventType.ToString();
-                    _abilitiesByEventType.AddOrUpdate(
-                        eventTypeString,
-                        new List<IAbility> { ability },
-                        (key, existingList) =>
-                        {
-                            existingList.Add(ability);
-                            return existingList;
-                        });
-                }
+                var eventTypeString = eventType.ToString();
+                _abilitiesByEventType.AddOrUpdate(
+                    eventTypeString,
+                    new List<IAbility> { ability },
+                    (key, existingList) =>
+                    {
+                        existingList.Add(ability);
+                        return existingList;
+                    });
             }
 
 
@@ -173,22 +204,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // Allow system abilities without SourceCard to be unregistered from _allAbilities
             // but SourceCard specific logic should only run if SourceCard exists.
 
+            RegisterAbilityTombstone(ability);
+
             _allAbilities.Remove(ability);
 
             // 从事件类型索引中移除
             // Ensure TriggerConfig is used for event types
-            if (ability.TriggerConfig != null && ability.TriggerConfig.EventTypes != null)
+            foreach (var eventType in GetAbilityEventTypesForIndexing(ability))
             {
-                foreach (var eventType in ability.TriggerConfig.EventTypes)
+                var eventTypeString = eventType.ToString();
+                if (_abilitiesByEventType.TryGetValue(eventTypeString, out var abilities))
                 {
-                    var eventTypeString = eventType.ToString();
-                    if (_abilitiesByEventType.TryGetValue(eventTypeString, out var abilities))
+                    abilities.Remove(ability);
+                    if (abilities.Count == 0)
                     {
-                        abilities.Remove(ability);
-                        if (abilities.Count == 0)
-                        {
-                            _abilitiesByEventType.TryRemove(eventTypeString, out _);
-                        }
+                        _abilitiesByEventType.TryRemove(eventTypeString, out _);
                     }
                 }
             }
@@ -311,6 +341,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
         }
 
+        public IReadOnlyList<Guid> GetAbilityRuntimeIdsForBuff(Guid buffId)
+        {
+            if (buffId == Guid.Empty)
+            {
+                return Array.Empty<Guid>();
+            }
+
+            return _abilityRuntimeIdsByBuffId.TryGetValue(buffId, out var abilityRuntimeIds)
+                ? abilityRuntimeIds.ToList()
+                : Array.Empty<Guid>();
+        }
+
         /// <summary>
         /// 获取指定事件触发的能力列表
         /// 注意：此方法不再处理事件，只返回相关能力。事件处理应通过EventProcessor进行。
@@ -325,10 +367,44 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             var relevantAbilities = GetAbilitiesForEvent(eventTypeString);
 
+            var targetedAbilityRuntimeId = gameEvent switch
+            {
+                ActInvokedEvent actEvent => actEvent.TriggeredAbilityRuntimeId,
+                FusionEvent fusionEvent => fusionEvent.TriggeredAbilityRuntimeId,
+                _ => null
+            };
+
+            // NOTE: Do not hard-filter abilities by TriggeredAbilityRuntimeId here.
+            // Let DSL conditions decide whether a specific ability should trigger.
+            // This keeps "when any card Act/Fusion happens" effects working.
+            // if (targetedAbilityRuntimeId.HasValue && targetedAbilityRuntimeId.Value != Guid.Empty)
+            // {
+            //     relevantAbilities = relevantAbilities
+            //         .Where(ability => ability.RuntimeId == targetedAbilityRuntimeId.Value)
+            //         .ToList();
+            // }
+
             foreach (var ability in relevantAbilities)
             {
                 try
                 {
+                    if (IsAbilitySuppressed(ability, context))
+                    {
+                        continue;
+                    }
+
+                    if (ability is Ability concreteAbility)
+                    {
+                        if (IsAuraAbility(concreteAbility))
+                        {
+                            if (!context.IsAuraRefresh && ShouldTriggerAuraAbility(concreteAbility, gameEvent, timing))
+                            {
+                                triggeredAbilities.Add(ability);
+                            }
+                            continue;
+                        }
+                    }
+
                     // Filter by the specified timing first
                     if (ability.TriggerConfig.Timing == timing && await ability.CanTrigger(gameEvent, context))
                     {
@@ -348,9 +424,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
 
             // --- NEW SORTING LOGIC ---
+            var clashEvent = gameEvent as ClashEvent;
+            var attackerId = clashEvent?.Attacker?.InstanceId;
+            var defenderId = clashEvent?.Defender?.InstanceId;
+
             var sortedAbilities = triggeredAbilities
                 .OrderBy(ability =>
                 {
+                    if (attackerId.HasValue && ability.SourceCard?.InstanceId == attackerId.Value)
+                    {
+                        return -2;
+                    }
+                    if (defenderId.HasValue && ability.SourceCard?.InstanceId == defenderId.Value)
+                    {
+                        return -1;
+                    }
                     // Rule 1: The event's source ability itself has the highest priority (e.g., Fanfare)
                     if (gameEvent.Source?.Card != null && ability.SourceCard?.InstanceId == gameEvent.Source.Card.InstanceId)
                     {
@@ -373,6 +461,140 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 sortedAbilities.Count, gameEvent.EventType, timing);
 
             return sortedAbilities;
+        }
+
+        private static bool IsAuraAbility(Ability ability)
+        {
+            return ability.Type == AbilityType.Continuous;
+        }
+
+        private static IEnumerable<EventType> GetAbilityEventTypesForIndexing(IAbility ability)
+        {
+            var eventTypes = new HashSet<EventType>();
+            if (ability.TriggerConfig?.EventTypes != null)
+            {
+                foreach (var eventType in ability.TriggerConfig.EventTypes)
+                {
+                    eventTypes.Add(eventType);
+                }
+            }
+
+            if (ability is Ability concreteAbility && IsAuraAbility(concreteAbility) && concreteAbility.Config.Auras.Any())
+            {
+                foreach (var auraConfig in concreteAbility.Config.Auras)
+                {
+                    if (auraConfig == null || !auraConfig.IsEnabled)
+                    {
+                        continue;
+                    }
+
+                    foreach (var trigger in GetAuraTriggerConfigs(concreteAbility, auraConfig))
+                    {
+                        if (trigger?.EventTypes == null)
+                        {
+                            continue;
+                        }
+
+                        foreach (var eventType in trigger.EventTypes)
+                        {
+                            eventTypes.Add(eventType);
+                        }
+                    }
+                }
+            }
+
+            return eventTypes;
+        }
+
+        private static IEnumerable<TriggerConfig> GetAuraTriggerConfigs(Ability ability, AuraConfig auraConfig)
+        {
+            return new[] { ability.Config.Trigger };
+        }
+
+        private static bool ShouldTriggerAuraAbility(Ability ability, IGameEvent gameEvent, TriggerTiming timing)
+        {
+            foreach (var auraConfig in ability.Config.Auras)
+            {
+                if (auraConfig == null || !auraConfig.IsEnabled)
+                {
+                    continue;
+                }
+
+                foreach (var trigger in GetAuraTriggerConfigs(ability, auraConfig))
+                {
+                    if (TriggerConfigMatchesEvent(trigger, gameEvent, timing, ability.SourceCard))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TriggerConfigMatchesEvent(TriggerConfig trigger, IGameEvent gameEvent, TriggerTiming timing, CardInstance? sourceCard)
+        {
+            if (trigger == null || !trigger.IsEnabled)
+            {
+                return false;
+            }
+
+            if (trigger.Timing != timing)
+            {
+                return false;
+            }
+
+            if (trigger.EventTypes == null || trigger.EventTypes.Count == 0)
+            {
+                return false;
+            }
+
+            if (!trigger.EventTypes.Contains(gameEvent.EventType))
+            {
+                return false;
+            }
+
+            if (sourceCard != null && !trigger.IsValidZone(sourceCard.CurrentZone))
+            {
+                return false;
+            }
+
+            if (!IsRelationMatch(trigger.RelationType, gameEvent, sourceCard))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsRelationMatch(TriggerRelationType relationType, IGameEvent gameEvent, CardInstance? sourceCard)
+        {
+            if (relationType == TriggerRelationType.Any)
+            {
+                return true;
+            }
+
+            if (sourceCard == null)
+            {
+                return relationType != TriggerRelationType.SourceSelf
+                       && relationType != TriggerRelationType.TargetSelf;
+            }
+
+            var sourceEventCard = gameEvent.Source?.Card;
+            var targetCards = gameEvent.Target
+                .Select(target => target.Card)
+                .Where(card => card != null)
+                .Select(card => card!)
+                .ToList();
+
+            return relationType switch
+            {
+                TriggerRelationType.SourceSelf => sourceEventCard != null && sourceEventCard.InstanceId == sourceCard.InstanceId,
+                TriggerRelationType.SourceOther => sourceEventCard != null && sourceEventCard.InstanceId != sourceCard.InstanceId,
+                TriggerRelationType.TargetSelf => targetCards.Any(card => card.InstanceId == sourceCard.InstanceId),
+                TriggerRelationType.TargetOther => targetCards.Any(card => card.InstanceId != sourceCard.InstanceId),
+                _ => true
+            };
         }
 
         /// <summary>
@@ -405,6 +627,63 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         }
 
         /// <summary>
+        /// 获取指定卡片的所有有效能力（不包含被抑制的能力）
+        /// </summary>
+        public List<IAbility> GetEffectiveAbilitiesForCard(Guid cardInstanceId, GameContext context)
+        {
+            var abilities = GetAbilitiesForCard(cardInstanceId);
+            if (abilities.Count == 0)
+            {
+                return abilities;
+            }
+
+            return abilities
+                .Where(ability => !IsAbilitySuppressed(ability, context))
+                .ToList();
+        }
+
+        /// <summary>
+        /// 判断能力是否在当前上下文中被抑制
+        /// </summary>
+        public bool IsAbilitySuppressed(IAbility ability, GameContext context)
+        {
+            if (ability == null || context == null)
+            {
+                return false;
+            }
+
+            if (!ability.SourceCardId.HasValue)
+            {
+                return false;
+            }
+
+            var buffs = context.BuffManager.GetBuffsForCard(ability.SourceCardId.Value);
+            if (buffs.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var buff in buffs)
+            {
+                if (!buff.IsActive)
+                {
+                    continue;
+                }
+
+                var suppressionEffects = buff.Effects.OfType<AbilitySuppressionBuffEffect>();
+                foreach (var suppressionEffect in suppressionEffects)
+                {
+                    if (AbilitySuppressionEvaluator.Matches(ability, suppressionEffect))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// 获取所有激活的能力
         /// </summary>
         /// <returns>激活能力列表</returns>
@@ -426,6 +705,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             _abilitiesByCardId.Clear();
             _abilitiesByRuntimeId.Clear(); // 新增：清空RuntimeId字典
             _abilityRuntimeIdsByBuffId.Clear(); // 新增：清空BuffId字典
+            _abilityTombstones.Clear();
 
             _logger?.LogDebug("[AbilityManager] Cleared {Count} abilities from all collections.", count);
         }
@@ -449,6 +729,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 _logger?.LogDebug("Ability with RuntimeId {AbilityRuntimeId} not found in _abilitiesByRuntimeId dictionary.", runtimeId);
             }
             return ability;
+        }
+
+        public bool TryGetAbilitySnapshot(Guid runtimeId, out AbilitySnapshot snapshot)
+        {
+            return _abilityTombstones.TryGetValue(runtimeId, out snapshot);
+        }
+
+        public void ClearAbilityTombstones()
+        {
+            _abilityTombstones.Clear();
         }
 
         /// <summary>
@@ -487,6 +777,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 cardSpecificAbilities.Count, cardInstance.Name, string.Join(", ", cardSpecificAbilities.Select(a => a.Name)));
         }
 
+        private void RegisterAbilityTombstone(IAbility ability)
+        {
+            if (ability.RuntimeId == Guid.Empty)
+            {
+                return;
+            }
+
+            var sourceCard = ability.SourceCard;
+            var snapshot = new AbilitySnapshot(
+                ability.RuntimeId,
+                ability.SourceCardId,
+                sourceCard?.Name,
+                ability.Name);
+
+            _abilityTombstones[ability.RuntimeId] = snapshot;
+        }
+
         /// <summary>
         /// 批量更新多个CardInstance的能力列表
         /// </summary>
@@ -496,6 +803,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             foreach (var cardInstance in cardInstances)
             {
                 UpdateCardInstanceAbilities(cardInstance);
+            }
+        }
+
+        /// <summary>
+        /// Resets per-event trigger flags for all registered abilities.
+        /// </summary>
+        public void ResetEventFlagsForAllAbilities()
+        {
+            foreach (var ability in _allAbilities.OfType<Ability>().ToList())
+            {
+                ability.Trigger.ResetEventFlags();
             }
         }
 
@@ -550,31 +868,83 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// Implements the new interface method to process a single ability.
         /// This centralizes the logic for checking conditions, resolving targets, and creating effects.
         /// </summary>
-        public async Task<AbilityProcessResult> ProcessSingleAbilityAsync(IAbility ability, GameContext context, bool isCancellable)
+        public async Task<AbilityProcessResult> ProcessSingleAbilityAsync(IAbility ability, GameContext context, bool isCancellable, bool deferTargetResolution, bool recordTrigger = true)
         {
-            context = context with { IsCancellable = isCancellable };
+            context = context with { IsCancellable = isCancellable, SourceAbility = ability };
+
+            var auraEvents = new List<IGameEvent>();
+            var concreteAbility = ability as Ability;
+            var auraConfigs = concreteAbility?.Config.Auras ?? new List<AuraConfig>();
+            var isAuraAbility = concreteAbility != null && IsAuraAbility(concreteAbility);
+            var runsAura = !isCancellable
+                           && isAuraAbility
+                           && auraConfigs.Any(a => a != null && a.IsEnabled);
+            var runsEffects = !isAuraAbility;
 
             // The partialResult logic is now removed. The process is always "start or continue".
             // The state is held within the Target objects themselves.
 
             // 1. Check initial conditions. This is always done.
             // If an ability was paused, its conditions were already met, but re-checking is safe and handles edge cases.
-            if (!ability.CheckConditions(context))
+            var needsAbilityConditions = runsEffects || runsAura;
+            var abilityConditionsPassed = true;
+            if (needsAbilityConditions)
+            {
+                abilityConditionsPassed = ability.CheckConditions(context);
+            }
+
+            if (runsEffects && !abilityConditionsPassed && !runsAura)
             {
                 _logger?.LogDebug("[AbilityManager] Ability {AbilityKeywords} (RuntimeId: {RuntimeId}) conditions not met. Skipping.",
                     ability.KeywordSummary, ability.RuntimeId);
-                return AbilityProcessResult.Success(new List<Effect>()); // Return a successful result with no effects.
+                return AbilityProcessResult.Success(new List<Effect>(), auraEvents); // Return a successful result with no effects.
             }
 
-            // 2. Resolve targets. This method now internally handles resuming from a specific point.
-            var targetResult = await ability.ResolveTargetsAsync(context, isCancellable);
+            var hasPlayerChoice = ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true);
+            var shouldDeferResolution = deferTargetResolution && !hasPlayerChoice && !runsAura;
 
-            // 3. Handle the result from the target resolution process.
-            if (targetResult.Status == ResolutionStatus.Failed)
+            TargetResolutionResult targetResult;
+            var needsAbilityTargets = (runsEffects && abilityConditionsPassed) || runsAura;
+            if (!needsAbilityTargets)
             {
-                _logger?.LogError("[AbilityManager] Target resolution failed for ability {AbilityKeywords} (RuntimeId: {RuntimeId}): {ErrorMessage}",
-                    ability.KeywordSummary, ability.RuntimeId, targetResult.ErrorMessage);
-                return AbilityProcessResult.Failure(targetResult.ErrorMessage ?? "Target resolution failed.");
+                targetResult = new TargetResolutionResult
+                {
+                    Status = ResolutionStatus.Completed,
+                    ResolvedTargets = new Dictionary<string, List<TargetInfo>>()
+                };
+            }
+            else if (shouldDeferResolution)
+            {
+                foreach (var target in ability.Targets)
+                {
+                    target.MarkForResolution();
+                }
+
+                targetResult = new TargetResolutionResult
+                {
+                    Status = ResolutionStatus.Completed,
+                    ResolvedTargets = new Dictionary<string, List<TargetInfo>>()
+                };
+
+                _logger?.LogDebug("[AbilityManager] Deferring target resolution for ability {AbilityKeywords} (RuntimeId: {RuntimeId}).",
+                    ability.KeywordSummary, ability.RuntimeId);
+            }
+            else
+            {
+                // 2. Resolve targets. This method now internally handles resuming from a specific point.
+                targetResult = await ability.ResolveTargetsAsync(context, isCancellable);
+
+                // 3. Handle the result from the target resolution process.
+                if (targetResult.Status == ResolutionStatus.Failed)
+                {
+                    _logger?.LogError("[AbilityManager] Target resolution failed for ability {AbilityKeywords} (RuntimeId: {RuntimeId}): {ErrorMessage}",
+                        ability.KeywordSummary, ability.RuntimeId, targetResult.ErrorMessage);
+                    if (targetResult.WasCancelled)
+                    {
+                        return AbilityProcessResult.Cancelled(targetResult.ErrorMessage ?? "Target resolution cancelled.");
+                    }
+                    return AbilityProcessResult.Failure(targetResult.ErrorMessage ?? "Target resolution failed.");
+                }
             }
 
             // This block is no longer needed.
@@ -585,22 +955,131 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             // explicit "Paused" state.
 
             // 4. If resolution is complete, create the effects.
-            List<Effect> effects;
-            try
+            List<Effect> effects = new();
+            if (runsEffects && abilityConditionsPassed)
             {
-                effects = await ability.CreateEffectsAsync(context, targetResult);
+                try
+                {
+                    effects = await ability.CreateEffectsAsync(context, targetResult);
+                }
+                catch (GameLogicException ex)
+                {
+                    _logger?.LogInformation(ex, "[AbilityManager] Ability {AbilityKeywords} (RuntimeId: {RuntimeId}) aborted by game logic: {Message}",
+                        ability.KeywordSummary, ability.RuntimeId, ex.Message);
+                    return AbilityProcessResult.Failure(ex.Message);
+                }
+
+                // Record a successful trigger after effects are created (optional for pre-analysis).
+                if (recordTrigger)
+                {
+                    ability.RecordTrigger(context);
+                }
             }
-            catch (GameLogicException ex)
+
+            if (effects.Count > 0 && shouldDeferResolution && ability.Targets.Any(t => t.Config.IsEnabled))
             {
-                _logger?.LogInformation(ex, "[AbilityManager] Ability {AbilityKeywords} (RuntimeId: {RuntimeId}) aborted by game logic: {Message}",
-                    ability.KeywordSummary, ability.RuntimeId, ex.Message);
-                return AbilityProcessResult.Failure(ex.Message);
+                foreach (var effect in effects)
+                {
+                    effect.ResolveTargetsOnExecution = true;
+                    effect.SourceAbility = ability;
+                }
+            }
+
+            if (runsAura && concreteAbility != null)
+            {
+                var conditionEvaluator = context.ServiceProvider.GetRequiredService<IConditionEvaluator>();
+
+                for (var index = 0; index < auraConfigs.Count; index++)
+                {
+                    var auraConfig = auraConfigs[index];
+                    if (auraConfig == null || !auraConfig.IsEnabled)
+                    {
+                        continue;
+                    }
+
+                    var auraConditionsPassed = abilityConditionsPassed;
+
+                    if (!auraConditionsPassed)
+                    {
+                        var clearResult = context.AuraManager.ClearAura(auraConfig, ability, context, index);
+                        if (!clearResult.Success)
+                        {
+                            return AbilityProcessResult.Failure(clearResult.ErrorMessage ?? "Aura clear failed.");
+                        }
+                        auraEvents.AddRange(clearResult.GeneratedEvents);
+                        continue;
+                    }
+
+                    IReadOnlyDictionary<string, List<TargetInfo>> auraTargets = targetResult.ResolvedTargets;
+
+                    var refreshResult = context.AuraManager.RefreshAura(auraConfig, ability, context, index, auraTargets);
+                    if (!refreshResult.Success)
+                    {
+                        return AbilityProcessResult.Failure(refreshResult.ErrorMessage ?? "Aura refresh failed.");
+                    }
+                    auraEvents.AddRange(refreshResult.GeneratedEvents);
+                }
             }
 
             _logger?.LogDebug("[AbilityManager] Processed ability {AbilityKeywords} (RuntimeId: {RuntimeId}) and created {EffectCount} effects.",
                 ability.KeywordSummary, ability.RuntimeId, effects.Count);
 
-            return AbilityProcessResult.Success(effects);
+
+            return AbilityProcessResult.Success(effects, auraEvents);
+        }
+
+        public DomainOperationResult RefreshAuraForAbility(IAbility ability, GameContext context)
+        {
+            if (ability is not Ability concreteAbility || context == null)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+
+            if (!IsAuraAbility(concreteAbility) || concreteAbility.Config.Auras.All(aura => aura == null || !aura.IsEnabled))
+            {
+                return new DomainOperationResult { Success = true };
+            }
+
+            if (concreteAbility.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true))
+            {
+                _logger?.LogDebug("[AbilityManager] Skipping aura refresh for ability {AbilityKeywords} (RuntimeId: {RuntimeId}) because it requires player choice targets.",
+                    ability.KeywordSummary, ability.RuntimeId);
+                return new DomainOperationResult { Success = true };
+            }
+
+            var auraContext = context with
+            {
+                IsAuraRefresh = true,
+                IsCancellable = false,
+                SourceCard = concreteAbility.SourceCard ?? context.SourceCard,
+                SourceAbility = ability
+            };
+
+            try
+            {
+                var refreshResult = ProcessSingleAbilityAsync(concreteAbility, auraContext, false, false)
+                    .GetAwaiter()
+                    .GetResult();
+
+                if (!refreshResult.IsSuccess)
+                {
+                    return new DomainOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = refreshResult.ErrorMessage
+                    };
+                }
+
+                var result = new DomainOperationResult { Success = true };
+                result.GeneratedEvents.AddRange(refreshResult.GeneratedEvents);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "[AbilityManager] Failed to refresh aura for ability {AbilityKeywords} (RuntimeId: {RuntimeId}).",
+                    ability.KeywordSummary, ability.RuntimeId);
+                return new DomainOperationResult { Success = false, ErrorMessage = ex.Message };
+            }
         }
     }
 } // Closing brace for namespace ShadowverseBeyond.Server.Domain.Abilities

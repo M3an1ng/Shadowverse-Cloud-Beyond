@@ -1,16 +1,106 @@
-export function renderFunctionCallNodeAST(editor, node, container) {
+import { getEventTypeHint, resolveEventParameterMeta } from "./event-translation.js";
+
+export function renderFunctionCallNodeAST(editor, node, container, options = {}) {
+    const args = node.args || [];
+    const useMethodStyle = args.length > 0;
     const wrapper = document.createElement('span');
     wrapper.className = 'dsl-node dsl-function-call';
+    const readableName = editor.getReadableFunctionName ? editor.getReadableFunctionName(node.functionName) : node.functionName;
+    const clickableArgs = Boolean(options?.clickableArgs);
+    const encapsulatedNode = options?.encapsulatedNode || null;
+    const isParentSelected = options?.isParentSelected || false;
+    const omitParensForSingleArg = Boolean(options?.omitParensForSingleArg);
+
+    if (clickableArgs) {
+        wrapper.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof editor.editSubExpression === 'function') {
+                editor.editSubExpression(node);
+            }
+        });
+    }
+
+    const renderArgNode = (arg, index) => {
+        if (arg) {
+            if (clickableArgs && typeof editor.renderClickableASTNode === 'function') {
+                editor.renderClickableASTNode(arg, wrapper, encapsulatedNode, isParentSelected);
+            } else {
+                editor.renderASTNodeRecursive(arg, wrapper);
+            }
+        } else {
+            editor.renderEmptySlotPlaceholder(node, 'arg', wrapper, index);
+        }
+    };
+
+    if (useMethodStyle) {
+        const receiver = args.length > 0 ? args[0] : null;
+        if (receiver) {
+            if (clickableArgs && typeof editor.renderClickableASTNode === 'function') {
+                editor.renderClickableASTNode(receiver, wrapper, encapsulatedNode, isParentSelected);
+            } else {
+                editor.renderASTNodeRecursive(receiver, wrapper);
+            }
+        } else {
+            editor.renderEmptySlotPlaceholder(node, 'arg', wrapper, 0);
+        }
+
+        const dot = document.createElement('span');
+        dot.textContent = '.';
+        wrapper.appendChild(dot);
+
+        const name = document.createElement('span');
+        name.textContent = readableName;
+        wrapper.appendChild(name);
+
+        const restCount = args.length - 1;
+        if (restCount <= 0) {
+            container.appendChild(wrapper);
+            return;
+        }
+
+        if (omitParensForSingleArg && restCount === 1) {
+            const spacer = document.createElement('span');
+            spacer.textContent = ' ';
+            wrapper.appendChild(spacer);
+            renderArgNode(args[1], 1);
+            container.appendChild(wrapper);
+            return;
+        }
+
+        const open = document.createElement('span');
+        open.textContent = '(';
+        wrapper.appendChild(open);
+
+        for (let i = 1; i < args.length; i++) {
+            if (i > 1) {
+                const comma = document.createElement('span');
+                comma.textContent = ', ';
+                wrapper.appendChild(comma);
+            }
+            renderArgNode(args[i], i);
+        }
+
+        const close = document.createElement('span');
+        close.textContent = ')';
+        wrapper.appendChild(close);
+
+        container.appendChild(wrapper);
+        return;
+    }
 
     const name = document.createElement('span');
-    name.textContent = node.functionName;
+    name.textContent = readableName;
     wrapper.appendChild(name);
+
+    if (args.length === 0) {
+        container.appendChild(wrapper);
+        return;
+    }
 
     const open = document.createElement('span');
     open.textContent = '(';
     wrapper.appendChild(open);
 
-    const args = node.args || [];
     for (let i = 0; i < args.length; i++) {
         if (i > 0) {
             const comma = document.createElement('span');
@@ -18,12 +108,7 @@ export function renderFunctionCallNodeAST(editor, node, container) {
             wrapper.appendChild(comma);
         }
 
-        const arg = args[i];
-        if (arg) {
-            editor.renderASTNodeRecursive(arg, wrapper);
-        } else {
-            editor.renderEmptySlotPlaceholder(node, 'arg', wrapper, i);
-        }
+        renderArgNode(args[i], i);
     }
 
     const close = document.createElement('span');
@@ -35,12 +120,29 @@ export function renderFunctionCallNodeAST(editor, node, container) {
 
 function getExpectedTypeForSlot(editor, parentNode, slot, index) {
     if (parentNode?.type === 'virtualRoot' && slot === 'main') {
-        return editor.normalizeTypeName(editor.expectedType || editor.slotExpectedType);
+        return editor.normalizeTypeName(editor.expectedType);
     }
 
     if (parentNode?.type === 'functionCall' && slot === 'arg') {
-        const param = (parentNode.parameters || [])[typeof index === 'number' ? index : 0];
-        return editor.normalizeTypeName(param?.typeName);
+        const argIndex = typeof index === 'number' ? index : 0;
+        const param = (parentNode.parameters || [])[argIndex];
+        const paramType = editor.normalizeTypeName(param?.typeName);
+        if (paramType && paramType !== 'Object') {
+            return paramType;
+        }
+        if (argIndex > 0) {
+            const receiver = (parentNode.args || [])[0];
+            const receiverType = receiver ? editor.calculateASTReturnType?.(receiver) : null;
+            if (receiverType) {
+                if (editor.isCollectionType?.(receiverType)) {
+                    return editor.normalizeTypeName(editor.getCollectionInnerType?.(receiverType)) || 'Object';
+                }
+                if (editor.isTextType?.(receiverType)) {
+                    return 'String';
+                }
+            }
+        }
+        return paramType;
     }
 
     if (parentNode?.type === 'listQuery' && slot === 'filterExpression') {
@@ -53,6 +155,14 @@ function getExpectedTypeForSlot(editor, parentNode, slot, index) {
 
     if (parentNode?.type === 'listTake' && slot === 'countExpression') {
         return 'Int32';
+    }
+
+    if (parentNode?.type === 'listDistinct' && slot === 'keyExpression') {
+        return 'Object';
+    }
+
+    if (parentNode?.type === 'listSelect' && slot === 'selectExpression') {
+        return 'Object';
     }
 
     if (parentNode?.type === 'operator') {
@@ -70,7 +180,19 @@ function getExpectedTypeForSlot(editor, parentNode, slot, index) {
         if (compareOps.includes(op)) {
             const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
             const siblingType = sibling?.returnType || editor.calculateASTReturnType?.(sibling);
-            return editor.normalizeTypeName(siblingType);
+            const normalizedSibling = editor.normalizeTypeName(siblingType);
+            if (['contains', 'startsWith', 'endsWith'].includes(op)) {
+                if (normalizedSibling && editor.isCollectionType?.(normalizedSibling)) {
+                    const inner = editor.getCollectionInnerType?.(normalizedSibling);
+                    return slot === 'right'
+                        ? (editor.normalizeTypeName(inner) || normalizedSibling)
+                        : normalizedSibling;
+                }
+                if (normalizedSibling && editor.isTextType?.(normalizedSibling)) {
+                    return 'String';
+                }
+            }
+            return normalizedSibling;
         }
     }
 
@@ -85,13 +207,6 @@ function getPlaceholderLabel(editor, expectedType) {
 }
 
 export function renderValueNode(editor, node, container) {
-    console.log("DslEditor: renderValueNode called for:", {
-        type: node.type,
-        value: node.value,
-        hasMetadata: !!node.metadata,
-        metadataType: node.metadata?.type,
-        isEncapsulated: node.metadata && node.metadata.type === "encapsulated"
-    });
 
     if (node.metadata?.type === 'empty') {
         const placeholderInfo = editor.resolveEmptySlot(node.parent, node);
@@ -102,7 +217,6 @@ export function renderValueNode(editor, node, container) {
     }
 
     if (node.metadata && node.metadata.type === "encapsulated") {
-        console.log("DslEditor: Rendering as encapsulated expression");
         editor.renderEncapsulatedExpression(node, container);
         return;
     }
@@ -125,6 +239,12 @@ export function renderValueNode(editor, node, container) {
             nodeElement.textContent = editor.getReadableValueLabel(node);
             nodeElement.classList.add("dsl-value-node--static");
         }
+    } else if (node.metadata.type === "enumValue") {
+        nodeElement.textContent = editor.getReadableValueLabel(node);
+        nodeElement.classList.add("dsl-value-node--static");
+    } else if (node.metadata.type === "propertyInput") {
+        editor.renderPropertyInput(node, container);
+        return;
     } else if (node.metadata.type === "rawText") {
         editor.renderRawTextInput(node, container);
         return;
@@ -135,11 +255,31 @@ export function renderValueNode(editor, node, container) {
         nodeElement.textContent = editor.getReadableValueLabel(node);
         nodeElement.classList.add("dsl-value-node--event");
     }
+    if (node._typeMatchInfo && !node._typeMatchInfo.isTypeMatch && node._typeMatchInfo.needsCorrection) {
+        nodeElement.classList.add("dsl-value-node--error");
+        nodeElement.title = `类型不匹配：期望 ${node._typeMatchInfo.expectedType}，实际 ${node._typeMatchInfo.actualType}`;
+    }
 
     container.appendChild(nodeElement);
 }
 
 export function getEncapsulationStyle(editor, node) {
+    const isMainExpression = editor?.virtualRoot?.main === node;
+    const parseState = editor?.parseStatus?.state;
+    if (isMainExpression && parseState === "fallback") {
+        return {
+            background: "linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%)",
+            borderColor: "#e74c3c",
+            color: "#c62828",
+            boxShadow: "0 2px 4px rgba(231, 76, 60, 0.2)",
+            hoverBoxShadow: "0 4px 8px rgba(231, 76, 60, 0.3)",
+            badgeSymbol: "×",
+            badgeColor: "#e74c3c",
+            badgeTitle: editor?.parseStatus?.message || "表达式解析失败，已降级为原始文本",
+            hasIssue: true
+        };
+    }
+
     const typeMatch = node._typeMatchInfo || editor.calculateNodeTypeMatch(node);
     const hasTypeIssue = !typeMatch.isTypeMatch && typeMatch.needsCorrection;
 
@@ -190,7 +330,15 @@ export function removeBrackets(text) {
     return text;
 }
 
-export function renderEncapsulatedExpression(editor, node, container) {
+function unwrapNestedEncapsulated(node) {
+    let current = node;
+    while (current && current.metadata?.type === "encapsulated" && current.metadata?.innerAST) {
+        current = current.metadata.innerAST;
+    }
+    return current;
+}
+
+export function renderEncapsulatedExpression(editor, node, container, options = {}) {
     if (node.metadata.innerAST && node.metadata.innerAST.metadata?.type === 'empty') {
         editor.renderPlaceholderCapsule(node, container);
         return;
@@ -209,9 +357,32 @@ export function renderEncapsulatedExpression(editor, node, container) {
 
     const contentSpan = document.createElement("span");
     contentSpan.className = "dsl-encapsulated-content";
+    const resolveDslNode = (start, boundary) => {
+        if (!start || !start.closest) return null;
+        const hit = start.closest('[data-dsl-node="true"]');
+        if (!hit || !boundary.contains(hit)) return null;
+        return hit.__dslNode || null;
+    };
+    const resolveDslNodeFromPoint = (event, boundary) => {
+        if (typeof document.elementsFromPoint !== "function") {
+            const target = event.target?.nodeType === Node.TEXT_NODE ? event.target.parentElement : event.target;
+            return resolveDslNode(target, boundary);
+        }
+        const hits = document.elementsFromPoint(event.clientX, event.clientY);
+        for (const hit of hits) {
+            if (hit && hit.closest) {
+                const nodeTarget = resolveDslNode(hit, boundary);
+                if (nodeTarget) return nodeTarget;
+            }
+        }
+        return null;
+    };
 
     if (node.metadata.innerAST) {
-        editor.renderClickableSubExpressions(node.metadata.innerAST, contentSpan, node, isSelected);
+        const innerAst = options.flattenNested
+            ? unwrapNestedEncapsulated(node.metadata.innerAST)
+            : node.metadata.innerAST;
+        editor.renderClickableSubExpressions(innerAst, contentSpan, node, isSelected);
     } else {
         contentSpan.textContent = removeBrackets(node.value);
     }
@@ -225,7 +396,73 @@ export function renderEncapsulatedExpression(editor, node, container) {
 
     capsuleElement.addEventListener('click', (e) => {
         e.stopPropagation();
-        console.log("DslEditor: Clicked main encapsulated expression. Entering edit mode for virtualRoot's main slot.");
+        if (typeof editor.editSubExpression !== 'function') {
+            return;
+        }
+
+        const ignoreSelector = [
+            '.dsl-static-input',
+            '.dsl-rawtext-input',
+            '.dsl-static-input-container',
+            '.dsl-property-input-container',
+            '.dsl-rawtext-input-container'
+        ].join(', ');
+        const rawTarget = e.target?.nodeType === Node.TEXT_NODE ? e.target.parentElement : e.target;
+        if (rawTarget && rawTarget.closest && rawTarget.closest(ignoreSelector)) {
+            return;
+        }
+
+        const nodeTarget = resolveDslNodeFromPoint(e, capsuleElement);
+        const shouldDebug = Boolean(window.DEBUG_DSL);
+        const debugHits = (shouldDebug && typeof document.elementsFromPoint === "function")
+            ? document.elementsFromPoint(e.clientX, e.clientY).slice(0, 8).map(el => ({
+                tag: el.tagName,
+                cls: el.className,
+                dslNode: el.dataset?.dslNode || null
+            }))
+            : [];
+        if (shouldDebug) {
+            console.log("DslEditor: capsule click", {
+                targetTag: rawTarget?.tagName,
+                targetClass: rawTarget?.className,
+                targetDslNode: rawTarget?.dataset?.dslNode || null,
+                resolvedNode: nodeTarget ? {
+                    type: nodeTarget.type,
+                    meta: nodeTarget.metadata?.type,
+                    value: nodeTarget.value ?? null,
+                    functionName: nodeTarget.functionName ?? null
+                } : null,
+                hasInnerAst: Boolean(node.metadata?.innerAST),
+                hitStack: debugHits
+            });
+        }
+        if (nodeTarget && nodeTarget !== node) {
+            if (shouldDebug) {
+                console.log("DslEditor: routing to inner node", {
+                    type: nodeTarget.type,
+                    meta: nodeTarget.metadata?.type,
+                    value: nodeTarget.value ?? null
+                });
+            }
+            editor.editSubExpression(nodeTarget);
+            return;
+        }
+
+        if (node.metadata.innerAST) {
+            if (shouldDebug) {
+                console.log("DslEditor: fallback to innerAST root", {
+                    type: node.metadata.innerAST?.type,
+                    meta: node.metadata.innerAST?.metadata?.type,
+                    value: node.metadata.innerAST?.value ?? null
+                });
+            }
+            editor.editSubExpression(node.metadata.innerAST);
+            return;
+        }
+
+        if (shouldDebug) {
+            console.log("DslEditor: fallback to main encapsulated node");
+        }
         editor.selectedNode = node;
         editor.handleEnterEditModeForSlot(editor.virtualRoot, 'main');
     });
@@ -241,6 +478,8 @@ export function renderPlaceholderCapsule(editor, node, container) {
     placeholderCapsule.classList.toggle("is-selected", isSelected);
     placeholderCapsule.dataset.emptySlot = "true";
     placeholderCapsule.dataset.placeholderScope = "main";
+    placeholderCapsule.dataset.dslNode = "true";
+    placeholderCapsule.__dslNode = node;
 
     const expectedType = getExpectedTypeForSlot(editor, editor.virtualRoot, 'main');
     const label = getPlaceholderLabel(editor, expectedType);
@@ -261,6 +500,8 @@ export function renderPlaceholderCapsule(editor, node, container) {
 export function renderNestedEncapsulatedExpression(editor, innerNode, container) {
     const nestedCapsule = document.createElement("span");
     nestedCapsule.className = "dsl-nested-encapsulated-expression";
+    nestedCapsule.dataset.dslNode = "true";
+    nestedCapsule.__dslNode = innerNode;
 
     const isSelected = editor.selectedNode === innerNode;
     nestedCapsule.classList.toggle("is-selected", isSelected);
@@ -268,7 +509,6 @@ export function renderNestedEncapsulatedExpression(editor, innerNode, container)
 
     nestedCapsule.addEventListener('click', (e) => {
         e.stopPropagation();
-        console.log('点击嵌套封装表达式:', innerNode);
         editor.selectedNode = innerNode;
         editor.renderEditor();
         editor.editSubExpression(innerNode);
@@ -289,15 +529,6 @@ export function renderNestedEncapsulatedExpression(editor, innerNode, container)
     let hasTypeIssue = false;
     let typeIssueDetails = null;
 
-    console.log("DslEditor: Nested encapsulated expression analysis:", {
-        nodeValue: innerNode.value,
-        nodeType: innerNode.type,
-        hasParent: !!innerNode.parent,
-        parentOperator: innerNode.parent?.operator,
-        hasTypeMatchInfo: !!innerNode._typeMatchInfo,
-        hasMetadata: !!innerNode.metadata,
-        metadataType: innerNode.metadata?.type
-    });
 
     if (innerNode._typeMatchInfo) {
         const typeMatch = innerNode._typeMatchInfo;
@@ -305,16 +536,7 @@ export function renderNestedEncapsulatedExpression(editor, innerNode, container)
         if (hasTypeIssue) {
             typeIssueDetails = `类型不匹配：期望 ${typeMatch.expectedType}，实际 ${typeMatch.actualType}`;
         }
-        console.log("DslEditor: Nested encapsulated expression type check:", {
-            nodeValue: innerNode.value,
-            expectedType: typeMatch.expectedType,
-            actualType: typeMatch.actualType,
-            isTypeMatch: typeMatch.isTypeMatch,
-            needsCorrection: typeMatch.needsCorrection,
-            hasTypeIssue: hasTypeIssue
-        });
     } else {
-        console.log("DslEditor: No type match info for nested encapsulated expression");
     }
     nestedCapsule.dataset.issue = hasTypeIssue ? "true" : "false";
 
@@ -346,14 +568,21 @@ export function renderOperatorNodeAST(editor, node, container) {
         operatorElement.textContent = node.operator;
         operatorElement.classList.add("dsl-operator-pill--binary");
     } else {
-        operatorElement.textContent = `.${node.type.replace('list', '').toLowerCase()}`;
+        let opName = node.type.replace('list', '').toLowerCase();
+        if (node.type === 'listSort') {
+            opName = 'orderBy';
+        }
+        operatorElement.textContent = `.${opName}`;
         operatorElement.classList.add("dsl-operator-pill--list");
     }
     operatorContainer.appendChild(operatorElement);
 
-    const parenLeft = document.createElement("span");
-    parenLeft.textContent = "(";
-    operatorContainer.appendChild(parenLeft);
+    const wrapWithParens = node.type !== 'operator';
+    if (wrapWithParens) {
+        const parenLeft = document.createElement("span");
+        parenLeft.textContent = "(";
+        operatorContainer.appendChild(parenLeft);
+    }
 
     let rightOperand = null;
     let slotName = '';
@@ -369,6 +598,12 @@ export function renderOperatorNodeAST(editor, node, container) {
     } else if (node.type === 'listTake') {
         rightOperand = node.countExpression;
         slotName = 'countExpression';
+    } else if (node.type === 'listDistinct') {
+        rightOperand = node.keyExpression;
+        slotName = 'keyExpression';
+    } else if (node.type === 'listSelect') {
+        rightOperand = node.selectExpression;
+        slotName = 'selectExpression';
     }
 
     if (rightOperand && rightOperand.metadata?.type !== 'empty') {
@@ -377,9 +612,11 @@ export function renderOperatorNodeAST(editor, node, container) {
         editor.renderEmptySlotPlaceholder(node, slotName, operatorContainer);
     }
 
-    const parenRight = document.createElement("span");
-    parenRight.textContent = ")";
-    operatorContainer.appendChild(parenRight);
+    if (wrapWithParens) {
+        const parenRight = document.createElement("span");
+        parenRight.textContent = ")";
+        operatorContainer.appendChild(parenRight);
+    }
 
     container.appendChild(operatorContainer);
 }
@@ -427,7 +664,9 @@ export function renderStaticValueInput(editor, node, container) {
 
     inputElement.addEventListener("input", (e) => {
         applyDraftValue(e.target.value.trim());
-        editor.updateExpressionFromAST();
+        if (!editor.isLightWorkspace) {
+            editor.updateExpressionFromAST({ skipRender: true });
+        }
     });
 
     inputElement.addEventListener("keydown", (e) => {
@@ -440,6 +679,99 @@ export function renderStaticValueInput(editor, node, container) {
 
     inputElement.addEventListener("blur", (e) => {
         commitValue(e.target.value);
+    });
+
+    inputContainer.appendChild(inputElement);
+    container.appendChild(inputContainer);
+
+    setTimeout(() => inputElement.focus(), 100);
+}
+
+export function renderPropertyInput(editor, node, container) {
+    const inputContainer = document.createElement("span");
+    inputContainer.className = "dsl-property-input-container";
+
+    const basePath = node.metadata?.basePath || "";
+    const readablePrefix = editor.getReadablePropertyChain(basePath) || basePath;
+    if (readablePrefix) {
+        const prefix = document.createElement("span");
+        prefix.className = "dsl-property-input-prefix";
+        prefix.textContent = `${readablePrefix}.`;
+        inputContainer.appendChild(prefix);
+    }
+
+    const inputElement = document.createElement("input");
+    inputElement.type = "text";
+    inputElement.className = "dsl-static-input";
+    inputElement.placeholder = "输入键名";
+    inputElement.value = node.metadata?.key || "";
+
+    const normalizeKey = (value) => {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) return "";
+        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+            (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+            return trimmed.slice(1, -1).trim();
+        }
+        return trimmed;
+    };
+
+    const applyDraftKey = (value) => {
+        const key = normalizeKey(value);
+        node.metadata.key = key;
+        node.metadata.isAwaitingInput = !key;
+        node.value = key ? (basePath ? `${basePath}.${key}` : key) : basePath;
+        node.updateCompleteness();
+        if (node.parent) {
+            node.parent.updateCompleteness();
+        }
+    };
+
+    const commitKey = (value) => {
+        const key = normalizeKey(value);
+        if (!key) {
+            editor.showExpressionError("键名不能为空。");
+            return;
+        }
+        if (key.includes(".")) {
+            editor.showExpressionError("键名不能包含 '.' 。");
+            return;
+        }
+
+        const fullPath = basePath ? `${basePath}.${key}` : key;
+        node.value = fullPath;
+        node.returnType = node.metadata?.returnType || node.returnType || "Object";
+        node.metadata = {
+            type: "property",
+            fullPath,
+            displayName: key,
+            isNested: true
+        };
+        node.updateCompleteness();
+        if (node.parent) {
+            node.parent.updateCompleteness();
+        }
+        editor.updateExpressionFromAST();
+        if (editor.onChange) {
+            editor.onChange(editor.expression);
+        }
+    };
+
+    inputElement.addEventListener("input", (e) => {
+        applyDraftKey(e.target.value);
+        editor.updateExpressionFromAST({ skipRender: true });
+    });
+
+    inputElement.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            commitKey(e.target.value);
+            inputElement.blur();
+        }
+    });
+
+    inputElement.addEventListener("blur", () => {
+        commitKey(inputElement.value);
     });
 
     inputContainer.appendChild(inputElement);
@@ -500,7 +832,11 @@ export function renderEmptySlotPlaceholder(editor, parentNode, slot, container, 
 
     placeholderCapsule.addEventListener('click', (e) => {
         e.stopPropagation();
-        console.log(`DslEditor: Clicked empty placeholder for ${slot}${index !== null ? `[${index}]` : ''} operand of:`, parentNode);
+        if (editor.isLightWorkspace && typeof editor.setLightWorkspaceFocus === "function") {
+            editor.setLightWorkspaceFocus(parentNode, slot, index);
+            editor.renderEditor();
+            return;
+        }
         editor.handleEnterEditModeForSlot(parentNode, slot, index);
     });
 
@@ -514,6 +850,8 @@ export function renderPropertyChainUI(editor, node, container) {
     chainContainer.className = "dsl-property-chain";
     chainContainer.classList.add(`dsl-value-style--${style.key}`);
     chainContainer.dataset.valueStyle = style.key;
+    chainContainer.dataset.dslNode = "true";
+    chainContainer.__dslNode = node;
 
     const chainParts = getReadablePropertyChainParts(editor, node.metadata?.fullPath || node.value);
     const parts = chainParts.length > 0 ? chainParts : (node.value || '').split('.');
@@ -545,7 +883,7 @@ export function getStyleForValueType(editor, typeName) {
     } else if (typeName === 'context') {
         style = { key: 'context', background: '#e3f2fd', color: '#1976d2' };
     }
-    
+
     return style;
 }
 
@@ -560,10 +898,29 @@ export function getReadablePropertyChainParts(editor, path) {
     const ctx = editor.getDslContextObject(contextName);
     let currentType = editor.normalizeTypeName(ctx?.typeName);
     const displayParts = [ctx?.displayName || contextName];
+    const eventTypeHint = getEventTypeHint(editor, segments);
 
     for (let i = 1; i < segments.length; i++) {
         const seg = segments[i];
-        const tm = currentType ? editor.getTypeMetadata(currentType) : null;
+        const normalizedType = editor.normalizeTypeName(currentType);
+        if (typeof editor.isDictionaryType === "function" && editor.isDictionaryType(normalizedType)) {
+            displayParts.push(seg);
+            const valueType = typeof editor.getDictionaryValueType === "function"
+                ? editor.getDictionaryValueType(normalizedType)
+                : null;
+            currentType = editor.normalizeTypeName(valueType) || null;
+            continue;
+        }
+        if (normalizedType === 'IGameEvent' || normalizedType === 'GameEventBase') {
+            const eventParam = resolveEventParameterMeta(editor, seg, eventTypeHint);
+            if (eventParam) {
+                displayParts.push(eventParam.displayName || seg);
+                currentType = editor.normalizeTypeName(eventParam.typeName) || null;
+                continue;
+            }
+        }
+
+        const tm = normalizedType ? editor.getTypeMetadata(normalizedType) : null;
         const prop = (tm?.properties || []).find(p =>
             String(p.name || '').toLowerCase() === String(seg).toLowerCase()
         );

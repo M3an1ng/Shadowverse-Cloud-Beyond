@@ -86,7 +86,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = false, ErrorMessage = "Failed to create buff from definition." };
                     }
 
-                    return _buffService.ApplyBuffProcess(buff, ctx);
+                    if (string.IsNullOrWhiteSpace(buff.EffectKey) && buff.SourceAbilityId != Guid.Empty)
+                    {
+                        buff.EffectKey = BuildEffectKey(effect, buff.SourceAbilityId);
+                    }
+
+                    return _buffService.ApplyBuffProcess(buff, ctx, parameters.CanStack);
                 };
 
             var serviceResult = _targetProcessingService.ProcessTargets(
@@ -101,6 +106,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             }
 
             return serviceResult;
+        }
+
+        private static string BuildEffectKey(Effect effect, Guid sourceAbilityId)
+        {
+            return $"{sourceAbilityId:N}:{effect.EffectIndex}";
         }
     }
 }

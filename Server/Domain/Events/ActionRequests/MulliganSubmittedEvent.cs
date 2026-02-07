@@ -25,8 +25,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("要替换的卡牌ID", "要替换的卡牌实例ID列表（向后兼容）。", Scope = GameEventParameterScope.Input)]
         public List<Guid> CardUidsToReplace { get; } // Made public setter private
 
-        public MulliganSubmittedEvent(Guid playerId, List<CardInstance> cardsToReplace)
-            : base(EventType.MulliganSubmitted)
+        public MulliganSubmittedEvent(Guid playerId, List<CardInstance> cardsToReplace, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.MulliganSubmitted, eventId, timestamp)
         {
             PlayerId = playerId;
             var cardUids = new List<Guid>();
@@ -39,8 +39,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         }
 
         // 向后兼容的构造函数
-        public MulliganSubmittedEvent(Guid playerId, List<Guid> cardUidsToReplace, GameContext context)
-            : base(EventType.MulliganSubmitted)
+        public MulliganSubmittedEvent(Guid playerId, List<Guid> cardUidsToReplace, GameContext context, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.MulliganSubmitted, eventId, timestamp)
         {
             PlayerId = playerId;
             CardUidsToReplace = cardUidsToReplace ?? new List<Guid>(); // Directly store the GUIDs

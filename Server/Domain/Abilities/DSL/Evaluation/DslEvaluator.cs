@@ -60,6 +60,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 IdentifierNode identifier => VisitIdentifier(identifier, context),
                 BinaryOperationNode binaryOp => VisitBinaryOperator(binaryOp, context),
                 UnaryOperationNode unaryOp => VisitUnaryOperator(unaryOp, context),
+                ParenthesizedExpressionNode parenthesized => VisitNode(parenthesized.Inner, context),
                 FunctionCallNode funcCall => VisitFunctionCall(funcCall, context),
                 MemberAccessNode memberAccess => VisitMemberAccess(memberAccess, context),
                 _ => HandleUnsupportedNode(node)
@@ -236,7 +237,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             {
                 return DynamicOperations.SetIntersect(left, right);
             }
-            if (operatorType == TokenType.Minus && DynamicOperations.IsCollection(left) && DynamicOperations.IsCollection(right))
+            if (operatorType == TokenType.SetDifference)
             {
                 return DynamicOperations.SetDifference(left, right);
             }
@@ -251,6 +252,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     return DynamicOperations.Multiply(left, right);
                 case TokenType.Divide:
                     return DynamicOperations.Divide(left, right);
+                case TokenType.DivideCeil:
+                    return DynamicOperations.CeilingDivide(left, right);
                 case TokenType.Modulo:
                     return DynamicOperations.Modulo(left, right);
                 case TokenType.Equal:
@@ -307,14 +310,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             switch (firstSegmentLower)
             {
                 case "player":
-                    baseObjectForPathResolution = context.GetRequestingPlayer();
+                    baseObjectForPathResolution = context.Owner;
                     pathSegmentsToResolve = path.Skip(1).ToList();
-                    _logger.LogTrace("Resolved '{Segment}' to RequestingPlayer.", firstSegment);
+                    _logger.LogTrace("Resolved '{Segment}' to Owner.", firstSegment);
                     break;
                 case "opponent":
-                    baseObjectForPathResolution = context.GetOpponentPlayer();
+                    baseObjectForPathResolution = context.Opponent;
                     pathSegmentsToResolve = path.Skip(1).ToList();
-                    _logger.LogTrace("Resolved '{Segment}' to OpponentPlayer.", firstSegment);
+                    _logger.LogTrace("Resolved '{Segment}' to Opponent.", firstSegment);
                     break;
                 case "gamestate":
                     baseObjectForPathResolution = context.CurrentGameState;
@@ -407,6 +410,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     continue;
                 }
 
+                if (currentTarget is IReadOnlyDictionary<string, int> intDictionary && intDictionary.TryGetValue(segment, out var intValue))
+                {
+                    currentTarget = intValue;
+                    _logger.LogTrace("Resolved segment '{Segment}' from int dictionary. Value: {Value}", segment, currentTarget);
+                    continue;
+                }
+
                 // Fallback to property reflection
                 var propertyInfo = currentTarget.GetType().GetProperty(segment, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
 
@@ -436,7 +446,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
     {
         public static bool IsCollection(object? value)
         {
-            return value is IEnumerable && value is not string;
+            return DslCollectionCoercion.IsCollectionValue(value);
         }
 
         public static object? SetUnion(object? left, object? right)
@@ -451,7 +461,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         public static object? SetDifference(object? left, object? right)
         {
-            return ApplySetOperation(left, right, TokenType.Minus);
+            return ApplySetOperation(left, right, TokenType.SetDifference);
         }
 
         public static object? Add(object? left, object? right)
@@ -509,6 +519,44 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             throw new InvalidOperationException($"Cannot divide types {left?.GetType().Name ?? "null"} and {right?.GetType().Name ?? "null"}");
         }
 
+        public static object? CeilingDivide(object? left, object? right)
+        {
+            if (TypeConverter.IsZero(right))
+            {
+                throw new DivideByZeroException("Attempted ceiling divide by zero.");
+            }
+
+            if (left is decimal || right is decimal)
+            {
+                var leftValue = Convert.ToDecimal(left ?? 0m);
+                var rightValue = Convert.ToDecimal(right ?? 1m);
+                return Math.Ceiling(leftValue / rightValue);
+            }
+
+            if (left is double || right is double || left is float || right is float)
+            {
+                var leftValue = Convert.ToDouble(left ?? 0.0);
+                var rightValue = Convert.ToDouble(right ?? 1.0);
+                return Math.Ceiling(leftValue / rightValue);
+            }
+
+            if (left is long || right is long)
+            {
+                var leftValue = Convert.ToDecimal(left ?? 0L);
+                var rightValue = Convert.ToDecimal(right ?? 1L);
+                return Convert.ToInt64(Math.Ceiling(leftValue / rightValue));
+            }
+
+            if (left is int || right is int)
+            {
+                var leftValue = Convert.ToDecimal(left ?? 0);
+                var rightValue = Convert.ToDecimal(right ?? 1);
+                return Convert.ToInt32(Math.Ceiling(leftValue / rightValue));
+            }
+
+            throw new InvalidOperationException($"Cannot perform ceiling division on types {left?.GetType().Name ?? "null"} and {right?.GetType().Name ?? "null"}");
+        }
+
         public static object? Modulo(object? left, object? right)
         {
             if (TypeConverter.IsZero(right)) throw new DivideByZeroException("Attempted modulo by zero.");
@@ -526,11 +574,40 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         public static bool AreEqual(object? left, object? right)
         {
+            if (TryCompareEnumWithString(left, right, out var enumEqual))
+            {
+                return enumEqual;
+            }
+
             if (left is ValueType && right is ValueType && left.GetType() != right.GetType())
             {
                 try { return Convert.ToDecimal(left).Equals(Convert.ToDecimal(right)); } catch { /* Fall through */ }
             }
             return Equals(left, right);
+        }
+
+        private static bool TryCompareEnumWithString(object? left, object? right, out bool result)
+        {
+            result = false;
+            if (left is Enum leftEnum && right is string rightString)
+            {
+                if (Enum.TryParse(leftEnum.GetType(), rightString, true, out var parsed))
+                {
+                    result = Equals(leftEnum, parsed);
+                    return true;
+                }
+            }
+
+            if (right is Enum rightEnum && left is string leftString)
+            {
+                if (Enum.TryParse(rightEnum.GetType(), leftString, true, out var parsed))
+                {
+                    result = Equals(rightEnum, parsed);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public static bool IsGreaterThan(object? left, object? right)
@@ -594,52 +671,37 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         private static object? ApplySetOperation(object? left, object? right, TokenType operatorType)
         {
-            if (left == null && right == null)
-            {
-                return Array.Empty<object>();
-            }
-
-            if (left == null)
-            {
-                return right ?? Array.Empty<object>();
-            }
-
-            if (right == null)
-            {
-                return left;
-            }
-
             if (left is string || right is string)
             {
                 throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
             }
 
-            if (left is not IEnumerable leftEnumerable || right is not IEnumerable rightEnumerable)
+            if (left == null && right == null)
             {
-                throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
+                return Array.Empty<object>();
             }
 
-            var leftElementType = TryGetEnumerableElementType(left.GetType());
-            var rightElementType = TryGetEnumerableElementType(right.GetType());
-            if (leftElementType == null || rightElementType == null)
+            var leftHasType = TryResolveElementType(left, out var leftElementType);
+            var rightHasType = TryResolveElementType(right, out var rightElementType);
+
+            if (!leftHasType && !rightHasType)
             {
-                throw new InvalidOperationException($"Set operator '{operatorType}' requires collection operands.");
+                return Array.Empty<object>();
             }
 
-            if (!leftElementType.IsAssignableFrom(rightElementType))
-            {
-                throw new InvalidOperationException($"Set operator '{operatorType}' requires compatible collection element types.");
-            }
+            var elementType = ResolveCompatibleElementType(
+                leftHasType ? leftElementType : rightElementType,
+                rightHasType ? rightElementType : leftElementType,
+                operatorType);
 
-            var elementType = leftElementType;
-            var leftTyped = CastEnumerable(leftEnumerable, elementType);
-            var rightTyped = CastEnumerable(rightEnumerable, elementType);
+            var leftTyped = CoerceEnumerable(left, elementType);
+            var rightTyped = CoerceEnumerable(right, elementType);
 
             var methodName = operatorType switch
             {
                 TokenType.SetUnion => nameof(DslSetOperators.Union),
                 TokenType.SetIntersect => nameof(DslSetOperators.Intersect),
-                TokenType.Minus => nameof(DslSetOperators.Except),
+                TokenType.SetDifference => nameof(DslSetOperators.Except),
                 _ => throw new InvalidOperationException($"Unsupported set operator '{operatorType}'.")
             };
 
@@ -665,36 +727,71 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 ?? throw new InvalidOperationException("Failed to cast enumerable.");
         }
 
-        private static Type? TryGetEnumerableElementType(Type type)
+        private static bool TryResolveElementType(object? value, out Type elementType)
         {
-            if (type == typeof(string))
+            if (value == null)
             {
-                return null;
+                elementType = typeof(object);
+                return false;
             }
 
-            if (type.IsArray)
+            var valueType = value.GetType();
+            if (valueType == typeof(string))
             {
-                return type.GetElementType() ?? typeof(object);
+                elementType = typeof(string);
+                return false;
             }
 
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            if (DslCollectionCoercion.TryGetEnumerableElementType(valueType, out elementType))
             {
-                return type.GetGenericArguments()[0];
+                return true;
             }
 
-            var enumerableInterface = type.GetInterfaces()
-                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
-            if (enumerableInterface != null)
+            elementType = valueType;
+            return true;
+        }
+
+        private static Type ResolveCompatibleElementType(Type leftElementType, Type rightElementType, TokenType operatorType)
+        {
+            if (leftElementType.IsAssignableFrom(rightElementType))
             {
-                return enumerableInterface.GetGenericArguments()[0];
+                return leftElementType;
             }
 
-            if (typeof(IEnumerable).IsAssignableFrom(type))
+            if (rightElementType.IsAssignableFrom(leftElementType))
             {
-                return typeof(object);
+                return rightElementType;
             }
 
-            return null;
+            throw new InvalidOperationException($"Set operator '{operatorType}' requires compatible collection element types.");
+        }
+
+        private static IEnumerable CoerceEnumerable(object? value, Type elementType)
+        {
+            if (value == null)
+            {
+                return CreateEmptyEnumerable(elementType);
+            }
+
+            if (value is IEnumerable enumerable)
+            {
+                return (IEnumerable)CastEnumerable(enumerable, elementType);
+            }
+
+            var array = Array.CreateInstance(elementType, 1);
+            array.SetValue(value, 0);
+            return array;
+        }
+
+        private static IEnumerable CreateEmptyEnumerable(Type elementType)
+        {
+            var emptyMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Empty), BindingFlags.Public | BindingFlags.Static);
+            if (emptyMethod == null)
+            {
+                throw new InvalidOperationException("Cannot resolve Enumerable.Empty.");
+            }
+
+            return (IEnumerable)emptyMethod.MakeGenericMethod(elementType).Invoke(null, Array.Empty<object>())!;
         }
 
         private static bool TryCompare(object left, object right, out int comparisonResult)

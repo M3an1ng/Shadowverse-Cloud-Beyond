@@ -27,6 +27,11 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
         public PlayMode? PlayMode { get; set; }
 
         /// <summary>
+        /// The runtime ID of the specific ability driving this play mode (optional, e.g., Enhance).
+        /// </summary>
+        public Guid? AbilityRuntimeId { get; set; }
+
+        /// <summary>
         /// The cost the client expects to pay for the selected mode.
         /// </summary>
         public int? PaidCost { get; set; }

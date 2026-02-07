@@ -8,6 +8,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR; // <<< CORRECTED for Event DTOs (Ba
 using ShadowverseBeyond.Server.Models; // <<< ADDED for GameActionContext
 using System; // For Guid
 using System.Collections.Generic; // Needed for List
+using System.Threading;
 
 // Corrected Namespace
 namespace ShadowverseBeyond.Server.Services
@@ -73,6 +74,32 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="events">The list of events to broadcast.</param>
         /// <returns>A task representing the asynchronous operation.</returns>
         Task BroadcastEventsAsync(string gameId, List<GameEventDto> events);
+
+        /// <summary>
+        /// Refreshes cached card definitions and broadcasts updated card instances for the specified card id.
+        /// </summary>
+        Task NotifyCardDefinitionUpdatedAsync(int cardId);
+
+        /// <summary>
+        /// Refreshes hand playability for the specified player and broadcasts the update.
+        /// </summary>
+        Task RefreshHandPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Refreshes Act playability for the specified player and broadcasts the update.
+        /// </summary>
+        Task RefreshActPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken);
+        Task<PlayabilityResultDto> GetCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Marks a player as disconnected and pauses turn processing if needed.
+        /// </summary>
+        void MarkPlayerDisconnected(string gameId, Guid playerId);
+
+        /// <summary>
+        /// Marks a player as reconnected and resumes turn processing if possible.
+        /// </summary>
+        void MarkPlayerReconnected(string gameId, Guid playerId);
 
     }
 }

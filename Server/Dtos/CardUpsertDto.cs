@@ -22,7 +22,16 @@ namespace ShadowverseBeyond.Server.Dtos
         public string Rarity { get; init; } = "Bronze";
 
         [JsonPropertyName("card_set")]
-        public string CardSet { get; init; } = "Basic";
+        public string CardSet { get; init; } = "Legacy";
+
+        [JsonPropertyName("card_set_definition_id")]
+        public int? CardSetDefinitionId { get; init; }
+
+        [JsonPropertyName("card_pack_definition_id")]
+        public int? CardPackDefinitionId { get; init; }
+
+        [JsonPropertyName("card_pack_code")]
+        public string? CardPackCode { get; init; }
 
         [JsonPropertyName("class")]
         public string Class { get; init; } = "Neutral";
@@ -41,6 +50,15 @@ namespace ShadowverseBeyond.Server.Dtos
 
         [JsonPropertyName("description")]
         public string? Description { get; init; }
+
+        [JsonPropertyName("artPreview")]
+        public string? ArtPreview { get; init; }
+
+        [JsonPropertyName("artDetail")]
+        public string? ArtDetail { get; init; }
+
+        [JsonPropertyName("isCollectible")]
+        public bool? IsCollectible { get; init; }
 
         [JsonPropertyName("keywords")]
         public List<string>? Keywords { get; init; }

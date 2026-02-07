@@ -183,7 +183,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase, // Handle camelCase from JSON
                     // Allow case-insensitive matching for enums by not specifying a naming policy for the converter.
                     // This will correctly map "Fixed" to ValueType.Fixed and "Passive" to AbilityType.Passive.
-                    Converters = { new LenientEffectKeywordConverter(), new JsonStringEnumConverter() }
+                    Converters = { new LenientEffectKeywordConverter(), new LenientTriggerRelationTypeConverter(), new JsonStringEnumConverter() }
                 };
 
                 var config = JsonSerializer.Deserialize<AbilityConfig>(cardAbility.JsonConfig!, options);
@@ -198,6 +198,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 config.Name = cardAbility.Name;
                 config.Description = cardAbility.Description ?? string.Empty;
                 config.IsEnabled = cardAbility.IsActive;
+                NormalizeLegacyAuraType(config);
                 config.NormalizeKeywords();
 
                 return config;
@@ -211,6 +212,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             {
                 _logger.LogError(ex, "An unexpected error occurred while converting AbilityDefinition ID {AbilityId}.", cardAbility.Id);
                 return null;
+            }
+        }
+
+        private static void NormalizeLegacyAuraType(AbilityConfig config)
+        {
+            if (config == null)
+            {
+                return;
+            }
+
+            if (config.Type != AbilityType.Triggered)
+            {
+                return;
+            }
+
+            if (config.Auras != null && config.Auras.Count > 0
+                && (config.Effects == null || config.Effects.Count == 0))
+            {
+                config.Type = AbilityType.Continuous;
             }
         }
     }

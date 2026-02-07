@@ -4,7 +4,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 {
     public class AbilityKeywordConfig
     {
-        public EffectKeyword Keyword { get; set; } = EffectKeyword.None;
+        public AbilityKeyword Keyword { get; set; } = AbilityKeyword.None;
         public int? Value { get; set; }
 
         public override string ToString()

@@ -1,3 +1,4 @@
+using System;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // DomainOperationResult
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -20,15 +21,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("新卡牌定义ID", "变形后的卡牌定义ID。")]
         public int NewCardDefinitionId { get; }
 
-        [GameEventParameter("变形的卡牌", "发生变形的卡牌。")]
+        [GameEventParameter("变形的卡牌", "发生变形的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? TransformingCard => Source?.Card;
 
         /// <summary>
         /// 通知用构造：在卡面已变更后，用当前卡面的定义ID作为 NewCardDefinitionId。
         /// 供 CardInstance.Transform 内部在完成变形后派发。
         /// </summary>
-        public TransformEvent(CardInstance transformedCard)
-            : base(EventType.Transform)
+        public TransformEvent(CardInstance transformedCard, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Transform, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(transformedCard);
             NewCardDefinitionId = transformedCard.BaseDefinitionId;
@@ -37,8 +38,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// <summary>
         /// 提交用构造：携带目标定义ID，由 Commit 执行实体实际变形。
         /// </summary>
-        public TransformEvent(CardInstance targetCard, int newDefinitionId)
-            : base(EventType.Transform)
+        public TransformEvent(CardInstance targetCard, int newDefinitionId, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Transform, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(targetCard);
             NewCardDefinitionId = newDefinitionId;
@@ -56,6 +57,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "TransformEvent.Commit: Source card is null." };
             }
 
+            // Notification events are emitted after a transform has already been applied.
+            // If the card already matches the requested definition, skip re-transforming to avoid recursion.
+            if (card.BaseDefinitionId == NewCardDefinitionId)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+
             var data = context.ServiceProvider.GetRequiredService<IGameDataProvider>();
             var def = data.GetCardDefinition(NewCardDefinitionId);
             if (def == null)
@@ -63,8 +71,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = $"TransformEvent.Commit: CardDefinition {NewCardDefinitionId} not found." };
             }
 
-            return card.Transform(def, context);
+            var transformResult = card.Transform(def, context);
+            if (!transformResult.Success)
+            {
+                return transformResult;
+            }
+
+            return transformResult;
         }
     }
 }
-

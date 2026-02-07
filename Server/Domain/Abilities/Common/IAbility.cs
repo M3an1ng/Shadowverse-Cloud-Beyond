@@ -42,7 +42,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary>
         /// Gets the primary keyword for display or legacy fallbacks.
         /// </summary>
-        EffectKeyword PrimaryKeyword { get; }
+        AbilityKeyword PrimaryKeyword { get; }
 
         /// <summary>
         /// Gets a human-readable keyword summary for logging or UI fallback.
@@ -52,12 +52,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary>
         /// Checks whether this ability includes a specific keyword.
         /// </summary>
-        bool HasKeyword(EffectKeyword keyword);
+        bool HasKeyword(AbilityKeyword keyword);
 
         /// <summary>
         /// Gets the numeric value attached to a keyword, if any.
         /// </summary>
-        int? GetKeywordValue(EffectKeyword keyword);
+        int? GetKeywordValue(AbilityKeyword keyword);
 
         /// <summary>
         /// Gets the type of the ability (e.g., Spell, FollowerEffect, System).
@@ -85,6 +85,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// Null if the ability is not granted by a buff.
         /// </summary>
         Guid? SourceBuffId { get; }
+
+        /// <summary>
+        /// Gets the number of times this ability has been triggered during the current turn.
+        /// </summary>
+        int TriggerCountThisTurn { get; }
+
+        /// <summary>
+        /// Gets the total number of times this ability has been triggered during the current game.
+        /// </summary>
+        int TriggerCountThisGame { get; }
 
         /// <summary>
         /// Gets the runtime list of targets associated with this ability.
@@ -117,6 +127,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// </returns>
         /// <param name="isCancellable">Indicates if the player choice initiated by this resolution can be cancelled.</param>
         Task<TargetResolutionResult> ResolveTargetsAsync(GameContext context, bool isCancellable = false);
+
+        /// <summary>
+        /// Performs a non-blocking check to determine if this ability has valid targets available.
+        /// </summary>
+        /// <param name="context">The current game context.</param>
+        /// <returns>A task that represents the asynchronous operation. The task result contains availability info.</returns>
+        Task<TargetAvailabilityResult> CheckTargetAvailabilityAsync(GameContext context);
 
         /// <summary>
         /// Creates the list of effects that this ability will produce, using the completed target resolution result.

@@ -14,6 +14,8 @@ namespace ShadowverseBeyond.Server.Domain.Query
     [JsonDerivedType(typeof(FilterOperation), typeDiscriminator: "FilterOperation")]
     [JsonDerivedType(typeof(SortOperation), typeDiscriminator: "SortOperation")]
     [JsonDerivedType(typeof(SelectionOperation), typeDiscriminator: "SelectionOperation")]
+    [JsonDerivedType(typeof(DistinctOperation), typeDiscriminator: "DistinctOperation")]
+    [JsonDerivedType(typeof(SelectOperation), typeDiscriminator: "SelectOperation")]
     [JsonDerivedType(typeof(PostProcessingOperation), typeDiscriminator: "PostProcessingOperation")]
     public interface IQueryOperation
     {
@@ -65,40 +67,36 @@ namespace ShadowverseBeyond.Server.Domain.Query
     /// </summary>
     /// <param name="Strategy">The selection strategy to use.</param>
     /// <param name="CountSource">The source defining how many items to select.</param>
-    [QueryOperationMetadata("Select", "Select a subset of the card list (e.g., first, last, random).")]
+    [QueryOperationMetadata("Take", "Select a subset of the card list (e.g., first, last, random).")]
     public record SelectionOperation(
         SelectionStrategy Strategy = SelectionStrategy.First,
         ValueConfig? CountSource = null // Use ValueConfig for dynamic count
     ) : IQueryOperation;
 
     /// <summary>
-    /// Defines the types of post-processing available.
+    /// Represents a distinct step in the query pipeline.
     /// </summary>
-    public enum PostProcessingType
-    {
-        /// <summary>
-        /// No post-processing.
-        /// </summary>
-        None,
-        /// <summary>
-        /// Converts items to CardDefinitionDto.
-        /// </summary>
-        ToCardDefinitionDto,
-        /// <summary>
-        /// Converts items to CardInstanceDto.
-        /// </summary>
-        ToCardInstanceDto,
-        // Add other specific post-processing types as needed
-    }
+    /// <param name="KeySelector">The key selector used to deduplicate items.</param>
+    [QueryOperationMetadata("Distinct", "Deduplicate items based on a key expression.")]
+    public record DistinctOperation(
+        ValueConfig KeySelector
+    ) : IQueryOperation;
+
+    /// <summary>
+    /// Represents a projection step in the query pipeline.
+    /// </summary>
+    /// <param name="Selector">The projection expression for each item.</param>
+    [QueryOperationMetadata("Select", "Project each item in the list to a new value.")]
+    public record SelectOperation(
+        ValueConfig Selector
+    ) : IQueryOperation;
 
     /// <summary>
     /// Represents a post-processing step in the query pipeline.
     /// </summary>
-    /// <param name="Type">The type of post-processing to apply.</param>
-    /// <param name="Parameters">Optional parameters for the post-processing step.</param>
-    [QueryOperationMetadata("Post-process", "Apply a transformation to the final result set (e.g., convert to DTOs).")]
+    /// <param name="Projection">The projection expression to apply on the final result set.</param>
+    [QueryOperationMetadata("Post-process", "Apply a projection to the final result set.")]
     public record PostProcessingOperation(
-        PostProcessingType Type,
-        Dictionary<string, object>? Parameters = null // Corrected generic syntax
+        ValueConfig Projection
     ) : IQueryOperation;
 }

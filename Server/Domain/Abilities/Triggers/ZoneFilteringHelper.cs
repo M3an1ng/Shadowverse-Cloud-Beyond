@@ -17,7 +17,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         public static readonly HashSet<CardZone> ActiveZones = new()
         {
             CardZone.Field,
-            CardZone.Playing
+            CardZone.Staging
         };
 
         /// <summary>
@@ -62,7 +62,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
             return zone switch
             {
                 CardZone.Field => 1,      // 最高优先级
-                CardZone.Playing => 3,    // 中高优先级
+                CardZone.Staging => 3,    // 中高优先级
                 CardZone.Hand => 4,       // 中优先级
                 CardZone.Graveyard => 5,  // 低优先级
                 CardZone.Deck => 6,       // 最低优先级

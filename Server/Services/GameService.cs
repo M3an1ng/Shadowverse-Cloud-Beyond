@@ -28,6 +28,7 @@ using System;
 using System.Collections.Concurrent; // For ConcurrentDictionary
 using System.Collections.Generic; // Add for List<>
 using System.Linq; // For helper methods potentially
+using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events; // Base Event DTO
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Action DTOs incl. DebugCommandDto
@@ -37,14 +38,17 @@ using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethod
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Added for IConditionFactory
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Added for IEffectExecutor
 using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Auras;
 using ShadowverseBeyond.Server.Domain.Events; // Added for IEventProcessor and PlayCardEvent
 using ShadowverseBeyond.Server.Domain.Factories; // Added for ICardFactory
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Query;
 
 using ShadowverseBeyond.Server.Domain.Abilities; // Added for AbilityManager
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for keyword constants
 using Microsoft.Extensions.DependencyInjection;
+using ShadowverseBeyond.Server.Infrastructure.Logging;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -73,6 +77,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, string?> _currentlyProcessingPlayerActionId = new(); // Tracks the PlayerId whose action chain is being processed
         private readonly ConcurrentDictionary<string, Task> _gameProcessingLoops = new(); // Stores the running Task for each game's loop
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _gameLoopCancellationTokens = new(); // Stores cancellation tokens for each loop
+        private readonly ConcurrentDictionary<string, Timer> _turnTimers = new();
 
         // Dictionary to manage DI scopes for each game session
         // Flag to prevent re-entrant EndTurn processing for the same game - REMOVED by Roo
@@ -286,31 +291,40 @@ namespace ShadowverseBeyond.Server.Services
                                     {
                                         // 【功能补全】检查事务处理结果，如果包含回合开始事件，则触发AI
                                         var turnStartEvent = transactionResult.ProcessedEvents.OfType<TurnStartEvent>().FirstOrDefault();
-                                        if (turnStartEvent?.Source?.Player != null && turnStartEvent.Source.Player.IsAI)
+                                        if (turnStartEvent?.Source?.Player != null)
                                         {
-                                            _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", turnStartEvent.Source.Player.PlayerId);
-                                            var aiService = sp.GetRequiredService<IAiService>();
-                                            // 【BUG修复】为AI行动创建一个新的后台任务，并确保它拥有自己的DI作用域和GameContext
-                                            _ = Task.Run(async () =>
+                                            StartTurnTimer(gameId, turnStartEvent.Source.Player.PlayerId);
+                                            if (turnStartEvent.Source.Player.IsAI)
                                             {
-                                                // 为这个后台任务创建一个新的、独立的作用域
-                                                await using var aiScope = _serviceScopeFactory.CreateAsyncScope();
-                                                var aiSp = aiScope.ServiceProvider;
-                                                var gameContextAccessor = aiSp.GetRequiredService<IGameContextAccessor>();
-                                                var mapper = aiSp.GetRequiredService<IMapper>();
-
-                                                // 获取最新的游戏状态
-                                                if (_gameStates.TryGetValue(gameId, out var currentGameState))
+                                                _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", turnStartEvent.Source.Player.PlayerId);
+                                                var aiService = sp.GetRequiredService<IAiService>();
+                                                // 【BUG修复】为AI行动创建一个新的后台任务，并确保它拥有自己的DI作用域和GameContext
+                                                _ = Task.Run(async () =>
                                                 {
-                                                    // 创建并设置GameContext
-                                                    using (var aiGameContext = new GameContext(aiSp, mapper, gameContextAccessor, currentGameState, turnStartEvent.Source.Player.PlayerId, cancellationToken))
+                                                    // 为这个后台任务创建一个新的、独立的作用域
+                                                    await using var aiScope = _serviceScopeFactory.CreateAsyncScope();
+                                                    var aiSp = aiScope.ServiceProvider;
+                                                    var gameContextAccessor = aiSp.GetRequiredService<IGameContextAccessor>();
+                                                    var mapper = aiSp.GetRequiredService<IMapper>();
+
+                                                    // 获取最新的游戏状态
+                                                    if (_gameStates.TryGetValue(gameId, out var currentGameState))
                                                     {
-                                                        // 现在，在拥有正确上下文的情况下调用AI服务
-                                                        var aiServiceFromScope = aiSp.GetRequiredService<IAiService>();
-                                                        await aiServiceFromScope.RequestAiActionAsync(gameId, turnStartEvent.Source.Player.PlayerId);
+                                                        // 创建并设置GameContext
+                                                        using (var aiGameContext = new GameContext(aiSp, mapper, gameContextAccessor, currentGameState, turnStartEvent.Source.Player.PlayerId, cancellationToken))
+                                                        {
+                                                            // 现在，在拥有正确上下文的情况下调用AI服务
+                                                            var aiServiceFromScope = aiSp.GetRequiredService<IAiService>();
+                                                            await aiServiceFromScope.RequestAiActionAsync(gameId, turnStartEvent.Source.Player.PlayerId);
+                                                        }
                                                     }
-                                                }
-                                            }, cancellationToken);
+                                                }, cancellationToken);
+                                            }
+                                        }
+
+                                        if (transactionResult.ProcessedEvents.OfType<GameEndEvent>().Any())
+                                        {
+                                            StopTurnTimer(gameId, true);
                                         }
                                     }
                                     else
@@ -329,10 +343,12 @@ namespace ShadowverseBeyond.Server.Services
 
                                     // 2. Update playability for all relevant players.
                                     await UpdateAndBroadcastHandPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
+                                    await UpdateAndBroadcastActPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
                                     var opponentId = gameState.GetOpponentPlayerState(actionWrapper.PlayerId)?.PlayerId;
                                     if (opponentId.HasValue)
                                     {
                                         await UpdateAndBroadcastHandPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
+                                        await UpdateAndBroadcastActPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
                                     }
                                     // --- End BUG-FIX ---
                                 }
@@ -557,28 +573,28 @@ namespace ShadowverseBeyond.Server.Services
                     break;
 
                 case "Surrender":
-                {
-                    var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
-                    if (opponent == null || opponent.PlayerId == Guid.Empty)
                     {
-                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
-                    }
+                        var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
+                        if (opponent == null || opponent.PlayerId == Guid.Empty)
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
+                        }
 
-                    initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Surrender"));
-                    break;
-                }
+                        initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Surrender"));
+                        break;
+                    }
 
                 case "Disconnect":
-                {
-                    var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
-                    if (opponent == null || opponent.PlayerId == Guid.Empty)
                     {
-                        throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
-                    }
+                        var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
+                        if (opponent == null || opponent.PlayerId == Guid.Empty)
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
+                        }
 
-                    initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Disconnect"));
-                    break;
-                }
+                        initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Disconnect"));
+                        break;
+                    }
 
                 case "SubmitMulligan":
                     // --- Mulligan Debug Logging ---
@@ -722,7 +738,7 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
-                var validation = await deckValidation.ValidateAsync(deck.Class, deck.Cards, requireComplete: true, cancellationToken);
+                var validation = await deckValidation.ValidateAsync(deck.Class, deck.Cards, deck.Environment, requireComplete: true, cancellationToken);
                 if (!validation.Success || validation.Data == null)
                 {
                     return null;
@@ -738,7 +754,7 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
-                var validation = await deckValidation.ValidateAsync(deckClass, cards, requireComplete: true, cancellationToken);
+                var validation = await deckValidation.ValidateAsync(deckClass, cards, DeckEnvironment.Open, requireComplete: true, cancellationToken);
                 if (!validation.Success || validation.Data == null)
                 {
                     return null;
@@ -815,6 +831,8 @@ namespace ShadowverseBeyond.Server.Services
                     createAi = useAiFallback;
                 }
 
+                // 用户级追踪开关：不在新对局时重置
+
                 var allCardDefinitions = _gameDataProvider.GetAllCardDefinitions();
                 if (!allCardDefinitions.Any())
                 {
@@ -828,7 +846,6 @@ namespace ShadowverseBeyond.Server.Services
 
                 var newGameState = new GameState(gameId, player1State, player2State, player1IsFirst ? player1Id : player2Id);
                 var secondPlayerState = player1IsFirst ? player2State : player1State;
-                secondPlayerState.PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
 
                 // --- Manual Manager Creation ---
                 var loggerFactory = scopeServiceProvider.GetRequiredService<ILoggerFactory>();
@@ -837,9 +854,15 @@ namespace ShadowverseBeyond.Server.Services
                 var systemAbilities = scopeServiceProvider.GetServices<IAbility>();
                 var abilityManager = new AbilityManager(loggerFactory.CreateLogger<AbilityManager>(), abilityFactory, systemAbilities);
                 var buffManager = new BuffManager(loggerFactory.CreateLogger<BuffManager>(), abilityManager);
+                var auraManager = new AuraManager(
+                    loggerFactory.CreateLogger<AuraManager>(),
+                    scopeServiceProvider.GetRequiredService<IValueSourceResolver>(),
+                    scopeServiceProvider.GetRequiredService<IBuffService>(),
+                    scopeServiceProvider.GetRequiredService<IBuffFactory>());
 
                 newGameState.AbilityManager = abilityManager;
                 newGameState.BuffManager = buffManager;
+                newGameState.AuraManager = auraManager;
 
                 _logger.LogInformation("[GameService] Created and assigned AbilityManager for Game {GameId}.", gameId);
                 // --- End Manual Manager Creation ---
@@ -852,6 +875,49 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 var room = roomResult.Room;
+                var devConfig = room.DevMatchConfig;
+
+                var maxPp = GameConstants.PlayPoints.InitialPlayPoints;
+                if (devConfig?.MaxPlayPoints.HasValue == true)
+                {
+                    maxPp = Math.Clamp(devConfig.MaxPlayPoints.Value, 0, GameConstants.PlayPoints.MaxPlayPoints);
+                }
+
+                var startingPp = GameConstants.PlayPoints.InitialPlayPoints;
+                if (devConfig?.StartingPlayPoints.HasValue == true)
+                {
+                    startingPp = Math.Clamp(devConfig.StartingPlayPoints.Value, 0, GameConstants.PlayPoints.MaxPlayPoints);
+                    if (devConfig.MaxPlayPoints.HasValue == false)
+                    {
+                        maxPp = Math.Max(maxPp, startingPp);
+                    }
+                }
+
+                startingPp = Math.Clamp(startingPp, 0, maxPp);
+
+                player1State.MaxPlayPoints = maxPp;
+                player2State.MaxPlayPoints = maxPp;
+                player1State.CurrentPlayPoints = startingPp;
+                player2State.CurrentPlayPoints = startingPp;
+
+                if (devConfig?.StartingTurn.HasValue == true)
+                {
+                    var startingTurn = Math.Clamp(devConfig.StartingTurn.Value, 1, GameConstants.Timing.MaxTurnsBeforeDraw);
+                    var initialTurnNumber = Math.Max(0, startingTurn - 1);
+                    player1State.TurnNumber = initialTurnNumber;
+                    player2State.TurnNumber = initialTurnNumber;
+                }
+
+                if (devConfig?.PpBoostUses.HasValue == true)
+                {
+                    var ppBoostUses = Math.Max(0, devConfig.PpBoostUses.Value);
+                    player1State.PpBoostUsesAvailable = ppBoostUses;
+                    player2State.PpBoostUsesAvailable = ppBoostUses;
+                }
+                else
+                {
+                    secondPlayerState.PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
+                }
                 var hostDeckIds = await ResolveDeckCardIdsAsync(room.HostDeckSelection, scopeServiceProvider, CancellationToken.None);
                 if (hostDeckIds == null)
                 {
@@ -880,11 +946,20 @@ namespace ShadowverseBeyond.Server.Services
                 ShuffleDeck(player1State.Deck);
                 ShuffleDeck(player2State.Deck);
 
+                player1State.InitialDeck = new List<CardInstance>(player1State.Deck);
+                player2State.InitialDeck = new List<CardInstance>(player2State.Deck);
+
                 // 【最终修复】根据领域规则，初始发牌不属于“抽牌”，不应触发抽牌事件。
                 // 因此，回归到直接操作列表的方式。
                 // 此操作现在是安全的，因为CardFactory的BUG已被修复，能确保Deck列表被正确填充。
                 var player1InitialHandSize = GameConstants.Hand.InitialHandSizeFirstPlayer;
                 var player2InitialHandSize = GameConstants.Hand.InitialHandSizeSecondPlayer;
+                if (devConfig?.StartingHandSize.HasValue == true)
+                {
+                    var overrideHand = Math.Clamp(devConfig.StartingHandSize.Value, 0, GameConstants.Hand.MaxHandSize);
+                    player1InitialHandSize = overrideHand;
+                    player2InitialHandSize = overrideHand;
+                }
                 var maxInitialHandSize = Math.Max(player1InitialHandSize, player2InitialHandSize);
 
                 for (int i = 0; i < maxInitialHandSize; i++)
@@ -909,6 +984,13 @@ namespace ShadowverseBeyond.Server.Services
                 const int leaderCardId = GameConstants.Cards.LeaderCardId;
                 player1State.Leader = cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player1Id, CardZone.Field);
                 player2State.Leader = cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player2Id, CardZone.Field);
+
+                if (devConfig?.StartingHealth.HasValue == true)
+                {
+                    var desiredHp = Math.Clamp(devConfig.StartingHealth.Value, 1, GameConstants.Health.PlayerMaxHealth);
+                    player1State.Leader.Damage = Math.Max(0, GameConstants.Health.PlayerMaxHealth - desiredHp);
+                    player2State.Leader.Damage = Math.Max(0, GameConstants.Health.PlayerMaxHealth - desiredHp);
+                }
 
                 if (_gameStates.TryAdd(gameId, newGameState))
                 {
@@ -997,22 +1079,22 @@ namespace ShadowverseBeyond.Server.Services
             {
                 // --- Basic Checks ---
                 var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
-                var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, abilityConfigs);
+                var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, gameContext, abilityConfigs);
                 result.PlayModes = modeResolution.Modes.ToList();
                 result.SelectedPlayMode = modeResolution.SelectedMode;
 
                 if (!modeResolution.HasAvailableMode)
                 {
-                    result.IsPlayable = false;
-                    result.FailureReason = modeResolution.DefaultFailureReason ??
-                        $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
-                    return result;
-                }
+                      result.IsPlayable = false;
+                      result.FailureReason = modeResolution.DefaultFailureReason ??
+                          $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
+                      return result;
+                  }
 
                 // Field Space Check (if Follower)
                 if (cardDefinition.Type == CardType.Follower)
                 {
-                    if (playerState.Field.Count >= MaxBoardSize)
+                    if (playerState.FieldOccupancyCount >= MaxBoardSize)
                     {
                         result.IsPlayable = false;
                         result.FailureReason = $"场地已满 (最大 {MaxBoardSize} 个)，无法召唤随从。";
@@ -1269,6 +1351,378 @@ namespace ShadowverseBeyond.Server.Services
                 // await _hubContext.Clients.User(playerId).SendAsync(ClientMethodNames.ReceiveError, "Error updating hand playability.");
             }
         }
+
+        /// <summary>
+        /// Checks the Act playability of all cards on a player's field and broadcasts the results
+        /// to the specific player client after their action chain completes.
+        /// </summary>
+        /// <param name="gameId">The ID of the game.</param>
+        /// <param name="playerId">The ID of the player whose field needs updating.</param>
+        private async Task UpdateAndBroadcastActPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation("[GameService:{GameId}] Updating Act playability for Player {PlayerId} after action completion.", gameId, playerId);
+            var playabilityResults = new Dictionary<Guid, ActPlayabilityResultDto>();
+
+            // --- Create a dedicated scope and context for this operation ---
+            await using var scope = _serviceScopeFactory.CreateAsyncScope();
+            var sp = scope.ServiceProvider;
+            var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+
+            try
+            {
+                var gameState = GetGameState(gameId);
+                if (gameState == null)
+                {
+                    _logger.LogWarning("[UpdateActPlayability:{GameId}] Game not found.", gameId);
+                    return;
+                }
+
+                var playerState = gameState.GetPlayerState(playerId);
+                if (playerState == null)
+                {
+                    _logger.LogWarning("[UpdateActPlayability:{GameId}] Player state not found for Player {PlayerId}.", gameId, playerId);
+                    return;
+                }
+
+                foreach (var cardOnField in playerState.Field.ToList())
+                {
+                    using (var gameContext = new GameContext(sp, _mapper, gameContextAccessor, gameState, playerId, cancellationToken, null, cardOnField))
+                    {
+                        var singleResult = await CheckActPlayabilityCoreLogicAsync(gameContext, playerState, cardOnField);
+                        playabilityResults[cardOnField.InstanceId] = singleResult;
+                    }
+                }
+
+                var updateDto = new ActPlayabilityUpdateDto(playerId)
+                {
+                    PlayabilityResults = playabilityResults
+                };
+
+                if (_hubContext != null)
+                {
+                    string groupName = $"Game_{gameId}";
+                    var clientProxy = _hubContext.Clients.Group(groupName);
+
+                    var dtoAsJson = "Serialization failed";
+                    try { dtoAsJson = System.Text.Json.JsonSerializer.Serialize(updateDto); } catch { }
+                    _logger.LogInformation("[DEBUG_PLAYABILITY] Sending ActPlayabilityUpdate to Group {GroupName} for Player {PlayerId}. DTO JSON: {DtoJson}", groupName, playerId, dtoAsJson);
+
+                    await clientProxy.SendAsync("ReceiveActPlayabilityUpdate", updateDto);
+                    _logger.LogInformation("[GameService:{GameId}] Sent Act playability update to Game Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
+                }
+                else
+                {
+                    _logger.LogError("[GameService:{GameId}] _hubContext is null. Cannot send Act playability update to Player {PlayerId}.", gameId, playerId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[GameService:{GameId}] Unexpected error during UpdateAndBroadcastActPlayabilityAsync for Player {PlayerId}.", gameId, playerId);
+            }
+        }
+
+        private static int CalculateActCost(GameContext context, CardInstance card)
+        {
+            return card.GetActCost(context);
+        }
+
+        private static async Task<ActPlayabilityResultDto> CheckActPlayabilityCoreLogicAsync(
+            GameContext gameContext,
+            PlayerState playerState,
+            CardInstance cardOnField)
+        {
+            var result = new ActPlayabilityResultDto
+            {
+                IsPlayable = false,
+                RequiresTargetSelection = false,
+                HasValidTargets = true
+            };
+
+            if (cardOnField.CurrentZone != CardZone.Field)
+            {
+                result.FailureReason = "Act can only be used while the card is on the field.";
+                return result;
+            }
+
+            if (!cardOnField.HasActAbility)
+            {
+                result.FailureReason = "This card has no Act ability.";
+                return result;
+            }
+
+            if (gameContext.CurrentGameState.CurrentPlayerId != playerState.PlayerId)
+            {
+                result.FailureReason = "It's not your turn to use Act.";
+                return result;
+            }
+
+            if (gameContext.CurrentGameState.Phase != GamePhase.Main)
+            {
+                result.FailureReason = "Act can only be used during Main phase.";
+                return result;
+            }
+
+            if (cardOnField.HasUsedActThisTurn(playerState.TurnNumber))
+            {
+                result.FailureReason = "This card has already used Act this turn.";
+                return result;
+            }
+
+            var actAbilities = gameContext.AbilityManager
+                .GetEffectiveAbilitiesForCard(cardOnField.InstanceId, gameContext)
+                .Where(a => a.HasKeyword(AbilityKeyword.Act))
+                .ToList();
+
+            var targetSelectionService = gameContext.ServiceProvider.GetRequiredService<TargetSelectionService>();
+
+            foreach (var ability in actAbilities)
+            {
+                var abilityResult = new ActAbilityPlayabilityDto
+                {
+                    AbilityRuntimeId = ability.RuntimeId,
+                    AbilityName = ability.Name ?? string.Empty
+                };
+
+                var actCost = cardOnField.GetActCostForAbility(ability, gameContext);
+                abilityResult.ActCost = actCost;
+
+                if (playerState.CurrentPlayPoints < actCost)
+                {
+                    abilityResult.IsPlayable = false;
+                    abilityResult.FailureReason = $"Not enough PP (need {actCost}, have {playerState.CurrentPlayPoints}).";
+                    result.Abilities.Add(abilityResult);
+                    continue;
+                }
+
+                var availabilityResult = await targetSelectionService.CheckTargetAvailabilityAsync(ability, gameContext);
+                abilityResult.RequiresTargetSelection = ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true);
+                abilityResult.HasValidTargets = availabilityResult.IsAvailable;
+                if (!availabilityResult.IsAvailable)
+                {
+                    abilityResult.IsPlayable = false;
+                    abilityResult.FailureReason = availabilityResult.FailureReason ?? "没有有效的目标。";
+                    result.Abilities.Add(abilityResult);
+                    continue;
+                }
+
+                abilityResult.IsPlayable = true;
+                result.Abilities.Add(abilityResult);
+            }
+
+            var actCostMax = CalculateActCost(gameContext, cardOnField);
+            result.ActCost = actCostMax;
+            result.IsPlayable = result.Abilities.Any(a => a.IsPlayable);
+            result.RequiresTargetSelection = result.Abilities.Any(a => a.RequiresTargetSelection);
+            result.HasValidTargets = result.Abilities.Any(a => a.HasValidTargets);
+            if (!result.IsPlayable)
+            {
+                result.FailureReason = result.Abilities.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.FailureReason))?.FailureReason
+                    ?? "无法发动启动能力。";
+                return result;
+            }
+
+            return result;
+        }
+
+        public void MarkPlayerDisconnected(string gameId, Guid playerId)
+        {
+            if (string.IsNullOrWhiteSpace(gameId) || playerId == Guid.Empty)
+            {
+                return;
+            }
+            _logger.LogInformation("[ReconnectPause:{GameId}] Player {PlayerId} marked disconnected.", gameId, playerId);
+        }
+
+        public void MarkPlayerReconnected(string gameId, Guid playerId)
+        {
+            if (string.IsNullOrWhiteSpace(gameId) || playerId == Guid.Empty)
+            {
+                return;
+            }
+            _logger.LogInformation("[ReconnectPause:{GameId}] Player {PlayerId} marked reconnected.", gameId, playerId);
+        }
+
+        private void StartTurnTimer(string gameId, Guid playerId)
+        {
+            StopTurnTimer(gameId);
+
+            if (!_gameStates.TryGetValue(gameId, out var gameState) || gameState == null)
+            {
+                _logger.LogWarning("[TurnTimer:{GameId}] Cannot start timer because game state is missing.", gameId);
+                return;
+            }
+
+            if (gameState.IsGameOver)
+            {
+                _logger.LogInformation("[TurnTimer:{GameId}] Game is already over. Timer not started.", gameId);
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var timeoutSeconds = gameState.TurnTimeoutSeconds > 0
+                ? gameState.TurnTimeoutSeconds
+                : GameConstants.Timing.DefaultTurnTimeoutSeconds;
+
+            if (gameState.TurnStartedAtUtc == null)
+            {
+                gameState.TurnStartedAtUtc = now;
+            }
+
+            if (gameState.TurnEndsAtUtc == null)
+            {
+                gameState.TurnEndsAtUtc = now.AddSeconds(timeoutSeconds);
+            }
+
+            gameState.TurnTimeoutSeconds = timeoutSeconds;
+
+            var endsAtUtc = gameState.TurnEndsAtUtc.Value;
+            var delay = endsAtUtc - now;
+            if (delay < TimeSpan.Zero)
+            {
+                delay = TimeSpan.Zero;
+            }
+
+            var timer = new Timer(_ => _ = HandleTurnTimeoutAsync(gameId, playerId, endsAtUtc), null, delay, Timeout.InfiniteTimeSpan);
+            _turnTimers[gameId] = timer;
+
+            _logger.LogInformation("[TurnTimer:{GameId}] Started timer for Player {PlayerId}. EndsAtUtc={EndsAtUtc:o}.",
+                gameId, playerId, endsAtUtc);
+        }
+
+        private void StopTurnTimer(string gameId, bool clearState = false)
+        {
+            if (_turnTimers.TryRemove(gameId, out var timer))
+            {
+                timer.Dispose();
+            }
+
+            if (clearState && _gameStates.TryGetValue(gameId, out var gameState) && gameState != null)
+            {
+                gameState.TurnStartedAtUtc = null;
+                gameState.TurnEndsAtUtc = null;
+            }
+        }
+
+        private async Task HandleTurnTimeoutAsync(string gameId, Guid playerId, DateTime expectedEndUtc)
+        {
+            try
+            {
+                StopTurnTimer(gameId);
+
+                if (!_gameStates.TryGetValue(gameId, out var gameState) || gameState == null)
+                {
+                    _logger.LogWarning("[TurnTimeout:{GameId}] Game state not found.", gameId);
+                    return;
+                }
+
+                if (gameState.IsGameOver)
+                {
+                    _logger.LogInformation("[TurnTimeout:{GameId}] Game already over. Ignoring timeout.", gameId);
+                    return;
+                }
+
+                if (gameState.CurrentPlayerId != playerId)
+                {
+                    _logger.LogInformation("[TurnTimeout:{GameId}] Player {PlayerId} is no longer active. Ignoring timeout.",
+                        gameId, playerId);
+                    return;
+                }
+
+                if (gameState.TurnEndsAtUtc == null || gameState.TurnEndsAtUtc.Value != expectedEndUtc)
+                {
+                    _logger.LogInformation("[TurnTimeout:{GameId}] Timer is stale. ExpectedEnd={ExpectedEnd:o}, CurrentEnd={CurrentEnd:o}",
+                        gameId, expectedEndUtc, gameState.TurnEndsAtUtc);
+                    return;
+                }
+
+                if (gameState.Phase != GamePhase.Main && gameState.Phase != GamePhase.TurnStart)
+                {
+                    _logger.LogInformation("[TurnTimeout:{GameId}] Current phase {Phase} does not allow end turn.", gameId, gameState.Phase);
+                    return;
+                }
+
+                _logger.LogInformation("[TurnTimeout:{GameId}] Timeout reached for Player {PlayerId}. Resolving pending choices and ending turn.",
+                    gameId, playerId);
+
+                var pendingChoice = _pendingActionService.GetPendingChoiceForPlayer(gameId, playerId);
+                if (pendingChoice != null)
+                {
+                    ResolvePendingChoiceForTimeout(pendingChoice.Request);
+                }
+
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "EndTurn",
+                    PlayerId = playerId
+                };
+
+                await EnqueuePlayerActionAsync(gameId, wrapper);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[TurnTimeout:{GameId}] Failed to handle turn timeout for Player {PlayerId}.", gameId, playerId);
+            }
+        }
+
+        private void ResolvePendingChoiceForTimeout(PlayerChoiceRequest request)
+        {
+            if (request.IsCancellable)
+            {
+                _pendingActionService.ForceResolveChoice(request.PendingChoiceId, PlayerChoiceResult.Cancelled);
+                _logger.LogInformation("[TurnTimeout] Cancelled pending choice {ChoiceId} for Player {PlayerId}.",
+                    request.PendingChoiceId, request.RequestingPlayerId);
+                return;
+            }
+
+            var selectable = request.SelectableTargetIds ?? new List<Guid>();
+            var min = Math.Max(0, request.MinSelectionCount);
+            var max = Math.Max(min, request.MaxSelectionCount);
+            var count = Math.Min(min, selectable.Count);
+
+            if (count < min)
+            {
+                _logger.LogWarning("[TurnTimeout] Not enough selectable targets for choice {ChoiceId}. Min={Min}, Available={Available}.",
+                    request.PendingChoiceId, min, selectable.Count);
+            }
+
+            var chosen = PickRandomTargets(selectable, count);
+            var forcedResult = new PlayerChoiceResult
+            {
+                WasCancelled = false,
+                ChosenTargetIds = chosen
+            };
+
+            _pendingActionService.ForceResolveChoice(request.PendingChoiceId, forcedResult);
+            _logger.LogInformation("[TurnTimeout] Force-resolved pending choice {ChoiceId} with {Count} target(s) (Max={Max}).",
+                request.PendingChoiceId, chosen.Count, max);
+        }
+
+        private static List<Guid> PickRandomTargets(IReadOnlyList<Guid> targets, int count)
+        {
+            if (count <= 0 || targets.Count == 0)
+            {
+                return new List<Guid>();
+            }
+
+            if (count >= targets.Count)
+            {
+                return targets.ToList();
+            }
+
+            var chosen = new List<Guid>(count);
+            var used = new HashSet<int>();
+
+            while (chosen.Count < count)
+            {
+                var index = Random.Shared.Next(targets.Count);
+                if (used.Add(index))
+                {
+                    chosen.Add(targets[index]);
+                }
+            }
+
+            return chosen;
+        }
         // --- Existing Methods Below ---
         // --- Helper Methods for End Turn Logic ---
 
@@ -1318,6 +1772,91 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
             _logger.LogInformation("[GameService:{GameId}] Finished broadcasting {EventCount} events.", gameId, events.Count);
+        }
+
+        public async Task NotifyCardDefinitionUpdatedAsync(int cardId)
+        {
+            if (cardId <= 0)
+            {
+                return;
+            }
+
+            if (_gameDataProvider.IsInitialized)
+            {
+                await _gameDataProvider.RefreshCacheAsync();
+            }
+
+            await using var scope = _serviceScopeFactory.CreateAsyncScope();
+            var sp = scope.ServiceProvider;
+            var mapper = sp.GetRequiredService<IMapper>();
+            var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+
+            foreach (var entry in _gameStates)
+            {
+                var gameId = entry.Key;
+                var gameState = entry.Value;
+                if (gameState == null)
+                {
+                    continue;
+                }
+
+                var updatedCards = gameState.AllCards
+                    .Where(card => card.BaseDefinitionId == cardId)
+                    .ToList();
+
+                if (updatedCards.Count == 0)
+                {
+                    continue;
+                }
+
+                var requestingPlayerId = gameState.CurrentPlayerId
+                    ?? gameState.FirstPlayerId
+                    ?? gameState.Player1.PlayerId;
+
+                if (requestingPlayerId == Guid.Empty)
+                {
+                    _logger.LogWarning("[GameService:{GameId}] No valid player id available while notifying card definition update.", gameId);
+                    continue;
+                }
+
+                List<CardInstanceDto> dtos;
+                using (var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, requestingPlayerId))
+                {
+                    dtos = mapper.Map<List<CardInstanceDto>>(updatedCards);
+                }
+                if (dtos.Count == 0)
+                {
+                    continue;
+                }
+
+                var evt = new CardInstanceUpdatedEventDto(Guid.Empty, dtos);
+                await BroadcastEventsAsync(gameId, new List<GameEventDto> { evt });
+            }
+        }
+
+        public async Task RefreshHandPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(gameId) || playerId == Guid.Empty)
+            {
+                return;
+            }
+
+            await UpdateAndBroadcastHandPlayabilityAsync(gameId, playerId, cancellationToken);
+        }
+
+        public async Task RefreshActPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(gameId) || playerId == Guid.Empty)
+            {
+                return;
+            }
+
+            await UpdateAndBroadcastActPlayabilityAsync(gameId, playerId, cancellationToken);
+        }
+
+        public Task<PlayabilityResultDto> GetCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken)
+        {
+            return CheckCardPlayabilityAsync(gameId, playerId, cardInstanceId, cancellationToken);
         }
         // Helper to broadcast a single event to the game group
         private async Task BroadcastEventAsync(string gameId, GameEventDto gameEvent)

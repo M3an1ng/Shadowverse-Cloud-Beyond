@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Metadata;
@@ -33,8 +33,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("融合动作", "融合动作的详细信息。")]
         public FusionActionDto ActionDto { get; }
 
-        public FusionRequestedEvent(Guid playerId, FusionActionDto actionDto)
-            : base(EventType.FusionRequested)
+        public FusionRequestedEvent(Guid playerId, FusionActionDto actionDto, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.FusionRequested, eventId, timestamp)
         {
             PlayerId = playerId;
             ActionDto = actionDto;
@@ -69,19 +69,49 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             }
 
             var fusionAbilities = context.AbilityManager
-                .GetAbilitiesForCard(card.InstanceId)
-                .Where(a => a.TriggerConfig?.EventTypes?.Contains(EventType.Fusion) ?? false)
+                .GetEffectiveAbilitiesForCard(card.InstanceId, context)
+                .Where(a => a.HasKeyword(AbilityKeyword.Fusion))
                 .ToList();
 
-            if (!fusionAbilities.Any())
+            Ability? selectedAbility = null;
+            if (ActionDto.AbilityRuntimeId.HasValue && ActionDto.AbilityRuntimeId.Value != Guid.Empty)
+            {
+                var ability = context.AbilityManager.GetAbilityByRuntimeId(ActionDto.AbilityRuntimeId.Value) as Ability;
+                if (ability == null)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected Fusion ability not found." };
+                }
+
+                var sourceCardId = ability.SourceCardId ?? ability.SourceCard?.InstanceId;
+                if (sourceCardId != card.InstanceId)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected Fusion ability does not belong to this card." };
+                }
+
+                if (!ability.HasKeyword(AbilityKeyword.Fusion))
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected ability is not a Fusion ability." };
+                }
+
+                if (context.AbilityManager.IsAbilitySuppressed(ability, context))
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Selected Fusion ability is suppressed." };
+                }
+
+                selectedAbility = ability;
+            }
+
+            if (!fusionAbilities.Any() && selectedAbility == null)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has no Fusion ability." };
             }
 
-            var abilityConfigs = fusionAbilities
-                .OfType<Ability>()
-                .Select(a => a.Config)
-                .ToList();
+            var abilityConfigs = selectedAbility != null
+                ? new List<AbilityConfig> { selectedAbility.Config }
+                : fusionAbilities
+                    .OfType<Ability>()
+                    .Select(a => a.Config)
+                    .ToList();
 
             var evaluationContext = context with { SourceCard = card };
             var conditionEvaluator = context.ServiceProvider.GetRequiredService<IConditionEvaluator>();
@@ -136,7 +166,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             }
 
             var result = new DomainOperationResult { Success = true };
-            result.GeneratedEvents.Add(new FusionEvent(card, fusedCards));
+            result.GeneratedEvents.Add(new FusionEvent(card, fusedCards, selectedAbility?.RuntimeId));
             return result;
         }
     }

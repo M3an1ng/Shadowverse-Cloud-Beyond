@@ -53,10 +53,10 @@
 
 | 效果名称 | 枚举值 | 实现难度 | 优先级 | 实现方案 |
 |---------|--------|----------|--------|----------|
-| GetToken | 111 | 中 | 中 | 扩展AddCardToHandEffectHandler支持衍生物 |
+| GetToken | 111 | 中 | 中 | 扩展GetTokenEffectHandler支持衍生物 |
 | SetGrave | 117 | 低 | 中 | 移动卡牌到墓地区域 |
 | SetCountdown | 118 | 低 | 中 | 修改CardInstance.Countdown属性 |
-| AddDeck | 119 | 低 | 中 | 类似AddCardToHandEffectHandler但目标是牌库 |
+| AddDeck | 119 | 低 | 中 | 类似GetTokenEffectHandler但目标是牌库 |
 | Reveal | 125 | 中 | 中 | 临时显示卡牌信息给玩家 |
 | SetValue | 132 | 中 | 中 | 通用数值修改器 |
 

@@ -8,6 +8,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
+using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Abilities;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -25,11 +27,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("应用的Buff", "被应用的Buff实例。")]
         public Buff AppliedBuff { get; }
 
-        [GameEventParameter("Buff来源", "应用Buff的来源卡牌。")]
+        [GameEventParameter("Buff来源", "应用Buff的来源卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? BuffSource => Source?.Card;
 
-        public BuffAppliedEvent(Buff appliedBuff, CardInstance? source)
-            : base(EventType.BuffApplied)
+        public BuffAppliedEvent(Buff appliedBuff, CardInstance? source, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.BuffApplied, eventId, timestamp)
         {
             AppliedBuff = appliedBuff ?? throw new ArgumentNullException(nameof(appliedBuff));
             if (source != null)
@@ -40,14 +42,60 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
+            var result = new DomainOperationResult { Success = true };
+            var logger = context.ServiceProvider.GetService<ILogger<BuffAppliedEvent>>();
+            var sourceAbility = context.AbilityManager.GetAbilityByRuntimeId(AppliedBuff.SourceAbilityId);
+            var sourceCardId = sourceAbility?.SourceCardId ?? AppliedBuff.SourceCardInstanceId;
+            var sourceCardName = sourceAbility?.SourceCard?.Name ?? AppliedBuff.SourceCardName;
+            var sourceAbilityName = sourceAbility?.Name ?? AppliedBuff.SourceAbilityName;
+
+            logger?.LogInformation(
+                "[BuffAppliedEvent] Buff {BuffId} applied. TargetCardId={TargetCardId} EffectKey={EffectKey} SourceAbilityId={SourceAbilityId} SourceAbilityName={SourceAbilityName} SourceCardId={SourceCardId} SourceCardName={SourceCardName} SourceEffectIndex={SourceEffectIndex} DurationType={DurationType} DefinitionId={DefinitionId} IsActive={IsActive}",
+                AppliedBuff.Id,
+                AppliedBuff.TargetCardInstanceId,
+                AppliedBuff.EffectKey ?? "<null>",
+                AppliedBuff.SourceAbilityId,
+                sourceAbilityName ?? "<null>",
+                sourceCardId,
+                sourceCardName ?? "<null>",
+                AppliedBuff.SourceEffectIndex,
+                AppliedBuff.DurationType,
+                AppliedBuff.DefinitionId ?? "<null>",
+                AppliedBuff.IsActive);
+
+            if (string.IsNullOrWhiteSpace(AppliedBuff.EffectKey))
+            {
+                logger?.LogInformation(
+                    "[BuffAppliedEvent] Buff {BuffId} has empty EffectKey. SourceAbilityId={SourceAbilityId} SourceEffectIndex={SourceEffectIndex}.",
+                    AppliedBuff.Id,
+                    AppliedBuff.SourceAbilityId,
+                    AppliedBuff.SourceEffectIndex);
+            }
+
             // The commit action is now the single, atomic operation of registering the buff.
             // All business logic (stacking, etc.) has already been processed and resulted in this event.
             context.BuffManager.RegisterBuffInstance(this.AppliedBuff, context.CurrentGameState);
             context.CurrentGameState.IncrementBuffRevision();
             context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.AppliedBuff.TargetCardInstanceId);
 
-            // This event does not generate further events.
-            return new DomainOperationResult { Success = true };
+            var suppressionEffects = AppliedBuff.Effects.OfType<AbilitySuppressionBuffEffect>().ToList();
+            if (suppressionEffects.Count > 0)
+            {
+                var abilities = context.AbilityManager.GetAbilitiesForCard(AppliedBuff.TargetCardInstanceId);
+                var suppressedAbilities = AbilitySuppressionEvaluator.CollectSuppressedAbilities(abilities, suppressionEffects);
+                var suppressedIds = suppressedAbilities.Select(ability => ability.RuntimeId).ToList();
+                if (suppressedIds.Count > 0)
+                {
+                    var auraResult = context.AuraManager.UnregisterBySourceAbilities(suppressedIds, context);
+                    result.Merge(auraResult);
+                    if (!auraResult.Success)
+                    {
+                        return auraResult;
+                    }
+                }
+            }
+
+            return result;
         }
     }
 }

@@ -45,20 +45,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var player = targetInfo.Player;
-                    if (player.GraveyardCount < parameters.Amount)
+                    var oldValue = player.GraveyardCount;
+                    if (!player.TryConsumeCounter(PlayerState.GraveyardCounterKey, parameters.Amount))
                     {
                         return new DomainOperationResult { Success = false, ErrorMessage = "Not enough graveyard count to consume." };
                     }
 
-                    player.GraveyardCount = Math.Max(0, player.GraveyardCount - parameters.Amount);
+                    var newValue = player.GraveyardCount;
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new GraveyardUpdatedEvent(player, player.GraveyardCount));
+                    result.GeneratedEvents.Add(new GraveyardUpdatedEvent(player, newValue));
+                    result.GeneratedEvents.Add(new CounterChangedEvent(player, PlayerState.GraveyardCounterKey, oldValue, newValue));
                     return result;
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
-                context.CurrentGameState,
-                context.RequestingPlayerId,
+                context,
                 parameters.PlayerScope);
 
             var serviceResult = _targetProcessingService.ProcessTargets(

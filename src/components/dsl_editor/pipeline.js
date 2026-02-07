@@ -1,23 +1,26 @@
-import { createListQueryNode, createListSortNode, createListTakeNode } from "./core.js";
+import { createListQueryNode, createListSortNode, createListTakeNode, createListDistinctNode, createListSelectNode } from "./core.js";
 
 export const PIPELINE_STAGE_META = {
     source: { label: "来源", dslMethod: null, backendOp: "QueryConfig.SourcePoolExpression" },
-    filter: { label: "筛选", dslMethod: "query", backendOp: "FilterOperation" },
+    filter: { label: "查询", dslMethod: "query", backendOp: "FilterOperation" },
     sort: { label: "排序", dslMethod: "orderBy", backendOp: "SortOperation" },
-    select: { label: "选择", dslMethod: "take", backendOp: "SelectionOperation" },
-    postProcess: { label: "后处理", dslMethod: null, backendOp: "PostProcessingOperation" },
+    take: { label: "取样", dslMethod: "take", backendOp: "SelectionOperation" },
+    distinct: { label: "去重", dslMethod: "distinct", backendOp: "DistinctOperation" },
+    select: { label: "选择", dslMethod: "select", backendOp: "SelectOperation" },
     raw: { label: "原始片段", dslMethod: null, backendOp: null }
 };
 
 export function isListOperationNode(node) {
-    return Boolean(node && (node.type === "listQuery" || node.type === "listSort" || node.type === "listTake"));
+    return Boolean(node && (node.type === "listQuery" || node.type === "listSort" || node.type === "listTake" || node.type === "listDistinct" || node.type === "listSelect"));
 }
 
 export function getStageTypeFromNode(node) {
     if (!node) return null;
     if (node.type === "listQuery") return "filter";
     if (node.type === "listSort") return "sort";
-    if (node.type === "listTake") return "select";
+    if (node.type === "listTake") return "take";
+    if (node.type === "listDistinct") return "distinct";
+    if (node.type === "listSelect") return "select";
     return null;
 }
 
@@ -59,6 +62,8 @@ export function rebuildListChainFromStages(sourceNode, stages) {
 export function createStageNode(stageType, sourceNode) {
     if (stageType === "filter") return createListQueryNode(sourceNode);
     if (stageType === "sort") return createListSortNode(sourceNode);
-    if (stageType === "select") return createListTakeNode(sourceNode);
+    if (stageType === "take") return createListTakeNode(sourceNode);
+    if (stageType === "distinct") return createListDistinctNode(sourceNode);
+    if (stageType === "select") return createListSelectNode(sourceNode);
     return null;
 }

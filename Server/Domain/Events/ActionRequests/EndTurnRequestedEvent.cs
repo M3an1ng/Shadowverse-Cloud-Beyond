@@ -18,8 +18,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("玩家ID", "发起结束回合请求的玩家ID。")]
         public Guid PlayerId { get; }
 
-        public EndTurnRequestedEvent(Guid playerId)
-            : base(EventType.EndTurnRequested)
+        public EndTurnRequestedEvent(Guid playerId, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.EndTurnRequested, eventId, timestamp)
         {
             PlayerId = playerId;
         }
@@ -67,7 +67,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             }
 
             // Generate the two events that represent the full turn transition
-            result.GeneratedEvents.Add(new TurnEndEvent(currentPlayerState));
+            var turnEndEvent = new TurnEndEvent(currentPlayerState);
+            result.GeneratedEvents.Add(turnEndEvent);
             result.GeneratedEvents.Add(new TurnStartEvent(nextPlayerState));
             result.Success = true;
 

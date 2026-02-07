@@ -23,11 +23,6 @@ class ExpressionContext {
         this.editingTarget = node;
         this.operationMode = mode;
         
-        console.log("ExpressionContext: Setting editing target:", {
-            node: node.value,
-            mode: mode,
-            level: this.editingLevel
-        });
     }
 
     /**
@@ -245,15 +240,12 @@ class ExpressionBuilder {
      * 添加操作符到表达式
      */
     addOperator(currentExpression, operator) {
-        console.log("ExpressionBuilder: Adding operator", operator, "to expression:", currentExpression.value);
 
         // 获取最后一个可编辑的节点
         const lastNode = currentExpression.getLastEditableNode();
-        console.log("ExpressionBuilder: Last editable node:", lastNode.value, "type:", lastNode.actualType);
 
         // 基于最后节点的类型和操作符类型决定构建策略
         const strategy = this.determineConstructionStrategy(lastNode, operator);
-        console.log("ExpressionBuilder: Construction strategy:", strategy);
 
         return this.executeConstructionStrategy(currentExpression, lastNode, operator, strategy);
     }
@@ -265,11 +257,6 @@ class ExpressionBuilder {
         const lastNodeType = lastNode.actualType;
         const operatorGroup = this.getOperatorGroup(operator);
 
-        console.log("ExpressionBuilder: Analyzing strategy for:", {
-            lastNodeType: lastNodeType,
-            operatorGroup: operatorGroup,
-            lastNodeValue: lastNode.value
-        });
 
         // 如果最后节点是数值类型，且操作符是比较操作符
         if (lastNodeType === 'Int32' && operatorGroup === 'comparison') {
@@ -305,7 +292,6 @@ class ExpressionBuilder {
      * 扩展最后一个节点
      */
     extendLastNode(currentExpression, lastNode, operator) {
-        console.log("ExpressionBuilder: Extending last node:", lastNode.value);
 
         // 创建新的操作符节点
         const operatorNode = new OperatorNode(operator);
@@ -330,7 +316,6 @@ class ExpressionBuilder {
      * 扩展整个表达式
      */
     extendExpression(currentExpression, operator) {
-        console.log("ExpressionBuilder: Extending entire expression:", currentExpression.value);
 
         // 创建新的操作符节点
         const operatorNode = new OperatorNode(operator);

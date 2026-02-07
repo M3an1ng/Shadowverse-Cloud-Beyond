@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
@@ -6,7 +6,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     /// <summary>
     /// 添加Buff效果参数
     /// </summary>
-    [EffectMetadata("添加Buff", "为目标添加增益效果。使用卡牌目标。")]
     public class AddBuffEffectParams : BaseEffectParams
     {
         /// <summary>

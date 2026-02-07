@@ -48,6 +48,7 @@ export class MetadataDrivenComponent {
             Decimal: '数字',
             Boolean: '布尔',
             String: '文本',
+            NonEntity: '非实体',
             Guid: 'ID',
             DateTime: '时间',
             CardInstance: '卡牌',
@@ -74,7 +75,6 @@ export class MetadataDrivenComponent {
         try {
             this.metadata = await metadataManager.initialize();
             this.isInitialized = true;
-            console.log('MetadataDrivenComponent: Initialized with metadata');
         } catch (error) {
             console.error('MetadataDrivenComponent: Failed to initialize:', error);
             throw error;
@@ -204,7 +204,7 @@ export class MetadataDrivenComponent {
         const input = document.createElement('input');
         input.type = 'number';
         input.className = 'form-input';
-        input.value = value || '';
+        input.value = value ?? '';
 
         if (options.min !== undefined) input.min = options.min;
         if (options.max !== undefined) input.max = options.max;
@@ -236,7 +236,7 @@ export class MetadataDrivenComponent {
         }
         
         input.className = 'form-input';
-        input.value = value || '';
+        input.value = value ?? '';
         
         if (options.placeholder) {
             input.placeholder = options.placeholder;

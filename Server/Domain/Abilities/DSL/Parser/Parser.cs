@@ -2,6 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
 {
@@ -38,7 +39,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             // Errors list is initialized inline now
 
             // 过滤掉空白字符和注释
-            _tokens = _tokens.Where(t => t.Type != TokenType.Whitespace && t.Type != TokenType.Comment).ToList();
+            _tokens = _tokens.Where(t => t.Type != TokenType.Whitespace
+                && t.Type != TokenType.Comment
+                && t.Type != TokenType.Newline).ToList();
         }
 
         // --- Public Entry Points ---
@@ -188,7 +191,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
 
         /// <summary>
         /// 解析完整的能力定义 (顶级入口)
-        /// 语法: ABILITY <name> [TAG <tag>] [TYPE <type>] [TRIGGER ...] [CONDITION ...] [TARGET ...] [EFFECT ...] [PROPERTY ...] END_ABILITY
+        /// 语法: ABILITY <name> [TAG <tag>] [TYPE <type>] [TRIGGER ...] [CONDITION ...] [TARGET ...] [EFFECT ...] [AURA ...] [PROPERTY ...] END_ABILITY
         /// </summary>
         /// <returns>能力的AST根节点，如果解析失败则返回 null</returns>
         public AbilityNode? ParseAbility()
@@ -198,13 +201,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
 
             try
             {
-                Expect(TokenType.AbilityKeyword); // Expect ABILITY keyword
+                ExpectIdentifier("ability"); // Expect ABILITY keyword
                 var abilityNameToken = ExpectIdentifierWithMessage("Expected ability name after ABILITY keyword.");
                 var abilityNode = new AbilityNode { Name = abilityNameToken.Value };
                 abilityNode.Location = ConvertPosition(abilityNameToken.Position); // Initial location
 
                 // Optional TAG
-                if (Match(TokenType.TagKeyword))
+                if (MatchIdentifier("tag"))
                 {
                     var tagToken = ExpectIdentifierWithMessage("Expected tag name after TAG keyword.");
                     abilityNode.Tag = tagToken.Value;
@@ -212,7 +215,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 }
 
                 // Optional TYPE
-                if (Match(TokenType.TypeKeyword))
+                if (MatchIdentifier("type"))
                 {
                     var typeToken = ExpectIdentifierWithMessage("Expected type name after TYPE keyword.");
                     abilityNode.Type = typeToken.Value;
@@ -220,32 +223,36 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 }
 
                 // 解析能力的各个块：TRIGGER, CONDITION, TARGET, EFFECT, PROPERTY
-                while (!Check(TokenType.EndAbilityKeyword) && !IsAtEnd)
+                while (!CheckIdentifier("end_ability") && !IsAtEnd)
                 {
-                    if (Match(TokenType.TriggerKeyword))
+                    if (MatchIdentifier("trigger"))
                     {
                         abilityNode.Trigger = ParseTriggerBlock();
-                        Expect(TokenType.EndTriggerKeyword);
+                        ExpectIdentifier("end_trigger");
                     }
-                    else if (Match(TokenType.ConditionKeyword))
+                    else if (MatchIdentifier("condition"))
                     {
                         abilityNode.Conditions.Add(ParseConditionBlock());
-                        Expect(TokenType.EndConditionKeyword);
+                        ExpectIdentifier("end_condition");
                     }
-                    else if (Match(TokenType.TargetKeyword))
+                    else if (MatchIdentifier("target"))
                     {
                         abilityNode.Targets.Add(ParseTargetBlock());
-                        Expect(TokenType.EndTargetKeyword);
+                        ExpectIdentifier("end_target");
                     }
-                    else if (Match(TokenType.EffectKeyword))
+                    else if (MatchIdentifier("effect"))
                     {
                         abilityNode.Effects.Add(ParseEffectBlock());
-                        Expect(TokenType.EndEffectKeyword);
+                        ExpectIdentifier("end_effect");
                     }
-                    else if (Match(TokenType.PropertyKeyword))
+                    else if (MatchIdentifier("property"))
                     {
                         abilityNode.Properties.Add(ParsePropertyBlock());
-                        Expect(TokenType.EndPropertyKeyword);
+                        ExpectIdentifier("end_property");
+                    }
+                    else if (Match(TokenType.Semicolon))
+                    {
+                        continue;
                     }
                     else
                     {
@@ -254,7 +261,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                     }
                 }
 
-                Expect(TokenType.EndAbilityKeyword); // Expect END_ABILITY keyword
+                ExpectIdentifier("end_ability"); // Expect END_ABILITY keyword
                 // TODO: Update final end location accurately
 
                 if (!IsAtEnd)
@@ -317,7 +324,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             }
 
             // 解析可选的范围、选择方法等
-            while (!Check(TokenType.EndTargetKeyword) && !IsAtEnd)
+            while (!CheckIdentifier("end_target") && !IsAtEnd)
             {
                 if (Match(TokenType.Identifier))
                 {
@@ -364,7 +371,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             }
 
             // 解析可选的目标、数量等
-            while (!Check(TokenType.EndEffectKeyword) && !IsAtEnd)
+            while (!CheckIdentifier("end_effect") && !IsAtEnd)
             {
                 if (Match(TokenType.Identifier))
                 {
@@ -414,26 +421,75 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             return propertyNode;
         }
 
-        /// <summary>
-        /// 解析触发器块的内容
-        /// 语法: EVENT event_type [SCOPE scope] [TIMING timing] [IF condition] [OPTIONAL]
-        /// </summary>
         private TriggerNode ParseTriggerBlock()
         {
             var triggerNode = new TriggerNode();
 
-            // 解析事件类型
-            if (Match(TokenType.EventKeyword))
+            if (MatchIdentifier("event") || MatchIdentifier("on"))
+            {
+                ParseEventTypes(triggerNode, "Expected event type after EVENT keyword.");
+            }
+            else if (Check(TokenType.Identifier) && !IsTriggerOptionKeyword(CurrentToken!.Value))
+            {
+                ParseEventTypes(triggerNode, "Expected event type in trigger block.");
+            }
+            else
+            {
+                AddError("Expected event type in trigger block.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+            }
+
+            var stopKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "end_trigger"
+            };
+            ParseTriggerOptions(triggerNode, stopKeywords, allowEventKeyword: true);
+
+            return triggerNode;
+        }
+
+        private void ParseEventTypes(TriggerNode triggerNode, string errorMessage)
+        {
+            if (!Match(TokenType.Identifier))
+            {
+                AddError(errorMessage, CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                return;
+            }
+
+            triggerNode.EventTypes.Add(Previous().Value);
+            while (Match(TokenType.Comma))
             {
                 if (Match(TokenType.Identifier))
                 {
                     triggerNode.EventTypes.Add(Previous().Value);
                 }
+                else
+                {
+                    AddError("Expected event type after ','.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                    break;
+                }
             }
+        }
 
-            // 解析可选的范围、时序等
-            while (!Check(TokenType.EndTriggerKeyword) && !IsAtEnd)
+        private void ParseTriggerOptions(TriggerNode triggerNode, HashSet<string> stopKeywords, bool allowEventKeyword)
+        {
+            while (!IsAtEnd)
             {
+                if (Match(TokenType.Semicolon))
+                {
+                    break;
+                }
+
+                if (Check(TokenType.Identifier) && stopKeywords.Contains(CurrentToken!.Value))
+                {
+                    break;
+                }
+
+                if (allowEventKeyword && (MatchIdentifier("event") || MatchIdentifier("on")))
+                {
+                    ParseEventTypes(triggerNode, "Expected event type after EVENT keyword.");
+                    continue;
+                }
+
                 if (Match(TokenType.Identifier))
                 {
                     var keyword = Previous().Value.ToLowerInvariant();
@@ -443,9 +499,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                             if (Match(TokenType.Identifier))
                                 triggerNode.Scope = Previous().Value;
                             break;
+                        case "relation":
+                            if (Match(TokenType.Identifier))
+                                triggerNode.Relation = Previous().Value;
+                            break;
                         case "timing":
                             if (Match(TokenType.Identifier))
                                 triggerNode.Timing = Previous().Value;
+                            break;
+                        case "zone":
+                        case "zones":
+                            ParseZoneList(triggerNode);
                             break;
                         case "if":
                             triggerNode.Condition = ParseExpression();
@@ -460,12 +524,51 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 }
                 else
                 {
-                    break; // 退出循环，让外层处理
+                    break;
                 }
             }
-
-            return triggerNode;
         }
+
+        private void ParseZoneList(TriggerNode triggerNode)
+        {
+            if (!Match(TokenType.Identifier))
+            {
+                AddError("Expected zone name after ZONE keyword.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                return;
+            }
+
+            triggerNode.Zones.Add(Previous().Value);
+            while (Match(TokenType.Comma))
+            {
+                if (Match(TokenType.Identifier))
+                {
+                    triggerNode.Zones.Add(Previous().Value);
+                }
+                else
+                {
+                    AddError("Expected zone name after ','.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                    break;
+                }
+            }
+        }
+
+        private static bool IsTriggerOptionKeyword(string value)
+        {
+            switch (value.ToLowerInvariant())
+            {
+                case "scope":
+                case "relation":
+                case "timing":
+                case "zone":
+                case "zones":
+                case "if":
+                case "optional":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         // --- Clause Parsing Helpers (New for Target Expressions) ---
 
         /// <summary>
@@ -731,7 +834,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         {
             var expr = ParseTerm();
 
-            while (Match(TokenType.SetIntersect))
+            while (Match(TokenType.SetIntersect, TokenType.SetDifference))
             {
                 var opToken = Previous();
                 var right = ParseTerm();
@@ -776,7 +879,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         {
             var expr = ParseUnary();
 
-            while (Match(TokenType.Multiply, TokenType.Divide, TokenType.Modulo))
+            while (Match(TokenType.Multiply, TokenType.Divide, TokenType.DivideCeil, TokenType.Modulo))
             {
                 var opToken = Previous(); // Get the token
                 var right = ParseUnary();
@@ -852,6 +955,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         /// </summary>
         private ExpressionNode FinishCall(ExpressionNode callee)
         {
+            if (callee is MemberAccessNode memberAccess && IsQueryMethod(memberAccess.Member.Name))
+            {
+                return ParseQueryMethodCall(memberAccess);
+            }
+
             var arguments = new List<ExpressionNode>();
 
             if (!Check(TokenType.RightParen))
@@ -873,19 +981,208 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 };
             }
 
-            if (callee is MemberAccessNode memberAccess)
+            if (callee is MemberAccessNode memberAccessCall)
             {
                 // Treat member calls like list.find(x) as find(list, x)
-                var callArguments = new List<ExpressionNode> { memberAccess.Target };
+                var callArguments = new List<ExpressionNode> { memberAccessCall.Target };
                 callArguments.AddRange(arguments);
                 return new FunctionCallNode
                 {
-                    FunctionName = memberAccess.Member.Name,
+                    FunctionName = memberAccessCall.Member.Name,
                     Arguments = callArguments
                 };
             }
 
             throw new ParseException("Invalid function call");
+        }
+
+        private static bool IsQueryMethod(string name)
+        {
+            return name.Equals("query", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("orderby", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("take", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("distinct", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("select", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private ExpressionNode ParseQueryMethodCall(MemberAccessNode memberAccess)
+        {
+            var methodName = memberAccess.Member.Name;
+            var source = memberAccess.Target;
+
+            if (methodName.Equals("query", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Check(TokenType.RightParen))
+                {
+                    AddError("Query operation requires a filter expression.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                    Expect(TokenType.RightParen);
+                    return new QueryFilterNode
+                    {
+                        Source = source,
+                        Filter = new LiteralNode { Value = true, DataType = "boolean" }
+                    };
+                }
+
+                var filterExpression = ParseExpression();
+                Expect(TokenType.RightParen);
+                return new QueryFilterNode
+                {
+                    Source = source,
+                    Filter = filterExpression
+                };
+            }
+
+            if (methodName.Equals("orderby", StringComparison.OrdinalIgnoreCase))
+            {
+                var orderings = ParseOrderByArguments();
+                Expect(TokenType.RightParen);
+                return new QueryOrderByNode
+                {
+                    Source = source,
+                    Orderings = orderings
+                };
+            }
+
+            if (methodName.Equals("take", StringComparison.OrdinalIgnoreCase))
+            {
+                var selection = ParseTakeArguments();
+                Expect(TokenType.RightParen);
+                return new QueryTakeNode
+                {
+                    Source = source,
+                    Selection = selection
+                };
+            }
+
+            if (methodName.Equals("distinct", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Check(TokenType.RightParen))
+                {
+                    AddError("Distinct operation requires a key expression.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                    Expect(TokenType.RightParen);
+                    return new QueryDistinctNode
+                    {
+                        Source = source,
+                        KeySelector = new LiteralNode { Value = null, DataType = "null" }
+                    };
+                }
+
+                var keyExpression = ParseExpression();
+                Expect(TokenType.RightParen);
+                return new QueryDistinctNode
+                {
+                    Source = source,
+                    KeySelector = keyExpression
+                };
+            }
+
+            if (methodName.Equals("select", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Check(TokenType.RightParen))
+                {
+                    AddError("Select operation requires a projection expression.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                    Expect(TokenType.RightParen);
+                    return new QuerySelectNode
+                    {
+                        Source = source,
+                        Selector = new LiteralNode { Value = null, DataType = "null" }
+                    };
+                }
+
+                var selectorExpression = ParseExpression();
+                Expect(TokenType.RightParen);
+                return new QuerySelectNode
+                {
+                    Source = source,
+                    Selector = selectorExpression
+                };
+            }
+
+
+            throw new ParseException($"Unsupported query method: {methodName}");
+        }
+
+        private List<OrderingTerm> ParseOrderByArguments()
+        {
+            var orderings = new List<OrderingTerm>();
+
+            if (Check(TokenType.RightParen))
+            {
+                AddError("OrderBy operation requires at least one ordering expression.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                return orderings;
+            }
+
+            do
+            {
+                var expression = ParseExpression();
+                var direction = OrderingDirection.Ascending;
+
+                if (Match(TokenType.Identifier, "desc"))
+                {
+                    direction = OrderingDirection.Descending;
+                }
+                else if (Match(TokenType.Identifier, "asc"))
+                {
+                    direction = OrderingDirection.Ascending;
+                }
+
+                orderings.Add(new OrderingTerm
+                {
+                    Expression = expression,
+                    Direction = direction
+                });
+            } while (Match(TokenType.Comma));
+
+            return orderings;
+        }
+
+        private SelectionTerm ParseTakeArguments()
+        {
+            if (Check(TokenType.RightParen))
+            {
+                AddError("Take operation requires a count expression.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                return new SelectionTerm
+                {
+                    Strategy = SelectionStrategy.First,
+                    CountExpression = new LiteralNode { Value = 1, DataType = "number" }
+                };
+            }
+
+            var strategy = SelectionStrategy.First;
+            ExpressionNode? countExpression = null;
+
+            if (Match(TokenType.Identifier, "random"))
+            {
+                strategy = SelectionStrategy.Random;
+            }
+            else if (Match(TokenType.Identifier, "last"))
+            {
+                strategy = SelectionStrategy.Last;
+            }
+            else if (Match(TokenType.Identifier, "first"))
+            {
+                strategy = SelectionStrategy.First;
+            }
+            else if (Match(TokenType.Identifier, "all"))
+            {
+                strategy = SelectionStrategy.All;
+            }
+
+            if (strategy != SelectionStrategy.All)
+            {
+                countExpression = ParseExpression();
+                if (countExpression == null)
+                {
+                    AddError("Take operation requires a count expression.", CurrentToken?.Position ?? new TokenPosition(0, 0, 0));
+                    countExpression = new LiteralNode { Value = 1, DataType = "number" };
+                }
+            }
+
+            return new SelectionTerm
+            {
+                Strategy = strategy,
+                CountExpression = countExpression
+            };
         }
 
         /// <summary>
@@ -932,6 +1229,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 };
             }
 
+            if (Match(TokenType.LeftBracket))
+            {
+                return ParseListLiteralNode();
+            }
+
             if (Match(TokenType.Identifier))
             {
                 var token = Previous();
@@ -946,10 +1248,80 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             {
                 var expr = ParseExpression();
                 Expect(TokenType.RightParen);
-                return expr;
+                return new ParenthesizedExpressionNode
+                {
+                    Inner = expr,
+                    DataType = expr.DataType
+                };
             }
 
             throw new ParseException($"Unexpected token: {CurrentToken?.Type.ToString() ?? "EOF"}");
+        }
+
+        private LiteralNode ParseListLiteralNode()
+        {
+            var elements = new List<string>();
+
+            if (!Check(TokenType.RightBracket))
+            {
+                while (true)
+                {
+                    var elementTokens = new List<Token>();
+                    while (!Check(TokenType.Comma) && !Check(TokenType.RightBracket) && !IsAtEnd)
+                    {
+                        elementTokens.Add(CurrentToken!);
+                        Advance();
+                    }
+
+                    elements.Add(BuildListLiteralElement(elementTokens));
+
+                    if (Match(TokenType.Comma))
+                    {
+                        continue;
+                    }
+
+                    break;
+                }
+            }
+
+            Expect(TokenType.RightBracket);
+
+            var allInt = elements.Count > 0 && elements.All(e => int.TryParse(e, out _));
+            if (allInt)
+            {
+                var ints = elements.Select(int.Parse).ToList();
+                return new LiteralNode
+                {
+                    Value = ints,
+                    DataType = "list<int32>"
+                };
+            }
+
+            return new LiteralNode
+            {
+                Value = elements,
+                DataType = "list<string>"
+            };
+        }
+
+        private static string BuildListLiteralElement(List<Token> tokens)
+        {
+            if (tokens.Count == 0) return string.Empty;
+
+            var builder = new StringBuilder();
+            foreach (var token in tokens)
+            {
+                if (token.Type == TokenType.String)
+                {
+                    builder.Append(token.ParsedValue?.ToString() ?? string.Empty);
+                }
+                else
+                {
+                    builder.Append(token.Value);
+                }
+            }
+
+            return builder.ToString().Trim();
         }
 
         // 辅助方法
@@ -961,6 +1333,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
                 return true;
             }
             return false;
+        }
+
+        private bool MatchIdentifier(string value)
+        {
+            return Match(TokenType.Identifier, value);
         }
 
         private bool CheckIdentifier(string value)

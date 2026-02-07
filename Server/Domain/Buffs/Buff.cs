@@ -26,6 +26,21 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary> The ID of the ability instance that created this buff. </summary>
         public Guid SourceAbilityId { get; init; }
 
+        /// <summary> Index of the effect within the source ability that created this buff. </summary>
+        public int? SourceEffectIndex { get; set; }
+
+        /// <summary> Non-stackable key for replacement scope; null/empty means stackable. </summary>
+        public string? EffectKey { get; set; }
+
+        /// <summary> The ID of the source card instance, if available. </summary>
+        public Guid? SourceCardInstanceId { get; set; }
+
+        /// <summary> Cached source card name for UI summaries when abilities are no longer available. </summary>
+        public string? SourceCardName { get; set; }
+
+        /// <summary> Cached source ability name for UI summaries when abilities are no longer available. </summary>
+        public string? SourceAbilityName { get; set; }
+
         /// <summary> The ID of the card instance this buff is applied to. </summary>
         public Guid TargetCardInstanceId { get; init; }
 
@@ -39,8 +54,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary> Specifies how long the buff lasts or how it gets removed. </summary>
         public DurationType DurationType { get; init; } = DurationType.Permanent;
 
-        /// <summary> Parameter associated with the duration type (e.g., number of turns, specific event name). </summary>
-        public object? DurationParameter { get; init; }
+        /// <summary> Parameter associated with the duration type (e.g., number of turns). </summary>
+        public int? DurationParameter { get; set; }
 
         /// <summary> Optional trigger condition that can cause the buff to be removed. </summary>
         public TriggerConfig? RemovalTrigger { get; init; }
@@ -48,13 +63,10 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary> Optional condition that must be met for the RemovalTrigger to actually remove the buff. </summary>
         public ConditionConfig? RemovalCondition { get; init; }
 
-        /// <summary> 指示此Buff是否不可叠加。当为true时，相同源的新Buff会替换此Buff。 </summary>
-        public bool IsNonStackable { get; init; } = false;
-
         // --- Applicability Condition (for Conditional/Aura Buffs) ---
         /// <summary>
-        /// If not null, the buff's effects are only applied when this condition evaluates to true in the current game context.
-        /// Checked during state calculation.
+        /// Deprecated: ApplicabilityCondition is no longer evaluated at runtime.
+        /// Conditional buffs should be implemented via aura refresh logic instead.
         /// </summary>
         public ConditionConfig? ApplicabilityCondition { get; init; }
 
@@ -73,11 +85,10 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<IBuffEffect> effects,
             string? definitionId = null, // Added optional definitionId
             DurationType durationType = DurationType.Permanent, // Allow setting duration etc. via constructor
-            object? durationParameter = null,
+            int? durationParameter = null,
             TriggerConfig? removalTrigger = null,
             ConditionConfig? removalCondition = null,
-            ConditionConfig? applicabilityCondition = null,
-            bool isNonStackable = false)
+            ConditionConfig? applicabilityCondition = null)
         {
             // Guid.Empty is a valid "No-Source" marker for system-generated buffs.
             SourceAbilityId = sourceAbilityId;
@@ -90,7 +101,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             RemovalTrigger = removalTrigger;
             RemovalCondition = removalCondition;
             ApplicabilityCondition = applicabilityCondition;
-            IsNonStackable = isNonStackable;
         }
 
         // --- Helper methods to access specific effect types ---

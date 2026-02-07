@@ -17,6 +17,7 @@ using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using AutoMapper; // Added for IMapper
 using ShadowverseBeyond.Server.Services.Abstractions; // 【修复】添加IGameDataProvider
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
@@ -132,9 +133,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.PlayCard => ConvertPlayCardEvent(gameEvent),
                     EventType.Summon => ConvertSummonEvent(gameEvent),
                     EventType.Damage => ConvertDamageEvent(gameEvent),
+                    EventType.Heal => ConvertHealEvent(gameEvent),
                     EventType.Destroy => ConvertCardDestroyedEvent(gameEvent),
                     EventType.Evolve => ConvertEvolveEvent(gameEvent),
-                    EventType.Draw => ConvertDrawEvent(gameEvent, context),
+                    EventType.Draw => ConvertDrawEvent(gameEvent),
                     EventType.TurnStart => ConvertTurnStartEvent(gameEvent, context),
                     EventType.TurnEnd => ConvertTurnEndEvent(gameEvent, context),
                     EventType.AbilityTriggered => ConvertAbilityTriggeredEvent(gameEvent),
@@ -144,6 +146,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.SilenceRemoved => ConvertSilenceRemovedEvent(gameEvent),
                     EventType.MulliganCompleted => ConvertMulliganCompletedEvent(gameEvent),
                     EventType.HandUpdated => ConvertHandUpdatedEvent(gameEvent),
+                    EventType.CardInstanceUpdated => ConvertCardInstanceUpdatedEvent(gameEvent),
                     EventType.PpUpdated => ConvertPpUpdateEvent(gameEvent),
                     EventType.PpMaxUpdated => ConvertPpMaxUpdateEvent(gameEvent),
                     EventType.PpBoostStateUpdated => ConvertPpBoostStateUpdatedEvent(gameEvent),
@@ -152,7 +155,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.SepUpdated => ConvertSepUpdateEvent(gameEvent),
                     EventType.SepMaxUpdated => ConvertSepMaxUpdateEvent(gameEvent),
                     EventType.GraveyardUpdated => ConvertGraveyardUpdatedEvent(gameEvent),
+                    EventType.DeckUpdated => ConvertDeckUpdatedEvent(gameEvent),
+                    EventType.CounterChanged => ConvertCounterChangedEvent(gameEvent),
+                    EventType.Vanish => ConvertVanishEvent(gameEvent),
+                    EventType.Return => ConvertReturnEvent(gameEvent),
                     EventType.GameEnd => ConvertGameEndEvent(gameEvent),
+                    EventType.AddEmblem => ConvertAddEmblemEvent(gameEvent),
                     // 【重复伤害修复】Action Request Events - 不转换为DTO，避免重复广播
                     // 这些事件只是请求事件，不应该直接转换为DTO
                     // 它们会生成真正的领域事件（如HandUpdatedEvent、SummonEvent等），这些领域事件才应该转换为DTO
@@ -163,6 +171,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.SuperEvolveRequested => null,
                     EventType.PlayCardRequested => null,
                     EventType.PpBoostRequested => null,
+                    EventType.CombatResolution => null,
                     // Keyword Events - 关键字事件转换
                     EventType.KeywordApplied => ConvertKeywordAddedEvent(gameEvent),
                     EventType.KeywordRemoved => ConvertKeywordRemovedEvent(gameEvent),
@@ -224,10 +233,26 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return new DamageDealtEventDto(
                 sourcePlayerId,
                 targetCard.InstanceId,
-                e.Damage,
+                e.ActualDamage,
                 targetCard.OwnerPlayerId,
                 e.Source?.Card?.InstanceId,
                 "Effect" // TODO: The source of damage (e.g., "Attack", "Effect") should come from the event.
+            );
+        }
+
+        private GameEventDto? ConvertHealEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not HealEvent e || e.Target.FirstOrDefault()?.Card == null) return null;
+            var targetCard = e.Target.FirstOrDefault()!.Card;
+            var sourcePlayerId = e.Source?.Player?.PlayerId ?? targetCard.OwnerPlayerId;
+
+            return new HealAppliedEventDto(
+                sourcePlayerId,
+                targetCard.InstanceId,
+                e.HealAmount,
+                targetCard.OwnerPlayerId,
+                e.Source?.Card?.InstanceId,
+                "Effect"
             );
         }
 
@@ -235,6 +260,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             if (gameEvent is not DestroyEvent e || e.Target.FirstOrDefault()?.Card == null) return null;
             var targetCard = e.Target.FirstOrDefault()!.Card;
+            if (targetCard.CurrentZone != CardZone.Graveyard)
+            {
+                return null;
+            }
             return new UnitDestroyedEventDto(
                 targetCard.OwnerPlayerId, // The owner of the card that was destroyed
                 targetCard.InstanceId,
@@ -243,48 +272,57 @@ namespace ShadowverseBeyond.Server.Domain.Events
             );
         }
 
+        private GameEventDto? ConvertVanishEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not CardVanishedEvent e || e.VanishedCard == null) return null;
+            var card = e.VanishedCard;
+            var sourcePlayerId = card.OwnerPlayerId;
+
+            return new CardVanishedEventDto(
+                sourcePlayerId,
+                card.InstanceId,
+                card.OwnerPlayerId,
+                e.VanishReason ?? "Unknown"
+            );
+        }
+
+        private GameEventDto? ConvertReturnEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not ReturnEvent e || e.ReturnedCard == null) return null;
+            var card = e.ReturnedCard;
+            var playerId = e.Source?.Player?.PlayerId ?? card.OwnerPlayerId;
+            var cardDto = _mapper.Map<CardInstanceDto>(card);
+
+            return new CardReturnedDto(
+                sourcePlayerId: playerId,
+                playerId: playerId,
+                cardUid: card.InstanceId,
+                returnedCard: cardDto,
+                reason: e.Reason
+            );
+        }
+
         private GameEventDto? ConvertEvolveEvent(IGameEvent gameEvent)
         {
             if (gameEvent is not EvolveEvent e) return null;
-            if (e.Source?.Card == null) return null;
-            var cardDto = _mapper.Map<CardInstanceDto>(e.Source.Card);
+            var evolvedCard = e.EvolvedCard;
+            if (evolvedCard == null) return null;
+            var cardDto = _mapper.Map<CardInstanceDto>(evolvedCard);
             if (cardDto == null)
             {
-                return new ErrorOccurredEventDto(e.Source.Card.OwnerPlayerId, "Cannot convert EvolveEvent to DTO: EvolvedCard could not be mapped.");
+                return new ErrorOccurredEventDto(evolvedCard.OwnerPlayerId, "Cannot convert EvolveEvent to DTO: EvolvedCard could not be mapped.");
             }
             return new UnitEvolvedEventDto(
-                e.Source.Card.OwnerPlayerId,
+                evolvedCard.OwnerPlayerId,
                 cardDto
             );
         }
 
-        private GameEventDto? ConvertDrawEvent(IGameEvent gameEvent, GameContext context)
+        private GameEventDto? ConvertDrawEvent(IGameEvent gameEvent)
         {
-            if (gameEvent is not DrawEvent e) return null;
-            // This is a temporary solution. A single DrawEvent can represent multiple cards,
-            // but the current DTO infrastructure only supports broadcasting one card draw at a time.
-            // This should be refactored to have a `CardsDrawnEventDto` that takes a list.
-            // For now, we are forced to send multiple events or just one. We will send one for the first card.
-            var firstCardId = e.DrawnCardInstanceIds.FirstOrDefault();
-            if (firstCardId == Guid.Empty)
-            {
-                _logger.LogWarning("DrawEvent has no drawn card instance IDs.");
-                return null;
-            }
-
-            var cardInstance = context.CurrentGameState.FindCardInstance(firstCardId);
-            if (cardInstance == null)
-            {
-                _logger.LogWarning("Could not find drawn card with instance ID {CardId} in game state.", firstCardId);
-                return null;
-            }
-
-            if (e.Source?.Player == null) return null;
-            return new CardDrawnEventDto(
-                e.Source.Player.PlayerId,
-                firstCardId.ToString(),
-                cardInstance.CurrentDefinitionId.ToString()
-            );
+            if (gameEvent is not DrawEvent) return null;
+            // DrawEvent uses the log announcement for client-facing output; skip per-card DTOs.
+            return null;
         }
 
         private GameEventDto? ConvertTurnStartEvent(IGameEvent gameEvent, GameContext context)
@@ -363,8 +401,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     buff.DefinitionId,
                     ExtractBuffType(buff),
                     buff.DurationType.ToString(),
-                    buff.DurationParameter,
-                    buff.IsNonStackable
+                    buff.DurationParameter
                 );
             }
 
@@ -390,8 +427,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     buffRemovedEvent.RemovalReason,
                     sourceAbility?.SourceCardId,
                     buff.DefinitionId,
-                    ExtractBuffType(buff),
-                    buff.IsNonStackable
+                    ExtractBuffType(buff)
                 );
             }
 
@@ -512,6 +548,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var handDtos = _mapper.Map<List<CardInstanceDto>>(updatedHand);
 
             return new HandUpdatedEventDto(playerId, handDtos);
+        }
+
+        private GameEventDto? ConvertCardInstanceUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not CardInstanceUpdatedEvent e) return null;
+
+            var updatedCards = _mapper.Map<List<CardInstanceDto>>(e.UpdatedCards);
+            return new CardInstanceUpdatedEventDto(Guid.Empty, updatedCards);
         }
 
         private GameEventDto? ConvertPpUpdateEvent(IGameEvent gameEvent)
@@ -689,6 +733,55 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 e.NewGraveyardCount,
                 null // destroyedCardDto is optional and can be null
             );
+        }
+
+        private GameEventDto? ConvertDeckUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not DeckCountChangedEvent e) return null;
+            if (e.Source?.Player == null) return null;
+
+            return new DeckUpdateEventDto(
+                e.Source.Player.PlayerId,
+                e.NewDeckCount
+            );
+        }
+
+        private GameEventDto? ConvertCounterChangedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not CounterChangedEvent e) return null;
+            var sourcePlayerId = e.Source?.Player?.PlayerId
+                ?? e.Source?.Card?.OwnerPlayerId
+                ?? Guid.Empty;
+            var targetPlayerId = e.Source?.Player?.PlayerId;
+            var targetCardId = e.Source?.Card?.InstanceId;
+
+            return new CounterChangedEventDto(
+                sourcePlayerId,
+                targetCardId,
+                targetPlayerId,
+                e.CounterName,
+                e.OldValue,
+                e.NewValue);
+        }
+
+        private GameEventDto? ConvertAddEmblemEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not AddEmblemEvent e) return null;
+            var player = e.TargetPlayer;
+            if (player == null) return null;
+
+            var addedEmblems = e.CardsToAdd
+                .Where(card => card != null)
+                .Select(card => _mapper.Map<CardInstanceDto>(card))
+                .Where(cardDto => cardDto != null)
+                .ToList();
+
+            if (addedEmblems.Count == 0)
+            {
+                return null;
+            }
+
+            return new EmblemUpdatedEventDto(player.PlayerId, addedEmblems);
         }
 
         private GameEventDto? ConvertAttackStateUpdatedEvent(IGameEvent gameEvent)

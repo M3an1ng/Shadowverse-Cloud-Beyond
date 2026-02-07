@@ -62,6 +62,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
 
         public override string ToString()
         {
+            if (Value is IEnumerable<string> stringList)
+            {
+                return $"Literal([{string.Join(",", stringList)}])";
+            }
             return $"Literal({Value})";
         }
     }
@@ -209,6 +213,45 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.AST
             // Use default enum ToString() for now
             var opStr = Operator.ToString();
             return IsPrefix ? $"{opStr}{Operand}" : $"{Operand}{opStr}";
+        }
+    }
+
+    /// <summary>
+    /// 括号表达式节点
+    /// 表示显式括号包裹的表达式
+    /// </summary>
+    public class ParenthesizedExpressionNode : ExpressionNode
+    {
+        public override string NodeType => "ParenthesizedExpression";
+
+        /// <summary>
+        /// 括号内的表达式
+        /// </summary>
+        public ExpressionNode Inner { get; set; } = new LiteralNode();
+
+        public override bool IsConstant => Inner.IsConstant;
+
+        public override List<AstNode> Children => new() { Inner };
+
+        public override T Accept<T>(IAstVisitor<T> visitor)
+        {
+            return visitor.VisitParenthesizedExpression(this);
+        }
+
+        public override AstNode Clone()
+        {
+            return new ParenthesizedExpressionNode
+            {
+                Inner = this.Inner.Clone() as ExpressionNode ?? new LiteralNode(),
+                DataType = this.DataType,
+                Location = this.Location,
+                Metadata = new Dictionary<string, object>(this.Metadata)
+            };
+        }
+
+        public override string ToString()
+        {
+            return $"({Inner})";
         }
     }
 

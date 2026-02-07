@@ -28,6 +28,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public List<PlayerStateDto> Players { get; set; } = new(); // State for both players
 
         public string? GameMessage { get; set; } // Optional message for the UI (e.g., "Player 1's Turn")
+        public int TurnTimeoutSeconds { get; set; }
+        public DateTime? TurnStartedAtUtc { get; set; }
+        public DateTime? TurnEndsAtUtc { get; set; }
         public bool IsGameOver { get; set; } // Flag indicating game end
         public string? WinnerId { get; set; } // ID of the winner if game is over
 
@@ -70,6 +73,10 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
             // Search in graveyard
             var graveyardCardDto = player.Graveyard.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
             if (graveyardCardDto != null) return graveyardCardDto;
+
+            // Search in emblem
+            var emblemCardDto = player.Emblem.FirstOrDefault(c => c.InstanceId.ToString() == instanceId);
+            if (emblemCardDto != null) return emblemCardDto;
 
             // Search leader card
             if (player.LeaderCard?.InstanceId.ToString() == instanceId)

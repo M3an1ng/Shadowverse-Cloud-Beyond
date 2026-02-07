@@ -28,5 +28,6 @@ namespace ShadowverseBeyond.Server.Dtos
         public string Description { get; set; } = string.Empty;
         public string TypeName { get; set; } = string.Empty;
         public GameEventParameterScope Scope { get; set; } = GameEventParameterScope.Both;
+        public string? DslDisplayTypeName { get; set; }
     }
 }

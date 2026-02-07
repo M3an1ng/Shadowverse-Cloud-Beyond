@@ -40,11 +40,14 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
      */
     render(container, valueConfig = null, onChange = () => {}, options = {}) {
         this.container = container;
-        this.valueConfig = this.normalizeValueConfig(valueConfig);
         this.onChange = onChange;
         this.options = options;
+        this.usePlaceholder = options?.usePlaceholder === true;
+        this.placeholderValue = options?.placeholderValue;
         this.expectedType = this.normalizeExpectedType(options.parameterType || options.expectedType);
         this.triggeringEventContext = options.triggeringEventContext || null;
+        this.valueConfig = this.normalizeValueConfig(valueConfig);
+        this.coerceValueConfigForDisplay();
         // 首次渲染时缓存当前配置，便于外部直接读取
         if (this.container) {
             try {
@@ -55,10 +58,6 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
             }
         }
 
-        console.log('ValueConfigEditor: Rendering with valueConfig:', {
-            original: valueConfig,
-            normalized: this.valueConfig
-        });
 
         this.clearContainer(container);
         this.renderEditor();
@@ -80,20 +79,54 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
      */
     normalizeValueConfig(valueConfig) {
         if (!valueConfig) {
+            if (this.usePlaceholder) {
+                return {
+                    $type: 'StaticValueConfig',
+                    Value: null
+                };
+            }
             return this.createDefaultValueConfig();
         }
 
-        // 如果是旧格式的{value: 1}，转换为StaticValueConfig
-        if (valueConfig.value !== undefined && !valueConfig.$type) {
+        // 如果是旧格式的纯值或非对象，转换为StaticValueConfig
+        if (typeof valueConfig !== 'object') {
             return {
                 $type: 'StaticValueConfig',
-                Value: valueConfig.value
+                Value: valueConfig
             };
         }
 
-        // 如果已经是正确格式，直接返回
-        if (valueConfig.$type) {
-            return valueConfig;
+        const rawType = valueConfig.$type;
+        const hasType = typeof rawType === 'string' && rawType.length > 0;
+        const rawValue = valueConfig.Value ?? valueConfig.value;
+        const rawFormula = valueConfig.Formula ?? valueConfig.formula;
+
+        // 如果是旧格式的{value: 1} 或 {Value: 1}，转换为StaticValueConfig
+        if (!hasType && rawValue !== undefined) {
+            return {
+                $type: 'StaticValueConfig',
+                Value: rawValue
+            };
+        }
+
+        // 如果是旧格式的{formula: "..."} 或 {Formula: "..."}，转换为FormulaValueConfig
+        if (!hasType && rawFormula !== undefined) {
+            return {
+                $type: 'FormulaValueConfig',
+                Formula: rawFormula
+            };
+        }
+
+        // 如果已经有$type，补齐大小写不一致的字段
+        if (hasType) {
+            const normalized = { ...valueConfig };
+            if (rawValue !== undefined && normalized.Value === undefined) {
+                normalized.Value = rawValue;
+            }
+            if (rawFormula !== undefined && normalized.Formula === undefined) {
+                normalized.Formula = rawFormula;
+            }
+            return normalized;
         }
 
         // 其他情况，创建默认配置
@@ -193,7 +226,7 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
 
         const currentValue = this.valueConfig.Value;
         const inferredKind = this.getStaticInputKindForType(this.expectedType);
-        const valueType = inferredKind || typeof currentValue;
+        const valueType = inferredKind || (currentValue == null ? 'number' : typeof currentValue);
 
         // 如果外部给了 expectedType，则固定静态输入类型，避免用户选择与参数真实类型冲突
         if (!inferredKind) {
@@ -217,7 +250,11 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         }
 
         // 值输入控件
-        const valueInput = this.createStaticValueInput(currentValue, valueType);
+        const placeholderText = this.usePlaceholder && this.placeholderValue !== undefined
+            ? String(this.placeholderValue)
+            : undefined;
+        const displayValue = this.usePlaceholder ? null : currentValue;
+        const valueInput = this.createStaticValueInput(displayValue, valueType, placeholderText);
         const valueGroup = this.createFormGroup('值', valueInput);
         container.appendChild(valueGroup);
 
@@ -227,11 +264,11 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
     /**
      * 创建静态值输入控件
      */
-    createStaticValueInput(value, valueType) {
+    createStaticValueInput(value, valueType, placeholder) {
         if (valueType === 'number') {
             return this.createNumberInput(value, (newValue) => {
                 this.updateValueConfig({ Value: newValue });
-            });
+            }, { placeholder });
         } else if (valueType === 'boolean') {
             return this.createCheckbox(value, (newValue) => {
                 this.updateValueConfig({ Value: newValue });
@@ -239,7 +276,7 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         } else {
             return this.createTextInput(value, (newValue) => {
                 this.updateValueConfig({ Value: newValue });
-            });
+            }, { placeholder });
         }
     }
 
@@ -288,6 +325,83 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         return container;
     }
 
+    coerceValueConfigForDisplay() {
+        if (!this.valueConfig || this.valueConfig.$type !== 'FormulaValueConfig') {
+            return;
+        }
+
+        const rawFormula = String(this.valueConfig.Formula ?? '').trim();
+        if (!rawFormula) {
+            return;
+        }
+
+        const formula = this.stripWrappingParens(rawFormula);
+        const literal = this.tryParseLiteral(formula);
+        if (!literal) {
+            return;
+        }
+
+        const expectedKind = this.getLiteralKindForExpectedType(this.expectedType);
+        if (expectedKind && expectedKind !== literal.kind) {
+            return;
+        }
+
+        this.valueConfig = {
+            $type: 'StaticValueConfig',
+            Value: literal.value
+        };
+    }
+
+    getLiteralKindForExpectedType(typeName) {
+        const t = this.normalizeExpectedType(typeName);
+        if (!t) return null;
+        if (['Int32', 'Int64', 'Single', 'Double', 'Decimal', 'Number'].includes(t)) return 'number';
+        if (t === 'Boolean') return 'boolean';
+        if (t === 'String') return 'string';
+        return null;
+    }
+
+    stripWrappingParens(text) {
+        let value = text.trim();
+        while (value.startsWith('(') && value.endsWith(')')) {
+            let depth = 0;
+            let isWrapped = true;
+            for (let i = 0; i < value.length; i += 1) {
+                const ch = value[i];
+                if (ch === '(') depth += 1;
+                if (ch === ')') depth -= 1;
+                if (depth === 0 && i < value.length - 1) {
+                    isWrapped = false;
+                    break;
+                }
+            }
+            if (!isWrapped) break;
+            value = value.slice(1, -1).trim();
+        }
+        return value;
+    }
+
+    tryParseLiteral(text) {
+        if (this.isNumericLiteral(text)) {
+            return { kind: 'number', value: Number(text) };
+        }
+        if (this.isBooleanLiteral(text)) {
+            return { kind: 'boolean', value: text.toLowerCase() === 'true' };
+        }
+        if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+            const quote = text[0];
+            if (quote === '"') {
+                try {
+                    return { kind: 'string', value: JSON.parse(text) };
+                } catch {
+                    return { kind: 'string', value: text.slice(1, -1) };
+                }
+            }
+            return { kind: 'string', value: text.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\") };
+        }
+        return null;
+    }
+
     /**
      * 改变ValueConfig类型
      */
@@ -296,10 +410,23 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
 
         if (newType === 'StaticValueConfig') {
             const kind = this.getStaticInputKindForType(this.expectedType);
-            const defaultValue =
-                kind === 'boolean' ? false :
-                kind === 'string' ? '' :
-                0;
+            let defaultValue;
+            if (this.valueConfig?.$type === 'FormulaValueConfig') {
+                const formula = String(this.valueConfig.Formula ?? '').trim();
+                if (kind === 'number' && this.isNumericLiteral(formula)) {
+                    defaultValue = Number(formula);
+                } else if (kind === 'boolean' && this.isBooleanLiteral(formula)) {
+                    defaultValue = formula.toLowerCase() === 'true';
+                } else if (kind === 'string' && formula) {
+                    defaultValue = formula;
+                }
+            }
+            if (defaultValue === undefined) {
+                defaultValue =
+                    kind === 'boolean' ? false :
+                    kind === 'string' ? '' :
+                    0;
+            }
             newValueConfig = {
                 $type: 'StaticValueConfig',
                 Value: defaultValue
@@ -314,6 +441,17 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         this.valueConfig = newValueConfig;
         this.notifyChange();
         this.renderEditor(); // 重新渲染编辑器
+    }
+
+    isNumericLiteral(text) {
+        if (!text) return false;
+        return /^-?\d+(\.\d+)?$/.test(text);
+    }
+
+    isBooleanLiteral(text) {
+        if (!text) return false;
+        const normalized = text.toLowerCase();
+        return normalized === 'true' || normalized === 'false';
     }
 
     /**
@@ -345,7 +483,6 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
      * 通知变化
      */
     notifyChange() {
-        console.log('ValueConfigEditor: Value changed:', this.valueConfig);
         // 缓存到容器数据集/引用，方便外部直接读取
         if (this.container) {
             try {

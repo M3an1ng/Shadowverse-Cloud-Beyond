@@ -14,14 +14,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("调度完成", "当玩家完成调度操作时触发的事件。", EventType.MulliganCompleted)]
     public class MulliganCompletedEvent : GameEventBase, ICommittableEvent
     {
-        [GameEventParameter("换牌玩家", "执行换牌操作的玩家。")]
+        [GameEventParameter("换牌玩家", "执行换牌操作的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? MulliganPlayer => Source?.Player;
 
-        [GameEventParameter("替换的卡牌", "被替换的卡牌列表。")]
+        [GameEventParameter("替换的卡牌", "被替换的卡牌列表。", DslDisplayTypeName = "事件目标")]
         public List<CardInstance> ReplacedCards => Target.Where(t => t.Card != null).Select(t => t.Card!).ToList();
 
-        public MulliganCompletedEvent(PlayerState player, List<CardInstance> replacedCards)
-            : base(EventType.MulliganCompleted)
+        public MulliganCompletedEvent(PlayerState player, List<CardInstance> replacedCards, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.MulliganCompleted, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             foreach (var card in replacedCards ?? [])

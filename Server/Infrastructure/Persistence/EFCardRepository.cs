@@ -36,6 +36,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
         {
             // Use AsNoTracking for read-only queries to improve performance.
             return await _context.CardDefinitions
+                                 .Include(card => card.CardSetDefinition)
                                  .AsNoTracking()
                                  .ToListAsync();
         }
@@ -45,7 +46,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
         {
             // FindAsync is suitable for querying by primary key and returns null if not found.
             // It works with int primary keys directly.
-            return await _context.CardDefinitions.FindAsync(id);
+            return await _context.CardDefinitions
+                .Include(card => card.CardSetDefinition)
+                .FirstOrDefaultAsync(card => card.Id == id);
         }
 
         /// <inheritdoc />
@@ -53,6 +56,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
         {
             // Use AsNoTracking for read-only queries to improve performance
             var cardDefinitions = await _context.CardDefinitions
+                .Include(card => card.CardSetDefinition)
                 .AsNoTracking()
                 .ToListAsync();
 
@@ -63,7 +67,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence // Corrected prefi
         public async Task<CardDefinition?> GetCardDefinitionByIdAsync(int id) // Match interface return type (parameter name differs, but type matches)
         {
             // Use FindAsync for querying by primary key - it's optimized for single entity retrieval
-            return await _context.CardDefinitions.FindAsync(id);
+            return await _context.CardDefinitions
+                .Include(card => card.CardSetDefinition)
+                .FirstOrDefaultAsync(card => card.Id == id);
         }
 
         public async Task<CardDefinition> AddAsync(CardDefinition definition)

@@ -4,11 +4,18 @@ using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
 {
     public static class PlayerScopeResolver
     {
+        public static IReadOnlyList<PlayerState> ResolvePlayers(GameContext context, PlayerScope scope)
+        {
+            var basePlayerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
+            return ResolvePlayers(context.CurrentGameState, basePlayerId, scope);
+        }
+
         public static IReadOnlyList<PlayerState> ResolvePlayers(GameState gameState, Guid requestingPlayerId, PlayerScope scope)
         {
             var players = new List<PlayerState>();
@@ -44,6 +51,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
             }
 
             return players;
+        }
+
+        public static IReadOnlyList<TargetInfo> ResolvePlayerTargets(GameContext context, PlayerScope scope)
+        {
+            return ResolvePlayers(context, scope)
+                .Select(TargetInfo.ForPlayer)
+                .ToList();
         }
 
         public static IReadOnlyList<TargetInfo> ResolvePlayerTargets(GameState gameState, Guid requestingPlayerId, PlayerScope scope)

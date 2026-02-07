@@ -21,6 +21,11 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
 
         public GameEventParameterScope Scope { get; set; } = GameEventParameterScope.Input;
 
+        /// <summary>
+        /// Optional DSL display type override for UI (e.g., "事件源", "事件目标").
+        /// </summary>
+        public string? DslDisplayTypeName { get; set; }
+
         public GameEventParameterAttribute(string displayName, string description)
         {
             DisplayName = displayName;

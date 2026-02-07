@@ -161,8 +161,136 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                 case CardInstance card:
                     node = JsonValue.Create(gameState.InGameIds.Format(InGameIdKind.Card, card.InstanceId));
                     return true;
-                case ShadowverseBeyond.Server.Domain.Buffs.Buff buff:
+                case Domain.Buffs.Buff buff:
                     node = JsonValue.Create(gameState.InGameIds.Format(InGameIdKind.Buff, buff.Id));
+                    return true;
+                case Domain.Abilities.Targets.TargetInfo targetInfo:
+                    if (TryFormatKnownGuid(gameState, targetInfo.InstanceId, out var targetId))
+                    {
+                        node = JsonValue.Create(targetId);
+                        return true;
+                    }
+                    return false;
+                case CardDefinitionSnapshot definition:
+                    var definitionObj = new JsonObject
+                    {
+                        ["Id"] = JsonValue.Create(definition.Id),
+                        ["Name"] = JsonValue.Create(definition.Name),
+                        ["Type"] = JsonValue.Create(definition.Type.ToString()),
+                        ["Rarity"] = JsonValue.Create(definition.Rarity.ToString()),
+                        ["CardSet"] = JsonValue.Create(definition.CardSet),
+                        ["Cost"] = JsonValue.Create(definition.Cost),
+                        ["Attack"] = JsonValue.Create(definition.Attack),
+                        ["Health"] = JsonValue.Create(definition.Health),
+                        ["Countdown"] = JsonValue.Create(definition.Countdown),
+                        ["Description"] = JsonValue.Create(definition.Description),
+                        ["IsCollectible"] = JsonValue.Create(definition.IsCollectible),
+                        ["Class"] = JsonValue.Create(definition.Class.ToString())
+                    };
+
+                    var definitionKeywords = new JsonArray();
+                    if (definition.Keywords != null)
+                    {
+                        foreach (var keyword in definition.Keywords)
+                        {
+                            definitionKeywords.Add(keyword);
+                        }
+                    }
+                    definitionObj["Keywords"] = definitionKeywords;
+
+                    node = definitionObj;
+                    return true;
+                case CardInstanceSnapshot snapshot:
+                    var snapshotObj = new JsonObject
+                    {
+                        ["InstanceId"] = JsonValue.Create(gameState.InGameIds.Format(InGameIdKind.Card, snapshot.InstanceId)),
+                        ["OwnerPlayerId"] = JsonValue.Create(gameState.InGameIds.Format(InGameIdKind.Player, snapshot.OwnerPlayerId)),
+                        ["BaseDefinitionId"] = JsonValue.Create(snapshot.BaseDefinitionId),
+                        ["CurrentDefinitionId"] = JsonValue.Create(snapshot.CurrentDefinitionId),
+                        ["Name"] = JsonValue.Create(snapshot.Name),
+                        ["CardType"] = JsonValue.Create(snapshot.CardType.ToString()),
+                        ["CurrentZone"] = JsonValue.Create(snapshot.CurrentZone.ToString()),
+                        ["LastMoveReason"] = JsonValue.Create(snapshot.LastMoveReason.ToString()),
+                        ["BaseAttack"] = JsonValue.Create(snapshot.BaseAttack),
+                        ["CurrentAttack"] = JsonValue.Create(snapshot.CurrentAttack),
+                        ["BaseHealth"] = JsonValue.Create(snapshot.BaseHealth),
+                        ["CurrentHealth"] = JsonValue.Create(snapshot.CurrentHealth),
+                        ["MaxHealth"] = JsonValue.Create(snapshot.MaxHealth),
+                        ["CurrentCost"] = JsonValue.Create(snapshot.CurrentCost),
+                        ["IsEvolved"] = JsonValue.Create(snapshot.IsEvolved),
+                        ["IsSuperEvolved"] = JsonValue.Create(snapshot.IsSuperEvolved),
+                        ["IsSilenced"] = JsonValue.Create(snapshot.IsSilenced),
+                        ["Countdown"] = JsonValue.Create(snapshot.Countdown),
+                        ["ZoneIndex"] = JsonValue.Create(snapshot.ZoneIndex),
+                        ["FieldTurn"] = JsonValue.Create(snapshot.FieldTurn),
+                        ["CanAttack"] = JsonValue.Create(snapshot.CanAttack),
+                        ["AttacksThisTurn"] = JsonValue.Create(snapshot.AttacksThisTurn),
+                        ["MaxAttacksPerTurn"] = JsonValue.Create(snapshot.MaxAttacksPerTurn),
+                        ["Spellboost"] = JsonValue.Create(snapshot.Spellboost),
+                        ["Earthsigil"] = JsonValue.Create(snapshot.Earthsigil)
+                    };
+
+                    if (snapshot.CurrentDefinition != null &&
+                        TryConvertToStableJson(gameState, "CurrentDefinition", snapshot.CurrentDefinition, out var definitionNode))
+                    {
+                        snapshotObj["CurrentDefinition"] = definitionNode;
+                    }
+                    else
+                    {
+                        snapshotObj["CurrentDefinition"] = null;
+                    }
+
+                    var keywordArray = new JsonArray();
+                    if (snapshot.Keywords != null)
+                    {
+                        foreach (var keyword in snapshot.Keywords)
+                        {
+                            keywordArray.Add(keyword.ToString());
+                        }
+                    }
+                    snapshotObj["Keywords"] = keywordArray;
+
+                    var abilityKeywordArray = new JsonArray();
+                    if (snapshot.AbilityKeywords != null)
+                    {
+                        foreach (var keyword in snapshot.AbilityKeywords)
+                        {
+                            abilityKeywordArray.Add(keyword.ToString());
+                        }
+                    }
+                    snapshotObj["AbilityKeywords"] = abilityKeywordArray;
+
+                    var cardNamesArray = new JsonArray();
+                    if (snapshot.CardNames != null)
+                    {
+                        foreach (var name in snapshot.CardNames)
+                        {
+                            cardNamesArray.Add(name);
+                        }
+                    }
+                    snapshotObj["CardNames"] = cardNamesArray;
+
+                    var tribeArray = new JsonArray();
+                    if (snapshot.Tribe != null)
+                    {
+                        foreach (var tribe in snapshot.Tribe)
+                        {
+                            tribeArray.Add(tribe);
+                        }
+                    }
+                    snapshotObj["Tribe"] = tribeArray;
+
+                    var counterMapObj = new JsonObject();
+                    if (snapshot.CounterMap != null)
+                    {
+                        foreach (var kv in snapshot.CounterMap)
+                        {
+                            counterMapObj[kv.Key] = JsonSerializer.SerializeToNode(kv.Value, typeof(int));
+                        }
+                    }
+                    snapshotObj["CounterMap"] = counterMapObj;
+
+                    node = snapshotObj;
                     return true;
             }
 
@@ -200,6 +328,13 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
             if (propertyName.Contains("Buff", StringComparison.OrdinalIgnoreCase))
             {
                 stableId = gameState.InGameIds.Format(InGameIdKind.Buff, guid);
+                return true;
+            }
+
+            if (propertyName.Contains("Option", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Contains("Choice", StringComparison.OrdinalIgnoreCase))
+            {
+                stableId = gameState.InGameIds.Format(InGameIdKind.Choice, guid);
                 return true;
             }
 
@@ -247,6 +382,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
 
             return false;
         }
+
 
         private sealed record ParameterAccessor(
             string PropertyName,

@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events; // EventType, GameContext
@@ -19,11 +20,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("允许超出上限", "是否允许当前PP暂时超过最大PP。")]
         public bool AllowOverflow { get; }
 
-        [GameEventParameter("目标玩家", "PP值被更新的玩家。")]
+        [GameEventParameter("目标玩家", "PP值被更新的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public PpUpdateEvent(PlayerState player, int currentPp, bool allowOverflow = false)
-            : base(EventType.PpUpdated)
+        public PpUpdateEvent(PlayerState player, int currentPp, bool allowOverflow = false, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.PpUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             CurrentPp = currentPp;
@@ -44,10 +45,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
-            return playerId.HasValue
-                ? $"pp player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} current={CurrentPp}"
-                : "pp";
+            var player = TargetPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}的PP变为 {AnnouncementTokens.Number(CurrentPp)}。";
         }
     }
 }

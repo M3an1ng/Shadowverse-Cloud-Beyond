@@ -1,0 +1,34 @@
+﻿using System.Collections.Generic;
+// using ShadowverseBeyond.Server.Domain.Abilities.Effects.Parameters; // No longer needed if base class is in the same new namespace or accessible
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
+
+namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters // Corrected namespace to match file location
+{
+    /// <summary>
+    /// Parameters for the GetToken effect.
+    /// </summary>
+    // Inherit from BaseEffectParams which contains common properties like GenerateBattleLog
+    [EffectMetadata("添加卡牌到手牌", "将卡牌添加到手牌。定义模式按玩家范围创建新卡；实例模式使用卡牌目标；复制模式复制卡牌目标并按玩家范围归属。")]
+    public class GetTokenEffectParams : BaseEffectParams // Changed base class to BaseEffectParams
+    {
+        [ParameterMetadata("玩家范围", UiControlType.Dropdown, DefaultValue = PlayerScope.Self, Description = "选择受到影响的玩家（自己/对手/双方）。")]
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
+
+        [ParameterMetadata("卡牌来源", UiControlType.Dropdown, DefaultValue = CardSourceMode.Definition, Description = "定义模式创建新卡；实例模式使用已选卡牌目标；复制模式复制已选卡牌目标。")]
+        public CardSourceMode CardSourceMode { get; set; } = CardSourceMode.Definition;
+
+        /// <summary>
+        /// The ID of the card definition to add to the hand.
+        /// </summary>
+        [ParameterMetadata("卡牌ID", UiControlType.CardDefinitionPicker, DefaultValue = null, Description = "要添加到手牌的卡牌定义ID列表。")]
+        public List<int> CardDefinitionId { get; set; } = new();
+
+        /// <summary>
+        /// The number of cards to add. Defaults to 1.
+        /// </summary>
+        [ParameterMetadata("数量", UiControlType.NumberStepper, DefaultValue = 1, Min = 1, Description = "要添加的卡牌数量。可以是固定数值，也可以是基于游戏状态的动态公式。")]
+        public int Amount { get; set; } = 1;
+    }
+}
+

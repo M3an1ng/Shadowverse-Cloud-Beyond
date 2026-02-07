@@ -49,13 +49,26 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 }
 
                 var result = new DomainOperationResult { Success = true };
+                var effectKey = BuildEffectKey(effect);
                 switch (parameters.Operation)
                 {
                     case KeywordOperation.Add:
-                        result.GeneratedEvents.Add(new KeywordAddedEvent(parameters.Keyword, targetInfo.Card));
+                        result.GeneratedEvents.Add(new KeywordAddedEvent(
+                            parameters.Keyword,
+                            targetInfo.Card,
+                            parameters.DurationType,
+                            parameters.DurationParameter,
+                            effectKey,
+                            parameters.CanStack));
                         break;
                     case KeywordOperation.Remove:
-                        result.GeneratedEvents.Add(new KeywordRemovedEvent(parameters.Keyword, targetInfo.Card));
+                        result.GeneratedEvents.Add(new KeywordRemovedEvent(
+                            parameters.Keyword,
+                            targetInfo.Card,
+                            parameters.DurationType,
+                            parameters.DurationParameter,
+                            effectKey,
+                            parameters.CanStack));
                         break;
                     default:
                         return new DomainOperationResult { Success = false, ErrorMessage = $"Unsupported keyword operation: {parameters.Operation}" };
@@ -76,6 +89,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             }
 
             return serviceResult;
+        }
+
+        private static string? BuildEffectKey(Effect effect)
+        {
+            if (!effect.sourceAbilityId.HasValue)
+            {
+                return null;
+            }
+
+            return $"{effect.sourceAbilityId.Value:N}:{effect.EffectIndex}";
         }
     }
 }

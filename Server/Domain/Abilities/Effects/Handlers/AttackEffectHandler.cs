@@ -68,8 +68,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     // The handler's job is to create the event (the intent).
                     // The transaction service will later call its Commit() method.
-                    var attackDeclaredEvent = new AttackEvent(attacker, targetUnit);
-                    result.GeneratedEvents.Add(attackDeclaredEvent);
+                    var attackEvent = new AttackEvent(attacker, targetUnit);
+                    result.GeneratedEvents.Add(attackEvent);
+                    result.GeneratedEvents.Add(new CombatResolutionEvent(attacker, targetUnit));
                     result.Success = true;
 
                     return result;

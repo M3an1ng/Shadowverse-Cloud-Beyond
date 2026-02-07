@@ -19,6 +19,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         this.onChange = null;
         this.container = null;
         this.dslEditors = new Map();
+        this.dslEditorRenderPromises = new Map();
         this.options = {};
     }
 
@@ -29,6 +30,12 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         this.targets = (targets || []).map(target => this.normalizeTargetConfig(target));
         this.onChange = onChange;
         this.options = options || {};
+        const forcedMode = this.options?.forceMode;
+        if (forcedMode) {
+            this.targets = this.targets.map(target => ({ ...target, _uiMode: forcedMode }));
+        }
+        this.dslEditors = new Map();
+        this.dslEditorRenderPromises = new Map();
 
         this.clearContainer(container);
         
@@ -39,9 +46,11 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             // 标题区域
             const header = document.createElement('div');
             header.className = 'step-header';
+            const titleText = this.options?.title || '卡牌目标选择配置';
+            const introText = this.options?.intro || '定义能力将影响哪些卡牌实例。你可以配置多个目标，并为每个目标指定筛选条件。';
             header.innerHTML = `
-                <h4>卡牌目标选择配置</h4>
-                <p class="step-intro">定义能力将影响哪些卡牌实例。你可以配置多个目标，并为每个目标指定筛选条件。</p>
+                <h4>${titleText}</h4>
+                <p class="step-intro">${introText}</p>
             `;
             wrapper.appendChild(header);
 
@@ -57,7 +66,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             // 添加按钮区域
             const actionsContainer = document.createElement('div');
             actionsContainer.className = 'add-target-container';
-            const addBtn = this.createButton('添加新目标', () => this.addTarget(), 'primary');
+            const addBtn = this.createButton(this.options?.addLabel || '添加新目标', () => this.addTarget(), 'primary');
             actionsContainer.appendChild(addBtn);
             wrapper.appendChild(actionsContainer);
 
@@ -75,6 +84,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         if (this.targets.length === 0) {
             const placeholder = document.createElement('div');
             placeholder.className = 'empty-state';
+            const emptyTitle = this.options?.emptyTitle || '暂无卡牌目标配置';
+            const emptyDesc = this.options?.emptyDesc || '定义能力将影响哪些卡牌实例<br>点击下方按钮添加第一个目标';
             placeholder.innerHTML = `
                 <div class="empty-state-visual">
                     <div class="target-ring-outer">
@@ -83,8 +94,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                         </div>
                     </div>
                 </div>
-                <h5 class="empty-title">暂无卡牌目标配置</h5>
-                <p class="empty-desc">定义能力将影响哪些卡牌实例<br>点击下方按钮添加第一个目标</p>
+                <h5 class="empty-title">${emptyTitle}</h5>
+                <p class="empty-desc">${emptyDesc}</p>
             `;
             container.appendChild(placeholder);
             return;
@@ -143,7 +154,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-icon delete-btn';
         deleteBtn.title = '删除';
-        deleteBtn.textContent = '×';
+        deleteBtn.setAttribute('aria-label', '删除');
 
         const expandBtn = document.createElement('button');
         expandBtn.className = 'btn-icon expand-btn';
@@ -168,28 +179,36 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         content.className = 'accordion-content collapsed';
         
         // 模式切换按钮
-        const modeSwitchContainer = document.createElement('div');
-        modeSwitchContainer.className = 'mode-switch-container';
+        const allowModeSwitch = !this.options?.hideModeSwitch && !this.options?.forceMode;
         const isAdvanced = target._uiMode === 'advanced';
-        
-        const switchBtn = this.createButton(
-            isAdvanced ? '切换至简化模式' : '切换至高级模式',
-            () => this.toggleTargetMode(index),
-            'secondary small'
-        );
-        modeSwitchContainer.appendChild(switchBtn);
-        content.appendChild(modeSwitchContainer);
+
+        if (allowModeSwitch) {
+            const modeSwitchContainer = document.createElement('div');
+            modeSwitchContainer.className = 'mode-switch-container';
+
+            const switchBtn = this.createButton(
+                isAdvanced ? '切换至简化模式' : '切换至高级模式',
+                () => this.toggleTargetMode(index),
+                'secondary small'
+            );
+            modeSwitchContainer.appendChild(switchBtn);
+            content.appendChild(modeSwitchContainer);
+        }
 
         if (isAdvanced) {
             // 高级模式：原有 DSL 编辑器
             const querySection = this.createQueryEditor(target, index);
             content.appendChild(querySection);
 
-            const validationSection = this.createValidationEditor(target, index);
-            content.appendChild(validationSection);
+            if (!this.options?.hideValidation) {
+                const validationSection = this.createValidationEditor(target, index);
+                content.appendChild(validationSection);
+            }
 
-            const playerChoiceSection = this.createPlayerChoiceEditor(target, index);
-            content.appendChild(playerChoiceSection);
+            if (!this.options?.hidePlayerChoice) {
+                const playerChoiceSection = this.createPlayerChoiceEditor(target, index);
+                content.appendChild(playerChoiceSection);
+            }
         } else {
             // 简化模式：按钮引导式 UI
             const simplifiedEditor = this.createSimplifiedEditor(target, index);
@@ -236,7 +255,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const editorKey = `sourcePool_${index}`;
         this.dslEditors.set(editorKey, dslEditor);
 
-        dslEditor.render(
+        const renderPromise = dslEditor.render(
             container,
             target.query?.sourcePoolExpression || '',
             (expression) => {
@@ -250,6 +269,18 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                 }
             }
         );
+        const renderEntry = { promise: renderPromise, done: false };
+        this.dslEditorRenderPromises.set(editorKey, renderEntry);
+        renderPromise
+            .catch((error) => {
+                console.warn('TargetConfigEditor: DSL editor render failed', error);
+            })
+            .finally(() => {
+                const current = this.dslEditorRenderPromises.get(editorKey);
+                if (current === renderEntry) {
+                    current.done = true;
+                }
+            });
 
         return this.createFormGroup('起始卡池', container, '选择查询的起点（如：所有敌方随从）');
     }
@@ -275,7 +306,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const addBtn = this.createButton('+ 添加操作', () => this.showAddOperationMenu(index), 'secondary small');
         container.appendChild(addBtn);
 
-        return this.createFormGroup('处理流程', container, '对卡池进行筛选、排序或随机抽取');
+        return this.createFormGroup('处理流程', container, '对卡池进行筛选、排序、去重、投影');
     }
 
     createOperationNode(operation, targetIndex, opIndex) {
@@ -306,34 +337,118 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     }
 
     renderOperationParams(container, operation, targetIndex, opIndex) {
+        const renderMiniDslEditor = (expression, onChange, expectedType = 'Object') => {
+            const dslContainer = document.createElement('div');
+            dslContainer.className = 'dsl-mini-wrapper';
+            const dslEditor = new DslEditor();
+            dslEditor.render(dslContainer, expression || '', (expr) => onChange(expr), {
+                expectedType,
+                triggeringEventContext: {
+                    eventTypes: this.options?.trigger?.eventTypes || [],
+                    timing: this.options?.trigger?.timing || 'On'
+                }
+            });
+            return dslContainer;
+        };
+
         switch (operation.$type) {
             case 'FilterOperation':
                 // 简化版：只显示添加按钮和现有过滤器
                 (operation.filters || []).forEach((filter, fIndex) => {
-                    const dslContainer = document.createElement('div');
-                    dslContainer.className = 'dsl-mini-wrapper';
-                    const dslEditor = new DslEditor();
-                    dslEditor.render(dslContainer, filter.valueSource?.formula || '', (expr) => {
-                        this.updateOperationFilter(targetIndex, opIndex, fIndex, expr);
-                    }, {
-                        expectedType: 'Boolean',
-                        triggeringEventContext: {
-                            eventTypes: this.options?.trigger?.eventTypes || [],
-                            timing: this.options?.trigger?.timing || 'On'
-                        }
-                    });
+                    const dslContainer = renderMiniDslEditor(
+                        filter.valueSource?.formula || '',
+                        (expr) => this.updateOperationFilter(targetIndex, opIndex, fIndex, expr),
+                        'Boolean'
+                    );
                     container.appendChild(dslContainer);
                 });
                 const addFilterBtn = this.createButton('添加条件', () => this.addFilter(targetIndex, opIndex), 'secondary tiny');
                 container.appendChild(addFilterBtn);
                 break;
+            case 'SortOperation':
+                (operation.ordering || []).forEach((ordering, orderingIndex) => {
+                    const row = document.createElement('div');
+                    row.className = 'operation-subrow';
+
+                    const exprContainer = renderMiniDslEditor(
+                        ordering.valueSource?.formula || '',
+                        (expr) => this.updateOrderingExpression(targetIndex, opIndex, orderingIndex, expr),
+                        'NonEntity'
+                    );
+                    row.appendChild(exprContainer);
+
+                    const direction = String(ordering.direction || 'ascending').toLowerCase();
+                    const dirGroup = this.createButtonGroup(
+                        '排序方向',
+                        [
+                            { value: 'ascending', label: '升序' },
+                            { value: 'descending', label: '降序' }
+                        ],
+                        direction === 'descending' ? 'descending' : 'ascending',
+                        (val) => this.updateOrderingDirection(targetIndex, opIndex, orderingIndex, val)
+                    );
+                    row.appendChild(dirGroup);
+
+                    const removeBtn = this.createButton('移除', () => this.removeOrdering(targetIndex, opIndex, orderingIndex), 'danger tiny');
+                    row.appendChild(removeBtn);
+
+                    container.appendChild(row);
+                });
+                container.appendChild(this.createButton('添加排序键', () => this.addOrdering(targetIndex, opIndex), 'secondary tiny'));
+                break;
+            case 'SelectionOperation':
+                {
+                    const strategy = String(operation.strategy || 'first').toLowerCase();
+                    const strategyGroup = this.createButtonGroup(
+                        '选择方式',
+                        [
+                            { value: 'first', label: '首个' },
+                            { value: 'last', label: '末尾' },
+                            { value: 'random', label: '随机' }
+                        ],
+                        strategy,
+                        (val) => this.updateOperation(targetIndex, opIndex, { strategy: val })
+                    );
+                    container.appendChild(strategyGroup);
+
+                    const countExpr = operation.countSource?.formula || '';
+                    const countContainer = renderMiniDslEditor(
+                        countExpr,
+                        (expr) => this.updateSelectionCountSource(targetIndex, opIndex, expr),
+                        'Int32'
+                    );
+                    container.appendChild(this.createFormGroup('数量', countContainer));
+                }
+                break;
+            case 'DistinctOperation':
+                {
+                    const exprContainer = renderMiniDslEditor(
+                        operation.keySelector?.formula || '',
+                        (expr) => this.updateOperationValueConfig(targetIndex, opIndex, 'keySelector', expr),
+                        'NonEntity'
+                    );
+                    container.appendChild(this.createFormGroup('去重键', exprContainer));
+                }
+                break;
+            case 'SelectOperation':
+                {
+                    const exprContainer = renderMiniDslEditor(
+                        operation.selector?.formula || '',
+                        (expr) => this.updateOperationValueConfig(targetIndex, opIndex, 'selector', expr),
+                        'Object'
+                    );
+                    container.appendChild(this.createFormGroup('投影', exprContainer));
+                }
+                break;
             case 'TakeOperation':
             case 'RandomOperation':
-                const countInput = this.createNumberInput(operation.count || 1, (val) => {
-                    this.updateOperation(targetIndex, opIndex, { count: val });
-                }, { min: 1 });
-                countInput.className = 'form-input small';
-                container.appendChild(this.createFormGroup('数量', countInput));
+                {
+                    const countInput = this.createNumberInput(operation.count || 1, (val) => {
+                        this.updateOperation(targetIndex, opIndex, { count: val });
+                    }, { min: 1 });
+                    countInput.className = 'form-input small';
+                    container.appendChild(this.createFormGroup('数量', countInput));
+                }
                 break;
             // ... 其他类型
         }
@@ -396,6 +511,15 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             );
             
             grid.appendChild(this.createFormGroup('选择数量', rangeSlider));
+
+            const inverseToggle = this.createToggleSwitch(
+                opts.isInverseSelection === true,
+                (checked) => {
+                    this.updatePlayerChoiceOption(index, { isInverseSelection: checked });
+                },
+                '反选：选择除指定目标外的卡'
+            );
+            grid.appendChild(this.createFormGroup('反选', inverseToggle));
             container.appendChild(grid);
         }
 
@@ -620,15 +744,24 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const container = document.createElement('div');
         container.className = 'simplified-target-editor';
 
+        const allowPlayerChoice = !this.options?.hidePlayerChoice;
+        const methodOptions = [
+            { value: 'All', label: '所有' },
+            { value: 'Random', label: '随机' },
+            { value: 'Select', label: '选择' }
+        ].filter(option => allowPlayerChoice || option.value !== 'Select');
+
+        let currentMethod = target._simpleMethod || 'All';
+        if (!allowPlayerChoice && currentMethod === 'Select') {
+            currentMethod = 'All';
+            this.updateSimplifiedTarget(index, { _simpleMethod: 'All', playerChoiceOptions: null });
+        }
+
         // 1. 选择方式 (Selection Method)
         const methodGroup = this.createButtonGroup(
             '选择方式',
-            [
-                { value: 'All', label: '所有' },
-                { value: 'Random', label: '随机' },
-                { value: 'Select', label: '选择' }
-            ],
-            target._simpleMethod || 'All',
+            methodOptions,
+            currentMethod,
             (val) => this.updateSimplifiedTarget(index, { _simpleMethod: val }),
             'method-group'
         );
@@ -684,16 +817,19 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         container.appendChild(typeGroup);
 
         // 5. 验证规则 (Validation Rules) - 复用高级模式组件
-        const validationSection = this.createValidationEditor(target, index);
-        validationSection.classList.add('simplified-section'); // 添加标记以便样式微调
-        container.appendChild(validationSection);
+        if (!this.options?.hideValidation) {
+            const validationSection = this.createValidationEditor(target, index);
+            validationSection.classList.add('simplified-section'); // 添加标记以便样式微调
+            container.appendChild(validationSection);
+        }
 
         return container;
     }
 
     renderSimplifiedDynamicContent(container, target, index) {
         this.clearContainer(container);
-        const method = target._simpleMethod || 'All';
+        const allowPlayerChoice = !this.options?.hidePlayerChoice;
+        const method = allowPlayerChoice ? (target._simpleMethod || 'All') : 'All';
         let hasContent = false;
 
         if (method === 'Random') {
@@ -705,8 +841,14 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             const grid = document.createElement('div');
             grid.className = 'form-grid-layout';
             
-            const randomOp = (target.query?.operations || []).find(op => op.$type === 'RandomOperation');
-            const currentCount = randomOp?.count || target._simpleRandomCount || 1;
+            const randomOp = (target.query?.operations || [])
+                .find(op => op.$type === 'SelectionOperation' && String(op.strategy || '').toLowerCase() === 'random');
+            let currentCount = target._simpleRandomCount || 1;
+            if (randomOp?.countSource?.value != null) {
+                currentCount = Number(randomOp.countSource.value) || currentCount;
+            } else if (typeof randomOp?.countSource?.formula === 'string' && /^\d+$/.test(randomOp.countSource.formula.trim())) {
+                currentCount = parseInt(randomOp.countSource.formula.trim(), 10) || currentCount;
+            }
 
             const slider = this.createRangeSlider(
                 0, // Min ignored in single mode
@@ -746,6 +888,23 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             );
             
             grid.appendChild(this.createFormGroup('选择数量', slider));
+
+            const inverseToggle = this.createToggleSwitch(
+                opts.isInverseSelection === true,
+                (checked) => {
+                    this.updateSimplifiedTarget(index, {
+                        playerChoiceOptions: {
+                            ...(target.playerChoiceOptions || {}),
+                            isRequired: true,
+                            isInverseSelection: checked,
+                            minCount,
+                            maxCount
+                        }
+                    });
+                },
+                '反选：选择除指定目标外的卡'
+            );
+            grid.appendChild(this.createFormGroup('反选', inverseToggle));
             selectCountContainer.appendChild(grid);
             container.appendChild(selectCountContainer);
         }
@@ -771,7 +930,12 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             btn.className = `btn-option ${currentValue === opt.value ? 'active' : ''}`;
             btn.textContent = opt.label;
             btn.dataset.value = opt.value;
-            btn.addEventListener('click', () => onChange(opt.value));
+            btn.addEventListener('click', () => {
+                const buttons = btnGroup.querySelectorAll('.btn-option');
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                onChange(opt.value);
+            });
             btnGroup.appendChild(btn);
         });
         
@@ -841,10 +1005,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         return wrapper;
     }
 
-    updateSimplifiedTarget(index, updates) {
-        const target = { ...this.targets[index], ...updates };
-        
-        // 根据简化状态生成 DSL
+    buildSimplifiedTargetQuery(target) {
         const method = target._simpleMethod || 'All';
         const scopes = Array.isArray(target._simpleScope) && target._simpleScope.length > 0
             ? target._simpleScope
@@ -862,7 +1023,6 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const hasLeaderType = typeSet.has('Leader');
         const nonLeaderTypes = Array.from(typeSet).filter(type => type !== 'Leader');
 
-        const mapScopeRoot = (scope) => scope === 'Opponent' ? 'opponent' : 'owner';
         const mapZoneProperty = (zone) => {
             switch (zone) {
                 case 'Hand':
@@ -879,13 +1039,13 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const mapTypePredicate = (type) => {
             switch (type) {
                 case 'Unit':
-                    return 'self.Type == "Follower"';
+                    return 'self.type == "Follower"';
                 case 'Spell':
-                    return 'self.Type == "Spell"';
+                    return 'self.type == "Spell"';
                 case 'Amulet':
-                    return 'self.Type == "Amulet"';
+                    return 'self.type == "Amulet"';
                 case 'Leader':
-                    return 'self.Type == "Leader"';
+                    return 'self.type == "Leader"';
                 default:
                     return null;
             }
@@ -897,16 +1057,16 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
                 return trimmed;
             }
-            if (trimmed.includes(' | ') || trimmed.includes(' & ') || trimmed.includes(' - ')) {
+            if (trimmed.includes(' | ') || trimmed.includes(' & ') || trimmed.includes(' ~ ')) {
                 return `(${trimmed})`;
             }
             return trimmed;
         };
 
         const scopeRoots = [];
-        if (scopeSet.has('Self')) scopeRoots.push('owner');
-        if (scopeSet.has('Opponent')) scopeRoots.push('opponent');
-        if (scopeRoots.length === 0) scopeRoots.push('owner');
+        if (scopeSet.has('Self')) scopeRoots.push('context.owner');
+        if (scopeSet.has('Opponent')) scopeRoots.push('context.opponent');
+        if (scopeRoots.length === 0) scopeRoots.push('context.owner');
 
         const zoneValues = zoneSet.size > 0 ? Array.from(zoneSet) : ['Battlefield'];
         const zoneSources = [];
@@ -919,7 +1079,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         let nonLeaderSource = null;
         if (nonLeaderTypes.length > 0) {
             if (zoneSources.length === 0) {
-                zoneSources.push('owner.field');
+                zoneSources.push('context.owner.field');
             }
             nonLeaderSource = zoneSources.length > 1
                 ? `(${zoneSources.join(' | ')})`
@@ -938,10 +1098,10 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
         let leaderSource = null;
         if (hasLeaderType) {
-            leaderSource = 'state.allLeaders';
-            if (scopeRoots.length === 1) {
-                leaderSource = `${leaderSource}.query(self.OwnerPlayerId == ${scopeRoots[0]}.PlayerId)`;
-            }
+            const leaderSources = scopeRoots.map(scopeRoot => `${scopeRoot}.leader`);
+            leaderSource = leaderSources.length > 1
+                ? `(${leaderSources.join(' | ')})`
+                : leaderSources[0];
         }
 
         let sourcePoolExpression = '';
@@ -952,25 +1112,35 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         } else if (leaderSource) {
             sourcePoolExpression = leaderSource;
         } else {
-            sourcePoolExpression = 'owner.field';
+            sourcePoolExpression = 'context.owner.field';
         }
 
+        let playerChoiceOptions = target.playerChoiceOptions ?? null;
         if (method === 'Random') {
             const count = Math.max(1, Number(target._simpleRandomCount || 1));
             sourcePoolExpression = `${wrapForCall(sourcePoolExpression)}.take(random ${count})`;
-            target.playerChoiceOptions = null;
+            playerChoiceOptions = null;
         } else if (method === 'Select') {
-            if (!target.playerChoiceOptions) {
-                target.playerChoiceOptions = { isRequired: true, minCount: 1, maxCount: 1 };
+            if (!playerChoiceOptions) {
+                playerChoiceOptions = { isRequired: true, minCount: 1, maxCount: 1 };
             }
         } else {
-            target.playerChoiceOptions = null;
+            playerChoiceOptions = null;
         }
+
+        return {
+            query: { sourcePoolExpression, operations: [] },
+            playerChoiceOptions
+        };
+    }
+
+    updateSimplifiedTarget(index, updates) {
+        const target = { ...this.targets[index], ...updates };
+        const built = this.buildSimplifiedTargetQuery(target);
 
         this.targets[index] = {
             ...target,
-            query: { sourcePoolExpression, operations: [] },
-            playerChoiceOptions: target.playerChoiceOptions
+            ...built
         };
         
         // 优化：仅更新 UI 状态而不重建 DOM
@@ -1017,14 +1187,192 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     }
 
     parseDslToSimplifiedUI(target) {
-        // 这是一个逆向解析过程，非常脆弱，仅用于演示
-        // 实际项目中需要更强大的 AST 分析
-        return {
-            _simpleMethod: 'All',
-            _simpleScope: ['Self'],
-            _simpleZone: ['Battlefield'],
-            _simpleType: ['Unit']
+        const sourceExpr = target?.query?.sourcePoolExpression || '';
+        if (!String(sourceExpr).trim()) {
+            return null;
+        }
+
+        const editor = new DslEditor();
+        editor.metadata = this.metadata || {};
+        editor.isInitialized = true;
+
+        let root = null;
+        try {
+            root = editor.buildAstFromExpression(String(sourceExpr).trim());
+        } catch {
+            return null;
+        }
+        if (!root) {
+            return null;
+        }
+
+        const stripOuterParens = (value) => {
+            let text = String(value || '').trim();
+            while (text.startsWith('(') && text.endsWith(')')) {
+                let depth = 0;
+                let valid = true;
+                for (let i = 0; i < text.length; i++) {
+                    const ch = text[i];
+                    if (ch === '(') depth++;
+                    if (ch === ')') depth--;
+                    if (depth === 0 && i < text.length - 1) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) break;
+                text = text.slice(1, -1).trim();
+            }
+            return text;
         };
+
+        const splitTopLevelUnion = (expr) => {
+            const text = stripOuterParens(expr);
+            const parts = [];
+            let depth = 0;
+            let start = 0;
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                if (ch === '(') depth++;
+                if (ch === ')') depth--;
+                if (ch === '|' && depth === 0) {
+                    parts.push(text.slice(start, i).trim());
+                    start = i + 1;
+                }
+            }
+            parts.push(text.slice(start).trim());
+            return parts.filter(Boolean);
+        };
+
+        let method = 'All';
+        let randomCount = 1;
+        let queryExpr = null;
+        let baseNode = root;
+
+        while (baseNode && ['listQuery', 'listTake', 'listSort', 'listDistinct'].includes(baseNode.type)) {
+            if (baseNode.type === 'listSort' || baseNode.type === 'listDistinct') {
+                return null;
+            }
+            if (baseNode.type === 'listTake') {
+                const strategy = String(baseNode.strategy || '').toLowerCase();
+                if (strategy && strategy !== 'random') {
+                    return null;
+                }
+                method = 'Random';
+                const countExpr = baseNode.countExpression?.toExpression?.() || '';
+                const parsedCount = parseInt(String(countExpr).trim(), 10);
+                if (!Number.isFinite(parsedCount) || parsedCount <= 0) {
+                    return null;
+                }
+                randomCount = parsedCount;
+            }
+            if (baseNode.type === 'listQuery') {
+                queryExpr = baseNode.filterExpression?.toExpression?.() || baseNode.filterExpression?.value || null;
+            }
+            baseNode = baseNode.source || null;
+        }
+
+        const baseExpr = stripOuterParens(baseNode?.toExpression?.() || baseNode?.value || '');
+        if (!baseExpr) {
+            return null;
+        }
+
+        const segments = splitTopLevelUnion(baseExpr);
+        if (segments.length === 0) {
+            return null;
+        }
+
+        const scopes = new Set();
+        const zones = new Set();
+        let hasLeader = false;
+
+        for (const seg of segments) {
+            const normalized = stripOuterParens(seg);
+            const match = normalized.match(/^context\.(owner|opponent)\.(field|hand|deck|graveyard|leader)$/);
+            if (!match) {
+                return null;
+            }
+            const scope = match[1] === 'owner' ? 'Self' : 'Opponent';
+            const zone = match[2];
+            scopes.add(scope);
+            if (zone === 'leader') {
+                hasLeader = true;
+            } else {
+                switch (zone) {
+                    case 'hand':
+                        zones.add('Hand');
+                        break;
+                    case 'deck':
+                        zones.add('Deck');
+                        break;
+                    case 'graveyard':
+                        zones.add('Graveyard');
+                        break;
+                    default:
+                        zones.add('Battlefield');
+                        break;
+                }
+            }
+        }
+
+        const types = new Set();
+        if (queryExpr) {
+            const normalized = stripOuterParens(queryExpr);
+            const matches = Array.from(normalized.matchAll(/self\.type\s*==\s*\"(Follower|Spell|Amulet|Leader)\"/g));
+            if (matches.length === 0) {
+                return null;
+            }
+            const replaced = normalized
+                .replace(/\s+/g, '')
+                .replace(/self\.type==\"(Follower|Spell|Amulet|Leader)\"/g, '')
+                .replace(/\|\|/g, '')
+                .replace(/or/gi, '')
+                .replace(/[()]/g, '');
+            if (replaced.trim() !== '') {
+                return null;
+            }
+            matches.forEach((m) => {
+                switch (m[1]) {
+                    case 'Follower':
+                        types.add('Unit');
+                        break;
+                    case 'Spell':
+                        types.add('Spell');
+                        break;
+                    case 'Amulet':
+                        types.add('Amulet');
+                        break;
+                    case 'Leader':
+                        types.add('Leader');
+                        break;
+                    default:
+                        break;
+                }
+            });
+        }
+
+        if (hasLeader) {
+            types.add('Leader');
+        }
+
+        if (types.size === 0) {
+            return null;
+        }
+
+        const simplified = {
+            _simpleMethod: method,
+            _simpleScope: scopes.size ? Array.from(scopes) : ['Self'],
+            _simpleZone: zones.size ? Array.from(zones) : ['Battlefield'],
+            _simpleType: Array.from(types)
+        };
+
+        if (method === 'Random') {
+            simplified._simpleRandomCount = randomCount;
+        } else if (target?.playerChoiceOptions) {
+            simplified._simpleMethod = 'Select';
+        }
+
+        return simplified;
     }
 
     // ... 其余辅助方法 (addTarget, removeTarget, etc.) ...
@@ -1080,19 +1428,44 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             rest.isEnabled = true;
         }
 
+        const sourceExpr = rest?.query?.sourcePoolExpression || '';
+        const hasSimpleState = rest._simpleMethod || rest._simpleScope || rest._simpleZone || rest._simpleType;
+        if (!rest._uiMode || (rest._uiMode === 'simplified' && !hasSimpleState)) {
+            const simplified = this.parseDslToSimplifiedUI(rest);
+            if (simplified) {
+                rest._uiMode = 'simplified';
+                Object.assign(rest, simplified);
+            } else if (String(sourceExpr).trim()) {
+                rest._uiMode = 'advanced';
+            }
+        }
+
         return rest;
     }
 
     showAddOperationMenu(index) {
         // 简化版菜单
-        const type = prompt('输入操作类型 (FilterOperation, TakeOperation, RandomOperation, SortOperation):', 'FilterOperation');
+        const supported = [
+            'FilterOperation',
+            'SortOperation',
+            'SelectionOperation',
+            'DistinctOperation',
+            'SelectOperation'
+        ];
+        const type = prompt(`输入操作类型 (${supported.join(', ')}):`, 'FilterOperation');
         if (type) this.addOperation(index, type);
     }
 
     addOperation(targetIndex, type) {
         const op = { $type: type };
         if (type === 'FilterOperation') op.filters = [];
-        if (type === 'TakeOperation' || type === 'RandomOperation') op.count = 1;
+        if (type === 'SortOperation') op.ordering = [{ valueSource: { formula: '' }, direction: 'ascending' }];
+        if (type === 'SelectionOperation') {
+            op.strategy = 'first';
+            op.countSource = { formula: '' };
+        }
+        if (type === 'DistinctOperation') op.keySelector = { formula: '' };
+        if (type === 'SelectOperation') op.selector = { formula: '' };
         this.targets[targetIndex].query.operations.push(op);
         this.updateTargetNode(targetIndex);
         this.notifyChange();
@@ -1115,6 +1488,51 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         this.notifyChange();
     }
 
+    addOrdering(targetIndex, opIndex) {
+        const op = this.targets[targetIndex].query.operations[opIndex];
+        if (!Array.isArray(op.ordering)) {
+            op.ordering = [];
+        }
+        op.ordering.push({ valueSource: { formula: '' }, direction: 'ascending' });
+        this.updateTargetNode(targetIndex);
+        this.notifyChange();
+    }
+
+    removeOrdering(targetIndex, opIndex, orderingIndex) {
+        const op = this.targets[targetIndex].query.operations[opIndex];
+        if (!Array.isArray(op.ordering)) return;
+        op.ordering.splice(orderingIndex, 1);
+        this.updateTargetNode(targetIndex);
+        this.notifyChange();
+    }
+
+    updateOrderingExpression(targetIndex, opIndex, orderingIndex, expr) {
+        const op = this.targets[targetIndex].query.operations[opIndex];
+        if (!Array.isArray(op.ordering) || !op.ordering[orderingIndex]) return;
+        op.ordering[orderingIndex].valueSource = { formula: expr };
+        this.notifyChange();
+    }
+
+    updateOrderingDirection(targetIndex, opIndex, orderingIndex, direction) {
+        const op = this.targets[targetIndex].query.operations[opIndex];
+        if (!Array.isArray(op.ordering) || !op.ordering[orderingIndex]) return;
+        op.ordering[orderingIndex].direction = direction === 'descending' ? 'descending' : 'ascending';
+        this.notifyChange();
+    }
+
+    updateOperationValueConfig(targetIndex, opIndex, field, expr) {
+        const op = this.targets[targetIndex].query.operations[opIndex];
+        op[field] = { formula: expr };
+        this.notifyChange();
+    }
+
+    updateSelectionCountSource(targetIndex, opIndex, expr) {
+        const op = this.targets[targetIndex].query.operations[opIndex];
+        const trimmed = String(expr ?? '').trim();
+        op.countSource = trimmed ? { formula: trimmed } : null;
+        this.notifyChange();
+    }
+
     updateOperation(targetIndex, opIndex, updates) {
         const op = this.targets[targetIndex].query.operations[opIndex];
         this.targets[targetIndex].query.operations[opIndex] = { ...op, ...updates };
@@ -1126,6 +1544,41 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     }
 
     notifyChange() {
-        if (this.onChange) this.onChange(this.targets);
+        if (!this.onChange) return;
+
+        const normalizedTargets = this.targets.map((target) => {
+            if (!target || typeof target !== 'object') return target;
+            const mode = target._uiMode || 'simplified';
+            const sourceExpr = target?.query?.sourcePoolExpression || '';
+            if (mode === 'simplified' && !String(sourceExpr).trim()) {
+                return { ...target, ...this.buildSimplifiedTargetQuery({ ...target }) };
+            }
+            return target;
+        });
+
+        this.targets = normalizedTargets;
+        this.onChange(normalizedTargets);
+    }
+
+    async flushDslEditors() {
+        const pending = Array.from(this.dslEditorRenderPromises.values())
+            .filter(entry => entry && !entry.done && entry.promise)
+            .map(entry => entry.promise);
+        if (pending.length > 0) {
+            await Promise.allSettled(pending);
+        }
+        for (const editor of this.dslEditors.values()) {
+            if (!editor) continue;
+            try {
+                editor.updateExpressionFromAST();
+            } catch (error) {
+                console.warn('TargetConfigEditor: Failed to flush DSL editor', error);
+            }
+        }
+    }
+
+    hasPendingDslRenders() {
+        return Array.from(this.dslEditorRenderPromises.values())
+            .some(entry => entry && !entry.done);
     }
 }

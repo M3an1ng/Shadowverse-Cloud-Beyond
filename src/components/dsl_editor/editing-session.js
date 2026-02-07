@@ -7,7 +7,6 @@ export function pushEditingPath(editor, entry) {
     } catch (e) {
         editor.editingPath.push(entry);
     }
-    console.log('DslEditor: pushEditingPath ->', entry);
 }
 
 export function popEditingPath(editor) {
@@ -18,7 +17,6 @@ export function popEditingPath(editor) {
     } catch (e) {
         entry = editor.editingPath.length > 0 ? editor.editingPath.pop() : undefined;
     }
-    console.log('DslEditor: popEditingPath <-', entry);
     return entry;
 }
 
@@ -37,7 +35,6 @@ export function clearEditingPath(editor) {
     } catch (e) {
         editor.editingPath = [];
     }
-    console.log('DslEditor: clearEditingPath');
 }
 
 export function getHighlightTargetNode(editor) {
@@ -59,7 +56,6 @@ export function getHighlightTargetNode(editor) {
 export function ensureAstRootSync(editor) {
     if (editor.astRoot !== editor.workspaceAST) {
         editor.astRoot = editor.workspaceAST;
-        console.log('DslEditor: ensureAstRootSync -> astRoot reassigned to workspaceAST');
     }
 }
 
@@ -87,10 +83,6 @@ export function writeBackToParentSlot(editor, parentNode, slot, newValueNode) {
 
 export function getDslContextObject(editor, name) {
     if (editor.contextOverride && editor.contextOverride.name === name) {
-        console.log(
-            `DslEditor: Using context override for "${name}":`,
-            editor.contextOverride
-        );
         return {
             name: editor.contextOverride.name,
             displayName: editor.contextOverride.displayName,
@@ -101,9 +93,5 @@ export function getDslContextObject(editor, name) {
 
     const contextObjects = editor.metadata?.dsl?.contextObjects || [];
     const result = contextObjects.find((obj) => obj.name === name);
-    console.log(
-        `DslEditor: Looking for context object "${name}", found:`,
-        result
-    );
     return result;
 }

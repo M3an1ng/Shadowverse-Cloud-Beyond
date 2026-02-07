@@ -40,8 +40,40 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
             if (parameters.DamageAmount <= 0)
             {
-                Logger.LogInformation("{EffectName}: DamageAmount is {DamageAmount}. No damage will be dealt.", effectName, parameters.DamageAmount);
-                return new GameStateActionResult { Success = true };
+                Logger.LogInformation("{EffectName}: DamageAmount is {DamageAmount}. Emitting zero-damage events.", effectName, parameters.DamageAmount);
+
+                Func<TargetInfo, GameContext, DomainOperationResult> zeroDamageAction =
+                    (targetInfo, ctx) =>
+                    {
+                        if (targetInfo.Type != Common.TargetType.Card || targetInfo.Card == null)
+                        {
+                            Logger.LogWarning("{EffectName}: Target is not a card or card data is missing. TargetType: {TargetType}", effectName, targetInfo.Type);
+                            return new DomainOperationResult { Success = false, ErrorMessage = "Damage effect can only be applied to cards." };
+                        }
+
+                        var result = new DomainOperationResult { Success = true };
+                        var sourceCard = ctx.SourceCard ?? targetInfo.Card;
+                        result.GeneratedEvents.Add(new DamageEvent(targetInfo.Card, 0, sourceCard, DamageKind.Ability));
+                        return result;
+                    };
+
+                var zeroResult = _targetProcessingService.ProcessTargets(
+                    context,
+                    effect.SelectedTargets,
+                    zeroDamageAction,
+                    effectName);
+
+                if (!zeroResult.Success && string.IsNullOrEmpty(zeroResult.ErrorMessage))
+                {
+                    zeroResult.ErrorMessage = "Failed to process targets for zero damage effect, or no valid targets found.";
+                }
+
+                return zeroResult;
+            }
+
+            if (parameters.DistributionMode == DamageDistributionMode.Split)
+            {
+                return ApplySplitDamage(effect, context, parameters, effectName);
             }
 
             Func<TargetInfo, GameContext, DomainOperationResult> damageAction =
@@ -54,38 +86,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var card = targetInfo.Card;
-                    var operationResult = card.TakeDamage(parameters.DamageAmount, ctx.SourceCard);
-
-                    // After dealing damage, check if the card is destroyed.
-                    if (operationResult.Success && card.CurrentHealth <= 0)
-                    {
-                        // Find the owner of the card to call the correct DestroyCard method.
-                        var ownerPlayer = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
-                        if (ownerPlayer != null)
-                        {
-                            if (ctx.SourceCard == null)
-                            {
-                                Logger.LogError("SourceCard is null in DamageEffectHandler when trying to destroy a card. This should not happen.");
-                                // Even if source is null, we should probably still destroy the card as it has 0 health.
-                                // However, we cannot call DestroyCard without a source. This indicates a deeper issue.
-                                // For now, we will fail gracefully for this target.
-                                operationResult.Success = false;
-                                operationResult.ErrorMessage = "Could not determine damage source for destruction.";
-                            }
-                            else
-                            {
-                                var destroyResult = ownerPlayer.DestroyCard(card, ctx.SourceCard, "DestroyedByDamage");
-                                // Merge the events from the destroy operation.
-                                operationResult.GeneratedEvents.AddRange(destroyResult.GeneratedEvents);
-                            }
-                        }
-                        else
-                        {
-                            // Log an error if the owner can't be found, which would be a critical state issue.
-                            Logger.LogError("Could not find owner player with ID {PlayerId} for card {CardId} to process destruction.", card.OwnerPlayerId, card.InstanceId);
-                        }
-                    }
-                    return operationResult;
+                    return card.TakeDamage(parameters.DamageAmount, ctx.SourceCard);
                 };
 
             var serviceResult = _targetProcessingService.ProcessTargets(
@@ -103,5 +104,93 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         }
 
         // CreateEffectCompletedEvent method is removed as this responsibility has moved to EffectExecutor.
+
+        private GameStateActionResult ApplySplitDamage(Effect effect, GameContext context, DamageEffectParams parameters, string effectName)
+        {
+            var result = new GameStateActionResult();
+            var targets = effect.SelectedTargets ?? new List<TargetInfo>();
+
+            if (targets.Count == 0)
+            {
+                result.Success = false;
+                result.ErrorMessage = "Split damage requires at least one target.";
+                return result;
+            }
+
+            var cards = targets
+                .Where(t => t.Type == Common.TargetType.Card && t.Card != null)
+                .Select(t => t.Card!)
+                .GroupBy(c => c.InstanceId)
+                .Select(g => g.First())
+                .ToList();
+
+            if (cards.Count == 0)
+            {
+                result.Success = false;
+                result.ErrorMessage = "Split damage can only be applied to card targets.";
+                return result;
+            }
+
+            var leaderTarget = cards.FirstOrDefault(c => c.IsLeader);
+            var followerTargets = cards
+                .Where(c => !c.IsLeader)
+                .OrderBy(c => c.ZoneIndex ?? int.MaxValue)
+                .ThenBy(c => c.InstanceId)
+                .ToList();
+
+            var remaining = parameters.DamageAmount;
+
+            if (followerTargets.Count == 0)
+            {
+                if (leaderTarget == null)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Split damage could not resolve a valid target.";
+                    return result;
+                }
+
+                var leaderResult = leaderTarget.TakeDamage(remaining, context.SourceCard);
+                result.GeneratedEvents.AddRange(leaderResult.GeneratedEvents);
+                result.Results.Add(leaderResult);
+                result.Success = leaderResult.Success;
+                return result;
+            }
+
+            for (var i = 0; i < followerTargets.Count && remaining > 0; i++)
+            {
+                var target = followerTargets[i];
+                var isLastFollower = i == followerTargets.Count - 1;
+                var maxAssignable = Math.Max(0, target.CurrentHealth);
+                var assignedDamage = isLastFollower && leaderTarget == null
+                    ? remaining
+                    : Math.Min(remaining, maxAssignable);
+
+                if (assignedDamage <= 0)
+                {
+                    continue;
+                }
+
+                var op = target.TakeDamage(assignedDamage, context.SourceCard);
+                result.GeneratedEvents.AddRange(op.GeneratedEvents);
+                result.Results.Add(op);
+                remaining -= assignedDamage;
+            }
+
+            if (leaderTarget != null && remaining > 0)
+            {
+                var leaderResult = leaderTarget.TakeDamage(remaining, context.SourceCard);
+                result.GeneratedEvents.AddRange(leaderResult.GeneratedEvents);
+                result.Results.Add(leaderResult);
+                remaining = 0;
+            }
+
+            result.Success = result.GeneratedEvents.Count > 0;
+            if (!result.Success && string.IsNullOrEmpty(result.ErrorMessage))
+            {
+                result.ErrorMessage = "Split damage did not produce any events.";
+            }
+
+            return result;
+        }
     }
 }

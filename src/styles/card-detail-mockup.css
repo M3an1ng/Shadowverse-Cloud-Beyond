@@ -1,0 +1,766 @@
+/* src/styles/card-detail-mockup.css */
+
+.card-detail-modal-overlay {
+    /* Galaxy Palette */
+    --cd-bg-void: #05070a;
+    --cd-bg-night: #0f172a;
+    --cd-text-color: #e2e8f0;
+    --cd-text-secondary: rgba(226, 232, 240, 0.6);
+
+    --cd-accent-gold: #fcd34d;
+    --cd-accent-cyan: #22d3ee;
+    --cd-accent-purple: #a855f7;
+    --cd-accent-red: #f43f5e;
+
+    --cd-font-serif: 'Cinzel', serif;
+    --cd-font-tech: 'Rajdhani', sans-serif;
+    --cd-font-mono: 'JetBrains Mono', monospace;
+
+    /* Glassmorphism 2.0 */
+    --cd-glass-bg: linear-gradient(145deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.8));
+    --cd-glass-border: 1px solid rgba(255, 255, 255, 0.08);
+    --cd-glass-glow: 0 0 15px rgba(168, 85, 247, 0.1);
+    --cd-glass-blur: blur(16px);
+
+    --transition-fast: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    background: radial-gradient(circle at center, rgba(30, 41, 59, 0.75) 0%, rgba(5, 7, 10, 0.92) 100%);
+    font-family: var(--font-chinese);
+    color: var(--cd-text-color);
+    z-index: 240;
+    overflow: auto;
+    box-sizing: border-box;
+}
+
+/* --- Modal Container --- */
+.card-detail-modal {
+    width: min(1000px, 92vw);
+    height: min(650px, 86vh);
+    background: var(--cd-glass-bg);
+    border: var(--cd-glass-border);
+    box-shadow: var(--cd-glass-glow), 0 20px 60px rgba(0, 0, 0, 0.6);
+    backdrop-filter: var(--cd-glass-blur);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 10;
+    animation: modalFadeIn 0.6s var(--transition-fast);
+    overflow: hidden;
+}
+
+@keyframes modalFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.98);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* --- Header Bar --- */
+.card-detail-modal .modal-header-bar {
+    height: 60px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: grid;
+    grid-template-columns: 56px 1fr 56px;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+    position: relative;
+    padding: 0 8px;
+    width: 100%;
+    align-self: stretch;
+    box-sizing: border-box;
+}
+
+.card-detail-modal .header-title {
+    font-family: var(--cd-font-serif);
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--cd-text-color);
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    grid-column: 2;
+    justify-self: center;
+}
+
+.card-detail-modal .close-btn {
+    position: static;
+    width: 56px;
+    height: 100%;
+    background: transparent;
+    border: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--cd-text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    grid-column: 3;
+    justify-self: end;
+}
+
+.card-detail-modal .close-btn:hover {
+    background: rgba(244, 63, 94, 0.2);
+    color: #fff;
+}
+
+.card-detail-modal .close-btn svg {
+    width: 28px;
+    height: 28px;
+    stroke-width: 2;
+}
+
+/* --- Main Content Grid --- */
+.card-detail-modal .detail-content-frame {
+    flex: 1;
+    padding: 24px 40px 32px;
+    box-sizing: border-box;
+    overflow: visible;
+}
+
+.card-detail-modal .detail-content-grid {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-columns: 44% 56%;
+    gap: 12px;
+    overflow: visible;
+    align-items: start;
+    box-sizing: border-box;
+}
+
+/* --- Left Column: Visual Preview --- */
+.card-detail-modal .visual-column {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 12px 18px;
+    min-width: 0;
+    min-height: 0;
+}
+
+.card-detail-modal .card-preview-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 360px;
+    aspect-ratio: 0.714;
+    margin-left: 10px;
+    transform: none;
+    --cd-card-border: rgba(255, 255, 255, 0.12);
+}
+
+.card-detail-modal .card-preview-art {
+    width: 100%;
+    height: 100%;
+    border: 2px solid var(--cd-card-border);
+    border-radius: 12px;
+    background: #000;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.card-detail-modal .card-preview-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.card-detail-modal .art-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #111, #050505);
+}
+
+.card-detail-modal .art-text {
+    font-family: var(--cd-font-serif);
+    font-size: 3rem;
+    color: rgba(255, 255, 255, 0.05);
+}
+
+/* Rarity Borders */
+.card-detail-modal .card-preview-wrapper.rarity-bronze {
+    --cd-card-border: #cd7f32;
+}
+
+.card-detail-modal .card-preview-wrapper.rarity-silver {
+    --cd-card-border: #c0c0c0;
+}
+
+.card-detail-modal .card-preview-wrapper.rarity-gold {
+    --cd-card-border: #eebb00;
+}
+
+.card-detail-modal .card-preview-wrapper.rarity-legend,
+.card-detail-modal .card-preview-wrapper.rarity-legendary {
+    --cd-card-border: transparent;
+}
+
+.card-detail-modal .card-preview-wrapper.rarity-legend .card-preview-art,
+.card-detail-modal .card-preview-wrapper.rarity-legendary .card-preview-art {
+    border-color: transparent;
+    background-image:
+        linear-gradient(#000, #000),
+        conic-gradient(
+            from 0deg,
+            #ffd24d,
+            #ff6ad5,
+            #7c83ff,
+            #3dffdf,
+            #ffd24d
+        );
+    background-clip: padding-box, border-box;
+    background-origin: padding-box, border-box;
+    box-shadow:
+        0 0 14px rgba(255, 210, 77, 0.35),
+        0 0 22px rgba(0, 255, 204, 0.25),
+        0 0 28px rgba(255, 106, 213, 0.2),
+        0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Stat Indicators */
+.card-detail-modal .card-stat-indicator {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--cd-font-serif);
+    font-weight: 700;
+    font-size: 2rem;
+    color: #fff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+    z-index: 5;
+}
+
+.card-detail-modal .stat-cost {
+    top: -10px;
+    left: -10px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--accent-cyan, var(--cd-accent-cyan));
+    border-radius: 50%;
+    color: var(--accent-cyan, var(--cd-accent-cyan));
+    box-shadow: 0 0 8px var(--accent-cyan-dim, rgba(96, 165, 250, 0.35));
+}
+
+.card-detail-modal .stat-atk {
+    bottom: 10px;
+    left: 10px;
+    background: url('data:image/svg+xml;utf8,<svg width="56" height="56" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg"><path d="M28 2 L52 46 L4 46 Z" fill="%230f172a" stroke="rgba(252, 211, 77, 0.8)" stroke-width="2"/></svg>') no-repeat center;
+    color: var(--cd-accent-gold);
+    padding-top: 6px;
+}
+
+.card-detail-modal .stat-def {
+    bottom: 10px;
+    right: 10px;
+    background: url('data:image/svg+xml;utf8,<svg width="56" height="56" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg"><path d="M28 2 L50 14 V42 L28 54 L6 42 V14 Z" fill="%230f172a" stroke="rgba(255,255,255,0.8)" stroke-width="2"/></svg>') no-repeat center;
+    color: #fff;
+}
+
+/* Inspect Button */
+.card-detail-modal .inspect-btn {
+    position: absolute;
+    bottom: 6px;
+    left: -54px;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: var(--cd-text-secondary);
+    font-family: var(--cd-font-tech);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 6;
+}
+
+.card-detail-modal .inspect-btn:hover:not(:disabled) {
+    background: rgba(252, 211, 77, 0.1);
+    border-color: var(--cd-accent-gold);
+    color: var(--cd-accent-gold);
+    box-shadow: 0 0 15px rgba(252, 211, 77, 0.2);
+}
+
+.card-detail-modal .inspect-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
+/* --- Right Column: Data & Actions --- */
+.card-detail-modal .data-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+}
+
+/* 1. Name Row */
+.card-detail-modal .name-row {
+    height: 50px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    position: relative;
+    overflow: hidden;
+}
+
+.card-detail-modal .name-row::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--cd-accent-gold);
+    box-shadow: 0 0 10px var(--cd-accent-gold);
+}
+
+.card-detail-modal .card-name {
+    font-family: var(--cd-font-serif);
+    font-size: 1.4rem;
+    color: var(--cd-text-color);
+}
+
+/* 2. Meta Row */
+.card-detail-modal .meta-row {
+    height: 60px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+    padding: 8px 16px;
+}
+
+.card-detail-modal .meta-box {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 100%;
+}
+
+.card-detail-modal .meta-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.9rem;
+    color: var(--cd-text-secondary);
+}
+
+.card-detail-modal .meta-value {
+    color: var(--accent-cyan, var(--cd-accent-cyan));
+    font-weight: 700;
+}
+
+.card-detail-modal .meta-stats {
+    display: flex;
+    gap: 12px;
+}
+
+.card-detail-modal .mini-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--cd-font-mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.card-detail-modal .mini-stat.attack {
+    color: var(--accent-cyan, var(--cd-accent-cyan));
+    text-shadow: 0 0 8px var(--accent-cyan-dim, rgba(96, 165, 250, 0.35));
+}
+
+.card-detail-modal .mini-stat.health {
+    color: var(--accent-red, var(--cd-accent-red));
+    text-shadow: 0 0 8px rgba(244, 63, 94, 0.35);
+}
+
+.card-detail-modal .icon-atk {
+    color: inherit;
+    display: flex;
+}
+
+.card-detail-modal .icon-def {
+    color: inherit;
+    display: flex;
+}
+
+/* 3. Ability Row */
+.card-detail-modal .ability-container-row {
+    flex: 1;
+    display: flex;
+    gap: 12px;
+    min-height: 0;
+    min-width: 0;
+}
+
+.card-detail-modal .ability-box {
+    flex: 1;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+    padding: 20px;
+    overflow-y: auto;
+    min-width: 0;
+}
+
+.card-detail-modal .ability-text {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--cd-text-color);
+    white-space: pre-wrap;
+}
+
+.card-detail-modal .keyword {
+    color: var(--cd-accent-gold);
+    font-weight: 700;
+}
+
+.card-detail-modal .preview-description-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 12px 0;
+}
+
+.card-detail-modal .preview-description-keyword .preview-description-text,
+.card-detail-modal .preview-description-derived .preview-description-text {
+    color: var(--color-preview-highlight, var(--cd-accent-gold));
+    font-weight: 700;
+}
+
+.card-detail-modal .preview-description-text {
+    cursor: pointer;
+}
+
+.card-detail-modal .preview-description-text:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.card-detail-modal .preview-description-reference {
+    display: block;
+    margin: 10px 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background: rgba(8, 12, 20, 0.6);
+    white-space: normal;
+}
+
+.card-detail-modal .preview-ref-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.card-detail-modal .preview-ref-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 6px;
+    border-left: 2px solid rgba(96, 165, 250, 0.85);
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.22), rgba(15, 23, 42, 0));
+    border-radius: 6px;
+}
+
+.card-detail-modal .preview-ref-header.no-stats {
+    justify-content: flex-start;
+}
+
+.card-detail-modal .preview-ref-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    flex: 0 0 28px;
+    border-radius: 999px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: rgba(226, 232, 240, 0.7);
+    background-color: rgba(15, 23, 42, 0.6);
+}
+
+.card-detail-modal .preview-ref-icon.is-empty {
+    background-image: none;
+}
+
+.card-detail-modal .preview-ref-stats {
+    margin-left: auto;
+    font-family: var(--cd-font-mono);
+    font-size: 11px;
+    color: rgba(226, 232, 240, 0.9);
+    letter-spacing: 0.08em;
+}
+
+.card-detail-modal .preview-ref-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgba(226, 232, 240, 0.95);
+    letter-spacing: 0.06em;
+    text-shadow: 0 0 14px rgba(59, 130, 246, 0.3);
+    overflow: hidden;
+    white-space: normal;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.card-detail-modal .preview-ref-body {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: rgba(226, 232, 240, 0.85);
+    white-space: pre-line;
+}
+
+.card-detail-modal .ability-divider {
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin: 16px 0;
+}
+
+.card-detail-modal .side-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    justify-content: flex-end;
+    padding-bottom: 20px;
+    opacity: 0.55;
+    pointer-events: none;
+    min-width: 44px;
+}
+
+.card-detail-modal .side-btn {
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--cd-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 4. Footer Stats Row (hidden for now) */
+.card-detail-modal .footer-stats-row {
+    display: none;
+}
+
+.card-detail-modal .stat-bar {
+    display: flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 4px 12px;
+    border-radius: 16px;
+    gap: 8px;
+    min-width: 150px;
+    justify-content: space-between;
+}
+
+.card-detail-modal .stat-label {
+    font-size: 0.8rem;
+    color: var(--cd-text-secondary);
+}
+
+.card-detail-modal .stat-value {
+    font-family: var(--cd-font-mono);
+    font-weight: 700;
+    color: #fff;
+}
+
+.card-detail-modal .stat-icon {
+    display: flex;
+}
+
+.card-detail-modal .normal-icon {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.card-detail-modal .animated-icon {
+    color: var(--cd-accent-gold);
+}
+
+/* 5. Footer Actions Row */
+.card-detail-modal .footer-actions-row {
+    display: flex;
+    gap: 16px;
+    height: 64px;
+}
+
+.card-detail-modal .action-btn {
+    flex: 1;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+    overflow: hidden;
+}
+
+.card-detail-modal .action-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.card-detail-modal .action-btn:disabled,
+.card-detail-modal .action-btn.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+}
+
+.card-detail-modal .action-btn:disabled:hover {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+.card-detail-modal .btn-label {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 2px;
+}
+
+.card-detail-modal .action-btn:disabled .btn-label,
+.card-detail-modal .action-btn.is-disabled .btn-label {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.card-detail-modal .btn-cost {
+    font-size: 0.8rem;
+    color: var(--cd-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.card-detail-modal .cost-icon {
+    display: flex;
+    color: var(--cd-accent-cyan);
+}
+
+/* Specific Button Styles */
+.card-detail-modal .create-animated-btn {
+    border-bottom: 3px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-detail-modal .liquefy-btn {
+    border-bottom: 3px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-detail-modal .create-btn {
+    border-bottom: 3px solid var(--cd-accent-gold);
+    background: rgba(252, 211, 77, 0.05);
+}
+
+.card-detail-modal .create-btn:hover {
+    background: rgba(252, 211, 77, 0.15);
+    box-shadow: 0 0 20px rgba(252, 211, 77, 0.1);
+}
+
+.card-detail-modal .create-btn .btn-label {
+    color: var(--cd-accent-gold);
+}
+
+.card-detail-modal .action-btn:active {
+    border-bottom-width: 1px;
+    transform: translateY(2px);
+}
+
+.card-detail-modal .action-btn.is-disabled:active,
+.card-detail-modal .action-btn:disabled:active {
+    transform: none;
+}
+
+/* Scrollbar */
+.card-detail-modal ::-webkit-scrollbar {
+    width: 6px;
+}
+
+.card-detail-modal ::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.card-detail-modal ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.card-detail-modal ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Simple detail art viewer */
+.card-detail-image-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 260;
+    padding: 24px;
+    overflow: auto;
+}
+
+.card-detail-image-content {
+    position: relative;
+    max-width: min(92vw, 720px);
+    width: 100%;
+}
+
+.card-detail-image {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+}
+
+.text-dim {
+    color: var(--cd-text-secondary);
+    font-style: italic;
+}

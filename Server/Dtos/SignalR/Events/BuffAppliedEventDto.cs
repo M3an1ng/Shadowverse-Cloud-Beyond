@@ -38,14 +38,9 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string DurationType { get; set; } = string.Empty;
 
         /// <summary>
-        /// The duration parameter (e.g., number of turns for LimitedTurns).
+        /// The duration parameter (if any).
         /// </summary>
-        public object? DurationParameter { get; set; }
-
-        /// <summary>
-        /// Whether this buff is non-stackable (replaces existing buffs from the same source).
-        /// </summary>
-        public bool IsNonStackable { get; set; }
+        public int? DurationParameter { get; set; }
 
         // Constructor
         public BuffAppliedEventDto(
@@ -56,8 +51,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
             string? buffDefinitionId = null,
             string buffType = "Unknown",
             string durationType = "Permanent",
-            object? durationParameter = null,
-            bool isNonStackable = false)
+            int? durationParameter = null)
             : base(sourcePlayerId, "BuffApplied")
         {
             BuffId = buffId;
@@ -67,7 +61,6 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
             BuffType = buffType;
             DurationType = durationType;
             DurationParameter = durationParameter;
-            IsNonStackable = isNonStackable;
         }
     }
 }

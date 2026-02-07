@@ -20,6 +20,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Specific Action DTOs
 using ShadowverseBeyond.Server.Exceptions; // GameLogicException
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState / MatchRoom
+using ShadowverseBeyond.Server.Domain.Constants;
 using AutoMapper; // Added for IMapper
 using System;
 using System.Collections.Generic; // List<> for events
@@ -30,6 +31,7 @@ using ShadowverseBeyond.Server.Dtos.Replay;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using Microsoft.Extensions.Options;
 using ShadowverseBeyond.Server.Options;
+using System.Collections.Concurrent;
 
 // Corrected Namespace
 namespace ShadowverseBeyond.Server.Hubs
@@ -50,6 +52,9 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly ISnapshotStore _snapshotStore;
         private readonly ReplayOptions _replayOptions;
         private readonly IRecordedEventMapper _recordedEventMapper;
+        private static readonly TimeSpan DisconnectGracePeriod = TimeSpan.FromSeconds(GameConstants.Network.DefaultConnectionTimeoutSeconds);
+        private const string DisconnectCachePrefix = "PendingDisconnect";
+        private static readonly ConcurrentDictionary<string, CancellationTokenSource> _disconnectTimeouts = new();
 
         /// <summary>
         /// Initializes a new instance of the GameHub class.
@@ -220,6 +225,90 @@ namespace ShadowverseBeyond.Server.Hubs
             {
                 _logger.LogError(ex, "Unexpected error processing EndTurn for Player {PlayerId} in Game {GameId}", playerId, gameId);
                 await Clients.Caller.ReceiveError("An unexpected server error occurred while ending the turn.");
+            }
+        }
+
+        /// <summary>
+        /// Client invokes this method to request a full game state sync.
+        /// </summary>
+        public async Task RequestInitialGameState()
+        {
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty)
+            {
+                _logger.LogWarning("RequestInitialGameState called by unidentified connection: {ConnectionId}", Context.ConnectionId);
+                await Clients.Caller.ReceiveError("无法识别对局信息，无法同步状态。");
+                return;
+            }
+
+            var gameIdStr = gameId.ToString();
+            var currentStateEntity = _gameService.GetGameState(gameIdStr);
+            if (currentStateEntity == null)
+            {
+                _logger.LogWarning("RequestInitialGameState failed: no active GameState. GameId={GameId}", gameIdStr);
+                await Clients.Caller.ReceiveError("当前对局状态不可用，无法同步。");
+                return;
+            }
+
+            var httpContext = Context.GetHttpContext();
+            if (httpContext == null)
+            {
+                _logger.LogWarning("RequestInitialGameState failed: HttpContext null. ConnectionId={ConnectionId}", Context.ConnectionId);
+                await Clients.Caller.ReceiveError("服务器环境异常，无法同步状态。");
+                return;
+            }
+
+            Guid contextPlayerId = Guid.Empty;
+            if (!string.IsNullOrWhiteSpace(playerId) && Guid.TryParse(playerId, out var parsedPlayerId))
+            {
+                contextPlayerId = parsedPlayerId;
+            }
+            else
+            {
+                var roomResult = _matchService.Get(gameIdStr);
+                if (roomResult.Success && roomResult.Room != null)
+                {
+                    contextPlayerId = roomResult.Room.HostPlayerId;
+                }
+            }
+
+            try
+            {
+                var requestServices = httpContext.RequestServices;
+                var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
+
+                GameStateDto currentState;
+                using (var tempContext = new GameContext(
+                    requestServices,
+                    _mapper,
+                    gameContextAccessor,
+                    currentStateEntity,
+                    contextPlayerId,
+                    Context.ConnectionAborted
+                ))
+                {
+                    currentState = _mapper.Map<GameStateDto>(currentStateEntity);
+                }
+
+                await Clients.Caller.ReceiveGameState(currentState);
+
+                if (contextPlayerId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _gameService.RefreshHandPlayabilityAsync(gameIdStr, contextPlayerId, Context.ConnectionAborted);
+                        await _gameService.RefreshActPlayabilityAsync(gameIdStr, contextPlayerId, Context.ConnectionAborted);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error refreshing playability after full state sync. ConnectionId={ConnectionId}, GameId={GameId}, PlayerId={PlayerId}", Context.ConnectionId, gameIdStr, contextPlayerId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending requested game state to ConnectionId={ConnectionId}, GameId={GameId}", Context.ConnectionId, gameIdStr);
+                await Clients.Caller.ReceiveError("服务器错误：同步对局状态失败。");
             }
         }
 
@@ -874,6 +963,10 @@ namespace ShadowverseBeyond.Server.Hubs
             _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}, Added to Group={GroupName}",
                 Context.ConnectionId, playerIdStr, gameId, groupName);
 
+            var hadPendingDisconnect = CancelDisconnectTimeout(gameId, playerGuid);
+            await NotifyPlayerConnectionStatusAsync(gameId, playerGuid, true, hadPendingDisconnect ? "Reconnect" : "Connected");
+            _gameService.MarkPlayerReconnected(gameId.ToString(), playerGuid);
+
             // Only create game state when match is started, to avoid "ghost seats" or hanging initialization.
             if (!room.UseAiFallback && room.Status != MatchStatus.Started)
             {
@@ -959,27 +1052,11 @@ namespace ShadowverseBeyond.Server.Hubs
                     await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
                     _logger.LogInformation("Removed ConnectionId {ConnectionId} from Group {GroupName}", Context.ConnectionId, groupName);
 
-                    // Optional: Notify GameService about the disconnection
-                    // if (!string.IsNullOrEmpty(playerId)) {
-                    //     await _gameService.HandlePlayerDisconnectAsync(gameId.ToString(), playerId, Context.ConnectionId);
-                    // }
                     if (!string.IsNullOrEmpty(playerId) && Guid.TryParse(playerId, out var playerGuid))
                     {
-                        var wrapper = new PlayerActionWrapper
-                        {
-                            ActionType = "Disconnect",
-                            PlayerId = playerGuid,
-                            ActionData = new { ConnectionId = Context.ConnectionId }
-                        };
-
-                        try
-                        {
-                            await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Failed to enqueue Disconnect action: GameId={GameId} PlayerId={PlayerId}", gameId, playerId);
-                        }
+                        await NotifyPlayerConnectionStatusAsync(gameId, playerGuid, false, "Disconnect");
+                        _gameService.MarkPlayerDisconnected(gameId.ToString(), playerGuid);
+                        ScheduleDisconnectTimeout(gameId, playerGuid);
                     }
                 }
                 catch (Exception ex)
@@ -994,6 +1071,99 @@ namespace ShadowverseBeyond.Server.Hubs
             }
 
             await base.OnDisconnectedAsync(exception);
+        }
+
+        private string GetDisconnectCacheKey(Guid gameId, Guid playerId)
+        {
+            return $"{DisconnectCachePrefix}_{gameId}_{playerId}";
+        }
+
+        private async Task NotifyPlayerConnectionStatusAsync(Guid gameId, Guid playerId, bool isConnected, string reason)
+        {
+            var groupName = $"Game_{gameId}";
+            var dto = new PlayerConnectionStatusEventDto
+            {
+                PlayerId = playerId,
+                IsConnected = isConnected,
+                Reason = reason
+            };
+            await Clients.Group(groupName).PlayerConnectionStatusUpdated(dto);
+        }
+
+        private void ScheduleDisconnectTimeout(Guid gameId, Guid playerId)
+        {
+            var cacheKey = GetDisconnectCacheKey(gameId, playerId);
+            var cts = new CancellationTokenSource();
+            _disconnectTimeouts.AddOrUpdate(
+                cacheKey,
+                _ => cts,
+                (_, existing) =>
+                {
+                    existing.Cancel();
+                    return cts;
+                });
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(DisconnectGracePeriod, cts.Token);
+                }
+                catch (TaskCanceledException)
+                {
+                    cts.Dispose();
+                    return;
+                }
+
+                if (cts.IsCancellationRequested)
+                {
+                    cts.Dispose();
+                    return;
+                }
+
+                if (!_disconnectTimeouts.TryRemove(cacheKey, out var storedCts) || !ReferenceEquals(storedCts, cts))
+                {
+                    cts.Dispose();
+                    return;
+                }
+
+                storedCts.Dispose();
+
+                try
+                {
+                    _logger.LogInformation("Disconnect timeout elapsed. Enqueuing disconnect action. GameId={GameId} PlayerId={PlayerId}", gameId, playerId);
+                    var gameState = _gameService.GetGameState(gameId.ToString());
+                    if (gameState == null || gameState.IsGameOver)
+                    {
+                        return;
+                    }
+
+                    var wrapper = new PlayerActionWrapper
+                    {
+                        ActionType = "Disconnect",
+                        PlayerId = playerId,
+                        ActionData = new { Reason = "Timeout" }
+                    };
+
+                    await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to process disconnect timeout: GameId={GameId} PlayerId={PlayerId}", gameId, playerId);
+                }
+            });
+        }
+
+        private bool CancelDisconnectTimeout(Guid gameId, Guid playerId)
+        {
+            var cacheKey = GetDisconnectCacheKey(gameId, playerId);
+            if (_disconnectTimeouts.TryRemove(cacheKey, out var cts))
+            {
+                cts.Cancel();
+                return true;
+            }
+
+            return false;
         }
 
         // --- Helper Method ---

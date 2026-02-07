@@ -1,108 +1,26 @@
 {
-  "1401301": {
-    "id": "1401301",
-    "name": "治愈的旋律",
-    "cardSet": "星云基础",
+  "1500101": {
+    "id": "1500101",
+    "name": "纹章:曙光的神使",
+    "cardSet": "神眷的棋盘",
     "class": "Neutral",
-    "rarity": "Silver",
-    "type": "Spell",
+    "rarity": "Legendary",
+    "type": "Crest",
     "trait": "",
-    "cost": 3,
+    "cost": 0,
     "attack": 0,
     "defense": 0,
-    "countdown": 0,
+    "countdown": 6,
     "effects": [
-      "Play||Restore|Allied-Leader|3",
-      "Play||Draw|1"
+      "When|Allied-Turn-End||InOrder&1|{Destroy|Random&1-Enemy-Follower}|{Draw|2}|{Restore|Allied-Leader|3}"
     ]
   },
-  "1401302": {
-    "id": "1401302",
-    "name": "商队猛犸象",
-    "cardSet": "星云基础",
+  "1501101": {
+    "id": "1501101",
+    "name": "寡言的宿敌",
+    "cardSet": "神眷的棋盘",
     "class": "Neutral",
-    "rarity": "Silver",
-    "type": "Follower",
-    "trait": "",
-    "cost": 7,
-    "attack": 10,
-    "defense": 10,
-    "countdown": 0,
-    "effects": []
-  },
-  "1401303": {
-    "id": "1401303",
-    "name": "哥布林杀手·路西乌斯&汀娜",
-    "cardSet": "星云基础",
-    "class": "Neutral",
-    "rarity": "Silver",
-    "type": "Follower",
-    "trait": "",
-    "cost": 4,
-    "attack": 5,
-    "defense": 4,
-    "countdown": 0,
-    "effects": [
-      "Evolve||Destroy|Select&1-Enemy-Neutral-Follower||Change|SuperEvolve||Destroy|Select&2-Enemy-Neutral-Follower"
-    ]
-  },
-  "1401401": {
-    "id": "1401401",
-    "name": "侦探的放大镜",
-    "cardSet": "星云基础",
-    "class": "Neutral",
-    "rarity": "Bronze",
-    "type": "Amulet",
-    "trait": "",
-    "cost": 2,
-    "attack": 0,
-    "defense": 0,
-    "countdown": 0,
-    "effects": [
-      "Engage&0||Destroy|ThisCard",
-      "Engage&0||Remove|Ward|Select&1-Enemy-Field-Follower"
-    ]
-  },
-  "1401402": {
-    "id": "1401402",
-    "name": "叮当天使·莉亚",
-    "cardSet": "星云基础",
-    "class": "Neutral",
-    "rarity": "Bronze",
-    "type": "Follower",
-    "trait": "",
-    "cost": 2,
-    "attack": 0,
-    "defense": 2,
-    "countdown": 0,
-    "effects": [
-      "Ward",
-      "LastWords||Draw|1",
-      "Evolve||Draw|1"
-    ]
-  },
-  "1401403": {
-    "id": "1401403",
-    "name": "激震的歌利亚",
-    "cardSet": "星云基础",
-    "class": "Neutral",
-    "rarity": "Bronze",
-    "type": "Follower",
-    "trait": "",
-    "cost": 4,
-    "attack": 4,
-    "defense": 5,
-    "countdown": 0,
-    "effects": [
-      "Ward"
-    ]
-  },
-  "1401404": {
-    "id": "1401404",
-    "name": "不屈的剑斗士",
-    "cardSet": "星云基础",
-    "class": "Neutral",
-    "rarity": "Bronze",
+    "rarity": "Legendary",
     "type": "Follower",
     "trait": "",
     "cost": 2,
@@ -110,7 +28,139 @@
     "defense": 2,
     "countdown": 0,
     "effects": [
-      "Enhance&4||+3/+3|ThisCard"
+      "Evolve||AuxSelect|Select&1-Enemy-Field-Follower||Damage|Enemy-It&Except-Follower|2||Change|SuperEvolve||AuxSelect|Select&1-Enemy-Field-Follower||Damage|Enemy-It&Except-Follower|4"
+    ]
+  },
+  "1501103": {
+    "id": "1501103",
+    "name": "曙光的神使",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 5,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Destroy|Select&1-Enemy-SuperEvolved-Follower",
+      "SuperEvolve||Crest&6|{When|Allied-Turn-End||InOrder&1|{Destroy|Random&1-Enemy-Follower}|{Draw|2}|{Restore|Allied-Leader|3}}"
+    ]
+  },
+  "1501201": {
+    "id": "1501201",
+    "name": "命运的预言诗",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Give|Select&1-Allied-Hand-Follower|{Fanfare||Evolve|ThisCard}||ReturnToDeck|It||AddLabel|It|Label1501201"
+    ]
+  },
+  "1501202": {
+    "id": "1501202",
+    "name": "冒险的歧路",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Gold",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&1||Destroy|ThisCard",
+      "Engage&1||Mode&1|{+1/+1|Allied-Field-Follower}|{Destroy|Select&1-Enemy-Follower}"
+    ]
+  },
+  "1501302": {
+    "id": "1501302",
+    "name": "异国的歌唱者",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 1,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Search|Random&1-Follower",
+      "LastWords||Search|Random&1-Spell&Amulet"
+    ]
+  },
+  "1501303": {
+    "id": "1501303",
+    "name": "巨人军团",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||CopySummon|ThisCard||Change|Enhance&8||Repeat&2|CopySummon|ThisCard",
+      "Ward"
+    ]
+  },
+  "1501401": {
+    "id": "1501401",
+    "name": "篝火之夜",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 2,
+    "effects": [
+      "When|Allied-Turn-Start||Restore|Allied-Leader|X||X=Countdown|ThisCard"
+    ]
+  },
+  "1501402": {
+    "id": "1501402",
+    "name": "雇佣刺客",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 2,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Bane"
+    ]
+  },
+  "1501403": {
+    "id": "1501403",
+    "name": "夜之兽",
+    "cardSet": "神眷的棋盘",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 1,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Aura"
     ]
   }
 }

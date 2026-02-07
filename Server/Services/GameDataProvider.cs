@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -20,11 +19,34 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<GameDataProvider> _logger;
 
-        // 缓存字典
-        private readonly ConcurrentDictionary<int, CardDefinition> _cardDefinitions = new();
-        private readonly ConcurrentDictionary<int, List<AbilityConfig>> _abilityConfigsByCard = new();
-        private readonly ConcurrentDictionary<long, AbilityConfig> _abilityConfigsById = new();
-        private readonly ConcurrentDictionary<string, BuffDefinition> _buffDefinitions = new();
+        private sealed class CacheSnapshot
+        {
+            public CacheSnapshot(
+                Dictionary<int, CardDefinition> cardDefinitions,
+                Dictionary<int, List<AbilityConfig>> abilityConfigsByCard,
+                Dictionary<long, AbilityConfig> abilityConfigsById,
+                Dictionary<string, BuffDefinition> buffDefinitions)
+            {
+                CardDefinitions = cardDefinitions;
+                AbilityConfigsByCard = abilityConfigsByCard;
+                AbilityConfigsById = abilityConfigsById;
+                BuffDefinitions = buffDefinitions;
+            }
+
+            public static CacheSnapshot Empty { get; } = new(
+                new Dictionary<int, CardDefinition>(),
+                new Dictionary<int, List<AbilityConfig>>(),
+                new Dictionary<long, AbilityConfig>(),
+                new Dictionary<string, BuffDefinition>());
+
+            public Dictionary<int, CardDefinition> CardDefinitions { get; }
+            public Dictionary<int, List<AbilityConfig>> AbilityConfigsByCard { get; }
+            public Dictionary<long, AbilityConfig> AbilityConfigsById { get; }
+            public Dictionary<string, BuffDefinition> BuffDefinitions { get; }
+        }
+
+        private CacheSnapshot _snapshot = CacheSnapshot.Empty;
+        private Guid _dataRevision = Guid.Empty;
 
         // 静态实例，用于全局访问
         public static IGameDataProvider Instance { get; private set; } = null!;
@@ -40,6 +62,7 @@ namespace ShadowverseBeyond.Server.Services
         private int _cacheMissCount = 0;
 
         public bool IsInitialized => _isInitialized;
+        public Guid DataRevision => _dataRevision;
 
         public GameDataProvider(
             IServiceScopeFactory scopeFactory,
@@ -72,20 +95,20 @@ namespace ShadowverseBeyond.Server.Services
 
                 var startTime = DateTime.UtcNow;
 
-                await LoadCardDefinitionsAsync();
-                await LoadAbilityConfigsAsync();
-                await LoadBuffDefinitionsAsync();
+                var snapshot = await BuildSnapshotAsync();
+                Interlocked.Exchange(ref _snapshot, snapshot);
 
                 _isInitialized = true;
+                _dataRevision = Guid.NewGuid();
                 _lastInitialized = DateTime.UtcNow;
                 _initializationDuration = DateTime.UtcNow - startTime;
 
                 _logger.LogInformation("GameDataProvider缓存初始化完成，耗时: {Duration}ms，" +
                     "卡牌定义: {CardCount}，能力配置: {AbilityCount}，Buff定义: {BuffCount}",
                     _initializationDuration.TotalMilliseconds,
-                    _cardDefinitions.Count,
-                    _abilityConfigsById.Count,
-                    _buffDefinitions.Count);
+                    snapshot.CardDefinitions.Count,
+                    snapshot.AbilityConfigsById.Count,
+                    snapshot.BuffDefinitions.Count);
             }
             catch (Exception ex)
             {
@@ -118,7 +141,8 @@ namespace ShadowverseBeyond.Server.Services
                 return null;
             }
 
-            if (_cardDefinitions.TryGetValue(cardId, out var cardDefinition))
+            var snapshot = Volatile.Read(ref _snapshot);
+            if (snapshot.CardDefinitions.TryGetValue(cardId, out var cardDefinition))
             {
                 Interlocked.Increment(ref _cacheHitCount);
                 return cardDefinition;
@@ -141,11 +165,12 @@ namespace ShadowverseBeyond.Server.Services
                 return new Dictionary<int, CardDefinition>();
             }
 
-            return _cardDefinitions.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            var snapshot = Volatile.Read(ref _snapshot);
+            return snapshot.CardDefinitions.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         }
 
         /// <inheritdoc />
-        public IReadOnlyCollection<CardDefinition> Cards => _cardDefinitions.Values.ToList();
+        public IReadOnlyCollection<CardDefinition> Cards => Volatile.Read(ref _snapshot).CardDefinitions.Values.ToList();
 
         /// <inheritdoc />
         public List<AbilityConfig> GetAbilityConfigs(int cardId)
@@ -157,7 +182,8 @@ namespace ShadowverseBeyond.Server.Services
                 return new List<AbilityConfig>();
             }
 
-            if (_abilityConfigsByCard.TryGetValue(cardId, out var configs))
+            var snapshot = Volatile.Read(ref _snapshot);
+            if (snapshot.AbilityConfigsByCard.TryGetValue(cardId, out var configs))
             {
                 Interlocked.Increment(ref _cacheHitCount);
                 return new List<AbilityConfig>(configs); // 返回副本
@@ -177,7 +203,8 @@ namespace ShadowverseBeyond.Server.Services
                 return null;
             }
 
-            if (_abilityConfigsById.TryGetValue(abilityId, out var config))
+            var snapshot = Volatile.Read(ref _snapshot);
+            if (snapshot.AbilityConfigsById.TryGetValue(abilityId, out var config))
             {
                 Interlocked.Increment(ref _cacheHitCount);
                 return config;
@@ -197,7 +224,8 @@ namespace ShadowverseBeyond.Server.Services
                 return new Dictionary<int, List<AbilityConfig>>();
             }
 
-            return _abilityConfigsByCard.ToDictionary(
+            var snapshot = Volatile.Read(ref _snapshot);
+            return snapshot.AbilityConfigsByCard.ToDictionary(
                 kvp => kvp.Key,
                 kvp => new List<AbilityConfig>(kvp.Value));
         }
@@ -212,7 +240,8 @@ namespace ShadowverseBeyond.Server.Services
                 return null;
             }
 
-            if (_buffDefinitions.TryGetValue(buffId, out var buffDefinition))
+            var snapshot = Volatile.Read(ref _snapshot);
+            if (snapshot.BuffDefinitions.TryGetValue(buffId, out var buffDefinition))
             {
                 Interlocked.Increment(ref _cacheHitCount);
                 return buffDefinition;
@@ -228,10 +257,13 @@ namespace ShadowverseBeyond.Server.Services
         {
             _logger.LogInformation("开始刷新GameDataProvider缓存...");
 
-            _isInitialized = false;
-            ClearCache();
-
-            await InitializeAsync();
+            var startTime = DateTime.UtcNow;
+            var snapshot = await BuildSnapshotAsync();
+            Interlocked.Exchange(ref _snapshot, snapshot);
+            _isInitialized = true;
+            _dataRevision = Guid.NewGuid();
+            _lastInitialized = DateTime.UtcNow;
+            _initializationDuration = DateTime.UtcNow - startTime;
 
             _logger.LogInformation("GameDataProvider缓存刷新完成");
         }
@@ -239,10 +271,9 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public void ClearCache()
         {
-            _cardDefinitions.Clear();
-            _abilityConfigsByCard.Clear();
-            _abilityConfigsById.Clear();
-            _buffDefinitions.Clear();
+            Interlocked.Exchange(ref _snapshot, CacheSnapshot.Empty);
+            _isInitialized = false;
+            _dataRevision = Guid.Empty;
 
             _cacheHitCount = 0;
             _cacheMissCount = 0;
@@ -253,11 +284,12 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public CacheStatistics GetCacheStatistics()
         {
+            var snapshot = Volatile.Read(ref _snapshot);
             return new CacheStatistics
             {
-                CardDefinitionCount = _cardDefinitions.Count,
-                AbilityConfigCount = _abilityConfigsById.Count,
-                BuffDefinitionCount = _buffDefinitions.Count,
+                CardDefinitionCount = snapshot.CardDefinitions.Count,
+                AbilityConfigCount = snapshot.AbilityConfigsById.Count,
+                BuffDefinitionCount = snapshot.BuffDefinitions.Count,
                 LastInitialized = _lastInitialized,
                 InitializationDuration = _initializationDuration,
                 MemoryUsageBytes = EstimateMemoryUsage(),
@@ -266,7 +298,20 @@ namespace ShadowverseBeyond.Server.Services
             };
         }
 
-        private async Task LoadCardDefinitionsAsync()
+        private async Task<CacheSnapshot> BuildSnapshotAsync()
+        {
+            var cardDefinitions = await LoadCardDefinitionsAsync();
+            var abilityConfigs = await LoadAbilityConfigsAsync();
+            var buffDefinitions = await LoadBuffDefinitionsAsync();
+
+            return new CacheSnapshot(
+                cardDefinitions,
+                abilityConfigs.ByCard,
+                abilityConfigs.ById,
+                buffDefinitions);
+        }
+
+        private async Task<Dictionary<int, CardDefinition>> LoadCardDefinitionsAsync()
         {
             try
             {
@@ -276,13 +321,14 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("开始加载卡牌定义...");
                 var allCards = await cardRepository.GetAllCardDefinitionsAsync();
 
-                _cardDefinitions.Clear();
+                var cardDefinitions = new Dictionary<int, CardDefinition>(allCards.Count);
                 foreach (var card in allCards)
                 {
-                    _cardDefinitions[card.Id] = card;
+                    cardDefinitions[card.Id] = card;
                 }
 
                 _logger.LogInformation("加载了 {Count} 个卡牌定义", allCards.Count);
+                return cardDefinitions;
             }
             catch (Exception ex)
             {
@@ -291,7 +337,11 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        private async Task LoadAbilityConfigsAsync()
+        private sealed record AbilityConfigSnapshot(
+            Dictionary<int, List<AbilityConfig>> ByCard,
+            Dictionary<long, AbilityConfig> ById);
+
+        private async Task<AbilityConfigSnapshot> LoadAbilityConfigsAsync()
         {
             try
             {
@@ -304,23 +354,26 @@ namespace ShadowverseBeyond.Server.Services
 
                 var allAbilities = await abilityLoader.LoadAllAbilitiesAsync();
 
-                _abilityConfigsByCard.Clear();
-                _abilityConfigsById.Clear();
+                var abilityConfigsByCard = new Dictionary<int, List<AbilityConfig>>();
+                var abilityConfigsById = new Dictionary<long, AbilityConfig>();
 
                 foreach (var ability in allAbilities)
                 {
                     // 按卡牌ID索引
-                    _abilityConfigsByCard.AddOrUpdate(
-                        ability.CardId,
-                        new List<AbilityConfig> { ability },
-                        (key, existing) => { existing.Add(ability); return existing; });
+                    if (!abilityConfigsByCard.TryGetValue(ability.CardId, out var list))
+                    {
+                        list = new List<AbilityConfig>();
+                        abilityConfigsByCard[ability.CardId] = list;
+                    }
+                    list.Add(ability);
 
                     // 按能力ID索引 - 修复类型转换问题
                     // ability.Id is already a long, no need to parse.
-                    _abilityConfigsById[ability.Id] = ability;
+                    abilityConfigsById[ability.Id] = ability;
                 }
 
                 _logger.LogInformation("加载了 {Count} 个能力配置", allAbilities.Count);
+                return new AbilityConfigSnapshot(abilityConfigsByCard, abilityConfigsById);
             }
             catch (Exception ex)
             {
@@ -329,7 +382,7 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        private async Task LoadBuffDefinitionsAsync()
+        private async Task<Dictionary<string, BuffDefinition>> LoadBuffDefinitionsAsync()
         {
             try
             {
@@ -339,13 +392,14 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("开始加载Buff定义...");
                 var allBuffs = await dbContext.BuffDefinitions.AsNoTracking().ToListAsync();
 
-                _buffDefinitions.Clear();
+                var buffDefinitions = new Dictionary<string, BuffDefinition>();
                 foreach (var buff in allBuffs)
                 {
-                    _buffDefinitions[buff.Id] = buff;
+                    buffDefinitions[buff.Id] = buff;
                 }
 
                 _logger.LogInformation("加载了 {Count} 个Buff定义", allBuffs.Count);
+                return buffDefinitions;
             }
             catch (Exception ex)
             {
@@ -356,17 +410,18 @@ namespace ShadowverseBeyond.Server.Services
 
         private long EstimateMemoryUsage()
         {
+            var snapshot = Volatile.Read(ref _snapshot);
             // 简单的内存使用估算
             long totalBytes = 0;
 
             // 估算卡牌定义内存使用
-            totalBytes += _cardDefinitions.Count * 1024; // 假设每个卡牌定义约1KB
+            totalBytes += snapshot.CardDefinitions.Count * 1024; // 假设每个卡牌定义约1KB
 
             // 估算能力配置内存使用
-            totalBytes += _abilityConfigsById.Count * 2048; // 假设每个能力配置约2KB
+            totalBytes += snapshot.AbilityConfigsById.Count * 2048; // 假设每个能力配置约2KB
 
             // 估算Buff定义内存使用
-            totalBytes += _buffDefinitions.Count * 512; // 假设每个Buff定义约512B
+            totalBytes += snapshot.BuffDefinitions.Count * 512; // 假设每个Buff定义约512B
 
             return totalBytes;
         }

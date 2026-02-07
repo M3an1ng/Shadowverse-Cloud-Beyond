@@ -15,13 +15,18 @@ using System.Linq;
 using System.Threading.Tasks;
 using System; // Required for Exception
 using Microsoft.AspNetCore.Http; // Required for StatusCodes
+using Microsoft.AspNetCore.Hosting;
 using AutoMapper;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using System.Text.Json;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using System.Text.Json.Serialization;
+using System.IO;
+using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 {
@@ -34,13 +39,39 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
         private readonly ILogger<CardsController> _logger;
         private readonly IMapper _mapper;
         private readonly ApplicationDbContext _db;
+        private readonly IWebHostEnvironment _environment;
+        private readonly IGameService _gameService;
+        private readonly IGameDataProvider _gameDataProvider;
+        private const string DataRevisionHeader = "X-Data-Revision";
+        private static readonly HashSet<string> AllowedArtExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp"
+        };
 
-        public CardsController(ICardRepository cardRepository, ILogger<CardsController> logger, IMapper mapper, ApplicationDbContext db) // Inject Repository
+        public CardsController(
+            ICardRepository cardRepository,
+            ILogger<CardsController> logger,
+            IMapper mapper,
+            ApplicationDbContext db,
+            IWebHostEnvironment environment,
+            IGameService gameService,
+            IGameDataProvider gameDataProvider) // Inject Repository
         {
             _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository)); // Assign Repository
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _db = db ?? throw new ArgumentNullException(nameof(db));
+            _environment = environment ?? throw new ArgumentNullException(nameof(environment));
+            _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
+            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
+        }
+
+        private void AppendDataRevisionHeader()
+        {
+            Response.Headers[DataRevisionHeader] = _gameDataProvider.DataRevision.ToString();
         }
 
         [HttpGet]
@@ -64,6 +95,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
                 var dtos = _mapper.Map<IEnumerable<CardDefinitionDto>>(definitions);
 
+                AppendDataRevisionHeader();
                 _logger.LogInformation($"Successfully retrieved {dtos.Count()} card definitions.");
                 return Ok(dtos);
             }
@@ -88,8 +120,26 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     dto = dto with { Id = maxId + 1 };
                 }
 
-                var entity = _mapper.Map<CardDefinition>(dto);
+                var setDefinition = await ResolveCardSetDefinitionAsync(dto);
+                if (setDefinition == null && ShouldAutoRegisterSet(dto.CardSet))
+                {
+                    setDefinition = await EnsureCardSetDefinitionAsync(dto.CardSet!);
+                }
+                setDefinition ??= await ResolveLegacyCardSetDefinitionAsync();
+                var normalizedDto = dto with
+                {
+                    CardSet = NormalizeCardSet(setDefinition?.Name ?? dto.CardSet)
+                };
+
+                var entity = _mapper.Map<CardDefinition>(normalizedDto);
+                if (setDefinition != null)
+                {
+                    entity.CardSetDefinitionId = setDefinition.Id;
+                    entity.CardSetDefinition = setDefinition;
+
+                }
                 await _cardRepository.AddAsync(entity);
+                await _gameService.NotifyCardDefinitionUpdatedAsync(entity.Id);
                 var resultDto = _mapper.Map<CardDefinitionDto>(entity);
                 return CreatedAtAction(nameof(GetCardById), new { id = entity.Id }, resultDto);
             }
@@ -113,20 +163,49 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     return NotFound($"Card with ID {id} not found.");
                 }
 
+                var setDefinition = await ResolveCardSetDefinitionAsync(dto);
+                if (setDefinition == null && ShouldAutoRegisterSet(dto.CardSet))
+                {
+                    setDefinition = await EnsureCardSetDefinitionAsync(dto.CardSet!);
+                }
+                if (setDefinition == null && existing.CardSetDefinitionId.HasValue)
+                {
+                    setDefinition = await _db.CardSetDefinitions.FindAsync(existing.CardSetDefinitionId.Value);
+                }
+
+                var normalizedCardSet = setDefinition?.Name
+                    ?? (string.IsNullOrWhiteSpace(dto.CardSet) ? existing.CardSet : NormalizeCardSet(dto.CardSet));
+
                 var mergedDto = dto with
                 {
                     Id = id,
+                    CardSet = normalizedCardSet,
                     // Avoid accidental data loss when the client doesn't send optional fields.
                     AbilityIds = dto.AbilityIds ?? existing.AbilityIds,
                     Keywords = dto.Keywords ?? existing.Keywords,
                     Tribe = dto.Tribe ?? existing.Tribe,
-                    CardSet = string.IsNullOrWhiteSpace(dto.CardSet) ? existing.CardSet : dto.CardSet,
                     Rarity = string.IsNullOrWhiteSpace(dto.Rarity) ? existing.Rarity.ToString() : dto.Rarity,
-                    Class = string.IsNullOrWhiteSpace(dto.Class) ? existing.Class.ToString() : dto.Class
+                    Class = string.IsNullOrWhiteSpace(dto.Class) ? existing.Class.ToString() : dto.Class,
+                    ArtPreview = dto.ArtPreview ?? existing.ArtPreview,
+                    ArtDetail = dto.ArtDetail ?? existing.ArtDetail,
+                    IsCollectible = dto.IsCollectible ?? existing.IsCollectible
                 };
 
                 var updatedEntity = _mapper.Map(mergedDto, existing);
+                if (setDefinition != null)
+                {
+                    updatedEntity.CardSetDefinitionId = setDefinition.Id;
+                    updatedEntity.CardSetDefinition = setDefinition;
+
+                }
+                else
+                {
+                    updatedEntity.CardSetDefinitionId = existing.CardSetDefinitionId;
+                    updatedEntity.CardSetDefinition = existing.CardSetDefinition;
+                }
                 await _cardRepository.UpdateAsync(updatedEntity);
+
+                await _gameService.NotifyCardDefinitionUpdatedAsync(id);
 
                 var resultDto = _mapper.Map<CardDefinitionDto>(updatedEntity);
                 return Ok(resultDto);
@@ -159,6 +238,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
                 var dto = _mapper.Map<CardDefinitionDto>(definition);
 
+                AppendDataRevisionHeader();
                 _logger.LogInformation("Successfully retrieved card definition for ID: {CardId}", id);
                 return Ok(dto);
             }
@@ -167,6 +247,24 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 _logger.LogError(ex, "An error occurred while retrieving card definition with ID: {CardId}", id);
                 return StatusCode(StatusCodes.Status500InternalServerError, "An error occurred while retrieving card definition.");
             }
+        }
+
+        [HttpPost("{id:int}/art/preview")]
+        [ProducesResponseType(typeof(CardDefinitionDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public Task<ActionResult<CardDefinitionDto>> UploadPreviewArt(int id, [FromForm] IFormFile file)
+        {
+            return SaveCardArtAsync(id, file, "preview");
+        }
+
+        [HttpPost("{id:int}/art/detail")]
+        [ProducesResponseType(typeof(CardDefinitionDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public Task<ActionResult<CardDefinitionDto>> UploadDetailArt(int id, [FromForm] IFormFile file)
+        {
+            return SaveCardArtAsync(id, file, "detail");
         }
 
         [HttpGet("{cardId:int}/abilities")]
@@ -191,6 +289,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
                 // 优先按 AbilityDefinition.CardId 获取（与运行时 AbilityLoader 一致），并兼容 AbilityIds 列表（历史/编辑器用途）
                 var abilityEntities = await _db.CardAbilities
+                    .AsNoTracking()
                     .Where(a => a.IsActive && (a.CardId == cardId || abilityIds.Contains(a.Id)))
                     .OrderBy(a => a.Priority)
                     .ToListAsync();
@@ -235,6 +334,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     };
                 }).ToList();
 
+                AppendDataRevisionHeader();
                 _logger.LogInformation("Successfully retrieved {Count} abilities for card ID: {CardId}", abilities.Count, cardId);
                 return Ok(abilities);
             }
@@ -285,6 +385,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 }
 
                 await _db.SaveChangesAsync();
+                await _gameDataProvider.RefreshCacheAsync();
 
                 return Ok(new { message = "Ability linked", cardId, abilityId });
             }
@@ -309,8 +410,16 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     return NotFound(new { error = $"Card {cardId} not found" });
                 }
 
+                var ability = await _db.CardAbilities.FirstOrDefaultAsync(a => a.Id == abilityId);
+
                 card.AbilityIds.Remove(abilityId);
+
+                if (ability != null && ability.CardId == cardId)
+                {
+                    _db.CardAbilities.Remove(ability);
+                }
                 await _db.SaveChangesAsync();
+                await _gameDataProvider.RefreshCacheAsync();
 
                 return Ok(new { message = "Ability unlinked", cardId, abilityId });
             }
@@ -337,6 +446,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
                 _db.CardDefinitions.Remove(card);
                 await _db.SaveChangesAsync();
+                await _gameDataProvider.RefreshCacheAsync();
 
                 return NoContent();
             }
@@ -379,6 +489,223 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             {
                 return null;
             }
+        }
+
+        private async Task<ActionResult<CardDefinitionDto>> SaveCardArtAsync(int id, IFormFile file, string kind)
+        {
+            if (file == null || file.Length <= 0)
+            {
+                return BadRequest("No file uploaded.");
+            }
+
+            var card = await _cardRepository.GetCardDefinitionByIdAsync(id);
+            if (card == null)
+            {
+                return NotFound($"Card with ID {id} not found.");
+            }
+
+            var extension = Path.GetExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(extension) || !AllowedArtExtensions.Contains(extension))
+            {
+                return BadRequest("Unsupported image type.");
+            }
+
+            var workspaceRoot = GetWorkspaceRoot();
+            var cardFolder = Path.Combine(workspaceRoot, "assets", "cards", id.ToString());
+            Directory.CreateDirectory(cardFolder);
+
+            var fileName = $"{kind}{extension.ToLowerInvariant()}";
+            var filePath = Path.Combine(cardFolder, fileName);
+            var newPath = $"/assets/cards/{id}/{fileName}";
+
+            var existingPath = kind == "preview" ? card.ArtPreview : card.ArtDetail;
+            TryDeleteExistingArt(workspaceRoot, existingPath, newPath);
+
+            await using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await file.CopyToAsync(stream);
+            }
+
+            if (kind == "preview")
+            {
+                card.ArtPreview = newPath;
+            }
+            else
+            {
+                card.ArtDetail = newPath;
+            }
+
+            await _cardRepository.UpdateAsync(card);
+            await _gameService.NotifyCardDefinitionUpdatedAsync(id);
+            var dto = _mapper.Map<CardDefinitionDto>(card);
+            return Ok(dto);
+        }
+
+        private string GetWorkspaceRoot()
+        {
+            return Path.GetFullPath(Path.Combine(_environment.ContentRootPath, ".."));
+        }
+
+        private static void TryDeleteExistingArt(string workspaceRoot, string? existingPath, string newPath)
+        {
+            if (string.IsNullOrWhiteSpace(existingPath))
+            {
+                return;
+            }
+
+            var normalized = existingPath.Replace('\\', '/').Trim();
+            if (!normalized.StartsWith("/assets/cards/", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (normalized.Equals(newPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var diskPath = GetDiskPathFromArtPath(workspaceRoot, normalized);
+            if (diskPath != null && System.IO.File.Exists(diskPath))
+            {
+                System.IO.File.Delete(diskPath);
+            }
+        }
+
+        private static string NormalizeCardSet(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? "Legacy" : value.Trim();
+        }
+
+        private static bool TryParsePackCode(string? value, out int region, out int sequence)
+        {
+            region = 0;
+            sequence = 0;
+            if (string.IsNullOrWhiteSpace(value)) return false;
+
+            var trimmed = value.Trim();
+            if (trimmed.Length != 3 || !trimmed.All(char.IsDigit)) return false;
+
+            region = int.Parse(trimmed.Substring(0, 1));
+            sequence = int.Parse(trimmed.Substring(1, 2));
+            return true;
+        }
+
+        private async Task<CardSetDefinition?> ResolveCardSetDefinitionAsync(CardUpsertDto dto)
+        {
+            if (dto.CardSetDefinitionId.HasValue)
+            {
+                return await _db.CardSetDefinitions.FindAsync(dto.CardSetDefinitionId.Value);
+            }
+
+            if (dto.CardPackDefinitionId.HasValue)
+            {
+                var pack = await _db.CardPackDefinitions
+                    .Include(p => p.CardSetDefinition)
+                    .FirstOrDefaultAsync(p => p.Id == dto.CardPackDefinitionId.Value);
+                if (pack != null)
+                {
+                    return pack.CardSetDefinition;
+                }
+            }
+
+            if (TryParsePackCode(dto.CardPackCode, out var region, out var sequence))
+            {
+                var pack = await _db.CardPackDefinitions
+                    .Include(p => p.CardSetDefinition)
+                    .FirstOrDefaultAsync(p => p.Region == region && p.Sequence == sequence);
+                if (pack != null)
+                {
+                    return pack.CardSetDefinition;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.CardSet))
+            {
+                var normalized = dto.CardSet.Trim().ToLower();
+                return await _db.CardSetDefinitions
+                    .FirstOrDefaultAsync(set => set.Name.ToLower() == normalized);
+            }
+
+            return null;
+        }
+
+        private async Task<CardSetDefinition?> ResolveLegacyCardSetDefinitionAsync()
+        {
+            return await _db.CardSetDefinitions
+                .FirstOrDefaultAsync(set => set.Name.ToLower() == "legacy");
+        }
+
+        private static bool ShouldAutoRegisterSet(string? cardSet)
+        {
+            return !string.IsNullOrWhiteSpace(cardSet);
+        }
+
+        private async Task<CardSetDefinition?> EnsureCardSetDefinitionAsync(string cardSetName)
+        {
+            var normalized = cardSetName.Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            var existing = await _db.CardSetDefinitions
+                .FirstOrDefaultAsync(set => set.Name.ToLower() == normalized.ToLower());
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var sequence = await FindNextSetSequenceAsync(region: 0);
+                var definition = new CardSetDefinition
+                {
+                    Name = normalized,
+                    Abbreviation = string.Empty,
+                    Region = 0,
+                    Sequence = sequence,
+                    Environments = new List<DeckEnvironment> { DeckEnvironment.Open },
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _db.CardSetDefinitions.Add(definition);
+                try
+                {
+                    await _db.SaveChangesAsync();
+                    return definition;
+                }
+                catch (DbUpdateException)
+                {
+                    _db.Entry(definition).State = EntityState.Detached;
+                }
+            }
+
+            return null;
+        }
+
+        private async Task<int> FindNextSetSequenceAsync(int region)
+        {
+            var used = await _db.CardSetDefinitions
+                .Where(set => set.Region == region)
+                .Select(set => set.Sequence)
+                .ToListAsync();
+
+            for (var sequence = 2; sequence <= 99; sequence++)
+            {
+                if (!used.Contains(sequence))
+                {
+                    return sequence;
+                }
+            }
+
+            throw new InvalidOperationException($"No available set sequence for region {region}.");
+        }
+
+        private static string? GetDiskPathFromArtPath(string workspaceRoot, string artPath)
+        {
+            var trimmed = artPath.TrimStart('/');
+            var combined = Path.GetFullPath(Path.Combine(workspaceRoot, trimmed));
+            return combined.StartsWith(workspaceRoot, StringComparison.OrdinalIgnoreCase) ? combined : null;
         }
 
         private static List<object> BuildAbilityKeywordDtos(IEnumerable<AbilityKeywordConfig> keywords)

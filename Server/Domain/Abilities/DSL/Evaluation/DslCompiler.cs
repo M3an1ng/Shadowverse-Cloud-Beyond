@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.Events;
 using Microsoft.Extensions.Logging;
 using System.Linq.Expressions;
@@ -273,6 +274,96 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             return outerLambda;
         }
 
+        public Func<TItem, IDslTraceCollector?, bool> CompilePredicateWithTrace<TItem>(string dslExpression, TargetSelectionContext tsc)
+        {
+            if (string.IsNullOrWhiteSpace(dslExpression))
+                return (item, trace) => true;
+
+            var cacheKey = $"TSC_Predicate_Trace_Inner:{typeof(TItem).FullName}:{dslExpression}";
+
+            if (!_cache.TryGetValue<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, IDslTraceCollector?, bool>>(cacheKey, out var compiledInner))
+            {
+                var lexer = new Lexer(dslExpression);
+                var tokens = lexer.Tokenize();
+                var parser = new Parser.Parser(tokens);
+                var ast = parser.ParseSingleExpression() ?? throw new InvalidOperationException($"Failed to parse DSL: {dslExpression}");
+
+                var selfParam = Expression.Parameter(typeof(TItem), "self");
+                var tscParam = Expression.Parameter(typeof(TargetSelectionContext), "tsc");
+                var gameContextParam = Expression.Parameter(typeof(GameContext), "game");
+                var dbContextParam = Expression.Parameter(typeof(IGameDataProvider), "db");
+                var traceParam = Expression.Parameter(typeof(IDslTraceCollector), "trace");
+
+                var builder = new ExpressionTreeBuilder(selfParam, gameContextParam, tscParam, dbContextParam, _functionRegistry, traceParam);
+                var body = builder.Build(ast);
+
+                if (body.Type != typeof(bool))
+                {
+                    throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
+                }
+
+                var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, IDslTraceCollector?, bool>>(
+                    body,
+                    selfParam,
+                    tscParam,
+                    gameContextParam,
+                    dbContextParam,
+                    traceParam);
+                compiledInner = innerLambda.Compile();
+
+                _cache.Set(cacheKey, compiledInner);
+            }
+
+            var gameContext = tsc.GameContext;
+            Func<TItem, IDslTraceCollector?, bool> outerLambda = (item, trace) => compiledInner(item, tsc, gameContext, _gameDataProvider, trace);
+            return outerLambda;
+        }
+
+        public Func<TItem, IDslTraceCollector?, object> CompileGetterWithTrace<TItem>(string dslExpression, TargetSelectionContext tsc)
+        {
+            if (string.IsNullOrWhiteSpace(dslExpression))
+                return (item, trace) => throw new InvalidOperationException("Cannot execute an empty DSL expression for a getter.");
+
+            var cacheKey = $"TSC_Getter_Trace_Inner:{typeof(TItem).FullName}:{dslExpression}";
+
+            if (!_cache.TryGetValue<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, IDslTraceCollector?, object>>(cacheKey, out var compiledInner))
+            {
+                var lexer = new Lexer(dslExpression);
+                var tokens = lexer.Tokenize();
+                var parser = new Parser.Parser(tokens);
+                var ast = parser.ParseSingleExpression() ?? throw new InvalidOperationException($"Failed to parse DSL: {dslExpression}");
+
+                var selfParam = Expression.Parameter(typeof(TItem), "self");
+                var tscParam = Expression.Parameter(typeof(TargetSelectionContext), "tsc");
+                var gameContextParam = Expression.Parameter(typeof(GameContext), "game");
+                var dbContextParam = Expression.Parameter(typeof(IGameDataProvider), "db");
+                var traceParam = Expression.Parameter(typeof(IDslTraceCollector), "trace");
+
+                var builder = new ExpressionTreeBuilder(selfParam, gameContextParam, tscParam, dbContextParam, _functionRegistry, traceParam);
+                var body = builder.Build(ast);
+
+                if (body.Type.IsValueType)
+                {
+                    body = Expression.Convert(body, typeof(object));
+                }
+
+                var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, IDslTraceCollector?, object>>(
+                    body,
+                    selfParam,
+                    tscParam,
+                    gameContextParam,
+                    dbContextParam,
+                    traceParam);
+                compiledInner = innerLambda.Compile();
+
+                _cache.Set(cacheKey, compiledInner);
+            }
+
+            var gameContext = tsc.GameContext;
+            Func<TItem, IDslTraceCollector?, object> outerLambda = (item, trace) => compiledInner(item, tsc, gameContext, _gameDataProvider, trace);
+            return outerLambda;
+        }
+
         public Func<TItem, object> CompileGetter<TItem>(string dslExpression, TargetSelectionContext tsc)
         {
             if (string.IsNullOrWhiteSpace(dslExpression))
@@ -319,6 +410,267 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var gameContext = tsc.GameContext;
             Func<TItem, object> outerLambda = (item) => compiledInner(item, tsc, gameContext, _gameDataProvider);
             return outerLambda;
+        }
+
+        public Func<object, bool> CompilePredicateRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            IDslCompiler.SelfResolutionMode selfResolutionMode = IDslCompiler.SelfResolutionMode.ItemOptional)
+        {
+            EnsureSelfUsageIsValid(dslExpression, selfType, selfResolutionMode);
+
+            if (selfType == null)
+            {
+                var fallback = CompilePredicate<object>(dslExpression, tsc);
+                return item => fallback(item);
+            }
+
+            var method = typeof(DslCompiler)
+                .GetMethod(nameof(CompileTypedPredicateRuntimeAdapter), global::System.Reflection.BindingFlags.NonPublic | global::System.Reflection.BindingFlags.Instance)!
+                .MakeGenericMethod(selfType);
+            return (Func<object, bool>)method.Invoke(this, new object[] { dslExpression, tsc })!;
+        }
+
+        public Func<object, IDslTraceCollector?, bool> CompilePredicateWithTraceRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            IDslCompiler.SelfResolutionMode selfResolutionMode = IDslCompiler.SelfResolutionMode.ItemOptional)
+        {
+            EnsureSelfUsageIsValid(dslExpression, selfType, selfResolutionMode);
+
+            if (selfType == null)
+            {
+                var fallback = CompilePredicateWithTrace<object>(dslExpression, tsc);
+                return (item, trace) => fallback(item, trace);
+            }
+
+            var method = typeof(DslCompiler)
+                .GetMethod(nameof(CompileTypedPredicateWithTraceRuntimeAdapter), global::System.Reflection.BindingFlags.NonPublic | global::System.Reflection.BindingFlags.Instance)!
+                .MakeGenericMethod(selfType);
+            return (Func<object, IDslTraceCollector?, bool>)method.Invoke(this, new object[] { dslExpression, tsc })!;
+        }
+
+        public Func<object, object?> CompileGetterRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            IDslCompiler.SelfResolutionMode selfResolutionMode = IDslCompiler.SelfResolutionMode.ItemOptional)
+        {
+            EnsureSelfUsageIsValid(dslExpression, selfType, selfResolutionMode);
+
+            if (selfType == null)
+            {
+                var fallback = CompileGetter<object>(dslExpression, tsc);
+                return item => fallback(item);
+            }
+
+            var method = typeof(DslCompiler)
+                .GetMethod(nameof(CompileTypedGetterRuntimeAdapter), global::System.Reflection.BindingFlags.NonPublic | global::System.Reflection.BindingFlags.Instance)!
+                .MakeGenericMethod(selfType);
+            return (Func<object, object?>)method.Invoke(this, new object[] { dslExpression, tsc })!;
+        }
+
+        public Func<object, IDslTraceCollector?, object?> CompileGetterWithTraceRuntime(
+            string dslExpression,
+            TargetSelectionContext tsc,
+            Type? selfType,
+            IDslCompiler.SelfResolutionMode selfResolutionMode = IDslCompiler.SelfResolutionMode.ItemOptional)
+        {
+            EnsureSelfUsageIsValid(dslExpression, selfType, selfResolutionMode);
+
+            if (selfType == null)
+            {
+                var fallback = CompileGetterWithTrace<object>(dslExpression, tsc);
+                return (item, trace) => fallback(item, trace);
+            }
+
+            var method = typeof(DslCompiler)
+                .GetMethod(nameof(CompileTypedGetterWithTraceRuntimeAdapter), global::System.Reflection.BindingFlags.NonPublic | global::System.Reflection.BindingFlags.Instance)!
+                .MakeGenericMethod(selfType);
+            return (Func<object, IDslTraceCollector?, object?>)method.Invoke(this, new object[] { dslExpression, tsc })!;
+        }
+
+        private Func<object, bool> CompileTypedPredicateRuntimeAdapter<TSelf>(string dslExpression, TargetSelectionContext tsc)
+        {
+            var typed = CompilePredicate<TSelf>(dslExpression, tsc);
+            return item => item is TSelf casted && typed(casted);
+        }
+
+        private Func<object, IDslTraceCollector?, bool> CompileTypedPredicateWithTraceRuntimeAdapter<TSelf>(string dslExpression, TargetSelectionContext tsc)
+        {
+            var typed = CompilePredicateWithTrace<TSelf>(dslExpression, tsc);
+            return (item, trace) => item is TSelf casted && typed(casted, trace);
+        }
+
+        private Func<object, object?> CompileTypedGetterRuntimeAdapter<TSelf>(string dslExpression, TargetSelectionContext tsc)
+        {
+            var typed = CompileGetter<TSelf>(dslExpression, tsc);
+            return item =>
+            {
+                if (item is TSelf casted)
+                {
+                    return typed(casted);
+                }
+
+                return null;
+            };
+        }
+
+        private Func<object, IDslTraceCollector?, object?> CompileTypedGetterWithTraceRuntimeAdapter<TSelf>(string dslExpression, TargetSelectionContext tsc)
+        {
+            var typed = CompileGetterWithTrace<TSelf>(dslExpression, tsc);
+            return (item, trace) =>
+            {
+                if (item is TSelf casted)
+                {
+                    return typed(casted, trace);
+                }
+
+                return null;
+            };
+        }
+
+        private void EnsureSelfUsageIsValid(
+            string dslExpression,
+            Type? selfType,
+            IDslCompiler.SelfResolutionMode selfResolutionMode)
+        {
+            if (string.IsNullOrWhiteSpace(dslExpression))
+            {
+                return;
+            }
+
+            if (selfResolutionMode == IDslCompiler.SelfResolutionMode.ItemRequired && selfType == null)
+            {
+                throw new InvalidOperationException(
+                    $"DSL expression '{dslExpression}' requires a non-null self type, but no runtime item type was provided.");
+            }
+
+            if (selfResolutionMode != IDslCompiler.SelfResolutionMode.ContextOnly)
+            {
+                return;
+            }
+
+            if (!ExpressionContainsForbiddenSelfReference(dslExpression))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"DSL expression '{dslExpression}' references 'self/this/current', but current execution mode does not provide self context.");
+        }
+
+        private bool ExpressionContainsForbiddenSelfReference(string dslExpression)
+        {
+            var cacheKey = $"DSL_FORBIDDEN_SELF_REF:{dslExpression}";
+            if (_cache.TryGetValue<bool>(cacheKey, out var cached))
+            {
+                return cached;
+            }
+
+            bool hasForbiddenSelf;
+            try
+            {
+                var lexer = new Lexer(dslExpression);
+                var tokens = lexer.Tokenize();
+                var parser = new Parser.Parser(tokens);
+                var ast = parser.ParseSingleExpression();
+                hasForbiddenSelf = AstContainsForbiddenSelfReference(ast, isSelfBoundScope: false);
+            }
+            catch
+            {
+                hasForbiddenSelf = false;
+            }
+
+            _cache.Set(cacheKey, hasForbiddenSelf);
+            return hasForbiddenSelf;
+        }
+
+        private static bool AstContainsForbiddenSelfReference(AstNode? node, bool isSelfBoundScope)
+        {
+            if (node == null)
+            {
+                return false;
+            }
+
+            if (node is QueryFilterNode queryFilter)
+            {
+                return AstContainsForbiddenSelfReference(queryFilter.Source, isSelfBoundScope)
+                    || AstContainsForbiddenSelfReference(queryFilter.Filter, isSelfBoundScope: true);
+            }
+
+            if (node is QueryOrderByNode queryOrderBy)
+            {
+                if (AstContainsForbiddenSelfReference(queryOrderBy.Source, isSelfBoundScope))
+                {
+                    return true;
+                }
+
+                foreach (var ordering in queryOrderBy.Orderings)
+                {
+                    if (AstContainsForbiddenSelfReference(ordering.Expression, isSelfBoundScope: true))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (node is QueryDistinctNode queryDistinct)
+            {
+                return AstContainsForbiddenSelfReference(queryDistinct.Source, isSelfBoundScope)
+                    || AstContainsForbiddenSelfReference(queryDistinct.KeySelector, isSelfBoundScope: true);
+            }
+
+            if (node is QuerySelectNode querySelect)
+            {
+                return AstContainsForbiddenSelfReference(querySelect.Source, isSelfBoundScope)
+                    || AstContainsForbiddenSelfReference(querySelect.Selector, isSelfBoundScope: true);
+            }
+
+            if (node is QueryTakeNode queryTake)
+            {
+                if (AstContainsForbiddenSelfReference(queryTake.Source, isSelfBoundScope))
+                {
+                    return true;
+                }
+
+                return AstContainsForbiddenSelfReference(queryTake.Selection, isSelfBoundScope);
+            }
+
+            if (node is IdentifierNode identifier)
+            {
+                var root = identifier.Path.Count > 0 ? identifier.Path[0] : identifier.Name;
+                if (IsSelfRoot(root) && !isSelfBoundScope)
+                {
+                    return true;
+                }
+            }
+
+            foreach (var child in node.Children)
+            {
+                if (AstContainsForbiddenSelfReference(child, isSelfBoundScope))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSelfRoot(string? root)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                return false;
+            }
+
+            return root.Equals("self", StringComparison.OrdinalIgnoreCase)
+                || root.Equals("this", StringComparison.OrdinalIgnoreCase)
+                || root.Equals("current", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

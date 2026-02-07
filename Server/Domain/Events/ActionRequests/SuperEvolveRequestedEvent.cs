@@ -28,8 +28,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         [GameEventParameter("超进化动作", "超进化动作的详细信息。")]
         public SuperEvolveActionDto ActionDto { get; }
 
-        public SuperEvolveRequestedEvent(Guid playerId, SuperEvolveActionDto actionDto)
-            : base(EventType.SuperEvolveRequested)
+        public SuperEvolveRequestedEvent(Guid playerId, SuperEvolveActionDto actionDto, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.SuperEvolveRequested, eventId, timestamp)
         {
             PlayerId = playerId;
             ActionDto = actionDto;
@@ -37,8 +37,6 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
         public DomainOperationResult Commit(GameContext context)
         {
-            var result = new DomainOperationResult();
-
             var requestingPlayer = context.CurrentGameState.GetPlayerState(this.PlayerId);
             if (requestingPlayer == null)
             {
@@ -91,21 +89,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} cannot super evolve on turn {requestingPlayer.TurnNumber}. Super evolution starts on turn {superEvolutionStartTurn}." };
             }
 
-            var sepResult = requestingPlayer.ConsumeSuperEvolutionPoints(GameConstants.SuperEvolution.SuperEvolutionPointCost);
-            result.GeneratedEvents.AddRange(sepResult.GeneratedEvents);
-
-            requestingPlayer.ApplySuperEvolutionRightUsed();
-            result.GeneratedEvents.Add(new SuperEvolveStateUpdatedEvent(requestingPlayer, false));
-
-            // Super evolve counts as evolution for the turn.
-            requestingPlayer.ApplyEvolutionRightUsed();
-            result.GeneratedEvents.Add(new EvolveStateUpdatedEvent(requestingPlayer, false));
-
-            var evolveResult = cardToEvolve.ApplySuperEvolution();
-            result.GeneratedEvents.AddRange(evolveResult.GeneratedEvents);
-
-            result.Success = true;
-            return result;
+            var evolveResult = requestingPlayer.SuperEvolveCard(cardToEvolve, evolutionSourceCard: null, isManualEvolution: true);
+            return evolveResult;
         }
     }
 }

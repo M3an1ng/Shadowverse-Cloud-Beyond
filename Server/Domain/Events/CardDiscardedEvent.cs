@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events; // EventType, GameContext
@@ -16,14 +17,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("弃置原因", "卡牌被弃置的原因。")]
         public string Reason { get; }
 
-        [GameEventParameter("弃置玩家", "弃置卡牌的玩家。")]
+        [GameEventParameter("弃置玩家", "弃置卡牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? DiscardingPlayer => Source?.Player;
 
-        [GameEventParameter("被弃置的卡牌", "被弃置的卡牌。")]
+        [GameEventParameter("被弃置的卡牌", "被弃置的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DiscardedCard => Target.FirstOrDefault()?.Card;
 
-        public CardDiscardedEvent(PlayerState player, CardInstance card, string reason)
-            : base(EventType.Discard)
+        public CardDiscardedEvent(PlayerState player, CardInstance card, string reason, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Discard, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));

@@ -47,8 +47,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     var card = targetInfo.Card;
 
                     // 根据框架约束：ReturnCardToHand 会直接引起状态变化，Handler 侧应只产出事件
+                    var owner = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
+                    if (owner == null)
+                    {
+                        Logger.LogWarning("{EffectName}: Owner player not found for card {CardId}.", effectName, card.InstanceId);
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Return effect failed: owner player not found." };
+                    }
+
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new ReturnEvent(card, "ReturnEffect"));
+                    result.GeneratedEvents.Add(new ReturnEvent(owner, card, "ReturnEffect"));
                     return result;
                 };
 

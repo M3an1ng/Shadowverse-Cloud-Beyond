@@ -73,6 +73,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         Minus,          // -
         Multiply,       // *
         Divide,         // /
+        DivideCeil,     // \
         Modulo,         // %
         Power,          // **
 
@@ -92,6 +93,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         // 集合操作符
         SetUnion,       // |
         SetIntersect,   // &
+        SetDifference,  // ~
 
         // 赋值操作符
         Assign,         // =
@@ -204,6 +206,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             ["-"] = TokenType.Minus,
             ["*"] = TokenType.Multiply,
             ["/"] = TokenType.Divide,
+            ["\\"] = TokenType.DivideCeil,
             ["%"] = TokenType.Modulo,
             ["**"] = TokenType.Power,
 
@@ -223,6 +226,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
             // 集合操作符
             ["|"] = TokenType.SetUnion,
             ["&"] = TokenType.SetIntersect,
+            ["~"] = TokenType.SetDifference,
 
             // 赋值操作符
             ["="] = TokenType.Assign,
@@ -262,7 +266,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser
         {
             return c switch
             {
-                '+' or '-' or '*' or '/' or '%' or '=' or '!' or '>' or '<' or '&' or '|' or '?' => true,
+                '+' or '-' or '*' or '/' or '\\' or '%' or '=' or '!' or '>' or '<' or '&' or '|' or '~' or '?' => true,
                 _ => false
             };
         }

@@ -14,7 +14,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
     {
         [Description("无")]
         None = 0,
-        [Description("疾馳")]
+        [Description("疾驰")]
         Storm = 1,
         [Description("守护")]
         Ward = 2,
@@ -30,9 +30,9 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         Countdown = 7,
         [Description("灵气")]
         Aura = 8,
-        [Description("威懾")]
+        [Description("威慑")]
         Pressure = 9,
-        [Description("無法攻擊")]
+        [Description("无法攻擊")]
         Shackle = 10,
         [Description("屏障")]
         Shield = 11,
@@ -48,7 +48,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         EarthSigil = 24,
     }
 
-    public enum EffectKeyword
+    public enum AbilityKeyword
     {
         [Description("无")]
         None = 0,
@@ -66,7 +66,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         Combo = 106,
         [Description("协作")]
         Rally = 107,
-        [Description("魔力增幅")]
+        [Description("魔力增幅时")]
         SpellBoost = 108,
         [Description("觉醒")]
         Awake = 109,
@@ -96,12 +96,17 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         Intromezzo = 121,
         [Description("狂乱")]
         Wrath = 122,
-        [Description("抉择")]
+        [Description("模式")]
         Choose = 123,
         [Description("启动")]
         Act = 124,
         [Description("血祭")]
-        Sacrifice = 125
+        Sacrifice = 125,
+        [Description("超进化时")]
+        SuperEvolveEffect = 126,
+        [Description("融合")]
+        Fusion = 127,
+
     }
 
     /// <summary>
@@ -112,14 +117,14 @@ namespace ShadowverseBeyond.Server.Domain.Constants
     {
         // 字符串常量已移除，请使用 CardKeyword 和 EffectKeyword 枚举
 
-        public static EffectKeyword ParseEffectKeywordOrDefault(string? keyword, EffectKeyword defaultValue = EffectKeyword.None)
+        public static AbilityKeyword ParseEffectKeywordOrDefault(string? keyword, AbilityKeyword defaultValue = AbilityKeyword.None)
         {
             if (string.IsNullOrWhiteSpace(keyword))
             {
                 return defaultValue;
             }
 
-            return Enum.TryParse<EffectKeyword>(keyword, ignoreCase: true, out var parsed)
+            return Enum.TryParse<AbilityKeyword>(keyword, ignoreCase: true, out var parsed)
                 ? parsed
                 : defaultValue;
         }
@@ -143,12 +148,12 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         /// </summary>
         /// <param name="keyword">效果关键字</param>
         /// <returns>如果是能力触发关键字则返回true</returns>
-        public static bool IsAbilityTriggerKeyword(EffectKeyword keyword)
+        public static bool IsAbilityTriggerKeyword(AbilityKeyword keyword)
         {
             // 注意: Lastword 在枚举中拼写不同
             return keyword switch
             {
-                EffectKeyword.Fanfare or EffectKeyword.Lastword or EffectKeyword.AttackEffect or EffectKeyword.FightEffect or EffectKeyword.EvolveEffect => true,
+                AbilityKeyword.Fanfare or AbilityKeyword.Lastword or AbilityKeyword.AttackEffect or AbilityKeyword.FightEffect or AbilityKeyword.EvolveEffect => true,
                 _ => false
             };
         }

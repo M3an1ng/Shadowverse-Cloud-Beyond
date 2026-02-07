@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -15,17 +16,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("攻击", "当一个单位攻击另一个单位时触发（在伤害计算前）。", EventType.Attack)]
     public class AttackEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("攻击者", "发起攻击的单位。")]
+        [GameEventParameter("攻击者", "发起攻击的单位。", DslDisplayTypeName = "事件源")]
         public CardInstance? Attacker => Source?.Card;
 
-        [GameEventParameter("目标", "被攻击的目标单位。")]
+        [GameEventParameter("目标", "被攻击的目标单位。", DslDisplayTypeName = "事件目标")]
         public CardInstance? TargetCard => Target.FirstOrDefault()?.Card;
 
-        public AttackEvent(CardInstance attacker, CardInstance target)
-            : base(EventType.Attack)
+        [GameEventParameter("消耗攻击次数", "是否在提交时消耗攻击次数。", Scope = GameEventParameterScope.Input)]
+        public bool ConsumeAttackCount { get; }
+
+        public AttackEvent(CardInstance attacker, CardInstance target, bool consumeAttackCount = false, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Attack, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(attacker);
             Target.Add(TargetInfo.ForCard(target));
+            ConsumeAttackCount = consumeAttackCount;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -35,34 +40,35 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "Attacker or target is null in AttackEvent." };
             }
 
-            var attackerPlayer = context.CurrentGameState.GetPlayerState(Attacker.OwnerPlayerId);
-            if (attackerPlayer == null)
+            var result = new DomainOperationResult { Success = true };
+            if (ConsumeAttackCount)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = $"Attacker's owner (ID: {Attacker.OwnerPlayerId}) not found." };
+                var oldCanAttack = Attacker.CanAttack;
+                Attacker.ApplyAttackPerformed();
+                if (oldCanAttack != Attacker.CanAttack)
+                {
+                    result.GeneratedEvents.Add(new AttackStateUpdatedEvent(Attacker, Attacker.CanAttack));
+                }
             }
-
-            var attackConsequences = Attacker.PerformAttack(TargetCard);
 
             if (Attacker.HasKeyword(CardKeyword.Ambush))
             {
-                attackConsequences.GeneratedEvents.Add(new KeywordRemovedEvent(CardKeyword.Ambush, Attacker));
+                result.GeneratedEvents.Add(new KeywordRemovedEvent(CardKeyword.Ambush, Attacker));
             }
 
-            return attackConsequences;
+            return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
-            var attackerId = Attacker?.InstanceId;
-            var targetId = TargetCard?.InstanceId;
-            if (!attackerId.HasValue || !targetId.HasValue)
+            var attacker = Attacker;
+            var target = TargetCard;
+            if (attacker == null || target == null)
             {
-                return "attack";
+                return string.Empty;
             }
 
-            var attackerToken = gameState.InGameIds.Format(InGameIdKind.Card, attackerId.Value);
-            var targetToken = gameState.InGameIds.Format(InGameIdKind.Card, targetId.Value);
-            return $"attack attacker={attackerToken} target={targetToken}";
+            return $"{AnnouncementTokens.Card(attacker)}攻击{AnnouncementTokens.Card(target)}。";
         }
     }
 }

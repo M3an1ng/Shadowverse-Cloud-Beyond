@@ -54,7 +54,7 @@ namespace ShadowverseBeyond.Server.Services
             return MatchOperationResult.Ok(room);
         }
 
-        public MatchOperationResult TryJoin(string gameId, string joinCode)
+        public MatchOperationResult TryJoin(string gameId, string joinCode, Guid? guestPlayerId = null)
         {
             if (!_rooms.TryGetValue(gameId, out var room))
             {
@@ -89,7 +89,13 @@ namespace ShadowverseBeyond.Server.Services
                     return MatchOperationResult.Fail(MatchOperationError.AlreadyFull, "房间已满。");
                 }
 
-                var guestId = Guid.NewGuid();
+                var guestId = guestPlayerId.HasValue && guestPlayerId.Value != Guid.Empty
+                    ? guestPlayerId.Value
+                    : Guid.NewGuid();
+                if (guestId == room.HostPlayerId)
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.Forbidden, "玩家已在房间内。");
+                }
                 room.GuestPlayerId = guestId;
                 room.GuestToken = GenerateToken();
                 room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
@@ -394,7 +400,19 @@ namespace ShadowverseBeyond.Server.Services
                 ClosedReason = source.ClosedReason,
                 HostDeckSelection = CloneSelection(source.HostDeckSelection),
                 GuestDeckSelection = CloneSelection(source.GuestDeckSelection),
-                AiDeckSelection = CloneSelection(source.AiDeckSelection)
+                AiDeckSelection = CloneSelection(source.AiDeckSelection),
+                DevMatchConfig = source.DevMatchConfig == null
+                    ? null
+                    : new DevMatchConfig
+                    {
+                        StartingPlayPoints = source.DevMatchConfig.StartingPlayPoints,
+                        MaxPlayPoints = source.DevMatchConfig.MaxPlayPoints,
+                        StartingHandSize = source.DevMatchConfig.StartingHandSize,
+                        StartingTurn = source.DevMatchConfig.StartingTurn,
+                        StartingHealth = source.DevMatchConfig.StartingHealth,
+                        PpBoostUses = source.DevMatchConfig.PpBoostUses,
+                        Seed = source.DevMatchConfig.Seed
+                    }
             };
         }
 

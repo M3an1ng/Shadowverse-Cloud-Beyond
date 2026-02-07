@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -16,11 +17,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("添加的纹章", "被添加到纹章区的卡牌列表。")]
         public List<CardInstance> CardsToAdd { get; }
 
-        [GameEventParameter("目标玩家", "接收纹章的玩家。")]
+        [GameEventParameter("目标玩家", "接收纹章的玩家。", DslDisplayTypeName = "事件目标")]
         public PlayerState? TargetPlayer => Target.FirstOrDefault()?.Player;
 
-        public AddEmblemEvent(PlayerState targetPlayer, List<CardInstance> cardsToAdd)
-            : base(EventType.AddEmblem)
+        public AddEmblemEvent(PlayerState targetPlayer, List<CardInstance> cardsToAdd, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.AddEmblem, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForPlayer(targetPlayer));
             CardsToAdd = cardsToAdd ?? new List<CardInstance>();
@@ -39,11 +40,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = TargetPlayer?.PlayerId;
+            var player = TargetPlayer;
             var count = CardsToAdd?.Count ?? 0;
-            return playerId.HasValue
-                ? $"add-emblem player={gameState.InGameIds.Format(InGameIdKind.Player, playerId.Value)} count={count}"
-                : "add-emblem";
+            if (player == null || count <= 0)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}获得 {AnnouncementTokens.Number(count)} 个纹章。";
         }
     }
 }

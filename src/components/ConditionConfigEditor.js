@@ -46,9 +46,10 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
             // 标题区域
             const header = document.createElement('div');
             header.className = 'step-header';
-            header.innerHTML = `
-                <div class="header-with-help">
-                    <h4>发动条件配置</h4>
+            const titleText = this.options?.title || '发动条件配置';
+            const introText = this.options?.intro || '设置能力发动的限制条件。只有满足所有启用条件时，能力才会执行。';
+            const showHelp = this.options?.hideHelp !== true;
+            const helpHtml = showHelp ? `
                     <div class="help-icon-wrapper">
                         <button class="btn-icon help-btn" id="condition-help-btn">?</button>
                         <div class="info-tooltip" id="condition-help-tooltip">
@@ -75,13 +76,21 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
                             </ul>
                         </div>
                     </div>
+                ` : '';
+
+            header.innerHTML = `
+                <div class="header-with-help">
+                    <h4>${titleText}</h4>
+                    ${helpHtml}
                 </div>
-                <p class="step-intro">设置能力发动的限制条件。只有满足所有启用条件时，能力才会执行。</p>
+                <p class="step-intro">${introText}</p>
             `;
             wrapper.appendChild(header);
 
             // 绑定帮助提示交互
-            this.bindHelpTooltip(header);
+            if (showHelp) {
+                this.bindHelpTooltip(header);
+            }
 
             // 创建条件列表容器
             const listContainer = document.createElement('div');
@@ -214,7 +223,7 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-icon delete-btn';
         deleteBtn.title = '删除';
-        deleteBtn.textContent = '×';
+        deleteBtn.setAttribute('aria-label', '删除');
 
         const expandBtn = document.createElement('button');
         expandBtn.className = 'btn-icon expand-btn';

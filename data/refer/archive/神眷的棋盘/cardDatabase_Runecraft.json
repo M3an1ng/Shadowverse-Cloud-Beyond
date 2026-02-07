@@ -1,0 +1,609 @@
+{
+  "1530101": {
+    "id": "1530101",
+    "name": "太一视界",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Spell",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Spellboost|X=0",
+      "Play||Draw|1",
+      "Play||Summon|1530410|1||Allied-Turn-Start-Until|+X/+X|It||If|{Spellboost}>9||SuperEvolve|It||X=Spellboost"
+    ]
+  },
+  "1530102": {
+    "id": "1530102",
+    "name": "纹章:夙宵恒辉原动之星·织天弦御照权天枢",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-SameName&1530410-Follower|LeaveField||AddToDeck|1530101|1"
+    ]
+  },
+  "1530104": {
+    "id": "1530104",
+    "name": "纹章:贤者之石",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Card&Crest&Faith|Keyword&EarthRite||InOrder&1|{Evolve|Random&1-Allied-UnEvolved-Trait:4-Follower}|{AuxSelect|Allied-Field-Keyword&Barrier-Trait:4-Follower||Give|Random&1-Allied-Field-That&Except-Trait:4-Follower|{Barrier}}"
+    ]
+  },
+  "1530105": {
+    "id": "1530105",
+    "name": "纹章:寰宇术士",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 2,
+    "effects": [
+      "When|ThisCard|EnterField||Give|Allied-Hand-Spell|{DoDamage&1}||Give|Allied-Field-Amulet|{DoDamage&1}",
+      "When|Allied-Spell|AddToHand||Give|That|{DoDamage&1}",
+      "When|Allied-Amulet|EnterField||Give|That|{DoDamage&1}",
+      "When|ThisCard|LeaveField||Give|Allied-Hand-Spell|{DoDamage&-1}||Give|Allied-Field-Amulet|{DoDamage&-1}",
+      "LastWords||Summon|1531104|1"
+    ]
+  },
+  "1530109": {
+    "id": "1530109",
+    "name": "原初巨像",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "巨像",
+    "cost": 3,
+    "attack": 6,
+    "defense": 6,
+    "countdown": 0,
+    "effects": [
+      "Rush",
+      "Ward",
+      "Bane",
+      "LastWords||Summon|1531101|1",
+      "Strike||Damage|Enemy-Leader|1||Restore|Allied-Leader|2||Damage|Random&1-Enemy-Follower|3"
+    ]
+  },
+  "1530201": {
+    "id": "1530201",
+    "name": "纹章:萃炼的大魔女·格洛莉娅",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "EngageCost&-1"
+    ]
+  },
+  "1530202": {
+    "id": "1530202",
+    "name": "纹章:赫金圆成",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 2,
+    "effects": [
+      "When|Allied-Turn-End||AddToDeck|1531202|1",
+      "LastWords||Draw|2"
+    ]
+  },
+  "1530301": {
+    "id": "1530301",
+    "name": "纹章:鸣锡擢升",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Card|HandDestroy||Spellboost|Hand-Card|1",
+      "When|Allied-Follower|FieldDestroy||Spellboost|Hand-Card|1"
+    ]
+  },
+  "1530401": {
+    "id": "1530401",
+    "name": "烈焰之余烬",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "土之印",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&1||If|EarthRite&1||Damage|Enemy-Leader|1"
+    ]
+  },
+  "1530402": {
+    "id": "1530402",
+    "name": "疾风之裂隙",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "土之印",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&1||If|EarthRite&1||Damage|Select&1-Enemy-Follower|3"
+    ]
+  },
+  "1530405": {
+    "id": "1530405",
+    "name": "飓风浮灵",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "巨像",
+    "cost": 1,
+    "attack": 3,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Rush",
+      "LastWords||Summon|1530402|1"
+    ]
+  },
+  "1530406": {
+    "id": "1530406",
+    "name": "凝水流体",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "巨像",
+    "cost": 1,
+    "attack": 1,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Ward",
+      "LastWords||Summon|1530408|1"
+    ]
+  },
+  "1530407": {
+    "id": "1530407",
+    "name": "熔火化形",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "巨像",
+    "cost": 1,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Bane",
+      "LastWords||Summon|1530401|1"
+    ]
+  },
+  "1530408": {
+    "id": "1530408",
+    "name": "流水之结晶",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "土之印",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&1||If|EarthRite&1||Restore|Allied-Leader|2"
+    ]
+  },
+  "1530409": {
+    "id": "1530409",
+    "name": "纹章:流汞定转",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Crest",
+    "trait": "",
+    "cost": 0,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 1,
+    "effects": [
+      "When|Allied-Follower|LeaveField||Destroy|ThisCard||-1/-1|Random&1-Enemy-Field-Follower"
+    ]
+  },
+  "1530410": {
+    "id": "1530410",
+    "name": "星之精",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "精魂",
+    "cost": 1,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "When|Allied-Leader|Starboost||Allied-Turn-Start-Until|+1/+1|ThisCard"
+    ]
+  },
+  "1531101": {
+    "id": "1531101",
+    "name": "贤者之石",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 6,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Crest&0|{When|Allied-Card&Crest&Faith|Keyword&EarthRite||InOrder&1|{Evolve|Random&1-Allied-UnEvolved-Trait:4-Follower}|{AuxSelect|Allied-Field-Keyword&Barrier-Trait:4-Follower||Give|Random&1-Allied-Field-That&Except-Trait:4-Follower|{Barrier}}}",
+      "LastWords||Summon|1530109|1",
+      "Engage&3|Banish|ThisCard||Change|If|EarthRite&3||Destroy|ThisCard",
+      "Fanfare||PP|3"
+    ]
+  },
+  "1531102": {
+    "id": "1531102",
+    "name": "夙宵恒辉原动之星·织天弦御照权天枢",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Spell",
+    "trait": "",
+    "cost": 10,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Spellboost|Cost-1",
+      "Play||AddToHand|1530101|1",
+      "Play||Crest&0|{When|Allied-SameName&1530410-Follower|LeaveField||AddToDeck|1530101|1}"
+    ]
+  },
+  "1531104": {
+    "id": "1531104",
+    "name": "寰宇术士",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Legendary",
+    "type": "Follower",
+    "trait": "",
+    "cost": 6,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "When|ThisCard|EnterField||Give|Allied-Field-Follower|{DoDamage&1}",
+      "When|Allied-Other-Follower|EnterField||Give|That|{DoDamage&1}",
+      "When|ThisCard|LeaveField||Give|Allied-Field-Follower|{DoDamage&-1}",
+      "LastWords||Crest&2|{When|ThisCard|EnterField||Give|Allied-Hand-Spell|{DoDamage&1}||Give|Allied-Field-Amulet|{DoDamage&1}}|{When|Allied-Spell|AddToHand||Give|That|{DoDamage&1}}|{When|Allied-Amulet|EnterField||Give|That|{DoDamage&1}}|{When|ThisCard|LeaveField||Give|Allied-Hand-Spell|{DoDamage&-1}||Give|Allied-Field-Amulet|{DoDamage&-1}}|{LastWords||Summon|1531104|1}"
+    ]
+  },
+  "1531201": {
+    "id": "1531201",
+    "name": "折叠创生",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 4,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||SameNameToHand|Select&1-Field-Follower||AddLabel|It|Label1531201||AfterIf|{Cost|It}<>1||CardCount|0||AfterIf|{Attack|It}<>1||CardCount|0||AfterIf|{Defense|It}<>1||If|EarthRite&2||Cost%2|It||%2/%2|It||AfterIf|{Cost|It}<>1||CardCount|0||AfterIf|{Attack|It}<>1||CardCount|0||AfterIf|{Defense|It}<>1||If|EarthRite&2||Cost%2|It||%2/%2|It||AfterIf|{Cost|It}<>1||CardCount|0||AfterIf|{Attack|It}<>1||CardCount|0||AfterIf|{Defense|It}<>1||If|EarthRite&2||Cost%2|It||%2/%2|It||AfterIf|{Cost|It}<>1||CardCount|0||AfterIf|{Attack|It}<>1||CardCount|0||AfterIf|{Defense|It}<>1||If|EarthRite&2||Cost%2|It||%2/%2|It||AfterIf|{Cost|It}<>1||CardCount|0||AfterIf|{Attack|It}<>1||CardCount|0||AfterIf|{Defense|It}<>1||If|EarthRite&2||Cost%2|It||%2/%2|It"
+    ]
+  },
+  "1531202": {
+    "id": "1531202",
+    "name": "赫金圆成",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 4,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Spellboost|Cost-1",
+      "Play||Destroy|Allied-SameName&1530202-Crest||Crest&2|{When|Allied-Turn-End||AddToDeck|1531202|1}|{LastWords||Draw|2}"
+    ]
+  },
+  "1531203": {
+    "id": "1531203",
+    "name": "铅柩守门人",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 4,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Spellboost|Cost-1",
+      "Ward",
+      "Clash||Spellboost|Hand-Card|1",
+      "SuperEvolve||Destroy|Allied-Other-Follower||+X/+Y|ThisCard||X=Attack|That||Y=Defense|That"
+    ]
+  },
+  "1531204": {
+    "id": "1531204",
+    "name": "萃炼的大魔女·格洛莉娅",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||AddToHand|1531401|2",
+      "Evolve||If|EarthRite&2||PP|2",
+      "SuperEvolve||Crest&0|{EngageCost&-1}"
+    ]
+  },
+  "1531206": {
+    "id": "1531206",
+    "name": "银锁的裁决",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Gold",
+    "type": "Spell",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Mode&1|{Draw|2}|{EarthSigil|4}|{Damage|Select&1-Enemy-Follower|6}||Change|If|EarthRite&2||Mode&2|{Draw|2}|{EarthSigil|4}|{Damage|Select&1-Enemy-Follower|6}"
+    ]
+  },
+  "1531301": {
+    "id": "1531301",
+    "name": "迅风调香师",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 1,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1530402|1",
+      "When|Enemy-Follower|Destroy||If|Allied-Turn|TimesPerTurn&1||Draw|1",
+      "Evolve||Summon|1530405|1"
+    ]
+  },
+  "1531302": {
+    "id": "1531302",
+    "name": "柔水精工师",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 1,
+    "defense": 3,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1530406|1||Summon|1530408|1",
+      "When|Allied-Trait:4-Follower|EnterField||Give|It|{Clash||If|TimesPerTurn&1||+1/+1|ThisCard}||Give|It|{Aura}",
+      "Evolve||Replicate|Fanfare"
+    ]
+  },
+  "1531303": {
+    "id": "1531303",
+    "name": "银轮灵使",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 1,
+    "attack": 0,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Ambush",
+      "When|Allied-Spell|Play||Banish|ThisCard",
+      "When|ThisCard|Banish||Spellboost|Hand-Card|1||Search|Random&1-Follower",
+      "LastWords||Summon|1530410|1"
+    ]
+  },
+  "1531305": {
+    "id": "1531305",
+    "name": "炽火缝纫师",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 3,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Enhance&6||Evolve|ThisCard||Summon|1530407|1||Give|It|{Rush}",
+      "Rush",
+      "LastWords||Summon|1530401|1"
+    ]
+  },
+  "1531306": {
+    "id": "1531306",
+    "name": "鸣锡擢升",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 6,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Crest&1|{When|Allied-Card|HandDestroy||Spellboost|Hand-Card|1}|{When|Allied-Follower|FieldDestroy||Spellboost|Hand-Card|1}",
+      "Play||Mode&1|{Draw|1}|{Summon|1530410|1}",
+      "Play||Mode&1|{Draw|1}|{Summon|1530410|1}",
+      "Play||Mode&1|{Draw|1}|{Summon|1530410|1}",
+      "Play||Mode&1|{Draw|1}|{Summon|1530410|1}"
+    ]
+  },
+  "1531401": {
+    "id": "1531401",
+    "name": "唤醒元素",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 1,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Mode&1|{Summon|1030401|1}|{Summon|1530401|1}|{Summon|1530408|1}|{Summon|1530402|1}"
+    ]
+  },
+  "1531402": {
+    "id": "1531402",
+    "name": "启明占星术师",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||ReturnToDeck|Select&1-Allied-Other-Follower&Spell||EarthSigil|1||Search|Random&1-Amulet"
+    ]
+  },
+  "1531404": {
+    "id": "1531404",
+    "name": "铜镜舞者",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 3,
+    "attack": 1,
+    "defense": 1,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Search|Random&1-Spell||Give|It|{Play||Summon|1531404|1}||AddLabel|It|Label1531404",
+      "Rush",
+      "Strike||Spellboost|Hand-Card|1"
+    ]
+  },
+  "1531405": {
+    "id": "1531405",
+    "name": "铁楔熔炼士",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 3,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Summon|1530410|2||Give|That|{Rush}",
+      "When|Allied-Turn-End||Destroy|Defense<3-Follower",
+      "Evolve||Cost-2|Select&1-Allied-Hand-Spell"
+    ]
+  },
+  "1531406": {
+    "id": "1531406",
+    "name": "尘土塑形师",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 5,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Fanfare||Mode&1|{Summon|1030403|1||Evolve|It}|{Summon|1030404|1||Give|It|{Barrier}}||Change|If|EarthRite&2||Summon|1030403|1||Evolve|It||Summon|1030404|1||Give|It|{Barrier}"
+    ]
+  },
+  "1531407": {
+    "id": "1531407",
+    "name": "流汞定转",
+    "cardSet": "神眷的棋盘",
+    "class": "Runecraft",
+    "rarity": "Bronze",
+    "type": "Spell",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Summon|1530410|1",
+      "Play||Crest&1|{When|Allied-Follower|LeaveField||Destroy|ThisCard||-1/-1|Random&1-Enemy-Field-Follower}"
+    ]
+  }
+}

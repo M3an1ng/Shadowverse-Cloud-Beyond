@@ -21,16 +21,22 @@ namespace ShadowverseBeyond.Server.Domain.Events
         AbilityEditorCategories.BaseActionLabel)]
     public sealed class FusionEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("融合素材", "本次融合消耗的素材卡牌列表。")]
+        [GameEventParameter("融合素材", "本次融合消耗的素材卡牌列表。", DslDisplayTypeName = "事件目标")]
         public IReadOnlyList<CardInstance> FusedCards => Target.Select(t => t.Card).Where(c => c != null).Cast<CardInstance>().ToList();
 
-        [GameEventParameter("融合卡牌", "执行融合动作的卡牌。")]
+        [GameEventParameter("融合卡牌", "执行融合动作的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? FusionCard => Source?.Card;
+
+        [GameEventParameter("触发能力ID", "本次融合所对应的能力运行时ID。")]
+        public Guid? TriggeredAbilityRuntimeId { get; }
 
         public FusionEvent(
             CardInstance sourceCard,
-            IReadOnlyList<CardInstance> fusedCards)
-            : base(EventType.Fusion)
+            IReadOnlyList<CardInstance> fusedCards,
+            Guid? triggeredAbilityRuntimeId = null,
+            Guid? eventId = null,
+            DateTime? timestamp = null)
+            : base(EventType.Fusion, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(sourceCard);
             if (fusedCards != null)
@@ -40,6 +46,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     Target.Add(TargetInfo.ForCard(fusedCard));
                 }
             }
+            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -88,8 +95,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var playerId = FusionCard?.OwnerPlayerId ?? Guid.Empty;
-            return $"fusion player={gameState.InGameIds.Format(InGameIdKind.Player, playerId)} count={FusedCards.Count}";
+            var source = FusionCard;
+            var count = FusedCards.Count;
+            if (source == null || count <= 0)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Card(source)}融合了 {AnnouncementTokens.Number(count)} 张牌。";
         }
     }
 }

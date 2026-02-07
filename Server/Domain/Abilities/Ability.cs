@@ -12,12 +12,16 @@ using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
+using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ShadowverseBeyond.Server.Domain.Factories;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -27,6 +31,12 @@ using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
+using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Infrastructure.Logging;
+using Microsoft.AspNetCore.SignalR;
+using ShadowverseBeyond.Server.Hubs;
+using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -34,6 +44,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     /// 运行时卡牌能力表示。
     /// 【架构最终版】职责：作为效果链（Effect Chain）的模板和工厂。
     /// </summary>
+    [DslExposable("能力", Description = "运行时能力实例")]
     public class Ability : IAbility
     {
         /// <summary>
@@ -42,6 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public AbilityConfig Config { get; }
 
         // RuntimeId is part of IAbility
+        [DslExposable("能力ID", Description = "该能力的运行时标识符")]
         public Guid RuntimeId { get; } // Already exists, ensure it's initialized (done in constructor)
 
         /// <summary>
@@ -52,6 +64,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 能力名称
         /// </summary>
+        [DslExposable("能力名称", Description = "该能力的名称")]
         public string Name => Config.Name;
 
         /// <summary>
@@ -62,18 +75,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 能力关键字列表，用于标识能力类型（如"Fanfare", "LastWords", "Rush"等）
         /// </summary>
+        [DslExposable("能力关键字", Description = "该能力的关键字")]
         public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => Config.AbilityKeywords;
 
         /// <summary>
         /// 能力的主关键字（用于兼容展示）
         /// </summary>
-        public EffectKeyword PrimaryKeyword => Config.PrimaryKeyword;
+        public AbilityKeyword PrimaryKeyword => Config.PrimaryKeyword;
 
         /// <summary>
         /// Ability keyword summary for logging or display.
         /// </summary>
         public string KeywordSummary => AbilityKeywords.Count == 0
-            ? EffectKeyword.None.ToString()
+            ? AbilityKeyword.None.ToString()
             : string.Join(", ", AbilityKeywords.Select(k => k.ToString()));
 
         /// <summary>
@@ -131,6 +145,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public int TotalTriggerCount { get; private set; }
 
         /// <summary>
+        /// 本回合触发次数
+        /// </summary>
+        [DslExposable("本回合触发次数", Description = "该能力在当前回合已触发的次数")]
+        public int TriggerCountThisTurn => Trigger.CurrentTurnTriggerCount;
+
+        /// <summary>
+        /// 本局总触发次数
+        /// </summary>
+        [DslExposable("总触发次数", Description = "该能力在本局对战总触发次数")]
+        public int TriggerCountThisGame => TotalTriggerCount;
+
+        /// <summary>
         /// 上次触发时间
         /// </summary>
         public DateTime? LastTriggerTime { get; private set; }
@@ -139,13 +165,53 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private readonly ITargetFactory _targetFactory;
         private readonly TargetSelectionService _targetSelectionService;
 
-        private readonly Dictionary<(Guid TriggerEventId, int EffectIndex), ChooseDecisionState> _chooseDecisions = new();
+        private readonly Dictionary<(Guid TriggerEventId, int EffectIndex, int ExecutionIndex), DecisionState> _chooseDecisions = new();
+        private readonly Dictionary<(Guid TriggerEventId, int EffectIndex, int ExecutionIndex), DecisionState> _randomDecisions = new();
+        private readonly Dictionary<Guid, PreflightPrimaryAbilityState> _preflightPrimaryAbilityStates = new();
 
-        private sealed class ChooseDecisionState
+        private sealed class DecisionOption
         {
-            public Dictionary<Guid, AbilityConfig> OptionsById { get; } = new();
-            public List<Guid>? SelectedOptionIds { get; set; }
+            public Guid Id { get; }
+            public AbilityConfig Config { get; }
+            public int Index { get; }
+
+            public DecisionOption(Guid id, AbilityConfig config, int index)
+            {
+                Id = id;
+                Config = config;
+                Index = index;
+            }
         }
+
+        private sealed class DecisionState
+        {
+            public List<DecisionOption> Options { get; } = new();
+            public Dictionary<Guid, AbilityConfig> OptionsById { get; } = new();
+        }
+
+        private sealed class PreflightPrimaryAbilityState
+        {
+            public List<Effect> Effects { get; init; } = new();
+            public List<IGameEvent> GeneratedEvents { get; init; } = new();
+        }
+
+        internal sealed record DecisionOptionSnapshot(Guid Id, AbilityConfig Config, int Index);
+
+        internal sealed record DecisionInput(
+            IReadOnlyList<Guid> OptionIds,
+            int SelectionCount,
+            bool AllowRepeat,
+            IReadOnlyList<double> Weights);
+
+        private static readonly JsonSerializerOptions AbilityConfigJsonOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+            Converters =
+            {
+                new JsonStringEnumConverter(),
+                new LenientEffectKeywordConverter()
+            }
+        };
 
         /// <summary>
         /// 构造函数，从AbilityConfig创建运行时Ability
@@ -203,12 +269,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             return Task.FromResult(Trigger.CanTrigger(gameEvent, SourceCard));
         }
 
-        public bool HasKeyword(EffectKeyword keyword)
+        public bool HasKeyword(AbilityKeyword keyword)
         {
             return Config.HasKeyword(keyword);
         }
 
-        public int? GetKeywordValue(EffectKeyword keyword)
+        public int? GetKeywordValue(AbilityKeyword keyword)
         {
             return Config.GetKeywordValue(keyword);
         }
@@ -218,12 +284,162 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         public bool CheckConditions(GameContext context)
         {
+            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
+            var traceEnabled = traceSettings?.IsConditionEnabledFor(context) == true;
+            var traceEntries = new List<ConditionTraceEntryDto>();
+            var triggeringEventId = context.TriggeringEvent?.EventId ?? Guid.Empty;
+            var hasTriggeringEvent = triggeringEventId != Guid.Empty;
+
             foreach (var condition in Conditions)
             {
-                if (!condition.Evaluate(context))
+                var expression = condition?.Config?.Expression ?? string.Empty;
+                bool passed;
+                ConditionTraceEntryDto? traceEntry = null;
+
+                if (hasTriggeringEvent && condition.TryGetResolvedResult(triggeringEventId, out var cachedResult))
+                {
+                    passed = cachedResult;
+                    if (traceEnabled)
+                    {
+                        traceEntry = new ConditionTraceEntryDto
+                        {
+                            Expression = expression,
+                            Trace = "[cached]"
+                        };
+                    }
+                }
+                else if (!traceEnabled)
+                {
+                    passed = condition.Evaluate(context);
+                }
+                else
+                {
+                    var traceCollector = new DslTraceCollector();
+                    passed = condition.Evaluate(context, traceCollector);
+                    var traceOutput = DslTraceFormatter.Format(expression, traceCollector);
+                    traceEntry = new ConditionTraceEntryDto
+                    {
+                        Expression = expression,
+                        Trace = traceOutput
+                    };
+                }
+
+                if (hasTriggeringEvent)
+                {
+                    condition.SetResolvedResult(passed, triggeringEventId);
+                }
+
+                if (!passed)
+                {
+                    if (traceEntry == null)
+                    {
+                        traceEntry = new ConditionTraceEntryDto
+                        {
+                            Expression = expression,
+                            Trace = "[no-trace]"
+                        };
+                    }
+
+                    LogConditionFailure(context, traceEntry);
                     return false;
+                }
+
+                if (traceEnabled && traceEntry != null)
+                {
+                    traceEntries.Add(traceEntry);
+                }
+            }
+            if (traceEnabled)
+            {
+                LogConditionSuccess(context, traceEntries);
             }
             return true;
+        }
+
+        private void LogConditionFailure(GameContext context, ConditionTraceEntryDto entry)
+        {
+            var logger = context.ServiceProvider.GetService<ILogger<Ability>>();
+            var canDebugLog = logger != null && logger.IsEnabled(LogLevel.Debug);
+            var sourceCard = SourceCard;
+            var cardName = sourceCard?.Name ?? "UnknownCard";
+            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
+            var message = $"能力 {Name}（运行时ID: {RuntimeId}）在卡牌 {cardName}（{cardId}）发动失败。表达式='{entry.Expression}'，追踪='{entry.Trace}'";
+
+            if (canDebugLog)
+            {
+                logger.LogDebug(
+                    "能力 {AbilityName}（运行时ID: {RuntimeId}）在卡牌 {CardName}（{CardId}）发动失败。表达式='{Expression}'，追踪='{Trace}'",
+                    Name,
+                    RuntimeId,
+                    cardName,
+                    cardId,
+                    entry.Expression,
+                    entry.Trace);
+            }
+
+            SendConditionTrace(context, false, new List<ConditionTraceEntryDto> { entry }, message);
+        }
+
+        private void LogConditionSuccess(GameContext context, IReadOnlyList<ConditionTraceEntryDto> entries)
+        {
+            var sourceCard = SourceCard;
+            var cardName = sourceCard?.Name ?? "UnknownCard";
+            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
+            var message = $"能力 {Name}（运行时ID: {RuntimeId}）在卡牌 {cardName}（{cardId}）成功发动。";
+            SendConditionTrace(context, true, entries, message);
+        }
+
+        private void SendConditionTrace(GameContext context, bool success, IReadOnlyList<ConditionTraceEntryDto> entries, string message)
+        {
+            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
+            var hubContext = context.ServiceProvider.GetService<IHubContext<GameHub, IGameClient>>();
+            if (traceSettings == null || hubContext == null || context.CurrentGameState == null)
+            {
+                return;
+            }
+
+            var sourceCard = SourceCard;
+            var cardName = sourceCard?.Name ?? "UnknownCard";
+            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
+
+            var playerIds = new[]
+            {
+                context.CurrentGameState.Player1?.PlayerId,
+                context.CurrentGameState.Player2?.PlayerId
+            };
+
+            foreach (var playerId in playerIds.Where(id => id.HasValue).Select(id => id!.Value).Distinct())
+            {
+                if (playerId == Guid.Empty || !traceSettings.IsConditionEnabled(playerId))
+                {
+                    continue;
+                }
+
+                var dto = new ConditionTraceFailedDto
+                {
+                    GameId = context.CurrentGameState.GameId,
+                    AbilityRuntimeId = RuntimeId,
+                    AbilityName = Name ?? string.Empty,
+                    CardName = cardName,
+                    CardId = cardId,
+                    Success = success,
+                    TraceKind = "Condition",
+                    ConditionId = string.Empty,
+                    Expression = entries.Count > 0 ? entries[0].Expression : string.Empty,
+                    Trace = entries.Count > 0 ? entries[0].Trace : string.Empty,
+                    Conditions = entries,
+                    Message = message
+                };
+
+                if (success)
+                {
+                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceSucceeded(dto);
+                }
+                else
+                {
+                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceFailed(dto);
+                }
+            }
         }
 
         /// <summary>
@@ -266,7 +482,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             // 从上下文中获取IAbilityFactory，用于创建连锁能力
             var abilityFactory = context.ServiceProvider.GetRequiredService<IAbilityFactory>();
-            var pendingActionService = context.ServiceProvider.GetRequiredService<IPendingActionService>();
             var triggeringEventId = context.TriggeringEvent?.EventId ?? Guid.Empty;
 
             for (var effectIndex = 0; effectIndex < enabledEffectConfigs.Count; effectIndex++)
@@ -288,21 +503,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     }
                 }
 
-                // --- Choose Branch Selection (pre-effect execution) ---
-                // Choose is modeled as a no-op effect that only triggers ONE chained branch ability.
-                // The actual player interaction is performed here (async), so we never block a sync effect handler.
-                List<Ability>? overriddenChainedAbilities = null;
-                if (effectConfig.Type == EffectType.Choose)
-                {
-                    overriddenChainedAbilities = await ResolveChooseBranchAbilitiesAsync(
-                        context,
-                        pendingActionService,
-                        abilityFactory,
-                        triggeringEventId,
-                        effectIndex,
-                        effectConfig);
-                }
-
                 var effectRequest = new Effect(
                     effectConfig,
                     context.RequestingPlayerId,
@@ -311,15 +511,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     context.TriggeringEvent?.EventId ?? Guid.Empty, // triggeredEventId
                     this.SourceCard?.InstanceId // sourceCardId
                 );
+                effectRequest.ResolvedTargets = targetResult.ResolvedTargets;
+                effectRequest.EffectIndex = effectIndex;
+                effectRequest.Priority = effectConfig.ExecutionOrder * 1000 + effectIndex;
+                effectRequest.SourceAbility = this;
 
                 context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Effect, effectRequest.Id);
 
                 // --- 核心修改：生成时填充能力链 ---
-                if (overriddenChainedAbilities != null)
-                {
-                    effectRequest.ChainedAbilities.AddRange(overriddenChainedAbilities);
-                }
-                else if (effectConfig.ChainedAbilities.Any())
+                if (effectConfig.ChainedAbilities.Any())
                 {
                     // 使用批量创建方法，虽然当前场景下差别不大，但更符合API设计
                     var chainedAbilities = abilityFactory.CreateAbilities(this.SourceCard, effectConfig.ChainedAbilities);
@@ -330,148 +530,142 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 resultingEffects.Add(effectRequest);
             }
 
-            // Cleanup: after the action is locked-in (commit phase), discard cached decisions for this trigger.
-            if (!context.IsCancellable && triggeringEventId != Guid.Empty)
-            {
-                var keysToRemove = _chooseDecisions.Keys.Where(k => k.TriggerEventId == triggeringEventId).ToList();
-                foreach (var key in keysToRemove)
-                {
-                    _chooseDecisions.Remove(key);
-                }
-            }
-
             return resultingEffects;
         }
 
-        private async Task<List<Ability>> ResolveChooseBranchAbilitiesAsync(
+        internal DecisionInput PrepareDecisionInput(
             GameContext context,
-            IPendingActionService pendingActionService,
-            IAbilityFactory abilityFactory,
             Guid triggeringEventId,
             int effectIndex,
-            EffectConfig effectConfig)
+            EffectConfig effectConfig,
+            bool isRandom,
+            int executionIndex = 0)
         {
-            if (!effectConfig.ChainedAbilities.Any())
+            var valueResolver = context.ServiceProvider.GetRequiredService<IValueSourceResolver>();
+            var branchConfigs = ResolveAbilityConfigs(effectConfig, "abilityConfigs", context, valueResolver);
+            if (branchConfigs.Count == 0)
             {
-                throw new GameLogicException("Choose effect requires at least one branch ability.");
+                throw new GameLogicException(isRandom
+                    ? "Random effect requires abilityConfigs."
+                    : "Choose effect requires abilityConfigs.");
             }
 
-            var key = (triggeringEventId, effectIndex);
-            if (!_chooseDecisions.TryGetValue(key, out var state))
+            var state = EnsureDecisionState(
+                context,
+                triggeringEventId,
+                effectIndex,
+                executionIndex,
+                isRandom,
+                branchConfigs);
+
+            var optionIds = state.Options.Select(option => option.Id).ToList();
+            if (optionIds.Count == 0)
             {
-                state = new ChooseDecisionState();
-                foreach (var branch in effectConfig.ChainedAbilities)
-                {
-                    state.OptionsById[Guid.NewGuid()] = branch;
-                }
-                _chooseDecisions[key] = state;
+                throw new GameLogicException(isRandom
+                    ? "Random effect has no available options."
+                    : "Choose effect has no available options.");
             }
 
-            if (state.SelectedOptionIds == null)
+            var selectionCount = ResolveSelectionCount(effectConfig, "selectionCount", 1, context, valueResolver);
+            selectionCount = Math.Max(1, selectionCount);
+
+            var allowRepeat = isRandom && ResolveBooleanParameter(effectConfig, "allowRepeat", false, context, valueResolver);
+            var weights = isRandom
+                ? ResolveWeights(effectConfig, "weights", optionIds.Count, context, valueResolver)
+                : new List<double>();
+
+            return new DecisionInput(optionIds, selectionCount, allowRepeat, weights);
+        }
+
+        internal IReadOnlyList<DecisionOptionSnapshot> GetDecisionOptions(
+            Guid triggeringEventId,
+            int effectIndex,
+            bool isRandom,
+            int executionIndex = 0)
+        {
+            var key = (triggeringEventId, effectIndex, executionIndex);
+            if (isRandom)
             {
-                var optionIds = state.OptionsById.Keys.ToList();
-                if (optionIds.Count == 0)
+                if (!_randomDecisions.TryGetValue(key, out var state))
                 {
-                    throw new GameLogicException("Choose effect has no available options.");
+                    throw new GameLogicException("Random decision options are missing.");
                 }
+                return state.Options.Select(option => new DecisionOptionSnapshot(option.Id, option.Config, option.Index)).ToList();
+            }
 
-                var valueResolver = context.ServiceProvider.GetRequiredService<IValueSourceResolver>();
-                var selectionCount = ResolveSelectionCount(effectConfig, "selectionCount", 1, context, valueResolver);
-                selectionCount = Math.Max(1, selectionCount);
+            if (!_chooseDecisions.TryGetValue(key, out var chooseState))
+            {
+                throw new GameLogicException("Choose decision options are missing.");
+            }
 
-                if (this.SourceCard == null)
+            return chooseState.Options.Select(option => new DecisionOptionSnapshot(option.Id, option.Config, option.Index)).ToList();
+        }
+
+        internal static List<CardInstanceDto> BuildDecisionOptionCards(
+            IReadOnlyList<DecisionOptionSnapshot> options,
+            Guid requestingPlayerId)
+        {
+            return options.Select(option =>
+            {
+                var branch = option.Config;
+                return new CardInstanceDto
                 {
-                    throw new GameLogicException("Choose effect requires a source card to execute branch abilities.");
-                }
-
-                if (selectionCount >= optionIds.Count)
-                {
-                    state.SelectedOptionIds = optionIds;
-                    return abilityFactory.CreateAbilities(this.SourceCard, state.SelectedOptionIds.Select(id => state.OptionsById[id]), this.SourceBuffId);
-                }
-
-                var optionCards = state.OptionsById.Select(kvp =>
-                {
-                    var optionId = kvp.Key;
-                    var branch = kvp.Value;
-
-                    return new CardInstanceDto
-                    {
-                        InstanceId = optionId,
-                        CardId = 0,
-                        Name = string.IsNullOrWhiteSpace(branch.Name) ? branch.PrimaryKeyword.ToString() : branch.Name,
-                        Cost = 0,
-                        Type = CardType.Spell,
-                        Rarity = CardRarity.Special,
-                        Class = CardClass.Neutral,
-                        Tribe = new List<string>(),
-                        Attack = 0,
-                        Health = 0,
-                        CurrentAttack = 0,
-                        CurrentHealth = 0,
-                        MaxHealth = 0,
-                        Description = branch.Description ?? string.Empty,
-                        CanEvolve = false,
-                        IsEvolved = false,
-                        CanAttack = false,
-                        AttacksThisTurn = 0,
-                        FieldTurn = 0,
-                        MaxAttack = 0,
-                        Zone = CardZone.Extra,
-                        Keywords = new List<CardKeyword>(),
-                        EffectDescriptions = new List<string>(),
-                        CurrentCountdown = null,
-                        MaxAttacksPerTurn = 1,
-                        CurrentCost = 0,
-                        ZoneIndex = null,
-                        OwnerPlayerId = context.RequestingPlayerId,
-                        EvolvedState = null
-                    };
-                }).ToList();
-
-                var promptMessage = $"请选择{selectionCount}个选项";
-
-                var request = new PlayerChoiceRequest
-                {
-                    PendingChoiceId = Guid.NewGuid(),
-                    GameId = context.CurrentGameState.GameId,
-                    TargetKey = $"choose_{effectIndex}",
-                    SourceAbilityRuntimeId = this.RuntimeId,
-                    RequestingPlayerId = context.RequestingPlayerId,
-                    Message = promptMessage,
-                    SelectableTargetIds = optionIds,
-                    SelectableCardInstances = optionCards,
-                    MinSelectionCount = selectionCount,
-                    MaxSelectionCount = selectionCount,
-                    IsCancellable = context.IsCancellable
+                    InstanceId = option.Id,
+                    CardId = 0,
+                    Name = string.IsNullOrWhiteSpace(branch.Name) ? branch.PrimaryKeyword.ToString() : branch.Name,
+                    Cost = 0,
+                    Type = CardType.Spell,
+                    Rarity = CardRarity.Special,
+                    Class = CardClass.Neutral,
+                    Tribe = new List<string>(),
+                    Attack = 0,
+                    Health = 0,
+                    CurrentAttack = 0,
+                    CurrentHealth = 0,
+                    MaxHealth = 0,
+                    Description = branch.Description ?? string.Empty,
+                    CanEvolve = false,
+                    IsEvolved = false,
+                    CanAttack = false,
+                    AttacksThisTurn = 0,
+                    FieldTurn = 0,
+                    MaxAttack = 0,
+                    Zone = CardZone.Extra,
+                    Keywords = new List<CardKeyword>(),
+                    EffectDescriptions = new List<string>(),
+                    CurrentCountdown = null,
+                    MaxAttacksPerTurn = 1,
+                    CurrentCost = 0,
+                    ZoneIndex = null,
+                    OwnerPlayerId = requestingPlayerId,
+                    EvolvedState = null
                 };
+            }).ToList();
+        }
 
-                var result = await pendingActionService.WaitForPlayerChoiceAsync(context.CurrentGameState.GameId, request, context.CancellationToken);
-                if (result.WasCancelled)
-                {
-                    throw new GameLogicException("Player cancelled Choose selection.");
-                }
-
-                var chosen = result.ChosenTargetIds
-                    .Where(id => id != Guid.Empty)
-                    .Distinct()
-                    .ToList();
-                if (chosen.Count == 0 || chosen.Any(id => !state.OptionsById.ContainsKey(id)))
-                {
-                    throw new GameLogicException("Invalid Choose selection result.");
-                }
-
-                state.SelectedOptionIds = chosen;
-            }
-
-            var selectedConfigs = state.SelectedOptionIds
-                .Select(id => state.OptionsById[id])
-                .ToList();
-            if (this.SourceCard == null)
+        private DecisionState EnsureDecisionState(
+            GameContext context,
+            Guid triggeringEventId,
+            int effectIndex,
+            int executionIndex,
+            bool isRandom,
+            IReadOnlyList<AbilityConfig> branchConfigs)
+        {
+            var key = (triggeringEventId, effectIndex, executionIndex);
+            var cache = isRandom ? _randomDecisions : _chooseDecisions;
+            if (!cache.TryGetValue(key, out var state))
             {
-                throw new GameLogicException("Choose effect requires a source card to execute branch abilities.");
+                state = new DecisionState();
+                foreach (var (branch, index) in branchConfigs.Select((branch, index) => (branch, index)))
+                {
+                    var id = Guid.NewGuid();
+                    state.Options.Add(new DecisionOption(id, branch, index));
+                    state.OptionsById[id] = branch;
+                    context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Choice, id);
+                }
+                cache[key] = state;
             }
-            return abilityFactory.CreateAbilities(this.SourceCard, selectedConfigs, this.SourceBuffId);
+            return state;
         }
 
         private static int ResolveSelectionCount(
@@ -481,20 +675,424 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             GameContext context,
             IValueSourceResolver resolver)
         {
-            if (effectConfig.Parameters == null || !effectConfig.Parameters.TryGetValue(key, out var valueConfig))
+            if (!TryResolveParameterValue(effectConfig, key, context, resolver, out var resolved))
             {
                 return fallback;
             }
 
             try
             {
-                var resolved = valueConfig.Resolve(context, resolver);
                 return CoerceToInt(resolved, fallback);
             }
             catch
             {
                 return fallback;
             }
+        }
+
+        private static List<AbilityConfig> ResolveAbilityConfigs(
+            EffectConfig effectConfig,
+            string key,
+            GameContext context,
+            IValueSourceResolver resolver)
+        {
+            if (!TryResolveParameterValue(effectConfig, key, context, resolver, out var resolved))
+            {
+                return new List<AbilityConfig>();
+            }
+
+            return CoerceAbilityConfigList(resolved);
+        }
+
+        private static List<AbilityConfig> CoerceAbilityConfigList(object? value)
+        {
+            if (value == null)
+            {
+                return new List<AbilityConfig>();
+            }
+
+            if (value is List<AbilityConfig> list)
+            {
+                return list.Where(item => item != null).ToList();
+            }
+
+            if (value is AbilityConfig[] array)
+            {
+                return array.Where(item => item != null).ToList();
+            }
+
+            if (value is IEnumerable<AbilityConfig> enumerable)
+            {
+                return enumerable.Where(item => item != null).ToList();
+            }
+
+            if (value is JsonElement jsonElement)
+            {
+                return DeserializeAbilityConfigList(jsonElement);
+            }
+
+            if (value is string jsonText)
+            {
+                return DeserializeAbilityConfigList(jsonText);
+            }
+
+            return new List<AbilityConfig>();
+        }
+
+        private static List<AbilityConfig> DeserializeAbilityConfigList(JsonElement element)
+        {
+            try
+            {
+                if (element.ValueKind == JsonValueKind.Array)
+                {
+                    var list = JsonSerializer.Deserialize<List<AbilityConfig>>(element.GetRawText(), AbilityConfigJsonOptions);
+                    return list?.Where(item => item != null).ToList() ?? new List<AbilityConfig>();
+                }
+
+                if (element.ValueKind == JsonValueKind.Object)
+                {
+                    var single = JsonSerializer.Deserialize<AbilityConfig>(element.GetRawText(), AbilityConfigJsonOptions);
+                    return single != null ? new List<AbilityConfig> { single } : new List<AbilityConfig>();
+                }
+
+                if (element.ValueKind == JsonValueKind.String)
+                {
+                    return DeserializeAbilityConfigList(element.GetString());
+                }
+            }
+            catch
+            {
+                return new List<AbilityConfig>();
+            }
+
+            return new List<AbilityConfig>();
+        }
+
+        private static List<AbilityConfig> DeserializeAbilityConfigList(string? jsonText)
+        {
+            if (string.IsNullOrWhiteSpace(jsonText))
+            {
+                return new List<AbilityConfig>();
+            }
+
+            try
+            {
+                var list = JsonSerializer.Deserialize<List<AbilityConfig>>(jsonText, AbilityConfigJsonOptions);
+                if (list != null)
+                {
+                    return list.Where(item => item != null).ToList();
+                }
+            }
+            catch
+            {
+                // Fallback to single object parse below.
+            }
+
+            try
+            {
+                var single = JsonSerializer.Deserialize<AbilityConfig>(jsonText, AbilityConfigJsonOptions);
+                return single != null ? new List<AbilityConfig> { single } : new List<AbilityConfig>();
+            }
+            catch
+            {
+                return new List<AbilityConfig>();
+            }
+        }
+
+        // Decision resolution now happens during event processing.
+
+        internal void ClearDecisionCache(Guid triggeringEventId, int effectIndex, int executionIndex = 0)
+        {
+            var key = (triggeringEventId, effectIndex, executionIndex);
+            _chooseDecisions.Remove(key);
+            _randomDecisions.Remove(key);
+        }
+
+        internal void ClearDecisionCache(Guid triggeringEventId)
+        {
+            var chooseKeys = _chooseDecisions.Keys.Where(k => k.TriggerEventId == triggeringEventId).ToList();
+            foreach (var key in chooseKeys)
+            {
+                _chooseDecisions.Remove(key);
+            }
+
+            var randomKeys = _randomDecisions.Keys.Where(k => k.TriggerEventId == triggeringEventId).ToList();
+            foreach (var key in randomKeys)
+            {
+                _randomDecisions.Remove(key);
+            }
+
+            foreach (var condition in Conditions)
+            {
+                condition.ClearResolvedForEvent(triggeringEventId);
+            }
+
+            _preflightPrimaryAbilityStates.Remove(triggeringEventId);
+        }
+
+        internal void CachePreflightPrimaryAbilityResult(
+            Guid triggeringEventId,
+            IReadOnlyList<Effect> effects,
+            IReadOnlyList<IGameEvent> generatedEvents)
+        {
+            _preflightPrimaryAbilityStates[triggeringEventId] = new PreflightPrimaryAbilityState
+            {
+                Effects = effects?.ToList() ?? new List<Effect>(),
+                GeneratedEvents = generatedEvents?.ToList() ?? new List<IGameEvent>()
+            };
+        }
+
+        internal bool TryConsumePreflightPrimaryAbilityResult(
+            Guid triggeringEventId,
+            out IReadOnlyList<Effect> effects,
+            out IReadOnlyList<IGameEvent> generatedEvents)
+        {
+            if (_preflightPrimaryAbilityStates.TryGetValue(triggeringEventId, out var state))
+            {
+                _preflightPrimaryAbilityStates.Remove(triggeringEventId);
+                effects = state.Effects;
+                generatedEvents = state.GeneratedEvents;
+                return true;
+            }
+
+            effects = Array.Empty<Effect>();
+            generatedEvents = Array.Empty<IGameEvent>();
+            return false;
+        }
+
+        private static bool ResolveBooleanParameter(
+            EffectConfig effectConfig,
+            string key,
+            bool fallback,
+            GameContext context,
+            IValueSourceResolver resolver)
+        {
+            if (!TryResolveParameterValue(effectConfig, key, context, resolver, out var resolved))
+            {
+                return fallback;
+            }
+
+            return CoerceToBool(resolved, fallback);
+        }
+
+        private static List<double> ResolveWeights(
+            EffectConfig effectConfig,
+            string key,
+            int optionCount,
+            GameContext context,
+            IValueSourceResolver resolver)
+        {
+            if (!TryResolveParameterValue(effectConfig, key, context, resolver, out var resolved))
+            {
+                return Enumerable.Repeat(1d, optionCount).ToList();
+            }
+
+            var weights = CoerceToDoubleList(resolved);
+            if (weights.Count == 0)
+            {
+                return Enumerable.Repeat(1d, optionCount).ToList();
+            }
+
+            var normalized = new List<double>(optionCount);
+            for (var i = 0; i < optionCount; i++)
+            {
+                var weight = i < weights.Count ? weights[i] : 1d;
+                normalized.Add(weight < 0 ? 0 : weight);
+            }
+
+            if (normalized.All(value => value <= 0))
+            {
+                return Enumerable.Repeat(1d, optionCount).ToList();
+            }
+
+            return normalized;
+        }
+
+        private static bool TryResolveParameterValue(
+            EffectConfig effectConfig,
+            string key,
+            GameContext context,
+            IValueSourceResolver resolver,
+            out object? resolved)
+        {
+            resolved = null;
+            if (effectConfig.Parameters == null || effectConfig.Parameters.Count == 0)
+            {
+                return false;
+            }
+
+            if (!TryGetParameter(effectConfig.Parameters, key, out var value))
+            {
+                return false;
+            }
+
+            if (value == null)
+            {
+                return false;
+            }
+
+            resolved = value.Resolve(context, resolver);
+            return true;
+        }
+
+        private static bool TryGetParameter(
+            Dictionary<string, ValueConfig> parameters,
+            string key,
+            out ValueConfig value)
+        {
+            return parameters.TryGetValue(key, out value);
+        }
+
+        private static bool CoerceToBool(object? value, bool fallback)
+        {
+            switch (value)
+            {
+                case null:
+                    return fallback;
+                case bool b:
+                    return b;
+                case int i:
+                    return i != 0;
+                case long l:
+                    return l != 0;
+                case double d:
+                    return Math.Abs(d) > double.Epsilon;
+                case float f:
+                    return Math.Abs(f) > float.Epsilon;
+                case decimal m:
+                    return m != 0;
+                case string s when bool.TryParse(s, out var parsed):
+                    return parsed;
+                case string s when int.TryParse(s, out var intParsed):
+                    return intParsed != 0;
+                case JsonElement jsonElement:
+                    if (jsonElement.ValueKind == JsonValueKind.True) return true;
+                    if (jsonElement.ValueKind == JsonValueKind.False) return false;
+                    if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var number))
+                    {
+                        return number != 0;
+                    }
+                    if (jsonElement.ValueKind == JsonValueKind.String && bool.TryParse(jsonElement.GetString(), out var jsonBool))
+                    {
+                        return jsonBool;
+                    }
+                    return fallback;
+                default:
+                    return fallback;
+            }
+        }
+
+        private static List<double> CoerceToDoubleList(object? value)
+        {
+            var weights = new List<double>();
+            if (value == null)
+            {
+                return weights;
+            }
+
+            if (value is JsonElement jsonElement)
+            {
+                if (jsonElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in jsonElement.EnumerateArray())
+                    {
+                        if (TryCoerceDouble(item, out var number))
+                        {
+                            weights.Add(number);
+                        }
+                    }
+                    return weights;
+                }
+                if (TryCoerceDouble(jsonElement, out var singleNumber))
+                {
+                    weights.Add(singleNumber);
+                    return weights;
+                }
+                if (jsonElement.ValueKind == JsonValueKind.String)
+                {
+                    return ParseWeightString(jsonElement.GetString());
+                }
+            }
+
+            if (value is string stringValue)
+            {
+                return ParseWeightString(stringValue);
+            }
+
+            if (value is global::System.Collections.IEnumerable enumerable && value is not string)
+            {
+                foreach (var item in enumerable)
+                {
+                    if (TryCoerceDouble(item, out var number))
+                    {
+                        weights.Add(number);
+                    }
+                }
+                return weights;
+            }
+
+            if (TryCoerceDouble(value, out var scalar))
+            {
+                weights.Add(scalar);
+            }
+
+            return weights;
+        }
+
+        private static bool TryCoerceDouble(object? value, out double number)
+        {
+            number = 0;
+            switch (value)
+            {
+                case null:
+                    return false;
+                case int i:
+                    number = i;
+                    return true;
+                case long l:
+                    number = l;
+                    return true;
+                case short s:
+                    number = s;
+                    return true;
+                case byte b:
+                    number = b;
+                    return true;
+                case double d:
+                    number = d;
+                    return true;
+                case float f:
+                    number = f;
+                    return true;
+                case decimal m:
+                    number = (double)m;
+                    return true;
+                case string s when double.TryParse(s, out var parsed):
+                    number = parsed;
+                    return true;
+                case JsonElement jsonElement when jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetDouble(out var jsonNumber):
+                    number = jsonNumber;
+                    return true;
+                case JsonElement jsonElement when jsonElement.ValueKind == JsonValueKind.String && double.TryParse(jsonElement.GetString(), out var jsonString):
+                    number = jsonString;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static List<double> ParseWeightString(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return new List<double>();
+            }
+
+            return value
+                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(item => item.Trim())
+                .Select(item => double.TryParse(item, out var parsed) ? parsed : 0d)
+                .ToList();
         }
 
         private static int CoerceToInt(object? value, int fallback)
@@ -534,14 +1132,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 default:
                     return fallback;
             }
-        }
-
-        /// <summary>
-        /// 转换CardInstance列表到TargetId列表
-        /// </summary>
-        private static List<TargetId> ConvertTargetsToTargetIds(List<CardInstance> targets)
-        {
-            return targets.Select(t => TargetId.Card(t.InstanceId)).ToList();
         }
 
         /// <summary>
@@ -587,7 +1177,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         public int GetTriggerCountThisTurn(GameContext context)
         {
-            return Trigger.CurrentTurnTriggerCount;
+            return TriggerCountThisTurn;
         }
 
         /// <summary>
@@ -595,7 +1185,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         public int GetTriggerCountThisGame(GameContext context)
         {
-            return TotalTriggerCount;
+            return TriggerCountThisGame;
         }
     }
 }

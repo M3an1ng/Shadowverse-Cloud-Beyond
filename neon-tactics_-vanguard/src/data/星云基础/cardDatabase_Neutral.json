@@ -1,0 +1,116 @@
+{
+  "1401301": {
+    "id": "1401301",
+    "name": "治愈的旋律",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Spell",
+    "trait": "",
+    "cost": 3,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Play||Restore|Allied-Leader|3",
+      "Play||Draw|1"
+    ]
+  },
+  "1401302": {
+    "id": "1401302",
+    "name": "商队猛犸象",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 7,
+    "attack": 10,
+    "defense": 10,
+    "countdown": 0,
+    "effects": []
+  },
+  "1401303": {
+    "id": "1401303",
+    "name": "哥布林杀手·路西乌斯&汀娜",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Silver",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 5,
+    "defense": 4,
+    "countdown": 0,
+    "effects": [
+      "Evolve||Destroy|Select&1-Enemy-Neutral-Follower||Change|SuperEvolve||Destroy|Select&2-Enemy-Neutral-Follower"
+    ]
+  },
+  "1401401": {
+    "id": "1401401",
+    "name": "侦探的放大镜",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Amulet",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 0,
+    "countdown": 0,
+    "effects": [
+      "Engage&0||Destroy|ThisCard",
+      "Engage&0||Remove|Ward|Select&1-Enemy-Field-Follower"
+    ]
+  },
+  "1401402": {
+    "id": "1401402",
+    "name": "叮当天使·莉亚",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 0,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Ward",
+      "LastWords||Draw|1",
+      "Evolve||Draw|1"
+    ]
+  },
+  "1401403": {
+    "id": "1401403",
+    "name": "激震的歌利亚",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 4,
+    "attack": 4,
+    "defense": 5,
+    "countdown": 0,
+    "effects": [
+      "Ward"
+    ]
+  },
+  "1401404": {
+    "id": "1401404",
+    "name": "不屈的剑斗士",
+    "cardSet": "星云基础",
+    "class": "Neutral",
+    "rarity": "Bronze",
+    "type": "Follower",
+    "trait": "",
+    "cost": 2,
+    "attack": 2,
+    "defense": 2,
+    "countdown": 0,
+    "effects": [
+      "Enhance&4||+3/+3|ThisCard"
+    ]
+  }
+}

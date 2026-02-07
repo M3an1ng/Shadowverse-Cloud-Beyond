@@ -20,7 +20,19 @@ namespace ShadowverseBeyond.Server.Dtos
         public string Rarity { get; init; } = "Common";
 
         [JsonPropertyName("card_set")]
-        public string CardSet { get; init; } = "Basic";
+        public string CardSet { get; init; } = "Legacy";
+
+        [JsonPropertyName("card_set_definition_id")]
+        public int? CardSetDefinitionId { get; init; }
+
+        [JsonPropertyName("card_set_code")]
+        public string? CardSetCode { get; init; }
+
+        [JsonPropertyName("card_set_abbr")]
+        public string? CardSetAbbr { get; init; }
+
+        [JsonPropertyName("card_set_environment")]
+        public List<DeckEnvironment>? CardSetEnvironment { get; init; }
 
         [JsonPropertyName("class")]
         public string Class { get; init; } = "Neutral";
@@ -39,6 +51,15 @@ namespace ShadowverseBeyond.Server.Dtos
 
         [JsonPropertyName("description")]
         public string? Description { get; init; }
+
+        [JsonPropertyName("artPreview")]
+        public string? ArtPreview { get; init; }
+
+        [JsonPropertyName("artDetail")]
+        public string? ArtDetail { get; init; }
+
+        [JsonPropertyName("isCollectible")]
+        public bool IsCollectible { get; init; } = true;
 
         [JsonPropertyName("keywords")]
         public List<string> Keywords { get; init; } = new List<string>();

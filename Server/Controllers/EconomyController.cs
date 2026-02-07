@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Controllers;
 
@@ -131,13 +132,14 @@ public class EconomyController : ControllerBase
     /// <summary>
     /// 获取可购买的卡包列表
     /// </summary>
+    /// <param name="environment">可选环境过滤</param>
     /// <returns>卡包列表</returns>
     [HttpGet("cardpacks")]
-    public async Task<ActionResult<List<CardPackDefinitionDto>>> GetAvailableCardPacks()
+    public async Task<ActionResult<List<CardPackDefinitionDto>>> GetAvailableCardPacks([FromQuery] DeckEnvironment? environment = null, [FromQuery] bool includeInactive = false)
     {
         try
         {
-            var cardPacks = await _economyService.GetAvailableCardPacksAsync();
+            var cardPacks = await _economyService.GetAvailableCardPacksAsync(environment, includeInactive);
             return Ok(cardPacks);
         }
         catch (Exception ex)

@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>卡牌特效测试 (Card Effects Test)</title>
+    <link rel="stylesheet" href="styles/game.css">
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .test-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 40px;
+            justify-content: center;
+            max-width: 1200px;
+        }
+
+        .card-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .card-group h3 {
+            margin: 0;
+            color: #aaa;
+            font-size: 14px;
+        }
+
+        /* Override .card positioning for static display */
+        .card {
+            position: relative;
+            transform: none;
+            /* Reset any default transforms if needed */
+        }
+
+        /* Ensure hover effects still work but don't break layout too much */
+        .card:hover {
+            z-index: 100;
+        }
+
+        .controls {
+            margin-bottom: 30px;
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .toggle-btn {
+            background: #444;
+            border: 1px solid #666;
+            color: white;
+            padding: 5px 10px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+        .toggle-btn.active {
+            background: #3b82f6;
+            border-color: #3b82f6;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- SVG Sprite Definitions -->
+    <svg style="display: none;">
+        <defs>
+            <!-- Ward (Shield) -->
+            <symbol id="icon-ward" viewBox="0 0 24 24">
+                <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
+            </symbol>
+
+            <!-- Bane (Scythe) -->
+            <symbol id="icon-bane" viewBox="0 0 24 24">
+                <path
+                    d="M13.5 2c-4.97 0-9 4.03-9 9H3c0-5.8 4.7-10.5 10.5-10.5h6v6h-1.5V3.65c-1.3-.9-2.9-1.45-4.5-1.65zm-3 9l-2 2 6.5 6.5 2-2-6.5-6.5zM19 13v6c0 1.1-.9 2-2 2H5v-1.5h12v-6.5h2z" />
+            </symbol>
+
+            <!-- Storm (Lightning) -->
+            <symbol id="icon-storm" viewBox="0 0 24 24">
+                <path d="M7 2v11h3v9l7-12h-4l4-8z" />
+            </symbol>
+
+            <!-- Rush (Boot/Dash) -->
+            <symbol id="icon-rush" viewBox="0 0 24 24">
+                <path
+                    d="M13.49 5.48c1.1 0 2 .9 2 2v8.99c0 1.1-.9 2-2 2H4v-6l5.5-5h3.99zm6.01-1.99H14v1.5h5.5l-2.5 5H21v-5c0-1.1-.9-1.5-1.5-1.5zm-1.5 8h-1.5v6h1.5v-6zm3 2h-1.5v4h1.5v-4z" />
+            </symbol>
+
+            <!-- Ambush (Eye/Hood) -->
+            <symbol id="icon-ambush" viewBox="0 0 24 24">
+                <path
+                    d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+            </symbol>
+
+            <!-- Drain (Blood Drop) -->
+            <symbol id="icon-drain" viewBox="0 0 24 24">
+                <path d="M12 2C12 2 5 9.5 5 14.5C5 18.64 8.36 22 12.5 22C16.64 22 20 18.64 20 14.5C20 9.5 13 2 12 2z" />
+            </symbol>
+
+            <!-- Pressure (Waves) -->
+            <symbol id="icon-pressure" viewBox="0 0 24 24">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-4-8c.08-2.16 1.88-3.89 4.07-3.89.37 0 .72.05 1.06.14l-1.04 1.76c-.01.02-.02.03-.02.05-.27-.12-.57-.19-.88-.19-1.16 0-2.11.95-2.11 2.11 0 .31.07.61.19.88l-1.76 1.04c-.09-.34-.14-.69-.14-1.06l.63-1.04zM12 16c-1.16 0-2.11-.95-2.11-2.11 0-.31.07-.61.19-.88l-1.76 1.04c.54 1.63 2.08 2.8 3.9 2.8 2.19 0 3.99-1.73 4.07-3.89l-1.04-.63c-.12.27-.19.57-.19.88 0 1.16-.95 2.11-2.11 2.11l1.05-1.76z" />
+            </symbol>
+
+            <!-- Shackle (Lock) -->
+            <symbol id="icon-shackle" viewBox="0 0 24 24">
+                <path
+                    d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
+            </symbol>
+
+            <!-- Shield (Barrier) -->
+            <symbol id="icon-shield" viewBox="0 0 24 24">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6z" />
+            </symbol>
+
+            <!-- DestroyResist (Diamond) -->
+            <symbol id="icon-destroy-resist" viewBox="0 0 24 24">
+                <path
+                    d="M12 2l-9.5 5.5 3.5 11L12 22l6-3.5 3.5-11L12 2zm0 2.8l6.4 3.7-2.6 8.1L12 19l-3.8-2.4-2.6-8.1 6.4-3.7z" />
+            </symbol>
+
+            <!-- Aura (Sparkles) -->
+            <symbol id="icon-aura" viewBox="0 0 24 24">
+                <path d="M12 2L9.1 8.6 2.5 11.5l6.6 2.9L12 21l2.9-6.6 6.6-2.9-6.6-2.9L12 2z" />
+            </symbol>
+        </defs>
+    </svg>
+
+    <h1>卡牌关键词特效测试</h1>
+
+    <div class="controls">
+        <span>切换背景: </span>
+        <button class="toggle-btn" onclick="document.body.style.backgroundColor = '#1a1a1a'">Dark</button>
+        <button class="toggle-btn" onclick="document.body.style.backgroundColor = '#555'">Gray</button>
+        <button class="toggle-btn" onclick="document.body.style.backgroundColor = '#000'">Black</button>
+        <button class="toggle-btn"
+            onclick="document.body.style.backgroundImage = 'url(background/battle_bg_01.jpg)'; document.body.style.backgroundSize = 'cover'">Game
+            BG</button>
+    </div>
+
+    <h2 style="text-align: center; margin-bottom: 20px;">方案一：徽记样式 (Badge Style)</h2>
+    <div class="test-container">
+
+        <!-- Normal Card -->
+        <div class="card-group">
+            <h3>普通 (Normal)</h3>
+            <div class="card follower">
+                <div class="cost">2</div>
+                <div class="name">Fighter</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ward (守护) -->
+        <div class="card-group">
+            <h3>守护 (Ward)</h3>
+            <div class="card follower">
+                <div class="cost">3</div>
+                <div class="name">Guardian</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">3</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-ward">
+                        <svg class="badge-icon">
+                            <use href="#icon-ward"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rush (突进) -->
+        <div class="card-group">
+            <h3>突进 (Rush)</h3>
+            <div class="card follower">
+                <div class="cost">2</div>
+                <div class="name">Lancer</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">1</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-rush">
+                        <svg class="badge-icon">
+                            <use href="#icon-rush"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storm (疾驰) -->
+        <div class="card-group">
+            <h3>疾驰 (Storm)</h3>
+            <div class="card follower">
+                <div class="cost">4</div>
+                <div class="name">Storm Knight</div>
+                <div class="stats">
+                    <span class="attack">3</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-storm">
+                        <svg class="badge-icon">
+                            <use href="#icon-storm"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bane (威慑/必杀) -->
+        <div class="card-group">
+            <h3>必杀 (Bane)</h3>
+            <div class="card follower">
+                <div class="cost">2</div>
+                <div class="name">Scorpion</div>
+                <div class="stats">
+                    <span class="attack">1</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">1</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-bane">
+                        <svg class="badge-icon">
+                            <use href="#icon-bane"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ambush (潜行) -->
+        <div class="card-group">
+            <h3>潜行 (Ambush)</h3>
+            <div class="card follower">
+                <div class="cost">3</div>
+                <div class="name">Ninja</div>
+                <div class="stats">
+                    <span class="attack">3</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-ambush">
+                        <svg class="badge-icon">
+                            <use href="#icon-ambush"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drain (吸血) -->
+        <div class="card-group">
+            <h3>吸血 (Drain)</h3>
+            <div class="card follower">
+                <div class="cost">4</div>
+                <div class="name">Vampire</div>
+                <div class="stats">
+                    <span class="attack">4</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">4</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-drain">
+                        <svg class="badge-icon">
+                            <use href="#icon-drain"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Multiple Keywords -->
+        <div class="card-group">
+            <h3>守护 + 必杀 (Ward + Bane)</h3>
+            <div class="card follower">
+                <div class="cost">6</div>
+                <div class="name">Death Guard</div>
+                <div class="stats">
+                    <span class="attack">4</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">6</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-ward">
+                        <svg class="badge-icon">
+                            <use href="#icon-ward"></use>
+                        </svg>
+                    </div>
+                    <div class="keyword-badge badge-bane">
+                        <svg class="badge-icon">
+                            <use href="#icon-bane"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Many Keywords -->
+        <div class="card-group">
+            <h3>多重词条 (Many)</h3>
+            <div class="card follower">
+                <div class="cost">10</div>
+                <div class="name">God</div>
+                <div class="stats">
+                    <span class="attack">10</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">10</span>
+                </div>
+                <div class="keyword-badges">
+                    <div class="keyword-badge badge-ward">
+                        <svg class="badge-icon">
+                            <use href="#icon-ward"></use>
+                        </svg>
+                    </div>
+                    <div class="keyword-badge badge-storm">
+                        <svg class="badge-icon">
+                            <use href="#icon-storm"></use>
+                        </svg>
+                    </div>
+                    <div class="keyword-badge badge-drain">
+                        <svg class="badge-icon">
+                            <use href="#icon-drain"></use>
+                        </svg>
+                    </div>
+                    <div class="keyword-badge badge-destroy-resist">
+                        <svg class="badge-icon">
+                            <use href="#icon-destroy-resist"></use>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <h2 style="margin-top: 50px; text-align: center;">方案二：卡牌样式特效 (Card Style Effects)</h2>
+    <div class="test-container">
+
+        <!-- Ward (Card Style) -->
+        <div class="card-group">
+            <h3>守护 (Ward)</h3>
+            <div class="card follower style-ward">
+                <div class="cost">3</div>
+                <div class="name">Guardian</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">3</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rush (Card Style) -->
+        <div class="card-group">
+            <h3>突进 (Rush)</h3>
+            <div class="card follower style-rush">
+                <div class="cost">2</div>
+                <div class="name">Lancer</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">1</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storm (Card Style) -->
+        <div class="card-group">
+            <h3>疾驰 (Storm)</h3>
+            <div class="card follower style-storm">
+                <div class="cost">4</div>
+                <div class="name">Storm Knight</div>
+                <div class="stats">
+                    <span class="attack">3</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bane (Card Style) -->
+        <div class="card-group">
+            <h3>必杀 (Bane)</h3>
+            <div class="card follower style-bane">
+                <div class="cost">2</div>
+                <div class="name">Scorpion</div>
+                <div class="stats">
+                    <span class="attack">1</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">1</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ambush (Card Style) -->
+        <div class="card-group">
+            <h3>潜行 (Ambush)</h3>
+            <div class="card follower style-ambush">
+                <div class="cost">3</div>
+                <div class="name">Ninja</div>
+                <div class="stats">
+                    <span class="attack">3</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drain (Card Style) -->
+        <div class="card-group">
+            <h3>吸血 (Drain)</h3>
+            <div class="card follower style-drain">
+                <div class="cost">4</div>
+                <div class="name">Vampire</div>
+                <div class="stats">
+                    <span class="attack">4</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">4</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pressure (Card Style) -->
+        <div class="card-group">
+            <h3>威慑 (Pressure)</h3>
+            <div class="card follower style-pressure">
+                <div class="cost">5</div>
+                <div class="name">Dread Lord</div>
+                <div class="stats">
+                    <span class="attack">5</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">5</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shackle (Card Style) -->
+        <div class="card-group">
+            <h3>无法攻击 (Shackle)</h3>
+            <div class="card follower style-shackle">
+                <div class="cost">2</div>
+                <div class="name">Statue</div>
+                <div class="stats">
+                    <span class="attack">0</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">5</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shield (Card Style) -->
+        <div class="card-group">
+            <h3>屏障 (Shield)</h3>
+            <div class="card follower style-shield">
+                <div class="cost">3</div>
+                <div class="name">Mage</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">3</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- DestroyResist (Card Style) -->
+        <div class="card-group">
+            <h3>无法被破坏 (DestroyResist)</h3>
+            <div class="card follower style-destroy-resist">
+                <div class="cost">8</div>
+                <div class="name">Aegis</div>
+                <div class="stats">
+                    <span class="attack">8</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">8</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Aura (Card Style) -->
+        <div class="card-group">
+            <h3>灵气 (Aura)</h3>
+            <div class="card follower style-aura">
+                <div class="cost">5</div>
+                <div class="name">Holy Mage</div>
+                <div class="stats">
+                    <span class="attack">4</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">5</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <h2 style="margin-top: 50px; text-align: center; color: #22d3ee; text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);">
+        方案三：现代特效 (Modern Style - Cyber/Holo)</h2>
+    <div class="test-container">
+
+        <!-- Ward (Modern) -->
+        <div class="card-group">
+            <h3>守护 (Ward)</h3>
+            <div class="card follower modern-ward">
+                <div class="cost">3</div>
+                <div class="name">Hex Guard</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">3</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rush (Modern) -->
+        <div class="card-group">
+            <h3>突进 (Rush)</h3>
+            <div class="card follower modern-rush">
+                <div class="cost">2</div>
+                <div class="name">Speedster</div>
+                <div class="stats">
+                    <span class="attack">2</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">1</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storm (Modern) -->
+        <div class="card-group">
+            <h3>疾驰 (Storm)</h3>
+            <div class="card follower modern-storm">
+                <div class="cost">4</div>
+                <div class="name">Lightning</div>
+                <div class="stats">
+                    <span class="attack">3</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bane (Modern) -->
+        <div class="card-group">
+            <h3>必杀 (Bane)</h3>
+            <div class="card follower modern-bane">
+                <div class="cost">2</div>
+                <div class="name">Venom</div>
+                <div class="stats">
+                    <span class="attack">1</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">1</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ambush (Modern) -->
+        <div class="card-group">
+            <h3>潜行 (Ambush)</h3>
+            <div class="card follower modern-ambush">
+                <div class="cost">3</div>
+                <div class="name">Glitch</div>
+                <div class="stats">
+                    <span class="attack">3</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">2</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drain (Modern) -->
+        <div class="card-group">
+            <h3>吸血 (Drain)</h3>
+            <div class="card follower modern-drain">
+                <div class="cost">4</div>
+                <div class="name">Siphon</div>
+                <div class="stats">
+                    <span class="attack">4</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">4</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- DestroyResist (Modern) -->
+        <div class="card-group">
+            <h3>无法被破坏 (Holo)</h3>
+            <div class="card follower modern-destroy-resist">
+                <div class="cost">8</div>
+                <div class="name">Holo Aegis</div>
+                <div class="stats">
+                    <span class="attack">8</span>
+                    <span class="stat-separator">/</span>
+                    <span class="health">8</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</body>
+
+</html>

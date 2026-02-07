@@ -4,7 +4,6 @@
 
 'use strict';
 
-console.log("游戏脚本 script.js 加载成功！");
 
 // --- 全局变量和常量 ---
 const gameContainer = document.getElementById('game-container');
@@ -29,7 +28,6 @@ let secondPlayerId = ''; // To easily check who went second for draw rule
 
 // --- 游戏初始化 ---
 function initGame() {
-    console.log("--- 初始化游戏 ---");
     gameState.gameOver = false;
     gameState.winner = null;
     gameState.turnNumber = 0;
@@ -48,7 +46,6 @@ function initGame() {
         player1DeckData = Array(20).fill(null).map((_, i) => ({ ...p1PlaceholderCard, id: `p1_ph_${i}`}));
         player2DeckData = Array(20).fill(null).map((_, i) => ({ ...p2PlaceholderCard, id: `p2_ph_${i}`}));
     } else {
-        console.log("Using card data from cardDatabase to build decks...");
         // TODO: Implement actual deck building/selection logic using cardDatabase
         // For now, just use the first 20 cards from the database if available
         // Ensure we don't mutate the original cardDatabase objects directly in deck
@@ -65,15 +62,12 @@ function initGame() {
     // TODO: Implement proper shuffle based on a seed for reproducibility if needed
     gameState.players[PLAYER1_ID].deck = [...player1DeckData].sort(() => Math.random() - 0.5); // Basic shuffle
     gameState.players[PLAYER2_ID].deck = [...player2DeckData].sort(() => Math.random() - 0.5); // Basic shuffle
-    console.log(`Player 1 deck size: ${gameState.players[PLAYER1_ID].deck.length}`);
-    console.log(`Player 2 deck size: ${gameState.players[PLAYER2_ID].deck.length}`);
 
 
     // Decide who goes first (randomly for now)
     const firstPlayerId = Math.random() < 0.5 ? PLAYER1_ID : PLAYER2_ID;
     secondPlayerId = firstPlayerId === PLAYER1_ID ? PLAYER2_ID : PLAYER1_ID; // Update global-like variable
     gameState.currentPlayerId = firstPlayerId;
-    console.log(`${firstPlayerId} goes first.`);
 
     // Set initial EP based on first/second player
     gameState.players[PLAYER1_ID].maxEp = firstPlayerId === PLAYER1_ID ? 2 : 3;
@@ -87,7 +81,6 @@ function initGame() {
 
 
     // Draw starting hands (Player 1: 3 cards, Player 2: 3 cards initially)
-    console.log("Drawing starting hands...");
     gameState.players[PLAYER1_ID].drawCard(STARTING_HAND_SIZE);
     gameState.players[PLAYER2_ID].drawCard(STARTING_HAND_SIZE);
 
@@ -97,7 +90,6 @@ function initGame() {
 
 
     // 4. 开始第一个回合
-    console.log("Starting first turn...");
     // Use setTimeout to ensure initial render completes before first turn logic runs
     setTimeout(startTurn, 100); // Short delay
 }
@@ -106,12 +98,10 @@ function initGame() {
 // --- 卡牌数据加载 ---
 async function loadCardData() {
     // 从 data/card_data.json 获取数据
-    console.log("加载卡牌数据...");
     // 存放卡牌数据的逻辑
 */
 // --- 卡牌数据加载 (Corrected Implementation) ---
 async function loadCardData() { // 使用临时名称以避免冲突
-    console.log('Attempting to load card data from data/card_data.json...');
     try {
         const response = await fetch('data/card_data.json');
         // Check if the response is ok (status in the range 200-299)
@@ -129,7 +119,6 @@ async function loadCardData() { // 使用临时名称以避免冲突
             // Check if the parsed data is actually an array
             if (Array.isArray(data)) {
                 gameState.cardDatabase = data;
-                console.log("Card data loaded successfully:", gameState.cardDatabase.length, "cards found.");
             } else {
                  console.warn("card_data.json does not contain a valid JSON array. Proceeding without card data.");
                  gameState.cardDatabase = []; // Ensure it's empty if format is wrong
@@ -143,7 +132,6 @@ async function loadCardData() { // 使用临时名称以避免冲突
         gameState.cardDatabase = []; // Ensure it's empty on error
     } finally {
         // Ensure initGame is called regardless of whether card data loaded successfully or not
-        console.log("Card data loading attempt finished. Initializing game...");
         initGame();
     }
 }
@@ -167,11 +155,9 @@ class Player {
 
     // Draw cards from deck to hand
     drawCard(count = 1) {
-        console.log(`${this.id} attempts to draw ${count} card(s).`);
         let drawnCount = 0;
         for (let i = 0; i < count; i++) {
             if (this.deck.length === 0) {
-                console.log(`${this.id}'s deck is empty!`);
                 // TODO: Implement fatigue damage here later
                 break; // Stop drawing
             }
@@ -180,7 +166,6 @@ class Player {
                 // Create an instance to put in graveyard if needed, or just log
                 const burntCardInstance = { ...burntCardData, uid: `burnt-${this.id}-${Date.now()}-${i}` };
                 this.graveyard.push(burntCardInstance);
-                console.log(`${this.id}'s hand is full! Burnt card: ${burntCardData?.name || 'Unknown'}`);
                 // TODO: Optionally trigger "on discard" effects later
             } else {
                 const drawnCardData = this.deck.pop(); // Get card data from deck
@@ -197,7 +182,6 @@ class Player {
                 drawnCount++;
             }
         }
-        console.log(`${this.id} drew ${drawnCount} card(s). Hand: ${this.hand.length}, Deck: ${this.deck.length}`);
         // Note: renderGame() should be called by the function that triggers drawing (e.g., startTurn)
     }
 
@@ -211,13 +195,11 @@ class Player {
 function startTurn() {
     // Check for game over condition before starting turn
     if (gameState.gameOver) {
-        console.log("Game is over. Cannot start new turn.");
         return;
     }
 
     gameState.turnNumber++;
     const currentPlayer = gameState.players[gameState.currentPlayerId];
-    console.log(`%c--- Turn ${gameState.turnNumber} (${currentPlayer.id}) Start ---`, 'color: blue; font-weight: bold;');
 
     // --- Start of Turn Effects ---
     // TODO: Process any start-of-turn effects (e.g., amulets)
@@ -237,7 +219,6 @@ function startTurn() {
     if (gameState.turnNumber >= evolveTurn && currentPlayer.ep < currentPlayer.maxEp) {
         currentPlayer.ep = currentPlayer.maxEp; // Give all EP at once
         gainedEP = true;
-        console.log(`${currentPlayer.id} gained EP. Total EP: ${currentPlayer.ep}/${currentPlayer.maxEp}`);
     }
 
     // 4. Draw a card
@@ -245,14 +226,12 @@ function startTurn() {
     let drawCount = 1;
     if (gameState.currentPlayerId === secondPlayerId && !currentPlayer.hasTakenTurn) {
         drawCount = 2;
-        console.log("Second player draws an extra card on their first turn.");
     }
     currentPlayer.drawCard(drawCount); // drawCard now logs details and updates hand/deck count
 
 
     // 5. Set game phase
     gameState.gamePhase = 'main';
-    console.log("Phase: main");
 
     // --- Start of Main Phase Effects ---
     // TODO: Process effects that trigger when main phase begins
@@ -270,19 +249,16 @@ function startTurn() {
 
     // 7. Enable actions for the current player and potentially trigger AI
     if (currentPlayer.isAI) {
-        console.log("AI's turn to act...");
         // Disable button just in case, although AI shouldn't use it
         const endTurnButton = document.getElementById('end-turn-button');
         if (endTurnButton) endTurnButton.disabled = true;
          // setTimeout(runAILogic, 1500); // Placeholder for AI turn logic call
          // For now, AI immediately ends turn
-         console.log("AI thinking... (will end turn shortly)");
          setTimeout(endTurn, 2000); // AI ends turn after 2 seconds
     } else {
          // Enable player actions (e.g., enable end turn button)
          const endTurnButton = document.getElementById('end-turn-button');
          if (endTurnButton) endTurnButton.disabled = false; // Enable player's end turn button
-         console.log("Player's turn. Waiting for action or End Turn.");
     }
 }
 
@@ -291,7 +267,6 @@ function endTurn() {
 
     const currentPlayerId = gameState.currentPlayerId;
     const currentPlayer = gameState.players[currentPlayerId];
-    console.log(`%c--- Turn ${gameState.turnNumber} (${currentPlayer.id}) End ---`, 'color: orange; font-weight: bold;');
 
 
     // Set flag indicating player has completed their first turn (for draw rule)
@@ -320,15 +295,12 @@ function endTurn() {
     gameState.currentPlayerId = gameState.currentPlayerId === PLAYER1_ID ? PLAYER2_ID : PLAYER1_ID;
 
     // Start the next turn after a short delay (Moved from current line ~820)
-    console.log("Ending turn, scheduling next turn start..."); // Added log
     setTimeout(startTurn, 500); // Delay before next turn starts
 } // This is now the CORRECT closing brace for endTurn function
 
 // 法术效果处理占位符
 function executeSpellEffect(spellCard, casterId) {
-    console.log(`Executing effects for spell: ${spellCard.name}`);
     if (!spellCard.effects || spellCard.effects.length === 0) {
-        console.log("Spell has no defined effects.");
         return;
     }
 
@@ -342,22 +314,18 @@ function executeSpellEffect(spellCard, casterId) {
         const opponent = gameState.players[opponentId];
         const damageValue = effect.value || 0;
         if(opponent) {
-            console.log(`Dealing ${damageValue} damage to ${opponentId} (placeholder target).`);
             opponent.health -= damageValue;
-             console.log(`${opponentId} health is now ${opponent.health}`);
             // TODO: checkGameOver();
         } else {
              console.error("Opponent not found!");
         }
 
     } else {
-        console.log(`Unhandled spell effect type: ${effect.type}`);
     }
     // 后续添加更多效果类型 (抽牌, 治疗, Buff 等)
 }
 // --- 卡牌交互 ---
 function playCard(cardUid) {
-    console.log(`Attempting to play card with UID: ${cardUid}`);
     const player = gameState.players[PLAYER1_ID]; // Assume only human player plays cards for now
 
     // --- 基本检查 ---
@@ -397,7 +365,6 @@ function playCard(cardUid) {
         }
 
         // 执行打出随从逻辑
-        console.log(`Playing follower: ${cardInstance.name}`);
         player.pp -= cardInstance.cost; // 扣除费用
 
         // 从手牌移除
@@ -414,13 +381,11 @@ function playCard(cardUid) {
 
         // 添加到战场
         player.field.push(cardInstance);
-        console.log(`${player.id}'s field:`, player.field.map(c => c.name));
 
 
         // TODO: 触发 "战吼" (Fanfare / on play) 效果
 
     } else if (cardInstance.type === 'Spell') {
-        console.log(`Playing spell: ${cardInstance.name}`);
         // 法术通常不进入战场
         player.pp -= cardInstance.cost; // 扣除费用
 
@@ -442,7 +407,6 @@ function playCard(cardUid) {
 
 
     // --- 出牌后操作 ---
-    console.log(`Played ${cardInstance.name}. Remaining PP: ${player.pp}`);
     renderGame(); // 出牌后立即更新界面
 }
         // This logic (current lines ~428-429) moved into endTurn's if block above.
@@ -452,7 +416,6 @@ function playCard(cardUid) {
     // Reset other statuses if needed (e.g., temporary buffs)
 function renderGame() {
     // Basic placeholder rendering - replace with more robust UI updates later
-    // console.log("Rendering game state..."); // Reduce console noise for now
 
     const player1 = gameState.players[PLAYER1_ID];
     const player2 = gameState.players[PLAYER2_ID];
@@ -485,11 +448,9 @@ function renderGame() {
         endTurnButton.onclick = () => {
             // Only allow player to end turn during their main phase and if game not over
             if (gameState.currentPlayerId === PLAYER1_ID && gameState.gamePhase === 'main' && !gameState.gameOver) {
-                console.log("Player clicked End Turn button.");
                 endTurnButton.disabled = true; // Disable button immediately on click
                 endTurn();
             } else {
-                 console.log("End Turn button clicked, but condition not met (Not player's turn, not main phase, or game over).");
             }
         };
         // Append button outside the infoDiv if preferred layout-wise
@@ -529,12 +490,10 @@ function renderGame() {
         cardElement.dataset.index = index; // Store hand index if needed
 
 cardElement.onclick = () => {
-            console.log(`Clicked hand card: ${cardInstance.name} (UID: ${cardInstance.uid})`);
              // 添加检查：仅允许在玩家的主阶段且游戏未结束时出牌
              if (gameState.currentPlayerId === PLAYER1_ID && gameState.gamePhase === 'main' && !gameState.gameOver) {
                 playCard(cardInstance.uid);
             } else {
-                 console.log("Cannot play card: Not player's turn, not main phase, or game over.");
             }
         };
         let cardText = `[${cardInstance.cost} PP] ${cardInstance.name || 'Unknown'}`;
@@ -567,7 +526,6 @@ cardElement.onclick = () => {
 
         // Add click listener later for playing the card
         // cardElement.onclick = () => {
-        //     console.log(`Clicked card: ${cardInstance.name} (UID: ${cardInstance.uid})`);
         //     // Call playCard function here
         // };
 
@@ -661,7 +619,6 @@ player1FieldDiv.innerHTML = '<b>Your Field:</b><br>'; // 创建完 div 后再设
         if (cardInstance.canAttack && gameState.currentPlayerId === PLAYER1_ID && gameState.gamePhase === 'main' && !gameState.gameOver) {
             // Conditions met: Add listener and ready class
             fieldCardElement.onclick = () => {
-                console.log(`Attempting attack with: ${cardInstance.name} (UID: ${cardInstance.uid})`);
                 initiateAttack(cardInstance.uid);
             };
             fieldCardElement.classList.add('attack-ready');
@@ -708,7 +665,6 @@ function initiateAttack(attackerUid) {
 
     // 检查是否满足攻击条件 (防御性检查，理论上onclick时已处理)
     if (!attacker.canAttack || gameState.currentPlayerId !== PLAYER1_ID || gameState.gamePhase !== 'main' || gameState.gameOver) {
-         console.log("不能攻击：不满足条件（无法攻击/非本人回合/非主阶段/游戏结束）");
          selectedAttackerUid = null; // 清除选择
          // renderGame(); // 更新视觉效果
          return;
@@ -716,14 +672,12 @@ function initiateAttack(attackerUid) {
 
     // 如果重复点击同一个已选中的攻击者，则取消选择
     if (selectedAttackerUid === attackerUid) {
-        console.log(`取消选择攻击者: ${attacker.name}`);
         selectedAttackerUid = null;
         // TODO: 更新UI，移除攻击者高亮和目标可选高亮
         renderGame(); // 重绘以移除高亮（如果实现了高亮的话）
         return;
     }
 
-    console.log(`选择攻击者: ${attacker.name} (UID: ${attackerUid}). 请选择对方战场上的目标。`);
     selectedAttackerUid = attackerUid;
 
     // TODO: 更新UI - 高亮选中的攻击者
@@ -736,22 +690,18 @@ function initiateAttack(attackerUid) {
  * @param {string} targetUid - 被点击的对方随从的唯一ID
  */
 function selectAttackTarget(targetUid) {
-     console.log(`尝试选择目标: UID ${targetUid}`);
      if (!selectedAttackerUid) {
-         console.log("错误：尚未选择攻击者。");
          // 可能是在错误的时机触发了这个事件，或者状态不同步
          return;
      }
 
      const target = gameState.players[PLAYER2_ID].field.find(card => card.uid === targetUid);
      if (!target) {
-        console.log("错误：选择的目标无效或未找到。");
         // 不清除攻击者选择，允许玩家选择其他目标
         return;
      }
 
      // 找到了攻击者和目标，执行攻击
-     console.log(`目标 ${target.name} (UID: ${targetUid}) 被选定，执行攻击!`);
      executeAttack(selectedAttackerUid, targetUid);
 }
 
@@ -763,7 +713,6 @@ function selectAttackTarget(targetUid) {
  */
 function executeAttack(attackerUid, targetUid) {
      if (gameState.gamePhase !== 'main' || gameState.currentPlayerId !== PLAYER1_ID || gameState.gameOver) {
-         console.log("无法执行攻击：条件不满足（非主阶段/非本人回合/游戏结束）。");
          selectedAttackerUid = null; // 攻击流程意外中止，清除选择
          renderGame();
          return;
@@ -781,7 +730,6 @@ function executeAttack(attackerUid, targetUid) {
         return;
     }
 
-    console.log(`战斗开始: ${attacker.name} VS ${target.name}`);
 
     // --- 战斗计算 ---
     // 获取当前攻防，若无则使用基础值
@@ -790,13 +738,11 @@ function executeAttack(attackerUid, targetUid) {
      const targetAttack = target.currentAttack !== undefined ? target.currentAttack : target.attack;
      let targetHealth = target.currentHealth !== undefined ? target.currentHealth : target.health;
 
-     console.log(`  开战前: ${attacker.name}(${attackerAttack}/${attackerHealth}), ${target.name}(${targetAttack}/${targetHealth})`);
 
      // 互相造成伤害
      targetHealth -= attackerAttack;
      attackerHealth -= targetAttack;
 
-     console.log(`  战斗后: ${attacker.name}(${attackerAttack}/${attackerHealth}), ${target.name}(${targetAttack}/${targetHealth})`);
 
      // 更新当前生命值
      attacker.currentHealth = attackerHealth;
@@ -812,7 +758,6 @@ function executeAttack(attackerUid, targetUid) {
      let targetDestroyed = false;
 
      if (attacker.currentHealth <= 0) {
-         console.log(`  ${attacker.name} 被破坏了!`);
          attackerDestroyed = true;
          gameState.players[PLAYER1_ID].graveyard.push(attacker); // 移入墓地
          // 从战场移除 (过滤掉被破坏的随从)
@@ -820,7 +765,6 @@ function executeAttack(attackerUid, targetUid) {
 
      }
       if (target.currentHealth <= 0) {
-         console.log(`  ${target.name} 被破坏了!`);
          targetDestroyed = true;
           gameState.players[PLAYER2_ID].graveyard.push(target); // 移入墓地
          // 从战场移除
@@ -833,12 +777,10 @@ function executeAttack(attackerUid, targetUid) {
      // TODO: 触发 "攻击后" 或 "被破坏时" 的卡牌效果（如果未来有的话）
      // TODO: 检查游戏是否结束 checkGameOver();
 
-     console.log("攻击结算完毕。");
      renderGame(); // Update UI with results
 }
 // --- 启动游戏 ---
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOM fully loaded and parsed. Starting game setup by loading card data...");
     // Load card data first. loadCardData will call initGame upon completion.
     loadCardData();
 });

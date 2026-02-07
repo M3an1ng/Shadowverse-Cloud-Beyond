@@ -21,7 +21,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
     using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
     using ShadowverseBeyond.Server.Domain.Effects;
 
-    [EffectHandler(EffectType.SetStatus)]
+    [EffectHandler(EffectType.ModifyStatus)]
     public class ModifyStatsEffectHandler : EffectHandlerBase<ModifyStatsEffectParams>
     {
         private readonly ITargetProcessingService _targetProcessingService;
@@ -52,11 +52,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     var card = targetInfo.Card;
 
                     // Create the event with the modifier values from the effect parameters.
+                    var effectKey = BuildEffectKey(effect);
                     var statChangedEvent = new StatChangedEvent(
                         targetCard: card,
-                        attackModifier: parameters.AttackModifier ?? 0,
-                        healthModifier: parameters.HealthModifier ?? 0,
-                        costModifier: parameters.CostModifier ?? 0
+                        attackModifier: parameters.AttackModifier,
+                        healthModifier: parameters.HealthModifier,
+                        costModifier: parameters.CostModifier,
+                        durationType: parameters.DurationType,
+                        durationParameter: parameters.DurationParameter,
+                        modifierLayer: parameters.ModifierLayer,
+                        effectKey: effectKey,
+                        canStack: parameters.CanStack
                     );
 
                     result.GeneratedEvents.Add(statChangedEvent);
@@ -76,6 +82,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             }
 
             return serviceResult;
+        }
+
+        private static string? BuildEffectKey(Effect effect)
+        {
+            if (!effect.sourceAbilityId.HasValue)
+            {
+                return null;
+            }
+
+            return $"{effect.sourceAbilityId.Value:N}:{effect.EffectIndex}";
         }
 
         // CreateEffectCompletedEvent method is removed as this responsibility has moved to EffectExecutor.

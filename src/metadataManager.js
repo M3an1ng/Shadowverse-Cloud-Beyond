@@ -9,6 +9,8 @@
  * 元数据管理器
  * 负责获取、缓存和管理来自后端的元数据
  */
+import { ensureEnumLocalization } from './enumLocalizationCache.js';
+
 export class MetadataManager {
     constructor() {
         this.metadata = null;
@@ -37,7 +39,6 @@ export class MetadataManager {
      */
     async loadMetadata() {
         try {
-            console.log('MetadataManager: Loading metadata from API...');
             
             const response = await fetch('/api/AbilityEditorMetadata');
             if (!response.ok) {
@@ -47,7 +48,6 @@ export class MetadataManager {
             this.metadata = await response.json();
             this.isLoaded = true;
             
-            console.log('MetadataManager: Metadata loaded successfully:', this.metadata);
             
             // 验证元数据结构
             this.validateMetadata();
@@ -74,7 +74,6 @@ export class MetadataManager {
             }
         }
 
-        console.log('MetadataManager: Metadata validation passed');
     }
 
     /**
@@ -175,15 +174,9 @@ export class MetadataManager {
      */
     async getEnumOptions(enumName) {
         try {
-            const response = await fetch(`/api/localization/enums/${enumName}`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            const enumData = await response.json();
-            
+            const { raw } = await ensureEnumLocalization(enumName);
             // 转换为选项数组格式
-            return Object.entries(enumData).map(([value, label]) => ({
+            return Object.entries(raw || {}).map(([value, label]) => ({
                 value,
                 label
             }));
@@ -197,26 +190,24 @@ export class MetadataManager {
      * 获取指定枚举的原始本地化映射（key -> label）
      */
     async getEnum(enumName) {
-        const response = await fetch(`/api/localization/enums/${enumName}`);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        return await response.json();
+        const { raw } = await ensureEnumLocalization(enumName);
+        return raw || {};
     }
 
     /**
      * 获取卡牌类型选项
      */
     async getCardTypeOptions() {
-        return await this.getEnumOptions('CardType');
+        const options = await this.getEnumOptions('CardType');
+        return options.filter(option => String(option.value ?? '').toLowerCase() !== 'leader');
     }
 
     /**
      * 获取卡牌稀有度选项
      */
     async getCardRarityOptions() {
-        return await this.getEnumOptions('CardRarity');
+        const options = await this.getEnumOptions('CardRarity');
+        return options.filter(option => String(option.value ?? '').toLowerCase() !== 'special');
     }
 
     /**
@@ -281,7 +272,6 @@ export class MetadataManager {
         this.metadata = null;
         this.isLoaded = false;
         this.loadPromise = null;
-        console.log('MetadataManager: Cleaned up');
     }
 }
 

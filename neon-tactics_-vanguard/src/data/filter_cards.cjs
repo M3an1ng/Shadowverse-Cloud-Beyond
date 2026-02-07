@@ -6,7 +6,7 @@ const cardDatabasePath = path.join(__dirname, 'cardDatabase.json');
 const cardDatabase = JSON.parse(fs.readFileSync(cardDatabasePath, 'utf8'));
 
 // Filter cards where cardSet is "神眷的棋盘"
-const filteredCards = Object.values(cardDatabase).filter(card => card.cardSet === '星云基础');
+const filteredCards = Object.values(cardDatabase).filter(card => card.cardSet === '神眷的棋盘');
 
 // Group cards by class
 const cardsByClass = {};

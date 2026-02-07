@@ -2,6 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Events; // Added for GameContext
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 using System.Threading.Tasks;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
@@ -21,6 +22,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         object? Resolve(ValueConfig valueConfig, GameContext context);
 
         object? ResolveFormulaValue(string formula, GameContext context);
+
+        object? ResolveFormulaValueWithTrace(string formula, GameContext context, IDslTraceCollector traceCollector);
 
         /// <summary>
         /// 解析为整数

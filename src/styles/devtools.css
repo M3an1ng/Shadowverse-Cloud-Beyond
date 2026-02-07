@@ -1,4 +1,4 @@
-/* 
+﻿/* 
  * Developer Tools Styles
  * Specific styling for the debug console and tools.
  */
@@ -9,6 +9,279 @@
     gap: var(--space-4);
     height: 100%;
     overflow-y: auto;
+}
+
+#dev-tools-page.is-locked #dev-tools-container {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+#dev-tools-lock {
+    display: none;
+    margin: 0 var(--space-4);
+    padding: var(--space-3);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-secondary);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: var(--text-sm);
+}
+
+#dev-tools-page.is-locked #dev-tools-lock {
+    display: block;
+}
+
+.devtools-log-viewer {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.tool-card-log-viewer {
+    grid-column: auto;
+}
+
+.log-viewer-modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-4);
+    background: rgba(6, 8, 12, 0.75);
+    z-index: 3000;
+}
+
+.log-viewer-modal.active {
+    display: flex;
+}
+
+.log-viewer-panel {
+    width: min(1200px, 96vw);
+    height: min(80vh, 900px);
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.log-viewer-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.log-viewer-panel-title {
+    font-size: var(--text-lg);
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+
+.devtools-log-viewer.is-locked .log-viewer-controls,
+.devtools-log-viewer.is-locked .log-stream-list,
+.devtools-log-viewer.is-locked .log-viewer-actions {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.log-viewer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.log-viewer-title {
+    font-size: var(--text-lg);
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+.log-viewer-subtitle {
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.log-viewer-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.log-viewer-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+}
+
+.log-levels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.log-level-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.log-level-chip input {
+    accent-color: var(--color-primary);
+}
+
+.log-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.log-search label {
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+}
+
+.log-autoscroll {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+}
+
+.log-stream-status {
+    font-size: var(--text-xs);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--color-secondary);
+}
+
+.log-stream-status[data-tone="success"] {
+    color: #34d399;
+}
+
+.log-stream-status[data-tone="warning"] {
+    color: #fbbf24;
+}
+
+.log-stream-status[data-tone="error"] {
+    color: #ef4444;
+}
+
+.log-stream-lock {
+    display: none;
+    padding: var(--space-3);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--color-secondary);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.devtools-log-viewer.is-locked .log-stream-lock {
+    display: block;
+}
+
+.log-stream-list {
+    min-height: 320px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    background: #0b0f14;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: #d4d4d4;
+    flex: 1;
+    min-height: 0;
+}
+
+.log-stream-entry {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: grid;
+    grid-template-columns: 140px 90px 1fr;
+    gap: var(--space-2);
+}
+
+.log-stream-entry:last-child {
+    border-bottom: none;
+}
+
+.log-stream-timestamp {
+    color: #94a3b8;
+}
+
+.log-stream-level {
+    font-weight: 600;
+}
+
+.log-stream-message {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.log-stream-source {
+    grid-column: 1 / -1;
+    font-size: 0.7rem;
+    color: #64748b;
+}
+
+.log-stream-exception {
+    grid-column: 1 / -1;
+    margin: 4px 0 0;
+    padding: 6px;
+    background: rgba(239, 68, 68, 0.08);
+    border-radius: var(--radius-sm);
+    white-space: pre-wrap;
+    color: #fca5a5;
+}
+
+.log-stream-entry.level-verbose .log-stream-level { color: #93c5fd; }
+.log-stream-entry.level-debug .log-stream-level { color: #7dd3fc; }
+.log-stream-entry.level-information .log-stream-level { color: #60a5fa; }
+.log-stream-entry.level-warning .log-stream-level { color: #fbbf24; }
+.log-stream-entry.level-error .log-stream-level { color: #f87171; }
+.log-stream-entry.level-fatal .log-stream-level { color: #fb7185; }
+
+@media (max-width: 720px) {
+    .log-viewer-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .log-viewer-controls {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .log-stream-entry {
+        grid-template-columns: 1fr;
+    }
 }
 
 .dev-tools-grid {
@@ -61,6 +334,100 @@
     background-color: var(--color-primary);
     color: var(--color-background);
     border-color: var(--color-primary);
+}
+
+.tool-button.is-active {
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    border-color: var(--color-primary);
+}
+
+/* --- Match Lab --- */
+#dev-tools-match-lab-page.is-locked #dev-tools-match-lab-container {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+#dev-tools-match-lab-lock {
+    display: none;
+    margin: 0 var(--space-4);
+    padding: var(--space-3);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-secondary);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: var(--text-sm);
+}
+
+#dev-tools-match-lab-page.is-locked #dev-tools-match-lab-lock {
+    display: block;
+}
+
+.match-lab-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: 0 var(--space-4) var(--space-4);
+}
+
+.match-lab-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: var(--space-4);
+}
+
+.match-lab-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.match-lab-title {
+    font-size: var(--text-lg);
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+.match-lab-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.match-lab-field label {
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+}
+
+.match-lab-note {
+    font-size: var(--text-xs);
+    color: var(--color-secondary);
+}
+
+.match-lab-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.match-lab-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+}
+
+.match-lab-status {
+    font-size: var(--text-sm);
+    color: var(--color-secondary);
+}
+
+.match-lab-status[data-tone="error"] {
+    color: #ef4444;
 }
 
 /* --- Console Overlay --- */
@@ -121,6 +488,8 @@
     overflow-y: auto;
     padding: var(--space-2);
     color: #d4d4d4;
+    flex: 1;
+    min-height: 0;
 }
 
 .log-entry {
@@ -154,3 +523,4 @@
     font-family: var(--font-mono);
     outline: none;
 }
+

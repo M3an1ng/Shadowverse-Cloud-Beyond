@@ -22,7 +22,7 @@ export function getOptionsForType(ctx, typeName) {
       .map((f) => ({
         type: "function",
         value: f.name,
-        label: f.name,
+        label: typeof ctx.getReadableFunctionName === "function" ? ctx.getReadableFunctionName(f.name) : f.name,
         description: f.description,
         returnType: f.returnType || f.returnTypeName || 'Object',
         meta: f
@@ -30,7 +30,12 @@ export function getOptionsForType(ctx, typeName) {
     options.push(...numericFunctions);
   }
 
-  // 文本类型（包括枚举和GUID）：提供文本操作符和函数
+  // 枚举类型：提供枚举操作符和枚举值
+  else if (typeof ctx.isEnumType === "function" && ctx.isEnumType(typeName)) {
+    options.push(...getEnumOperators(ctx, typeName));
+  }
+
+  // 文本类型（包括 GUID）：提供文本操作符和函数
   else if (ctx.isTextType(typeName)) {
     const textOperators = ctx.getTextOperators() || [];
     options.push(...textOperators);
@@ -49,14 +54,27 @@ export function getOptionsForType(ctx, typeName) {
   else if (ctx.isCollectionType(typeName)) {
     options.push(...getCollectionOperators());
 
-    const collectionFunctions = ctx.getCollectionFunctions() || [];
+    const collectionFunctions = ctx.getCollectionFunctions(typeName) || [];
     options.push(...collectionFunctions);
 
     options.push({
       type: "listPipeline",
       value: "pipeline",
       label: "筛选",
-      description: "打开筛选/排序/选择管线"
+      description: "打开筛选/排序/选择面板"
+    });
+  }
+
+  // 业务对象类型：允许单元素筛选
+  else if (ctx.isBusinessObjectType(typeName)) {
+    const objectProperties = ctx.getObjectProperties(typeName) || [];
+    options.push(...objectProperties);
+
+    options.push({
+      type: "listPipeline",
+      value: "pipeline",
+      label: "筛选",
+      description: "对单个实体进行查询，命中则返回该实体"
     });
   }
 
@@ -87,6 +105,8 @@ export function getSmartOperators(ctx, typeName) {
       { type: "operator", value: "-", label: "减法 (-)", description: "数值减法运算", priority: 110 },
       { type: "operator", value: "*", label: "乘法 (*)", description: "数值乘法运算", priority: 115 },
       { type: "operator", value: "/", label: "除法 (/)", description: "数值除法运算", priority: 115 },
+      { type: "operator", value: "\\", label: "向上取整除 (\\)", description: "除法结果向上取整", priority: 115 },
+      { type: "operator", value: "%", label: "取余 (%)", description: "数值取余运算", priority: 115 },
 
       { type: "operator", value: "==", label: "等于 (==)", description: "数值相等比较", priority: 100 },
       { type: "operator", value: "!=", label: "不等于 (!=)", description: "数值不等比较", priority: 95 },
@@ -107,13 +127,6 @@ export function getSmartOperators(ctx, typeName) {
       { type: "operator", value: "==", label: "等于 (==)", description: "文本相等比较", priority: 100 },
       { type: "operator", value: "!=", label: "不等于 (!=)", description: "文本不等比较", priority: 95 }
     );
-    if (typeName === 'String') {
-      operators.push(
-        { type: "operator", value: "contains", label: "包含", description: "字符串包含检查", priority: 85 },
-        { type: "operator", value: "startsWith", label: "开始于", description: "字符串前缀检查", priority: 80 },
-        { type: "operator", value: "endsWith", label: "结束于", description: "字符串后缀检查", priority: 80 }
-      );
-    }
   } else if (ctx.isBusinessObjectType(typeName)) {
     operators.push(
       { type: "operator", value: "==", label: "等于 (==)", description: "对象相等比较", priority: 100 },
@@ -161,6 +174,6 @@ function getCollectionOperators() {
   return [
     { type: "operator", value: "|", label: "并集 (|)", description: "合并两个集合并去重" },
     { type: "operator", value: "&", label: "交集 (&)", description: "取两个集合的交集" },
-    { type: "operator", value: "-", label: "差集 (-)", description: "从左侧集合中排除右侧集合" }
+    { type: "operator", value: "~", label: "差集 (~)", description: "从左侧集合中排除右侧集合" }
   ];
 }

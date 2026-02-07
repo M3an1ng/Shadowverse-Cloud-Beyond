@@ -89,6 +89,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         AttackTimesUpdated,
         /// <summary>
+        /// 单位本回合已攻击次数被重置时触发。
+        /// </summary>
+        [Description("攻击次数重置")]
+        AttackTimesReset,
+        /// <summary>
         /// 玩家的可进化状态发生改变时触发。
         /// </summary>
         EvolveStateUpdated,
@@ -205,6 +210,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         HandUpdated,
         /// <summary>
+        /// 事务结束时的卡牌实例批量更新事件。
+        /// </summary>
+        CardInstanceUpdated,
+        /// <summary>
         /// 玩家提交换牌请求时触发。
         /// </summary>
         MulliganSubmitted,
@@ -240,6 +249,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         EffectInvoked,
         /// <summary>
+        /// 抉择结果事件（用于记录抉择效果的最终选择）。
+        /// </summary>
+        Choose,
+        /// <summary>
+        /// 随机结果事件（用于记录随机效果的最终选择）。
+        /// </summary>
+        Random,
+        /// <summary>
         /// 当一个能力被触发时广播。
         /// </summary>
         AbilityTriggered,
@@ -268,6 +285,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [Description("洗回牌库")]
         Tuck,
 
+        /// <summary>
+        /// 将手牌洗回牌库时触发。
+        /// </summary>
+        [Description("洗回牌堆")]
+        Shuffle,
+
         Transform,
 
         // --- 其他/通用事件 ---
@@ -287,6 +310,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// 卡牌因手牌已满而被爆牌时触发。
         /// </summary>
         CardBurned,
+        /// <summary>
+        /// 卡牌因战场已满而无法进入战场时触发。
+        /// </summary>
+        CardPacked,
         /// <summary>
         /// 玩家试图抽牌但牌库为空时触发。
         /// </summary>
@@ -325,6 +352,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         ActRequested,
 
         /// <summary>
+        /// 玩家以 Enhance（爆能）模式打出卡牌时触发。
+        /// </summary>
+        Enhance,
+
+        /// <summary>
         /// 一张卡牌成功发动了 Fusion（融合）能力（用于触发 Fusion 能力）。
         /// </summary>
         Fusion,
@@ -349,6 +381,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         SpellBoost,
 
+        /// <summary>
+        /// 战斗伤害结算时触发。
+        /// </summary>
+        CombatResolution,
+
+        /// <summary>
+        /// 卡牌获得能力时触发。
+        /// </summary>
+        [Description("获得能力")]
+        AbilityGranted,
+
     }
 
 
@@ -357,6 +400,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         None = 0, SetResult = 1, KeepCard = 2, TurnStart = 3, TurnEnd = 4,
         Play = 5, Cover = 6, Attack = 7, Evolve = 8, Fusion = 9, Act = 10,
         Accelerate = 11, Crystalize = 12, SetAttackTimes = 13,
+        ResetAttackTimes = 15,
         ChangeFlag = 90,
         Random = 91,
 

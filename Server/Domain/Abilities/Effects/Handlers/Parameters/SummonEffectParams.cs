@@ -1,4 +1,4 @@
-// File: Server/Domain/Abilities/Effects/Handlers/Parameters/SummonUnitEffectParams.cs
+﻿// File: Server/Domain/Abilities/Effects/Handlers/Parameters/SummonUnitEffectParams.cs
 using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
@@ -25,13 +25,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// The Definition ID of the card to summon.
         /// This is mandatory for summoning.
         /// </summary>
-        [ParameterMetadata("卡牌ID", UiControlType.NumberStepper, DefaultValue = 0, Min = 1, Description = "要召唤的卡牌定义ID。这是召唤效果的必需参数。")]
-        public int CardDefinitionId { get; set; }
+        [ParameterMetadata("卡牌ID", UiControlType.CardDefinitionPicker, DefaultValue = null, Description = "要召唤的卡牌定义ID列表。")]
+        public List<int> CardDefinitionId { get; set; } = new();
 
         /// <summary>
         /// The number of units to summon. Defaults to 1.
         /// </summary>
-        [ParameterMetadata("召唤数量", UiControlType.ValueConfigEditor, DefaultValue = 1, Min = 1, Description = "要召唤的单位数量。可以是固定数值，也可以是基于游戏状态的动态公式。")]
+        [ParameterMetadata("召唤数量", UiControlType.NumberStepper, DefaultValue = 1, Min = 1, Description = "要召唤的单位数量。可以是固定数值，也可以是基于游戏状态的动态公式。")]
         public int SummonCount { get; set; } = 1;
 
 

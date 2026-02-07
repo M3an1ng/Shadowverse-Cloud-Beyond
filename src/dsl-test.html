@@ -196,7 +196,6 @@
 
                 infoEl.textContent = JSON.stringify(dslInfo, null, 2);
                 
-                console.log('完整的DSL元数据:', metadata.dsl);
                 
             } catch (error) {
                 statusEl.textContent = `元数据加载失败: ${error.message}`;
@@ -226,7 +225,6 @@
                 // 渲染编辑器
                 await dslEditor.render(containerEl, '', (expression) => {
                     resultEl.textContent = `当前表达式: ${expression}`;
-                    console.log('DSL表达式变化:', expression);
                     // 表达式变化时立即更新状态
                     updateRealTimeDebug();
                 });
@@ -235,7 +233,6 @@
                 statusEl.className = 'status success';
 
                 // 立即触发一次状态更新
-                console.log('DSL编辑器初始化完成，设置全局引用');
                 setTimeout(() => {
                     updateRealTimeDebug();
                 }, 200);
@@ -272,7 +269,6 @@
         // 测试深层嵌套
         window.testDeepNesting = function() {
             if (dslEditor) {
-                console.log('Testing deep nesting...');
                 // 模拟用户点击选择深层属性
                 const testPath = 'context.currentGameState.allField';
                 dslEditor.setExpression(testPath);
@@ -359,7 +355,6 @@
 
                if (finalExpression === expectedExpression) {
                    infoEl.textContent = `测试成功！ 最终表达式: ${finalExpression}`;
-                   console.log('集合查询测试成功！');
                } else {
                    throw new Error(`表达式不匹配！\n预期: ${expectedExpression}\n实际: ${finalExpression}`);
                }
@@ -387,7 +382,6 @@
                 };
 
                 document.getElementById('debug-info').textContent = JSON.stringify(debugInfo, null, 2);
-                console.log('DSL Editor Debug Info:', debugInfo);
             } else {
                 alert('请先初始化DSL编辑器');
             }
@@ -410,8 +404,6 @@
                 };
 
                 document.getElementById('debug-info').textContent = JSON.stringify(debugInfo, null, 2);
-                console.log('Available Options Debug Info:', debugInfo);
-                console.log('Context Objects:', dslEditor.metadata?.dsl?.contextObjects);
             } else {
                 alert('请先初始化DSL编辑器');
             }
@@ -440,7 +432,6 @@
                 statusEl.textContent = '表达式解析成功！编辑器已加载。';
                 statusEl.className = 'status success';
                 
-                console.log('Parser test editor state:', parserTestEditor);
 
             } catch (error) {
                 statusEl.textContent = `表达式解析失败: ${error.message}`;
@@ -452,7 +443,6 @@
 
         // 页面加载时自动测试元数据
         window.addEventListener('load', () => {
-            console.log('DSL测试页面已加载');
         });
 
         // 实时状态更新函数
@@ -460,12 +450,10 @@
             try {
                 // 检查编辑器是否存在
                 if (!window.dslEditor) {
-                    // console.log('Debug: dslEditor not found in window');
                     return;
                 }
 
                 const editor = window.dslEditor;
-                // console.log('Debug: Updating real-time debug, editor found:', !!editor);
 
                 // 格式化AST节点显示
                 function formatAST(node) {
@@ -490,7 +478,6 @@
                     const element = document.getElementById(id);
                     if (element) {
                         element.textContent = content;
-                        // console.log(`Debug: Updated ${id}:`, content);
                     } else {
                         console.warn(`Debug: Element ${id} not found`);
                     }
@@ -523,7 +510,6 @@
                 const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
                 safeUpdateElement('last-update-display', timeStr);
 
-                // console.log('Debug: Real-time debug update completed');
 
             } catch (error) {
                 console.error('Debug: Error in updateRealTimeDebug:', error);
@@ -539,7 +525,6 @@
 
         // 监听DSL表达式变化事件，立即更新状态
         window.addEventListener('dslExpressionChanged', (event) => {
-            console.log('DSL表达式变化:', event.detail);
             if (window.dslEditor) {
                 updateRealTimeDebug();
             }
@@ -547,7 +532,6 @@
 
         // 手动触发状态更新的全局函数
         window.forceUpdateDebug = function() {
-            console.log('手动触发状态更新');
             updateRealTimeDebug();
         };
     </script>

@@ -134,7 +134,7 @@ export class ValueNode extends ASTNode {
 
     updateCompleteness() {
         // 对于静态值节点，如果正在等待输入，则不完整
-        if (this.metadata.type === 'staticValue' && this.metadata.isAwaitingInput) {
+        if ((this.metadata.type === 'staticValue' || this.metadata.type === 'propertyInput') && this.metadata.isAwaitingInput) {
             this.isComplete = false;
         } else {
             this.isComplete = true;
@@ -266,19 +266,61 @@ export class OperatorNode extends ASTNode {
             return node.returnType;
         };
 
+        const normalizeTypeName = (typeName) => {
+            if (!typeName) return null;
+            const trimmed = String(typeName).trim();
+            if (!trimmed) return null;
+            const aliasMap = {
+                CardInstanceSnapshot: 'CardInstance',
+                CardInstanceResetSnapshot: 'CardInstance',
+                CardDefinitionSnapshot: 'CardDefinition'
+            };
+            const nullable = trimmed.match(/^Nullable<(.+)>$/);
+            if (nullable) return aliasMap[nullable[1]] || nullable[1];
+            if (trimmed === 'List' || trimmed === 'IEnumerable' || trimmed === 'IReadOnlyList' || trimmed === 'IReadOnlyCollection' || trimmed === 'ICollection') {
+                return 'List<Object>';
+            }
+            const roListMatch = trimmed.match(/^IReadOnlyList<(.+)>$/);
+            if (roListMatch) return `List<${aliasMap[roListMatch[1]] || roListMatch[1]}>`;
+            const roCollectionMatch = trimmed.match(/^IReadOnlyCollection<(.+)>$/);
+            if (roCollectionMatch) return `List<${aliasMap[roCollectionMatch[1]] || roCollectionMatch[1]}>`;
+            const collectionMatch = trimmed.match(/^ICollection<(.+)>$/);
+            if (collectionMatch) return `List<${aliasMap[collectionMatch[1]] || collectionMatch[1]}>`;
+            const enumerableMatch = trimmed.match(/^IEnumerable<(.+)>$/);
+            if (enumerableMatch) return `List<${aliasMap[enumerableMatch[1]] || enumerableMatch[1]}>`;
+            return aliasMap[trimmed] || trimmed;
+        };
+
         const isCollectionType = (typeName) => {
-            if (!typeName) return false;
-            return /^(List|IEnumerable)(<.+>)?$/.test(String(typeName));
+            const normalized = normalizeTypeName(typeName);
+            if (!normalized) return false;
+            return /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(normalized));
         };
 
         const getCollectionInnerType = (typeName) => {
-            if (!typeName) return null;
-            const match = String(typeName).match(/<(.*)>/);
+            const normalized = normalizeTypeName(typeName);
+            if (!normalized) return null;
+            const match = String(normalized).match(/<(.*)>/);
             return match ? match[1] : 'Object';
+        };
+
+        const areElementTypesCompatible = (leftInner, rightInner) => {
+            if (!leftInner || !rightInner) return true;
+            if (leftInner === 'Object' || rightInner === 'Object') return true;
+            return leftInner === rightInner;
+        };
+
+        const isScalarCompatibleWithCollection = (scalarType, collectionType) => {
+            const scalar = normalizeTypeName(scalarType);
+            const collectionInner = getCollectionInnerType(collectionType);
+            if (!scalar || !collectionInner) return false;
+            if (scalar.toLowerCase() === 'string') return false;
+            return collectionInner === 'Object' || scalar === collectionInner;
         };
 
         const leftType = resolveNodeType(this.leftOperand);
         const rightType = resolveNodeType(this.rightOperand);
+
 
         // 逻辑操作符要求两个操作数都是布尔类型
         if (['&&', '||'].includes(this.operator)) {
@@ -290,18 +332,34 @@ export class OperatorNode extends ASTNode {
             }
         }
 
-        // 集合操作符要求两个操作数都是兼容的集合类型
-        if (['|', '&'].includes(this.operator) || (this.operator === '-' && isCollectionType(leftType) && isCollectionType(rightType))) {
-            if (!isCollectionType(leftType)) {
-                return `集合操作符 ${this.operator} 的左操作数必须是集合类型，当前类型：${formatTypeName(leftType)}`;
+        // 集合操作符：允许 集合↔集合，以及 集合↔单体元素（自动包装为集合）
+        if (['|', '&', '~'].includes(this.operator)) {
+            const leftIsCollection = isCollectionType(leftType);
+            const rightIsCollection = isCollectionType(rightType);
+
+            if (!leftIsCollection && !rightIsCollection) {
+                return `集合操作符 ${this.operator} 至少需要一个集合操作数，当前类型：${formatTypeName(leftType)} 与 ${formatTypeName(rightType)}`;
             }
-            if (!isCollectionType(rightType)) {
-                return `集合操作符 ${this.operator} 的右操作数必须是集合类型，当前类型：${formatTypeName(rightType)}`;
+
+            const referenceCollectionType = leftIsCollection ? leftType : rightType;
+            const referenceInnerType = getCollectionInnerType(referenceCollectionType);
+
+            if (leftIsCollection) {
+                const leftInner = getCollectionInnerType(leftType);
+                if (!areElementTypesCompatible(leftInner, referenceInnerType)) {
+                    return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(leftInner)} 与 ${formatTypeName(referenceInnerType)}`;
+                }
+            } else if (!isScalarCompatibleWithCollection(leftType, referenceCollectionType)) {
+                return `集合操作符 ${this.operator} 的左操作数必须是集合或兼容的元素类型，当前类型：${formatTypeName(leftType)}`;
             }
-            const leftInner = getCollectionInnerType(leftType);
-            const rightInner = getCollectionInnerType(rightType);
-            if (leftInner && rightInner && leftInner !== 'Object' && leftInner !== rightInner) {
-                return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(leftInner)} 与 ${formatTypeName(rightInner)}`;
+
+            if (rightIsCollection) {
+                const rightInner = getCollectionInnerType(rightType);
+                if (!areElementTypesCompatible(rightInner, referenceInnerType)) {
+                    return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(referenceInnerType)} 与 ${formatTypeName(rightInner)}`;
+                }
+            } else if (!isScalarCompatibleWithCollection(rightType, referenceCollectionType)) {
+                return `集合操作符 ${this.operator} 的右操作数必须是集合或兼容的元素类型，当前类型：${formatTypeName(rightType)}`;
             }
         }
 
@@ -389,7 +447,7 @@ export class ListQueryNode extends ASTNode {
                     errors.push(...filterValidation.errors);
                 }
                 if (this.filterExpression.returnType !== 'Boolean') {
-                    errors.push(`Query筛选表达式必须返回布尔值，当前返回: ${formatTypeName(this.filterExpression.returnType)}`);
+                    errors.push(`Query查询表达式必须返回布尔值，当前返回: ${formatTypeName(this.filterExpression.returnType)}`);
                 }
             }
             return { isValid: errors.length === 0, errors };
@@ -407,24 +465,30 @@ export class ListQueryNode extends ASTNode {
     /**
      * ListSortNode - 表示.orderBy()操作
      */
-    export class ListSortNode extends ASTNode {
-        constructor(sourceNode) {
-            super('listSort', sourceNode.returnType);
-            this.source = sourceNode;
-            this.sortExpression = null; // 排序表达式
-            if (sourceNode) {
-                sourceNode.parent = this;
-            }
-            this.updateCompleteness();
+export class ListSortNode extends ASTNode {
+    constructor(sourceNode) {
+        super('listSort', sourceNode.returnType);
+        this.source = sourceNode;
+        this.sortExpression = null; // 排序表达式
+        this.direction = 'asc';
+        if (sourceNode) {
+            sourceNode.parent = this;
         }
+        this.updateCompleteness();
+    }
     
-        setSortExpression(node) {
-            this.sortExpression = node;
-            if (node) {
-                node.parent = this;
-            }
-            this.updateCompleteness();
+    setSortExpression(node) {
+        this.sortExpression = node;
+        if (node) {
+            node.parent = this;
         }
+        this.updateCompleteness();
+    }
+
+    setDirection(direction) {
+        const normalized = String(direction || '').toLowerCase();
+        this.direction = normalized === 'desc' ? 'desc' : 'asc';
+    }
     
         updateCompleteness() {
             const isEmpty = !this.sortExpression
@@ -434,17 +498,19 @@ export class ListQueryNode extends ASTNode {
             this.isComplete = this.source && (isEmpty || this.sortExpression.isComplete);
         }
 
-        toExpression() {
-            const sourceExpr = this.source ? this.source.toExpression() : '';
-            const sortExpr = this.sortExpression ? this.sortExpression.toExpression() : '';
-            const isEmpty = !this.sortExpression
-                || this.sortExpression.metadata?.type === 'empty'
-                || (this.sortExpression.metadata?.type === 'encapsulated'
-                    && this.sortExpression.metadata?.innerAST?.metadata?.type === 'empty')
-                || !sortExpr;
-            if (isEmpty) return sourceExpr;
-            return `${sourceExpr}.orderBy(${sortExpr})`;
-        }
+    toExpression() {
+        const sourceExpr = this.source ? this.source.toExpression() : '';
+        const sortExpr = this.sortExpression ? this.sortExpression.toExpression() : '';
+        const isEmpty = !this.sortExpression
+            || this.sortExpression.metadata?.type === 'empty'
+            || (this.sortExpression.metadata?.type === 'encapsulated'
+                && this.sortExpression.metadata?.innerAST?.metadata?.type === 'empty')
+            || !sortExpr;
+        if (isEmpty) return sourceExpr;
+        const dir = String(this.direction || 'asc').toLowerCase();
+        const suffix = dir === 'desc' ? ' desc' : '';
+        return `${sourceExpr}.orderBy(${sortExpr}${suffix})`;
+    }
     
         validate() {
             const errors = [];
@@ -456,33 +522,193 @@ export class ListQueryNode extends ASTNode {
             if (!isEmpty) {
                 const v = this.sortExpression.validate();
                 if (!v.isValid) errors.push(...v.errors);
+                const sortType = this.sortExpression.returnType;
+                const isCollectionType = (typeName) => /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(typeName || ''));
+                const isDictionaryType = (typeName) => /^(Dictionary|IDictionary|IReadOnlyDictionary)<.+>$/.test(String(typeName || ''));
+                const businessObjectTypes = [
+                    'PlayerState',
+                    'CardInstance',
+                    'CardDefinition',
+                    'EffectInstance',
+                    'EventInstance'
+                ];
+                if (sortType && (isCollectionType(sortType) || isDictionaryType(sortType) || businessObjectTypes.includes(sortType))) {
+                    errors.push(`OrderBy排序键必须为非实体类型，当前返回: ${formatTypeName(sortType)}`);
+                }
             }
             return { isValid: errors.length === 0, errors };
         }
     
-        clone() {
-            const cloned = new ListSortNode(this.source.clone());
-            if (this.sortExpression) {
-                cloned.setSortExpression(this.sortExpression.clone());
-            }
-            return cloned;
+    clone() {
+        const cloned = new ListSortNode(this.source.clone());
+        cloned.direction = this.direction;
+        if (this.sortExpression) {
+            cloned.setSortExpression(this.sortExpression.clone());
         }
+        return cloned;
+    }
     }
     
     /**
+     * ListDistinctNode - 表示.distinct()操作
+     */
+export class ListDistinctNode extends ASTNode {
+    constructor(sourceNode) {
+        super('listDistinct', sourceNode.returnType);
+        this.source = sourceNode;
+        this.keyExpression = null;
+        if (sourceNode) {
+            sourceNode.parent = this;
+        }
+        this.updateCompleteness();
+    }
+
+    setKeyExpression(node) {
+        this.keyExpression = node;
+        if (node) {
+            node.parent = this;
+        }
+        this.updateCompleteness();
+    }
+
+    updateCompleteness() {
+        const isEmpty = !this.keyExpression
+            || this.keyExpression.metadata?.type === 'empty'
+            || (this.keyExpression.metadata?.type === 'encapsulated'
+                && this.keyExpression.metadata?.innerAST?.metadata?.type === 'empty');
+        this.isComplete = this.source && !isEmpty && this.keyExpression.isComplete;
+    }
+
+    toExpression() {
+        const sourceExpr = this.source ? this.source.toExpression() : '';
+        const keyExpr = this.keyExpression ? this.keyExpression.toExpression() : '';
+        return `${sourceExpr}.distinct(${keyExpr})`;
+    }
+
+    validate() {
+        const errors = [];
+        if (!this.source) errors.push('Distinct操作缺少源集合');
+        if (!this.keyExpression) {
+            errors.push('Distinct操作缺少去重键表达式');
+            return { isValid: false, errors };
+        }
+        const v = this.keyExpression.validate();
+        if (!v.isValid) errors.push(...v.errors);
+
+        const keyType = this.keyExpression.returnType;
+        const isCollectionType = (typeName) => /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(typeName || ''));
+        const isDictionaryType = (typeName) => /^(Dictionary|IDictionary|IReadOnlyDictionary)<.+>$/.test(String(typeName || ''));
+        const businessObjectTypes = [
+            'PlayerState',
+            'CardInstance',
+            'CardDefinition',
+            'EffectInstance',
+            'EventInstance'
+        ];
+        if (keyType && (isCollectionType(keyType) || isDictionaryType(keyType) || businessObjectTypes.includes(keyType))) {
+            errors.push(`Distinct去重键必须为非实体类型，当前返回: ${formatTypeName(keyType)}`);
+        }
+
+        return { isValid: errors.length === 0, errors };
+    }
+
+    clone() {
+        const cloned = new ListDistinctNode(this.source.clone());
+        if (this.keyExpression) {
+            cloned.setKeyExpression(this.keyExpression.clone());
+        }
+        return cloned;
+    }
+}
+
+/**
+ * ListSelectNode - 表示.select()操作
+ */
+export class ListSelectNode extends ASTNode {
+    constructor(sourceNode) {
+        super('listSelect', sourceNode.returnType);
+        this.source = sourceNode;
+        this.selectExpression = null;
+        if (sourceNode) {
+            sourceNode.parent = this;
+        }
+        this.updateCompleteness();
+    }
+
+    setSelectExpression(node) {
+        this.selectExpression = node;
+        if (node) {
+            node.parent = this;
+        }
+        const resolveCollectionInnerType = (typeName) => {
+            const trimmed = String(typeName || "").trim();
+            if (!trimmed) return null;
+            if (trimmed === 'List' || trimmed === 'IEnumerable' || trimmed === 'IReadOnlyList' || trimmed === 'IReadOnlyCollection' || trimmed === 'ICollection') {
+                return 'Object';
+            }
+            const match = trimmed.match(/^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)<(.+)>$/);
+            return match ? match[2] : null;
+        };
+        const inner = resolveCollectionInnerType(this.source?.returnType);
+        if (inner !== null) {
+            const selectedType = node?.returnType || "Object";
+            this.returnType = `List<${selectedType}>`;
+        } else if (node?.returnType) {
+            this.returnType = node.returnType;
+        }
+        this.updateCompleteness();
+    }
+
+    updateCompleteness() {
+        const isEmpty = !this.selectExpression
+            || this.selectExpression.metadata?.type === 'empty'
+            || (this.selectExpression.metadata?.type === 'encapsulated'
+                && this.selectExpression.metadata?.innerAST?.metadata?.type === 'empty');
+        this.isComplete = this.source && !isEmpty && this.selectExpression.isComplete;
+    }
+
+    toExpression() {
+        const sourceExpr = this.source ? this.source.toExpression() : '';
+        const selectExpr = this.selectExpression ? this.selectExpression.toExpression() : '';
+        return `${sourceExpr}.select(${selectExpr})`;
+    }
+
+    validate() {
+        const errors = [];
+        if (!this.source) errors.push('Select操作缺少源集合');
+        if (!this.selectExpression) {
+            errors.push('Select操作缺少投影表达式');
+            return { isValid: false, errors };
+        }
+        const v = this.selectExpression.validate();
+        if (!v.isValid) errors.push(...v.errors);
+
+        return { isValid: errors.length === 0, errors };
+    }
+
+    clone() {
+        const cloned = new ListSelectNode(this.source.clone());
+        if (this.selectExpression) {
+            cloned.setSelectExpression(this.selectExpression.clone());
+        }
+        return cloned;
+    }
+}
+
+    /**
      * ListTakeNode - 表示.take()操作
      */
-    export class ListTakeNode extends ASTNode {
-        constructor(sourceNode) {
-            super('listTake', sourceNode.returnType);
-            this.source = sourceNode;
-            this.countExpression = null; // 数量表达式
-            this.strategy = 'first';
-            if (sourceNode) {
-                sourceNode.parent = this;
-            }
-            this.updateCompleteness();
+export class ListTakeNode extends ASTNode {
+    constructor(sourceNode) {
+        super('listTake', sourceNode.returnType);
+        this.source = sourceNode;
+        this.countExpression = null; // 数量表达式
+        this.strategy = 'first';
+        if (sourceNode) {
+            sourceNode.parent = this;
         }
+        this.updateCompleteness();
+    }
     
         setCountExpression(node) {
             this.countExpression = node;
@@ -492,45 +718,55 @@ export class ListQueryNode extends ASTNode {
             this.updateCompleteness();
         }
 
-        setStrategy(strategy) {
-            const normalized = String(strategy || '').toLowerCase();
-            if (['first', 'last', 'random'].includes(normalized)) {
-                this.strategy = normalized;
-            }
+    setStrategy(strategy) {
+        const normalized = String(strategy || '').toLowerCase();
+        if (['first', 'last', 'random', 'all'].includes(normalized)) {
+            this.strategy = normalized;
         }
+    }
     
-        updateCompleteness() {
-            const isEmpty = !this.countExpression
-                || this.countExpression.metadata?.type === 'empty'
-                || (this.countExpression.metadata?.type === 'encapsulated'
-                    && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty');
-            this.isComplete = this.source && (isEmpty || this.countExpression.isComplete);
+    updateCompleteness() {
+        if (String(this.strategy || '').toLowerCase() === 'all') {
+            this.isComplete = Boolean(this.source);
+            return;
+        }
+        const isEmpty = !this.countExpression
+            || this.countExpression.metadata?.type === 'empty'
+            || (this.countExpression.metadata?.type === 'encapsulated'
+                && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty');
+        this.isComplete = this.source && (isEmpty || this.countExpression.isComplete);
         }
 
-        toExpression() {
-            const sourceExpr = this.source ? this.source.toExpression() : '';
-            const countExpr = this.countExpression ? this.countExpression.toExpression() : '';
-            const isEmpty = !this.countExpression
-                || this.countExpression.metadata?.type === 'empty'
-                || (this.countExpression.metadata?.type === 'encapsulated'
-                    && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty')
-                || !countExpr;
-            if (isEmpty) return sourceExpr;
-            const strategy = String(this.strategy || 'first').toLowerCase();
-            if (strategy && strategy !== 'first') {
-                return `${sourceExpr}.take(${strategy} ${countExpr})`;
-            }
-            return `${sourceExpr}.take(${countExpr})`;
+    toExpression() {
+        const sourceExpr = this.source ? this.source.toExpression() : '';
+        const strategy = String(this.strategy || 'first').toLowerCase();
+        if (strategy === 'all') {
+            return `${sourceExpr}.take(all)`;
         }
+        const countExpr = this.countExpression ? this.countExpression.toExpression() : '';
+        const isEmpty = !this.countExpression
+            || this.countExpression.metadata?.type === 'empty'
+            || (this.countExpression.metadata?.type === 'encapsulated'
+                && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty')
+            || !countExpr;
+        if (isEmpty) return sourceExpr;
+        if (strategy && strategy !== 'first') {
+            return `${sourceExpr}.take(${strategy} ${countExpr})`;
+        }
+        return `${sourceExpr}.take(${countExpr})`;
+    }
     
-        validate() {
-            const errors = [];
-            if (!this.source) errors.push('Take操作缺少源集合');
-            const isEmpty = !this.countExpression
-                || this.countExpression.metadata?.type === 'empty'
-                || (this.countExpression.metadata?.type === 'encapsulated'
-                    && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty');
-            if (!isEmpty) {
+    validate() {
+        const errors = [];
+        if (!this.source) errors.push('Take操作缺少源集合');
+        if (String(this.strategy || '').toLowerCase() === 'all') {
+            return { isValid: errors.length === 0, errors };
+        }
+        const isEmpty = !this.countExpression
+            || this.countExpression.metadata?.type === 'empty'
+            || (this.countExpression.metadata?.type === 'encapsulated'
+                && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty');
+        if (!isEmpty) {
                 const v = this.countExpression.validate();
                 if (!v.isValid) errors.push(...v.errors);
 
@@ -561,6 +797,14 @@ export class ListQueryNode extends ASTNode {
         return new ListTakeNode(sourceNode);
     }
 
+export function createListDistinctNode(sourceNode) {
+    return new ListDistinctNode(sourceNode);
+}
+
+export function createListSelectNode(sourceNode) {
+    return new ListSelectNode(sourceNode);
+}
+
 
 export function createValueNode(value, returnType, metadata = {}) {
     return new ValueNode(value, returnType, metadata);
@@ -585,7 +829,7 @@ export function inferOperatorReturnType(operator) {
     if (['==', '!=', '>', '<', '>=', '<=', 'contains', 'startsWith', 'endsWith'].includes(operator)) {
         return 'Boolean';
     }
-    if (['+', '-', '*', '/'].includes(operator)) {
+    if (['+', '-', '*', '/', '\\', '%'].includes(operator)) {
         return 'Number';
     }
     return 'Object';
@@ -628,10 +872,24 @@ export function findIncompleteNode(root) {
     if (root.type === 'listTake') {
         const src = findIncompleteNode(root.source);
         if (src) return src;
-        const f = findIncompleteNode(root.countExpression);
+        const strategy = String(root.strategy || '').toLowerCase();
+        if (strategy !== 'all') {
+            const f = findIncompleteNode(root.countExpression);
+            if (f) return f;
+        }
+    }
+    if (root.type === 'listDistinct') {
+        const src = findIncompleteNode(root.source);
+        if (src) return src;
+        const f = findIncompleteNode(root.keyExpression);
         if (f) return f;
     }
-
+    if (root.type === 'listSelect') {
+        const src = findIncompleteNode(root.source);
+        if (src) return src;
+        const f = findIncompleteNode(root.selectExpression);
+        if (f) return f;
+    }
     return null;
 }
 

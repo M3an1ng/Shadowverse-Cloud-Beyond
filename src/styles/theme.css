@@ -13,6 +13,7 @@
     
     --color-success: #22c55e; /* Green 500 */
     --color-warning: #eab308; /* Yellow 500 */
+    --color-preview-highlight: #f2b35c; /* Orange highlight for preview parsing */
     
     /* --- Field Colors --- */
     --color-field-player: #06b6d4; /* Cyan 500 */

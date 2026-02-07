@@ -5,8 +5,10 @@
 ## 关键对象
 
 ### `EffectConfig`
-定义效果的静态配置（类型、参数、Outputs、ChainedAbilities）。
+定义效果的静态配置（类型、参数、Outputs、ChainedAbilities、RepeatCount）。
 - 位置：`Server/Domain/Abilities/Effects/EffectConfig.cs`
+- `RepeatCount`：额外重复次数（0 表示只执行一次；>=1 时会重复执行并触发连锁能力）。
+- `RepeatCondition`：重复条件（为空默认满足，重复次数>0时仅在条件满足时继续重复）。
 
 ### `Effect`
 运行时效果请求，包含目标、输出与连锁能力等信息。
@@ -43,5 +45,7 @@
 ## 常见 DSL 访问点（建议）
 
 - 需要读取“本次效果目标”：`context.selectedTargets`
+- 需要读取“能力目标池”：`context.resolvedTargets`
 - 需要读取“效果输出”：`context.triggeringEvent.outputs`（连锁能力触发事件为 `EffectCompletedEvent` 时）
+- 需要读取“效果生成事件”：`context.triggeringEvent.generatedEvents`
 - 需要读取“上一个效果的输入/目标”：`context.triggeringEvent.originalEffectInputParams` / `context.triggeringEvent.resolvedTargets`

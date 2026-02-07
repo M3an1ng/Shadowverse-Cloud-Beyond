@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -161,7 +162,37 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
             {
                 if (string.IsNullOrWhiteSpace(announcement)) return new JsonObject();
 
-                var parts = announcement.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var normalized = StripTurnPrefix(announcement);
+                var tokens = ExtractTokens(normalized);
+                if (TryExtractNumber(tokens, out var number))
+                {
+                    var payload = new JsonObject();
+                    if (string.Equals(eventType, "Damage", StringComparison.OrdinalIgnoreCase))
+                    {
+                        payload["Damage"] = number;
+                        return payload;
+                    }
+
+                    if (string.Equals(eventType, "Heal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        payload["HealAmount"] = number;
+                        return payload;
+                    }
+
+                    if (string.Equals(eventType, "PpUpdated", StringComparison.OrdinalIgnoreCase))
+                    {
+                        payload["CurrentPp"] = number;
+                        return payload;
+                    }
+
+                    if (string.Equals(eventType, "EpUpdated", StringComparison.OrdinalIgnoreCase))
+                    {
+                        payload["CurrentEp"] = number;
+                        return payload;
+                    }
+                }
+
+                var parts = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (parts.Length == 0) return new JsonObject();
 
                 var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -174,40 +205,73 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     kv[key] = value;
                 }
 
-                var payload = new JsonObject();
+                var legacyPayload = new JsonObject();
                 if (string.Equals(eventType, "Damage", StringComparison.OrdinalIgnoreCase) ||
                     parts[0].Equals("damage", StringComparison.OrdinalIgnoreCase))
                 {
                     if (kv.TryGetValue("amount", out var amountStr) && int.TryParse(amountStr, out var amount))
-                        payload["Damage"] = amount;
-                    return payload;
+                        legacyPayload["Damage"] = amount;
+                    return legacyPayload;
                 }
 
                 if (string.Equals(eventType, "Heal", StringComparison.OrdinalIgnoreCase) ||
                     parts[0].Equals("heal", StringComparison.OrdinalIgnoreCase))
                 {
                     if (kv.TryGetValue("amount", out var amountStr) && int.TryParse(amountStr, out var amount))
-                        payload["HealAmount"] = amount;
-                    return payload;
+                        legacyPayload["HealAmount"] = amount;
+                    return legacyPayload;
                 }
 
                 if (string.Equals(eventType, "PpUpdated", StringComparison.OrdinalIgnoreCase) ||
                     parts[0].Equals("pp", StringComparison.OrdinalIgnoreCase))
                 {
                     if (kv.TryGetValue("current", out var currentStr) && int.TryParse(currentStr, out var current))
-                        payload["CurrentPp"] = current;
-                    return payload;
+                        legacyPayload["CurrentPp"] = current;
+                    return legacyPayload;
                 }
 
                 if (string.Equals(eventType, "EpUpdated", StringComparison.OrdinalIgnoreCase) ||
                     parts[0].Equals("ep", StringComparison.OrdinalIgnoreCase))
                 {
                     if (kv.TryGetValue("current", out var currentStr) && int.TryParse(currentStr, out var current))
-                        payload["CurrentEp"] = current;
-                    return payload;
+                        legacyPayload["CurrentEp"] = current;
+                    return legacyPayload;
                 }
 
-                return payload;
+                return legacyPayload;
+            }
+
+            private static string StripTurnPrefix(string announcement)
+            {
+                return Regex.Replace(announcement, @"^\[Turn\s+\d+\]\s*", string.Empty);
+            }
+
+            private static IReadOnlyList<string> ExtractTokens(string announcement)
+            {
+                var tokens = new List<string>();
+                foreach (Match match in Regex.Matches(announcement, @"\[\[(.+?)\]\]"))
+                {
+                    if (match.Success && match.Groups.Count > 1)
+                    {
+                        tokens.Add(match.Groups[1].Value);
+                    }
+                }
+                return tokens;
+            }
+
+            private static bool TryExtractNumber(IReadOnlyList<string> tokens, out int value)
+            {
+                foreach (var token in tokens)
+                {
+                    if (token.StartsWith("num:", StringComparison.OrdinalIgnoreCase) &&
+                        int.TryParse(token[4..], out value))
+                    {
+                        return true;
+                    }
+                }
+
+                value = 0;
+                return false;
             }
         }
     }

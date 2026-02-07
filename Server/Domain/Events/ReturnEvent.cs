@@ -1,3 +1,4 @@
+using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -18,8 +19,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("返回原因", "卡牌被返回的原因。")]
         public string Reason { get; }
 
-        [GameEventParameter("返回的卡牌", "被返回的卡牌。")]
+        [GameEventParameter("返回的卡牌", "被返回的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? ReturnedCard => Target.FirstOrDefault()?.Card;
+
+        public ReturnEvent(PlayerState player, CardInstance card, string reason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Return, eventId, timestamp)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            Target.Add(TargetInfo.ForCard(card));
+            Reason = reason;
+        }
 
         public ReturnEvent(CardInstance card, string reason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Return, eventId, timestamp)
@@ -36,7 +45,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "ReturnEvent.Commit: card is null." };
             }
 
-            var player = Source?.Player;
+            var player = Source?.Player ?? context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
             if (player == null)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "ReturnEvent.Commit: player is null." };
@@ -49,10 +58,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            var targetId = ReturnedCard?.InstanceId;
-            return targetId.HasValue
-                ? $"return target={gameState.InGameIds.Format(InGameIdKind.Card, targetId.Value)}"
-                : "return";
+            var card = ReturnedCard;
+            if (card == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Card(card)}返回手牌。";
         }
     }
 }

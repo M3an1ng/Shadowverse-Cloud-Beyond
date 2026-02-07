@@ -86,11 +86,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Tests
         #region Max Function Tests
 
         [Fact]
-        public async Task MaxFunction_WithNumericValues_ReturnsMaximum()
+        public async Task MaxFunction_WithNumericCollection_ReturnsMaximum()
         {
             // Arrange
             var maxFunction = new MaxFunction();
-            var args = new List<object?> { 1, 5, 3, 9, 2 };
+            var collection = new List<object?> { 1, 5, 3, 9, 2 };
+            var args = new List<object?> { collection };
 
             // Act
             var result = await maxFunction.ExecuteAsync(args, _evaluationContext);
@@ -114,17 +115,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Tests
         }
 
         [Fact]
-        public async Task MaxFunction_WithMixedTypes_ConvertsAndReturnsMax()
+        public void MaxFunction_WithLegacyArguments_IsInvalid()
         {
             // Arrange
             var maxFunction = new MaxFunction();
-            var args = new List<object?> { 1, "5", 3.7, 2 };
-
-            // Act
-            var result = await maxFunction.ExecuteAsync(args, _evaluationContext);
+            var args = new List<object?> { 1, 2 };
 
             // Assert
-            Assert.Equal(5.0, result);
+            Assert.False(maxFunction.ValidateArguments(args));
         }
 
         #endregion
@@ -132,11 +130,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Tests
         #region Min Function Tests
 
         [Fact]
-        public async Task MinFunction_WithNumericValues_ReturnsMinimum()
+        public async Task MinFunction_WithNumericCollection_ReturnsMinimum()
         {
             // Arrange
             var minFunction = new MinFunction();
-            var args = new List<object?> { 1, 5, 3, 9, 2 };
+            var collection = new List<object?> { 1, 5, 3, 9, 2 };
+            var args = new List<object?> { collection };
 
             // Act
             var result = await minFunction.ExecuteAsync(args, _evaluationContext);
@@ -159,16 +158,28 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Tests
             Assert.Null(result);
         }
 
+        [Fact]
+        public void MinFunction_WithLegacyArguments_IsInvalid()
+        {
+            // Arrange
+            var minFunction = new MinFunction();
+            var args = new List<object?> { 1, 2 };
+
+            // Assert
+            Assert.False(minFunction.ValidateArguments(args));
+        }
+
         #endregion
 
         #region Sum Function Tests
 
         [Fact]
-        public async Task SumFunction_WithNumericValues_ReturnsSum()
+        public async Task SumFunction_WithNumericCollection_ReturnsSum()
         {
             // Arrange
             var sumFunction = new SumFunction();
-            var args = new List<object?> { 1, 2, 3, 4, 5 };
+            var collection = new List<object?> { 1, 2, 3, 4, 5 };
+            var args = new List<object?> { collection };
 
             // Act
             var result = await sumFunction.ExecuteAsync(args, _evaluationContext);
@@ -189,6 +200,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions.Tests
 
             // Assert
             Assert.Equal(0.0, result);
+        }
+
+        [Fact]
+        public void SumFunction_WithLegacyArguments_IsInvalid()
+        {
+            // Arrange
+            var sumFunction = new SumFunction();
+            var args = new List<object?> { 1, 2 };
+
+            // Assert
+            Assert.False(sumFunction.ValidateArguments(args));
         }
 
         #endregion

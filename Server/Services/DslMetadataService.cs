@@ -8,6 +8,7 @@ using ShadowverseBeyond.Server.Dtos.Dsl;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Events.Metadata;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -31,7 +32,8 @@ namespace ShadowverseBeyond.Server.Services
             {
                 Functions = BuildFunctionMetadata(functionRegistry),
                 ContextObjects = BuildContextObjectMetadata(),
-                TypeMetadata = BuildAllTypeMetadata() // 添加所有类型的元数据
+                TypeMetadata = BuildAllTypeMetadata(), // 添加所有类型的元数据
+                EnumTypes = BuildEnumMetadata()
             };
             return metadata;
         }
@@ -60,12 +62,12 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         Name = functionDef.Name,
                         Description = functionDef.Description,
-                        ReturnTypeName = functionDef.ReturnType.Name,
+                        ReturnTypeName = GetCleanTypeName(functionDef.ReturnType),
                         Parameters = functionDef.Parameters.Select(p => new DslParameterDto
                         {
                             Name = p.Name,
                             Description = p.Description,
-                            TypeName = p.Type.Name,
+                            TypeName = GetCleanTypeName(p.Type),
                             IsOptional = p.IsOptional
                         }).ToList()
                     });
@@ -108,7 +110,7 @@ namespace ShadowverseBeyond.Server.Services
                             Name = GetDslPropertyName(prop),
                             DisplayName = propAttr.DisplayName,
                             Description = propAttr.Description,
-                            TypeName = prop.PropertyType.Name
+                            TypeName = GetCleanTypeName(prop.PropertyType)
                         });
                     }
                 }
@@ -180,6 +182,92 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return typeMetadata;
+        }
+
+        private List<DslEnumTypeDto> BuildEnumMetadata()
+        {
+            var enumTypes = new HashSet<Type>();
+            var assembly = Assembly.GetExecutingAssembly();
+            var exposableTypes = assembly.GetTypes()
+                .Where(t => t.IsClass && t.GetCustomAttribute<DslExposableAttribute>() != null)
+                .ToList();
+            var baseEventFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "EventType",
+                "EventId",
+                "Timestamp",
+                "Source",
+                "Target"
+            };
+
+            foreach (var type in exposableTypes)
+            {
+                var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.GetCustomAttribute<DslExposableAttribute>() != null)
+                    .ToList();
+                if (typeof(GameEventBase).IsAssignableFrom(type))
+                {
+                    props = props
+                        .Where(p => !baseEventFields.Contains(p.Name))
+                        .ToList();
+                }
+
+                foreach (var prop in props)
+                {
+                    CollectEnumTypes(prop.PropertyType, enumTypes);
+                }
+            }
+
+            var eventTypes = assembly.GetTypes()
+                .Where(t => t.IsClass && !t.IsAbstract && typeof(IGameEvent).IsAssignableFrom(t))
+                .ToList();
+            foreach (var eventType in eventTypes)
+            {
+                var descriptor = EventParameterCache.GetDescriptor(eventType);
+                foreach (var parameter in descriptor.Parameters)
+                {
+                    CollectEnumTypes(parameter.PropertyType, enumTypes);
+                }
+            }
+
+            return enumTypes
+                .OrderBy(t => t.Name)
+                .Select(t => new DslEnumTypeDto
+                {
+                    Name = GetCleanTypeName(t),
+                    Values = Enum.GetNames(t).ToList()
+                })
+                .ToList();
+        }
+
+        private static void CollectEnumTypes(Type? type, HashSet<Type> output)
+        {
+            if (type == null) return;
+
+            var underlying = Nullable.GetUnderlyingType(type);
+            if (underlying != null)
+            {
+                CollectEnumTypes(underlying, output);
+                return;
+            }
+
+            if (type.IsEnum)
+            {
+                output.Add(type);
+                return;
+            }
+
+            if (type.IsArray)
+            {
+                CollectEnumTypes(type.GetElementType(), output);
+                return;
+            }
+
+            if (!type.IsGenericType) return;
+            foreach (var arg in type.GetGenericArguments())
+            {
+                CollectEnumTypes(arg, output);
+            }
         }
 
         private string GetCleanTypeName(Type type) => TypeNameHelper.GetCleanTypeName(type);

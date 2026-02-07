@@ -20,6 +20,17 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         }
 
         /// <summary>
+        /// Emblem zone related constants
+        /// </summary>
+        public static class Emblem
+        {
+            /// <summary>
+            /// Maximum number of emblems a player can have
+            /// </summary>
+            public const int MaxEmblemSize = 5;
+        }
+
+        /// <summary>
         /// Hand and deck related constants
         /// </summary>
         public static class Hand
@@ -156,7 +167,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// <summary>
             /// Default turn timeout in seconds
             /// </summary>
-            public const int DefaultTurnTimeoutSeconds = 90;
+            public const int DefaultTurnTimeoutSeconds = 180;
 
             /// <summary>
             /// Maximum number of turns before forced draw
@@ -291,6 +302,16 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// Maximum number of Before intercept iterations for a single event.
             /// </summary>
             public const int BeforeInterceptMaxIterations = 8;
+
+            /// <summary>
+            /// Maximum recursion depth while processing events in a single transaction.
+            /// </summary>
+            public const int MaxEventRecursionDepth = 256;
+
+            /// <summary>
+            /// Maximum times the same event signature can be processed in a single transaction.
+            /// </summary>
+            public const int MaxEventSignatureRepeats = 64;
 
             /// <summary>
             /// Gets the priority value for a given card zone and ownership context.

@@ -26,6 +26,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task ReceiveError(string errorMessage);
 
         /// <summary>
+        /// Notifies clients about a player's connection status change.
+        /// </summary>
+        Task PlayerConnectionStatusUpdated(PlayerConnectionStatusEventDto eventDto);
+
+        /// <summary>
         /// Sends the result of a card playability check back to the client that requested it.
         /// </summary>
         /// <param name="result">A DTO containing the playability status and target information.</param>
@@ -98,6 +103,16 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task HandUpdated(HandUpdatedEventDto eventDto); // Restored for mulligan functionality
 
         /// <summary>
+        /// Notifies the client that card instance snapshots have been updated.
+        /// </summary>
+        Task CardInstanceUpdated(CardInstanceUpdatedEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that a counter value has changed on a card or player.
+        /// </summary>
+        Task CounterChanged(CounterChangedEventDto eventDto);
+
+        /// <summary>
         /// Notifies the client of an update to their deck count.
         /// </summary>
         /// <summary>
@@ -120,6 +135,16 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task UnitDestroyed(UnitDestroyedEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client that a card has vanished.
+        /// </summary>
+        Task CardVanished(CardVanishedEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that a card has been returned to hand.
+        /// </summary>
+        Task CardReturned(CardReturnedDto eventDto);
+
+        /// <summary>
         /// Notifies the client that an attack has been declared.
         /// </summary>
         Task AttackDeclared(AttackDeclaredEventDto eventDto);
@@ -128,6 +153,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Notifies the client that damage has been dealt to an entity.
         /// </summary>
         Task DamageDealt(DamageDealtEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that healing has been applied to an entity.
+        /// </summary>
+        Task HealApplied(HealAppliedEventDto eventDto);
 
         /// <summary>
         /// Notifies the client that an entity's health has changed.
@@ -140,9 +170,24 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task StatChange(StatChangeEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client that a keyword has been added to a card.
+        /// </summary>
+        Task KeywordAdded(KeywordAddedEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that a keyword has been removed from a card.
+        /// </summary>
+        Task KeywordRemoved(KeywordRemovedEventDto eventDto);
+
+        /// <summary>
         /// Notifies the client of an update to their graveyard count or contents.
         /// </summary>
         Task GraveyardUpdate(GraveyardUpdateEventDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that emblems were added to the player's emblem zone.
+        /// </summary>
+        Task EmblemUpdated(EmblemUpdatedEventDto eventDto);
 
         /// <summary>
         /// Sends hand playability update to the client after player actions complete.
@@ -150,6 +195,13 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// </summary>
         /// <param name="updateDto">The hand playability update DTO containing playability results.</param>
         Task ReceiveHandPlayabilityUpdate(HandPlayabilityUpdateDto updateDto);
+
+        /// <summary>
+        /// Sends Act playability update to the client after player actions complete.
+        /// Contains playability status for all cards on the player's field.
+        /// </summary>
+        /// <param name="updateDto">The Act playability update DTO containing playability results.</param>
+        Task ReceiveActPlayabilityUpdate(ActPlayabilityUpdateDto updateDto);
 
         /// <summary>
         /// Notifies the client that a unit's attack state has been updated.
@@ -192,6 +244,16 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Sends a generic log/announcement entry for events without a dedicated UI DTO.
         /// </summary>
         Task LogEvent(LogEventDto eventDto);
+
+        /// <summary>
+        /// Sends ability condition trace failure details to the in-game dev console.
+        /// </summary>
+        Task ConditionTraceFailed(ConditionTraceFailedDto eventDto);
+
+        /// <summary>
+        /// Sends ability trace success details to the in-game dev console.
+        /// </summary>
+        Task ConditionTraceSucceeded(ConditionTraceFailedDto eventDto);
 
         /// <summary>
         /// Notifies both clients that a card has been revealed.

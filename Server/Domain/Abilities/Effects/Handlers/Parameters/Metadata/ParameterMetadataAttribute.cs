@@ -49,6 +49,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.
         /// </summary>
         public string? OptionsProviderKey { get; set; }
 
+        /// <summary>
+        /// Whether this parameter allows DSL input in the editor.
+        /// </summary>
+        public bool AllowDsl { get; set; } = true;
+
+        /// <summary>
+        /// Optional: override the expected DSL type name used by the editor/type checker.
+        /// </summary>
+        public string? DslType { get; set; }
+
+        /// <summary>
+        /// DSL input availability mode (optional/forced/disabled).
+        /// </summary>
+        public DslMode DslMode { get; set; } = DslMode.Optional;
+
         public ParameterMetadataAttribute(string displayName, UiControlType controlType)
         {
             DisplayName = displayName;

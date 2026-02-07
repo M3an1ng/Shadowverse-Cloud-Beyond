@@ -21,11 +21,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// 激活型能力
         /// </summary>
         Activated,
-
-        /// <summary>
-        /// 关键字能力（如Rush, Taunt, Ward等）
-        /// </summary>
-        Keyword
     }
 
     /// <summary>
@@ -201,9 +196,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     // Add the TargetType enum (can be in this file or a separate one)
     public enum TargetType
     {
+        [Description("未定义")]
         Undefined,
+        [Description("玩家")]
         Player,
+        [Description("卡牌")]
         Card, // Renamed from CardInstance for conciseness and alignment with TargetInfo
+        [Description("无")]
         None // Represents a system-level or non-specific source
     }
 
@@ -229,6 +228,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// </summary>
         [Description("双方")]
         Both
+    }
+
+    /// <summary>
+    /// 计数器操作类型
+    /// </summary>
+    public enum CounterOperation
+    {
+        /// <summary>
+        /// 增加/减少计数器
+        /// </summary>
+        [Description("增加")]
+        Add,
+
+        /// <summary>
+        /// 设置计数器为指定值
+        /// </summary>
+        [Description("设置")]
+        Set,
+
+        /// <summary>
+        /// 消耗计数器（不足则失败）
+        /// </summary>
+        [Description("消耗")]
+        Consume
     }
 
     /// <summary>
@@ -367,17 +390,46 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     public enum DurationType
     {
         /// <summary> Lasts indefinitely until explicitly removed or silenced. </summary>
+        [Description("永久")]
         Permanent,
         /// <summary> Removed at the end of the current turn (or specified player's turn). </summary>
+        [Description("回合结束时")]
         EndOfTurn,
         /// <summary> Removed at the start of the next turn (or specified player's turn). </summary>
-        StartOfNextTurn,
+        [Description("下回合开始时")]
+        StartOfTurn,
+        /// <summary> Removed at the start of the owner player's turn. </summary>
+        [Description("我方回合开始时")]
+        OwnerTurnStart,
+        /// <summary> Removed at the end of the owner player's turn. </summary>
+        [Description("我方回合结束时")]
+        OwnerTurnEnd,
+        /// <summary> Removed at the start of the opponent player's turn. </summary>
+        [Description("敌方回合开始时")]
+        OpponentTurnStart,
+        /// <summary> Removed at the end of the opponent player's turn. </summary>
+        [Description("敌方回合结束时")]
+        OpponentTurnEnd,
         /// <summary> Removed when a specific game event occurs (e.g., "OnAttack"). Parameter holds event details. </summary>
-        SpecificEvent,
-        /// <summary> Lasts for a specific number of turns. Parameter holds the number. </summary>
-        LimitedTurns,
         /// <summary> Removed based on a TriggerConfig and optional ConditionConfig. </summary>
+        [Description("条件移除")]
         ConditionalRemoval
+    }
+
+    /// <summary>
+    /// Defines how abilities are removed/suppressed by RemoveAbility effects.
+    /// </summary>
+    public enum RemoveAbilityMode
+    {
+        /// <summary> Match by ability definition ID. </summary>
+        [Description("按ID")]
+        Id,
+        /// <summary> Match by ability keyword. </summary>
+        [Description("按关键字")]
+        Keyword,
+        /// <summary> Suppress all abilities on the target card. </summary>
+        [Description("全部")]
+        All
     }
 }
 /// <summary>
@@ -394,26 +446,38 @@ public enum TriggerRelationType
     Any,
 
     /// <summary>
+    /// Triggers if the ability's owner is involved as either source or target.
+    /// </summary>
+    [Description("仅限本卡牌")]
+    Self,
+
+    /// <summary>
+    /// Triggers if an entity other than the ability's owner is involved.
+    /// </summary>
+    [Description("仅限其他卡牌")]
+    Other,
+
+    /// <summary>
     /// Triggers if the ability's owner is the source of the event.
     /// </summary>
-    [Description("仅限自己触发时")]
+    [Description("仅限本卡牌为事件来源时")]
     SourceSelf,
 
     /// <summary>
     /// Triggers if the source of the event is any entity other than the ability's owner.
     /// </summary>
-    [Description("仅限自己以外触发时")]
+    [Description("仅限其他卡牌为事件来源时")]
     SourceOther,
 
     /// <summary>
     /// Triggers if the ability's owner is the target of the event.
     /// </summary>
-    [Description("仅限自己为目标时")]
+    [Description("仅限本卡牌为事件目标时")]
     TargetSelf,
 
     /// <summary>
     /// Triggers if the target of the event is any entity other than the ability's owner.
     /// </summary>
-    [Description("仅限自己以外为目标时")]
+    [Description("仅限其他卡牌为事件目标时")]
     TargetOther
 }

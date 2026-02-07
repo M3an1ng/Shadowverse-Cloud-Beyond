@@ -19,14 +19,20 @@ export function renderPipelineBlock(editor, node, container, renderNodeFn) {
 
     const pipelineBadge = document.createElement("span");
     const stageCount = pipeline.stages.length;
-    pipelineBadge.textContent = stageCount > 0 ? `管线 · ${stageCount}步` : "管线";
+    pipelineBadge.textContent = stageCount > 0 ? `筛选 · ${stageCount}步` : "筛选";
     pipelineBadge.className = "dsl-pipeline-badge";
     pipelineWrapper.appendChild(pipelineBadge);
 
     pipelineWrapper.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (typeof editor.syncPipelineContext === "function") {
+            editor.syncPipelineContext();
+        }
         editor.pipelineOpen = true;
         editor.pipelineOpenSource = pipeline.source || null;
+        if (typeof editor.markPipelineContextDirty === "function") {
+            editor.markPipelineContextDirty();
+        }
         editor.renderEditor();
     });
 
@@ -73,6 +79,10 @@ export function renderListQueryNodeAST(editor, node, container) {
         expressionNode = node.sortExpression;
     } else if (node.type === 'listTake') {
         expressionNode = node.countExpression;
+    } else if (node.type === 'listDistinct') {
+        expressionNode = node.keyExpression;
+    } else if (node.type === 'listSelect') {
+        expressionNode = node.selectExpression;
     }
 
     if (expressionNode) {
@@ -82,7 +92,11 @@ export function renderListQueryNodeAST(editor, node, container) {
             ? 'filterExpression'
             : node.type === 'listSort'
                 ? 'sortExpression'
-                : 'countExpression';
+                : node.type === 'listDistinct'
+                    ? 'keyExpression'
+                    : node.type === 'listSelect'
+                        ? 'selectExpression'
+                    : 'countExpression';
         editor.renderEmptySlotPlaceholder(node, slotName, queryContainer);
     }
 
@@ -102,7 +116,7 @@ export function renderPipelineEditorUI(editor, container) {
     header.className = "dsl-pipeline-editor-header";
 
     const title = document.createElement("div");
-    title.textContent = "Pipeline 编辑";
+    title.textContent = "筛选编辑";
     title.className = "dsl-pipeline-editor-title";
     header.appendChild(title);
 
@@ -125,7 +139,9 @@ export function renderPipelineEditorUI(editor, container) {
             stageRow.classList.add("has-issue");
         }
         if (typeIssue) {
-            stageRow.title = `类型不匹配：期望 ${typeIssue.expectedType}，实际 ${typeIssue.actualType}`;
+            const expectedDisplay = editor.getDisplayTypeName?.(typeIssue.expectedType) || typeIssue.expectedType;
+            const actualDisplay = editor.getDisplayTypeName?.(typeIssue.actualType) || typeIssue.actualType;
+            stageRow.title = `类型不匹配：期望 ${expectedDisplay}，实际 ${actualDisplay}`;
         }
 
         stageRow.draggable = !isRawStage;
@@ -245,7 +261,8 @@ export function renderPipelineEditorUI(editor, container) {
                 const options = [
                     { value: "first", label: "首个" },
                     { value: "last", label: "末尾" },
-                    { value: "random", label: "随机" }
+                    { value: "random", label: "随机" },
+                    { value: "all", label: "全部" }
                 ];
 
                 const currentStrategy = String(stage.node.strategy || "first").toLowerCase();
@@ -270,6 +287,42 @@ export function renderPipelineEditorUI(editor, container) {
                 editPanel.appendChild(strategyRow);
             }
 
+            if (stage.node?.type === "listSort") {
+                const directionRow = document.createElement("div");
+                directionRow.className = "dsl-pipeline-select-row";
+
+                const directionLabel = document.createElement("span");
+                directionLabel.textContent = "排序方向";
+                directionLabel.className = "dsl-pipeline-select-label";
+                directionRow.appendChild(directionLabel);
+
+                const options = [
+                    { value: "asc", label: "升序" },
+                    { value: "desc", label: "降序" }
+                ];
+
+                const currentDirection = String(stage.node.direction || "asc").toLowerCase();
+
+                options.forEach((option) => {
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.textContent = option.label;
+                    btn.className = "dsl-pipeline-strategy-btn";
+                    if (currentDirection === option.value) {
+                        btn.classList.add("is-active");
+                    }
+                    btn.addEventListener("click", (event) => {
+                        event.preventDefault();
+                        stage.node.setDirection?.(option.value);
+                        stage.node.direction = option.value;
+                        editor.renderEditor();
+                    });
+                    directionRow.appendChild(btn);
+                });
+
+                editPanel.appendChild(directionRow);
+            }
+
             const editorHost = document.createElement("div");
             editorHost.className = "dsl-pipeline-edit-host";
 
@@ -286,7 +339,7 @@ export function renderPipelineEditorUI(editor, container) {
     if (stages.length === 0) {
         const emptyState = document.createElement("div");
         emptyState.className = "dsl-pipeline-empty-state";
-        emptyState.textContent = "尚未添加筛选阶段，可点击下方按钮添加。";
+        emptyState.textContent = "尚未添加查询阶段，可点击下方按钮添加。";
         stagesContainer.appendChild(emptyState);
     }
 
@@ -297,7 +350,7 @@ export function renderPipelineEditorUI(editor, container) {
     const canAddStage = Boolean(pipeline.source);
 
     const addFilter = document.createElement("button");
-    addFilter.textContent = "+ 筛选";
+    addFilter.textContent = "+ 查询";
     addFilter.className = "dsl-pipeline-add-btn";
     if (canAddStage) {
         addFilter.addEventListener("click", (event) => {
@@ -326,6 +379,36 @@ export function renderPipelineEditorUI(editor, container) {
     }
     addRow.appendChild(addSort);
 
+    const addTake = document.createElement("button");
+    addTake.textContent = "+ 取样";
+    addTake.className = "dsl-pipeline-add-btn";
+    if (canAddStage) {
+        addTake.addEventListener("click", (event) => {
+            event.preventDefault();
+            editor.insertPipelineStage("take");
+        });
+    } else {
+        addTake.classList.add("is-disabled");
+        addTake.disabled = true;
+        addTake.title = "原始表达式无法拆分为阶段";
+    }
+    addRow.appendChild(addTake);
+
+    const addDistinct = document.createElement("button");
+    addDistinct.textContent = "+ 去重";
+    addDistinct.className = "dsl-pipeline-add-btn";
+    if (canAddStage) {
+        addDistinct.addEventListener("click", (event) => {
+            event.preventDefault();
+            editor.insertPipelineStage("distinct");
+        });
+    } else {
+        addDistinct.classList.add("is-disabled");
+        addDistinct.disabled = true;
+        addDistinct.title = "原始表达式无法拆分为阶段";
+    }
+    addRow.appendChild(addDistinct);
+
     const addSelect = document.createElement("button");
     addSelect.textContent = "+ 选择";
     addSelect.className = "dsl-pipeline-add-btn";
@@ -340,13 +423,6 @@ export function renderPipelineEditorUI(editor, container) {
         addSelect.title = "原始表达式无法拆分为阶段";
     }
     addRow.appendChild(addSelect);
-
-    const disabledPost = document.createElement("button");
-    disabledPost.textContent = "+ 后处理";
-    disabledPost.disabled = true;
-    disabledPost.title = "当前DSL尚不支持后处理阶段";
-    disabledPost.className = "dsl-pipeline-add-btn is-disabled";
-    addRow.appendChild(disabledPost);
 
     panel.appendChild(addRow);
     container.appendChild(panel);

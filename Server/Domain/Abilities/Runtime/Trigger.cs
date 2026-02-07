@@ -4,6 +4,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Entities;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
 {
@@ -139,18 +140,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
             if (Config.RelationType == TriggerRelationType.Any)
                 return true;
 
-            // If the ability has no owner, it cannot be "Self" in any context.
+            // If the ability has no owner, it cannot be "Self" or "Other" in any context.
             if (abilityOwnerCard == null)
             {
                 return Config.RelationType != TriggerRelationType.SourceSelf &&
-                       Config.RelationType != TriggerRelationType.TargetSelf;
+                       Config.RelationType != TriggerRelationType.TargetSelf &&
+                       Config.RelationType != TriggerRelationType.Self &&
+                       Config.RelationType != TriggerRelationType.Other;
             }
 
             var eventSourceCard = gameEvent.Source?.Card;
-            var eventTargetCard = gameEvent.Target.FirstOrDefault()?.Card;
+            var eventTargetCards = gameEvent.Target
+                .Select(target => target.Card)
+                .Where(card => card != null)
+                .Select(card => card!)
+                .ToList();
 
             switch (Config.RelationType)
             {
+                case TriggerRelationType.Self:
+                    return (eventSourceCard != null && eventSourceCard.InstanceId == abilityOwnerCard.InstanceId)
+                           || eventTargetCards.Any(card => card.InstanceId == abilityOwnerCard.InstanceId);
+
+                case TriggerRelationType.Other:
+                    return (eventSourceCard != null && eventSourceCard.InstanceId != abilityOwnerCard.InstanceId)
+                           || eventTargetCards.Any(card => card.InstanceId != abilityOwnerCard.InstanceId);
+
                 case TriggerRelationType.SourceSelf:
                     return eventSourceCard != null && eventSourceCard.InstanceId == abilityOwnerCard.InstanceId;
 
@@ -158,10 +173,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
                     return eventSourceCard != null && eventSourceCard.InstanceId != abilityOwnerCard.InstanceId;
 
                 case TriggerRelationType.TargetSelf:
-                    return eventTargetCard != null && eventTargetCard.InstanceId == abilityOwnerCard.InstanceId;
+                    return eventTargetCards.Any(card => card.InstanceId == abilityOwnerCard.InstanceId);
 
                 case TriggerRelationType.TargetOther:
-                    return eventTargetCard != null && eventTargetCard.InstanceId != abilityOwnerCard.InstanceId;
+                    return eventTargetCards.Any(card => card.InstanceId != abilityOwnerCard.InstanceId);
 
                 default:
                     return true; // Should be covered by the 'Any' check at the beginning

@@ -14,6 +14,11 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
         public Guid CardUid { get; set; } = Guid.Empty;
 
         /// <summary>
+        /// The runtime ID of the specific Fusion ability to execute (optional).
+        /// </summary>
+        public Guid? AbilityRuntimeId { get; set; }
+
+        /// <summary>
         /// The unique identifiers (UIDs) of the material cards to be fused.
         /// </summary>
         public List<Guid> FusedCardUids { get; set; } = new();

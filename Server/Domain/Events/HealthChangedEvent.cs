@@ -22,11 +22,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("变化量", "生命值的变化量（正数为治疗，负数为伤害）。")]
         public int ChangeAmount { get; }
 
-        [GameEventParameter("目标卡牌", "生命值发生变化的卡牌。")]
+        [GameEventParameter("目标卡牌", "生命值发生变化的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? TargetCard => Source?.Card;
 
-        public HealthChangedEvent(CardInstance card, int oldHealth, int newHealth, int changeAmount)
-            : base(EventType.HealthChanged)
+        public HealthChangedEvent(CardInstance card, int oldHealth, int newHealth, int changeAmount, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.HealthChanged, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(card);
             OldHealth = oldHealth;
@@ -53,7 +53,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 var owner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
                 if (owner != null)
                 {
-                    owner.BloodPool = Math.Max(0, owner.BloodPool + (-ChangeAmount));
+                    var oldValue = owner.BloodPool;
+                    var newValue = owner.AddCounter(PlayerState.BloodPoolCounterKey, -ChangeAmount);
+                    result.GeneratedEvents.Add(new CounterChangedEvent(owner, PlayerState.BloodPoolCounterKey, oldValue, newValue));
                 }
             }
 

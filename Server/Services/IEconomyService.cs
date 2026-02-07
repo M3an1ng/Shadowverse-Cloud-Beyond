@@ -1,5 +1,6 @@
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Services;
 
@@ -51,8 +52,9 @@ public interface IEconomyService
     /// <summary>
     /// 获取可购买的卡包列表
     /// </summary>
+    /// <param name="environment">可选环境过滤</param>
     /// <returns>卡包定义列表</returns>
-    Task<List<CardPackDefinitionDto>> GetAvailableCardPacksAsync();
+    Task<List<CardPackDefinitionDto>> GetAvailableCardPacksAsync(DeckEnvironment? environment = null, bool includeInactive = false);
 
     /// <summary>
     /// 购买卡包

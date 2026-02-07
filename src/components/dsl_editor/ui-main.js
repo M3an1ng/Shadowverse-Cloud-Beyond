@@ -30,21 +30,16 @@ export function renderMainExpressionUI(editor, container) {
     border-radius: 4px;
     padding: 6px;
     color: #212529;
-    cursor: pointer;
   `;
 
   // 使用已有的封装渲染：当节点是封装胶囊时，沿用 editor 的渲染以保持一致
   // 否则回退为可点击文本渲染
   const ast = editor.virtualRoot.main;
-  // 决定性修复：统一渲染逻辑，直接复用工作区的 AST 递归渲染函数
-  // 这将确保主表达式区域的样式（包括占位符、高亮等）与工作区完全一致
-  editor.renderASTNodeRecursive(ast, expressionContent);
-
-  expressionContent.addEventListener('click', (e) => {
-    if (e.target === expressionContent) {
-      editor.expandMainExpression();
-    }
-  });
+  if (ast?.metadata?.type === "encapsulated") {
+    editor.renderEncapsulatedExpression(ast, expressionContent, { flattenNested: true });
+  } else {
+    editor.renderASTNodeRecursive(ast, expressionContent);
+  }
 
   mainDiv.appendChild(header);
   mainDiv.appendChild(expressionContent);

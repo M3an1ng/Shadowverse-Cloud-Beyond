@@ -70,6 +70,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public bool AutoSelect { get; set; } = false;
 
         /// <summary>
+        /// 是否反选（选择除指定卡以外的卡）
+        /// </summary>
+        public bool IsInverseSelection { get; set; } = false;
+
+        /// <summary>
         /// 玩家选择的最小数量限制
         /// </summary>
         public int MinCount { get; set; } = 1;

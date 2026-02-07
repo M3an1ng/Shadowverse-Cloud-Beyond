@@ -76,18 +76,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         ctx.CurrentGameState,
                         selectedDefinitionId,
                         player.PlayerId,
-                        CardZone.Playing);
+                        CardZone.Staging);
 
                     summoned.AddTribeMarker(GameConstants.Tribes.Reanimate);
 
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new SummonEvent(player, summoned, null));
+                    var expectedPosition = player.Field.Count + 1;
+                    result.GeneratedEvents.Add(new SummonEvent(player, summoned, expectedPosition));
                     return result;
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(
-                context.CurrentGameState,
-                context.RequestingPlayerId,
+                context,
                 parameters.PlayerScope);
 
             var serviceResult = _targetProcessingService.ProcessTargets(
