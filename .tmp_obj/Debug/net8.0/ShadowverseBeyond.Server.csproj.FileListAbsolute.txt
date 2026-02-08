@@ -1,8 +1,0 @@
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.csproj.AssemblyReference.cache
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.GeneratedMSBuildEditorConfig.editorconfig
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.AssemblyInfoInputs.cache
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.AssemblyInfo.cs
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.csproj.CoreCompileInputs.cache
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.MvcApplicationPartsAssemblyInfo.cs
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.MvcApplicationPartsAssemblyInfo.cache
-D:\workspace\Shadowverse-beyond\.tmp_obj\Debug\net8.0\ShadowverseBeyond.Server.sourcelink.json

@@ -38,3 +38,44 @@ dist/
 test-results/
 playwright-report/
 coverage/
+
+# AI/local tooling artifacts
+.agent/
+.augment/
+.gemini/
+.roo/
+.shared/
+.tmp_obj/
+.tmp_out/
+.codex_tmp_*.py
+.tmp_db_*.py
+
+# Generated code-map cache
+.codex/code-map.json
+.codex/code-map.md
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Build/publish outputs
+Server/artifacts/
+Server/publish_release/
+Server.Tests/TestResults/
+**/TestResults/
+
+# Local database files
+Server/Data/*.db
+Server/Data/*.db-*
+Server/*.db
+
+# Local logs
+server_run.log
+vite-dev.out.log
+vite-dev.err.log
+
+# Local backup files
+index.prod.html.bak-*
+
+# OS generated files
+.DS_Store
