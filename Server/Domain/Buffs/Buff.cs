@@ -26,6 +26,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary> The ID of the ability instance that created this buff. </summary>
         public Guid SourceAbilityId { get; init; }
 
+        /// <summary>
+        /// Display-only root ability runtime id used to group buff summaries by primary ability.
+        /// </summary>
+        public Guid? SummaryRootAbilityId { get; set; }
+
         /// <summary> Index of the effect within the source ability that created this buff. </summary>
         public int? SourceEffectIndex { get; set; }
 
@@ -56,6 +61,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
         /// <summary> Parameter associated with the duration type (e.g., number of turns). </summary>
         public int? DurationParameter { get; set; }
+
+        /// <summary>
+        /// When true, applying this buff keeps the target's current health unchanged (capped by new max health).
+        /// This is evaluated during BuffAppliedEvent commit, after the buff becomes active.
+        /// </summary>
+        public bool PreserveCurrentHealthOnApply { get; set; } = false;
 
         /// <summary> Optional trigger condition that can cause the buff to be removed. </summary>
         public TriggerConfig? RemovalTrigger { get; init; }
@@ -107,5 +118,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public IEnumerable<StatModification> GetStatModifications() => Effects.OfType<StatBuffEffect>().SelectMany(e => e.Modifications);
         public IEnumerable<CardKeyword> GetGrantedKeywords() => Effects.OfType<KeywordBuffEffect>().SelectMany(e => e.GrantedKeywords);
         public IEnumerable<AbilityConfig> GetGrantedAbilityConfigs() => Effects.OfType<AbilityBuffEffect>().SelectMany(e => e.GrantedAbilityConfigs);
+        public IEnumerable<string> GetAddedTribes() => Effects.OfType<TribeBuffEffect>().SelectMany(e => e.AddedTribes);
     }
 }

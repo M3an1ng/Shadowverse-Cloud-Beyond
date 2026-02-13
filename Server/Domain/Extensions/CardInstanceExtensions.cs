@@ -145,6 +145,9 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
         /// <returns>如果可以攻击主战者则返回true</returns>
         public static bool CanAttackLeader(this CardInstanceDto cardDto)
         {
+            if (cardDto.HasKeyword(CardKeyword.Shackle) || cardDto.HasKeyword(CardKeyword.CannotAttackLeader))
+                return false;
+
             if (cardDto.HasStorm())
                 return true;
 
@@ -189,9 +192,16 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
             // 如果目标是主战者，检查是否可以攻击主战者
             if (target.Type == CardType.Leader)
             {
+                if (attacker.HasKeyword(CardKeyword.CannotAttackLeader))
+                    return false;
+
                 // 如果刚召唤且只有Rush（不是Storm），不能攻击主战者
                 if (justSummoned && attacker.HasRush() && !attacker.HasStorm())
                     return false;
+            }
+            else if (target.Type == CardType.Follower && attacker.HasKeyword(CardKeyword.CannotAttackFollower))
+            {
+                return false;
             }
 
             return true;

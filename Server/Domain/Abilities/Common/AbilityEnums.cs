@@ -343,6 +343,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
     }
 
     /// <summary>
+    /// 依序分支执行顺序。
+    /// </summary>
+    public enum SequenceOrder
+    {
+        /// <summary>
+        /// 按配置顺序执行（1,2,3...）。
+        /// </summary>
+        [Description("依序")]
+        Forward,
+
+        /// <summary>
+        /// 按配置逆序执行（...3,2,1）。
+        /// </summary>
+        [Description("逆序")]
+        Reverse
+    }
+
+    /// <summary>
     /// 失败处理策略枚举
     /// </summary>
     public enum FailureStrategy

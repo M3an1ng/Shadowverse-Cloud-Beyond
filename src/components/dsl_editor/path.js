@@ -33,36 +33,126 @@ export function clearPath(stack) {
 }
 
 /**
- * 写回父槽位 (仅处理 left/right；self 由上层结合路径处理)
+ * 写回父槽位 (兜底路径；优先应通过 editor.setSlotNode 统一处理)
  */
-export function writeBackToParentSlot(parentNode, slot, newValueNode) {
-    if (!parentNode || !newValueNode) return false;
+export function writeBackToParentSlot(parentNode, slot, newValueNode, index = null) {
+    if (!parentNode || !slot) return false;
 
-    // 关键修复：处理虚拟根节点
     if (parentNode.type === 'virtualRoot' && slot === 'main') {
         parentNode.main = newValueNode;
         return true;
     }
 
-    // 动态构建setter方法名
-    const setterName = `set${slot.charAt(0).toUpperCase() + slot.slice(1)}`;
-
-    if (typeof parentNode[setterName] === 'function') {
-        parentNode[setterName](newValueNode);
-        return true;
-    }
-    
-    // 回退到旧的硬编码方法
-    if (slot === 'left' && typeof parentNode.setLeftOperand === 'function') {
-        parentNode.setLeftOperand(newValueNode);
-        return true;
-    }
-    if (slot === 'right' && typeof parentNode.setRightOperand === 'function') {
-        parentNode.setRightOperand(newValueNode);
+    if (parentNode.type === 'value' && slot === 'innerAST') {
+        if (!parentNode.metadata || typeof parentNode.metadata !== 'object') {
+            parentNode.metadata = {};
+        }
+        parentNode.metadata.innerAST = newValueNode || null;
+        if (newValueNode) newValueNode.parent = parentNode;
+        parentNode.updateCompleteness?.();
         return true;
     }
 
-    console.error(`writeBackToParentSlot Error: Setter method '${setterName}' not found on parentNode`, parentNode);
+    if (parentNode.type === 'operator') {
+        if (slot === 'left') {
+            if (typeof parentNode.setLeftOperand === 'function') {
+                parentNode.setLeftOperand(newValueNode);
+            } else {
+                parentNode.leftOperand = newValueNode || null;
+                if (newValueNode) newValueNode.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
+            return true;
+        }
+        if (slot === 'right') {
+            if (typeof parentNode.setRightOperand === 'function') {
+                parentNode.setRightOperand(newValueNode);
+            } else {
+                parentNode.rightOperand = newValueNode || null;
+                if (newValueNode) newValueNode.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
+            return true;
+        }
+    }
+
+    if (parentNode.type === 'functionCall' && slot === 'arg') {
+        const argIndex = typeof index === 'number' ? index : 0;
+        if (typeof parentNode.setArg === 'function') {
+            parentNode.setArg(argIndex, newValueNode);
+            return true;
+        }
+        return false;
+    }
+
+    if (
+        (parentNode.type === 'listQuery'
+            || parentNode.type === 'listSort'
+            || parentNode.type === 'listTake'
+            || parentNode.type === 'listDistinct'
+            || parentNode.type === 'listSelect')
+        && slot === 'source'
+    ) {
+        parentNode.source = newValueNode || null;
+        if (newValueNode) newValueNode.parent = parentNode;
+        parentNode.updateCompleteness?.();
+        return true;
+    }
+
+    if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
+        if (typeof parentNode.setFilterExpression === 'function') {
+            parentNode.setFilterExpression(newValueNode);
+        } else {
+            parentNode.filterExpression = newValueNode || null;
+            if (newValueNode) newValueNode.parent = parentNode;
+            parentNode.updateCompleteness?.();
+        }
+        return true;
+    }
+
+    if (parentNode.type === 'listSort' && slot === 'sortExpression') {
+        if (typeof parentNode.setSortExpression === 'function') {
+            parentNode.setSortExpression(newValueNode);
+        } else {
+            parentNode.sortExpression = newValueNode || null;
+            if (newValueNode) newValueNode.parent = parentNode;
+            parentNode.updateCompleteness?.();
+        }
+        return true;
+    }
+
+    if (parentNode.type === 'listTake' && slot === 'countExpression') {
+        if (typeof parentNode.setCountExpression === 'function') {
+            parentNode.setCountExpression(newValueNode);
+        } else {
+            parentNode.countExpression = newValueNode || null;
+            if (newValueNode) newValueNode.parent = parentNode;
+            parentNode.updateCompleteness?.();
+        }
+        return true;
+    }
+
+    if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
+        if (typeof parentNode.setKeyExpression === 'function') {
+            parentNode.setKeyExpression(newValueNode);
+        } else {
+            parentNode.keyExpression = newValueNode || null;
+            if (newValueNode) newValueNode.parent = parentNode;
+            parentNode.updateCompleteness?.();
+        }
+        return true;
+    }
+
+    if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
+        if (typeof parentNode.setSelectExpression === 'function') {
+            parentNode.setSelectExpression(newValueNode);
+        } else {
+            parentNode.selectExpression = newValueNode || null;
+            if (newValueNode) newValueNode.parent = parentNode;
+            parentNode.updateCompleteness?.();
+        }
+        return true;
+    }
+
     return false;
 }
-

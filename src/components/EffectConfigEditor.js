@@ -11,6 +11,8 @@ import { DslEditor } from './DslEditor.js';
 import { getBlockingLoader } from './blockingLoader.js';
 import { ensureAbilityData, ensureCardDefinitions, getAbilityDataSnapshot } from '../abilityDataCache.js';
 import { ensureEnumLocalization } from '../enumLocalizationCache.js';
+import { validateDslExpression } from '../dslValidation.js';
+import { getSemanticNodeType as getCoreSemanticNodeType } from './dsl_editor/core.js';
 
 /**
  * 效果配置编辑器
@@ -35,6 +37,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         this.abilityDefinitionCache = null;
         this.abilityDefinitionIndex = new Map();
         this.abilityDefinitionPromise = null;
+        this.outputEditorsByEffect = new Map();
+        this.replaceEventParamMetadataCache = new Map();
+        this.replaceEventParamMetadataRequests = new Map();
     }
 
     async render(container, effects = [], onChange = () => {}, options = {}) {
@@ -44,6 +49,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         this.effects = (effects || []).map(effect => this.normalizeEffectConfig(effect));
         this.onChange = onChange;
         this.options = options || {};
+        this.outputEditorsByEffect.clear();
         this.closeChainedAbilityModal();
 
         this.clearContainer(container);
@@ -353,7 +359,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 return latest && typeof latest === 'object' ? latest : {};
             });
         
-        if (!effectMeta.parameters || effectMeta.parameters.length === 0) {
+        const effectiveParameters = this.getEffectiveEffectParameterMetadata(effectMeta, parameters, effectIndex);
+        if (effectiveParameters.length === 0) {
             container.innerHTML = '<div class="text-muted">此效果无需额外参数</div>';
             return container;
         }
@@ -365,6 +372,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const hasSearchMode = this.hasEffectParameter(effectMeta, 'UseSearchMode');
         const hasCardSourceMode = this.hasEffectParameter(effectMeta, 'CardSourceMode');
         const hasRemoveMode = this.hasEffectParameter(effectMeta, 'RemoveMode');
+        const hasModifierLayer = this.hasEffectParameter(effectMeta, 'ModifierLayer');
         const useSearchMode = hasSearchMode
             ? this.normalizeBooleanValue(this.getEffectParameterValue(parameters, effectMeta, 'UseSearchMode'))
             : false;
@@ -374,16 +382,21 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const removeMode = hasRemoveMode
             ? this.normalizeRemoveAbilityMode(this.getEffectParameterValue(parameters, effectMeta, 'RemoveMode'))
             : null;
+        const modifierLayer = hasModifierLayer
+            ? this.normalizeModifierLayer(this.getEffectParameterValue(parameters, effectMeta, 'ModifierLayer'))
+            : null;
         const renderContext = {
             hasSearchMode,
             useSearchMode,
             hasCardSourceMode,
             cardSourceMode,
             hasRemoveMode,
-            removeMode
+            removeMode,
+            hasModifierLayer,
+            modifierLayer
         };
 
-        effectMeta.parameters.forEach(paramMeta => {
+        effectiveParameters.forEach(paramMeta => {
             const paramName = this.getEffectParameterName(paramMeta);
             if (!paramName) {
                 return;
@@ -430,6 +443,15 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 } else {
                     newParams[paramName] = newValue;
                 }
+
+                if (this.isReplaceEventEffectMeta(effectMeta) && this.isReplacementEventTypeParameter(paramName)) {
+                    Object.keys(newParams).forEach((key) => {
+                        if (this.isReplacementParamsParameter(key)) {
+                            delete newParams[key];
+                        }
+                    });
+                }
+
                 onChange(newParams);
             };
 
@@ -499,6 +521,12 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         });
 
         container.appendChild(grid);
+        if (renderContext.modifierLayer === 'Multiplicative') {
+            const multiplierHint = document.createElement('div');
+            multiplierHint.className = 'text-muted multiplicative-mode-hint';
+            multiplierHint.textContent = '当前为倍乘模式：参数按百分比解释（50 表示 0.5 倍，150 表示 1.5 倍，100 表示不变）。';
+            container.appendChild(multiplierHint);
+        }
         return container;
     }
 
@@ -514,6 +542,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const selectionSection = this.createTargetSelectorEditor(effect, index);
         container.appendChild(selectionSection);
 
+        const outputsSection = this.createOutputsEditor(effect, index);
+        container.appendChild(outputsSection);
+
         const failureSection = this.createFailureHandlingEditor(effect, index);
         container.appendChild(failureSection);
 
@@ -523,6 +554,391 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const repeatConditionSection = this.createRepeatConditionEditor(effect, index);
         container.appendChild(repeatConditionSection);
 
+        return container;
+    }
+
+    createOutputsEditor(effect, index) {
+        const container = document.createElement('div');
+        container.className = 'config-section';
+        container.innerHTML = '<h5 class="section-title">输出变量</h5>';
+
+        const desc = document.createElement('div');
+        desc.className = 'text-muted';
+        desc.textContent = '将当前效果结果保存为可复用变量，供后续连锁通过 context.triggeringEvent.Outputs.<变量名> 访问。';
+        container.appendChild(desc);
+
+        const list = document.createElement('div');
+        list.className = 'effect-output-list';
+
+        const warning = document.createElement('div');
+        warning.className = 'output-duplicate-warning hidden';
+        warning.textContent = '存在重复变量名，保存时将按最后一条同名项覆盖。';
+
+        const editorPanel = document.createElement('div');
+        editorPanel.className = 'output-dsl-editor-host hidden';
+        const editorHeader = document.createElement('div');
+        editorHeader.className = 'output-dsl-editor-title';
+        const editorTitleText = document.createElement('span');
+        editorTitleText.className = 'output-dsl-editor-title-text';
+        editorHeader.appendChild(editorTitleText);
+        const collapseBtn = this.createButton('折叠', () => {
+            state.editorExpanded = false;
+            renderRows();
+            renderDslEditor();
+        }, 'secondary');
+        collapseBtn.classList.add('btn-small', 'output-dsl-editor-collapse');
+        editorHeader.appendChild(collapseBtn);
+        const editorBody = document.createElement('div');
+        editorBody.className = 'dsl-editor-wrapper';
+        editorPanel.appendChild(editorHeader);
+        editorPanel.appendChild(editorBody);
+
+        const createEntry = (name = '', formula = '', typeName = null) => ({
+            id: `output_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            name: String(name || ''),
+            formula: String(formula || ''),
+            typeName: typeName ? String(typeName) : null
+        });
+
+        const currentOutputs = this.normalizeEffectOutputs(effect?.outputs ?? effect?.Outputs);
+        const entries = Object.entries(currentOutputs);
+        const state = {
+            rows: entries.length > 0
+                ? entries.map(([name, formula]) => createEntry(name, formula))
+                : [],
+            activeRowId: null,
+            editorExpanded: false,
+            editorLoaded: false,
+            dslEditorInstance: null
+        };
+
+        const getActiveRow = () => state.rows.find(row => row.id === state.activeRowId) || null;
+        const getOutputTypeLabel = (entry) => {
+            const rawType = String(entry?.typeName || '').trim();
+            if (!rawType) return '类型: Void';
+            const display = (state.dslEditorInstance && typeof state.dslEditorInstance.getDisplayTypeName === 'function')
+                ? state.dslEditorInstance.getDisplayTypeName(rawType)
+                : rawType;
+            return `类型: ${display || rawType}`;
+        };
+        const getTriggeringEventContext = () => this.getDslTriggeringEventContext();
+        const syncActiveRowTypeFromEditor = () => {
+            const active = getActiveRow();
+            if (!active || !state.dslEditorInstance) return;
+
+            let inferred = null;
+            const root = state.dslEditorInstance.astRoot || state.dslEditorInstance.virtualRoot?.mainExpression || null;
+            if (root && typeof state.dslEditorInstance.getSemanticNodeType === 'function') {
+                inferred = state.dslEditorInstance.getSemanticNodeType(root);
+            }
+            if (!inferred && root?.returnType) {
+                inferred = root.returnType;
+            }
+            if (inferred && typeof state.dslEditorInstance.normalizeTypeName === 'function') {
+                inferred = state.dslEditorInstance.normalizeTypeName(inferred);
+            }
+            active.typeName = inferred || null;
+        };
+        const mountEditorPanelToActiveRow = () => {
+            const activeId = state.activeRowId;
+            if (state.editorExpanded && activeId) {
+                const activeSlot = list.querySelector(`.output-row-editor-slot[data-row-id="${activeId}"]`);
+                if (activeSlot && editorPanel.parentElement !== activeSlot) {
+                    activeSlot.appendChild(editorPanel);
+                }
+                editorPanel.classList.remove('hidden');
+                return;
+            }
+
+            editorPanel.classList.add('hidden');
+            if (editorPanel.parentElement !== container) {
+                container.appendChild(editorPanel);
+            }
+        };
+
+        const commitOutputs = () => {
+            const normalized = {};
+            const keyCounter = new Map();
+            state.rows.forEach((row) => {
+                const key = String(row.name || '').trim();
+                const formula = String(row.formula || '');
+
+                if (!key) return;
+
+                const lowerKey = key.toLowerCase();
+                keyCounter.set(lowerKey, (keyCounter.get(lowerKey) || 0) + 1);
+                normalized[key] = formula;
+            });
+
+            const hasDuplicate = Array.from(keyCounter.values()).some(count => count > 1);
+            warning.classList.toggle('hidden', !hasDuplicate);
+            this.updateEffect(index, { outputs: normalized });
+        };
+
+        const renderDslEditor = () => {
+            mountEditorPanelToActiveRow();
+            editorBody.innerHTML = '';
+            if (!state.editorExpanded) return;
+
+            const active = getActiveRow();
+            if (!active) {
+                editorTitleText.textContent = '未选择输出变量';
+                const empty = document.createElement('div');
+                empty.className = 'text-muted';
+                empty.textContent = '请选择一条输出变量后编辑公式。';
+                editorBody.appendChild(empty);
+                return;
+            }
+
+            const title = String(active.name || '').trim();
+            editorTitleText.textContent = title
+                ? `公式编辑：${title}`
+                : '公式编辑：未命名变量';
+
+            const dslContainer = document.createElement('div');
+            dslContainer.className = 'dsl-editor-wrapper ability-editor';
+            editorBody.appendChild(dslContainer);
+
+            if (!state.editorLoaded) {
+                state.editorLoaded = true;
+            }
+            if (!state.dslEditorInstance) {
+                state.dslEditorInstance = new DslEditor();
+            }
+
+            state.dslEditorInstance.render(
+                dslContainer,
+                active.formula || '',
+                (newFormula) => {
+                    const row = getActiveRow();
+                    if (!row) return;
+                    row.formula = newFormula || '';
+                    syncActiveRowTypeFromEditor();
+                    commitOutputs();
+                    refreshRowView(row.id);
+                },
+                {
+                    expectedType: null,
+                    triggeringEventContext: getTriggeringEventContext()
+                }
+            ).then(() => {
+                syncActiveRowTypeFromEditor();
+                renderRows();
+                mountEditorPanelToActiveRow();
+            }).catch((error) => {
+                dslContainer.innerHTML = `<div class="error-message">DSL编辑器加载失败: ${error.message}</div>`;
+            });
+        };
+
+        const renderRows = () => {
+            list.innerHTML = '';
+            const keyCounter = new Map();
+            state.rows.forEach((row) => {
+                const key = String(row.name || '').trim().toLowerCase();
+                if (!key) return;
+                keyCounter.set(key, (keyCounter.get(key) || 0) + 1);
+            });
+
+            state.rows.forEach((row) => {
+                const key = String(row.name || '').trim().toLowerCase();
+                const isDuplicate = key && (keyCounter.get(key) || 0) > 1;
+                list.appendChild(createRow(row, isDuplicate));
+            });
+        };
+
+        const refreshRowView = (rowId) => {
+            if (!rowId) return;
+            const rowData = state.rows.find(item => item.id === rowId);
+            if (!rowData) return;
+
+            const rowBlock = list.querySelector(`.effect-output-row-block[data-row-id="${rowId}"]`);
+            if (!rowBlock) return;
+
+            const previewInput = rowBlock.querySelector('.output-formula-preview');
+            if (previewInput) {
+                const hasFormula = Boolean(rowData.formula && rowData.formula.trim());
+                previewInput.value = hasFormula ? rowData.formula : '';
+            }
+
+            const typeBadge = rowBlock.querySelector('.output-type-badge');
+            if (typeBadge) {
+                const label = getOutputTypeLabel(rowData);
+                typeBadge.textContent = label;
+                typeBadge.title = label;
+            }
+        };
+
+        const setActiveRow = (rowId) => {
+            state.activeRowId = rowId;
+            renderRows();
+            if (state.editorExpanded) {
+                renderDslEditor();
+            }
+        };
+
+        const toggleDslEditorForRow = (rowId) => {
+            if (state.editorExpanded && state.activeRowId === rowId) {
+                state.editorExpanded = false;
+                renderRows();
+                renderDslEditor();
+                return;
+            }
+            state.activeRowId = rowId;
+            state.editorExpanded = true;
+            renderRows();
+            renderDslEditor();
+        };
+
+        const createRow = (entry, isDuplicate = false) => {
+            const rowBlock = document.createElement('div');
+            rowBlock.className = 'effect-output-row-block';
+            rowBlock.dataset.rowId = entry.id;
+
+            const rowElement = document.createElement('div');
+            rowElement.className = 'effect-output-row';
+            if (state.editorExpanded && entry.id === state.activeRowId) {
+                rowElement.classList.add('active');
+            }
+            if (isDuplicate) {
+                rowElement.classList.add('duplicate-key');
+            }
+
+            const nameCell = document.createElement('div');
+            nameCell.className = 'output-name-cell';
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.className = 'form-input output-name-input';
+            nameInput.placeholder = '（变量名）';
+            nameInput.value = entry.name;
+            nameInput.addEventListener('click', (event) => event.stopPropagation());
+            nameInput.addEventListener('focus', () => {
+                state.activeRowId = entry.id;
+                if (state.editorExpanded) {
+                    renderDslEditor();
+                }
+            });
+            nameInput.addEventListener('input', (event) => {
+                entry.name = event.target.value || '';
+                commitOutputs();
+            });
+            nameInput.addEventListener('change', () => {
+                renderRows();
+                renderDslEditor();
+            });
+            const typeBadge = document.createElement('span');
+            typeBadge.className = 'output-type-badge';
+            typeBadge.textContent = getOutputTypeLabel(entry);
+            typeBadge.title = typeBadge.textContent;
+            nameCell.appendChild(nameInput);
+            nameCell.appendChild(typeBadge);
+
+            const preview = document.createElement('input');
+            preview.type = 'text';
+            preview.readOnly = true;
+            preview.className = 'form-input output-formula-preview clickable';
+            const hasFormula = Boolean(entry.formula && entry.formula.trim());
+            preview.value = hasFormula ? entry.formula : '';
+            preview.placeholder = '（未输入表达式）';
+            preview.title = '点击展开/折叠该变量的DSL编辑器';
+            preview.addEventListener('click', (event) => {
+                event.stopPropagation();
+                toggleDslEditorForRow(entry.id);
+            });
+
+            const removeBtn = this.createButton('删除', () => {
+                state.rows = state.rows.filter(item => item.id !== entry.id);
+                if (!state.rows.some(item => item.id === state.activeRowId)) {
+                    state.activeRowId = null;
+                    state.editorExpanded = false;
+                }
+                commitOutputs();
+                renderRows();
+                renderDslEditor();
+            }, 'danger');
+            removeBtn.classList.add('btn-small', 'output-remove-btn');
+            removeBtn.addEventListener('click', (event) => event.stopPropagation());
+
+            rowElement.addEventListener('click', () => setActiveRow(entry.id));
+
+            rowElement.appendChild(nameCell);
+            rowElement.appendChild(preview);
+            rowElement.appendChild(removeBtn);
+
+            const editorSlot = document.createElement('div');
+            editorSlot.className = 'output-row-editor-slot';
+            editorSlot.dataset.rowId = entry.id;
+
+            rowBlock.appendChild(rowElement);
+            rowBlock.appendChild(editorSlot);
+            return rowBlock;
+        };
+
+        const actions = document.createElement('div');
+        actions.className = 'output-actions';
+        const addBtn = this.createButton('添加变量', () => {
+            const next = createEntry('', '');
+            state.rows.push(next);
+            commitOutputs();
+            setActiveRow(next.id);
+            state.editorExpanded = true;
+            renderDslEditor();
+        }, 'secondary');
+        addBtn.classList.add('btn-small');
+        actions.appendChild(addBtn);
+
+        renderRows();
+        renderDslEditor();
+
+        this.outputEditorsByEffect.set(index, {
+            flushDraftToEffect: () => {
+                const active = getActiveRow();
+                const editor = state.dslEditorInstance;
+                if (!active || !editor) {
+                    return { flushed: false, reason: 'no-active-editor' };
+                }
+
+                if (typeof editor.validateExpressionForCompletion === 'function') {
+                    const validation = editor.validateExpressionForCompletion();
+                    if (validation && validation.isValid === false) {
+                        return { flushed: false, reason: 'incomplete-expression' };
+                    }
+                }
+
+                // Ensure workspace draft is committed back to main expression before reading.
+                if (typeof editor.saveWorkspace === 'function') {
+                    editor.saveWorkspace();
+                } else if (typeof editor.updateExpressionFromAST === 'function') {
+                    editor.updateExpressionFromAST({ skipRender: true });
+                } else if (typeof editor.computeCurrentExpression === 'function') {
+                    const nextExpr = String(editor.computeCurrentExpression() || '');
+                    if (nextExpr !== active.formula) {
+                        active.formula = nextExpr;
+                    }
+                }
+
+                if (typeof editor.computeCurrentExpression === 'function') {
+                    const nextExpr = String(editor.computeCurrentExpression() || '');
+                    if (nextExpr !== active.formula) {
+                        active.formula = nextExpr;
+                    }
+                }
+
+                syncActiveRowTypeFromEditor();
+                commitOutputs();
+                refreshRowView(active.id);
+                return { flushed: true };
+            },
+            getRowsSnapshot: () => state.rows.map((row) => ({
+                name: String(row?.name || '').trim(),
+                formula: String(row?.formula || ''),
+                typeName: row?.typeName ? String(row.typeName) : null
+            }))
+        });
+
+        container.appendChild(list);
+        container.appendChild(warning);
+        container.appendChild(editorPanel);
+        container.appendChild(actions);
         return container;
     }
 
@@ -621,25 +1037,147 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     createRepeatCountEditor(effect, index) {
         const container = document.createElement('div');
         container.className = 'config-section';
-        container.innerHTML = '<h5 class="section-title">重复执行</h5>';
+        const cacheParamName = '__repeat_count';
+        const getLatestEffect = () => this.effects?.[index] || effect || {};
+        const getLatestRepeatCount = () => this.normalizeRepeatCount(getLatestEffect());
+        const getLatestRepeatCountValue = () => this.normalizeRepeatCountValue(getLatestEffect());
 
-        const current = this.normalizeRepeatCount(effect);
-        const input = document.createElement('input');
-        input.type = 'number';
-        input.className = 'form-input';
-        input.min = '0';
-        input.step = '1';
-        input.value = String(current);
+        const initialRepeatCount = getLatestRepeatCount();
+        const initialRepeatCountValue = getLatestRepeatCountValue();
+        this.cacheParameterModeState(
+            index,
+            cacheParamName,
+            initialRepeatCountValue || this.toStaticValueConfig(initialRepeatCount),
+            initialRepeatCount
+        );
 
-        input.addEventListener('change', (e) => {
-            const rawValue = e.target.value;
-            const parsed = rawValue === '' ? 0 : Number(rawValue);
-            const safeValue = Number.isNaN(parsed) ? 0 : Math.max(0, Math.floor(parsed));
-            input.value = String(safeValue);
-            this.updateEffect(index, { repeatCount: safeValue });
-        });
+        let isDslMode = this.isFormulaValueConfig(initialRepeatCountValue);
 
-        container.appendChild(this.createFormGroup(null, input));
+        const createModeToggleRow = () => {
+            const row = document.createElement('div');
+            row.className = 'repeat-count-mode-row';
+
+            const badge = document.createElement('span');
+            badge.className = 'parameter-badge';
+            badge.textContent = this.getControlBadgeLabel('numberstepper') || '整数';
+            row.appendChild(badge);
+
+            const toggle = document.createElement('div');
+            toggle.className = 'parameter-mode-toggle';
+
+            const structuredBtn = document.createElement('button');
+            structuredBtn.type = 'button';
+            structuredBtn.className = 'mode-btn';
+            structuredBtn.textContent = '简化';
+            if (!isDslMode) structuredBtn.classList.add('active');
+            structuredBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const cache = this.getParameterCache(index, cacheParamName);
+                const cachedStructured = cache?.structuredValue;
+                const fallback = getLatestRepeatCount();
+                const next = Number.isFinite(cachedStructured)
+                    ? Number(cachedStructured)
+                    : fallback;
+                const safeValue = Math.max(0, Math.floor(next));
+                this.cacheStructuredValue(index, cacheParamName, safeValue);
+                this.updateEffect(index, {
+                    repeatCount: safeValue,
+                    repeatCountValue: null
+                });
+                isDslMode = false;
+                renderSection();
+            });
+
+            const dslBtn = document.createElement('button');
+            dslBtn.type = 'button';
+            dslBtn.className = 'mode-btn';
+            dslBtn.textContent = '高级';
+            if (isDslMode) dslBtn.classList.add('active');
+            dslBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const latestValueConfig = getLatestRepeatCountValue();
+                const formula = this.getCachedDslExpression(index, cacheParamName)
+                    ?? this.getDslExpressionFromValueConfig(latestValueConfig)
+                    ?? '';
+                this.cacheDslExpression(index, cacheParamName, formula);
+                this.updateEffect(index, {
+                    repeatCountValue: {
+                        $type: 'FormulaValueConfig',
+                        Formula: formula
+                    }
+                });
+                isDslMode = true;
+                renderSection();
+            });
+
+            toggle.appendChild(structuredBtn);
+            toggle.appendChild(dslBtn);
+            row.appendChild(toggle);
+            return row;
+        };
+
+        const renderControlBody = (host) => {
+            host.innerHTML = '';
+
+            if (isDslMode) {
+                const latestValueConfig = getLatestRepeatCountValue();
+                const formula = this.getDslExpressionFromValueConfig(latestValueConfig)
+                    ?? this.getCachedDslExpression(index, cacheParamName)
+                    ?? '';
+
+                this.renderDslExpressionControl(host, {
+                    expression: formula,
+                    expectedType: 'Int32',
+                    onChange: (newFormula) => {
+                        const normalizedFormula = newFormula || '';
+                        this.cacheDslExpression(index, cacheParamName, normalizedFormula);
+                        this.updateEffect(index, {
+                            repeatCountValue: {
+                                $type: 'FormulaValueConfig',
+                                Formula: normalizedFormula
+                            }
+                        });
+                    },
+                    triggeringEventContext: this.getDslTriggeringEventContext()
+                });
+                return;
+            }
+
+            const current = getLatestRepeatCount();
+            const input = this.createNumberInput(
+                current,
+                (val) => {
+                    const numeric = Number.isFinite(val) ? Number(val) : 0;
+                    const safeValue = Math.max(0, Math.floor(numeric));
+                    this.cacheStructuredValue(index, cacheParamName, safeValue);
+                    this.updateEffect(index, {
+                        repeatCount: safeValue,
+                        repeatCountValue: null
+                    });
+                },
+                { min: 0, step: 1 }
+            );
+            input.className = 'form-input';
+            host.appendChild(input);
+        };
+
+        const renderSection = () => {
+            container.innerHTML = '';
+
+            const title = document.createElement('h5');
+            title.className = 'section-title';
+            title.textContent = '重复次数';
+
+            const body = document.createElement('div');
+            body.className = 'repeat-count-control-body';
+            renderControlBody(body);
+
+            container.appendChild(title);
+            container.appendChild(createModeToggleRow());
+            container.appendChild(body);
+        };
+
+        renderSection();
         return container;
     }
 
@@ -726,10 +1264,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             },
             {
                 expectedType: 'Boolean',
-                triggeringEventContext: {
-                    eventTypes: this.options?.trigger?.eventTypes || [],
-                    timing: this.options?.trigger?.timing || 'On'
-                }
+                triggeringEventContext: this.getDslTriggeringEventContext()
             }
         ).catch(error => {
             console.error('EffectConfigEditor: failed to render repeat condition DSL editor', error);
@@ -907,10 +1442,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                         Formula: newFormula ?? ''
                     });
                 },
-                triggeringEventContext: {
-                    eventTypes: this.options?.trigger?.eventTypes || [],
-                    timing: this.options?.trigger?.timing || 'On'
-                }
+                triggeringEventContext: this.getDslTriggeringEventContext()
             });
             return;
         }
@@ -989,10 +1521,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                     parameterType: typeName,
                     usePlaceholder: shouldUsePlaceholder,
                     placeholderValue: defaultPlaceholder,
-                    triggeringEventContext: {
-                        eventTypes: this.options?.trigger?.eventTypes || [],
-                        timing: this.options?.trigger?.timing || 'On'
-                    }
+                    triggeringEventContext: this.getDslTriggeringEventContext()
                 });
                 return;
             }
@@ -2087,6 +2616,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             normalized.effects = ability.effects ?? ability.Effects ?? [];
             normalized.auras = ability.auras ?? ability.Auras ?? [];
             normalized.counterRegistrations = ability.counterRegistrations ?? ability.CounterRegistrations ?? [];
+            normalized.playerCounterRegistrations = ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [];
             normalized.isActive = ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true;
             normalized.version = ability.version ?? ability.Version ?? '1.0';
 
@@ -2183,6 +2713,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 auras: [],
                 type: 'Triggered',
                 counterRegistrations: [],
+                playerCounterRegistrations: [],
                 isActive: true
             };
         }
@@ -2203,6 +2734,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 effects: ability.effects ?? ability.Effects ?? [],
                 auras: ability.auras ?? ability.Auras ?? [],
                 counterRegistrations: ability.counterRegistrations ?? ability.CounterRegistrations ?? [],
+                playerCounterRegistrations: ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [],
                 isActive: ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true
             };
         }
@@ -2236,6 +2768,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 effects: finalConfig.effects ?? [],
                 auras: finalConfig.auras ?? [],
                 counterRegistrations: finalConfig.counterRegistrations ?? [],
+                playerCounterRegistrations: finalConfig.playerCounterRegistrations ?? [],
                 isActive: finalConfig.isActive ?? true,
                 version: finalConfig.version ?? '1.0'
             };
@@ -2596,6 +3129,10 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
         const rawSelector = effect?.targetSelector ?? effect?.TargetSelector ?? effect?.targetselector;
         normalized.targetSelector = this.normalizeTargetSelector(rawSelector);
+        const rawOutputs = effect?.outputs ?? effect?.Outputs ?? effect?.output;
+        normalized.outputs = this.normalizeEffectOutputs(rawOutputs);
+        delete normalized.Outputs;
+        delete normalized.output;
 
         const rawFailure = effect?.onFailure ?? effect?.OnFailure ?? effect?.onfailure;
         if (rawFailure != null && rawFailure !== '') {
@@ -2608,6 +3145,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         delete normalized.chainedabilities;
 
         normalized.repeatCount = this.normalizeRepeatCount(effect);
+        normalized.repeatCountValue = this.normalizeRepeatCountValue(effect);
         normalized.repeatCondition = this.normalizeRepeatCondition(
             effect?.repeatCondition ?? effect?.RepeatCondition ?? effect?.repeatcondition
         );
@@ -2726,16 +3264,41 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
     normalizeRepeatCount(effect) {
         const raw = effect?.repeatCount ?? effect?.RepeatCount ?? effect?.repeatcount;
-        if (raw == null || raw === '') {
+        const unwrapped = this.unwrapStaticValueConfig(raw);
+        const candidate = unwrapped.ok ? unwrapped.value : raw;
+
+        if (candidate == null || candidate === '') {
             return 0;
         }
 
-        const value = Number(raw);
+        const value = Number(candidate);
         if (Number.isNaN(value)) {
             return 0;
         }
 
         return Math.max(0, Math.floor(value));
+    }
+
+    normalizeRepeatCountValue(effect) {
+        const raw = effect?.repeatCountValue ?? effect?.RepeatCountValue ?? effect?.repeatcountvalue;
+        if (raw == null || raw === '') {
+            return null;
+        }
+
+        if (typeof raw === 'string') {
+            const formula = raw.trim();
+            if (!formula) return null;
+            return {
+                $type: 'FormulaValueConfig',
+                Formula: formula
+            };
+        }
+
+        if (typeof raw !== 'object' || Array.isArray(raw)) {
+            return null;
+        }
+
+        return this.normalizeValueConfig(raw);
     }
 
     getEffectTypeName(effectMeta) {
@@ -2848,6 +3411,32 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         return 'Id';
     }
 
+    normalizeModifierLayer(value) {
+        if (value == null || value === '') return 'Additive';
+        if (typeof value === 'number') {
+            return this.mapModifierLayerValue(value);
+        }
+        const raw = String(value).trim();
+        if (raw === '') return 'Additive';
+        if (/^\d+$/.test(raw)) {
+            return this.mapModifierLayerValue(Number(raw));
+        }
+        const lowered = raw.toLowerCase();
+        if (lowered === 'base') return 'Base';
+        if (lowered === 'additive') return 'Additive';
+        if (lowered === 'multiplicative') return 'Multiplicative';
+        if (lowered === 'set') return 'Set';
+        return raw;
+    }
+
+    mapModifierLayerValue(value) {
+        if (value === 0) return 'Base';
+        if (value === 1) return 'Additive';
+        if (value === 2) return 'Multiplicative';
+        if (value === 3) return 'Set';
+        return 'Additive';
+    }
+
     shouldRenderEffectParameter(paramMeta, context) {
         const paramName = this.getEffectParameterName(paramMeta);
         if (!paramName) return true;
@@ -2878,6 +3467,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const hasSearchMode = this.hasEffectParameter(effectMeta, 'UseSearchMode');
         const hasCardSourceMode = this.hasEffectParameter(effectMeta, 'CardSourceMode');
         const hasRemoveMode = this.hasEffectParameter(effectMeta, 'RemoveMode');
+        const hasModifierLayer = this.hasEffectParameter(effectMeta, 'ModifierLayer');
 
         if (hasSearchMode) {
             const prevValue = this.normalizeBooleanValue(this.getEffectParameterValue(previousParams, effectMeta, 'UseSearchMode'));
@@ -2895,6 +3485,31 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             const prevMode = this.normalizeRemoveAbilityMode(this.getEffectParameterValue(previousParams, effectMeta, 'RemoveMode'));
             const nextMode = this.normalizeRemoveAbilityMode(this.getEffectParameterValue(nextParams, effectMeta, 'RemoveMode'));
             if (prevMode !== nextMode) return true;
+        }
+
+        if (hasModifierLayer) {
+            const prevLayer = this.normalizeModifierLayer(this.getEffectParameterValue(previousParams, effectMeta, 'ModifierLayer'));
+            const nextLayer = this.normalizeModifierLayer(this.getEffectParameterValue(nextParams, effectMeta, 'ModifierLayer'));
+            if (prevLayer !== nextLayer) return true;
+        }
+
+        if (this.isReplaceEventEffectMeta(effectMeta)) {
+            const prevType = this.normalizeMetadataLookupKey(this.getReplacementEventTypeValue(effectMeta, previousParams));
+            const nextType = this.normalizeMetadataLookupKey(this.getReplacementEventTypeValue(effectMeta, nextParams));
+            if (prevType !== nextType) return true;
+
+            const dynamicKeys = new Set([
+                ...Object.keys(previousParams || {}),
+                ...Object.keys(nextParams || {})
+            ].filter((key) => this.isReplacementParamsParameter(key)));
+
+            for (const key of dynamicKeys) {
+                const prevValue = this.getParameterValueFromObject(previousParams, key);
+                const nextValue = this.getParameterValueFromObject(nextParams, key);
+                if (this.isFormulaValueConfig(prevValue) !== this.isFormulaValueConfig(nextValue)) {
+                    return true;
+                }
+            }
         }
 
         // Refresh when a DSL-capable parameter switches between structured and DSL modes.
@@ -2932,7 +3547,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
     isDecisionAbilityEffect(effectTypeName) {
         const normalized = String(effectTypeName || '').trim().toLowerCase();
-        return normalized === 'choose' || normalized === 'random';
+        return normalized === 'choose' || normalized === 'random' || normalized === 'sequence';
     }
 
     getDecisionAbilityLockConfig(ability) {
@@ -3019,6 +3634,122 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             this.activeChainedModal.remove();
             this.activeChainedModal = null;
         }
+    }
+
+    getDslTriggeringEventContext() {
+        return {
+            eventTypes: this.options?.trigger?.eventTypes || [],
+            timing: this.options?.trigger?.timing || 'On',
+            outputVariables: this.options?.triggeringEventOutputs || []
+        };
+    }
+
+    unwrapOuterParens(text) {
+        let value = String(text || '').trim();
+        const isWrapped = (input) => {
+            if (!input.startsWith('(') || !input.endsWith(')')) return false;
+            let depth = 0;
+            for (let i = 0; i < input.length; i++) {
+                const ch = input[i];
+                if (ch === '(') depth++;
+                if (ch === ')') depth--;
+                if (depth === 0 && i < input.length - 1) return false;
+            }
+            return depth === 0;
+        };
+        while (isWrapped(value)) {
+            value = value.slice(1, -1).trim();
+        }
+        return value;
+    }
+
+    inferTypeFromTriggeringOutputReference(formula, context = null) {
+        const cleaned = this.unwrapOuterParens(formula).replace(/\s+/g, '');
+        const prefix = 'context.triggeringEvent.Outputs.';
+        if (!cleaned.startsWith(prefix)) return null;
+        const refName = String(cleaned.slice(prefix.length) || '').trim();
+        if (!refName) return null;
+        if (/[+\-*/<>=!&|,[\]{}()]/.test(refName)) return null;
+
+        const outputVariables = Array.isArray(context?.outputVariables)
+            ? context.outputVariables
+            : [];
+        const matched = outputVariables.find(entry =>
+            String(entry?.name || '').trim().toLowerCase() === refName.toLowerCase()
+        );
+        if (!matched) return null;
+        return String(matched?.typeName || '').trim() || null;
+    }
+
+    getEffectOutputDraftSnapshot(effectIndex) {
+        const helper = this.outputEditorsByEffect.get(effectIndex);
+        if (!helper || typeof helper.getRowsSnapshot !== 'function') {
+            return [];
+        }
+        try {
+            return helper.getRowsSnapshot();
+        } catch (error) {
+            console.warn('EffectConfigEditor: failed to read output draft snapshot', error);
+            return [];
+        }
+    }
+
+    async buildEffectOutputVariableHints(effectIndex) {
+        const triggeringEventContext = this.getDslTriggeringEventContext();
+        const draftRows = this.getEffectOutputDraftSnapshot(effectIndex)
+            .filter(row => row?.name);
+        const entries = draftRows.length > 0
+            ? draftRows.map(row => [row.name, row.formula, row.typeName])
+            : (() => {
+                const effect = this.effects?.[effectIndex];
+                if (!effect) return [];
+                const outputs = this.normalizeEffectOutputs(effect.outputs ?? effect.Outputs);
+                return Object.entries(outputs).map(([name, formula]) => [name, formula, null]);
+            })();
+        if (entries.length === 0) return [];
+
+        const typeHints = [];
+        for (const [rawName, rawFormula, draftTypeName] of entries) {
+            const name = String(rawName || '').trim();
+            if (!name) continue;
+
+                const formula = String(rawFormula || '').trim();
+                let typeName = 'Object';
+                const passthroughType = this.inferTypeFromTriggeringOutputReference(formula, triggeringEventContext);
+                if (passthroughType) {
+                    typeName = passthroughType;
+                }
+                if (!formula) {
+                    typeName = 'Void';
+                } else if (!passthroughType) {
+                    try {
+                        const res = await validateDslExpression(this.metadata, formula, {
+                            allowEmpty: false,
+                            triggeringEventContext
+                        });
+                        if (res?.ast) {
+                            const inferred = getCoreSemanticNodeType(res.ast) || res.ast.returnType || null;
+                            if (inferred) {
+                                typeName = String(inferred);
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`EffectConfigEditor: failed to infer output type for ${name}`, error);
+                }
+            }
+
+            if ((!typeName || typeName === 'Object') && draftTypeName) {
+                typeName = String(draftTypeName);
+            }
+
+            typeHints.push({
+                name,
+                typeName,
+                formula
+            });
+        }
+
+        return typeHints;
     }
 
     renderChainedAbilityListView(effectIndex, container) {
@@ -3154,6 +3885,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     async renderChainedAbilityEditorView(effectIndex, abilityIndex, container) {
         this.clearContainer(container);
 
+        this.flushEffectOutputDrafts(effectIndex);
+
         const header = document.createElement('div');
         header.className = 'chained-abilities-editor-header';
 
@@ -3183,6 +3916,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const baseAbility = abilityIndex === null
             ? this.createDefaultChainedAbility(effectIndex)
             : this.cloneChainedAbility(abilities[abilityIndex], effectIndex);
+        const triggeringEventOutputs = await this.buildEffectOutputVariableHints(effectIndex);
 
         await abilityEditor.render(
             editorHost,
@@ -3204,9 +3938,23 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             {
                 lockedTrigger: this.getChainedAbilityLockConfig(),
                 lockedTriggerMessage: '连锁能力触发时机与有效区域已锁定，无法修改。',
-                lockValidZones: true
+                lockValidZones: true,
+                triggeringEventOutputs
             }
         );
+    }
+
+    flushEffectOutputDrafts(effectIndex) {
+        const helper = this.outputEditorsByEffect.get(effectIndex);
+        if (!helper || typeof helper.flushDraftToEffect !== 'function') {
+            return;
+        }
+
+        try {
+            helper.flushDraftToEffect();
+        } catch (error) {
+            console.warn('EffectConfigEditor: failed to flush output draft before opening chained ability editor', error);
+        }
     }
 
     getChainedAbilities(effectIndex) {
@@ -3243,7 +3991,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             conditions: [],
             targets: [],
             effects: [],
-            counterRegistrations: []
+            counterRegistrations: [],
+            playerCounterRegistrations: []
         };
     }
 
@@ -3290,6 +4039,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             counterRegistrations: Array.isArray(parsed?.counterRegistrations)
                 ? parsed.counterRegistrations
                 : (Array.isArray(updatedConfig?.counterRegistrations) ? updatedConfig.counterRegistrations : []),
+            playerCounterRegistrations: Array.isArray(parsed?.playerCounterRegistrations)
+                ? parsed.playerCounterRegistrations
+                : (Array.isArray(updatedConfig?.playerCounterRegistrations) ? updatedConfig.playerCounterRegistrations : []),
             version: parsed?.version || '1.0'
         };
 
@@ -3316,6 +4068,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             parameters: {},
             isEnabled: true,
             repeatCount: 0,
+            repeatCountValue: null,
             repeatCondition: null,
             chainedAbilities: []
         });
@@ -3369,15 +4122,171 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         return (this.metadata.effects || []).find(e => e.effectTypeName === type);
     }
 
+    getEffectiveEffectParameterMetadata(effectMeta, parameters, effectIndex) {
+        const baseParameters = Array.isArray(effectMeta?.parameters) ? effectMeta.parameters : [];
+        const replacementParameters = this.getReplacementDynamicParameterMetadata(effectMeta, parameters, effectIndex);
+        if (replacementParameters.length === 0) {
+            return baseParameters;
+        }
+
+        return [...baseParameters, ...replacementParameters];
+    }
+
+    getReplacementDynamicParameterMetadata(effectMeta, parameters, effectIndex) {
+        if (!this.isReplaceEventEffectMeta(effectMeta)) {
+            return [];
+        }
+
+        const replacementEventType = this.getReplacementEventTypeValue(effectMeta, parameters);
+        if (!replacementEventType) {
+            return [];
+        }
+
+        const cacheKey = this.normalizeMetadataLookupKey(replacementEventType);
+        const cached = this.replaceEventParamMetadataCache.get(cacheKey);
+        if (Array.isArray(cached)) {
+            return cached.map((meta) => {
+                const rawPropertyName = this.getEffectParameterName(meta);
+                const displayName = meta.displayName || meta.DisplayName || rawPropertyName;
+                const description = meta.description || meta.Description || '';
+                return {
+                    ...meta,
+                    propertyName: `ReplacementParams.${rawPropertyName}`,
+                    displayName: `替换参数 · ${displayName}`,
+                    description
+                };
+            });
+        }
+
+        this.ensureReplacementParameterMetadata(replacementEventType, effectIndex);
+        return [];
+    }
+
+    async ensureReplacementParameterMetadata(replacementEventType, effectIndex) {
+        const cacheKey = this.normalizeMetadataLookupKey(replacementEventType);
+        if (this.replaceEventParamMetadataCache.has(cacheKey)) {
+            return this.replaceEventParamMetadataCache.get(cacheKey);
+        }
+
+        if (this.replaceEventParamMetadataRequests.has(cacheKey)) {
+            return this.replaceEventParamMetadataRequests.get(cacheKey);
+        }
+
+        const promise = this.fetchReplacementParameterMetadata(replacementEventType)
+            .then((metadata) => {
+                this.replaceEventParamMetadataCache.set(cacheKey, metadata);
+
+                if (Number.isInteger(effectIndex)) {
+                    const effect = this.effects?.[effectIndex];
+                    const effectMeta = this.getEffectMetadata(effect?.type);
+                    const currentReplacementType = this.getReplacementEventTypeValue(effectMeta, effect?.parameters || {});
+                    if (this.normalizeMetadataLookupKey(currentReplacementType) === cacheKey) {
+                        this.updateEffectNode(effectIndex);
+                    }
+                }
+
+                return metadata;
+            })
+            .finally(() => {
+                this.replaceEventParamMetadataRequests.delete(cacheKey);
+            });
+
+        this.replaceEventParamMetadataRequests.set(cacheKey, promise);
+        return promise;
+    }
+
+    async fetchReplacementParameterMetadata(replacementEventType) {
+        try {
+            const res = await fetch(`/api/abilityEditorOptions/replaceEventParameters/${encodeURIComponent(replacementEventType)}`);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const raw = await res.json();
+            if (!Array.isArray(raw)) {
+                return [];
+            }
+
+            return raw.filter((item) => this.getEffectParameterName(item));
+        } catch (error) {
+            console.warn('EffectConfigEditor: failed to load replace-event parameter metadata', replacementEventType, error);
+            return [];
+        }
+    }
+
+    normalizeMetadataLookupKey(value) {
+        if (value == null) return '';
+        return String(value).trim().toLowerCase();
+    }
+
+    isReplaceEventEffectMeta(effectMeta) {
+        const typeName = this.getEffectTypeName(effectMeta);
+        return typeName.toLowerCase() === 'replaceevent';
+    }
+
+    isReplacementEventTypeParameter(paramName) {
+        return String(paramName || '').trim().toLowerCase() === 'replacementeventtype';
+    }
+
+    isReplacementParamsParameter(paramName) {
+        return String(paramName || '').trim().toLowerCase().startsWith('replacementparams.');
+    }
+
+    getReplacementEventTypeValue(effectMeta, parameters) {
+        if (!effectMeta || !parameters || typeof parameters !== 'object') {
+            return '';
+        }
+
+        const raw = this.getEffectParameterValue(parameters, effectMeta, 'ReplacementEventType');
+        if (raw == null) {
+            return '';
+        }
+
+        return String(raw).trim();
+    }
+
     notifyChange() {
         if (!this.onChange) return;
 
         const sanitizedEffects = this.effects.map(effect => {
             const cleanParams = this.sanitizeParameters(effect.parameters);
-            return { ...effect, parameters: cleanParams };
+            const cleanOutputs = this.sanitizeOutputs(effect.outputs ?? effect.Outputs);
+            return { ...effect, parameters: cleanParams, outputs: cleanOutputs };
         });
 
         this.onChange(sanitizedEffects);
+    }
+
+    normalizeEffectOutputs(outputs) {
+        if (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)) {
+            return {};
+        }
+
+        const normalized = {};
+        Object.entries(outputs).forEach(([rawKey, rawValue]) => {
+            const key = String(rawKey || '').trim();
+            if (!key) return;
+            if (rawValue == null) {
+                normalized[key] = '';
+                return;
+            }
+            normalized[key] = String(rawValue);
+        });
+
+        return normalized;
+    }
+
+    sanitizeOutputs(outputs) {
+        const normalized = this.normalizeEffectOutputs(outputs);
+        const result = {};
+
+        Object.entries(normalized).forEach(([rawKey, rawValue]) => {
+            const key = String(rawKey || '').trim();
+            if (!key) return;
+            result[key] = String(rawValue ?? '');
+        });
+
+        return result;
     }
 
     sanitizeParameters(parameters) {
@@ -3545,7 +4454,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             const effectMeta = getEffectMeta(effect.type);
             const withDefaults = this.applyDefaultParameters(effect, effectMeta);
             const cleanParams = this.sanitizeParameters(withDefaults.parameters);
-            return { ...withDefaults, parameters: cleanParams };
+            const cleanOutputs = this.sanitizeOutputs(withDefaults.outputs ?? withDefaults.Outputs);
+            return { ...withDefaults, parameters: cleanParams, outputs: cleanOutputs };
         });
     }
 

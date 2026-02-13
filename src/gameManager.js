@@ -10,11 +10,10 @@
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + addUnitToField + updateUnitDisplay + removeUnitFromField + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
 
 // --- Constants ---
 const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
-const MAX_EMBLEM_SIZE = 5; // Maximum cards in a player's emblem zone
 const GAME_LOG_LIMIT = 200; // Prevent unbounded growth in UI log
 
 // --- SignalR Connection ---
@@ -57,6 +56,7 @@ export let gameState = {
 let turnTimerIntervalId = null;
 let turnTimerEndsAtMs = null;
 let turnTimerTotalMs = 0;
+let lastHandledChoiceRequestKey = null;
 
 function stopTurnTimer() {
     if (turnTimerIntervalId) {
@@ -372,6 +372,147 @@ export function getPlayerState(playerId) {
     // FIX: Use p.id which is set during createPlayer from the DTO's playerId
     return gameState.players.find((p) => p && p.id === playerId);
 }
+
+function normalizeZoneName(zoneValue) {
+    if (zoneValue === null || zoneValue === undefined) {
+        return null;
+    }
+
+    const normalized = String(zoneValue).trim().toLowerCase();
+    if (!normalized) {
+        return null;
+    }
+
+    switch (normalized) {
+        case "hand":
+            return "hand";
+        case "field":
+            return "field";
+        case "deck":
+            return "deck";
+        case "graveyard":
+            return "graveyard";
+        case "emblem":
+            return "emblem";
+        case "playing":
+            return "playing";
+        case "staging":
+            return "staging";
+        case "extra":
+            return "extra";
+        case "removed":
+            return "removed";
+        case "none":
+            return "none";
+        default:
+            return normalized;
+    }
+}
+
+function toZoneLabel(zoneName) {
+    if (!zoneName) return "None";
+    return zoneName.charAt(0).toUpperCase() + zoneName.slice(1);
+}
+
+function extractCardUid(card) {
+    if (!card || typeof card !== "object") return null;
+    return card.uid ?? card.InstanceId ?? card.instanceId ?? null;
+}
+
+function findCardInZoneArray(zoneArray, cardUid) {
+    if (!Array.isArray(zoneArray) || !cardUid) {
+        return -1;
+    }
+
+    return zoneArray.findIndex(card => {
+        const uid = extractCardUid(card);
+        return uid && String(uid) === String(cardUid);
+    });
+}
+
+function detachCardFromAllZones(cardUid) {
+    if (!cardUid) {
+        return { card: null, removed: [] };
+    }
+
+    const removed = [];
+    let detachedCard = null;
+    const zones = ["hand", "field", "graveyard", "emblem", "deck"];
+
+    for (const player of gameState.players) {
+        if (!player) continue;
+        for (const zone of zones) {
+            const zoneArray = player[zone];
+            if (!Array.isArray(zoneArray)) continue;
+
+            const index = findCardInZoneArray(zoneArray, cardUid);
+            if (index < 0) continue;
+
+            const [removedCard] = zoneArray.splice(index, 1);
+            if (!detachedCard && removedCard) {
+                detachedCard = removedCard;
+            }
+            removed.push({ playerId: player.id, zone });
+        }
+    }
+
+    return { card: detachedCard, removed };
+}
+
+function ensureZoneArray(player, zoneName) {
+    if (!player || !zoneName) {
+        return null;
+    }
+
+    if (!Array.isArray(player[zoneName])) {
+        player[zoneName] = [];
+    }
+
+    return player[zoneName];
+}
+
+function refreshPlayerZoneUi(player, zoneName) {
+    if (!player || !zoneName) return;
+
+    if (zoneName === "hand") {
+        updateHandDisplay(player.id, player.hand);
+        return;
+    }
+
+    if (zoneName === "field") {
+        updateFieldDisplay(player.id, player.field);
+        return;
+    }
+
+    if (zoneName === "emblem") {
+        updateEmblemZone(player);
+        return;
+    }
+
+    if (zoneName === "deck") {
+        updateDeckCountDisplay(player.id, player.deckCount ?? player.deck?.length ?? 0);
+        return;
+    }
+
+    if (zoneName === "graveyard") {
+        const count = player.graveyardCount ?? player.graveyard?.length ?? 0;
+        updateGraveyardCountDisplay(player.id, count);
+    }
+}
+
+function adjustZoneCount(player, zoneName, delta) {
+    if (!player || !zoneName || !Number.isFinite(delta) || delta === 0) {
+        return;
+    }
+
+    if (zoneName === "deck") {
+        const base = Number.isFinite(player.deckCount) ? player.deckCount : (player.deck?.length ?? 0);
+        player.deckCount = Math.max(0, base + delta);
+    } else if (zoneName === "graveyard") {
+        const base = Number.isFinite(player.graveyardCount) ? player.graveyardCount : (player.graveyard?.length ?? 0);
+        player.graveyardCount = Math.max(0, base + delta);
+    }
+}
 // --- 其他函数占位符 (保持不变) ---
 
 // --- Effect Resolution ---
@@ -474,6 +615,14 @@ export async function playCard(cardUid, targetUid = null) {
         return;
     }
 
+    if (cardHasKeyword(cardInstance, "CannotUse")) {
+        console.warn(
+            `GM: PlayCard rejected - Card ${cardUid} (${cardInstance.name}) has CannotUse.`
+        );
+        alert("该卡牌处于【无法使用】状态。");
+        return;
+    }
+
 
 
     const playerState = getPlayerState(cardInstance?.ownerId); // Use optional chaining for safety
@@ -486,9 +635,27 @@ export async function playCard(cardUid, targetUid = null) {
     }
 
     const playabilityInfo = gameState.playabilityCache[cardUid];
+    if (playabilityInfo?.isPlayable === false) {
+        const failureReason = playabilityInfo.failureReason || "该卡牌当前无法使用。";
+        console.warn(
+            `GM: PlayCard rejected - Card ${cardUid} (${cardInstance.name}) is marked unplayable. Reason: ${failureReason}`
+        );
+        alert(failureReason);
+        return;
+    }
     const selection = resolvePlayModeSelection(playabilityInfo?.playModes, playabilityInfo?.selectedPlayMode);
     const selectedPlayMode = selection.mode;
-    const effectiveCost = selection.cost ?? cardInstance.cost;
+    const fallbackCostRaw =
+        cardInstance.currentCost
+        ?? cardInstance.CurrentCost
+        ?? cardInstance.cost
+        ?? cardInstance.Cost
+        ?? 0;
+    const fallbackCost = Number.isFinite(fallbackCostRaw)
+        ? Math.max(0, fallbackCostRaw)
+        : Math.max(0, Number(fallbackCostRaw) || 0);
+    const effectiveCost = Number.isFinite(selection.cost) ? selection.cost : fallbackCost;
+    const selectedAbilityRuntimeId = playabilityInfo?.selectedAbilityRuntimeId ?? null;
 
     // --- Pre-condition Checks (Client-side) ---
     // IMPORTANT: Ensure we check against localPlayerId provided during initGame
@@ -568,9 +735,12 @@ export async function playCard(cardUid, targetUid = null) {
             CardUid: cardUid,
             TargetUids: targetUid ? [targetUid] : []
         };
-        if (selectedPlayMode) {
+        if (selectedPlayMode !== null && selectedPlayMode !== undefined) {
             actionDto.PlayMode = selectedPlayMode;
             actionDto.PaidCost = effectiveCost;
+            if (isEnhanceMode(selectedPlayMode) && selectedAbilityRuntimeId) {
+                actionDto.AbilityRuntimeId = selectedAbilityRuntimeId;
+            }
         }
         // Invoke with the single DTO object
         // BUG-016: Store UID before invoking, so PpUpdate can remove it from hand
@@ -739,6 +909,14 @@ export async function selectAttackTarget(targetUid) {
         return;
     }
 
+    const attackerKeywords = Array.isArray(attackerInstance.keywords) ? attackerInstance.keywords : [];
+    const attackerCannotAttackLeader = attackerKeywords.includes("CannotAttackLeader");
+    const attackerCannotAttackFollower = attackerKeywords.includes("CannotAttackFollower");
+    const targetIsFollower =
+        targetInstance.type === "Follower" ||
+        targetInstance.type === "Follower_Evolved";
+    const targetIsLeader = targetInstance.type === "Leader";
+
     // REMOVED: Redundant Summoning Sickness Check for Leader Target.
     // The general 'canAttack' flag (set in playCard based on Storm,
     // and checked in initiateAttack) now handles this correctly for all targets.
@@ -752,20 +930,25 @@ export async function selectAttackTarget(targetUid) {
         return;
     }
 
+    const hasEffectiveWard = card => {
+        const cardKeywords = Array.isArray(card?.keywords) ? card.keywords : [];
+        const hasWard = cardKeywords.includes("Ward");
+        const hasAmbush = cardKeywords.includes("Ambush");
+        const hasPressure = cardKeywords.includes("Pressure");
+        return hasWard && !hasAmbush && !hasPressure;
+    };
+
     // Check if opponent has any follower with Ward on the field
     const opponentHasWard = opponentPlayer.field.some(
         (card) =>
             card &&
             (card.type === "Follower" || card.type === "Follower_Evolved") &&
-            card.keywords?.includes("Ward")
+            hasEffectiveWard(card)
     );
 
     // If opponent has Ward, enforce targeting rules
     if (opponentHasWard) {
-        const targetIsFollower =
-            targetInstance.type === "Follower" ||
-            targetInstance.type === "Follower_Evolved";
-        const targetHasWard = targetInstance.keywords?.includes("Ward");
+        const targetHasWard = hasEffectiveWard(targetInstance);
 
         // Valid targets when opponent has Ward: Only followers that also have Ward
         if (!targetIsFollower || !targetHasWard) {
@@ -778,10 +961,9 @@ export async function selectAttackTarget(targetUid) {
         // If target is a follower with Ward, the check passes.
     }
     // If opponent does NOT have Ward, any valid target (follower or leader, respecting other rules) is fine.
-    else if (targetInstance.type === 'Leader') {
+    else if (targetIsLeader) {
         // If target is the leader and there's no Ward, check Rush/Storm rules
-        const hasStorm = attackerInstance.keywords?.includes("Storm");
-        const hasRush = attackerInstance.keywords?.includes("Rush");
+        const hasStorm = attackerKeywords.includes("Storm");
         const isSummoningSick = attackerInstance.fieldTurn === 0 && !attackerInstance.isEvolved;
 
         // Can attack leader if: has Storm OR is not summoning sick.
@@ -793,6 +975,22 @@ export async function selectAttackTarget(targetUid) {
             alert("该随从本回合无法攻击敌方主战者！");
             return;
         }
+    }
+
+    if (targetIsLeader && attackerCannotAttackLeader) {
+        console.warn(
+            `GM: SelectTarget failed - Attacker ${attackerInstance.name} cannot attack leaders due to CannotAttackLeader.`
+        );
+        alert("该随从无法攻击敌方主战者！");
+        return;
+    }
+
+    if (targetIsFollower && attackerCannotAttackFollower) {
+        console.warn(
+            `GM: SelectTarget failed - Attacker ${attackerInstance.name} cannot attack followers due to CannotAttackFollower.`
+        );
+        alert("该随从无法攻击敌方随从！");
+        return;
     }
 
     // All validations passed (including Ward and Rush/Storm checks)
@@ -898,6 +1096,14 @@ export function cancelSelection() {
 
 // 进化随从
 // 进化随从 (Implemented Version)
+function cardHasKeyword(cardInstance, keywordName) {
+    if (!cardInstance || !keywordName) return false;
+    const rawKeywords = cardInstance.keywords ?? cardInstance.Keywords ?? [];
+    if (!Array.isArray(rawKeywords)) return false;
+    const normalizedTarget = String(keywordName).trim().toLowerCase();
+    return rawKeywords.some(keyword => String(keyword ?? '').trim().toLowerCase() === normalizedTarget);
+}
+
 export async function evolveCard(cardUid) {
     if (gameState.isSpectator) {
         alert("观战模式：不能进行操作。");
@@ -939,10 +1145,11 @@ export async function evolveCard(cardUid) {
     // Optimistic client-side checks (Server will re-validate)
     if (!playerState.canEvolve) {
         console.warn("GM: EvolveCard rejected - Local state indicates evolution already used or unavailable.");
-        alert("本回合已使用过进化点或无法进化。");
+        alert("本回合已使用过进化权或无法进化。");
         return;
     }
-    if (playerState.ep < 1) {
+    const hasFreeEvolve = cardHasKeyword(cardInstance, "FreeEvolve");
+    if (!hasFreeEvolve && playerState.ep < 1) {
         // Check local EP
         console.warn(
             "GM: EvolveCard rejected - Local state shows insufficient EP."
@@ -1157,7 +1364,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
 }
 
 // Fusion request for a hand card
-export async function requestFusion(cardUid, fusedCardUids = [], abilityRuntimeId = null) {
+export async function requestFusion(cardUid, abilityRuntimeId = null) {
     if (gameState.isSpectator) {
         alert("观战模式：不能进行操作。");
         return;
@@ -1196,31 +1403,8 @@ export async function requestFusion(cardUid, fusedCardUids = [], abilityRuntimeI
         return;
     }
 
-    const materials = Array.isArray(fusedCardUids) ? fusedCardUids.filter(Boolean) : [];
-    if (materials.length === 0) {
-        alert("需要选择至少一张融合素材。");
-        return;
-    }
-
-    if (materials.includes(cardUid)) {
-        alert("融合素材不能包含发动融合的卡牌本体。");
-        return;
-    }
-
-    for (const materialUid of materials) {
-        const material = findCardInstanceByUid(materialUid);
-        if (!material) {
-            alert(`找不到素材卡牌：${materialUid}`);
-            return;
-        }
-        if (material.ownerId !== playerState.id || material.zone !== "Hand") {
-            alert("融合素材必须是自己手牌中的卡牌。");
-            return;
-        }
-    }
-
     try {
-        const actionDto = { CardUid: cardUid, FusedCardUids: materials };
+        const actionDto = { CardUid: cardUid };
         if (abilityRuntimeId) {
             actionDto.AbilityRuntimeId = abilityRuntimeId;
         }
@@ -1421,42 +1605,58 @@ export function handleHandPlayabilityUpdate(updateDto) {
     }
 
 
-    // 【修复】更新缓存：将服务器端的 InstanceId (Guid) 映射到客户端的 uid (string)
-    Object.entries(updateDto.PlayabilityResults).forEach(([instanceId, playabilityResult]) => {
-        // 查找对应的卡牌实例 - 使用 uid 属性进行匹配
-        const localPlayer = getPlayerState(gameState.localPlayerId);
-        if (localPlayer && localPlayer.hand) {
-            // 【修复】使用正确的UID属性：优先使用uid，备用InstanceId（与findCardInstanceByUid保持一致）
-            const cardInstance = localPlayer.hand.find(card => card && (card.uid === instanceId || card.InstanceId === instanceId));
-            if (cardInstance) {
-                // 使用统一的UID作为缓存键
-                const cardUid = cardInstance.uid ?? cardInstance.InstanceId;
-                const playModes = (playabilityResult.PlayModes || []).map(mode => ({
-                    mode: mode.Mode,
-                    effectiveCost: mode.EffectiveCost,
-                    isAvailable: mode.IsAvailable
-                }));
-                const selection = resolvePlayModeSelection(playModes, playabilityResult.SelectedPlayMode);
+    const localPlayer = getPlayerState(gameState.localPlayerId);
+    if (!localPlayer || !Array.isArray(localPlayer.hand)) {
+        return;
+    }
 
-                const playabilityInfo = {
-                    cardUid: cardUid,
-                    isPlayable: playabilityResult.IsPlayable,
-                    requiresTargetSelection: playabilityResult.RequiresTargetSelection,
-                    hasValidTargets: playabilityResult.HasValidTargets,
-                    canPlayWithoutTarget: playabilityResult.CanPlayWithoutTarget,
-                    failureReason: playabilityResult.FailureReason,
-                    validTargetIds: playabilityResult.ValidTargetIds || [],
-                    playModes: playModes,
-                    selectedPlayMode: selection.mode,
-                    selectedPlayCost: selection.cost
-                };
-                gameState.playabilityCache[cardUid] = playabilityInfo;
-                refreshBattleCardPreviewIfCurrent(cardInstance);
-            } else {
-                console.warn(`GM: Could not find card instance with UID ${instanceId} in local player's hand`);
-            }
+    const normalizeInstanceId = value => String(value ?? '').trim().toLowerCase();
+    let hasHandCacheUpdate = false;
+
+    // 【修复】更新缓存：将服务器端的 InstanceId (Guid) 映射到客户端的 uid (string)
+    const rawResults = updateDto.PlayabilityResults;
+    Object.entries(rawResults).forEach(([instanceId, playabilityResult]) => {
+        const normalizedInstanceId = normalizeInstanceId(instanceId);
+        const cardInstance = localPlayer.hand.find(card => {
+            if (!card) return false;
+            return normalizeInstanceId(card.uid) === normalizedInstanceId
+                || normalizeInstanceId(card.InstanceId) === normalizedInstanceId;
+        });
+
+        if (cardInstance) {
+            // 使用统一的UID作为缓存键
+            const cardUid = cardInstance.uid ?? cardInstance.InstanceId;
+            const playModes = (playabilityResult.PlayModes || []).map(mode => ({
+                mode: mode.Mode,
+                effectiveCost: mode.EffectiveCost,
+                isAvailable: mode.IsAvailable
+            }));
+            const selection = resolvePlayModeSelection(playModes, playabilityResult.SelectedPlayMode);
+
+            const playabilityInfo = {
+                cardUid: cardUid,
+                isPlayable: playabilityResult.IsPlayable,
+                requiresTargetSelection: playabilityResult.RequiresTargetSelection,
+                hasValidTargets: playabilityResult.HasValidTargets,
+                canPlayWithoutTarget: playabilityResult.CanPlayWithoutTarget,
+                failureReason: playabilityResult.FailureReason,
+                validTargetIds: playabilityResult.ValidTargetIds || [],
+                playModes: playModes,
+                selectedPlayMode: selection.mode,
+                selectedPlayCost: selection.cost,
+                selectedAbilityRuntimeId: playabilityResult.SelectedAbilityRuntimeId ?? null
+            };
+            gameState.playabilityCache[cardUid] = playabilityInfo;
+            hasHandCacheUpdate = true;
+            refreshBattleCardPreviewIfCurrent(cardInstance);
+        } else {
+            console.warn(`GM: Could not find card instance with UID ${instanceId} in local player's hand`);
         }
     });
+
+    if (hasHandCacheUpdate && gameState.phase !== 'Mulligan' && gameState.phase !== 'GameOver') {
+        updateHandDisplay(localPlayer.id, localPlayer.hand);
+    }
 
     // 可玩性高亮只在主流程阶段需要；Mulligan 阶段频繁重渲染会打断本地交互（如调度选牌）。
     if (gameState.phase === 'Mulligan' || gameState.phase === 'GameOver') {
@@ -1480,6 +1680,12 @@ export function handleHandPlayabilityUpdate(updateDto) {
 function _hydratePlayerProperties(playerInstance, playerDto) {
     if (!playerInstance || !playerDto) return;
     // Use PascalCase: CurrentPP, MaxPP, CurrentEP, MaxEP, CanEvolve, HasUnlockedEvolution, TurnNumber, DeckCount, Deck
+    playerInstance.isAI = playerDto.IsAI ?? playerDto.isAI ?? playerInstance.isAI ?? false;
+    playerInstance.isFirst = playerDto.IsFirst ?? playerDto.isFirst ?? playerInstance.isFirst ?? false;
+    playerInstance.class = playerDto.Class ?? playerDto.class ?? playerInstance.class ?? null;
+    playerInstance.displayName = playerDto.DisplayName ?? playerDto.displayName ?? playerInstance.displayName ?? '';
+    playerInstance.avatarUrl = playerDto.AvatarUrl ?? playerDto.avatarUrl ?? playerInstance.avatarUrl ?? '';
+    playerInstance.deckClass = playerDto.DeckClass ?? playerDto.deckClass ?? playerInstance.deckClass ?? '';
     playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
     playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
     playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
@@ -1487,15 +1693,39 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
     playerInstance.sep = playerDto.CurrentSEP ?? 0;
     playerInstance.maxSEP = playerDto.MaxSEP ?? 0;
-    playerInstance.bloodPool = playerDto.BloodPool ?? playerDto.bloodPool ?? 0;
-    playerInstance.combo = playerDto.Combo ?? playerDto.combo ?? 0;
+    const rawCounters = playerDto.Counters ?? playerDto.counters;
+    playerInstance.counters = (rawCounters && typeof rawCounters === 'object') ? { ...rawCounters } : {};
+    const rawCounterDisplayNames = playerDto.CounterDisplayNames ?? playerDto.counterDisplayNames;
+    playerInstance.counterDisplayNames = (rawCounterDisplayNames && typeof rawCounterDisplayNames === 'object')
+        ? { ...rawCounterDisplayNames }
+        : {};
+
+    const readCounter = (key, fallback = 0) => {
+        const normalizedKey = String(key ?? '').trim().toLowerCase();
+        if (normalizedKey && playerInstance.counters && typeof playerInstance.counters === 'object') {
+            for (const [entryKey, entryValue] of Object.entries(playerInstance.counters)) {
+                if (String(entryKey).trim().toLowerCase() !== normalizedKey) continue;
+                const parsed = Number(entryValue);
+                if (Number.isFinite(parsed)) {
+                    return Math.max(0, Math.trunc(parsed));
+                }
+            }
+        }
+        return Number.isFinite(Number(fallback)) ? Math.max(0, Math.trunc(Number(fallback))) : 0;
+    };
+
+    playerInstance.bloodPool = readCounter('bloodpool', playerDto.BloodPool ?? playerDto.bloodPool ?? 0);
+    playerInstance.combo = readCounter('combo', playerDto.Combo ?? playerDto.combo ?? 0);
     // FIXED: Backend sends CanEvolve, not CanEvolveThisTurn
       playerInstance.canEvolve = playerDto.CanEvolve ?? false; // PascalCase - Fixed property name
       playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? false;
-      playerInstance.hasUnlockedEvolution = playerDto.HasUnlockedEvolution ?? false; // PascalCase
+      playerInstance.hasUnlockedEvolution =
+          playerDto.IsEvolutionUnlocked ?? playerDto.HasUnlockedEvolution ?? false;
+      playerInstance.hasUnlockedSuperEvolution =
+          playerDto.IsSuperEvolutionUnlocked ?? playerDto.HasUnlockedSuperEvolution ?? false;
       playerInstance.turnNumber = playerDto.TurnNumber ?? 0; // 【架构重构】使用turnNumber属性名保持一致性
       playerInstance.deckCount = playerDto.DeckCount ?? (Array.isArray(playerDto.Deck) ? playerDto.Deck.length : 0); // PascalCase (x2)
-      playerInstance.graveyardCount = playerDto.GraveyardCount ?? playerInstance.graveyardCount ?? 0;
+      playerInstance.graveyardCount = readCounter('graveyard', playerDto.GraveyardCount ?? playerInstance.graveyardCount ?? 0);
       // Keep deck as simple array of IDs/DTOs from server if no methods needed client-side
       playerInstance.deck = Array.isArray(playerDto.Deck) ? [...playerDto.Deck] : []; // PascalCase (x2)
       // Mulligan
@@ -1930,12 +2160,13 @@ export function handleEpUpdate(eventData) {
     if (playerToUpdate) {
         playerToUpdate.ep = eventData.CurrentEp;
         playerToUpdate.maxEP = eventData.MaxEp;
-
-        // Update canEvolve flag based on EP availability
-        playerToUpdate.canEvolve = playerToUpdate.maxEP > 0 && playerToUpdate.ep > 0;
-
-
         updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
+        if (Array.isArray(playerToUpdate.field)) {
+            playerToUpdate.field.forEach(card => {
+                updateCardActionButtons(card);
+                refreshBattleCardPreviewIfCurrent(card);
+            });
+        }
     } else {
         console.warn(`GM: EpUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
     }
@@ -2000,11 +2231,13 @@ export function handleEpMaxUpdate(eventData) {
     } else if (playerToUpdate.ep > playerToUpdate.maxEP) {
         playerToUpdate.ep = playerToUpdate.maxEP;
     }
-
-    // canEvolve 规则：有上限且当前>0
-    playerToUpdate.canEvolve = playerToUpdate.maxEP > 0 && playerToUpdate.ep > 0;
-
     updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
+    if (Array.isArray(playerToUpdate.field)) {
+        playerToUpdate.field.forEach(card => {
+            updateCardActionButtons(card);
+            refreshBattleCardPreviewIfCurrent(card);
+        });
+    }
 }
 
 export function handleSepMaxUpdate(eventData) {
@@ -2242,6 +2475,94 @@ export function handleCardInstanceUpdated(eventData) {
     updatedInstances.forEach(instance => refreshBattleCardPreviewIfCurrent(instance));
 }
 
+export function handleCardMoved(eventData) {
+    const cardUid = eventData?.CardUid ?? eventData?.MovedCard?.InstanceId;
+    const ownerId = eventData?.PlayerId ?? eventData?.MovedCard?.OwnerPlayerId ?? eventData?.SourcePlayerId;
+    const fromZone = normalizeZoneName(eventData?.FromZone);
+    const toZone = normalizeZoneName(eventData?.ToZone);
+
+    if (!cardUid || !toZone) {
+        console.error("GM Error: Invalid data in handleCardMoved:", eventData);
+        return;
+    }
+
+    const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
+    const detached = detachCardFromAllZones(cardUid);
+
+    let movedInstance = eventData?.MovedCard ? createCardInstance(eventData.MovedCard) : null;
+    if (!movedInstance) {
+        movedInstance = detached.card;
+    }
+
+    if (!movedInstance) {
+        console.warn(`GM: CardMoved cannot hydrate card instance: ${cardUid}`);
+    }
+
+    const touchedZones = new Set();
+    const markTouched = (playerId, zoneName) => {
+        if (!playerId || !zoneName) return;
+        touchedZones.add(`${playerId}:${zoneName}`);
+    };
+
+    for (const removed of detached.removed) {
+        adjustZoneCount(getPlayerState(removed.playerId), removed.zone, removed.zone === "deck" || removed.zone === "graveyard" ? -1 : 0);
+        markTouched(removed.playerId, removed.zone);
+    }
+
+    const trackedZones = new Set(["hand", "field", "graveyard", "emblem", "deck"]);
+    if (trackedZones.has(toZone) && ownerPlayer) {
+        const destination = ensureZoneArray(ownerPlayer, toZone);
+        if (destination && movedInstance) {
+            movedInstance.ownerId = ownerPlayer.id;
+            movedInstance.zone = toZoneLabel(toZone);
+
+            const existingIndex = findCardInZoneArray(destination, cardUid);
+            if (existingIndex < 0) {
+                if (toZone === "field" && Number.isInteger(movedInstance.zoneIndex) && movedInstance.zoneIndex >= 0 && movedInstance.zoneIndex <= destination.length) {
+                    destination.splice(movedInstance.zoneIndex, 0, movedInstance);
+                } else {
+                    destination.push(movedInstance);
+                }
+            } else {
+                destination[existingIndex] = movedInstance;
+            }
+        }
+
+        adjustZoneCount(ownerPlayer, toZone, toZone === "deck" || toZone === "graveyard" ? 1 : 0);
+        markTouched(ownerPlayer.id, toZone);
+    }
+
+    if (fromZone && ownerPlayer && detached.removed.length === 0 && (fromZone === "deck" || fromZone === "graveyard")) {
+        adjustZoneCount(ownerPlayer, fromZone, -1);
+        markTouched(ownerPlayer.id, fromZone);
+    }
+
+    for (const key of touchedZones) {
+        const [playerId, zoneName] = key.split(":");
+        const player = getPlayerState(playerId);
+        if (player) {
+            refreshPlayerZoneUi(player, zoneName);
+        }
+    }
+
+    if (movedInstance) {
+        refreshBattleCardPreviewIfCurrent(movedInstance);
+    }
+
+    if (gameState.selectedAttackerUid && !findCardInstanceByUid(gameState.selectedAttackerUid)) {
+        gameState.selectedAttackerUid = null;
+        clearSelectionHighlights();
+    }
+}
+
+export function handleTuck(eventData) {
+    // Placeholder for tuck visual effects. Zone movement is handled by CardMoved.
+    if (!eventData || !eventData.CardUid) {
+        console.error("GM Error: Invalid data in handleTuck:", eventData);
+        return;
+    }
+}
+
 export function handleCounterChanged(eventData) {
     if (!eventData || !eventData.CounterName) {
         console.error("GM Error: Invalid data in handleCounterChanged:", eventData);
@@ -2288,12 +2609,24 @@ export function handleCounterChanged(eventData) {
             return;
         }
 
+        if (!player.counters || typeof player.counters !== 'object') {
+            player.counters = {};
+        }
+        player.counters[counterName] = newValue;
+
         if (normalizedCounter === 'bloodpool') {
             player.bloodPool = newValue;
             updateBloodPoolDisplay(player.id, player.bloodPool);
         } else if (normalizedCounter === 'combo') {
             player.combo = newValue;
             updateComboDisplay(player.id, player.combo);
+        } else if (normalizedCounter === 'graveyard') {
+            player.graveyardCount = newValue;
+            updateGraveyardCountDisplay(player.id, player.graveyardCount);
+        }
+
+        if (player.leaderCard) {
+            refreshBattleCardPreviewIfCurrent(player.leaderCard);
         }
     }
 }
@@ -2337,111 +2670,27 @@ export function handleGraveyardUpdate(eventData) {
     // The server's count is the source of truth.
     const newServerCount = eventData.GraveyardCount;
     playerToUpdate.graveyardCount = newServerCount; // Update local state model if you use it.
+    if (!playerToUpdate.counters || typeof playerToUpdate.counters !== 'object') {
+        playerToUpdate.counters = {};
+    }
+    playerToUpdate.counters.graveyard = newServerCount;
 
     // Log the update for clarity.
 
     // Directly call the UI update function with the correct player ID and the new count.
     // The UI function is responsible for determining if this is the 'local' or 'opponent' player.
     updateGraveyardCountDisplay(updatedPlayerId, newServerCount);
+    if (playerToUpdate.leaderCard) {
+        refreshBattleCardPreviewIfCurrent(playerToUpdate.leaderCard);
+    }
 }
 
 export function handleEmblemUpdated(eventData) {
-    // DTO: EmblemUpdatedEventDto { PlayerId, AddedEmblems[] }
-
+    // Zone movement is handled by CardMoved.
+    // This event is reserved for emblem-related visual effects.
     if (!eventData) {
         console.error("GM Error: Invalid data in handleEmblemUpdated:", eventData);
-        return;
     }
-
-    const playerId = eventData.PlayerId ?? eventData.SourcePlayerId;
-    if (!playerId) {
-        console.error("GM Error: handleEmblemUpdated missing PlayerId/SourcePlayerId:", eventData);
-        return;
-    }
-
-    const addedEmblems = Array.isArray(eventData.AddedEmblems)
-        ? eventData.AddedEmblems
-        : Array.isArray(eventData.Emblems)
-            ? eventData.Emblems
-            : [];
-
-    if (addedEmblems.length === 0) {
-        return;
-    }
-
-    const playerToUpdate = getPlayerState(playerId);
-    if (!playerToUpdate) {
-        console.warn(`GM: EmblemUpdated event received for invalid player: ${playerId}`);
-        return;
-    }
-
-    if (!Array.isArray(playerToUpdate.emblem)) {
-        playerToUpdate.emblem = [];
-    }
-
-    let stateChanged = false;
-    let handChanged = false;
-    const removedFieldUids = [];
-
-    for (const emblemDto of addedEmblems) {
-        if (!emblemDto) {
-            continue;
-        }
-
-        const emblemInstance = createCardInstance(emblemDto);
-        if (!emblemInstance) {
-            console.warn("GM: Failed to create emblem instance from DTO:", emblemDto);
-            continue;
-        }
-
-        emblemInstance.ownerId = playerToUpdate.id;
-        emblemInstance.zone = 'Emblem';
-
-        const emblemUid = emblemInstance.uid ?? emblemInstance.InstanceId ?? emblemInstance.instanceId;
-        if (!emblemUid) {
-            continue;
-        }
-
-        if (playerToUpdate.emblem.some(card => card && (card.uid === emblemUid || card.InstanceId === emblemUid))) {
-            continue;
-        }
-
-        const handIndex = playerToUpdate.hand.findIndex(card => card && (card.uid === emblemUid || card.InstanceId === emblemUid));
-        if (handIndex > -1) {
-            playerToUpdate.hand.splice(handIndex, 1);
-            handChanged = true;
-            stateChanged = true;
-        }
-
-        const fieldIndex = playerToUpdate.field.findIndex(card => card && (card.uid === emblemUid || card.InstanceId === emblemUid));
-        if (fieldIndex > -1) {
-            playerToUpdate.field.splice(fieldIndex, 1);
-            removedFieldUids.push(emblemUid);
-            stateChanged = true;
-        }
-
-        if (playerToUpdate.emblem.length >= MAX_EMBLEM_SIZE) {
-            console.warn(`GM: Emblem zone is full (${playerToUpdate.emblem.length}/${MAX_EMBLEM_SIZE}). Skipping emblem ${emblemInstance.name}.`);
-            continue;
-        }
-
-        playerToUpdate.emblem = [...playerToUpdate.emblem, emblemInstance];
-        stateChanged = true;
-    }
-
-    if (!stateChanged) {
-        return;
-    }
-
-    if (handChanged) {
-        updateHandDisplay(playerToUpdate.id, playerToUpdate.hand);
-    }
-
-    if (removedFieldUids.length) {
-        removedFieldUids.forEach(uid => removeUnitFromField(uid));
-    }
-
-    updateEmblemZone(playerToUpdate);
 }
 
 // Removed handleUnitPlayed function
@@ -2578,6 +2827,7 @@ export function handleKeywordAdded(eventData) {
 
     updateCardKeywords(unit, keyword, true);
     updateUnitDisplay(unit);
+    refreshBattleCardPreviewIfCurrent(unit);
     refreshAttackHighlightsIfNeeded();
 }
 
@@ -2597,193 +2847,55 @@ export function handleKeywordRemoved(eventData) {
 
     updateCardKeywords(unit, keyword, false);
     updateUnitDisplay(unit);
+    refreshBattleCardPreviewIfCurrent(unit);
     refreshAttackHighlightsIfNeeded();
 }
 
 export function handleUnitDestroyed(eventData) {
-    // DTO: UnitDestroyedEventDto { string UnitUid }
-    if (!eventData || !eventData.UnitUid) { // PascalCase
+    // DTO: UnitDestroyedEventDto { UnitUid, PlayerId, Reason }
+    // Zone movement is handled by CardMoved.
+    if (!eventData || !eventData.UnitUid) {
         console.error("GM Error: Invalid data in handleUnitDestroyed:", eventData);
         return;
     }
-    const unit = findCardInstanceByUid(eventData.UnitUid); // PascalCase
-    if (unit) {
-        // 【BUG修复】核心问题修复：在处理破坏事件时，必须将单位从本地gameState的field数组中移除。
-        // 之前的实现只移除了UI，但没有更新数据状态，导致后续重绘时“幽灵单位”重现。
-        const ownerPlayer = getPlayerState(unit.ownerId);
-        let removedFromField = false;
-        let removedFromEmblem = false;
-        if (ownerPlayer) {
-            if (Array.isArray(ownerPlayer.field)) {
-                const unitIndex = ownerPlayer.field.findIndex(
-                    u => u && (u.uid === eventData.UnitUid || u.InstanceId === eventData.UnitUid)
-                );
-                if (unitIndex > -1) {
-                    ownerPlayer.field.splice(unitIndex, 1);
-                    removedFromField = true;
-                }
-            }
-
-            if (Array.isArray(ownerPlayer.emblem)) {
-                const emblemIndex = ownerPlayer.emblem.findIndex(
-                    u => u && (u.uid === eventData.UnitUid || u.InstanceId === eventData.UnitUid)
-                );
-                if (emblemIndex > -1) {
-                    ownerPlayer.emblem.splice(emblemIndex, 1);
-                    removedFromEmblem = true;
-                }
-            }
-        }
-
-        // 仅从UI上移除单位的DOM元素（战场）
-        if (removedFromField || String(unit.zone).toLowerCase() === 'field') {
-            removeUnitFromField(eventData.UnitUid);
-        }
-
-        // 纹章被破坏时刷新纹章区
-        if (removedFromEmblem && ownerPlayer) {
-            updateEmblemZone(ownerPlayer);
-        }
-
-    } else {
-        console.warn(`GM: UnitDestroyed event received for invalid unit UID: ${eventData.UnitUid}`); // PascalCase
+    const unit = findCardInstanceByUid(eventData.UnitUid);
+    if (!unit) {
+        console.warn(`GM: UnitDestroyed event received for invalid unit UID: ${eventData.UnitUid}`);
+        return;
     }
+
+    // Placeholder for destroy visual effects.
+    refreshBattleCardPreviewIfCurrent(unit);
 }
 
 export function handleCardVanished(eventData) {
-    // DTO: CardVanishedEventDto { string CardUid, string PlayerId, string Reason }
+    // DTO: CardVanishedEventDto { CardUid, PlayerId, Reason }
+    // Zone movement is handled by CardMoved.
     if (!eventData || !eventData.CardUid) {
         console.error("GM Error: Invalid data in handleCardVanished:", eventData);
         return;
     }
 
-    const cardUid = eventData.CardUid;
-    const removedHandOwners = new Set();
-    const removedEmblemOwners = new Set();
-    let removedFromField = false;
-
-    for (const player of gameState.players) {
-        if (!player) {
-            continue;
-        }
-
-        if (Array.isArray(player.hand)) {
-            const handIndex = player.hand.findIndex(card => card && (card.uid === cardUid || card.InstanceId === cardUid));
-            if (handIndex > -1) {
-                player.hand.splice(handIndex, 1);
-                removedHandOwners.add(player.id);
-            }
-        }
-
-        if (Array.isArray(player.field)) {
-            const fieldIndex = player.field.findIndex(card => card && (card.uid === cardUid || card.InstanceId === cardUid));
-            if (fieldIndex > -1) {
-                player.field.splice(fieldIndex, 1);
-                removedFromField = true;
-            }
-        }
-
-        if (Array.isArray(player.emblem)) {
-            const emblemIndex = player.emblem.findIndex(card => card && (card.uid === cardUid || card.InstanceId === cardUid));
-            if (emblemIndex > -1) {
-                player.emblem.splice(emblemIndex, 1);
-                removedEmblemOwners.add(player.id);
-            }
-        }
-    }
-
-    if (removedFromField) {
-        removeUnitFromField(cardUid);
-    }
-
-    for (const ownerId of removedHandOwners) {
-        const player = getPlayerState(ownerId);
-        if (player) {
-            updateHandDisplay(player.id, player.hand);
-        }
-    }
-
-    for (const ownerId of removedEmblemOwners) {
-        const player = getPlayerState(ownerId);
-        if (player) {
-            updateEmblemZone(player);
-        }
+    const card = findCardInstanceByUid(eventData.CardUid);
+    if (card) {
+        // Placeholder for vanish visual effects.
+        refreshBattleCardPreviewIfCurrent(card);
     }
 }
 
 export function handleCardReturned(eventData) {
+    // Zone movement is handled by CardMoved.
     const cardUid = eventData?.CardUid ?? eventData?.ReturnedCard?.InstanceId;
-    const ownerId = eventData?.PlayerId ?? eventData?.SourcePlayerId ?? eventData?.ReturnedCard?.OwnerPlayerId;
-
-    if (!cardUid || !ownerId) {
+    if (!cardUid) {
         console.error("GM Error: Invalid data in handleCardReturned:", eventData);
         return;
     }
 
-    const ownerPlayer = getPlayerState(ownerId);
-    if (!ownerPlayer) {
-        console.warn(`GM: CardReturned event received for invalid player: ${ownerId}`);
-        return;
+    const returnedCard = findCardInstanceByUid(cardUid);
+    if (returnedCard) {
+        // Placeholder for return visual effects.
+        refreshBattleCardPreviewIfCurrent(returnedCard);
     }
-
-    if (!Array.isArray(ownerPlayer.hand)) {
-        ownerPlayer.hand = [];
-    }
-
-    let returnedInstance = null;
-    let fieldChanged = false;
-    let emblemChanged = false;
-
-    const detachByUid = (arr, zoneName) => {
-        if (!Array.isArray(arr)) {
-            return null;
-        }
-
-        const idx = arr.findIndex(card => card && (card.uid === cardUid || card.InstanceId === cardUid));
-        if (idx < 0) {
-            return null;
-        }
-
-        const [removed] = arr.splice(idx, 1);
-        if (zoneName === 'Field') {
-            fieldChanged = true;
-        } else if (zoneName === 'Emblem') {
-            emblemChanged = true;
-        }
-        return removed ?? null;
-    };
-
-    returnedInstance = detachByUid(ownerPlayer.hand, 'Hand') || returnedInstance;
-    returnedInstance = detachByUid(ownerPlayer.field, 'Field') || returnedInstance;
-    returnedInstance = detachByUid(ownerPlayer.emblem, 'Emblem') || returnedInstance;
-    returnedInstance = detachByUid(ownerPlayer.graveyard, 'Graveyard') || returnedInstance;
-
-    if (!returnedInstance && eventData?.ReturnedCard) {
-        returnedInstance = createCardInstance(eventData.ReturnedCard);
-    }
-
-    if (!returnedInstance) {
-        console.warn(`GM: CardReturned unable to hydrate card instance: ${cardUid}`);
-        return;
-    }
-
-    returnedInstance.ownerId = ownerPlayer.id;
-    returnedInstance.zone = 'Hand';
-
-    const existsInHand = ownerPlayer.hand?.some(card => card && (card.uid === cardUid || card.InstanceId === cardUid));
-    if (!existsInHand) {
-        ownerPlayer.hand.push(returnedInstance);
-    }
-
-    if (fieldChanged) {
-        updateFieldDisplay(ownerPlayer.id, ownerPlayer.field);
-    }
-    if (emblemChanged) {
-        updateEmblemZone(ownerPlayer);
-    }
-
-    updateHandDisplay(ownerPlayer.id, ownerPlayer.hand);
-    refreshBattleCardPreviewIfCurrent(returnedInstance);
 }
 
 export function handleAttackDeclared(eventData) {
@@ -2925,134 +3037,22 @@ export function handleHealApplied(eventData) {
 // --- NEW Refactored Event Handlers ---
 
 export function handleCardPlayed(eventData) {
-    // DTO: CardPlayedEventDto { SourcePlayerId: string, PlayedCardInstance: CardInstanceDto, TargetUid?: string } // Corrected DTO structure based on error log
-
-    try {
-        // Use PascalCase: SourcePlayerId, PlayedCardInstance, PlayedCardInstance.InstanceId
-        // Validate the corrected DTO structure based on the error log
-        if (!eventData || !eventData.SourcePlayerId || !eventData.PlayedCardInstance || !eventData.PlayedCardInstance.InstanceId) {
-            console.error("GM Error: Invalid data in handleCardPlayed (Expected SourcePlayerId and PlayedCardInstance with InstanceId):", eventData);
-            return;
-        }
-
-        // Find the player who played the card using SourcePlayerId
-        const playingPlayer = getPlayerState(eventData.SourcePlayerId); // Use SourcePlayerId
-        if (!playingPlayer) {
-            console.error(`[handleCardPlayed] Player not found: ${eventData.SourcePlayerId}`); // Use SourcePlayerId
-            return;
-        }
-
-        // --- BUG-022 Fix Start ---
-        // Extract the UID from the nested instance object
-        const playedCardUid = eventData.PlayedCardInstance.InstanceId; // Get UID from instance
-
-        // Find the index of the played card in the player's hand using the extracted UID
-        const cardIndex = playingPlayer.hand.findIndex(card => card && card.InstanceId === playedCardUid);
-
-        if (cardIndex !== -1) {
-            // Remove the card from the hand state
-            const playedCard = playingPlayer.hand.splice(cardIndex, 1)[0]; // Remove and get the card
-
-            // Update the hand UI
-            updateHandDisplay(playingPlayer.id, playingPlayer.hand);
-        } else {
-            // This might happen if the card was already removed by another event
-            // or if the event data is inconsistent.
-            console.warn(`[handleCardPlayed] Card with UID ${playedCardUid} not found in ${playingPlayer.id}'s hand state. Hand UI might be already updated or state is inconsistent.`);
-            // Still update the display just in case the UI is out of sync with the state we have
-            updateHandDisplay(playingPlayer.id, playingPlayer.hand);
-        }
-        // --- BUG-022 Fix End ---
-
-        // TODO: Implement logic to visually show the card being played (animation?)
-        // Note: PP update should be handled by PpUpdateEvent.
-        // Note: Graveyard update should be handled by GraveyardUpdateEvent.
-
-    } catch (error) {
-        console.error("Error handling CardPlayed event:", error, eventData);
+    // Zone movement is handled by CardMoved.
+    if (!eventData || !eventData.SourcePlayerId || !eventData.PlayedCardInstance?.InstanceId) {
+        console.error("GM Error: Invalid data in handleCardPlayed:", eventData);
+        return;
     }
+
+    // Placeholder for play-card visual effects.
 }
 
 export function handleCardSummoned(eventData) {
-    // DTO: CardSummonedEventDto { SourcePlayerId, SummonedCard (CardInstanceDto), Source, TimestampUtc }
-    // Use PascalCase: SourcePlayerId, SummonedCard
-    if (!eventData || !eventData.SourcePlayerId || !eventData.SummonedCard) { // Corrected property check
-        console.error("GM Error: Invalid data in handleCardSummoned:", eventData); // Corrected function name in error
+    // Zone movement is handled by CardMoved.
+    // This event is reserved for summon visual effects.
+    if (!eventData || !eventData.SourcePlayerId || !eventData.SummonedCard) {
+        console.error("GM Error: Invalid data in handleCardSummoned:", eventData);
         return;
     }
-    // Use PascalCase: SourcePlayerId
-    const ownerPlayer = getPlayerState(eventData.SourcePlayerId); // Corrected property access
-    if (!ownerPlayer) {
-        // Use PascalCase: SourcePlayerId
-        console.warn(`GM: CardSummoned event received for invalid player: ${eventData.SourcePlayerId}`); // Corrected property access
-        return;
-    }
-
-    let handChanged = false;
-    // Remove the card from hand using SourceCardUid if provided (optional) - Assuming SourceCardUid might still be relevant if summoned from hand effect
-    // Use PascalCase: SourceCardUid
-    if (eventData.SourceCardUid) { // PascalCase
-        // Use PascalCase: SourceCardUid
-        const handIndex = ownerPlayer.hand.findIndex(c => c && c.uid === eventData.SourceCardUid); // PascalCase
-        if (handIndex > -1) {
-            const removedCard = ownerPlayer.hand.splice(handIndex, 1)[0];
-            // Use PascalCase: SourceCardUid
-            handChanged = true;
-        } else {
-            // Use PascalCase: SourceCardUid
-            console.warn(`GM: CardSummoned event SourceCardUid ${eventData.SourceCardUid} not found in player ${ownerPlayer.id}'s hand.`); // PascalCase
-        }
-    }
-
-    // HYDRATION: Create full instance from the SummonedCard DTO
-    // Use PascalCase: SummonedCard
-    const entityInstance = createCardInstance(eventData.SummonedCard); // Corrected property access
-    if (!entityInstance) {
-        // Use PascalCase: SummonedCard
-        console.error(`GM: Failed to create instance for CardSummoned DTO for player ${ownerPlayer.id}:`, eventData.SummonedCard); // Corrected property access
-        return;
-    }
-
-    entityInstance.ownerId = ownerPlayer.id; // Ensure owner is set
-    entityInstance.zone = 'Field'; // Ensure zone
-
-    // Hydrate dynamic state from the SummonedCard DTO (which is a CardInstanceDto)
-    if (entityInstance.type === 'Follower' || entityInstance.type === 'Follower_Evolved') {
-        // Use PascalCase: SummonedCard.CanAttack, SummonedCard.CurrentAttack, SummonedCard.CurrentHealth, SummonedCard.IsEvolved
-        entityInstance.canAttack = eventData.SummonedCard.CanAttack ?? false; // Corrected property access
-        entityInstance.currentAttack = eventData.SummonedCard.CurrentAttack ?? entityInstance.attack; // Corrected property access
-        entityInstance.currentHealth = eventData.SummonedCard.CurrentHealth ?? entityInstance.health; // Corrected property access
-        entityInstance.isEvolved = eventData.SummonedCard.IsEvolved ?? false; // Corrected property access
-        entityInstance.fieldTurn = eventData.SummonedCard.FieldTurn ?? entityInstance.fieldTurn ?? 0;
-    } else if (entityInstance.type === 'Amulet') {
-        // Add amulet-specific hydration if needed (e.g., countdown)
-        // Use PascalCase: SummonedCard.Countdown
-        // entityInstance.countdown = eventData.SummonedCard.Countdown ?? entityInstance.countdown; // Corrected property access
-    }
-
-    // Use PascalCase: SummonedCard
-
-    let fieldChanged = false;
-    // Avoid adding duplicates
-    if (!ownerPlayer.field.some(f => f && f.uid === entityInstance.uid)) {
-        if (ownerPlayer.field.length < MAX_FIELD_SIZE) {
-            ownerPlayer.field = [...ownerPlayer.field, entityInstance]; // Create new array
-            fieldChanged = true;
-        } else {
-            console.warn(`GM: EntityEnteredPlay event received for ${entityInstance.name}, but player ${ownerPlayer.id}'s field is full (${ownerPlayer.field.length}/${MAX_FIELD_SIZE}). Entity not added client-side.`);
-        }
-    } else {
-        console.warn(`GM: EntityEnteredPlay event received for entity UID ${entityInstance.uid} which is already present on player ${ownerPlayer.id}'s field.`);
-    }
-
-    // Re-render if hand or field changed
-    if (fieldChanged) { // Only update field if field changed
-        const appended = addUnitToField(ownerPlayer.id, entityInstance); // Add the specific unit to the field UI
-        if (!appended) {
-            updateFieldDisplay(ownerPlayer.id, ownerPlayer.field);
-        }
-    }
-    // Hand update is now handled by handleCardPlayed
 }
 
 // --- END NEW Refactored Event Handlers ---
@@ -3245,16 +3245,20 @@ export function handlePlayerChoiceRequested(eventData) {
         return;
     }
 
+    const dedupeKey = `${choiceRequest.PendingChoiceId ?? ''}:${choiceRequest.SourceAbilityRuntimeId}`;
+    if (dedupeKey === lastHandledChoiceRequestKey) {
+        return;
+    }
+    lastHandledChoiceRequestKey = dedupeKey;
+
     // The primary role of this handler is to pass the choice request to the UI module.
     try {
-        import('./ui.js').then(uiModule => {
-            if (uiModule.showPlayerChoiceUI) {
-                // Pass the nested choiceRequest object to the UI function.
-                uiModule.showPlayerChoiceUI(choiceRequest);
-            } else {
-                console.error("GM Error: ui.js module does not have showPlayerChoiceUI function.");
-            }
-        });
+        if (showPlayerChoiceUI) {
+            // Pass the nested choiceRequest object to the UI function.
+            showPlayerChoiceUI(choiceRequest);
+        } else {
+            console.error("GM Error: ui.js module does not have showPlayerChoiceUI function.");
+        }
     } catch (error) {
         console.error("GM Error: Failed to load or call ui.js for PlayerChoiceRequested:", error);
     }
@@ -3274,11 +3278,9 @@ export function handleCardRevealed(eventData) {
 
     // Show a transient overlay; do not modify authoritative state.
     try {
-        import('./ui.js').then(uiModule => {
-            if (uiModule.showRevealOverlay) {
-                uiModule.showRevealOverlay(revealedCard);
-            }
-        });
+        if (showRevealOverlay) {
+            showRevealOverlay(revealedCard);
+        }
     } catch (error) {
         console.error("GM Error: Failed to show reveal overlay:", error);
     }
@@ -3302,11 +3304,9 @@ export function handleFusion(eventData) {
     appendSystemLog(`${who}融合了${fusedCount}张卡`);
 
     try {
-        import('./ui.js').then(uiModule => {
-            if (uiModule.showFusionAnimation) {
-                uiModule.showFusionAnimation(sourcePlayerId, fusedIds);
-            }
-        });
+        if (showFusionAnimation) {
+            showFusionAnimation(sourcePlayerId, fusedIds);
+        }
     } catch (error) {
         console.error("GM Error: Failed to show fusion animation:", error);
     }

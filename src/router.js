@@ -70,7 +70,7 @@ class Router {
 
         this.routes.set('dev-tools', {
             element: document.getElementById('dev-tools-page'),
-            title: '系统核心 - 影之诗 星云',
+            title: '系统设置 - 影之诗 星云',
             init: this.initDevToolsPage.bind(this),
             cleanup: this.cleanupDevToolsPage.bind(this)
         });
@@ -317,8 +317,14 @@ class Router {
     async initDevToolsPage() {
 
         try {
-            const module = await import('./devToolsLogViewer.js');
-            await module.initializeDevToolsLogViewer();
+            const [logModule, userModule] = await Promise.all([
+                import('./devToolsLogViewer.js'),
+                import('./devToolsUserManagement.js')
+            ]);
+            await Promise.all([
+                logModule.initializeDevToolsLogViewer(),
+                userModule.initializeDevToolsUserManagement()
+            ]);
         } catch (error) {
             console.error('Router: Failed to initialize dev tools:', error);
         }
@@ -326,8 +332,14 @@ class Router {
 
     async cleanupDevToolsPage() {
         try {
-            const module = await import('./devToolsLogViewer.js');
-            await module.cleanupDevToolsLogViewer();
+            const [logModule, userModule] = await Promise.all([
+                import('./devToolsLogViewer.js'),
+                import('./devToolsUserManagement.js')
+            ]);
+            await Promise.all([
+                logModule.cleanupDevToolsLogViewer(),
+                userModule.cleanupDevToolsUserManagement()
+            ]);
         } catch (error) {
             console.error('Router: Failed to cleanup dev tools:', error);
         }

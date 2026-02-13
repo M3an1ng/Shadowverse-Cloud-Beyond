@@ -1,6 +1,8 @@
 using AutoMapper;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace ShadowverseBeyond.Server.Mappings
@@ -17,15 +19,71 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.PpBoostUsesAvailable, opt => opt.MapFrom(src => src.PpBoostUsesAvailable))
                 .ForMember(dest => dest.MaxEP, opt => opt.MapFrom(src => src.MaxEvolutionPoints))
                 .ForMember(dest => dest.CurrentEP, opt => opt.MapFrom(src => src.CurrentEvolutionPoints))
+                .ForMember(dest => dest.IsEvolutionUnlocked, opt => opt.MapFrom(src => src.IsEvolutionUnlocked))
+                .ForMember(dest => dest.CanEvolve, opt => opt.MapFrom(src => src.CanEvolve))
                 .ForMember(dest => dest.MaxSEP, opt => opt.MapFrom(src => src.MaxSuperEvolutionPoints))
                 .ForMember(dest => dest.CurrentSEP, opt => opt.MapFrom(src => src.CurrentSuperEvolutionPoints))
+                .ForMember(dest => dest.IsSuperEvolutionUnlocked, opt => opt.MapFrom(src => src.IsSuperEvolutionUnlocked))
                 .ForMember(dest => dest.CanSuperEvolve, opt => opt.MapFrom(src => src.CanSuperEvolve))
+                .ForMember(dest => dest.Class, opt => opt.MapFrom(src => src.Class))
+                .ForMember(dest => dest.DisplayName, opt => opt.MapFrom(src => src.DisplayName))
+                .ForMember(dest => dest.AvatarUrl, opt => opt.MapFrom(src => src.AvatarUrl))
                 .ForMember(dest => dest.GraveyardCount, opt => opt.MapFrom(src => src.GraveyardCount))
                 .ForMember(dest => dest.BloodPool, opt => opt.MapFrom(src => src.BloodPool))
+                .ForMember(dest => dest.Counters, opt => opt.MapFrom(src => BuildCounterSnapshot(src)))
+                .ForMember(dest => dest.CounterDisplayNames, opt => opt.MapFrom(src => BuildCounterDisplayNameSnapshot(src)))
                 .ForMember(dest => dest.LeaderCard, opt => opt.MapFrom(src => src.Leader))
                 // Field 已不再包含主战者；这里保留防御性过滤，避免遗留状态误入前端。
                 .ForMember(dest => dest.Field, opt => opt.MapFrom(src => src.Field.Where(card => card == null || !card.IsLeader)))
                 .ForMember(dest => dest.Emblem, opt => opt.MapFrom(src => src.Emblem));
+        }
+
+        private static Dictionary<string, int> BuildCounterSnapshot(PlayerState playerState)
+        {
+            if (playerState == null)
+            {
+                return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in playerState.CounterMap)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    continue;
+                }
+
+                result[pair.Key] = Math.Max(0, pair.Value);
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, string> BuildCounterDisplayNameSnapshot(PlayerState playerState)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [PlayerState.ComboCounterKey] = "连击数",
+                [PlayerState.GraveyardCounterKey] = "墓场数",
+                [PlayerState.BloodPoolCounterKey] = "血池"
+            };
+
+            if (playerState == null)
+            {
+                return result;
+            }
+
+            foreach (var key in playerState.CounterMap.Keys)
+            {
+                if (string.IsNullOrWhiteSpace(key) || result.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                result[key] = key.Trim();
+            }
+
+            return result;
         }
     }
 }

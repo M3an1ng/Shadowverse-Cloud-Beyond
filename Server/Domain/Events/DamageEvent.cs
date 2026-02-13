@@ -7,6 +7,7 @@ using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
 using System;
 using ShadowverseBeyond.Server.Domain.Identifiers;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -23,10 +24,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("伤害", "当对目标造成伤害时触发的事件。", EventType.Damage)]
     public class DamageEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("伤害值", "造成的伤害数值。")]
+        [GameEventParameter("伤害值", "造成的伤害数值。", Scope = GameEventParameterScope.Input)]
         public int Damage { get; }
 
-        [GameEventParameter("实际伤害值", "实际造成的伤害数值（考虑护盾、超进化免伤等）。")]
+        [GameEventParameter("实际伤害值", "实际造成的伤害数值（考虑屏障、超进化免伤等）。", Scope = GameEventParameterScope.Output)]
         public int ActualDamage { get; private set; }
 
         [GameEventParameter("伤害来源", "造成伤害的卡牌。", DslDisplayTypeName = "事件源")]
@@ -38,7 +39,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("伤害类型", "伤害来源类型（战斗/能力等）。")]
         public DamageKind Kind { get; }
 
-        [GameEventParameter("反击伤害", "是否为反击（被动）造成的伤害。")]
         public bool IsCounterAttack { get; }
 
         public DamageEvent(CardInstance target, int damage, CardInstance source)
@@ -71,12 +71,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             var result = new DomainOperationResult { Success = true };
             var card = DamageTarget;
+            if (card.CurrentZone == CardZone.Graveyard || card.CurrentZone == CardZone.Removed)
+            {
+                ActualDamage = 0;
+                result.Success = false;
+                result.ErrorMessage = $"DamageEvent target {card.InstanceId} is no longer valid in zone {card.CurrentZone}.";
+                return result;
+            }
 
             int oldHealth = card.CurrentHealth;
             int intendedDamage = this.Damage;
             var targetKeywords = context.BuffService.GetEffectiveKeywords(card, context);
             var hasShield = targetKeywords.Contains(CardKeyword.Shield);
-            var rawDamage = hasShield ? 0 : Math.Max(0, intendedDamage);
+            var isSuperEvolveDamageImmune = IsSuperEvolveDamageImmune(card, context);
+            var rawDamage = hasShield || isSuperEvolveDamageImmune ? 0 : Math.Max(0, intendedDamage);
             int newHealth = oldHealth - rawDamage;
             ActualDamage = rawDamage;
 
@@ -111,11 +119,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
                         result.GeneratedEvents.Add(new HealEvent(owner.Leader, rawDamage, DamageSource));
                     }
                 }
-
-                if (sourceKeywords.Contains(CardKeyword.Bane) && card.IsFollower && newHealth > 0)
-                {
-                    result.GeneratedEvents.Add(new DestroyEvent(card, DamageSource, "DestroyedByBane"));
-                }
             }
 
             // If a leader reaches 0 health, the game ends (leaders are not destroyed as normal cards).
@@ -131,17 +134,28 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
                 if (winnerId.HasValue && winnerId.Value != Guid.Empty)
                 {
-                    result.GeneratedEvents.Add(new GameEndEvent(winnerId.Value, loserId, "Leader health reached zero"));
+                    result.GeneratedEvents.Add(new GameEndEvent(winnerId.Value, loserId, "主战者生命值归零"));
                 }
             }
             // If a non-leader reaches 0 health, schedule destruction after health is applied.
-            else if (newHealth <= 0)
+            else if (newHealth <= 0 && Kind != DamageKind.Combat)
             {
                 var sourceCard = DamageSource ?? card; // fallback to self if missing
-                result.GeneratedEvents.Add(new DestroyEvent(card, sourceCard, "DestroyedByDamage"));
+                result.GeneratedEvents.Add(new DestroyEvent(card, sourceCard, EventReasonSource.System));
             }
 
             return result;
+        }
+
+        private static bool IsSuperEvolveDamageImmune(CardInstance target, GameContext context)
+        {
+            if (!target.IsSuperEvolved || !target.IsFollower)
+            {
+                return false;
+            }
+
+            var activePlayerId = context.CurrentGameState.CurrentPlayerId;
+            return activePlayerId.HasValue && target.OwnerPlayerId == activePlayerId.Value;
         }
 
         public string GetAnnouncement(GameState gameState)

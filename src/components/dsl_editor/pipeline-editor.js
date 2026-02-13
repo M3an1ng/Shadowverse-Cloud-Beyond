@@ -1,6 +1,7 @@
-import { createValueNode, validateAST, findIncompleteNode } from "./core.js";
+import { createValueNode, validateAST, findIncompleteNode, getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 import { PIPELINE_STAGE_META, isListOperationNode, extractListPipeline, rebuildListChainFromStages, createStageNode } from "./pipeline.js";
 import { finalizeDraftInputs } from "./ast-normalize.js";
+import { resolveEventTypeHintFromSource } from "./event-translation.js";
 
 export function createPipelineEditState() {
     return {
@@ -16,6 +17,7 @@ function createPipelineContextState() {
     return {
         pipelineOpen: false,
         pipelineOpenSource: null,
+        pipelineOpenMode: null,
         pipelineEditState: createPipelineEditState()
     };
 }
@@ -71,6 +73,7 @@ export function markPipelineContextDirty(editor) {
     editor.pipelineContextStore.set(editor.pipelineActiveContextKey, {
         pipelineOpen: Boolean(editor.pipelineOpen),
         pipelineOpenSource: editor.pipelineOpenSource || null,
+        pipelineOpenMode: editor.pipelineOpenMode || null,
         pipelineEditState: editor.pipelineEditState || createPipelineEditState()
     });
 }
@@ -81,7 +84,6 @@ export function syncPipelineContext(editor) {
 
     const nextKey = getCurrentPipelineContextKey(editor);
     const currentKey = editor.pipelineActiveContextKey;
-    const hasBootstrappedState = editor.pipelineContextStore.has(nextKey);
 
     if (currentKey && currentKey !== nextKey) {
         markPipelineContextDirty(editor);
@@ -91,19 +93,13 @@ export function syncPipelineContext(editor) {
         return nextKey;
     }
 
-    // 首次进入上下文时，沿用当前实例上的兼容字段，避免覆盖旧调用路径预先设置的状态
-    if (!currentKey && !hasBootstrappedState) {
-        editor.pipelineContextStore.set(nextKey, {
-            pipelineOpen: Boolean(editor.pipelineOpen),
-            pipelineOpenSource: editor.pipelineOpenSource || null,
-            pipelineEditState: editor.pipelineEditState || createPipelineEditState()
-        });
-    }
-
-    const state = editor.pipelineContextStore.get(nextKey) || createPipelineContextState();
-    editor.pipelineOpen = Boolean(state.pipelineOpen);
-    editor.pipelineOpenSource = state.pipelineOpenSource || null;
-    editor.pipelineEditState = state.pipelineEditState || createPipelineEditState();
+    // 需求：工作区加载时默认折叠管线，仅在用户点击管线入口后展开
+    const collapsedState = createPipelineContextState();
+    editor.pipelineOpen = false;
+    editor.pipelineOpenSource = null;
+    editor.pipelineOpenMode = null;
+    editor.pipelineEditState = collapsedState.pipelineEditState;
+    editor.pipelineContextStore.set(nextKey, collapsedState);
     editor.pipelineActiveContextKey = nextKey;
     return nextKey;
 }
@@ -116,11 +112,252 @@ export function unwrapEncapsulatedNode(editor, node) {
     return node;
 }
 
+function getSemanticType(editor, node) {
+    if (!node) return null;
+    if (typeof editor?.getSemanticNodeType === "function") {
+        return editor.getSemanticNodeType(node);
+    }
+    return getCoreSemanticNodeType(node);
+}
+
+function getLightFocusSlotNode(editor) {
+    const focus = editor?.lightWorkspaceFocus;
+    if (!focus?.parentNode || !focus?.slot) return null;
+    const { parentNode, slot, index } = focus;
+    if (parentNode.type === "virtualRoot" && slot === "main") return parentNode.main || null;
+    if (parentNode.type === "operator") {
+        return slot === "left"
+            ? parentNode.leftOperand || null
+            : slot === "right"
+                ? parentNode.rightOperand || null
+                : null;
+    }
+    if (parentNode.type === "functionCall" && slot === "arg") {
+        const argIndex = typeof index === "number" ? index : 0;
+        return (parentNode.args || [])[argIndex] || null;
+    }
+    if (parentNode.type === "listQuery" && slot === "filterExpression") return parentNode.filterExpression || null;
+    if (parentNode.type === "listSort" && slot === "sortExpression") return parentNode.sortExpression || null;
+    if (parentNode.type === "listTake" && slot === "countExpression") return parentNode.countExpression || null;
+    if (parentNode.type === "listDistinct" && slot === "keyExpression") return parentNode.keyExpression || null;
+    if (parentNode.type === "listSelect" && slot === "selectExpression") return parentNode.selectExpression || null;
+    return null;
+}
+
+function canStartPipelineFromNode(editor, node) {
+    if (!node) return false;
+    const nodeType = getSemanticType(editor, node);
+    if (!nodeType) return false;
+    if (typeof editor.canOpenPipelineOnType === "function") {
+        return editor.canOpenPipelineOnType(nodeType);
+    }
+    if (editor.isCollectionType(nodeType)) return true;
+    return typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(nodeType);
+}
+
+function findPipelineTargetLocation(editor, root, requestedSource) {
+    if (!root || !requestedSource) return null;
+    const visited = new Set();
+    let found = null;
+
+    const matches = (node) => {
+        if (!node) return false;
+        return node === requestedSource;
+    };
+
+    const visit = (node, parentNode = null, slot = null, index = null) => {
+        if (!node || typeof node !== "object" || found) return;
+        if (visited.has(node)) return;
+        visited.add(node);
+
+        if (matches(node) && canStartPipelineFromNode(editor, node)) {
+            found = { node, parentNode, slot, index };
+            return;
+        }
+
+        if (node.type === "value" && node.metadata?.type === "encapsulated" && node.metadata?.innerAST) {
+            visit(node.metadata.innerAST, node, "innerAST", null);
+            return;
+        }
+
+        if (node.type === "operator") {
+            visit(node.leftOperand, node, "left", null);
+            visit(node.rightOperand, node, "right", null);
+            return;
+        }
+
+        if (node.type === "functionCall") {
+            (node.args || []).forEach((arg, argIndex) => visit(arg, node, "arg", argIndex));
+            return;
+        }
+
+        if (node.type === "listQuery") {
+            visit(node.source, node, "source", null);
+            visit(node.filterExpression, node, "filterExpression", null);
+            return;
+        }
+
+        if (node.type === "listSort") {
+            visit(node.source, node, "source", null);
+            visit(node.sortExpression, node, "sortExpression", null);
+            return;
+        }
+
+        if (node.type === "listTake") {
+            visit(node.source, node, "source", null);
+            visit(node.countExpression, node, "countExpression", null);
+            return;
+        }
+
+        if (node.type === "listDistinct") {
+            visit(node.source, node, "source", null);
+            visit(node.keyExpression, node, "keyExpression", null);
+            return;
+        }
+
+        if (node.type === "listSelect") {
+            visit(node.source, node, "source", null);
+            visit(node.selectExpression, node, "selectExpression", null);
+        }
+    };
+
+    visit(root, null, null, null);
+    return found;
+}
+
+function collectPipelineCandidates(root) {
+    const result = [];
+    const visited = new Set();
+
+    const visit = (node, parentNode = null, slot = null, index = null) => {
+        if (!node || typeof node !== "object") return;
+        if (visited.has(node)) return;
+        visited.add(node);
+
+        if (node.type === "value" && node.metadata?.type === "encapsulated" && node.metadata?.innerAST) {
+            visit(node.metadata.innerAST, node, "innerAST", null);
+            return;
+        }
+
+        if (isListOperationNode(node) && !isListOperationNode(parentNode)) {
+            const pipeline = extractListPipeline(node);
+            if (pipeline?.source) {
+                result.push({
+                    root: node,
+                    parentNode,
+                    slot,
+                    index,
+                    source: pipeline.source,
+                    stages: pipeline.stages,
+                    allowEmpty: true
+                });
+            }
+        }
+
+        if (node.type === "operator") {
+            visit(node.leftOperand, node, "left", null);
+            visit(node.rightOperand, node, "right", null);
+            return;
+        }
+
+        if (node.type === "functionCall") {
+            (node.args || []).forEach((arg, argIndex) => visit(arg, node, "arg", argIndex));
+            return;
+        }
+
+        if (node.type === "listQuery") {
+            visit(node.source, node, "source", null);
+            visit(node.filterExpression, node, "filterExpression", null);
+            return;
+        }
+
+        if (node.type === "listSort") {
+            visit(node.source, node, "source", null);
+            visit(node.sortExpression, node, "sortExpression", null);
+            return;
+        }
+
+        if (node.type === "listTake") {
+            visit(node.source, node, "source", null);
+            visit(node.countExpression, node, "countExpression", null);
+            return;
+        }
+
+        if (node.type === "listDistinct") {
+            visit(node.source, node, "source", null);
+            visit(node.keyExpression, node, "keyExpression", null);
+            return;
+        }
+
+        if (node.type === "listSelect") {
+            visit(node.source, node, "source", null);
+            visit(node.selectExpression, node, "selectExpression", null);
+        }
+    };
+
+    visit(root, null, null, null);
+    return result;
+}
+
+function clearPipelineEditState(editor) {
+    editor.pipelineEditState = createPipelineEditState();
+}
+
+function alignPipelineEditState(editor, pipelineContext) {
+    const state = editor.pipelineEditState;
+    if (!state?.node) return;
+    const stages = Array.isArray(pipelineContext?.stages) ? pipelineContext.stages : [];
+    const stillExists = stages.some((stage) => stage?.node === state.node);
+    if (!stillExists) {
+        clearPipelineEditState(editor);
+    }
+}
+
+function writeChildNode(editor, parentNode, slot, index, nextNode) {
+    if (!editor || typeof editor.setSlotNode !== "function") return false;
+    return editor.setSlotNode(parentNode, slot, index, nextNode);
+}
+
+function applyPipelineRootReplacement(editor, pipelineContext, newRoot) {
+    if (!pipelineContext?.parentNode) {
+        editor.workspaceAST = newRoot;
+        return;
+    }
+    const updated = writeChildNode(editor, pipelineContext.parentNode, pipelineContext.slot, pipelineContext.index, newRoot);
+    if (!updated) {
+        console.warn("DslEditor: applyPipelineRootReplacement failed to write slot.", pipelineContext);
+    }
+}
+
 export function getPipelineContext(editor) {
     syncPipelineContext(editor);
     const root = unwrapEncapsulatedNode(editor, editor.workspaceAST);
     if (!root) return null;
     if (!editor.pipelineOpen) return null;
+    if (editor.pipelineOpenMode === "fresh") {
+        const freshSource = editor.pipelineOpenSource || root;
+        const sourceType = getSemanticType(editor, freshSource);
+        const allowSingleton = sourceType
+            && !editor.isCollectionType(sourceType)
+            && typeof editor.canOpenPipelineOnType === "function"
+            && editor.canOpenPipelineOnType(sourceType);
+        if (!sourceType || (!editor.isCollectionType(sourceType) && !allowSingleton)) {
+            editor.pipelineOpen = false;
+            editor.pipelineOpenSource = null;
+            editor.pipelineOpenMode = null;
+            markPipelineContextDirty(editor);
+            return null;
+        }
+        return {
+            root: freshSource,
+            parentNode: null,
+            slot: null,
+            index: null,
+            source: freshSource,
+            stages: [],
+            allowEmpty: true
+        };
+    }
     if (root.type === "value" && root.metadata?.type === "rawText") {
         const rawText = String(root.value || root.metadata?.rawText || "");
         if (/\.(query|orderBy|take|distinct|select)\s*\(/i.test(rawText)) {
@@ -132,59 +369,105 @@ export function getPipelineContext(editor) {
             };
         }
     }
-    if (isListOperationNode(root)) {
-        const pipeline = extractListPipeline(root);
-        if (!pipeline) return null;
-        editor.pipelineOpenSource = pipeline.source || null;
-        markPipelineContextDirty(editor);
-        return {
-            root,
-            source: pipeline.source,
-            stages: pipeline.stages,
-            allowEmpty: true
-        };
+
+    const pipelineCandidates = collectPipelineCandidates(root);
+    const requestedSource = editor.pipelineOpenSource || null;
+    if (pipelineCandidates.length > 0) {
+        let selected = null;
+
+        if (requestedSource) {
+            selected = pipelineCandidates.find((candidate) => (
+                candidate.root === requestedSource
+                || candidate.source === requestedSource
+            )) || null;
+            if (!selected && pipelineCandidates.length === 1) {
+                selected = pipelineCandidates[0];
+            }
+        } else if (pipelineCandidates.length === 1) {
+            selected = pipelineCandidates[0];
+        }
+
+        if (selected) {
+            editor.pipelineOpenSource = selected.source || null;
+            alignPipelineEditState(editor, selected);
+            markPipelineContextDirty(editor);
+            return selected;
+        }
     }
 
-    const returnType = root.returnType || editor.calculateASTReturnType(root);
+    if (requestedSource) {
+        const target = findPipelineTargetLocation(editor, root, requestedSource);
+        if (target?.node) {
+            const targetContext = {
+                root: target.node,
+                parentNode: target.parentNode,
+                slot: target.slot,
+                index: target.index,
+                source: target.node,
+                stages: [],
+                allowEmpty: true
+            };
+            editor.pipelineOpenSource = target.node;
+            alignPipelineEditState(editor, targetContext);
+            markPipelineContextDirty(editor);
+            return targetContext;
+        }
+    }
+
+    const returnType = getSemanticType(editor, root);
     const allowSingleton = returnType
         && !editor.isCollectionType(returnType)
-        && typeof editor.isBusinessObjectType === "function"
-        && editor.isBusinessObjectType(returnType);
+        && typeof editor.canOpenPipelineOnType === "function"
+        && editor.canOpenPipelineOnType(returnType);
     if (returnType && !editor.isCollectionType(returnType) && !allowSingleton) {
         editor.pipelineOpen = false;
         editor.pipelineOpenSource = null;
+        editor.pipelineOpenMode = null;
         markPipelineContextDirty(editor);
         return null;
     }
 
     editor.pipelineOpenSource = root;
+    alignPipelineEditState(editor, { stages: [] });
     markPipelineContextDirty(editor);
     return {
         root,
+        parentNode: null,
+        slot: null,
+        index: null,
         source: root,
         stages: [],
         allowEmpty: true
     };
 }
 
-export function openPipelineFromCurrent(editor) {
+export function openPipelineFromCurrent(editor, options = {}) {
     syncPipelineContext(editor);
     const root = unwrapEncapsulatedNode(editor, editor.workspaceAST);
     if (!root) {
         editor.showExpressionError("当前没有可编辑的集合表达式。");
         return;
     }
-    const returnType = root.returnType || editor.calculateASTReturnType(root);
-    const allowSingleton = returnType
-        && !editor.isCollectionType(returnType)
-        && typeof editor.isBusinessObjectType === "function"
-        && editor.isBusinessObjectType(returnType);
-    if (!editor.isCollectionType(returnType) && !allowSingleton) {
+
+    if (!canStartPipelineFromNode(editor, root)) {
         editor.showExpressionError("当前表达式不是集合或实体对象，无法打开筛选。");
         return;
     }
+
+    // 打开新的管线编辑区时，默认不继承旧阶段的编辑焦点。
+    clearPipelineEditState(editor);
+    const forceFresh = options?.forceFresh === true;
     editor.pipelineOpen = true;
-    editor.pipelineOpenSource = root;
+    editor.pipelineOpenMode = forceFresh ? "fresh" : null;
+    if (forceFresh) {
+        editor.pipelineOpenSource = root;
+    } else if (isListOperationNode(root)) {
+        const pipeline = extractListPipeline(root);
+        editor.pipelineOpenSource = pipeline?.source || root;
+    } else {
+        // 架构约束：筛选基于当前工作区根表达式，不向子节点回退
+        editor.pipelineOpenSource = root;
+    }
     markPipelineContextDirty(editor);
 }
 
@@ -429,31 +712,39 @@ export function renderPipelineStageInlineEditor(editor, stage, container) {
     inlineEditor.isLightWorkspace = true;
 
     const slot = state.slot;
-    const expectedType = slot === "filterExpression"
+    const fallbackExpectedType = slot === "filterExpression"
         ? "Boolean"
         : slot === "countExpression"
             ? "Int32"
             : slot === "sortExpression" || slot === "keyExpression"
                 ? "NonEntity"
-            : slot === "selectExpression"
-                ? "Object"
-                : null;
+                : slot === "selectExpression"
+                    ? "Object"
+                    : null;
+    const expectedType = (typeof editor.getExpectedTypeForSlot === "function" && slot)
+        ? editor.getExpectedTypeForSlot(state.node, slot)
+        : fallbackExpectedType;
 
-    const sourceType = state.node?.source?.returnType
-        || editor.calculateASTReturnType(state.node?.source)
-        || editor.pipelineOpenSource?.returnType
-        || editor.calculateASTReturnType(editor.pipelineOpenSource);
+    const sourceType = getSemanticType(editor, state.node?.source)
+        || getSemanticType(editor, editor.pipelineOpenSource);
     let innerType = editor.getCollectionInnerType(sourceType);
     const shouldScopeToSelf = slot === "filterExpression" || slot === "sortExpression" || slot === "keyExpression" || slot === "selectExpression";
-    if (!innerType && sourceType && typeof editor.isBusinessObjectType === "function"
-        && editor.isBusinessObjectType(sourceType)) {
-        innerType = sourceType;
+    if (!innerType && sourceType && typeof editor.canOpenPipelineOnType === "function"
+        && editor.canOpenPipelineOnType(sourceType)) {
+        innerType = editor.normalizeTypeName(sourceType) || sourceType;
     }
     if (shouldScopeToSelf && !innerType) {
         innerType = "Object";
     }
     const contextOverride = shouldScopeToSelf && innerType
-        ? { name: "self", displayName: "当前项", typeName: innerType }
+        ? {
+            name: "self",
+            displayName: "当前项",
+            typeName: innerType,
+            eventType: editor.normalizeTypeName(innerType) === "IGameEvent"
+                ? resolveEventTypeHintFromSource(editor, state.node?.source || editor.pipelineOpenSource)
+                : null
+        }
         : null;
 
     syncInlineSuggestionEditor(editor, inlineEditor, expectedType, contextOverride);
@@ -600,60 +891,75 @@ export function getPipelineStageTypeIssue(editor, stage) {
     if (!stage?.node) return null;
     if (stage.type === "raw") return null;
     let exprNode = null;
-    let expectedType = null;
+    let slot = null;
+    let fallbackExpectedType = null;
     if (stage.node.type === "listQuery") {
+        slot = "filterExpression";
         exprNode = stage.node.filterExpression;
-        expectedType = "Boolean";
+        fallbackExpectedType = "Boolean";
     } else if (stage.node.type === "listTake") {
         const strategy = String(stage.node.strategy || "").toLowerCase();
         if (strategy === "all") return null;
+        slot = "countExpression";
         exprNode = stage.node.countExpression;
-        expectedType = "Int32";
+        fallbackExpectedType = "Int32";
     } else if (stage.node.type === "listSort") {
+        slot = "sortExpression";
         exprNode = stage.node.sortExpression;
-        expectedType = "NonEntity";
+        fallbackExpectedType = "NonEntity";
     } else if (stage.node.type === "listDistinct") {
+        slot = "keyExpression";
         exprNode = stage.node.keyExpression;
-        expectedType = "NonEntity";
+        fallbackExpectedType = "NonEntity";
     } else if (stage.node.type === "listSelect") {
+        slot = "selectExpression";
         exprNode = stage.node.selectExpression;
-        expectedType = "Object";
+        fallbackExpectedType = "Object";
     }
 
+    const expectedType = (typeof editor.getExpectedTypeForSlot === "function" && slot)
+        ? editor.getExpectedTypeForSlot(stage.node, slot)
+        : fallbackExpectedType;
     if (!exprNode || !expectedType) return null;
     if (exprNode.metadata?.type === "empty") return null;
-    const actualType = editor.calculateASTReturnType(exprNode);
+    const actualType = getSemanticType(editor, exprNode);
     if (!actualType) return null;
+    const normalizedExpectedType = typeof editor.normalizeTypeName === "function"
+        ? editor.normalizeTypeName(expectedType)
+        : expectedType;
 
     let hasIssue = false;
-    if (expectedType === "Int32") {
+    if (normalizedExpectedType === "Int32") {
         hasIssue = !editor.isNumericType(actualType);
-    } else if (expectedType === "NonEntity") {
+    } else if (normalizedExpectedType === "NonEntity") {
         const isEntity = typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(actualType);
         const isCollection = typeof editor.isCollectionType === "function" && editor.isCollectionType(actualType);
         const isDictionary = typeof editor.isDictionaryType === "function" && editor.isDictionaryType(actualType);
         hasIssue = isEntity || isCollection || isDictionary;
-    } else if (!editor.areTypesCompatible(actualType, expectedType)) {
+    } else if (!editor.areTypesCompatible(actualType, normalizedExpectedType)) {
         hasIssue = true;
     }
 
     if (!hasIssue) return null;
-    return { expectedType, actualType };
+    return { expectedType: normalizedExpectedType, actualType };
 }
 
 export function insertPipelineStage(editor, stageType, insertIndex = null) {
     syncPipelineContext(editor);
     const pipeline = getPipelineContext(editor);
     if (!pipeline || !pipeline.source) return;
+
+    const stages = Array.isArray(pipeline.stages) ? [...pipeline.stages] : [];
     const newNode = createStageNode(stageType, pipeline.source);
     if (!newNode) return;
 
-    const stages = Array.isArray(pipeline.stages) ? [...pipeline.stages] : [];
     const index = typeof insertIndex === "number" ? insertIndex : stages.length;
     stages.splice(index, 0, { type: stageType, node: newNode });
 
     const newRoot = rebuildListChainFromStages(pipeline.source, stages);
-    editor.workspaceAST = newRoot;
+    applyPipelineRootReplacement(editor, pipeline, newRoot);
+    editor.pipelineOpenMode = null;
+    editor.pipelineOpenSource = pipeline.source || null;
     editor.maintainASTRelationships(editor.workspaceAST);
     editor.updateExpressionFromAST();
     editor.renderEditor();
@@ -671,7 +977,9 @@ export function removePipelineStage(editor, index) {
         ? rebuildListChainFromStages(pipeline.source, stages)
         : pipeline.source;
 
-    editor.workspaceAST = newRoot;
+    applyPipelineRootReplacement(editor, pipeline, newRoot);
+    editor.pipelineOpenMode = null;
+    editor.pipelineOpenSource = pipeline.source || null;
     editor.maintainASTRelationships(editor.workspaceAST);
     editor.updateExpressionFromAST();
     editor.renderEditor();
@@ -690,7 +998,9 @@ export function movePipelineStage(editor, fromIndex, toIndex) {
     stages.splice(toIndex, 0, moved);
 
     const newRoot = rebuildListChainFromStages(pipeline.source, stages);
-    editor.workspaceAST = newRoot;
+    applyPipelineRootReplacement(editor, pipeline, newRoot);
+    editor.pipelineOpenMode = null;
+    editor.pipelineOpenSource = pipeline.source || null;
     editor.maintainASTRelationships(editor.workspaceAST);
     editor.updateExpressionFromAST();
     editor.renderEditor();

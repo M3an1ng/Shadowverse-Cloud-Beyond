@@ -43,5 +43,10 @@ namespace ShadowverseBeyond.Server.Dtos
         /// The default selected play mode based on availability.
         /// </summary>
         public PlayMode? SelectedPlayMode { get; set; }
+
+        /// <summary>
+        /// The runtime ID of the selected ability for the selected play mode (for example, Enhance).
+        /// </summary>
+        public Guid? SelectedAbilityRuntimeId { get; set; }
     }
 }

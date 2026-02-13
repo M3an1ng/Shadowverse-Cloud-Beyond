@@ -1,24 +1,23 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection; // Added for GetRequiredService
-using ShadowverseBeyond.Server.Domain.Abilities.Common; // For ValueConfig
-using ShadowverseBeyond.Server.Domain.Abilities.Runtime; // For Runtime classes if needed (though AbilityContext is primary)
-using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId
-using ShadowverseBeyond.Server.Domain.Events;   // For IGameEvent
-using ShadowverseBeyond.Server.Domain.Constants; // Add using for CardKeyword enum
+using Microsoft.Extensions.DependencyInjection;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Constants;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Reflection; // Added for reflection
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers; // Added for Handler types
-// using ShadowverseBeyond.Server.Domain.Abilities.Effects.Parameters; // REMOVED - No longer needed
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // Keep this for ALL parameter types now
-using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases; // Added for EffectHandlerBase
-using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation; // For DslEvaluator
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
-using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // For ExpressionNode
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
@@ -62,15 +61,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         /// </summary>
         public GameStateActionResult ExecuteEffect(Effect effect, GameContext context)
         {
-            var effectConfig = effect.EffectConfig;
-            _logger.LogDebug("🔧 [EffectExecutor] Executing effect {EffectType} with full result for ability on card {SourceCardId}",
-                effectConfig.Type, context.SourceCard?.InstanceId.ToString() ?? "N/A");
+            if (effect == null)
+            {
+                _logger.LogError("Effect cannot be null for effect execution.");
+                return new GameStateActionResult { Success = false, ErrorMessage = "Effect cannot be null." };
+            }
 
             if (context == null)
             {
                 _logger.LogError("AbilityContext cannot be null for effect execution.");
                 return new GameStateActionResult { Success = false, ErrorMessage = "AbilityContext cannot be null." };
             }
+
+            var effectConfig = effect.EffectConfig;
+            _logger.LogDebug("🔧 [EffectExecutor] Executing effect {EffectType} with full result for ability on card {SourceCardId}",
+                effectConfig.Type, context.SourceCard?.InstanceId.ToString() ?? "N/A");
 
             var resolvedParameters = new Dictionary<string, object>();
             var calculatedOutputs = new Dictionary<string, object?>();
@@ -175,11 +180,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 if (!actionResult.Success)
                 {
                     _logger.LogError("Effect handler for {EffectType} failed: {ErrorMessage}", effectConfig.Type, actionResult.ErrorMessage);
-                    // Even if handler failed, we might still want to generate an EffectCompletedEvent if Outputs are defined.
-                    // Or, we could return early. For now, let's proceed to generate EffectCompletedEvent.
+                    // EffectCompletedEvent is materialized by the transaction service after
+                    // generated events are fully processed.
                 }
 
-                // 9. Resolve Outputs and Create EffectCompletedEvent
+                // 9. Resolve Outputs (EffectCompletedEvent is created in transaction service
+                // after generated events finish recursive processing)
                 calculatedOutputs = new Dictionary<string, object?>();
                 if (effectConfig.Outputs != null && effectConfig.Outputs.Any())
                 {
@@ -221,33 +227,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                         calculatedOutputs["fusedIds"] = fusedIds;
                 }
 
-                var generatedEvents = actionResult.GeneratedEvents != null
-                    ? actionResult.GeneratedEvents.ToList()
-                    : new List<IGameEvent>();
-                var generatedCards = new List<CardInstance>();
-                var generatedCardSnapshots = new List<CardInstanceSnapshot>();
+                actionResult.ResolvedParameters = resolvedParameters.ToDictionary(kvp => kvp.Key, kvp => kvp.Value).AsReadOnly();
+                actionResult.Outputs = calculatedOutputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value).AsReadOnly();
 
-                // Create EffectCompletedEvent
-                var effectCompletedEvent = new EffectCompletedEvent(
-                    effectConfig.Type,
-                    resolvedParameters, // These are the input parameters to the effect handler
-                    effect.SelectedTargets.AsReadOnly(), // Get targets directly from the Effect DTO
-                    generatedEvents.AsReadOnly(),
-                    generatedCards,
-                    generatedCardSnapshots,
-                    calculatedOutputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value).AsReadOnly(),
-                    actionResult.Success,
-                    context.SourceCard
-                );
-
-                actionResult.GeneratedEvents ??= new List<IGameEvent>();
-                actionResult.GeneratedEvents.Add(effectCompletedEvent);
-                _logger.LogDebug("🔧 [EffectExecutor] Added EffectCompletedEvent for {EffectType}", effectConfig.Type);
-
-
-                // 【关键修复】在Effect执行完毕后清理GameContext的临时状态
-
-                _logger.LogDebug("🔧 [EffectExecutor] Effect {EffectType} generated {EventCount} events (including EffectCompletedEvent).",
+                _logger.LogDebug("🔧 [EffectExecutor] Effect {EffectType} generated {EventCount} events.",
                     effectConfig.Type, actionResult.GeneratedEvents?.Count ?? 0);
 
                 return actionResult;
@@ -288,33 +271,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                 var generatedEvents = mergedEvents
                     .Where(e => e is not EffectCompletedEvent)
                     .ToList();
-                var generatedCards = new List<CardInstance>();
-                var generatedCardSnapshots = new List<CardInstanceSnapshot>();
 
                 actionResult.GeneratedEvents = generatedEvents;
                 effect.GeneratedEvents = generatedEvents;
 
                 var fallbackOutputs = new Dictionary<string, object?>(calculatedOutputs);
                 fallbackOutputs["effectFailed"] = true;
-
-                var effectCompletedEvent = new EffectCompletedEvent(
-                    effectConfig.Type,
-                    resolvedParameters,
-                    effect.SelectedTargets.AsReadOnly(),
-                    generatedEvents.AsReadOnly(),
-                    generatedCards,
-                    generatedCardSnapshots,
-                    fallbackOutputs.AsReadOnly(),
-                    false,
-                    context.SourceCard
-                );
-
-                actionResult.GeneratedEvents.Add(effectCompletedEvent);
+                actionResult.ResolvedParameters = resolvedParameters.ToDictionary(kvp => kvp.Key, kvp => kvp.Value).AsReadOnly();
+                actionResult.Outputs = fallbackOutputs.AsReadOnly();
                 return actionResult;
             }
         }
-
-
 
         // Helper method to resolve parameters
         private Dictionary<string, object> ResolveEffectParameters(
@@ -432,7 +399,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     Message = message
                 };
 
-                _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceSucceeded(dto);
+                _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceSucceeded(dto);
             }
         }
 
@@ -472,7 +439,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                             }
                         }
 
-                        // 【修复】优先处理null值，特别是Guid?等可空类型
+                        // Handle null values first, especially for nullable property types.
                         if (value == null)
                         {
                             if (IsNullableType(property.PropertyType))
@@ -772,54 +739,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         private static bool IsNullableType(Type type)
         {
             return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>);
-        }
-
-        private static IReadOnlyList<CardInstance> CollectGeneratedCards(
-            IReadOnlyList<IGameEvent> generatedEvents)
-        {
-            if (generatedEvents == null || generatedEvents.Count == 0)
-            {
-                return new List<CardInstance>();
-            }
-
-            var results = new Dictionary<Guid, CardInstance>();
-            foreach (var gameEvent in generatedEvents)
-            {
-                if (gameEvent == null)
-                {
-                    continue;
-                }
-
-                foreach (var targetInfo in gameEvent.Target)
-                {
-                    var card = targetInfo?.Card;
-                    if (card == null)
-                    {
-                        continue;
-                    }
-
-                    if (!results.ContainsKey(card.InstanceId))
-                    {
-                        results[card.InstanceId] = card;
-                    }
-                }
-            }
-
-            return results.Values.ToList();
-        }
-
-        private static IReadOnlyList<CardInstanceSnapshot> CollectGeneratedCardSnapshots(
-            IReadOnlyList<CardInstance> generatedCards)
-        {
-            if (generatedCards == null || generatedCards.Count == 0)
-            {
-                return new List<CardInstanceSnapshot>();
-            }
-
-            return generatedCards
-                .Where(card => card != null)
-                .Select(CardInstanceSnapshot.From)
-                .ToList();
         }
 
         // Removed MapEffectTypeToEventType method as it's no longer needed.

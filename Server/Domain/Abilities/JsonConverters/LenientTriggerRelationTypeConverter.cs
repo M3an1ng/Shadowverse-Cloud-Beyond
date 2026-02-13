@@ -6,8 +6,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
 {
     /// <summary>
-    /// Allows legacy/relaxed values for TriggerRelationType.
-    /// Accepts "Self" (maps to SourceSelf) and numeric values; defaults to Any.
+    /// Allows relaxed values for TriggerRelationType.
+    /// Accepts enum string/numeric values; defaults to Any when parsing fails.
     /// </summary>
     public sealed class LenientTriggerRelationTypeConverter : JsonConverter<TriggerRelationType>
     {
@@ -28,11 +28,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.JsonConverters
             if (reader.TokenType == JsonTokenType.String)
             {
                 var text = (reader.GetString() ?? string.Empty).Trim();
-                if (string.Equals(text, "Self", StringComparison.OrdinalIgnoreCase))
-                {
-                    return TriggerRelationType.SourceSelf;
-                }
-
                 if (Enum.TryParse<TriggerRelationType>(text, ignoreCase: true, out var parsed))
                 {
                     return parsed;

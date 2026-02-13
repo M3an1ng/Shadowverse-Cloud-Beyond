@@ -7,6 +7,7 @@ using System.Linq;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 using System;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -17,7 +18,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     public class DestroyEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("摧毁原因", "卡牌被摧毁的原因。")]
-        public string Reason { get; }
+        public EventReasonSource Reason { get; }
 
         [GameEventParameter("摧毁来源", "导致摧毁的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? DestroySource => Source?.Card;
@@ -25,16 +26,27 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("被摧毁的卡牌", "被摧毁的目标卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DestroyTarget => Target.FirstOrDefault()?.Card;
 
-        public DestroyEvent(CardInstance target, CardInstance source, string reason, Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("摧毁来源快照", "生成事件时记录的摧毁来源快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? DestroySourceSnapshot { get; }
+
+        [GameEventParameter("被摧毁目标快照", "生成事件时记录的被摧毁目标快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? DestroyTargetSnapshot { get; }
+
+        public bool DestroyApplied { get; private set; }
+
+        public DestroyEvent(CardInstance target, CardInstance source, EventReasonSource reason, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Destroy, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(target));
             Source = TargetInfo.ForCard(source);
             Reason = reason;
+            DestroyTargetSnapshot = CardInstanceSnapshot.From(target);
+            DestroySourceSnapshot = CardInstanceSnapshot.From(source);
         }
 
         public DomainOperationResult Commit(GameContext context)
         {
+            DestroyApplied = false;
             var targetCard = DestroyTarget;
             var sourceCard = DestroySource;
 
@@ -44,14 +56,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var targetKeywords = context.BuffService.GetEffectiveKeywords(targetCard, context);
-            if (targetKeywords.Contains(CardKeyword.DestroyResist) && IsAbilityDestroyReason(Reason))
+            if (targetKeywords.Contains(CardKeyword.DestroyResist) && Reason == EventReasonSource.Ability)
             {
                 return new DomainOperationResult { Success = true };
             }
 
             if (targetKeywords.Contains(CardKeyword.EarthSigil)
-                && IsAbilityDestroyReason(Reason)
-                && sourceCard.OwnerPlayerId != targetCard.OwnerPlayerId)
+                && Reason == EventReasonSource.Ability)
             {
                 return new DomainOperationResult { Success = true };
             }
@@ -59,7 +70,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (targetCard.IsSuperEvolved &&
                 targetCard.IsFollower &&
                 targetCard.OwnerPlayerId == context.CurrentGameState.CurrentPlayerId &&
-                IsAbilityDestroyReason(Reason))
+                Reason == EventReasonSource.Ability)
             {
                 return new DomainOperationResult { Success = true };
             }
@@ -70,13 +81,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Owner player for card {targetCard.InstanceId} not found." };
             }
 
+            DestroyApplied = true;
             var moveReason = ResolveMoveReason(Reason);
-            // The entity method handles the state change and generates the factual CardDestroyedEvent.
-            return ownerPlayer.DestroyCard(targetCard, sourceCard, Reason, moveReason);
+            var destroyResult = ownerPlayer.DestroyCard(targetCard, sourceCard, Reason, moveReason);
+            return destroyResult;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
+            if (!DestroyApplied)
+            {
+                return string.Empty;
+            }
+
             var target = DestroyTarget;
             if (target == null)
             {
@@ -89,19 +106,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 : $"{AnnouncementTokens.Card(target)}被破坏。";
         }
 
-        private static bool IsAbilityDestroyReason(string reason)
-        {
-            if (string.IsNullOrWhiteSpace(reason))
-            {
-                return false;
-            }
-
-            return reason.Equals("Effect", StringComparison.OrdinalIgnoreCase) ||
-                   reason.StartsWith("Effect", StringComparison.OrdinalIgnoreCase) ||
-                   reason.StartsWith("Ability", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static CardMoveReason ResolveMoveReason(string reason)
+        private static CardMoveReason ResolveMoveReason(EventReasonSource reason)
         {
             return CardMoveReason.Destroyed;
         }

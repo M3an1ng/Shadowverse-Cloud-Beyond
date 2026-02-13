@@ -16,6 +16,9 @@ using System.Threading.RateLimiting;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions; // Added for AddDslFunctionSystem extension
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation; // For IDslCompiler
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Net.Http.Headers;
+using Microsoft.AspNetCore.ResponseCompression;
+using System.IO.Compression;
 
 // --- ShadowverseBeyond Namespaces ---
 using ShadowverseBeyond.Server.Domain.Entities;         // Added Correct
@@ -49,6 +52,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Starting web application"); // Serilog startup message
 
     var builder = WebApplication.CreateBuilder(args);
+    var isDevelopment = builder.Environment.IsDevelopment();
 
     // Log stream buffer + sink for dev-tools viewer
     builder.Services.AddSingleton<LogStreamBuffer>();
@@ -106,6 +110,30 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         });
     });
     Log.Information("Registered RateLimiter policies.");
+
+    builder.Services.AddResponseCompression(options =>
+    {
+        options.EnableForHttps = true;
+        options.Providers.Add<BrotliCompressionProvider>();
+        options.Providers.Add<GzipCompressionProvider>();
+        options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[]
+        {
+            "application/javascript",
+            "application/json",
+            "application/wasm",
+            "image/svg+xml",
+            "text/javascript"
+        });
+    });
+    builder.Services.Configure<BrotliCompressionProviderOptions>(options =>
+    {
+        options.Level = isDevelopment ? CompressionLevel.Fastest : CompressionLevel.Optimal;
+    });
+    builder.Services.Configure<GzipCompressionProviderOptions>(options =>
+    {
+        options.Level = isDevelopment ? CompressionLevel.Fastest : CompressionLevel.SmallestSize;
+    });
+    Log.Information("Registered ResponseCompression providers (Brotli/Gzip).");
 
     // Register AutoMapper - Scans the assembly containing Program for Profile classes
     builder.Services.AddAutoMapper(typeof(Program).Assembly);
@@ -335,6 +363,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // --- Ability and Buff Management ---
     // AbilityFactory and its dependencies must be Scoped to align with the GameState/request lifetime.
     builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.IAbilityFactory, ShadowverseBeyond.Server.Domain.Abilities.AbilityFactory>();
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Domain.Abilities.Ordering.ITriggerOrderingPolicy, ShadowverseBeyond.Server.Domain.Abilities.Ordering.DefaultTriggerOrderingPolicy>();
 
     // AbilityManager must be Scoped as it manages abilities for a specific game instance.
     builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Abilities.AbilityManager>();
@@ -499,6 +528,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         app.UseSwaggerUI(); // Use standard .NET 8 middleware
     }
 
+    app.UseResponseCompression();
+
     // Serve default files (like index.html) from the configured web root
     // Configure options for UseDefaultFiles to use the same physical file provider
     var workspaceRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, ".."));
@@ -526,7 +557,57 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         // Point the FileProvider to the workspace root (d:\workspace\Shadowverse-beyond)
         FileProvider = new PhysicalFileProvider(
             System.IO.Path.Combine(builder.Environment.ContentRootPath, "..")),
-        RequestPath = "" // Serve files directly from the root URL path (e.g., /style.css, /src/gameManager.js)
+        RequestPath = "", // Serve files directly from the root URL path (e.g., /style.css, /src/gameManager.js)
+        OnPrepareResponse = context =>
+        {
+            var path = context.Context.Request.Path.Value ?? string.Empty;
+            var extension = Path.GetExtension(path);
+            var isImage = string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".gif", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(extension, ".avif", StringComparison.OrdinalIgnoreCase);
+
+            CacheControlHeaderValue cacheControl;
+            var appendImmutable = false;
+            if (isImage && path.StartsWith("/assets/cards/", StringComparison.OrdinalIgnoreCase))
+            {
+                cacheControl = new CacheControlHeaderValue
+                {
+                    Public = true,
+                    MaxAge = app.Environment.IsDevelopment()
+                        ? TimeSpan.FromMinutes(10)
+                        : TimeSpan.FromDays(30)
+                };
+                appendImmutable = !app.Environment.IsDevelopment();
+            }
+            else if (!app.Environment.IsDevelopment() && path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
+            {
+                // Bundled Vite assets are fingerprinted and safe to cache for long periods.
+                cacheControl = new CacheControlHeaderValue
+                {
+                    Public = true,
+                    MaxAge = TimeSpan.FromDays(365)
+                };
+                appendImmutable = true;
+            }
+            else
+            {
+                cacheControl = new CacheControlHeaderValue
+                {
+                    Public = true,
+                    MaxAge = TimeSpan.FromMinutes(5)
+                };
+            }
+
+            context.Context.Response.GetTypedHeaders().CacheControl = cacheControl;
+            if (appendImmutable)
+            {
+                context.Context.Response.Headers[HeaderNames.CacheControl] = $"{context.Context.Response.Headers[HeaderNames.CacheControl]}, immutable";
+            }
+            context.Context.Response.Headers[HeaderNames.Vary] = "Accept-Encoding";
+        }
     });
 
     app.UseRateLimiter();

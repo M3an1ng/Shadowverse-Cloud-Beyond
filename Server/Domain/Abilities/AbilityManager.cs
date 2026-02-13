@@ -25,9 +25,12 @@ using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Factories;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Abilities.Ordering;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using System.Threading;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -43,18 +46,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private readonly ConcurrentDictionary<Guid, IAbility> _abilitiesByRuntimeId = new(); // 新增：按RuntimeId索引能力
         private readonly ConcurrentDictionary<Guid, List<Guid>> _abilityRuntimeIdsByBuffId = new(); // 新增：按BuffId索引能力运行时ID
         private readonly ConcurrentDictionary<Guid, AbilitySnapshot> _abilityTombstones = new();
+        private readonly ConcurrentDictionary<Guid, byte> _abilityTriggeredListenerRuntimeIds = new();
+        private readonly ConcurrentDictionary<Guid, long> _abilityRegistrationOrders = new();
         private readonly ILogger<AbilityManager>? _logger;
         private readonly IAbilityFactory _abilityFactory;
+        private readonly ITriggerOrderingPolicy _triggerOrderingPolicy;
+        private long _abilityRegistrationSequence;
         // Removed: _eventProcessor to break circular dependency
         // Removed: _buffManager, _cardRepository, _functionRegistry
 
         public AbilityManager(
             ILogger<AbilityManager>? logger,
             IAbilityFactory abilityFactory,
-            IEnumerable<IAbility> systemAbilities) // Added systemAbilities
+            IEnumerable<IAbility> systemAbilities)
+            : this(logger, abilityFactory, systemAbilities, new DefaultTriggerOrderingPolicy())
+        {
+        }
+
+        public AbilityManager(
+            ILogger<AbilityManager>? logger,
+            IAbilityFactory abilityFactory,
+            IEnumerable<IAbility> systemAbilities,
+            ITriggerOrderingPolicy triggerOrderingPolicy)
         {
             _logger = logger;
             _abilityFactory = abilityFactory ?? throw new ArgumentNullException(nameof(abilityFactory));
+            _triggerOrderingPolicy = triggerOrderingPolicy ?? throw new ArgumentNullException(nameof(triggerOrderingPolicy));
 
             if (systemAbilities != null)
             {
@@ -71,9 +88,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <param name="cardInstance">卡片实例</param>
         /// <param name="abilityConfigs">能力配置列表</param>
         /// <returns>创建的能力列表</returns>
-        public List<Ability> CreateAbilitiesForCard(CardInstance cardInstance, List<AbilityConfig> abilityConfigs, Guid? sourceBuffId = null)
+        public List<Ability> CreateAbilitiesForCard(
+            CardInstance cardInstance,
+            List<AbilityConfig> abilityConfigs,
+            Guid? sourceBuffId = null)
         {
-            InitializeCountersFromConfigs(cardInstance, abilityConfigs);
+            return CreateAbilitiesForCard(cardInstance, abilityConfigs, sourceBuffId, null);
+        }
+
+        public List<Ability> CreateAbilitiesForCard(
+            CardInstance cardInstance,
+            List<AbilityConfig> abilityConfigs,
+            Guid? sourceBuffId,
+            GameState? gameState)
+        {
+            InitializeCountersFromConfigs(cardInstance, abilityConfigs, gameState);
 
             // 1. Use the factory to create the list of abilities, passing the optional sourceBuffId
             var abilities = _abilityFactory.CreateAbilities(cardInstance, abilityConfigs, sourceBuffId);
@@ -91,7 +120,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             return abilities;
         }
 
-        private static void InitializeCountersFromConfigs(CardInstance cardInstance, IEnumerable<AbilityConfig> abilityConfigs)
+        private static void InitializeCountersFromConfigs(
+            CardInstance cardInstance,
+            IEnumerable<AbilityConfig> abilityConfigs,
+            GameState? gameState)
         {
             if (cardInstance == null || abilityConfigs == null)
             {
@@ -100,19 +132,41 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             foreach (var config in abilityConfigs)
             {
-                if (config?.CounterRegistrations == null || config.CounterRegistrations.Count == 0)
+                if (config == null)
                 {
                     continue;
                 }
 
-                foreach (var registration in config.CounterRegistrations)
+                if (config.CounterRegistrations != null && config.CounterRegistrations.Count > 0)
+                {
+                    foreach (var registration in config.CounterRegistrations)
+                    {
+                        if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                        {
+                            continue;
+                        }
+
+                        cardInstance.Counters.TryInitialize(registration.Name, registration.InitialValue);
+                    }
+                }
+
+                if (gameState == null || config.PlayerCounterRegistrations == null || config.PlayerCounterRegistrations.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var registration in config.PlayerCounterRegistrations)
                 {
                     if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
                     {
                         continue;
                     }
 
-                    cardInstance.Counters.TryInitialize(registration.Name, registration.InitialValue);
+                    var players = PlayerScopeResolver.ResolvePlayers(gameState, cardInstance.OwnerPlayerId, registration.PlayerScope);
+                    foreach (var player in players)
+                    {
+                        player.Counters.TryInitialize(registration.Name, registration.InitialValue);
+                    }
                 }
             }
         }
@@ -134,10 +188,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
 
             _allAbilities.Add(ability);
+            _abilityRegistrationOrders.TryAdd(ability.RuntimeId, Interlocked.Increment(ref _abilityRegistrationSequence));
+            var indexedEventTypes = GetAbilityEventTypesForIndexing(ability).ToList();
+            if (indexedEventTypes.Contains(EventType.AbilityTriggered))
+            {
+                _abilityTriggeredListenerRuntimeIds[ability.RuntimeId] = 0;
+            }
 
             // 按事件类型索引能力
             // Ensure TriggerConfig is used for event types
-            foreach (var eventType in GetAbilityEventTypesForIndexing(ability))
+            foreach (var eventType in indexedEventTypes)
             {
                 var eventTypeString = eventType.ToString();
                 _abilitiesByEventType.AddOrUpdate(
@@ -207,6 +267,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             RegisterAbilityTombstone(ability);
 
             _allAbilities.Remove(ability);
+            _abilityTriggeredListenerRuntimeIds.TryRemove(ability.RuntimeId, out _);
+            _abilityRegistrationOrders.TryRemove(ability.RuntimeId, out _);
 
             // 从事件类型索引中移除
             // Ensure TriggerConfig is used for event types
@@ -367,16 +429,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             var relevantAbilities = GetAbilitiesForEvent(eventTypeString);
 
-            var targetedAbilityRuntimeId = gameEvent switch
-            {
-                ActInvokedEvent actEvent => actEvent.TriggeredAbilityRuntimeId,
-                FusionEvent fusionEvent => fusionEvent.TriggeredAbilityRuntimeId,
-                _ => null
-            };
-
-            // NOTE: Do not hard-filter abilities by TriggeredAbilityRuntimeId here.
+            // NOTE: Do not hard-filter abilities by a single runtime ability id here.
             // Let DSL conditions decide whether a specific ability should trigger.
-            // This keeps "when any card Act/Fusion happens" effects working.
             // if (targetedAbilityRuntimeId.HasValue && targetedAbilityRuntimeId.Value != Guid.Empty)
             // {
             //     relevantAbilities = relevantAbilities
@@ -397,7 +451,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     {
                         if (IsAuraAbility(concreteAbility))
                         {
-                            if (!context.IsAuraRefresh && ShouldTriggerAuraAbility(concreteAbility, gameEvent, timing))
+                            // Aura refresh is unified into After timing.
+                            // TriggerConfig timing is ignored for aura matching so legacy configs remain compatible.
+                            if (timing == TriggerTiming.After
+                                && !context.IsAuraRefresh
+                                && ShouldTriggerAuraAbility(concreteAbility, gameEvent))
                             {
                                 triggeredAbilities.Add(ability);
                             }
@@ -423,44 +481,33 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return triggeredAbilities; // Return empty list early
             }
 
-            // --- NEW SORTING LOGIC ---
-            var clashEvent = gameEvent as ClashEvent;
-            var attackerId = clashEvent?.Attacker?.InstanceId;
-            var defenderId = clashEvent?.Defender?.InstanceId;
+            var orderedAbilities = _triggerOrderingPolicy.OrderTriggeredAbilities(
+                triggeredAbilities,
+                gameEvent,
+                context,
+                _abilityRegistrationOrders);
 
-            var sortedAbilities = triggeredAbilities
-                .OrderBy(ability =>
-                {
-                    if (attackerId.HasValue && ability.SourceCard?.InstanceId == attackerId.Value)
-                    {
-                        return -2;
-                    }
-                    if (defenderId.HasValue && ability.SourceCard?.InstanceId == defenderId.Value)
-                    {
-                        return -1;
-                    }
-                    // Rule 1: The event's source ability itself has the highest priority (e.g., Fanfare)
-                    if (gameEvent.Source?.Card != null && ability.SourceCard?.InstanceId == gameEvent.Source.Card.InstanceId)
-                    {
-                        return 0;
-                    }
-                    // Rule 2: System abilities without a source card have lower priority
-                    if (ability.SourceCard == null)
-                    {
-                        return 100;
-                    }
-                    // Rule 3: Sort by zone and ownership
-                    var card = ability.SourceCard;
-                    var activePlayerId = context.CurrentGameState.CurrentPlayerId;
-                    bool isMyTurn = card.OwnerPlayerId == activePlayerId;
-                    return GameConstants.AbilityTrigger.GetZonePriority(card.CurrentZone, isMyTurn);
-                })
-                .ToList();
+            LogTriggerOrdering(gameEvent, timing, orderedAbilities);
 
-            _logger?.LogDebug("Triggered and sorted {Count} abilities for event {EventType} at timing {Timing}.",
-                sortedAbilities.Count, gameEvent.EventType, timing);
+            return orderedAbilities.Select(item => item.Ability).ToList();
+        }
 
-            return sortedAbilities;
+        private void LogTriggerOrdering(IGameEvent gameEvent, TriggerTiming timing, IReadOnlyList<OrderedTriggeredAbility> orderedAbilities)
+        {
+            if (_logger == null || !_logger.IsEnabled(LogLevel.Debug) || orderedAbilities.Count == 0)
+            {
+                return;
+            }
+
+            var orderingDetails = string.Join(" | ", orderedAbilities.Select(item =>
+                $"{item.Ability.KeywordSummary}({item.Ability.RuntimeId})[{item.Key}]"));
+
+            _logger.LogDebug(
+                "Triggered and sorted {Count} abilities for event {EventType} at timing {Timing}. Order: {Order}",
+                orderedAbilities.Count,
+                gameEvent.EventType,
+                timing,
+                orderingDetails);
         }
 
         private static bool IsAuraAbility(Ability ability)
@@ -511,7 +558,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             return new[] { ability.Config.Trigger };
         }
 
-        private static bool ShouldTriggerAuraAbility(Ability ability, IGameEvent gameEvent, TriggerTiming timing)
+        private static bool ShouldTriggerAuraAbility(Ability ability, IGameEvent gameEvent)
         {
             foreach (var auraConfig in ability.Config.Auras)
             {
@@ -522,7 +569,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
                 foreach (var trigger in GetAuraTriggerConfigs(ability, auraConfig))
                 {
-                    if (TriggerConfigMatchesEvent(trigger, gameEvent, timing, ability.SourceCard))
+                    if (TriggerConfigMatchesEvent(
+                        trigger,
+                        gameEvent,
+                        TriggerTiming.After,
+                        ability.SourceCard,
+                        ignoreTiming: true))
                     {
                         return true;
                     }
@@ -532,14 +584,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             return false;
         }
 
-        private static bool TriggerConfigMatchesEvent(TriggerConfig trigger, IGameEvent gameEvent, TriggerTiming timing, CardInstance? sourceCard)
+        private static bool TriggerConfigMatchesEvent(
+            TriggerConfig trigger,
+            IGameEvent gameEvent,
+            TriggerTiming expectedTiming,
+            CardInstance? sourceCard,
+            bool ignoreTiming = false)
         {
             if (trigger == null || !trigger.IsEnabled)
             {
                 return false;
             }
 
-            if (trigger.Timing != timing)
+            if (!ignoreTiming && trigger.Timing != expectedTiming)
             {
                 return false;
             }
@@ -706,6 +763,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             _abilitiesByRuntimeId.Clear(); // 新增：清空RuntimeId字典
             _abilityRuntimeIdsByBuffId.Clear(); // 新增：清空BuffId字典
             _abilityTombstones.Clear();
+            _abilityTriggeredListenerRuntimeIds.Clear();
+            _abilityRegistrationOrders.Clear();
+            _abilityRegistrationSequence = 0;
 
             _logger?.LogDebug("[AbilityManager] Cleared {Count} abilities from all collections.", count);
         }
@@ -755,6 +815,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 _logger?.LogWarning("[AbilityManager] System ability of type {AbilityType} not found.", typeof(T).Name);
             }
             return ability;
+        }
+
+        public bool HasAbilityTriggeredListeners()
+        {
+            return !_abilityTriggeredListenerRuntimeIds.IsEmpty;
         }
 
         /// <summary>
@@ -856,9 +921,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 EventType.AbilityTriggered => new AbilityTriggeredEventDto(
                     gameEvent.Source?.Player?.PlayerId ?? Guid.Empty,
                     gameEvent.Source?.Card?.InstanceId ?? Guid.Empty,
-                    (gameEvent as AbilityTriggeredEvent)?.TriggeringEvent.EventType.ToString() ?? string.Empty,
+                    (gameEvent as AbilityTriggeredEvent)?.TriggerEventType.ToString() ?? string.Empty,
                     new Dictionary<string, object>(),
-                    (gameEvent as AbilityTriggeredEvent)?.AbilityKeywords ?? Array.Empty<string>()
+                    (gameEvent as AbilityTriggeredEvent)?.AbilityKeywords.Select(k => k.ToString()).ToArray() ?? Array.Empty<string>()
                 ),
                 _ => null
             };
@@ -973,6 +1038,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 if (recordTrigger)
                 {
                     ability.RecordTrigger(context);
+                    if (context.TriggeringEvent != null && HasAbilityTriggeredListeners())
+                    {
+                        auraEvents.Add(new AbilityTriggeredEvent(ability, context.TriggeringEvent));
+                    }
                 }
             }
 

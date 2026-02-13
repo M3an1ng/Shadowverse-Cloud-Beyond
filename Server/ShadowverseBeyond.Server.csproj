@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>1928e720-d856-4fdb-9791-bd6419326aa1</UserSecretsId>
-    <DefaultItemExcludes>$(DefaultItemExcludes);publish\**;artifacts\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**;publish\**;artifacts\**;.tmp_build\**;obj_codex\**;obj_codex2\**;bin_codex\**;bin_codex2\**;Server\**;Server.Tests\**;**\publish\**;**\artifacts\**;**\.tmp_build\**;**\obj_codex\**;**\obj_codex2\**;**\bin_codex\**;**\bin_codex2\**;**\Server\**;**\Server.Tests\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,6 +28,7 @@
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
   </ItemGroup>
 
@@ -35,6 +36,11 @@
   <ItemGroup>
     <Compile Remove="Domain\Abilities\DSL\Functions\Tests\**\*.cs" />
     <None Include="Domain\Abilities\DSL\Functions\Tests\**\*.cs" />
+  </ItemGroup>
+
+  <!-- Guard against accidentally compiling generated/copied source trees -->
+  <ItemGroup>
+    <Compile Remove="obj_codex\**\*.cs;obj_codex2\**\*.cs;bin_codex\**\*.cs;bin_codex2\**\*.cs;Server\**\*.cs;Server.Tests\**\*.cs;publish\**\*.cs;artifacts\**\*.cs;.tmp_build\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>

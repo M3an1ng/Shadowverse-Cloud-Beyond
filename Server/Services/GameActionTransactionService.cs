@@ -22,10 +22,12 @@ using ShadowverseBeyond.Server.Domain.Events.Services;
 using Microsoft.Extensions.Options;
 using ShadowverseBeyond.Server.Options;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Reflection;
 using System.Linq.Expressions;
 using System.Globalization;
+using System.Text.Json;
 using ShadowverseBeyond.Server.Exceptions;
 
 namespace ShadowverseBeyond.Server.Services
@@ -48,7 +50,9 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IMetaProgressionService _metaProgressionService;
         private readonly ReplayOptions _replayOptions;
         private readonly Queue<Effect> _effectQueue = new();
-        private readonly Dictionary<DecisionCacheKey, PreflightDecisionState> _preflightDecisionCache = new();
+        private readonly HashSet<SameNameTriggerKey> _sameNameTriggeredInTransaction = new();
+        private readonly Dictionary<DeferredTargetResolutionKey, IReadOnlyDictionary<string, List<TargetInfo>>> _deferredTargetResolutionCache = new();
+        private PreflightSession? _activePreflightSession;
         private static readonly ConcurrentDictionary<EventType, Type?> ReplacementEventTypeCache = new();
         private static readonly ConcurrentDictionary<Type, IReadOnlyList<ReplacementEventParameter>> ReplacementEventParameterCache = new();
         private static readonly ConcurrentDictionary<Type, IReadOnlyList<ReplacementConstructorBinding>> ReplacementEventConstructorCache = new();
@@ -72,10 +76,59 @@ namespace ShadowverseBeyond.Server.Services
             bool AllowRepeat,
             string WeightsKey);
 
+        private readonly record struct TargetSignatureKey(
+            Guid AbilityRuntimeId,
+            Guid TriggerEventId,
+            string TargetKey);
+
+        private readonly record struct SameNameTriggerKey(
+            Guid OwnerPlayerId,
+            long AbilityDefinitionId);
+
+        private readonly record struct DeferredTargetResolutionKey(
+            Guid AbilityRuntimeId,
+            Guid TriggerEventId);
+
+        private sealed class CommitPlanItem
+        {
+            public Guid RootEventId { get; init; }
+            public string Step { get; init; } = string.Empty;
+        }
+
+        private sealed class CommitPlan
+        {
+            public List<CommitPlanItem> PlanItems { get; init; } = new();
+            public Dictionary<DecisionCacheKey, DecisionInputSignature> DecisionSignatures { get; init; } = new();
+            public Dictionary<TargetSignatureKey, string> TargetSignatures { get; init; } = new();
+            public string StateFingerprint { get; init; } = string.Empty;
+        }
+
+        private sealed class TargetSignatureSnapshot
+        {
+            public Ability Ability { get; init; } = null!;
+            public Guid TriggerEventId { get; init; }
+            public string TargetKey { get; init; } = string.Empty;
+            public string Signature { get; init; } = string.Empty;
+        }
+
+        private sealed class PreflightSession
+        {
+            public Guid TransactionId { get; init; }
+            public IReadOnlyList<Guid> ActionRootEventIds { get; init; } = Array.Empty<Guid>();
+            public Dictionary<DecisionCacheKey, PreflightDecisionState> DecisionSnapshots { get; } = new();
+            public Dictionary<TargetSignatureKey, TargetSignatureSnapshot> TargetSignatures { get; } = new();
+            public CommitPlan CommitPlan { get; set; } = new();
+            public string StateFingerprint { get; init; } = string.Empty;
+            public bool CommitStarted { get; set; }
+            public bool HasIncompletePreflight { get; set; }
+            public string? IncompleteReason { get; set; }
+        }
+
         private sealed class PreflightDecisionState
         {
             public DecisionInputSignature Signature { get; init; }
             public List<int> SelectedIndexes { get; init; } = new();
+            public List<IAbility> BranchAbilities { get; init; } = new();
         }
 
         public GameActionTransactionService(
@@ -110,18 +163,21 @@ namespace ShadowverseBeyond.Server.Services
         public async Task<PausableTransactionResult> ProcessTransactionAsync(GameContext gameContext, IEnumerable<IGameEvent> initialEvents)
         {
             var initialEventList = initialEvents.ToList();
-            _logger.LogWarning("[STATE_POLLUTION_TRACE] TransactionService: Received GameContext for GameId: {GameId} with GameState HashCode: {HashCode}", gameContext.CurrentGameState.GameId, gameContext.CurrentGameState.GetHashCode());
             _logger.LogInformation("--- Transaction Start: Processing {EventCount} initial events. ---", initialEventList.Count);
 
             try
             {
-                _preflightDecisionCache.Clear();
+                ClearActivePreflightSession();
+                ResetSameNameTriggerLimitState();
+                _deferredTargetResolutionCache.Clear();
 
                 var expansionResult = ExpandRequestToActionRoots(gameContext, initialEventList);
                 if (!expansionResult.Result.IsSuccess)
                 {
                     return expansionResult.Result;
                 }
+
+                _activePreflightSession = BuildPreflightSession(gameContext, expansionResult.ActionRootEvents);
 
                 // Phase 1: Analyze and resolve primary abilities (Cancellable Part)
                 var analysisResult = await AnalyzePrimaryAbilitiesAsync(gameContext, expansionResult.ActionRootEvents);
@@ -144,6 +200,18 @@ namespace ShadowverseBeyond.Server.Services
                 //     return chainedAbilitiesResult; // Return if failed or paused
                 // }
 
+                var commitPlanBuildResult = BuildCommitPlan();
+                if (!commitPlanBuildResult.IsSuccess)
+                {
+                    return commitPlanBuildResult;
+                }
+
+                var commitValidationResult = ValidateCommitPreflightConsistency(gameContext);
+                if (!commitValidationResult.IsSuccess)
+                {
+                    return commitValidationResult;
+                }
+
                 // Phase 3: Commit events and handle subsequent effects
                 var commitResult = await CommitTransactionAsync(gameContext, expansionResult.CommitEvents);
 
@@ -151,7 +219,9 @@ namespace ShadowverseBeyond.Server.Services
             }
             finally
             {
-                _preflightDecisionCache.Clear();
+                ClearActivePreflightSession();
+                ResetSameNameTriggerLimitState();
+                _deferredTargetResolutionCache.Clear();
                 _abilityManager.ClearAbilityTombstones();
             }
         }
@@ -198,6 +268,249 @@ namespace ShadowverseBeyond.Server.Services
             return (PausableTransactionResult.Success(new List<IGameEvent>()), commitEvents, actionRootEvents);
         }
 
+        private void ClearActivePreflightSession()
+        {
+            _activePreflightSession = null;
+        }
+
+        private void ResetSameNameTriggerLimitState()
+        {
+            _sameNameTriggeredInTransaction.Clear();
+        }
+
+        private PreflightSession BuildPreflightSession(GameContext gameContext, IReadOnlyList<IGameEvent> actionRootEvents)
+        {
+            return new PreflightSession
+            {
+                TransactionId = Guid.NewGuid(),
+                ActionRootEventIds = actionRootEvents.Select(evt => evt.EventId).ToList(),
+                StateFingerprint = BuildStateFingerprint(gameContext.CurrentGameState)
+            };
+        }
+
+        private PausableTransactionResult BuildCommitPlan()
+        {
+            if (_activePreflightSession == null)
+            {
+                return PausableTransactionResult.Failure("Preflight session is missing.");
+            }
+
+            if (_activePreflightSession.HasIncompletePreflight)
+            {
+                return PausableTransactionResult.Failure(
+                    $"PreflightIncomplete: {_activePreflightSession.IncompleteReason ?? "unresolved preflight steps remain."}");
+            }
+
+            var decisionSignatures = _activePreflightSession.DecisionSnapshots
+                .ToDictionary(pair => pair.Key, pair => pair.Value.Signature);
+
+            var targetSignatures = _activePreflightSession.TargetSignatures
+                .ToDictionary(pair => pair.Key, pair => pair.Value.Signature);
+
+            _activePreflightSession.CommitPlan = new CommitPlan
+            {
+                PlanItems = _activePreflightSession.ActionRootEventIds
+                    .Select(rootId => new CommitPlanItem
+                    {
+                        RootEventId = rootId,
+                        Step = "ExecuteActionRoot"
+                    })
+                    .ToList(),
+                DecisionSignatures = decisionSignatures,
+                TargetSignatures = targetSignatures,
+                StateFingerprint = _activePreflightSession.StateFingerprint
+            };
+
+            return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private PausableTransactionResult ValidateCommitPreflightConsistency(GameContext gameContext)
+        {
+            if (_activePreflightSession == null)
+            {
+                return PausableTransactionResult.Failure("Preflight session is missing.");
+            }
+
+            var currentFingerprint = BuildStateFingerprint(gameContext.CurrentGameState);
+            if (!string.Equals(currentFingerprint, _activePreflightSession.CommitPlan.StateFingerprint, StringComparison.Ordinal))
+            {
+                return PausableTransactionResult.Failure("Preflight consistency check failed: state fingerprint mismatch.");
+            }
+
+            foreach (var pair in _activePreflightSession.CommitPlan.DecisionSignatures)
+            {
+                if (!_activePreflightSession.DecisionSnapshots.TryGetValue(pair.Key, out var snapshot))
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight consistency check failed: missing decision snapshot for ability {pair.Key.AbilityRuntimeId}, effect {pair.Key.EffectIndex}, execution {pair.Key.ExecutionIndex}.");
+                }
+
+                if (snapshot.Signature != pair.Value)
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight consistency check failed: decision signature mismatch for ability {pair.Key.AbilityRuntimeId}, effect {pair.Key.EffectIndex}, execution {pair.Key.ExecutionIndex}.");
+                }
+            }
+
+            foreach (var pair in _activePreflightSession.CommitPlan.TargetSignatures)
+            {
+                if (!_activePreflightSession.TargetSignatures.TryGetValue(pair.Key, out var snapshot))
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight consistency check failed: missing target snapshot for ability {pair.Key.AbilityRuntimeId}, key '{pair.Key.TargetKey}'.");
+                }
+
+                if (!string.Equals(snapshot.Signature, pair.Value, StringComparison.Ordinal))
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight consistency check failed: target signature mismatch for ability {pair.Key.AbilityRuntimeId}, key '{pair.Key.TargetKey}'.");
+                }
+
+                var target = snapshot.Ability.Targets.FirstOrDefault(t => string.Equals(t.Key, snapshot.TargetKey, StringComparison.Ordinal));
+                if (target == null)
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight consistency check failed: target '{snapshot.TargetKey}' is missing for ability {snapshot.Ability.RuntimeId}.");
+                }
+
+                var currentSignature = BuildTargetSignature(target.ResolvedTargets);
+                if (!string.Equals(currentSignature, snapshot.Signature, StringComparison.Ordinal))
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight consistency check failed: target signature mismatch for ability {snapshot.Ability.RuntimeId}, key '{snapshot.TargetKey}'.");
+                }
+            }
+
+            return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private static string BuildStateFingerprint(GameState gameState)
+        {
+            var player1Field = string.Join(",",
+                gameState.Player1.Field
+                    .Where(card => card != null)
+                    .Select(card => card.InstanceId.ToString("N"))
+                    .OrderBy(id => id));
+            var player2Field = string.Join(",",
+                gameState.Player2.Field
+                    .Where(card => card != null)
+                    .Select(card => card.InstanceId.ToString("N"))
+                    .OrderBy(id => id));
+
+            return string.Join("|",
+                gameState.StateRevision.ToString(CultureInfo.InvariantCulture),
+                gameState.CurrentPlayerId?.ToString("N") ?? string.Empty,
+                gameState.Player1.CurrentHealth.ToString(CultureInfo.InvariantCulture),
+                gameState.Player2.CurrentHealth.ToString(CultureInfo.InvariantCulture),
+                gameState.Player1.Hand.Count.ToString(CultureInfo.InvariantCulture),
+                gameState.Player2.Hand.Count.ToString(CultureInfo.InvariantCulture),
+                player1Field,
+                player2Field);
+        }
+
+        private void CaptureAbilityTargetSignatures(Ability ability, Guid triggeringEventId)
+        {
+            if (_activePreflightSession == null || ability == null || triggeringEventId == Guid.Empty)
+            {
+                return;
+            }
+
+            foreach (var target in ability.Targets.Where(target => target.Config.IsEnabled))
+            {
+                var key = new TargetSignatureKey(ability.RuntimeId, triggeringEventId, target.Key);
+                _activePreflightSession.TargetSignatures[key] = new TargetSignatureSnapshot
+                {
+                    Ability = ability,
+                    TriggerEventId = triggeringEventId,
+                    TargetKey = target.Key,
+                    Signature = BuildTargetSignature(target.ResolvedTargets)
+                };
+            }
+        }
+
+        private static string BuildTargetSignature(IReadOnlyList<TargetInfo> targets)
+        {
+            if (targets == null || targets.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(",",
+                targets
+                    .Select(target => target?.InstanceId ?? Guid.Empty)
+                    .Where(id => id != Guid.Empty)
+                    .OrderBy(id => id)
+                    .Select(id => id.ToString("N")));
+        }
+
+        private bool TryGetPreflightDecisionState(DecisionCacheKey cacheKey, out PreflightDecisionState state)
+        {
+            if (_activePreflightSession != null
+                && _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out state!))
+            {
+                return true;
+            }
+
+            state = null!;
+            return false;
+        }
+
+        private bool HasPreflightDecisionState(DecisionCacheKey cacheKey)
+        {
+            return _activePreflightSession != null
+                && _activePreflightSession.DecisionSnapshots.ContainsKey(cacheKey);
+        }
+
+        private void UpsertPreflightDecisionState(
+            DecisionCacheKey cacheKey,
+            DecisionInputSignature signature,
+            IReadOnlyList<int> selectedIndexes)
+        {
+            if (_activePreflightSession == null)
+            {
+                return;
+            }
+
+            _activePreflightSession.DecisionSnapshots[cacheKey] = new PreflightDecisionState
+            {
+                Signature = signature,
+                SelectedIndexes = selectedIndexes.ToList(),
+                BranchAbilities = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out var existing)
+                    ? existing.BranchAbilities
+                    : new List<IAbility>()
+            };
+        }
+
+        private void SetPreflightDecisionBranchAbilities(DecisionCacheKey cacheKey, IReadOnlyList<IAbility> branchAbilities)
+        {
+            if (_activePreflightSession == null
+                || !_activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out var state))
+            {
+                return;
+            }
+
+            _activePreflightSession.DecisionSnapshots[cacheKey] = new PreflightDecisionState
+            {
+                Signature = state.Signature,
+                SelectedIndexes = state.SelectedIndexes,
+                BranchAbilities = branchAbilities.ToList()
+            };
+        }
+
+        private void MarkPreflightIncomplete(string reason)
+        {
+            if (_activePreflightSession == null)
+            {
+                return;
+            }
+
+            _activePreflightSession.HasIncompletePreflight = true;
+            if (string.IsNullOrWhiteSpace(_activePreflightSession.IncompleteReason))
+            {
+                _activePreflightSession.IncompleteReason = reason;
+            }
+        }
+
         private static bool ShouldExpandRequestEvent(IGameEvent gameEvent)
         {
             return gameEvent is PlayCardRequestedEvent
@@ -220,20 +533,11 @@ namespace ShadowverseBeyond.Server.Services
                     var primarySourceCard = ResolvePrimarySourceCard(gameEvent);
                     var primaryContext = gameContext with { TriggeringEvent = gameEvent, SourceCard = primarySourceCard, IsCancellable = true };
 
-                    // --- DIAGNOSTIC LOGGING START ---
-                    _logger.LogWarning("[DIAGNOSTIC] Analyzing event: {EventType}. Context SourceCard: {CardName} ({CardId})",
-                        gameEvent.GetType().Name,
-                        primarySourceCard?.Name ?? "NULL",
-                        primarySourceCard?.InstanceId ?? Guid.Empty);
-                    // --- DIAGNOSTIC LOGGING END ---
-
                     var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(gameEvent, primaryContext, TriggerTiming.On)
                         ?? new List<IAbility>();
-
-                    // --- DIAGNOSTIC LOGGING START ---
-                    var triggeredAbilitiesInfo = string.Join(", ", triggeredAbilities.Select(a => $"{a.KeywordSummary} on {a.SourceCard?.Name ?? "System"}"));
-                    _logger.LogWarning("[DIAGNOSTIC] Triggered abilities found: [{Abilities}]", triggeredAbilitiesInfo);
-                    // --- DIAGNOSTIC LOGGING END ---
+                    triggeredAbilities = FilterTriggeredAbilitiesByTransactionSameNameLimit(
+                        triggeredAbilities,
+                        "preflight-primary");
 
                     // According to the design doc, a "Primary Ability" is one where the ability's source
                     // is the same as the event's source. The user has clarified to use gameContext.SourceCard.
@@ -242,11 +546,6 @@ namespace ShadowverseBeyond.Server.Services
                         primarySourceCard != null &&
                         ability.SourceCard.InstanceId == primarySourceCard.InstanceId
                     ).ToList();
-
-                    // --- DIAGNOSTIC LOGGING START ---
-                    var primaryAbilitiesInfo = string.Join(", ", primaryAbilities.Select(a => $"{a.KeywordSummary} on {a.SourceCard?.Name ?? "System"}"));
-                    _logger.LogWarning("[DIAGNOSTIC] Filtered primary abilities: [{Abilities}]", primaryAbilitiesInfo);
-                    // --- DIAGNOSTIC LOGGING END ---
 
                     if (!primaryAbilities.Any())
                     {
@@ -258,9 +557,33 @@ namespace ShadowverseBeyond.Server.Services
 
                     foreach (var ability in primaryAbilities)
                     {
-                        // Primary abilities are cancellable.
+                        var requiresPreflight = RequiresAbilityPreflight(
+                            ability,
+                            executionIsCancellable: true,
+                            out var requiresTargetChoicePreflight,
+                            out var requiresDecisionPreflight);
+
+                        // 无目标选择且无 Choose 的主能力不做预解析，留到提交阶段执行。
+                        if (!requiresPreflight)
+                        {
+                            _logger.LogDebug(
+                                "Skipping preflight for primary ability '{AbilityKeywords}' (RuntimeId: {RuntimeId}) because it requires neither target choice nor decision preflight.",
+                                ability.KeywordSummary,
+                                ability.RuntimeId);
+                            continue;
+                        }
+
+                        // Decision-only preflight should not lock targets before commit.
+                        var deferTargetResolution = !requiresTargetChoicePreflight && requiresDecisionPreflight;
+
+                        // Preflight primary abilities are cancellable.
                         var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = gameEvent, IsCancellable = true };
-                        var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(ability, abilityContext, true, false, recordTrigger: false);
+                        var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(
+                            ability,
+                            abilityContext,
+                            true,
+                            deferTargetResolution,
+                            recordTrigger: false);
                         if (abilityResult == null)
                         {
                             return PausableTransactionResult.Failure("Primary ability processing returned null result.");
@@ -286,7 +609,12 @@ namespace ShadowverseBeyond.Server.Services
                             return PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Primary ability processing failed.");
                         }
 
-                        if (ability is Ability decisionConcreteAbility)
+                        if (ability is Ability resolvedAbility)
+                        {
+                            CaptureAbilityTargetSignatures(resolvedAbility, gameEvent.EventId);
+                        }
+
+                        if (requiresDecisionPreflight && ability is Ability decisionConcreteAbility)
                         {
                             var preflightDecisionResult = await PreflightDecisionEffectsAsync(abilityContext, decisionConcreteAbility, gameEvent, abilityResult.Effects);
                             if (preflightDecisionResult.IsCancelled)
@@ -316,6 +644,53 @@ namespace ShadowverseBeyond.Server.Services
             return PausableTransactionResult.Success(new List<IGameEvent>());
         }
 
+        private static bool RequiresTargetChoicePreflight(IAbility ability)
+        {
+            if (ability?.Targets == null || ability.Targets.Count == 0)
+            {
+                return false;
+            }
+
+            return ability.Targets.Any(target =>
+                target?.Config?.IsEnabled == true &&
+                target.Config.PlayerChoiceOptions?.IsRequired == true);
+        }
+
+        private static bool RequiresDecisionPreflight(IAbility ability)
+        {
+            if (ability is not Ability concreteAbility)
+            {
+                return false;
+            }
+
+            var effects = concreteAbility.Config?.Effects;
+            if (effects == null || effects.Count == 0)
+            {
+                return false;
+            }
+
+            return effects.Any(effect =>
+                effect != null &&
+                effect.Type == EffectType.Choose);
+        }
+
+        private static bool RequiresAbilityPreflight(
+            IAbility ability,
+            bool executionIsCancellable,
+            out bool requiresTargetChoicePreflight,
+            out bool requiresDecisionPreflight)
+        {
+            requiresTargetChoicePreflight = RequiresTargetChoicePreflight(ability);
+            requiresDecisionPreflight = RequiresDecisionPreflight(ability);
+
+            if (!executionIsCancellable)
+            {
+                return false;
+            }
+
+            return requiresTargetChoicePreflight || requiresDecisionPreflight;
+        }
+
         private static CardInstance? ResolvePrimarySourceCard(IGameEvent gameEvent)
         {
             return gameEvent switch
@@ -325,6 +700,7 @@ namespace ShadowverseBeyond.Server.Services
                 EvolveEvent evolveEvent => evolveEvent.EvolvedCard,
                 SuperEvolveEvent superEvolveEvent => superEvolveEvent.SuperEvolvedCard,
                 ActInvokedEvent actInvokedEvent => actInvokedEvent.ActCard,
+                FusionInvokedEvent fusionInvokedEvent => fusionInvokedEvent.FusionCard,
                 FusionEvent fusionEvent => fusionEvent.FusionCard,
                 _ => gameEvent.Source?.Card ?? gameEvent.Target.FirstOrDefault()?.Card
             };
@@ -346,7 +722,7 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var effect in effects)
             {
-                if (effect.Type != EffectType.Choose && effect.Type != EffectType.Random)
+                if (effect.Type != EffectType.Choose)
                 {
                     continue;
                 }
@@ -355,7 +731,28 @@ namespace ShadowverseBeyond.Server.Services
                     ? gameContext.CurrentGameState.FindCardInstance(effect.SourceCardId.Value)
                     : decisionAbility.SourceCard;
 
-                var preflightExecutionCount = GetPreflightDecisionExecutionCount(effect);
+                var preflightEffectContext = preflightContext with
+                {
+                    SourceCard = sourceCard,
+                    TriggeringEvent = triggeringEvent,
+                    CurrentEffect = effect,
+                    ResolvedTargets = effect.ResolvedTargets
+                };
+
+                var repeatCountResult = ResolveEffectRepeatCount(effect, preflightEffectContext);
+                if (!repeatCountResult.Success)
+                {
+                    return PausableTransactionResult.Failure(repeatCountResult.ErrorMessage ?? "Failed to resolve repeat count.");
+                }
+
+                var totalExecutions = repeatCountResult.RepeatCount + 1;
+                var preflightExecutionCount = GetPreflightDecisionExecutionCount(effect, preflightEffectContext, repeatCountResult.RepeatCount);
+                if (preflightExecutionCount < totalExecutions)
+                {
+                    MarkPreflightIncomplete(
+                        $"decision effect {effect.Type} ({effect.Id}) requires {totalExecutions} executions but only {preflightExecutionCount} can be preflighted deterministically.");
+                }
+
                 for (var executionIndex = 0; executionIndex < preflightExecutionCount; executionIndex++)
                 {
                     effect.ExecutionIndex = executionIndex;
@@ -379,10 +776,18 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
-                    var (interceptResult, interceptedEvent) = await ApplyBeforeInterceptsAsync(effectContext, decisionPreparation.DecisionEvent, processedEvents);
+                    var (interceptResult, interceptedEvent, _, preflightPrevented) = await ApplyBeforeInterceptsAsync(
+                        effectContext,
+                        decisionPreparation.DecisionEvent,
+                        processedEvents);
                     if (!interceptResult.IsSuccess)
                     {
                         return interceptResult;
+                    }
+
+                    if (preflightPrevented)
+                    {
+                        continue;
                     }
 
                     var decisionResolveResult = await ResolveDecisionEventIfNeededAsync(effectContext, interceptedEvent, DecisionResolutionPhase.Preflight);
@@ -397,15 +802,128 @@ namespace ShadowverseBeyond.Server.Services
                     }
 
                     processedEvents.Add(interceptedEvent);
+
+                    if (decisionPreparation.DecisionAbility == null)
+                    {
+                        continue;
+                    }
+
+                    var branchResolveResult = ResolveDecisionAbilitiesFromEvent(
+                        effect,
+                        effectContext,
+                        decisionPreparation.DecisionAbility,
+                        interceptedEvent,
+                        out var branchAbilities);
+                    if (!branchResolveResult.IsSuccess)
+                    {
+                        return branchResolveResult;
+                    }
+
+                    if (TryCreateDecisionCacheKey(
+                            effect,
+                            decisionPreparation.DecisionAbility,
+                            effect.Type == EffectType.Random,
+                            out var cacheKey))
+                    {
+                        SetPreflightDecisionBranchAbilities(cacheKey, branchAbilities);
+                    }
+
+                    if (branchAbilities.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var branchPreflightResult = await PreflightDecisionBranchAbilitiesAsync(
+                        effectContext,
+                        triggeringEvent,
+                        effect,
+                        branchAbilities);
+                    if (!branchPreflightResult.IsSuccess)
+                    {
+                        return branchPreflightResult;
+                    }
                 }
             }
 
             return PausableTransactionResult.Success(new List<IGameEvent>());
         }
 
-        private int GetPreflightDecisionExecutionCount(Effect effect)
+        private async Task<PausableTransactionResult> PreflightDecisionBranchAbilitiesAsync(
+            GameContext effectContext,
+            IGameEvent triggeringEvent,
+            Effect parentEffect,
+            IReadOnlyList<IAbility> branchAbilities)
         {
-            var repeatCount = Math.Max(0, effect.EffectConfig.RepeatCount);
+            foreach (var branchAbility in branchAbilities)
+            {
+                var requiresPreflight = RequiresAbilityPreflight(
+                    branchAbility,
+                    executionIsCancellable: true,
+                    out var requiresTargetChoicePreflight,
+                    out var requiresDecisionPreflight);
+                if (!requiresPreflight)
+                {
+                    continue;
+                }
+
+                var deferTargetResolution = !requiresTargetChoicePreflight && requiresDecisionPreflight;
+
+                var branchContext = effectContext with
+                {
+                    SourceCard = branchAbility.SourceCard,
+                    TriggeringEvent = triggeringEvent,
+                    CurrentEffect = parentEffect,
+                    ResolvedTargets = parentEffect.ResolvedTargets,
+                    IsCancellable = true
+                };
+
+                var branchResult = await effectContext.AbilityManager.ProcessSingleAbilityAsync(
+                    branchAbility,
+                    branchContext,
+                    true,
+                    deferTargetResolution,
+                    recordTrigger: false);
+                if (branchResult == null)
+                {
+                    return PausableTransactionResult.Failure(
+                        $"Preflight failed for decision branch ability {branchAbility.RuntimeId}: null process result.");
+                }
+
+                if (branchResult.IsCancelled)
+                {
+                    return PausableTransactionResult.Cancelled();
+                }
+
+                if (!branchResult.IsSuccess)
+                {
+                    return PausableTransactionResult.Failure(
+                        branchResult.ErrorMessage ?? $"Preflight failed for decision branch ability {branchAbility.RuntimeId}.");
+                }
+
+                if (branchAbility is Ability concreteBranchAbility)
+                {
+                    CaptureAbilityTargetSignatures(concreteBranchAbility, triggeringEvent.EventId);
+                    if (RequiresDecisionPreflight(branchAbility))
+                    {
+                        var nestedResult = await PreflightDecisionEffectsAsync(
+                            branchContext,
+                            concreteBranchAbility,
+                            triggeringEvent,
+                            branchResult.Effects);
+                        if (!nestedResult.IsSuccess)
+                        {
+                            return nestedResult;
+                        }
+                    }
+                }
+            }
+
+            return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private int GetPreflightDecisionExecutionCount(Effect effect, GameContext effectContext, int? resolvedRepeatCount = null)
+        {
+            var repeatCount = resolvedRepeatCount ?? ResolveEffectRepeatCount(effect, effectContext).RepeatCount;
             if (repeatCount == 0)
             {
                 return 1;
@@ -413,6 +931,11 @@ namespace ShadowverseBeyond.Server.Services
 
             if (effect.EffectConfig.RepeatCondition != null)
             {
+                if (!effect.EffectConfig.RepeatCondition.IsEnabled && HasStableDecisionInputForRepeatPreflight(effect.EffectConfig))
+                {
+                    return repeatCount + 1;
+                }
+
                 _logger.LogDebug(
                     "Decision effect {EffectType} ({EffectId}) has RepeatCondition; preflight only executes first iteration.",
                     effect.Type,
@@ -450,6 +973,88 @@ namespace ShadowverseBeyond.Server.Services
             return valueConfig is StaticValueConfig;
         }
 
+        private (bool Success, int RepeatCount, string? ErrorMessage) ResolveEffectRepeatCount(Effect effect, GameContext context)
+        {
+            var fallback = Math.Max(0, effect.EffectConfig.RepeatCount);
+            var repeatCountValue = effect.EffectConfig.RepeatCountValue;
+            if (repeatCountValue == null)
+            {
+                return (true, fallback, null);
+            }
+
+            try
+            {
+                var resolver = context.ServiceProvider.GetRequiredService<IValueSourceResolver>();
+                var resolved = resolver.Resolve(repeatCountValue, context);
+                if (!TryCoerceNonNegativeRepeatCount(resolved, out var repeatCount))
+                {
+                    return (false, 0, $"RepeatCountValue for effect {effect.Type} ({effect.Id}) must resolve to a non-negative number.");
+                }
+
+                return (true, repeatCount, null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resolve RepeatCountValue for effect {EffectType} ({EffectId}).", effect.Type, effect.Id);
+                return (false, 0, $"Failed to resolve RepeatCountValue for effect {effect.Type} ({effect.Id}): {ex.Message}");
+            }
+        }
+
+        private static bool TryCoerceNonNegativeRepeatCount(object? value, out int repeatCount)
+        {
+            switch (value)
+            {
+                case null:
+                    repeatCount = 0;
+                    return false;
+                case int i:
+                    repeatCount = Math.Max(0, i);
+                    return true;
+                case long l when l >= int.MinValue && l <= int.MaxValue:
+                    repeatCount = Math.Max(0, (int)l);
+                    return true;
+                case short s:
+                    repeatCount = Math.Max(0, (int)s);
+                    return true;
+                case byte b:
+                    repeatCount = Math.Max(0, (int)b);
+                    return true;
+                case double d when !double.IsNaN(d) && !double.IsInfinity(d):
+                    repeatCount = Math.Max(0, (int)Math.Floor(d));
+                    return true;
+                case float f when !float.IsNaN(f) && !float.IsInfinity(f):
+                    repeatCount = Math.Max(0, (int)Math.Floor(f));
+                    return true;
+                case decimal m:
+                    repeatCount = Math.Max(0, (int)Math.Floor(m));
+                    return true;
+                case bool b:
+                    repeatCount = b ? 1 : 0;
+                    return true;
+                case string s when int.TryParse(s, out var parsed):
+                    repeatCount = Math.Max(0, parsed);
+                    return true;
+                case JsonElement jsonElement:
+                    if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var jsonNumber))
+                    {
+                        repeatCount = Math.Max(0, jsonNumber);
+                        return true;
+                    }
+
+                    if (jsonElement.ValueKind == JsonValueKind.String
+                        && int.TryParse(jsonElement.GetString(), out var jsonStringInt))
+                    {
+                        repeatCount = Math.Max(0, jsonStringInt);
+                        return true;
+                    }
+
+                    break;
+            }
+
+            repeatCount = 0;
+            return false;
+        }
+
         private async Task<(PausableTransactionResult Result, List<Effect> Effects, List<IGameEvent> GeneratedEvents)> GetTriggerAbilityEffectsAsync(
             GameContext gameContext,
             IGameEvent gameEvent,
@@ -457,7 +1062,13 @@ namespace ShadowverseBeyond.Server.Services
         {
             var generatedEffects = new List<Effect>();
             var generatedEvents = new List<IGameEvent>();
-            var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(gameEvent, gameContext, timing);
+            var abilityTriggerContext = ShouldSuppressAuraRefreshForEvent(gameContext, gameEvent)
+                ? gameContext with { IsAuraRefresh = true }
+                : gameContext;
+            var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(gameEvent, abilityTriggerContext, timing);
+            triggeredAbilities = FilterTriggeredAbilitiesByTransactionSameNameLimit(
+                triggeredAbilities,
+                $"trigger-{timing.ToString().ToLowerInvariant()}");
 
             // This logic is now refined. "Primary" abilities (cancellable, require choice) are handled
             // exclusively in AnalyzePrimaryAbilitiesAsync. This method should handle all other
@@ -472,7 +1083,12 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var ability in triggeredAbilities)
             {
-                var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = gameEvent };
+                if (!TryAcquireSameNameTriggerSlot(ability, $"trigger-{timing.ToString().ToLowerInvariant()}"))
+                {
+                    continue;
+                }
+
+                var abilityContext = abilityTriggerContext with { SourceCard = ability.SourceCard, TriggeringEvent = gameEvent };
 
                 if (timing == TriggerTiming.On
                     && gameEvent is IPlayerActionEvent
@@ -483,6 +1099,10 @@ namespace ShadowverseBeyond.Server.Services
                         out var preflightGeneratedEvents))
                 {
                     ability.RecordTrigger(abilityContext);
+                    if (ShouldEmitAbilityTriggeredEvent(abilityContext))
+                    {
+                        generatedEvents.Add(new AbilityTriggeredEvent(ability, abilityContext.TriggeringEvent!));
+                    }
                     generatedEffects.AddRange(preflightEffects);
                     if (preflightGeneratedEvents.Count > 0)
                     {
@@ -511,14 +1131,143 @@ namespace ShadowverseBeyond.Server.Services
             return (PausableTransactionResult.Success(new List<IGameEvent>()), generatedEffects, generatedEvents);
         }
 
+        private bool ShouldSuppressAuraRefreshForEvent(GameContext gameContext, IGameEvent gameEvent)
+        {
+            Guid sourceAbilityId = Guid.Empty;
+            if (gameEvent is BuffAppliedEvent appliedEvent)
+            {
+                sourceAbilityId = appliedEvent.AppliedBuff.SourceAbilityId;
+            }
+            else if (gameEvent is BuffRemovedEvent removedEvent)
+            {
+                sourceAbilityId = removedEvent.RemovedBuff.SourceAbilityId;
+            }
+
+            if (sourceAbilityId == Guid.Empty)
+            {
+                return false;
+            }
+
+            var sourceAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(sourceAbilityId);
+            return sourceAbility is Ability ability && ability.Config.Auras.Any();
+        }
+
+        private List<IAbility> FilterTriggeredAbilitiesByTransactionSameNameLimit(
+            IEnumerable<IAbility> triggeredAbilities,
+            string phaseTag)
+        {
+            var candidates = triggeredAbilities?.ToList() ?? new List<IAbility>();
+            if (candidates.Count == 0)
+            {
+                return candidates;
+            }
+
+            var filtered = new List<IAbility>(candidates.Count);
+            var seenInBatch = new HashSet<SameNameTriggerKey>();
+
+            foreach (var ability in candidates)
+            {
+                if (!TryGetSameNameTriggerKey(ability, out var key))
+                {
+                    filtered.Add(ability);
+                    continue;
+                }
+
+                if (_sameNameTriggeredInTransaction.Contains(key))
+                {
+                    _logger.LogDebug(
+                        "Suppressed same-name trigger candidate in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
+                        phaseTag,
+                        key.OwnerPlayerId,
+                        key.AbilityDefinitionId,
+                        ability.RuntimeId);
+                    continue;
+                }
+
+                if (!seenInBatch.Add(key))
+                {
+                    _logger.LogDebug(
+                        "Suppressed duplicate same-name trigger candidate in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
+                        phaseTag,
+                        key.OwnerPlayerId,
+                        key.AbilityDefinitionId,
+                        ability.RuntimeId);
+                    continue;
+                }
+
+                filtered.Add(ability);
+            }
+
+            return filtered;
+        }
+
+        private bool TryAcquireSameNameTriggerSlot(IAbility ability, string phaseTag)
+        {
+            if (!TryGetSameNameTriggerKey(ability, out var key))
+            {
+                return true;
+            }
+
+            if (_sameNameTriggeredInTransaction.Contains(key))
+            {
+                _logger.LogDebug(
+                    "Suppressed same-name trigger execution in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
+                    phaseTag,
+                    key.OwnerPlayerId,
+                    key.AbilityDefinitionId,
+                    ability.RuntimeId);
+                return false;
+            }
+
+            _sameNameTriggeredInTransaction.Add(key);
+            return true;
+        }
+
+        private static bool TryGetSameNameTriggerKey(IAbility ability, out SameNameTriggerKey key)
+        {
+            key = default;
+            if (ability?.TriggerConfig?.LimitSameNameOncePerTransaction != true)
+            {
+                return false;
+            }
+
+            var ownerPlayerId = ability.SourceCard?.OwnerPlayerId ?? Guid.Empty;
+            if (ownerPlayerId == Guid.Empty)
+            {
+                return false;
+            }
+
+            key = new SameNameTriggerKey(ownerPlayerId, ability.DefinitionId);
+            return true;
+        }
+
         private static bool IsInterceptEffect(Effect effect)
         {
             return IsInterceptEffectType(effect.Type);
         }
 
+        private static bool ShouldEmitAbilityTriggeredEvent(GameContext context)
+        {
+            if (context.TriggeringEvent == null)
+            {
+                return false;
+            }
+
+            // Fast-path gate: only emit when there are listeners for EventType.AbilityTriggered.
+            if (context.AbilityManager is AbilityManager concreteManager)
+            {
+                return concreteManager.HasAbilityTriggeredListeners();
+            }
+
+            // For test doubles / alternate managers, keep legacy behavior.
+            return true;
+        }
+
         private static bool IsInterceptEffectType(EffectType effectType)
         {
-            return effectType == EffectType.RewriteEventParams || effectType == EffectType.ReplaceEvent;
+            return effectType == EffectType.RewriteEventParams
+                || effectType == EffectType.ReplaceEvent
+                || effectType == EffectType.PreventEvent;
         }
 
         private static void EnqueueDelayedEvent(
@@ -604,21 +1353,38 @@ namespace ShadowverseBeyond.Server.Services
             eventStagingArea.Enqueue(next);
         }
 
-        private async Task<(PausableTransactionResult Result, IGameEvent FinalEvent)> ApplyBeforeInterceptsAsync(
+        private async Task<(PausableTransactionResult Result, IGameEvent FinalEvent, List<IGameEvent> GeneratedEvents, bool IsPrevented)> ApplyBeforeInterceptsAsync(
             GameContext gameContext,
             IGameEvent initialEvent,
-            List<IGameEvent> processedEvents)
+            List<IGameEvent> processedEvents,
+            Dictionary<string, int>? eventSignatureCounts = null,
+            Queue<IGameEvent>? eventStagingArea = null,
+            Dictionary<Guid, Queue<IGameEvent>>? delayedEventsByParent = null,
+            Queue<IGameEvent>? queueDrainedDelayedEvents = null,
+            HashSet<Guid>? readyQueueDrainedEvents = null,
+            int recursionDepth = 0)
         {
             var currentEvent = initialEvent;
             var interceptIteration = 0;
             var interceptedAbilityIds = new HashSet<Guid>();
             var maxIterations = GameConstants.AbilityTrigger.BeforeInterceptMaxIterations;
+            var generatedEvents = new List<IGameEvent>();
+            var generatedEventIds = new HashSet<Guid>();
+            var canExecuteFollowUps =
+                eventSignatureCounts != null &&
+                eventStagingArea != null &&
+                delayedEventsByParent != null &&
+                queueDrainedDelayedEvents != null &&
+                readyQueueDrainedEvents != null;
 
             while (interceptIteration < maxIterations)
             {
                 bool eventChanged = false;
 
                 var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(currentEvent, gameContext, TriggerTiming.Before);
+                triggeredAbilities = FilterTriggeredAbilitiesByTransactionSameNameLimit(
+                    triggeredAbilities,
+                    "before-intercept");
 
                 foreach (var ability in triggeredAbilities)
                 {
@@ -637,7 +1403,7 @@ namespace ShadowverseBeyond.Server.Services
 
                     if (!abilityResult.IsSuccess)
                     {
-                        return (PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Before intercept ability processing failed."), currentEvent);
+                        return (PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Before intercept ability processing failed."), currentEvent, generatedEvents, false);
                     }
 
                     var interceptEffects = abilityResult.Effects.Where(IsInterceptEffect).ToList();
@@ -646,15 +1412,56 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
+                    if (!TryAcquireSameNameTriggerSlot(ability, "before-intercept"))
+                    {
+                        continue;
+                    }
+
                     interceptedAbilityIds.Add(ability.RuntimeId);
                     ability.RecordTrigger(abilityContext);
+                    if (ShouldEmitAbilityTriggeredEvent(abilityContext))
+                    {
+                        generatedEvents.Add(new AbilityTriggeredEvent(ability, abilityContext.TriggeringEvent!));
+                    }
+
+                    AppendGeneratedEvents(generatedEvents, generatedEventIds, abilityResult.GeneratedEvents);
 
                     foreach (var interceptEffect in interceptEffects)
                     {
                         var (effectResult, actionResult) = await ExecuteInterceptEffectAsync(interceptEffect, abilityContext, processedEvents);
                         if (!effectResult.IsSuccess)
                         {
-                            return (effectResult, currentEvent);
+                            return (effectResult, currentEvent, generatedEvents, false);
+                        }
+
+                        if (actionResult != null)
+                        {
+                            AppendGeneratedEvents(generatedEvents, generatedEventIds, actionResult.GeneratedEvents);
+
+                            if (canExecuteFollowUps)
+                            {
+                                var effectContext = abilityContext with
+                                {
+                                    CurrentEffect = interceptEffect,
+                                    ResolvedTargets = interceptEffect.ResolvedTargets
+                                };
+
+                                var chainedResult = await ProcessChainedAbilitiesAsync(
+                                    interceptEffect,
+                                    effectContext,
+                                    actionResult,
+                                    processedEvents,
+                                    eventSignatureCounts!,
+                                    eventStagingArea!,
+                                    delayedEventsByParent!,
+                                    queueDrainedDelayedEvents!,
+                                    readyQueueDrainedEvents!,
+                                    recursionDepth + 1);
+                                if (!chainedResult.IsSuccess)
+                                {
+                                    return (chainedResult, currentEvent, generatedEvents, false);
+                                }
+                            }
                         }
 
                         var intercept = actionResult?.EventIntercept;
@@ -663,13 +1470,20 @@ namespace ShadowverseBeyond.Server.Services
                             continue;
                         }
 
-                        if (!TryApplyEventIntercept(gameContext, currentEvent, intercept, out var updatedEvent, out var changed, out var errorMessage))
+                        if (!TryApplyEventIntercept(gameContext, currentEvent, intercept, out var updatedEvent, out var changed, out var prevented, out var errorMessage))
                         {
-                            return (PausableTransactionResult.Failure(errorMessage ?? "Before intercept failed to apply."), currentEvent);
+                            return (PausableTransactionResult.Failure(errorMessage ?? "Before intercept failed to apply."), currentEvent, generatedEvents, false);
+                        }
+
+                        if (prevented)
+                        {
+                            ResetResolvedStateAfterInterceptChange(gameContext, currentEvent.EventId);
+                            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent, generatedEvents, true);
                         }
 
                         if (changed)
                         {
+                            ResetResolvedStateAfterInterceptChange(gameContext, currentEvent.EventId);
                             currentEvent = updatedEvent;
                             eventChanged = true;
                             interceptIteration++;
@@ -695,7 +1509,86 @@ namespace ShadowverseBeyond.Server.Services
                     maxIterations, currentEvent.EventType, currentEvent.EventId);
             }
 
-            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent);
+            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent, generatedEvents, false);
+        }
+
+        private static void AppendGeneratedEvents(
+            List<IGameEvent> destination,
+            HashSet<Guid> eventIds,
+            IEnumerable<IGameEvent>? source)
+        {
+            if (source == null)
+            {
+                return;
+            }
+
+            foreach (var gameEvent in source)
+            {
+                if (gameEvent == null)
+                {
+                    continue;
+                }
+
+                if (eventIds.Add(gameEvent.EventId))
+                {
+                    destination.Add(gameEvent);
+                }
+            }
+        }
+
+        private void ResetResolvedStateAfterInterceptChange(GameContext gameContext, Guid triggerEventId)
+        {
+            if (triggerEventId == Guid.Empty)
+            {
+                return;
+            }
+
+            // Intercept rewrites/replacements can alter event semantics while keeping the same EventId.
+            // Reset event-scoped caches so subsequent Before/On evaluation resolves against the updated event.
+            if (gameContext.AbilityManager is AbilityManager abilityManager)
+            {
+                foreach (var ability in abilityManager.GetActiveAbilities().OfType<Ability>())
+                {
+                    ability.ClearDecisionCache(triggerEventId);
+
+                    foreach (var target in ability.Targets)
+                    {
+                        if (target.LastResolvedEventId == triggerEventId)
+                        {
+                            target.MarkForResolution();
+                        }
+                    }
+                }
+            }
+
+            var deferredKeys = _deferredTargetResolutionCache.Keys
+                .Where(key => key.TriggerEventId == triggerEventId)
+                .ToList();
+            foreach (var key in deferredKeys)
+            {
+                _deferredTargetResolutionCache.Remove(key);
+            }
+
+            if (_activePreflightSession == null)
+            {
+                return;
+            }
+
+            var decisionKeys = _activePreflightSession.DecisionSnapshots.Keys
+                .Where(key => key.TriggerEventId == triggerEventId)
+                .ToList();
+            foreach (var key in decisionKeys)
+            {
+                _activePreflightSession.DecisionSnapshots.Remove(key);
+            }
+
+            var targetKeys = _activePreflightSession.TargetSignatures.Keys
+                .Where(key => key.TriggerEventId == triggerEventId)
+                .ToList();
+            foreach (var key in targetKeys)
+            {
+                _activePreflightSession.TargetSignatures.Remove(key);
+            }
         }
 
         private async Task<PausableTransactionResult> ResolveDecisionEventIfNeededAsync(
@@ -705,8 +1598,9 @@ namespace ShadowverseBeyond.Server.Services
         {
             var resolvedChoose = gameEvent as ChooseEvent;
             var resolvedRandom = gameEvent as RandomEvent;
+            var resolvedSequence = gameEvent as SequenceEvent;
 
-            if (resolvedChoose == null && resolvedRandom == null)
+            if (resolvedChoose == null && resolvedRandom == null && resolvedSequence == null)
             {
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
@@ -717,6 +1611,11 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             if (resolvedRandom?.SelectedOptionIds.Count > 0)
+            {
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
+            if (resolvedSequence?.SelectedOptionIds.Count > 0)
             {
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
@@ -738,11 +1637,15 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Failure("Decision event requires a source ability.");
             }
 
-            var isRandom = resolvedRandom != null;
+            var decisionMode = GetDecisionModeFromDecisionEvent(gameEvent);
             var executionIndex = Math.Max(0, currentEffect.ExecutionIndex);
-            var optionIds = resolvedRandom != null
-                ? resolvedRandom.OptionIds
-                : resolvedChoose!.OptionIds;
+            var optionIds = gameEvent switch
+            {
+                RandomEvent randomEvent => randomEvent.OptionIds,
+                ChooseEvent chooseEvent => chooseEvent.OptionIds,
+                SequenceEvent sequenceEvent => sequenceEvent.OptionIds,
+                _ => Array.Empty<Guid>()
+            };
 
             if (optionIds.Count == 0)
             {
@@ -754,13 +1657,17 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     resolvedRandom.SetSelectedOptionIndexes(Array.Empty<int>());
                 }
+                else if (resolvedSequence != null)
+                {
+                    resolvedSequence.SetSelectedOptionIndexes(Array.Empty<int>());
+                }
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
 
             IReadOnlyList<Ability.DecisionOptionSnapshot> availableOptions;
             try
             {
-                availableOptions = ability.GetDecisionOptions(currentEffect.TriggeredEventId, currentEffect.EffectIndex, isRandom, executionIndex);
+                availableOptions = ability.GetDecisionOptions(currentEffect.TriggeredEventId, currentEffect.EffectIndex, decisionMode, executionIndex);
             }
             catch (GameLogicException ex)
             {
@@ -778,28 +1685,59 @@ namespace ShadowverseBeyond.Server.Services
                 orderedOptions.Add(option);
             }
 
-            if (!TryCreateDecisionCacheKey(currentEffect, ability, isRandom, out var cacheKey))
+            var usePreflightDecisionCache = decisionMode == Ability.DecisionMode.Choose;
+            DecisionInputSignature signature = default;
+            DecisionCacheKey cacheKey = default;
+            if (usePreflightDecisionCache)
             {
-                return PausableTransactionResult.Failure("Decision cache key is invalid.");
+                if (!TryCreateDecisionCacheKey(currentEffect, ability, decisionMode == Ability.DecisionMode.Random, out cacheKey))
+                {
+                    return PausableTransactionResult.Failure("Decision cache key is invalid.");
+                }
+
+                signature = BuildDecisionInputSignature(optionIds, resolvedChoose?.SelectionCount ?? resolvedRandom?.SelectionCount ?? 0, resolvedRandom?.AllowRepeat ?? false, resolvedRandom?.Weights);
+                if (phase == DecisionResolutionPhase.Commit)
+                {
+                    if (!TryGetPreflightDecisionState(cacheKey, out var cachedDecision))
+                    {
+                        _logger.LogWarning(
+                            "Preflight decision snapshot missing for ability {AbilityRuntimeId}, effect {EffectIndex}, execution {ExecutionIndex}. Falling back to commit-time decision resolution.",
+                            ability.RuntimeId,
+                            currentEffect.EffectIndex,
+                            executionIndex);
+                    }
+                    else
+                    {
+                        if (cachedDecision.Signature != signature)
+                        {
+                            return PausableTransactionResult.Failure("Decision input signature mismatch between preflight and commit.");
+                        }
+
+                        if (resolvedChoose != null)
+                        {
+                            resolvedChoose.SetSelectedOptionIndexes(cachedDecision.SelectedIndexes);
+                        }
+                        else if (resolvedRandom != null)
+                        {
+                            resolvedRandom.SetSelectedOptionIndexes(cachedDecision.SelectedIndexes);
+                        }
+
+                        return PausableTransactionResult.Success(new List<IGameEvent>());
+                    }
+                }
             }
 
-            var signature = BuildDecisionInputSignature(optionIds, resolvedChoose?.SelectionCount ?? resolvedRandom?.SelectionCount ?? 0, resolvedRandom?.AllowRepeat ?? false, resolvedRandom?.Weights);
-            if (phase == DecisionResolutionPhase.Commit && _preflightDecisionCache.TryGetValue(cacheKey, out var cachedDecision))
+            if (resolvedSequence != null)
             {
-                if (cachedDecision.Signature != signature)
-                {
-                    return PausableTransactionResult.Failure("Decision input signature mismatch between preflight and commit.");
-                }
-
-                if (resolvedChoose != null)
-                {
-                    resolvedChoose.SetSelectedOptionIndexes(cachedDecision.SelectedIndexes);
-                }
-                else if (resolvedRandom != null)
-                {
-                    resolvedRandom.SetSelectedOptionIndexes(cachedDecision.SelectedIndexes);
-                }
-
+                var selectionCount = Math.Max(0, resolvedSequence.SelectionCount);
+                var sequenceScopePath = EnsureSequenceScopePath(currentEffect, ability);
+                var selectedIndexes = ability.ResolveSequenceSelection(
+                    sequenceScopePath,
+                    optionIds.Count,
+                    selectionCount,
+                    resolvedSequence.LoopSelection,
+                    resolvedSequence.SelectionOrder);
+                resolvedSequence.SetSelectedOptionIndexes(selectedIndexes);
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
 
@@ -815,13 +1753,9 @@ namespace ShadowverseBeyond.Server.Services
                 var selectedIndexes = SampleWeightedIndexes(weights, selectionCount, resolvedRandom.AllowRepeat);
                 resolvedRandom.SetSelectedOptionIndexes(selectedIndexes);
 
-                if (phase == DecisionResolutionPhase.Preflight)
+                if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
                 {
-                    _preflightDecisionCache[cacheKey] = new PreflightDecisionState
-                    {
-                        Signature = signature,
-                        SelectedIndexes = selectedIndexes
-                    };
+                    UpsertPreflightDecisionState(cacheKey, signature, selectedIndexes);
                 }
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
@@ -880,13 +1814,9 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 resolvedChoose.SetSelectedOptionIndexes(selectedIndexes);
-                if (phase == DecisionResolutionPhase.Preflight)
+                if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
                 {
-                    _preflightDecisionCache[cacheKey] = new PreflightDecisionState
-                    {
-                        Signature = signature,
-                        SelectedIndexes = selectedIndexes
-                    };
+                    UpsertPreflightDecisionState(cacheKey, signature, selectedIndexes);
                 }
             }
 
@@ -925,6 +1855,71 @@ namespace ShadowverseBeyond.Server.Services
                 Math.Max(0, currentEffect.ExecutionIndex),
                 isRandom);
             return true;
+        }
+
+        private string EnsureSequenceScopePath(Effect effect, Ability? ability = null)
+        {
+            if (!string.IsNullOrWhiteSpace(effect.SequenceScopePath))
+            {
+                return effect.SequenceScopePath;
+            }
+
+            var scopePrefix = ability?.SequenceScopePathPrefix;
+            if (string.IsNullOrWhiteSpace(scopePrefix) && effect.SourceAbility is Ability sourceAbility)
+            {
+                scopePrefix = sourceAbility.SequenceScopePathPrefix;
+            }
+
+            if (string.IsNullOrWhiteSpace(scopePrefix) && effect.sourceAbilityId.HasValue && effect.sourceAbilityId.Value != Guid.Empty)
+            {
+                scopePrefix = $"ability/{effect.sourceAbilityId.Value:N}";
+            }
+
+            if (string.IsNullOrWhiteSpace(scopePrefix))
+            {
+                scopePrefix = $"effect/{effect.Id:N}";
+            }
+
+            effect.SequenceScopePath = $"{scopePrefix}/effect/{Math.Max(0, effect.EffectIndex)}";
+            return effect.SequenceScopePath;
+        }
+
+        private static string BuildChildSequenceScopePath(string parentScopePath, string segment, int index)
+        {
+            var normalizedParent = string.IsNullOrWhiteSpace(parentScopePath)
+                ? "effect/unknown"
+                : parentScopePath.TrimEnd('/');
+            var normalizedSegment = string.IsNullOrWhiteSpace(segment)
+                ? "child"
+                : segment.Trim();
+            return $"{normalizedParent}/{normalizedSegment}/{Math.Max(0, index)}";
+        }
+
+        private static bool IsDecisionEffectType(EffectType effectType)
+        {
+            return effectType == EffectType.Choose
+                || effectType == EffectType.Random
+                || effectType == EffectType.Sequence;
+        }
+
+        private static Ability.DecisionMode GetDecisionModeFromEffectType(EffectType effectType)
+        {
+            return effectType switch
+            {
+                EffectType.Random => Ability.DecisionMode.Random,
+                EffectType.Sequence => Ability.DecisionMode.Sequence,
+                _ => Ability.DecisionMode.Choose
+            };
+        }
+
+        private static Ability.DecisionMode GetDecisionModeFromDecisionEvent(IGameEvent decisionEvent)
+        {
+            return decisionEvent switch
+            {
+                RandomEvent => Ability.DecisionMode.Random,
+                SequenceEvent => Ability.DecisionMode.Sequence,
+                _ => Ability.DecisionMode.Choose
+            };
         }
 
         private static string BuildDecisionChoicePrompt(int selectionCount)
@@ -1108,6 +2103,8 @@ namespace ShadowverseBeyond.Server.Services
                 return (deferredResolutionResult, null);
             }
 
+            effectContext = effectContext with { ResolvedTargets = effect.ResolvedTargets };
+
             var actionResult = _effectExecutor.ExecuteEffect(effect, effectContext);
             if (!actionResult.Success)
             {
@@ -1120,10 +2117,15 @@ namespace ShadowverseBeyond.Server.Services
                         _logger.LogWarning("Intercept effect {EffectType} failed and was skipped due to OnFailure=SkipEffect.", effect.Type);
                         return (PausableTransactionResult.Success(new List<IGameEvent>()), null);
                     case FailureHandling.AbortAbility:
-                    default:
                         var errorMessage = $"Intercept effect execution failed for {effect.Type}.";
                         _logger.LogError(errorMessage);
                         return (PausableTransactionResult.Failure(errorMessage), null);
+                    default:
+                        _logger.LogWarning(
+                            "Intercept effect {EffectType} failed with unknown OnFailure value '{OnFailure}'. Falling back to CompleteWithFailure.",
+                            effect.Type,
+                            effect.EffectConfig.OnFailure);
+                        return (PausableTransactionResult.Success(new List<IGameEvent>()), actionResult);
                 }
             }
 
@@ -1136,10 +2138,12 @@ namespace ShadowverseBeyond.Server.Services
             EventInterceptResult intercept,
             out IGameEvent updatedEvent,
             out bool changed,
+            out bool prevented,
             out string? errorMessage)
         {
             updatedEvent = currentEvent;
             changed = false;
+            prevented = false;
             errorMessage = null;
 
             switch (intercept.Kind)
@@ -1148,6 +2152,9 @@ namespace ShadowverseBeyond.Server.Services
                     return TryApplyEventRewrite(currentEvent, intercept, out updatedEvent, out changed, out errorMessage);
                 case EventInterceptKind.ReplaceEvent:
                     return TryApplyEventReplacement(gameContext, currentEvent, intercept, out updatedEvent, out changed, out errorMessage);
+                case EventInterceptKind.PreventEvent:
+                    prevented = true;
+                    return true;
                 default:
                     return true;
             }
@@ -1653,6 +2660,10 @@ namespace ShadowverseBeyond.Server.Services
         private async Task<PausableTransactionResult> CommitTransactionAsync(GameContext gameContext, IEnumerable<IGameEvent> initialEvents)
         {
             _logger.LogInformation("--- Phase 3: Committing Transaction ---");
+            if (_activePreflightSession != null)
+            {
+                _activePreflightSession.CommitStarted = true;
+            }
             _effectQueue.Clear();
             var eventStagingArea = new Queue<IGameEvent>(initialEvents);
             var delayedEventsByParent = new Dictionary<Guid, Queue<IGameEvent>>();
@@ -1661,6 +2672,124 @@ namespace ShadowverseBeyond.Server.Services
             var processedEvents = new List<IGameEvent>();
             var eventSignatureCounts = new Dictionary<string, int>(StringComparer.Ordinal);
             var bundleId = Guid.NewGuid();
+            var cardUpdateEventAdded = false;
+
+            async Task<(List<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)> BroadcastPlan, List<CommittedEventWriteDto> RecordedEvents)> BuildBroadcastArtifactsAsync(
+                IReadOnlyList<IGameEvent> eventsToBroadcast)
+            {
+                var broadcastPlan = new List<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)>(eventsToBroadcast.Count);
+                var recordedEvents = new List<CommittedEventWriteDto>(eventsToBroadcast.Count);
+
+                foreach (var gameEvent in eventsToBroadcast)
+                {
+                    var announcement = (gameEvent as ILogAnnounceableEvent)?.GetAnnouncement(gameContext.CurrentGameState);
+                    if (!string.IsNullOrWhiteSpace(announcement))
+                    {
+                        announcement = AnnouncementTokens.WithTurn(gameContext.CurrentGameState, announcement);
+                    }
+
+                    var processorResult = await _eventProcessor.ProcessEventAsync(gameEvent, gameContext);
+                    var dtos = processorResult.ResultingDtos.ToList();
+
+                    if (dtos.Count == 0 && !string.IsNullOrWhiteSpace(announcement))
+                    {
+                        var sourcePlayerId = gameEvent.Source?.Player?.PlayerId ?? Guid.Empty;
+                        dtos.Add(new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), announcement, sourcePlayerId));
+                    }
+
+                    var envelopes = _recordedEventMapper.MapClientDtos(dtos);
+                    string? rawEventJson = null;
+                    try
+                    {
+                        rawEventJson = _rawEventMapper.MapToOutputRawEventJson(gameContext.CurrentGameState, gameEvent);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to map {EventType} (ID: {EventId}) to RawEventJson.", gameEvent.EventType, gameEvent.EventId);
+                    }
+
+                    var targets = gameEvent.Target?.Select(t => t.InstanceId).ToArray() ?? Array.Empty<Guid>();
+                    recordedEvents.Add(new CommittedEventWriteDto(
+                        gameEvent.EventId,
+                        gameEvent.EventType.ToString(),
+                        gameEvent.Timestamp,
+                        announcement,
+                        gameEvent.Source?.InstanceId,
+                        targets,
+                        envelopes,
+                        rawEventJson));
+
+                    broadcastPlan.Add((gameEvent, announcement, dtos));
+                }
+
+                return (broadcastPlan, recordedEvents);
+            }
+
+            async Task BroadcastPlanAsync(
+                string groupName,
+                IReadOnlyList<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)> broadcastPlan)
+            {
+                foreach (var item in broadcastPlan)
+                {
+                    var announcement = item.Announcement;
+                    var hasDto = item.Dtos.Count > 0;
+                    foreach (var dto in item.Dtos)
+                    {
+                        if (!string.IsNullOrWhiteSpace(announcement) && dto is GameEventDto gameEventDto)
+                        {
+                            gameEventDto.Announcement ??= announcement;
+                        }
+
+                        await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, dto);
+                    }
+
+                    if (!hasDto && !string.IsNullOrWhiteSpace(announcement))
+                    {
+                        var sourcePlayerId = item.Event.Source?.Player?.PlayerId ?? Guid.Empty;
+                        var logDto = new LogEventDto(item.Event.EventId, item.Event.EventType.ToString(), announcement, sourcePlayerId);
+                        await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, logDto);
+                    }
+                }
+            }
+
+            async Task<PausableTransactionResult> FinalizeFailedTransactionAsync(PausableTransactionResult failureResult)
+            {
+                var failureMessage = failureResult.ErrorMessage ?? "Transaction commit failed.";
+
+                if (!cardUpdateEventAdded)
+                {
+                    var updatedCards = CollectUpdatedCardInstances(gameContext, processedEvents);
+                    if (updatedCards.Count > 0)
+                    {
+                        processedEvents.Add(new CardInstanceUpdatedEvent(updatedCards));
+                    }
+
+                    cardUpdateEventAdded = true;
+                }
+
+                gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_failed_partial");
+
+                var groupName = SignalRGroupNames.Game(gameContext.CurrentGameState.GameId);
+
+                if (processedEvents.Count > 0)
+                {
+                    var (broadcastPlan, _) = await BuildBroadcastArtifactsAsync(processedEvents);
+                    _logger.LogWarning(
+                        "Transaction failed after partial commit. Broadcasting {Count} processed events. Error: {Error}",
+                        processedEvents.Count,
+                        failureMessage);
+                    await BroadcastPlanAsync(groupName, broadcastPlan);
+                }
+
+                var failureLog = new LogEventDto(
+                    Guid.NewGuid(),
+                    "TransactionFailed",
+                    $"transaction-failed: {failureMessage}",
+                    Guid.Empty);
+                await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, failureLog);
+
+                return failureResult;
+            }
 
             while (eventStagingArea.Count > 0 || _effectQueue.Count > 0 || queueDrainedDelayedEvents.Count > 0)
             {
@@ -1683,7 +2812,7 @@ namespace ShadowverseBeyond.Server.Services
                         queueDrainedDelayedEvents,
                         readyQueueDrainedEvents,
                         recursionDepth: 0);
-                    if (!result.IsSuccess) return result;
+                    if (!result.IsSuccess) return await FinalizeFailedTransactionAsync(result);
                 }
                 else
                 {
@@ -1698,59 +2827,22 @@ namespace ShadowverseBeyond.Server.Services
                         queueDrainedDelayedEvents,
                         readyQueueDrainedEvents,
                         recursionDepth: 0);
-                    if (!result.IsSuccess) return result;
+                    if (!result.IsSuccess) return await FinalizeFailedTransactionAsync(result);
                 }
             }
 
-            var updatedCards = CollectUpdatedCardInstances(gameContext, processedEvents);
-            if (updatedCards.Count > 0)
+            if (!cardUpdateEventAdded)
             {
-                processedEvents.Add(new CardInstanceUpdatedEvent(updatedCards));
+                var updatedCards = CollectUpdatedCardInstances(gameContext, processedEvents);
+                if (updatedCards.Count > 0)
+                {
+                    processedEvents.Add(new CardInstanceUpdatedEvent(updatedCards));
+                }
+
+                cardUpdateEventAdded = true;
             }
 
-            var broadcastPlan = new List<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)>(processedEvents.Count);
-            var recordedEvents = new List<CommittedEventWriteDto>(processedEvents.Count);
-
-            foreach (var gameEvent in processedEvents)
-            {
-                var announcement = (gameEvent as ILogAnnounceableEvent)?.GetAnnouncement(gameContext.CurrentGameState);
-                if (!string.IsNullOrWhiteSpace(announcement))
-                {
-                    announcement = AnnouncementTokens.WithTurn(gameContext.CurrentGameState, announcement);
-                }
-                var processorResult = await _eventProcessor.ProcessEventAsync(gameEvent, gameContext);
-                var dtos = processorResult.ResultingDtos.ToList();
-
-                if (dtos.Count == 0 && !string.IsNullOrWhiteSpace(announcement))
-                {
-                    var sourcePlayerId = gameEvent.Source?.Player?.PlayerId ?? Guid.Empty;
-                    dtos.Add(new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), announcement, sourcePlayerId));
-                }
-
-                var envelopes = _recordedEventMapper.MapClientDtos(dtos);
-                string? rawEventJson = null;
-                try
-                {
-                    rawEventJson = _rawEventMapper.MapToOutputRawEventJson(gameContext.CurrentGameState, gameEvent);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Failed to map {EventType} (ID: {EventId}) to RawEventJson.", gameEvent.EventType, gameEvent.EventId);
-                }
-
-                var targets = gameEvent.Target?.Select(t => t.InstanceId).ToArray() ?? Array.Empty<Guid>();
-                recordedEvents.Add(new CommittedEventWriteDto(
-                    gameEvent.EventId,
-                    gameEvent.EventType.ToString(),
-                    gameEvent.Timestamp,
-                    announcement,
-                    gameEvent.Source?.InstanceId,
-                    targets,
-                    envelopes,
-                    rawEventJson));
-
-                broadcastPlan.Add((gameEvent, announcement, dtos));
-            }
+            var (broadcastPlan, recordedEvents) = await BuildBroadcastArtifactsAsync(processedEvents);
 
             // Persist the committed event bundle for replay/debug export (best-effort; do not break the match).
             if (ShouldPersistReplay(gameContext.CurrentGameState))
@@ -1789,7 +2881,7 @@ namespace ShadowverseBeyond.Server.Services
             }
             else
             {
-                _logger.LogDebug("Skipping replay persistence for single-player game {GameId}.", gameContext.CurrentGameState.GameId);
+                _logger.LogDebug("Skipping replay persistence for game {GameId} (disabled by config or AI match).", gameContext.CurrentGameState.GameId);
             }
 
             // --- Broadcast all processed events AFTER the entire transaction is complete ---
@@ -1798,29 +2890,8 @@ namespace ShadowverseBeyond.Server.Services
             await _metaProgressionService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
 
             _logger.LogInformation("Broadcasting {Count} processed events at the end of the transaction.", processedEvents.Count);
-            string groupName = $"Game_{gameContext.CurrentGameState.GameId}";
-            foreach (var item in broadcastPlan)
-            {
-                var announcement = item.Announcement;
-                var hasDto = item.Dtos.Count > 0;
-                foreach (var dto in item.Dtos)
-                {
-                    if (!string.IsNullOrWhiteSpace(announcement) && dto is GameEventDto gameEventDto)
-                    {
-                        gameEventDto.Announcement ??= announcement;
-                    }
-
-                    await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, dto);
-                }
-
-                // If this event produces no DTOs, still broadcast a lightweight log entry.
-                if (!hasDto && !string.IsNullOrWhiteSpace(announcement))
-                {
-                    var sourcePlayerId = item.Event.Source?.Player?.PlayerId ?? Guid.Empty;
-                    var logDto = new LogEventDto(item.Event.EventId, item.Event.EventType.ToString(), announcement, sourcePlayerId);
-                    await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, logDto);
-                }
-            }
+            string groupName = SignalRGroupNames.Game(gameContext.CurrentGameState.GameId);
+            await BroadcastPlanAsync(groupName, broadcastPlan);
 
             _logger.LogInformation("--- Transaction End: All events and effects processed successfully. ---");
             return PausableTransactionResult.Success(processedEvents);
@@ -1880,8 +2951,13 @@ namespace ShadowverseBeyond.Server.Services
             return updatedCards;
         }
 
-        private static bool ShouldPersistReplay(GameState gameState)
+        private bool ShouldPersistReplay(GameState gameState)
         {
+            if (!_replayOptions.EnableJournalWrites)
+            {
+                return false;
+            }
+
             return !gameState.Player1.IsAI && !gameState.Player2.IsAI;
         }
 
@@ -1896,28 +2972,6 @@ namespace ShadowverseBeyond.Server.Services
             HashSet<Guid> readyQueueDrainedEvents,
             int recursionDepth)
         {
-            if (!gameContext.IsAuraRefresh)
-            {
-                Guid sourceAbilityId = Guid.Empty;
-                if (gameEvent is BuffAppliedEvent appliedEvent)
-                {
-                    sourceAbilityId = appliedEvent.AppliedBuff.SourceAbilityId;
-                }
-                else if (gameEvent is BuffRemovedEvent removedEvent)
-                {
-                    sourceAbilityId = removedEvent.RemovedBuff.SourceAbilityId;
-                }
-
-                if (sourceAbilityId != Guid.Empty)
-                {
-                    var sourceAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(sourceAbilityId);
-                    if (sourceAbility is Ability ability && ability.Config.Auras.Any())
-                    {
-                        gameContext = gameContext with { IsAuraRefresh = true };
-                    }
-                }
-            }
-
             if (recursionDepth > GameConstants.AbilityTrigger.MaxEventRecursionDepth)
             {
                 var message = $"Event recursion depth exceeded ({GameConstants.AbilityTrigger.MaxEventRecursionDepth}) at {gameEvent.EventType}.";
@@ -1995,34 +3049,91 @@ namespace ShadowverseBeyond.Server.Services
                 gameContext.BuffService.RefreshDerivedStateCache(gameContext, "turn_start");
             }
 
-            // 0. Before intercepts: allow rewrites/replacements before committing the event.
-            var (interceptResult, interceptedEvent) = await ApplyBeforeInterceptsAsync(gameContext, gameEvent, processedEvents);
-            if (!interceptResult.IsSuccess) return interceptResult;
-            gameEvent = interceptedEvent;
-
-            var decisionResolveResult = await ResolveDecisionEventIfNeededAsync(gameContext, gameEvent, DecisionResolutionPhase.Commit);
-            if (!decisionResolveResult.IsSuccess) return decisionResolveResult;
-
-            processedEvents.Add(gameEvent);
-
-            // 1. 'Before' phase: Effects are executed immediately and their events are processed recursively.
-            var auraBeforeResult = await RefreshAurasIfNeededAsync(
+            // 1a. Before phase (intercept sub-phase): allow rewrites/replacements before commit.
+            var (interceptResult, interceptedEvent, interceptGeneratedEvents, eventPrevented) = await ApplyBeforeInterceptsAsync(
                 gameContext,
                 gameEvent,
-                TriggerTiming.Before,
                 processedEvents,
                 eventSignatureCounts,
                 eventStagingArea,
                 delayedEventsByParent,
                 queueDrainedDelayedEvents,
                 readyQueueDrainedEvents,
-                recursionDepth + 1);
-            if (!auraBeforeResult.IsSuccess) return auraBeforeResult;
+                recursionDepth);
+            if (!interceptResult.IsSuccess) return interceptResult;
+            gameEvent = interceptedEvent;
 
+            if (eventPrevented)
+            {
+                var deferredInterceptAbilityTriggeredEvents = new List<IGameEvent>();
+                foreach (var abilityEvent in interceptGeneratedEvents)
+                {
+                    if (abilityEvent is AbilityTriggeredEvent)
+                    {
+                        deferredInterceptAbilityTriggeredEvents.Add(abilityEvent);
+                        continue;
+                    }
+
+                    var eventResult = await ProcessEventRecursivelyAsync(
+                        gameContext,
+                        abilityEvent,
+                        processedEvents,
+                        eventSignatureCounts,
+                        eventStagingArea,
+                        delayedEventsByParent,
+                        queueDrainedDelayedEvents,
+                        readyQueueDrainedEvents,
+                        recursionDepth + 1);
+                    if (!eventResult.IsSuccess) return eventResult;
+                }
+
+                foreach (var abilityEvent in deferredInterceptAbilityTriggeredEvents)
+                {
+                    var eventResult = await ProcessEventRecursivelyAsync(
+                        gameContext,
+                        abilityEvent,
+                        processedEvents,
+                        eventSignatureCounts,
+                        eventStagingArea,
+                        delayedEventsByParent,
+                        queueDrainedDelayedEvents,
+                        readyQueueDrainedEvents,
+                        recursionDepth + 1);
+                    if (!eventResult.IsSuccess) return eventResult;
+                }
+
+                ResetAbilityEventFlags(gameContext);
+                ReleaseDelayedEventsIfReady(gameEvent.EventId, eventStagingArea, delayedEventsByParent);
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
+            var decisionResolveResult = await ResolveDecisionEventIfNeededAsync(gameContext, gameEvent, DecisionResolutionPhase.Commit);
+            if (!decisionResolveResult.IsSuccess) return decisionResolveResult;
+
+            processedEvents.Add(gameEvent);
+
+            // 1b. Before phase: Effects are executed immediately and their events are processed recursively.
             var (beforeResult, beforeEffects, beforeEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.Before);
             if (!beforeResult.IsSuccess) return beforeResult;
-            foreach (var abilityEvent in beforeEvents)
+            var beforePhaseEvents = new List<IGameEvent>(interceptGeneratedEvents.Count + beforeEvents.Count);
+            if (interceptGeneratedEvents.Count > 0)
             {
+                beforePhaseEvents.AddRange(interceptGeneratedEvents);
+            }
+            if (beforeEvents.Count > 0)
+            {
+                beforePhaseEvents.AddRange(beforeEvents);
+            }
+
+            var deferredBeforeAbilityTriggeredEvents = new List<IGameEvent>();
+            foreach (var abilityEvent in beforePhaseEvents)
+            {
+                if (abilityEvent is AbilityTriggeredEvent)
+                {
+                    deferredBeforeAbilityTriggeredEvents.Add(abilityEvent);
+                    continue;
+                }
+
                 var eventResult = await ProcessEventRecursivelyAsync(
                     gameContext,
                     abilityEvent,
@@ -2050,24 +3161,33 @@ namespace ShadowverseBeyond.Server.Services
                 if (!result.IsSuccess) return result;
             }
 
-            // 2. 'On' phase: Effects are enqueued for later processing.
-            var auraOnResult = await RefreshAurasIfNeededAsync(
-                gameContext,
-                gameEvent,
-                TriggerTiming.On,
-                processedEvents,
-                eventSignatureCounts,
-                eventStagingArea,
-                delayedEventsByParent,
-                queueDrainedDelayedEvents,
-                readyQueueDrainedEvents,
-                recursionDepth + 1);
-            if (!auraOnResult.IsSuccess) return auraOnResult;
+            foreach (var abilityEvent in deferredBeforeAbilityTriggeredEvents)
+            {
+                var eventResult = await ProcessEventRecursivelyAsync(
+                    gameContext,
+                    abilityEvent,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    recursionDepth + 1);
+                if (!eventResult.IsSuccess) return eventResult;
+            }
 
+            // 2. 'On' phase: Effects are enqueued for later processing.
             var (onResult, onEffects, onEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.On);
             if (!onResult.IsSuccess) return onResult;
+            var deferredOnAbilityTriggeredEvents = new List<IGameEvent>();
             foreach (var abilityEvent in onEvents)
             {
+                if (abilityEvent is AbilityTriggeredEvent)
+                {
+                    deferredOnAbilityTriggeredEvents.Add(abilityEvent);
+                    continue;
+                }
+
                 var eventResult = await ProcessEventRecursivelyAsync(
                     gameContext,
                     abilityEvent,
@@ -2083,6 +3203,21 @@ namespace ShadowverseBeyond.Server.Services
             foreach (var effect in onEffects)
             {
                 _effectQueue.Enqueue(effect);
+            }
+
+            foreach (var abilityEvent in deferredOnAbilityTriggeredEvents)
+            {
+                var eventResult = await ProcessEventRecursivelyAsync(
+                    gameContext,
+                    abilityEvent,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    recursionDepth + 1);
+                if (!eventResult.IsSuccess) return eventResult;
             }
 
             // 3. 'Commit' phase: The event's state change is applied, and resulting events are processed recursively.
@@ -2133,23 +3268,17 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             // 4. 'After' phase: Effects are enqueued for later processing.
-            var auraAfterResult = await RefreshAurasIfNeededAsync(
-                gameContext,
-                gameEvent,
-                TriggerTiming.After,
-                processedEvents,
-                eventSignatureCounts,
-                eventStagingArea,
-                delayedEventsByParent,
-                queueDrainedDelayedEvents,
-                readyQueueDrainedEvents,
-                recursionDepth + 1);
-            if (!auraAfterResult.IsSuccess) return auraAfterResult;
-
             var (afterResult, afterEffects, afterEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.After);
             if (!afterResult.IsSuccess) return afterResult;
+            var deferredAfterAbilityTriggeredEvents = new List<IGameEvent>();
             foreach (var abilityEvent in afterEvents)
             {
+                if (abilityEvent is AbilityTriggeredEvent)
+                {
+                    deferredAfterAbilityTriggeredEvents.Add(abilityEvent);
+                    continue;
+                }
+
                 var eventResult = await ProcessEventRecursivelyAsync(
                     gameContext,
                     abilityEvent,
@@ -2165,6 +3294,21 @@ namespace ShadowverseBeyond.Server.Services
             foreach (var effect in afterEffects)
             {
                 _effectQueue.Enqueue(effect);
+            }
+
+            foreach (var abilityEvent in deferredAfterAbilityTriggeredEvents)
+            {
+                var eventResult = await ProcessEventRecursivelyAsync(
+                    gameContext,
+                    abilityEvent,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    recursionDepth + 1);
+                if (!eventResult.IsSuccess) return eventResult;
             }
 
             ResetAbilityEventFlags(gameContext);
@@ -2195,100 +3339,6 @@ namespace ShadowverseBeyond.Server.Services
             return $"{gameEvent.EventType}:{sourceId:N}:{targets}";
         }
 
-        private async Task<PausableTransactionResult> RefreshAurasIfNeededAsync(
-            GameContext gameContext,
-            IGameEvent gameEvent,
-            TriggerTiming timing,
-            List<IGameEvent> processedEvents,
-            Dictionary<string, int> eventSignatureCounts,
-            Queue<IGameEvent> eventStagingArea,
-            Dictionary<Guid, Queue<IGameEvent>> delayedEventsByParent,
-            Queue<IGameEvent> queueDrainedDelayedEvents,
-            HashSet<Guid> readyQueueDrainedEvents,
-            int recursionDepth)
-        {
-            if (gameContext.IsAuraRefresh)
-            {
-                return PausableTransactionResult.Success(new List<IGameEvent>());
-            }
-
-            if (timing != TriggerTiming.After)
-            {
-                return PausableTransactionResult.Success(new List<IGameEvent>());
-            }
-
-            var triggeredBeforeAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(
-                gameEvent,
-                gameContext,
-                TriggerTiming.Before);
-
-            var triggeredOnAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(
-                gameEvent,
-                gameContext,
-                TriggerTiming.On);
-
-            var triggeredAfterAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(
-                gameEvent,
-                gameContext,
-                TriggerTiming.After);
-
-            var auraAbilities = triggeredBeforeAbilities
-                .Concat(triggeredOnAbilities)
-                .Concat(triggeredAfterAbilities)
-                .OfType<Ability>()
-                .Where(IsAuraOnlyAbility)
-                .GroupBy(ability => ability.RuntimeId)
-                .Select(group => group.First())
-                .ToList();
-
-            if (auraAbilities.Count == 0)
-            {
-                return PausableTransactionResult.Success(new List<IGameEvent>());
-            }
-
-            foreach (var ability in auraAbilities)
-            {
-                var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = gameEvent };
-                var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(ability, abilityContext, false, true);
-                if (!abilityResult.IsSuccess)
-                {
-                    return PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Aura refresh failed.");
-                }
-
-                foreach (var abilityEvent in abilityResult.GeneratedEvents)
-                {
-                    var eventResult = await ProcessEventRecursivelyAsync(
-                        gameContext,
-                        abilityEvent,
-                        processedEvents,
-                        eventSignatureCounts,
-                        eventStagingArea,
-                        delayedEventsByParent,
-                        queueDrainedDelayedEvents,
-                        readyQueueDrainedEvents,
-                        recursionDepth + 1);
-                    if (!eventResult.IsSuccess) return eventResult;
-                }
-            }
-
-            return PausableTransactionResult.Success(new List<IGameEvent>());
-        }
-
-        private static bool IsAuraOnlyAbility(Ability ability)
-        {
-            if (ability == null || ability.Config == null)
-            {
-                return false;
-            }
-
-            if (ability.Config.Auras == null || ability.Config.Auras.Count == 0)
-            {
-                return false;
-            }
-
-            return ability.Type == AbilityType.Continuous;
-        }
-
         private async Task<PausableTransactionResult> ProcessChainedAbilitiesAsync(
             Effect executedEffect,
             GameContext context,
@@ -2301,18 +3351,27 @@ namespace ShadowverseBeyond.Server.Services
             HashSet<Guid> readyQueueDrainedEvents,
             int recursionDepth)
         {
-            if (executedEffect.ChainedAbilities.Any())
+            var chainedAbilityResult = CreateChainedAbilitiesForExecution(executedEffect, context);
+            if (!chainedAbilityResult.Success)
             {
-                _logger.LogInformation("Effect {EffectType} has {Count} chained abilities. Processing them...", executedEffect.Type, executedEffect.ChainedAbilities.Count);
+                return PausableTransactionResult.Failure(chainedAbilityResult.ErrorMessage ?? "Failed to create chained abilities from templates.");
+            }
 
-                // Find the EffectCompletedEvent which is the true trigger for these chained abilities.
-                var effectCompletedEvent = effectResult.GeneratedEvents.OfType<EffectCompletedEvent>().FirstOrDefault();
+            var chainedAbilities = chainedAbilityResult.Abilities;
+            if (chainedAbilities.Count > 0)
+            {
+                _logger.LogInformation("Effect {EffectType} has {Count} chained abilities. Processing them...", executedEffect.Type, chainedAbilities.Count);
+
+                // Find the EffectCompletedEvent emitted by the current effect itself.
+                // GeneratedEvents may already include nested EffectCompletedEvent entries from decision/chained execution.
+                // The current effect's own EffectCompletedEvent is appended last by ProcessEffectAsync.
+                var effectCompletedEvent = effectResult.GeneratedEvents.OfType<EffectCompletedEvent>().LastOrDefault();
                 if (effectCompletedEvent == null)
                 {
                     _logger.LogWarning("Could not find EffectCompletedEvent for chained ability processing. Context may be incomplete for ability on card {SourceCardId}.", executedEffect.SourceCardId);
                 }
 
-                foreach (var chainedAbility in executedEffect.ChainedAbilities)
+                foreach (var chainedAbility in chainedAbilities)
                 {
                     // Create the precise context for this chained ability.
                     var abilityContext = context with
@@ -2353,6 +3412,77 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
             return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private (bool Success, string? ErrorMessage, IReadOnlyList<IAbility> Abilities) CreateChainedAbilitiesForExecution(Effect executedEffect, GameContext context)
+        {
+            if (!executedEffect.EffectConfig.ChainedAbilities.Any())
+            {
+                return (true, null, Array.Empty<IAbility>());
+            }
+
+            var abilityFactory = context.ServiceProvider.GetService<IAbilityFactory>();
+            if (abilityFactory == null)
+            {
+                return (false, "Effect requires IAbilityFactory to instantiate chained ability templates.", Array.Empty<IAbility>());
+            }
+
+            var sourceCard = executedEffect.SourceAbility?.SourceCard;
+            if (sourceCard == null && executedEffect.SourceCardId.HasValue)
+            {
+                sourceCard = context.CurrentGameState.FindCardInstance(executedEffect.SourceCardId.Value);
+            }
+
+            if (sourceCard == null)
+            {
+                return (false, $"Cannot instantiate chained abilities for effect {executedEffect.Type}: source card is missing.", Array.Empty<IAbility>());
+            }
+
+            try
+            {
+                var sourceBuffId = executedEffect.SourceAbility?.SourceBuffId;
+                var abilities = abilityFactory
+                    .CreateAbilities(sourceCard, executedEffect.EffectConfig.ChainedAbilities, sourceBuffId)
+                    .Cast<IAbility>()
+                    .ToList();
+
+                var summaryRootAbilityId = executedEffect.SummaryRootAbilityId;
+                if (!summaryRootAbilityId.HasValue || summaryRootAbilityId.Value == Guid.Empty)
+                {
+                    if (executedEffect.SourceAbility is Ability sourceAbility)
+                    {
+                        summaryRootAbilityId = sourceAbility.SummaryRootAbilityId;
+                    }
+                    else if (executedEffect.sourceAbilityId.HasValue && executedEffect.sourceAbilityId.Value != Guid.Empty)
+                    {
+                        summaryRootAbilityId = executedEffect.sourceAbilityId.Value;
+                    }
+                }
+
+                if (summaryRootAbilityId.HasValue && summaryRootAbilityId.Value != Guid.Empty)
+                {
+                    foreach (var chainedAbility in abilities.OfType<Ability>())
+                    {
+                        chainedAbility.SummaryRootAbilityId = summaryRootAbilityId.Value;
+                    }
+                }
+
+                var parentScopePath = EnsureSequenceScopePath(executedEffect, executedEffect.SourceAbility as Ability);
+                for (var abilityIndex = 0; abilityIndex < abilities.Count; abilityIndex++)
+                {
+                    if (abilities[abilityIndex] is Ability chainedConcreteAbility)
+                    {
+                        chainedConcreteAbility.SequenceScopePathPrefix = BuildChildSequenceScopePath(parentScopePath, "chain", abilityIndex);
+                    }
+                }
+
+                return (true, null, abilities);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to instantiate chained ability templates for effect {EffectType} ({EffectId}).", executedEffect.Type, executedEffect.Id);
+                return (false, $"Failed to instantiate chained abilities for effect {executedEffect.Type}.", Array.Empty<IAbility>());
+            }
         }
 
         private async Task<PausableTransactionResult> ExecuteDecisionAbilitiesAsync(
@@ -2432,7 +3562,7 @@ namespace ShadowverseBeyond.Server.Services
             GameContext effectContext,
             int executionIndex = 0)
         {
-            if (effect.Type != EffectType.Choose && effect.Type != EffectType.Random)
+            if (!IsDecisionEffectType(effect.Type))
             {
                 return Task.FromResult((PausableTransactionResult.Success(new List<IGameEvent>()), (Ability?)null, (IGameEvent?)null));
             }
@@ -2451,12 +3581,13 @@ namespace ShadowverseBeyond.Server.Services
             Ability.DecisionInput input;
             try
             {
+                var decisionMode = GetDecisionModeFromEffectType(effect.Type);
                 input = ability.PrepareDecisionInput(
                     effectContext,
                     effect.TriggeredEventId,
                     effect.EffectIndex,
                     effect.EffectConfig,
-                    isRandom: effect.Type == EffectType.Random,
+                    mode: decisionMode,
                     executionIndex: executionIndex);
             }
             catch (GameLogicException ex)
@@ -2464,17 +3595,26 @@ namespace ShadowverseBeyond.Server.Services
                 return Task.FromResult((PausableTransactionResult.Failure(ex.Message), (Ability?)null, (IGameEvent?)null));
             }
 
-            IGameEvent decisionEvent = effect.Type == EffectType.Choose
-                ? new ChooseEvent(
+            IGameEvent decisionEvent = effect.Type switch
+            {
+                EffectType.Choose => new ChooseEvent(
                     input.OptionIds,
                     input.SelectionCount,
-                    ability.SourceCard)
-                : new RandomEvent(
+                    ability.SourceCard),
+                EffectType.Random => new RandomEvent(
                     input.OptionIds,
                     input.SelectionCount,
                     input.AllowRepeat,
                     input.Weights.ToList(),
-                    ability.SourceCard);
+                    ability.SourceCard),
+                EffectType.Sequence => new SequenceEvent(
+                    input.OptionIds,
+                    input.SelectionCount,
+                    input.LoopSelection,
+                    input.SequenceOrder,
+                    ability.SourceCard),
+                _ => throw new GameLogicException($"Unsupported decision effect type: {effect.Type}")
+            };
 
             return Task.FromResult((PausableTransactionResult.Success(new List<IGameEvent>()), (Ability?)ability, (IGameEvent?)decisionEvent));
         }
@@ -2492,6 +3632,7 @@ namespace ShadowverseBeyond.Server.Services
             {
                 ChooseEvent chooseEvent => chooseEvent.OptionIds,
                 RandomEvent randomEvent => randomEvent.OptionIds,
+                SequenceEvent sequenceEvent => sequenceEvent.OptionIds,
                 _ => Array.Empty<Guid>()
             };
 
@@ -2499,6 +3640,7 @@ namespace ShadowverseBeyond.Server.Services
             {
                 ChooseEvent chooseEvent => chooseEvent.SelectedOptionIds,
                 RandomEvent randomEvent => randomEvent.SelectedOptionIds,
+                SequenceEvent sequenceEvent => sequenceEvent.SelectedOptionIds,
                 _ => Array.Empty<int>()
             };
 
@@ -2512,11 +3654,11 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Failure("Decision effect requires a source card to execute branch abilities.");
             }
 
-            var isRandom = decisionEvent is RandomEvent;
+            var decisionMode = GetDecisionModeFromDecisionEvent(decisionEvent);
             IReadOnlyList<Ability.DecisionOptionSnapshot> options;
             try
             {
-                options = ability.GetDecisionOptions(effect.TriggeredEventId, effect.EffectIndex, isRandom, effect.ExecutionIndex);
+                options = ability.GetDecisionOptions(effect.TriggeredEventId, effect.EffectIndex, decisionMode, effect.ExecutionIndex);
             }
             catch (GameLogicException ex)
             {
@@ -2551,6 +3693,34 @@ namespace ShadowverseBeyond.Server.Services
                 .Cast<IAbility>()
                 .ToList();
 
+            var summaryRootAbilityId = effect.SummaryRootAbilityId;
+            if (!summaryRootAbilityId.HasValue || summaryRootAbilityId.Value == Guid.Empty)
+            {
+                summaryRootAbilityId = ability.SummaryRootAbilityId != Guid.Empty
+                    ? ability.SummaryRootAbilityId
+                    : ability.RuntimeId;
+            }
+
+            if (summaryRootAbilityId.HasValue && summaryRootAbilityId.Value != Guid.Empty)
+            {
+                foreach (var decisionAbility in decisionAbilities.OfType<Ability>())
+                {
+                    decisionAbility.SummaryRootAbilityId = summaryRootAbilityId.Value;
+                }
+            }
+
+            var parentScopePath = EnsureSequenceScopePath(effect, ability);
+            for (var branchIndex = 0; branchIndex < decisionAbilities.Count; branchIndex++)
+            {
+                if (decisionAbilities[branchIndex] is Ability decisionConcreteAbility)
+                {
+                    var selectedOptionIndex = branchIndex < selectedIndexes.Count
+                        ? selectedIndexes[branchIndex]
+                        : branchIndex;
+                    decisionConcreteAbility.SequenceScopePathPrefix = BuildChildSequenceScopePath(parentScopePath, "decision", selectedOptionIndex);
+                }
+            }
+
             return PausableTransactionResult.Success(new List<IGameEvent>());
         }
 
@@ -2577,6 +3747,14 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Failure($"Deferred target resolution failed: ability {effect.sourceAbilityId} not found.");
             }
 
+            if (TryBuildDeferredTargetResolutionKey(effect, ability, out var cacheKey)
+                && _deferredTargetResolutionCache.TryGetValue(cacheKey, out var cachedTargets))
+            {
+                ApplyResolvedTargetsToEffect(effect, cachedTargets);
+                effect.ResolveTargetsOnExecution = false;
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
             if (ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true))
             {
                 return PausableTransactionResult.Failure($"Deferred target resolution cannot handle player choice for ability '{ability.KeywordSummary}'.");
@@ -2588,11 +3766,41 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Failure(targetResult.ErrorMessage ?? "Deferred target resolution failed.");
             }
 
-            effect.SelectedTargets = ResolveEffectTargets(effect.EffectConfig, targetResult.ResolvedTargets);
-            effect.ResolvedTargets = targetResult.ResolvedTargets;
+            ApplyResolvedTargetsToEffect(effect, targetResult.ResolvedTargets);
+            if (TryBuildDeferredTargetResolutionKey(effect, ability, out cacheKey))
+            {
+                _deferredTargetResolutionCache[cacheKey] = effect.ResolvedTargets;
+            }
             effect.ResolveTargetsOnExecution = false;
 
             return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private static bool TryBuildDeferredTargetResolutionKey(
+            Effect effect,
+            IAbility? ability,
+            out DeferredTargetResolutionKey key)
+        {
+            var abilityRuntimeId = ability?.RuntimeId
+                ?? (effect.sourceAbilityId.HasValue && effect.sourceAbilityId.Value != Guid.Empty
+                    ? effect.sourceAbilityId.Value
+                    : Guid.Empty);
+            if (abilityRuntimeId == Guid.Empty)
+            {
+                key = default;
+                return false;
+            }
+
+            key = new DeferredTargetResolutionKey(abilityRuntimeId, effect.TriggeredEventId);
+            return true;
+        }
+
+        private static void ApplyResolvedTargetsToEffect(
+            Effect effect,
+            IReadOnlyDictionary<string, List<TargetInfo>> resolvedTargets)
+        {
+            effect.ResolvedTargets = resolvedTargets;
+            effect.SelectedTargets = ResolveEffectTargets(effect.EffectConfig, resolvedTargets);
         }
 
         private static List<TargetInfo> ResolveEffectTargets(EffectConfig effectConfig, IReadOnlyDictionary<string, List<TargetInfo>> resolvedTargets)
@@ -2629,10 +3837,7 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
 
-            // --- BUG-025 FIX START ---
-            // Create a new, precise context for this specific effect execution.
-            // This ensures that DSLs and handlers use the context in which the effect was generated,
-            // not the broader context of the event that might have triggered it.
+            // Create a context specific to this effect execution.
             var sourceCard = effect.SourceCardId.HasValue
                 ? gameContext.CurrentGameState.FindCardInstance(effect.SourceCardId.Value)
                 : null;
@@ -2679,20 +3884,6 @@ namespace ShadowverseBeyond.Server.Services
                 CurrentEffect = effect,
                 ResolvedTargets = effect.ResolvedTargets
             };
-            // --- BUG-025 FIX END ---
-
-            // --- STATE_POLLUTION_TRACE ---
-            _logger.LogWarning("[STATE_POLLUTION_TRACE] Processing Effect in GameId: {CurrentGameId}. Effect was generated with SourceCardId: {EffectSourceCardId}. Found Card in current state: {FoundCardId}",
-                gameContext.CurrentGameState.GameId,
-                effect.SourceCardId,
-                sourceCard?.InstanceId);
-            // --- END TRACE ---
-
-            _logger.LogDebug("[CONTEXT_TRACKING] In ProcessEffectAsync for Effect {EffectType} ({EffectId}). SourceCardId from Effect: {SourceCardId}. Found SourceCard in Context: {SourceCardInstanceId}",
-                effect.Type,
-                effect.Id,
-                effect.SourceCardId,
-                effectContext.SourceCard?.InstanceId);
 
             var deferredResolutionResult = await ResolveDeferredTargetsIfNeededAsync(effect, effectContext);
             if (!deferredResolutionResult.IsSuccess)
@@ -2700,7 +3891,15 @@ namespace ShadowverseBeyond.Server.Services
                 return deferredResolutionResult;
             }
 
-            var repeatCount = Math.Max(0, effect.EffectConfig.RepeatCount);
+            effectContext = effectContext with { ResolvedTargets = effect.ResolvedTargets };
+
+            var repeatCountResult = ResolveEffectRepeatCount(effect, effectContext);
+            if (!repeatCountResult.Success)
+            {
+                return PausableTransactionResult.Failure(repeatCountResult.ErrorMessage ?? "Failed to resolve repeat count.");
+            }
+
+            var repeatCount = repeatCountResult.RepeatCount;
             var totalExecutions = repeatCount + 1;
             var repeatCondition = effect.EffectConfig.RepeatCondition;
             IConditionEvaluator? repeatConditionEvaluator = null;
@@ -2758,7 +3957,7 @@ namespace ShadowverseBeyond.Server.Services
                     if (decisionAbility != null
                         && TryCreateDecisionCacheKey(effect, decisionAbility, effect.Type == EffectType.Random, out var cacheKey))
                     {
-                        shouldClearDecisionCache = !_preflightDecisionCache.ContainsKey(cacheKey);
+                        shouldClearDecisionCache = !HasPreflightDecisionState(cacheKey);
                     }
 
                     if (shouldClearDecisionCache)
@@ -2788,13 +3987,26 @@ namespace ShadowverseBeyond.Server.Services
                 var decisionAbilities = new List<IAbility>();
                 if (decisionPreparation.DecisionEvent != null && decisionPreparation.DecisionAbility != null)
                 {
-                    var abilityResult = ResolveDecisionAbilitiesFromEvent(
-                        effect,
-                        effectContext,
-                        decisionPreparation.DecisionAbility,
-                        decisionPreparation.DecisionEvent,
-                        out decisionAbilities);
-                    if (!abilityResult.IsSuccess) return abilityResult;
+                    if (TryCreateDecisionCacheKey(
+                            effect,
+                            decisionPreparation.DecisionAbility,
+                            effect.Type == EffectType.Random,
+                            out var decisionCacheKey)
+                        && TryGetPreflightDecisionState(decisionCacheKey, out var preflightDecisionState)
+                        && preflightDecisionState.BranchAbilities.Count > 0)
+                    {
+                        decisionAbilities = preflightDecisionState.BranchAbilities.ToList();
+                    }
+                    else
+                    {
+                        var abilityResult = ResolveDecisionAbilitiesFromEvent(
+                            effect,
+                            effectContext,
+                            decisionPreparation.DecisionAbility,
+                            decisionPreparation.DecisionEvent,
+                            out decisionAbilities);
+                        if (!abilityResult.IsSuccess) return abilityResult;
+                    }
                 }
 
                 if (decisionAbilities.Count > 0)
@@ -2818,21 +4030,16 @@ namespace ShadowverseBeyond.Server.Services
 
                 var effectResult = _effectExecutor.ExecuteEffect(effect, effectContext); // Use the new context
 
-                var generatedEvents = effectResult.GeneratedEvents ?? new List<IGameEvent>();
+                var generatedEvents = (effectResult.GeneratedEvents ?? new List<IGameEvent>())
+                    .Where(e => e is not EffectCompletedEvent)
+                    .ToList();
+                effectResult.GeneratedEvents = generatedEvents;
                 var eventProcessingSucceeded = true;
                 string? eventProcessingError = null;
                 EffectCompletedEvent? effectCompletedEvent = null;
-                var effectCompletedIndex = -1;
 
                 foreach (var newEvent in generatedEvents)
                 {
-                    if (newEvent is EffectCompletedEvent completedEvent)
-                    {
-                        effectCompletedEvent = completedEvent;
-                        effectCompletedIndex = generatedEvents.IndexOf(newEvent);
-                        continue;
-                    }
-
                     if (processedEvents.Any(e => e.EventId == newEvent.EventId))
                     {
                         continue;
@@ -2857,33 +4064,32 @@ namespace ShadowverseBeyond.Server.Services
                     }
                 }
 
-                if (effectCompletedEvent != null)
-                {
-                    var refreshedGeneratedCards = CollectGeneratedCards(effectCompletedEvent.GeneratedEvents);
-                    var refreshedSnapshots = refreshedGeneratedCards.Select(CardInstanceSnapshot.From).ToList();
+                var completionOutputs = effectResult.Outputs?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+                    ?? new Dictionary<string, object?>();
+                completionOutputs["effectFailed"] = !(effectResult.Success && eventProcessingSucceeded);
 
-                    var refreshedEffectCompletedEvent = new EffectCompletedEvent(
-                        effectCompletedEvent.OriginalEffectType,
-                        effectCompletedEvent.OriginalEffectInputParams,
-                        effectCompletedEvent.ResolvedTargets,
-                        effectCompletedEvent.GeneratedEvents,
-                        refreshedGeneratedCards,
-                        refreshedSnapshots,
-                        effectCompletedEvent.Outputs,
-                        effectCompletedEvent.ParentEffectSucceeded,
-                        effectCompletedEvent.Source?.Card,
-                        effectCompletedEvent.EventId,
-                        effectCompletedEvent.Timestamp);
+                var completionResolvedParameters = effectResult.ResolvedParameters?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+                    ?? new Dictionary<string, object>();
 
-                    if (effectCompletedIndex >= 0)
-                    {
-                        generatedEvents[effectCompletedIndex] = refreshedEffectCompletedEvent;
-                    }
+                var generatedCards = CollectGeneratedCards(generatedEvents);
+                var generatedSnapshots = generatedCards.Select(CardInstanceSnapshot.From).ToList();
+                var generatedEventsSnapshot = generatedEvents.ToList().AsReadOnly();
 
-                    effectCompletedEvent = refreshedEffectCompletedEvent;
-                }
+                effectCompletedEvent = new EffectCompletedEvent(
+                    effect.EffectConfig.Type,
+                    completionResolvedParameters.AsReadOnly(),
+                    effect.SelectedTargets.AsReadOnly(),
+                    generatedEventsSnapshot,
+                    generatedCards,
+                    generatedSnapshots,
+                    completionOutputs.AsReadOnly(),
+                    effectResult.Success && eventProcessingSucceeded,
+                    effectContext.SourceCard);
 
-                if (eventProcessingSucceeded && effectCompletedEvent != null)
+                generatedEvents.Add(effectCompletedEvent);
+                effectResult.GeneratedEvents = generatedEvents;
+
+                if (eventProcessingSucceeded)
                 {
                     if (!processedEvents.Any(e => e.EventId == effectCompletedEvent.EventId))
                     {
@@ -2923,12 +4129,18 @@ namespace ShadowverseBeyond.Server.Services
                                 eventProcessingError ?? effectResult.ErrorMessage ?? "Unknown");
                             continue;
                         case FailureHandling.AbortAbility:
-                        default:
                             var errorMessage = eventProcessingError
                                 ?? effectResult.ErrorMessage
                                 ?? $"Effect execution failed for {effect.Type}.";
                             _logger.LogError(errorMessage);
                             return PausableTransactionResult.Failure(errorMessage);
+                        default:
+                            _logger.LogWarning(
+                                "Effect {EffectType} failed with unknown OnFailure value '{OnFailure}'. Falling back to CompleteWithFailure. Error: {Error}",
+                                effect.Type,
+                                effect.EffectConfig.OnFailure,
+                                eventProcessingError ?? effectResult.ErrorMessage ?? "Unknown");
+                            break;
                     }
                 }
 
@@ -2947,7 +4159,7 @@ namespace ShadowverseBeyond.Server.Services
                 if (!chainedResult.IsSuccess) return chainedResult;
             }
 
-            if (effect.Type == EffectType.Choose || effect.Type == EffectType.Random)
+            if (IsDecisionEffectType(effect.Type))
             {
                 if (effect.SourceAbility is Ability ability)
                 {
@@ -2966,6 +4178,11 @@ namespace ShadowverseBeyond.Server.Services
         public Task<PausableTransactionResult> CancelPendingActionAsync(GameContext gameContext)
         {
             _logger.LogInformation("Attempting to cancel pending action for player: {PlayerId}", gameContext.RequestingPlayerId);
+
+            if (_activePreflightSession?.CommitStarted == true)
+            {
+                return Task.FromResult(PausableTransactionResult.Failure("Cannot cancel action after commit has started."));
+            }
 
             var pendingChoiceContext = _pendingActionService.GetPendingChoiceForPlayer(gameContext.CurrentGameState.GameId, gameContext.RequestingPlayerId);
 

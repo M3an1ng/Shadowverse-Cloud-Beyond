@@ -69,9 +69,8 @@ public class EffectFailureCompletionTests
         var result = executor.ExecuteEffect(effect, context);
 
         Assert.False(result.Success);
-        var completion = Assert.Single(result.GeneratedEvents.OfType<EffectCompletedEvent>());
-        Assert.False(completion.ParentEffectSucceeded);
-        Assert.True(completion.Outputs.TryGetValue("effectFailed", out var failed));
+        Assert.Empty(result.GeneratedEvents.OfType<EffectCompletedEvent>());
+        Assert.True(result.Outputs.TryGetValue("effectFailed", out var failed));
         Assert.Equal(true, failed);
     }
 }

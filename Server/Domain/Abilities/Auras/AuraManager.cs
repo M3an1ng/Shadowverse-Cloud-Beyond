@@ -518,7 +518,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 }
 
                 var durationType = config.DurationType;
-                var durationParameter = config.DurationParameter;
+                if (!TryResolveDurationParameter(config.DurationParameter, context, out var durationParameter, out var durationError))
+                {
+                    return new DomainOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = durationError ?? "Aura registration failed: invalid duration parameter."
+                    };
+                }
                 var canStack = config.CanStack;
 
                 Buff buff;
@@ -591,7 +598,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 }
 
                 var resolved = _valueSourceResolver.Resolve(statConfig.Value, context);
-                var resolvedValue = CoerceToNullableInt(resolved);
+                var resolvedValue = CoerceToNullableDouble(resolved);
                 if (!resolvedValue.HasValue)
                 {
                     continue;
@@ -628,7 +635,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 }
 
                 var resolved = _valueSourceResolver.Resolve(abilityKeywordConfig.Value, context);
-                var resolvedValue = CoerceToNullableInt(resolved);
+                var resolvedValue = CoerceToNullableDouble(resolved);
                 if (!resolvedValue.HasValue)
                 {
                     continue;
@@ -678,6 +685,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 effects.Add(new RemoveKeywordBuffEffect(removedKeywords));
             }
 
+            var addedTribes = (config.TribeModifiers ?? new List<TribeModifierConfig>())
+                .Where(static tribeConfig => tribeConfig != null && !string.IsNullOrWhiteSpace(tribeConfig.Tribe))
+                .Select(static tribeConfig => tribeConfig.Tribe.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (addedTribes.Count > 0)
+            {
+                effects.Add(new TribeBuffEffect(addedTribes));
+            }
+
             if (config.GrantedAbilities != null && config.GrantedAbilities.Count > 0)
             {
                 var abilityConfigs = config.GrantedAbilities.Where(config => config != null).ToList();
@@ -724,7 +742,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
             return result;
         }
 
-        private static bool ShouldApplyStat(int? value, ModifierLayer layer)
+        private static bool ShouldApplyStat(double? value, ModifierLayer layer)
         {
             if (!value.HasValue)
             {
@@ -752,7 +770,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 return false;
             }
 
-            if (config.DurationParameter < 0)
+            if (config.DurationParameter is StaticValueConfig staticDuration &&
+                TryCoerceToCeilInt(staticDuration.Value, out var staticDurationValue) &&
+                staticDurationValue < 0)
             {
                 errorMessage = "Aura registration failed: duration parameter cannot be negative.";
                 return false;
@@ -792,6 +812,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 if (keywordConfig.Keyword == CardKeyword.None)
                 {
                     errorMessage = "Aura registration failed: keyword modifier requires a keyword.";
+                    return false;
+                }
+
+                hasEffects = true;
+            }
+
+            foreach (var tribeConfig in config.TribeModifiers ?? new List<TribeModifierConfig>())
+            {
+                if (tribeConfig == null)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(tribeConfig.Tribe))
+                {
+                    errorMessage = "Aura registration failed: tribe modifier requires a non-empty tribe.";
                     return false;
                 }
 
@@ -840,7 +876,51 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
             return true;
         }
 
-        private static int? CoerceToNullableInt(object? value)
+        private bool TryResolveDurationParameter(
+            ValueConfig? durationParameterConfig,
+            GameContext context,
+            out int? durationParameter,
+            out string? errorMessage)
+        {
+            durationParameter = 0;
+            errorMessage = null;
+
+            if (durationParameterConfig == null)
+            {
+                return true;
+            }
+
+            var resolved = _valueSourceResolver.Resolve(durationParameterConfig, context);
+            if (!TryCoerceToCeilInt(resolved, out var parsed))
+            {
+                errorMessage = "Aura registration failed: duration parameter must resolve to an integer.";
+                return false;
+            }
+
+            if (parsed < 0)
+            {
+                errorMessage = "Aura registration failed: duration parameter cannot be negative.";
+                return false;
+            }
+
+            durationParameter = parsed;
+            return true;
+        }
+
+        private static bool TryCoerceToCeilInt(object? value, out int result)
+        {
+            result = 0;
+            var number = CoerceToNullableDouble(value);
+            if (!number.HasValue)
+            {
+                return false;
+            }
+
+            result = (int)Math.Ceiling(number.Value);
+            return true;
+        }
+
+        private static double? CoerceToNullableDouble(object? value)
         {
             if (value == null)
             {
@@ -854,31 +934,36 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
 
             if (value is long longValue)
             {
-                return (int)longValue;
+                return longValue;
             }
 
             if (value is double doubleValue)
             {
-                return (int)doubleValue;
+                return doubleValue;
+            }
+
+            if (value is float floatValue)
+            {
+                return floatValue;
             }
 
             if (value is decimal decimalValue)
             {
-                return (int)decimalValue;
+                return (double)decimalValue;
             }
 
-            if (value is string text && int.TryParse(text, out var parsed))
+            if (value is string text && double.TryParse(text, out var parsed))
             {
                 return parsed;
             }
 
             if (value is JsonElement jsonElement)
             {
-                if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var number))
+                if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetDouble(out var number))
                 {
                     return number;
                 }
-                if (jsonElement.ValueKind == JsonValueKind.String && int.TryParse(jsonElement.GetString(), out var jsonParsed))
+                if (jsonElement.ValueKind == JsonValueKind.String && double.TryParse(jsonElement.GetString(), out var jsonParsed))
                 {
                     return jsonParsed;
                 }

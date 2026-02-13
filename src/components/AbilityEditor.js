@@ -115,7 +115,44 @@ export class AbilityEditor extends MetadataDrivenComponent {
             effects: (ability.effects && ability.effects.length > 0) ? ability.effects : [{ type: '', parameters: {} }],
             auraConfig,
             auras: ability.auras || ability.Auras || [],
-            counterRegistrations: ability.counterRegistrations || ability.CounterRegistrations || []
+            counterRegistrations: this.mergeCounterRegistrations(
+                ability.counterRegistrations || ability.CounterRegistrations || [],
+                ability.playerCounterRegistrations || ability.PlayerCounterRegistrations || []
+            )
+        };
+    }
+
+    mergeCounterRegistrations(cardRegistrations, playerRegistrations) {
+        const cardItems = this.normalizeCounterRegistrations(cardRegistrations, 'Card');
+        const playerItems = this.normalizeCounterRegistrations(playerRegistrations, 'Player');
+        return [...cardItems, ...playerItems];
+    }
+
+    normalizeCounterRegistrations(registrations, defaultTargetType = 'Card') {
+        if (!Array.isArray(registrations)) {
+            return [];
+        }
+
+        return registrations.map((entry) => this.normalizeSingleCounterRegistration(entry, defaultTargetType));
+    }
+
+    normalizeSingleCounterRegistration(entry, defaultTargetType = 'Card') {
+        const name = String(entry?.name ?? entry?.Name ?? '').trim();
+        const rawDisplayName = entry?.displayName ?? entry?.DisplayName;
+        const displayName = String(rawDisplayName ?? '').trim() || name;
+        const rawInitialValue = Number(entry?.initialValue ?? entry?.InitialValue ?? 0);
+        const initialValue = Number.isFinite(rawInitialValue) ? Math.trunc(rawInitialValue) : 0;
+        const targetTypeRaw = String(entry?.targetType ?? entry?.TargetType ?? defaultTargetType ?? 'Card').trim();
+        const targetType = targetTypeRaw.toLowerCase() === 'player' ? 'Player' : 'Card';
+        const playerScopeRaw = String(entry?.playerScope ?? entry?.PlayerScope ?? 'Self').trim();
+        const playerScope = ['Self', 'Opponent', 'Both'].includes(playerScopeRaw) ? playerScopeRaw : 'Self';
+
+        return {
+            name,
+            displayName,
+            initialValue,
+            targetType,
+            playerScope
         };
     }
 
@@ -289,7 +326,11 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     contentArea,
                     this.ability.targets,
                     (targets) => this.updateAbility({ targets: targets }),
-                    { trigger: this.ability.trigger, ...this.getTargetEditorOptions() }
+                    {
+                        trigger: this.ability.trigger,
+                        triggeringEventOutputs: this.options?.triggeringEventOutputs || [],
+                        ...this.getTargetEditorOptions()
+                    }
                 );
                 break;
             case 'conditions':
@@ -297,7 +338,11 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     contentArea,
                     this.ability.conditions,
                     (conditions) => this.updateAbility({ conditions: conditions }),
-                    { trigger: this.ability.trigger, ...this.getConditionEditorOptions() }
+                    {
+                        trigger: this.ability.trigger,
+                        triggeringEventOutputs: this.options?.triggeringEventOutputs || [],
+                        ...this.getConditionEditorOptions()
+                    }
                 );
                 break;
             case 'effects':
@@ -321,7 +366,11 @@ export class AbilityEditor extends MetadataDrivenComponent {
                         contentArea,
                         this.ability.effects,
                         (effects) => this.updateAbility({ effects: effects }),
-                        { trigger: this.ability.trigger, targets: this.ability.targets }
+                        {
+                            trigger: this.ability.trigger,
+                            targets: this.ability.targets,
+                            triggeringEventOutputs: this.options?.triggeringEventOutputs || []
+                        }
                     );
                 }
                 break;
@@ -527,7 +576,11 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 for (let filterIdx = 0; filterIdx < filters.length; filterIdx++) {
                     const filter = filters[filterIdx];
                     const filterExpr = filter?.valueSource?.formula || '';
-                    const res = await validateDslExpression(this.metadata, filterExpr, { expectedType: 'Boolean', allowEmpty: false });
+                    const res = await validateDslExpression(this.metadata, filterExpr, {
+                        expectedType: 'Boolean',
+                        allowEmpty: false,
+                        triggeringEventContext
+                    });
                     for (const issue of res.issues) {
                         pushError(`目标 #${index + 1} 筛选 #${opIdx + 1}.${filterIdx + 1}: ${issue.message}`);
                     }
@@ -573,6 +626,34 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     pushError(`效果 #${index + 1} 参数 ${paramName} 公式: ${issue.message}`);
                 }
             }
+
+            const outputs = effect.outputs && typeof effect.outputs === 'object'
+                ? effect.outputs
+                : ((effect.Outputs && typeof effect.Outputs === 'object') ? effect.Outputs : {});
+            const outputKeysSeen = new Set();
+            for (const [rawOutputName, rawFormula] of Object.entries(outputs)) {
+                const outputName = String(rawOutputName || '').trim();
+                if (!outputName) {
+                    pushError(`效果 #${index + 1} 输出变量名不能为空`);
+                    continue;
+                }
+
+                const outputKey = outputName.toLowerCase();
+                if (outputKeysSeen.has(outputKey)) {
+                    pushError(`效果 #${index + 1} 输出变量 ${outputName} 重复`);
+                    continue;
+                }
+                outputKeysSeen.add(outputKey);
+
+                const formula = String(rawFormula || '');
+                const res = await validateDslExpression(this.metadata, formula, {
+                    allowEmpty: false,
+                    triggeringEventContext
+                });
+                for (const issue of res.issues) {
+                    pushError(`效果 #${index + 1} 输出 ${outputName} 公式: ${issue.message}`);
+                }
+            }
         }
 
         return issues;
@@ -584,9 +665,13 @@ export class AbilityEditor extends MetadataDrivenComponent {
         if (!eventTypes.length) {
             return null;
         }
+        const outputVariables = Array.isArray(this.options?.triggeringEventOutputs)
+            ? this.options.triggeringEventOutputs
+            : [];
         return {
             eventTypes,
-            timing: trigger?.timing || 'On'
+            timing: trigger?.timing || 'On',
+            outputVariables
         };
     }
 
@@ -754,10 +839,20 @@ export class AbilityEditor extends MetadataDrivenComponent {
 
         const counterList = document.createElement('div');
         counterList.className = 'counter-registration-list';
+        const counterTargetOptions = [
+            { value: 'Card', label: '卡牌' },
+            { value: 'Player', label: '玩家' }
+        ];
+        const playerScopeOptions = [
+            { value: 'Self', label: '自己' },
+            { value: 'Opponent', label: '对手' },
+            { value: 'Both', label: '双方' }
+        ];
 
         const updateCounters = (next) => {
-            this.updateAbility({ counterRegistrations: next });
-            renderCounters(next);
+            const normalized = this.normalizeCounterRegistrations(next);
+            this.updateAbility({ counterRegistrations: normalized });
+            renderCounters(normalized);
         };
 
         const renderCounters = (items) => {
@@ -766,7 +861,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
 
             const headerRow = document.createElement('div');
             headerRow.className = 'counter-registration-row counter-registration-row--header';
-            headerRow.innerHTML = '<span>变量名</span><span>初始值</span><span>操作</span>';
+            headerRow.innerHTML = '<span>变量名</span><span>目标</span><span>玩家范围</span><span>初始值</span><span>操作</span>';
             counterList.appendChild(headerRow);
 
             if (list.length === 0) {
@@ -782,10 +877,57 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 row.className = 'counter-registration-row';
 
                 const nameInput = this.createTextInput(entry?.name || '', (value) => {
-                    const next = list.map((item, idx) => idx === index ? { ...item, name: value } : item);
+                    const next = list.map((item, idx) => {
+                        if (idx !== index) {
+                            return item;
+                        }
+
+                        const previousName = String(item?.name ?? '').trim();
+                        const previousDisplayName = String(item?.displayName ?? '').trim();
+                        const normalizedName = String(value ?? '').trim();
+                        const shouldFollowName = previousDisplayName.length === 0 || previousDisplayName === previousName;
+
+                        return {
+                            ...item,
+                            name: normalizedName,
+                            displayName: shouldFollowName ? normalizedName : previousDisplayName
+                        };
+                    });
                     updateCounters(next);
                 }, { placeholder: '变量名称' });
                 nameInput.classList.add('counter-registration-input');
+
+                const targetTypeSelect = this.createDropdown(
+                    counterTargetOptions,
+                    entry?.targetType || 'Card',
+                    (value) => {
+                        const nextTargetType = value === 'Player' ? 'Player' : 'Card';
+                        const next = list.map((item, idx) => idx === index
+                            ? { ...item, targetType: nextTargetType, playerScope: item?.playerScope || 'Self' }
+                            : item);
+                        updateCounters(next);
+                    },
+                    ''
+                );
+                targetTypeSelect.classList.add('counter-registration-input');
+
+                const playerScopeSelect = this.createDropdown(
+                    playerScopeOptions,
+                    entry?.playerScope || 'Self',
+                    (value) => {
+                        const next = list.map((item, idx) => idx === index
+                            ? { ...item, playerScope: value || 'Self' }
+                            : item);
+                        updateCounters(next);
+                    },
+                    ''
+                );
+                playerScopeSelect.classList.add('counter-registration-input');
+                const isPlayerTarget = (entry?.targetType || 'Card') === 'Player';
+                playerScopeSelect.disabled = !isPlayerTarget;
+                if (!isPlayerTarget) {
+                    playerScopeSelect.classList.add('counter-registration-input--disabled');
+                }
 
                 const valueInput = this.createNumberInput(entry?.initialValue ?? 0, (value) => {
                     const normalized = Number.isFinite(value) ? Math.trunc(value) : 0;
@@ -801,6 +943,8 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 removeBtn.classList.add('btn-small');
 
                 row.appendChild(nameInput);
+                row.appendChild(targetTypeSelect);
+                row.appendChild(playerScopeSelect);
                 row.appendChild(valueInput);
                 row.appendChild(removeBtn);
                 counterList.appendChild(row);
@@ -809,7 +953,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
 
         const addButton = this.createButton('添加变量', () => {
             const next = Array.isArray(this.ability.counterRegistrations) ? [...this.ability.counterRegistrations] : [];
-            next.push({ name: '', initialValue: 0 });
+            next.push({ name: '', displayName: '', initialValue: 0, targetType: 'Card', playerScope: 'Self' });
             updateCounters(next);
         }, 'secondary');
         addButton.classList.add('btn-small');
@@ -822,7 +966,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         counterGroup.appendChild(counterActions);
         renderCounters(this.ability.counterRegistrations || []);
 
-        const counterForm = this.createFormGroup('变量注册', counterGroup, '在能力生效时初始化计数器；同名计数器已存在则跳过。');
+        const counterForm = this.createFormGroup('变量注册', counterGroup, '单区块配置，保存时自动拆分为卡牌/玩家变量注册。');
         counterForm.classList.add('full-width');
         formGrid.appendChild(counterForm);
 
@@ -1065,13 +1209,22 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const finalName = (this.ability.name && this.ability.name.trim() !== '')
             ? this.ability.name
             : this.getDefaultAbilityName();
+        const normalizedCounters = this.normalizeCounterRegistrations(this.ability.counterRegistrations);
+        const cardCounterRegistrations = normalizedCounters
+            .filter(entry => entry.targetType !== 'Player')
+            .map(({ targetType, playerScope, ...rest }) => ({ ...rest }));
+        const playerCounterRegistrations = normalizedCounters
+            .filter(entry => entry.targetType === 'Player')
+            .map(({ targetType, ...rest }) => ({ ...rest, playerScope: rest.playerScope || 'Self' }));
             
         const { cardName, abilitySequence, ...baseAbility } = this.ability;
         const finalAbility = {
             ...baseAbility,
             name: finalName,
             priority: this.ability.priority || 0,
-            description: this.ability.description || ''
+            description: this.ability.description || '',
+            counterRegistrations: cardCounterRegistrations,
+            playerCounterRegistrations
         };
         const cleanedAbility = this.stripUiFields(finalAbility);
         const finalizedEffects = this.effectEditor?.buildEffectsForSave
@@ -1104,6 +1257,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 effects: isAuraMode ? [] : finalizedEffects,
                 auras: isAuraMode ? [auraPayload] : (cleanedAbility.auras || []),
                 counterRegistrations: cleanedAbility.counterRegistrations,
+                playerCounterRegistrations: cleanedAbility.playerCounterRegistrations,
                 isActive: cleanedAbility.isActive,
                 version: "1.0"
             })

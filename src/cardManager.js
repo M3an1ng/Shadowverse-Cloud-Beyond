@@ -65,6 +65,7 @@ export function createCardInstance(cardDto) {
         buffSummaries: cardDto.BuffSummaries ?? cardDto.buffSummaries ?? [],
         buffStatSummary: cardDto.BuffStatSummary ?? cardDto.buffStatSummary ?? null,
         counters: cardDto.Counters ?? cardDto.counters ?? cardDto.CounterMap ?? cardDto.counterMap ?? {},
+        counterDisplayNames: cardDto.CounterDisplayNames ?? cardDto.counterDisplayNames ?? {},
 
         // 纯前端状态 (在本地初始化和管理)
         turnPlayed: null,

@@ -14,12 +14,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// A committable event that represents a card executing Fusion and consuming materials.
     /// </summary>
     [GameEventMetadata(
-        "融合",
-        "当一张卡牌成功发动融合并消耗素材时触发的事件。",
-        EventType.Fusion,
+        "融合时",
+        "当融合效果结算并消耗素材时触发的事件。",
+        EventType.CardFused,
         AbilityEditorCategories.BaseActionId,
         AbilityEditorCategories.BaseActionLabel)]
-    public sealed class FusionEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
+    public sealed class FusionEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("融合素材", "本次融合消耗的素材卡牌列表。", DslDisplayTypeName = "事件目标")]
         public IReadOnlyList<CardInstance> FusedCards => Target.Select(t => t.Card).Where(c => c != null).Cast<CardInstance>().ToList();
@@ -27,16 +27,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("融合卡牌", "执行融合动作的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? FusionCard => Source?.Card;
 
-        [GameEventParameter("触发能力ID", "本次融合所对应的能力运行时ID。")]
-        public Guid? TriggeredAbilityRuntimeId { get; }
-
         public FusionEvent(
             CardInstance sourceCard,
             IReadOnlyList<CardInstance> fusedCards,
-            Guid? triggeredAbilityRuntimeId = null,
             Guid? eventId = null,
             DateTime? timestamp = null)
-            : base(EventType.Fusion, eventId, timestamp)
+            : base(EventType.CardFused, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(sourceCard);
             if (fusedCards != null)
@@ -46,7 +42,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     Target.Add(TargetInfo.ForCard(fusedCard));
                 }
             }
-            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -86,7 +81,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 {
                     return new DomainOperationResult { Success = false, ErrorMessage = $"FusionEvent.Commit: fused card {fusedCard.InstanceId} not owned by source player." };
                 }
+            }
 
+            sourceCard.AddFusedCards(fusedCards);
+
+            foreach (var fusedCard in fusedCards)
+            {
                 result.GeneratedEvents.Add(new CardVanishedEvent(fusedCard, fusedCard.CurrentZone, "Fusion"));
             }
 

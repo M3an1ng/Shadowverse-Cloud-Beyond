@@ -1,4 +1,39 @@
-import { getEventTypeHint, resolveEventParameterMeta } from "./event-translation.js";
+import { getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
+import { resolvePropertyChain } from "./property-chain-resolver.js";
+
+function withScopedSelfContext(editor, sourceNode, callback) {
+    if (typeof callback !== "function") return;
+    if (!editor || !sourceNode) {
+        callback();
+        return;
+    }
+
+    const sourceType = getCoreSemanticNodeType(sourceNode);
+    const isCollection = sourceType
+        && typeof editor.isCollectionType === "function"
+        && editor.isCollectionType(sourceType);
+    const itemType = isCollection && typeof editor.getCollectionInnerType === "function"
+        ? editor.normalizeTypeName(editor.getCollectionInnerType(sourceType))
+        : null;
+
+    if (!itemType) {
+        callback();
+        return;
+    }
+
+    const previousOverride = editor.contextOverride;
+    editor.contextOverride = {
+        ...(previousOverride || {}),
+        name: "self",
+        displayName: "当前项",
+        typeName: itemType
+    };
+    try {
+        callback();
+    } finally {
+        editor.contextOverride = previousOverride;
+    }
+}
 
 function resolveExpectedTypeForValueNode(editor, node) {
     if (!editor || !node) return null;
@@ -168,39 +203,51 @@ export function refreshValueNodeReturnTypes(editor, node) {
         refreshValueNodeReturnTypes(editor, node.rightOperand);
     } else if (node.type === "functionCall") {
         (node.args || []).forEach((arg) => refreshValueNodeReturnTypes(editor, arg));
+        const semanticType = getCoreSemanticNodeType(node);
+        if (semanticType) {
+            node.returnType = semanticType;
+        }
     } else if (node.type === "listQuery") {
         refreshValueNodeReturnTypes(editor, node.source);
-        refreshValueNodeReturnTypes(editor, node.filterExpression);
-        if (node.source?.returnType) {
-            node.returnType = node.source.returnType;
+        withScopedSelfContext(editor, node.source, () => {
+            refreshValueNodeReturnTypes(editor, node.filterExpression);
+        });
+        const sourceType = getCoreSemanticNodeType(node.source);
+        if (sourceType) {
+            node.returnType = sourceType;
         }
     } else if (node.type === "listSort") {
         refreshValueNodeReturnTypes(editor, node.source);
-        refreshValueNodeReturnTypes(editor, node.sortExpression);
-        if (node.source?.returnType) {
-            node.returnType = node.source.returnType;
+        withScopedSelfContext(editor, node.source, () => {
+            refreshValueNodeReturnTypes(editor, node.sortExpression);
+        });
+        const sourceType = getCoreSemanticNodeType(node.source);
+        if (sourceType) {
+            node.returnType = sourceType;
         }
     } else if (node.type === "listTake") {
         refreshValueNodeReturnTypes(editor, node.source);
         refreshValueNodeReturnTypes(editor, node.countExpression);
-        if (node.source?.returnType) {
-            node.returnType = node.source.returnType;
+        const sourceType = getCoreSemanticNodeType(node.source);
+        if (sourceType) {
+            node.returnType = sourceType;
         }
     } else if (node.type === "listDistinct") {
         refreshValueNodeReturnTypes(editor, node.source);
-        refreshValueNodeReturnTypes(editor, node.keyExpression);
-        if (node.source?.returnType) {
-            node.returnType = node.source.returnType;
+        withScopedSelfContext(editor, node.source, () => {
+            refreshValueNodeReturnTypes(editor, node.keyExpression);
+        });
+        const sourceType = getCoreSemanticNodeType(node.source);
+        if (sourceType) {
+            node.returnType = sourceType;
         }
     } else if (node.type === "listSelect") {
         refreshValueNodeReturnTypes(editor, node.source);
-        refreshValueNodeReturnTypes(editor, node.selectExpression);
-        const sourceType = editor.normalizeTypeName(node.source?.returnType)
-            || editor.normalizeTypeName(editor.calculateASTReturnType?.(node.source))
-            || node.source?.returnType;
-        const selectedType = editor.normalizeTypeName(node.selectExpression?.returnType)
-            || editor.normalizeTypeName(editor.calculateASTReturnType?.(node.selectExpression))
-            || node.selectExpression?.returnType;
+        withScopedSelfContext(editor, node.source, () => {
+            refreshValueNodeReturnTypes(editor, node.selectExpression);
+        });
+        const sourceType = getCoreSemanticNodeType(node.source);
+        const selectedType = getCoreSemanticNodeType(node.selectExpression);
         if (sourceType && typeof editor.isCollectionType === "function" && editor.isCollectionType(sourceType)) {
             const inner = selectedType || "Object";
             node.returnType = `List<${inner}>`;
@@ -218,10 +265,7 @@ function inferValueNodeReturnType(editor, node) {
 
     if (metaType === "encapsulated" && node.metadata?.innerAST) {
         const inner = node.metadata.innerAST;
-        if (typeof editor.calculateASTReturnType === "function") {
-            return editor.calculateASTReturnType(inner);
-        }
-        return inner.returnType || node.returnType;
+        return getCoreSemanticNodeType(inner);
     }
 
     if (metaType === "staticValue") {
@@ -332,56 +376,8 @@ function coerceEncapsulatedToEnum(editor, node) {
 }
 
 function inferPropertyChainReturnType(editor, path) {
-    const segments = String(path || "").split(".").filter(Boolean);
-    if (segments.length === 0) return null;
-
-    const ctx = editor.getDslContextObject(segments[0]);
-    let currentType = editor.normalizeTypeName(ctx?.typeName);
-    const eventTypeHint = getEventTypeHint(editor, segments);
-    const resolveDictionaryValueType = (typeName) => {
-        if (!editor || !typeName) return null;
-        const normalized = editor.normalizeTypeName(typeName);
-        if (!normalized) return null;
-        if (typeof editor.isDictionaryType === "function" && editor.isDictionaryType(normalized)) {
-            if (typeof editor.getDictionaryValueType === "function") {
-                const valueType = editor.getDictionaryValueType(normalized);
-                return editor.normalizeTypeName(valueType) || valueType;
-            }
-            const match = String(normalized).match(/<(.*)>/);
-            if (!match) return "Object";
-            const parts = match[1].split(",").map(part => part.trim());
-            return parts[1] || "Object";
-        }
-        return null;
-    };
-
-    for (let i = 1; i < segments.length; i++) {
-        const seg = segments[i];
-        const normalizedType = editor.normalizeTypeName(currentType);
-        if (!normalizedType) return null;
-
-        const dictValueType = resolveDictionaryValueType(normalizedType);
-        if (dictValueType) {
-            currentType = dictValueType || "Object";
-            continue;
-        }
-
-        if (normalizedType === "IGameEvent" || normalizedType === "GameEventBase") {
-            const eventParam = resolveEventParameterMeta(editor, seg, eventTypeHint);
-            if (eventParam?.typeName) {
-                currentType = editor.normalizeTypeName(eventParam.typeName) || "Object";
-                continue;
-            }
-        }
-
-        const tm = editor.getTypeMetadata(currentType);
-        const prop = (tm?.properties || []).find(p =>
-            String(p.name || "").toLowerCase() === String(seg || "").toLowerCase()
-        );
-        currentType = editor.normalizeTypeName(prop?.typeName) || "Object";
-    }
-
-    return currentType || null;
+    const resolved = resolvePropertyChain(editor, path);
+    return resolved?.finalType || null;
 }
 
 export function refreshCompleteness(node) {

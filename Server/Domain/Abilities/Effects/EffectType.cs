@@ -151,6 +151,20 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         [Description("替换事件")]
         ReplaceEvent = 93,
 
+        /// <summary>
+        /// 阻止触发事件 - Before阶段用于阻止当前触发事件继续执行
+        /// ⚠️ 仅用于Before拦截机制
+        /// </summary>
+        [Description("阻止事件")]
+        PreventEvent = 95,
+
+        /// <summary>
+        /// 依序效果 - 按顺序或逆序选择若干分支并触发对应连锁能力
+        /// 🔄 可实现：基于决策事件系统执行有状态游标选择
+        /// </summary>
+        [Description("依序")]
+        Sequence = 94,
+
         // ==================== 核心游戏效果 (100-110) ====================
 
         /// <summary>
@@ -245,6 +259,13 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         SetStatus = 143,
 
         /// <summary>
+        /// 调整生命上限 - 仅修改最大生命值，且不会抬高当前生命值
+        /// ✅ 已实现：AdjustMaxHealthEffectHandler
+        /// </summary>
+        [Description("调整生命上限")]
+        AdjustMaxHealth = 149,
+
+        /// <summary>
         /// 移除Buff - 移除目标身上的增益效果
         /// 🔄 可实现：基于现有Buff系统
         /// </summary>
@@ -294,6 +315,13 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// </summary>
         [Description("授予能力")]
         GrantAbility = 144,
+
+        /// <summary>
+        /// 添加种类 - 为目标附加额外种类（Tribe）Buff
+        /// ✅ 已实现：AddTribeEffectHandler
+        /// </summary>
+        [Description("添加种类")]
+        AddTribe = 150,
 
         /// <summary>
         /// 添加光环 - 注册可刷新的持续效果
@@ -457,6 +485,13 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// </summary>
         [Description("设置EP")]
         SetEP = 130,
+
+        /// <summary>
+        /// 设置SEP - 直接设置玩家当前SEP值
+        /// ✅ 已实现：ModifySEPEffectHandler（可扩展为直接设置）
+        /// </summary>
+        [Description("设置SEP")]
+        SetSEP = 148,
 
         /// <summary>
         /// 设置EP上限 - 修改玩家最大EP值

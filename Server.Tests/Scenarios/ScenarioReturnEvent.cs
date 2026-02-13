@@ -6,7 +6,7 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
 {
     internal sealed class ScenarioReturnEvent : ReturnEvent
     {
-        public ScenarioReturnEvent(PlayerState player, CardInstance card, string reason)
+        public ScenarioReturnEvent(PlayerState player, CardInstance card, EventReasonSource reason)
             : base(card, reason)
         {
             Source = TargetInfo.ForPlayer(player);

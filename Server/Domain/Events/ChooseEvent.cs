@@ -52,7 +52,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         internal void SetSelectedOptionIndexes(IEnumerable<int> indexes)
         {
-            _selectedOptionIndexes = indexes?.ToList() ?? new List<int>();
+            _selectedOptionIndexes = indexes?
+                .OrderBy(index => index)
+                .ToList() ?? new List<int>();
         }
     }
 }

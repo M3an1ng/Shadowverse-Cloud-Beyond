@@ -5,7 +5,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
     public enum EventInterceptKind
     {
         RewriteParameters = 0,
-        ReplaceEvent = 1
+        ReplaceEvent = 1,
+        PreventEvent = 2
     }
 
     public sealed class EventInterceptResult
@@ -49,6 +50,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             string? replacementReason = null)
         {
             return new EventInterceptResult(EventInterceptKind.ReplaceEvent, null, null, replacementEventType, replacementReason, replacementParameters);
+        }
+
+        public static EventInterceptResult PreventEvent()
+        {
+            return new EventInterceptResult(EventInterceptKind.PreventEvent, null, null, null, null, null);
         }
     }
 }

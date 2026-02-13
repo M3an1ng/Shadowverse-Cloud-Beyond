@@ -50,6 +50,8 @@ export function getHighlightTargetNode(editor) {
     if (top.slot === 'filterExpression') return top.parentNode.filterExpression || null;
     if (top.slot === 'sortExpression') return top.parentNode.sortExpression || null;
     if (top.slot === 'countExpression') return top.parentNode.countExpression || null;
+    if (top.slot === 'keyExpression') return top.parentNode.keyExpression || null;
+    if (top.slot === 'selectExpression') return top.parentNode.selectExpression || null;
     return top.parentNode || null;
 }
 
@@ -59,26 +61,11 @@ export function ensureAstRootSync(editor) {
     }
 }
 
-export function writeBackToParentSlot(editor, parentNode, slot, newValueNode) {
-    try {
-        return writeBackSlot(parentNode, slot, newValueNode);
-    } catch (e) {
-        if (!parentNode || !newValueNode) return false;
-        if (slot === 'left' && typeof parentNode.setLeftOperand === 'function') {
-            parentNode.setLeftOperand(newValueNode);
-            return true;
-        }
-        if (slot === 'right' && typeof parentNode.setRightOperand === 'function') {
-            parentNode.setRightOperand(newValueNode);
-            return true;
-        }
-        if (slot === 'self') {
-            console.warn('DslEditor: writeBackToParentSlot(slot=self) requires upper-level path context.');
-            return false;
-        }
-        console.warn('DslEditor: writeBackToParentSlot failed: invalid slot or parentNode');
-        return false;
+export function writeBackToParentSlot(editor, parentNode, slot, newValueNode, index = null) {
+    if (editor && typeof editor.setSlotNode === 'function') {
+        return editor.setSlotNode(parentNode, slot, index, newValueNode);
     }
+    return writeBackSlot(parentNode, slot, newValueNode, index);
 }
 
 export function getDslContextObject(editor, name) {

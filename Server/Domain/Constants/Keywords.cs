@@ -36,6 +36,14 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         Shackle = 10,
         [Description("屏障")]
         Shield = 11,
+        [Description("无法攻击主战者")]
+        CannotAttackLeader = 12,
+        [Description("无法攻击随从")]
+        CannotAttackFollower = 13,
+        [Description("法术守护")]
+        SpellWard = 14,
+        [Description("无法使用")]
+        CannotUse = 15,
         [Description("无法被破坏")]
         DestroyResist = 20,
         [Description("无法被消失")]
@@ -138,7 +146,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         {
             return keyword switch
             {
-                CardKeyword.Ward or CardKeyword.Ambush or CardKeyword.Shield => true,
+                CardKeyword.Ward or CardKeyword.SpellWard or CardKeyword.Ambush or CardKeyword.Shield => true,
                 _ => false
             };
         }

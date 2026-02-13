@@ -78,9 +78,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         player.PlayerId,
                         CardZone.Staging);
 
-                    summoned.AddTribeMarker(GameConstants.Tribes.Reanimate);
-
                     var result = new DomainOperationResult { Success = true };
+                    var tribeBuffResult = ctx.BuffService.ApplyTribeBuff(
+                        context: ctx,
+                        target: summoned,
+                        tribes: new List<string> { "亡者" },
+                        durationType: DurationType.Permanent,
+                        durationParameter: null,
+                        effectKey: "reanimate_tribe",
+                        canStack: true);
+                    result.Merge(tribeBuffResult);
+                    if (!tribeBuffResult.Success)
+                    {
+                        return tribeBuffResult;
+                    }
+
                     var expectedPosition = player.Field.Count + 1;
                     result.GeneratedEvents.Add(new SummonEvent(player, summoned, expectedPosition));
                     return result;

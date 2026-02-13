@@ -64,7 +64,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     // Create the DestroyEvent command.
-                    var destroyEvent = new DestroyEvent(targetCard, sourceCard, "Effect");
+                    var destroyEvent = new DestroyEvent(targetCard, sourceCard, EventReasonSource.Ability);
                     result.GeneratedEvents.Add(destroyEvent);
                     result.Success = true;
 

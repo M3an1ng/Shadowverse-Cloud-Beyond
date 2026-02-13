@@ -53,11 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = false, ErrorMessage = "TurnStart effect can only be applied to players." };
                     }
 
-                    var result = new DomainOperationResult();
-                    var evt = new TurnStartEvent(targetInfo.Player);
-                    result.GeneratedEvents.Add(evt);
-                    result.Success = true;
-                    return result;
+                    return targetInfo.Player.BuildTurnStartTransitionEvents();
                 };
 
             var playerTargets = PlayerScopeResolver.ResolvePlayerTargets(

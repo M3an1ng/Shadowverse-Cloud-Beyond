@@ -7,6 +7,7 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Identifiers;
@@ -204,10 +205,10 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         {
             return modification.Layer switch
             {
-                ModifierLayer.Additive => currentValue + modification.Value,
-                ModifierLayer.Multiplicative => (int)(currentValue * (modification.Value / 100.0)),
-                ModifierLayer.Set => modification.Value,
-                ModifierLayer.Base => modification.Value,
+                ModifierLayer.Additive => currentValue + (int)modification.Value,
+                ModifierLayer.Multiplicative => CeilToInt(currentValue * modification.Value),
+                ModifierLayer.Set => CeilToInt(modification.Value),
+                ModifierLayer.Base => CeilToInt(modification.Value),
                 _ => currentValue,
             };
         }
@@ -216,13 +217,15 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         {
             return modification.Layer switch
             {
-                ModifierLayer.Additive => currentValue + modification.Value,
-                ModifierLayer.Set => modification.Value,
-                ModifierLayer.Multiplicative => (int)(currentValue * (modification.Value / 100.0)),
-                ModifierLayer.Base => modification.Value,
+                ModifierLayer.Additive => currentValue + (int)modification.Value,
+                ModifierLayer.Set => CeilToInt(modification.Value),
+                ModifierLayer.Multiplicative => CeilToInt(currentValue * modification.Value),
+                ModifierLayer.Base => CeilToInt(modification.Value),
                 _ => currentValue,
             };
         }
+
+        private static int CeilToInt(double value) => (int)Math.Ceiling(value);
 
         public void RefreshDerivedStateCache(GameContext context, string reason)
         {
@@ -551,6 +554,69 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             return ApplyBuffProcess(statBuff, context, canStack);
         }
 
+        public DomainOperationResult ApplyTribeBuff(
+            GameContext context,
+            CardInstance target,
+            List<string> tribes,
+            DurationType durationType,
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true)
+        {
+            if (target == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ApplyTribeBuff: target is null." };
+            }
+
+            var normalizedTribes = (tribes ?? new List<string>())
+                .Where(static tribe => !string.IsNullOrWhiteSpace(tribe))
+                .Select(static tribe => tribe.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (normalizedTribes.Count == 0)
+            {
+                return new DomainOperationResult { Success = true };
+            }
+
+            var sourceAbilityForTribe = context.GetCurrentAbility();
+            var ownerPlayerId = context.SourceCard?.OwnerPlayerId ?? target.OwnerPlayerId;
+            var ownerPlayer = context.CurrentGameState.GetPlayerState(ownerPlayerId)
+                ?? context.CurrentGameState.GetPlayerState(context.RequestingPlayerId);
+            var currentTurn = ownerPlayer?.TurnNumber ?? 0;
+
+            var effects = new List<IBuffEffect> { new TribeBuffEffect(normalizedTribes) };
+            Buff tribeBuff;
+            if (sourceAbilityForTribe == null)
+            {
+                tribeBuff = new Buff(
+                    sourceAbilityId: Guid.Empty,
+                    targetCardInstanceId: target.InstanceId,
+                    currentTurn: currentTurn,
+                    effects: effects,
+                    durationType: durationType,
+                    durationParameter: durationParameter);
+            }
+            else
+            {
+                tribeBuff = _buffFactory.CreateCompositeBuff(
+                    target: target,
+                    sourceCard: context.SourceCard,
+                    sourceAbility: sourceAbilityForTribe,
+                    effects: effects,
+                    durationType: durationType,
+                    durationParameter: durationParameter,
+                    currentTurn: currentTurn);
+            }
+
+            if (!string.IsNullOrWhiteSpace(effectKey) && tribeBuff.SourceAbilityId != Guid.Empty)
+            {
+                tribeBuff.EffectKey = effectKey;
+            }
+
+            return ApplyBuffProcess(tribeBuff, context, canStack);
+        }
+
         public DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context, bool canStack = true)
         {
             var result = new DomainOperationResult();
@@ -599,6 +665,23 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             if (!buff.SourceEffectIndex.HasValue && context.CurrentEffect != null)
             {
                 buff.SourceEffectIndex = context.CurrentEffect.EffectIndex;
+            }
+
+            if (!buff.SummaryRootAbilityId.HasValue || buff.SummaryRootAbilityId == Guid.Empty)
+            {
+                var effectRootId = context.CurrentEffect?.SummaryRootAbilityId;
+                if (effectRootId.HasValue && effectRootId.Value != Guid.Empty)
+                {
+                    buff.SummaryRootAbilityId = effectRootId.Value;
+                }
+                else if (currentAbility is Ability runtimeAbility && runtimeAbility.SummaryRootAbilityId != Guid.Empty)
+                {
+                    buff.SummaryRootAbilityId = runtimeAbility.SummaryRootAbilityId;
+                }
+                else if (currentAbility != null && currentAbility.RuntimeId != Guid.Empty)
+                {
+                    buff.SummaryRootAbilityId = currentAbility.RuntimeId;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(buff.EffectKey) && buff.SourceAbilityId != Guid.Empty)

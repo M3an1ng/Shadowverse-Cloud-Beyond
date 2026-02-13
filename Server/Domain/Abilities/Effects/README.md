@@ -40,7 +40,7 @@
 ## Outputs 与连锁能力（ChainedAbilities）
 
 - Outputs：在 handler 生成事件后，`EffectExecutor` 会用 `IValueSourceResolver` 计算 `EffectConfig.Outputs` 并生成 `EffectCompletedEvent`（见 `Server/Domain/Events/SignalEvents.cs`）。
-- 连锁能力：`Effect` 执行完成后，事务引擎会优先处理 `effect.ChainedAbilities`，并以 `EffectCompletedEvent` 作为连锁能力的 `TriggeringEvent`（见 `Server/Services/GameActionTransactionService.cs`）。
+- 连锁能力：`Effect` 执行完成后，事务引擎会基于 `effect.EffectConfig.ChainedAbilities` 模板实例化能力，并以 `EffectCompletedEvent` 作为连锁能力的 `TriggeringEvent`（见 `Server/Services/GameActionTransactionService.cs`）。
 
 ## 常见 DSL 访问点（建议）
 

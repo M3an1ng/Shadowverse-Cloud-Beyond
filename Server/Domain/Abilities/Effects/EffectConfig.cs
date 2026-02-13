@@ -45,6 +45,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
         public int RepeatCount { get; set; } = 0;
 
         /// <summary>
+        /// 动态重复次数配置（可选）。
+        /// 当提供该值时，执行阶段会优先解析此 ValueConfig 作为 RepeatCount（向下取整并最小为 0）。
+        /// </summary>
+        public ValueConfig? RepeatCountValue { get; set; }
+
+        /// <summary>
         /// 重复执行的条件（为空则默认满足）。
         /// </summary>
         public ConditionConfig? RepeatCondition { get; set; }

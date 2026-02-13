@@ -1,5 +1,5 @@
 import { DslEditor } from "./components/DslEditor.js";
-import { validateAST } from "./components/dsl_editor/core.js";
+import { validateAST, getSemanticNodeType as getCoreSemanticNodeType } from "./components/dsl_editor/core.js";
 import { refreshCompleteness, refreshValueNodeReturnTypes } from "./components/dsl_editor/ast-normalize.js";
 import { requestParseAstApi } from "./components/dsl_editor/services/parse.js";
 
@@ -101,31 +101,47 @@ export async function validateDslExpression(metadata, expression, options = {}) 
 function buildValidationDebug(editor, ast, expectedType) {
     if (!editor || !ast) return "ast=null";
     const expr = ast?.toExpression?.() || "";
-    const rootType = editor.calculateASTReturnType(ast);
+    const rootType = getCoreSemanticNodeType(ast);
     const parts = [
         `expected=${expectedType || "null"}`,
         `rootType=${rootType || "null"}`,
         `expr=${expr}`
     ];
 
+    const outputVars = Array.isArray(editor?.triggeringEventContext?.outputVariables)
+        ? editor.triggeringEventContext.outputVariables
+        : [];
+    if (outputVars.length > 0) {
+        const compact = outputVars
+            .slice(0, 10)
+            .map(v => `${String(v?.name || '').trim()}:${String(v?.typeName || '').trim() || 'Object'}`)
+            .filter(Boolean)
+            .join(",");
+        if (compact) {
+            parts.push(`outputs=${compact}`);
+        }
+    }
+
     if (ast.type === "operator") {
         const left = ast.leftOperand;
         const right = ast.rightOperand;
         parts.push(`op=${ast.operator}`);
-        parts.push(`left=${summarizeNode(left)}`);
-        parts.push(`right=${summarizeNode(right)}`);
+        parts.push(`left=${summarizeNode(editor, left)}`);
+        parts.push(`right=${summarizeNode(editor, right)}`);
     }
 
     return parts.join(" | ");
 }
 
-function summarizeNode(node) {
+function summarizeNode(editor, node) {
     if (!node) return "null";
     const meta = node.metadata || {};
     const metaType = meta.type || "none";
+    const semantic = getCoreSemanticNodeType(node);
     const chunks = [
         `type=${node.type}`,
         `return=${node.returnType || "null"}`,
+        `semantic=${semantic || "null"}`,
         `meta=${metaType}`,
         `value=${node.value || ""}`
     ];

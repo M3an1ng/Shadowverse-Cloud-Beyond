@@ -62,7 +62,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             _logger.LogDebug("Creating a copy of ability '{AbilityName}' ({AbilityId}).", ability.Name, ability.RuntimeId);
 
-            return new Ability(ability.Config, _conditionFactory, _targetFactory, _targetSelectionService, ability.SourceCard, ability.SourceBuffId);
+            var copy = new Ability(ability.Config, _conditionFactory, _targetFactory, _targetSelectionService, ability.SourceCard, ability.SourceBuffId)
+            {
+                SummaryRootAbilityId = ability.SummaryRootAbilityId,
+                SequenceScopePathPrefix = ability.SequenceScopePathPrefix
+            };
+
+            return copy;
         }
 
         public List<Ability> CreateAbilities(CardInstance cardInstance, IEnumerable<AbilityConfig> abilityConfigs, Guid? sourceBuffId = null)

@@ -77,6 +77,22 @@ namespace ShadowverseBeyond.Server.Domain.Events
             context.CurrentGameState.IncrementBuffRevision();
             context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.RemovedBuff.TargetCardInstanceId);
 
+            if (targetCard != null)
+            {
+                var activeBuffs = context.BuffManager.GetBuffsForCard(targetCard.InstanceId);
+                foreach (var tribe in RemovedBuff.GetAddedTribes())
+                {
+                    var stillProvided = activeBuffs.Any(buff =>
+                        buff.Effects.OfType<TribeBuffEffect>()
+                            .Any(effect => effect.AddedTribes.Any(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase))));
+
+                    if (!stillProvided)
+                    {
+                        targetCard.RemoveTribeMarker(tribe);
+                    }
+                }
+            }
+
             if (affectsHealth && targetCard != null && (targetCard.IsFollower || targetCard.IsLeader))
             {
                 var newMaxHealth = context.BuffService.GetEffectiveMaxHealth(targetCard, context);

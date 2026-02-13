@@ -12,11 +12,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     {
         public string Key { get; set; } = string.Empty;
         public DurationType DurationType { get; set; } = DurationType.Permanent;
-        public int DurationParameter { get; set; } = 0;
+        public ValueConfig? DurationParameter { get; set; } = new StaticValueConfig { Value = 0 };
         public bool CanStack { get; set; } = false;
 
         public List<StatModifierConfig> StatModifiers { get; set; } = new();
         public List<KeywordModifierConfig> KeywordModifiers { get; set; } = new();
+        public List<TribeModifierConfig> TribeModifiers { get; set; } = new();
         public List<AbilityKeywordModifierConfig> AbilityKeywordModifiers { get; set; } = new();
         public List<AbilityConfig> GrantedAbilities { get; set; } = new();
     }
@@ -24,11 +25,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     public class BuffTemplateConfig
     {
         public DurationType DurationType { get; set; } = DurationType.Permanent;
-        public int DurationParameter { get; set; } = 0;
+        public ValueConfig? DurationParameter { get; set; } = new StaticValueConfig { Value = 0 };
         public bool CanStack { get; set; } = false;
 
         public List<StatModifierConfig> StatModifiers { get; set; } = new();
         public List<KeywordModifierConfig> KeywordModifiers { get; set; } = new();
+        public List<TribeModifierConfig> TribeModifiers { get; set; } = new();
         public List<AbilityKeywordModifierConfig> AbilityKeywordModifiers { get; set; } = new();
         public List<AbilityConfig> GrantedAbilities { get; set; } = new();
     }
@@ -53,6 +55,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public ValueConfig? Value { get; set; }
     }
 
+    public class TribeModifierConfig
+    {
+        public string Tribe { get; set; } = string.Empty;
+    }
+
     public static class BuffConfigAdapter
     {
         public static List<BuffConfig> FromTemplate(BuffTemplateConfig? template)
@@ -71,6 +78,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     CanStack = template.CanStack,
                     StatModifiers = template.StatModifiers ?? new List<StatModifierConfig>(),
                     KeywordModifiers = template.KeywordModifiers ?? new List<KeywordModifierConfig>(),
+                    TribeModifiers = template.TribeModifiers ?? new List<TribeModifierConfig>(),
                     AbilityKeywordModifiers = template.AbilityKeywordModifiers ?? new List<AbilityKeywordModifierConfig>(),
                     GrantedAbilities = template.GrantedAbilities ?? new List<AbilityConfig>()
                 }

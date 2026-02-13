@@ -4,10 +4,17 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**;artifacts\**;.tmp_build\**;**\artifacts\**;**\.tmp_build\**</DefaultItemExcludes>
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="**\artifacts\**\*.cs;**\.tmp_build\**\*.cs" />
+    <None Remove="**\artifacts\**;**\.tmp_build\**" />
+    <Content Remove="**\artifacts\**;**\.tmp_build\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="MartinCostello.Logging.XUnit" Version="0.6.0" />

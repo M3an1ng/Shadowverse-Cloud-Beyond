@@ -55,6 +55,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                         }
                         return $"{func.FunctionName}({args})";
                     }
+                case QueryFilterNode queryFilter:
+                    return $"{FormatNode(queryFilter.Source, collector)}.query({FormatNode(queryFilter.Filter, collector)})";
+                case QueryOrderByNode queryOrderBy:
+                    {
+                        var orderingText = queryOrderBy.Orderings.Any()
+                            ? string.Join(", ", queryOrderBy.Orderings.Select(ordering => FormatOrderingTerm(ordering, collector)))
+                            : string.Empty;
+                        return $"{FormatNode(queryOrderBy.Source, collector)}.orderBy({orderingText})";
+                    }
+                case QueryDistinctNode queryDistinct:
+                    return $"{FormatNode(queryDistinct.Source, collector)}.distinct({FormatNode(queryDistinct.KeySelector, collector)})";
+                case QuerySelectNode querySelect:
+                    return $"{FormatNode(querySelect.Source, collector)}.select({FormatNode(querySelect.Selector, collector)})";
+                case QueryTakeNode queryTake:
+                    return $"{FormatNode(queryTake.Source, collector)}.take({FormatSelectionTerm(queryTake.Selection, collector)})";
                 case MemberAccessNode member:
                     return FormatValueOrFallback(member.ToString(), collector);
                 case IdentifierNode identifier:
@@ -64,6 +79,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 default:
                     return FormatValueOrFallback(node.ToString(), collector);
             }
+        }
+
+        private static string FormatOrderingTerm(OrderingTerm ordering, IDslTraceCollector collector)
+        {
+            var direction = ordering.Direction == OrderingDirection.Descending ? "desc" : "asc";
+            return $"{FormatNode(ordering.Expression, collector)} {direction}";
+        }
+
+        private static string FormatSelectionTerm(SelectionTerm? selection, IDslTraceCollector collector)
+        {
+            if (selection == null || selection.Strategy == SelectionStrategy.All)
+            {
+                return "all";
+            }
+
+            var count = selection.CountExpression != null
+                ? FormatNode(selection.CountExpression, collector)
+                : "0";
+            return $"{selection.Strategy.ToString().ToLowerInvariant()} {count}";
         }
 
         private static string FormatValueOrFallback(string expression, IDslTraceCollector collector)

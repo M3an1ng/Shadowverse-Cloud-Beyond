@@ -69,6 +69,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public bool IsEnabled { get; set; } = true;
         public string Version { get; set; } = "1.0";
         public List<CounterRegistrationConfig> CounterRegistrations { get; set; } = new();
+        public List<PlayerCounterRegistrationConfig> PlayerCounterRegistrations { get; set; } = new();
 
         [JsonIgnore]
         public AbilityKeyword PrimaryKeyword => AbilityKeywords.FirstOrDefault()?.Keyword ?? AbilityKeyword.None;
@@ -109,6 +110,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     public class CounterRegistrationConfig
     {
         public string Name { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
         public int InitialValue { get; set; }
+    }
+
+    public class PlayerCounterRegistrationConfig
+    {
+        public string Name { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public int InitialValue { get; set; }
+        public PlayerScope PlayerScope { get; set; } = PlayerScope.Self;
     }
 } // End of namespace

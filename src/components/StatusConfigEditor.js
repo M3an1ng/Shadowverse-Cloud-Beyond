@@ -7,11 +7,12 @@
 
 import { MetadataDrivenComponent } from './MetadataDrivenComponent.js';
 import { EffectConfigEditor } from './EffectConfigEditor.js';
+import { ValueConfigEditor } from './ValueConfigEditor.js';
 import { ensureEnumLocalization } from '../enumLocalizationCache.js';
 
 /**
  * 状态(Buff)配置编辑器
- * 采用手风琴式列表，支持多条Buff配置，并可配置属性/关键词/能力三类效果
+ * 采用手风琴式列表，支持多条Buff配置，并可配置属性/关键词/能力关键字/能力四类效果
  */
 export class StatusConfigEditor extends MetadataDrivenComponent {
     constructor() {
@@ -166,6 +167,12 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         } else if (type === 'keyword') {
             const keywordSection = this.createKeywordModifiersSection(buff, index);
             content.appendChild(keywordSection);
+        } else if (type === 'tribe') {
+            const tribeSection = this.createTribeModifiersSection(buff, index);
+            content.appendChild(tribeSection);
+        } else if (type === 'abilityKeyword') {
+            const abilityKeywordSection = this.createAbilityKeywordModifiersSection(buff, index);
+            content.appendChild(abilityKeywordSection);
         } else if (type === 'ability') {
             const abilitySection = this.createGrantedAbilitiesSection(buff, index);
             content.appendChild(abilitySection);
@@ -229,6 +236,26 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         );
         section.appendChild(this.createFormGroup(null, stackToggle));
 
+        const durationTypeControl = document.createElement('div');
+        durationTypeControl.className = 'parameter-control';
+        const durationTypeSelect = this.createEnumSelect(
+            'DurationType',
+            buff.durationType || 'Permanent',
+            (value) => this.updateBuffConfig(index, { durationType: value || 'Permanent' })
+        );
+        durationTypeControl.appendChild(durationTypeSelect);
+        section.appendChild(this.createFormGroup(this.createParameterLabel('持续时间'), durationTypeControl));
+
+        const durationParameterControl = document.createElement('div');
+        durationParameterControl.className = 'parameter-control';
+        const durationParameterEditor = this.createValueConfigEditorControl(
+            buff.durationParameter,
+            (value) => this.updateBuffConfig(index, { durationParameter: value }),
+            { parameterType: 'Int32', parameterLabel: '持续参数', placeholderValue: 0 }
+        );
+        durationParameterControl.appendChild(durationParameterEditor);
+        section.appendChild(this.createValueConfigFormGroup(null, durationParameterControl));
+
         container.appendChild(section);
         return container;
     }
@@ -247,6 +274,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         const options = [
             { type: 'stat', title: '属性状态', desc: '调整攻击/生命/费用等属性' },
             { type: 'keyword', title: '关键词状态', desc: '添加或移除卡牌关键词' },
+            { type: 'tribe', title: '种类状态', desc: '为卡牌附加额外种类' },
+            { type: 'abilityKeyword', title: '能力关键字状态', desc: '调整启动/爆能/融合等关键字数值' },
             { type: 'ability', title: '能力状态', desc: '授予额外能力' }
         ];
 
@@ -273,6 +302,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         if (buff._uiType) return buff._uiType;
         if (Array.isArray(buff.statModifiers) && buff.statModifiers.length > 0) return 'stat';
         if (Array.isArray(buff.keywordModifiers) && buff.keywordModifiers.length > 0) return 'keyword';
+        if (Array.isArray(buff.tribeModifiers) && buff.tribeModifiers.length > 0) return 'tribe';
+        if (Array.isArray(buff.abilityKeywordModifiers) && buff.abilityKeywordModifiers.length > 0) return 'abilityKeyword';
         if (Array.isArray(buff.grantedAbilities) && buff.grantedAbilities.length > 0) return 'ability';
         return '';
     }
@@ -283,6 +314,10 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 return '属性';
             case 'keyword':
                 return '关键词';
+            case 'tribe':
+                return '种类';
+            case 'abilityKeyword':
+                return '能力关键字';
             case 'ability':
                 return '能力';
             default:
@@ -294,6 +329,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         if (!type) return 0;
         if (type === 'stat') return this.getStatAdjustmentCount(buff);
         if (type === 'keyword') return buff.keywordModifiers?.length || 0;
+        if (type === 'tribe') return buff.tribeModifiers?.length || 0;
+        if (type === 'abilityKeyword') return buff.abilityKeywordModifiers?.length || 0;
         if (type === 'ability') return buff.grantedAbilities?.length || 0;
         return 0;
     }
@@ -311,6 +348,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 _statAdjustment: statAdjustment,
                 _statAdjustmentDirty: statAdjustmentDirty,
                 keywordModifiers: [],
+                tribeModifiers: [],
+                abilityKeywordModifiers: [],
                 grantedAbilities: []
             });
             return;
@@ -322,6 +361,34 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 keywordModifiers: (current.keywordModifiers && current.keywordModifiers.length > 0)
                     ? current.keywordModifiers
                     : [{ keyword: 'None', operation: 'Add' }],
+                tribeModifiers: [],
+                abilityKeywordModifiers: [],
+                grantedAbilities: []
+            });
+            return;
+        }
+        if (type === 'tribe') {
+            this.updateBuffConfig(index, {
+                _uiType: 'tribe',
+                statModifiers: [],
+                keywordModifiers: [],
+                tribeModifiers: (current.tribeModifiers && current.tribeModifiers.length > 0)
+                    ? current.tribeModifiers
+                    : [{ tribe: '' }],
+                abilityKeywordModifiers: [],
+                grantedAbilities: []
+            });
+            return;
+        }
+        if (type === 'abilityKeyword') {
+            this.updateBuffConfig(index, {
+                _uiType: 'abilityKeyword',
+                statModifiers: [],
+                keywordModifiers: [],
+                tribeModifiers: [],
+                abilityKeywordModifiers: (current.abilityKeywordModifiers && current.abilityKeywordModifiers.length > 0)
+                    ? current.abilityKeywordModifiers
+                    : [{ keyword: 'None', layer: 'Additive', value: null }],
                 grantedAbilities: []
             });
             return;
@@ -331,6 +398,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 _uiType: 'ability',
                 statModifiers: [],
                 keywordModifiers: [],
+                tribeModifiers: [],
+                abilityKeywordModifiers: [],
                 grantedAbilities: Array.isArray(current.grantedAbilities) ? current.grantedAbilities : []
             });
         }
@@ -353,33 +422,33 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
 
         const attackControl = document.createElement('div');
         attackControl.className = 'parameter-control';
-        const attackInput = this.createNumberInput(
-            this.coerceNumericValue(state.attackModifier),
+        const attackInput = this.createValueConfigEditorControl(
+            state.attackModifier,
             (value) => this.updateStatAdjustmentValue(buffIndex, 'attackModifier', value),
-            { placeholder: '（空）' }
+            { parameterType: 'Int32', parameterLabel: '攻击力修正' }
         );
         attackControl.appendChild(attackInput);
-        grid.appendChild(this.createFormGroup(this.createParameterLabel('攻击力修正'), attackControl));
+        grid.appendChild(this.createValueConfigFormGroup(null, attackControl));
 
         const healthControl = document.createElement('div');
         healthControl.className = 'parameter-control';
-        const healthInput = this.createNumberInput(
-            this.coerceNumericValue(state.healthModifier),
+        const healthInput = this.createValueConfigEditorControl(
+            state.healthModifier,
             (value) => this.updateStatAdjustmentValue(buffIndex, 'healthModifier', value),
-            { placeholder: '（空）' }
+            { parameterType: 'Int32', parameterLabel: '生命值修正' }
         );
         healthControl.appendChild(healthInput);
-        grid.appendChild(this.createFormGroup(this.createParameterLabel('生命值修正'), healthControl));
+        grid.appendChild(this.createValueConfigFormGroup(null, healthControl));
 
         const costControl = document.createElement('div');
         costControl.className = 'parameter-control';
-        const costInput = this.createNumberInput(
-            this.coerceNumericValue(state.costModifier),
+        const costInput = this.createValueConfigEditorControl(
+            state.costModifier,
             (value) => this.updateStatAdjustmentValue(buffIndex, 'costModifier', value),
-            { placeholder: '（空）' }
+            { parameterType: 'Int32', parameterLabel: '费用修正' }
         );
         costControl.appendChild(costInput);
-        grid.appendChild(this.createFormGroup(this.createParameterLabel('费用修正'), costControl));
+        grid.appendChild(this.createValueConfigFormGroup(null, costControl));
 
         const layerControl = document.createElement('div');
         layerControl.className = 'parameter-control';
@@ -473,6 +542,73 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         return section;
     }
 
+    createTribeModifiersSection(buff, buffIndex) {
+        const section = document.createElement('div');
+        section.className = 'parameters-panel';
+
+        const list = document.createElement('div');
+        list.className = 'modifier-list';
+        section.appendChild(list);
+
+        const getBuff = () => this.buffConfigs[buffIndex] || {};
+
+        const renderList = () => {
+            list.innerHTML = '';
+            const items = getBuff().tribeModifiers || [];
+
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'text-muted';
+                empty.textContent = '暂无种类修正';
+                list.appendChild(empty);
+                return;
+            }
+
+            items.forEach((modifier, index) => {
+                const row = document.createElement('div');
+                row.className = 'operation-item';
+
+                const grid = document.createElement('div');
+                grid.className = 'form-grid-layout';
+
+                const tribeControl = document.createElement('div');
+                tribeControl.className = 'parameter-control';
+                const tribeInput = this.createTextInput(
+                    modifier.tribe || '',
+                    (value) => this.updateTribeModifier(buffIndex, index, { tribe: value }),
+                    { placeholder: '妖精' }
+                );
+                tribeControl.appendChild(tribeInput);
+                grid.appendChild(this.createFormGroup(this.createParameterLabel('种类'), tribeControl));
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn-icon delete-btn';
+                removeBtn.type = 'button';
+                removeBtn.title = '移除种类';
+                removeBtn.textContent = '×';
+                removeBtn.addEventListener('click', () => {
+                    this.removeTribeModifier(buffIndex, index);
+                    renderList();
+                });
+
+                row.appendChild(grid);
+                row.appendChild(removeBtn);
+                list.appendChild(row);
+            });
+        };
+
+        renderList();
+
+        const addBtn = this.createButton('添加种类', () => {
+            this.addTribeModifier(buffIndex);
+            renderList();
+        }, 'secondary');
+        addBtn.classList.add('btn-small');
+        section.appendChild(addBtn);
+
+        return section;
+    }
+
     createGrantedAbilitiesSection(buff, buffIndex) {
         const section = document.createElement('div');
         section.className = 'parameters-panel';
@@ -494,6 +630,93 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         const group = this.createFormGroup(this.createParameterLabel('授予能力'), container);
         group.classList.add('full-width');
         section.appendChild(group);
+
+        return section;
+    }
+
+    createAbilityKeywordModifiersSection(buff, buffIndex) {
+        const section = document.createElement('div');
+        section.className = 'parameters-panel';
+
+        const list = document.createElement('div');
+        list.className = 'modifier-list';
+        section.appendChild(list);
+
+        const getBuff = () => this.buffConfigs[buffIndex] || {};
+
+        const renderList = () => {
+            list.innerHTML = '';
+            const items = getBuff().abilityKeywordModifiers || [];
+
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'text-muted';
+                empty.textContent = '暂无能力关键字修正';
+                list.appendChild(empty);
+                return;
+            }
+
+            items.forEach((modifier, index) => {
+                const row = document.createElement('div');
+                row.className = 'operation-item';
+
+                const grid = document.createElement('div');
+                grid.className = 'form-grid-layout';
+
+                const keywordControl = document.createElement('div');
+                keywordControl.className = 'parameter-control';
+                const keywordSelect = this.createEnumSelect(
+                    'AbilityKeyword',
+                    modifier.keyword || 'None',
+                    (value) => this.updateAbilityKeywordModifier(buffIndex, index, { keyword: value })
+                );
+                keywordControl.appendChild(keywordSelect);
+                grid.appendChild(this.createFormGroup(this.createParameterLabel('能力关键字'), keywordControl));
+
+                const layerControl = document.createElement('div');
+                layerControl.className = 'parameter-control';
+                const layerSelect = this.createEnumSelect(
+                    'ModifierLayer',
+                    modifier.layer || 'Additive',
+                    (value) => this.updateAbilityKeywordModifier(buffIndex, index, { layer: value || 'Additive' })
+                );
+                layerControl.appendChild(layerSelect);
+                grid.appendChild(this.createFormGroup(this.createParameterLabel('调整类型'), layerControl));
+
+                const valueControl = document.createElement('div');
+                valueControl.className = 'parameter-control';
+                const valueInput = this.createValueConfigEditorControl(
+                    modifier.value,
+                    (value) => this.updateAbilityKeywordModifier(buffIndex, index, { value }),
+                    { parameterType: 'Int32', parameterLabel: '修正值' }
+                );
+                valueControl.appendChild(valueInput);
+                grid.appendChild(this.createValueConfigFormGroup(null, valueControl));
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn-icon delete-btn';
+                removeBtn.type = 'button';
+                removeBtn.title = '移除能力关键字修正';
+                removeBtn.textContent = '×';
+                removeBtn.addEventListener('click', () => {
+                    this.removeAbilityKeywordModifier(buffIndex, index);
+                    renderList();
+                });
+
+                row.appendChild(grid);
+                row.appendChild(removeBtn);
+                list.appendChild(row);
+            });
+        };
+
+        renderList();
+
+        const addBtn = this.createButton('添加能力关键字修正', () => {
+            this.addAbilityKeywordModifier(buffIndex);
+            renderList();
+        }, 'secondary');
+        addBtn.classList.add('btn-small');
+        section.appendChild(addBtn);
 
         return section;
     }
@@ -560,6 +783,68 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         return null;
     }
 
+    normalizeValueConfigInput(value) {
+        if (value === undefined || value === null) {
+            return null;
+        }
+        if (typeof value === 'object') {
+            return value;
+        }
+        return { $type: 'StaticValueConfig', Value: value };
+    }
+
+    createValueConfigEditorControl(value, onChange, options = {}) {
+        const container = document.createElement('div');
+        container.className = 'value-config-inline';
+        const parameterType = options.parameterType || 'Int32';
+        const defaultPlaceholderValue =
+            parameterType === 'Int32' || parameterType === 'Int64' || parameterType === 'Single' || parameterType === 'Double' || parameterType === 'Decimal'
+                ? 0
+                : null;
+
+        const editor = new ValueConfigEditor();
+        editor.render(
+            container,
+            this.normalizeValueConfigInput(value),
+            (nextValue) => {
+                if (this.isValueConfigEmpty(nextValue)) {
+                    onChange(null);
+                    return;
+                }
+                onChange(nextValue);
+            },
+            {
+                parameterType,
+                usePlaceholder: true,
+                placeholderValue: options.placeholderValue ?? defaultPlaceholderValue,
+                parameterLabel: options.parameterLabel || '',
+                inline: true,
+                hideValueLabel: true,
+                hideFormulaHelp: true
+            }
+        );
+
+        return container;
+    }
+
+    createValueConfigFormGroup(label, control, description = null) {
+        const group = this.createFormGroup(label, control, description);
+        group.classList.add('value-config-group');
+
+        const syncFullWidth = () => {
+            const hasDslEditor = !!control.querySelector('.dsl-editor-wrapper');
+            group.classList.toggle('full-width', hasDslEditor);
+        };
+
+        syncFullWidth();
+        if (typeof MutationObserver === 'function') {
+            const observer = new MutationObserver(() => syncFullWidth());
+            observer.observe(control, { childList: true, subtree: true });
+        }
+
+        return group;
+    }
+
     createParameterLabel(title) {
         const header = document.createElement('div');
         header.className = 'parameter-header';
@@ -615,6 +900,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             const types = [];
             if (base.statModifiers.length > 0) types.push('stat');
             if (base.keywordModifiers.length > 0) types.push('keyword');
+            if (base.tribeModifiers.length > 0) types.push('tribe');
+            if (base.abilityKeywordModifiers.length > 0) types.push('abilityKeyword');
             if (base.grantedAbilities.length > 0) types.push('ability');
 
             if (types.length === 0) {
@@ -636,6 +923,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                     _uiType: type,
                     statModifiers: type === 'stat' ? base.statModifiers : [],
                     keywordModifiers: type === 'keyword' ? base.keywordModifiers : [],
+                    tribeModifiers: type === 'tribe' ? base.tribeModifiers : [],
+                    abilityKeywordModifiers: type === 'abilityKeyword' ? base.abilityKeywordModifiers : [],
                     grantedAbilities: type === 'ability' ? base.grantedAbilities : [],
                     _statAdjustment: type === 'stat' ? base._statAdjustment : this.deriveStatAdjustmentState([]),
                     _statAdjustmentDirty: type === 'stat' ? (base._statAdjustmentDirty ?? false) : false
@@ -658,6 +947,12 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         const keywordModifiers = Array.isArray(raw.keywordModifiers ?? raw.KeywordModifiers)
             ? (raw.keywordModifiers ?? raw.KeywordModifiers).map(item => this.normalizeKeywordModifier(item))
             : [];
+        const tribeModifiers = Array.isArray(raw.tribeModifiers ?? raw.TribeModifiers)
+            ? (raw.tribeModifiers ?? raw.TribeModifiers).map(item => this.normalizeTribeModifier(item))
+            : [];
+        const abilityKeywordModifiers = Array.isArray(raw.abilityKeywordModifiers ?? raw.AbilityKeywordModifiers)
+            ? (raw.abilityKeywordModifiers ?? raw.AbilityKeywordModifiers).map(item => this.normalizeAbilityKeywordModifier(item))
+            : [];
         const rawAbilities = raw.grantedAbilities ?? raw.GrantedAbilities;
         const grantedAbilities = Array.isArray(rawAbilities)
             ? rawAbilities.map(item => this.abilityListHelper.normalizeAbilityConfigForList(item)).filter(Boolean)
@@ -670,6 +965,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             canStack: raw.canStack ?? raw.CanStack ?? false,
             statModifiers,
             keywordModifiers,
+            tribeModifiers,
+            abilityKeywordModifiers,
             grantedAbilities,
             _uiType: raw._uiType ?? raw.UiType ?? '',
             _statAdjustment: this.deriveStatAdjustmentState(statModifiers),
@@ -685,6 +982,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             canStack: false,
             statModifiers: [],
             keywordModifiers: [],
+            tribeModifiers: [],
+            abilityKeywordModifiers: [],
             grantedAbilities: [],
             _uiType: '',
             _statAdjustment: this.deriveStatAdjustmentState([]),
@@ -710,6 +1009,26 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         return {
             keyword: raw.keyword ?? raw.Keyword ?? 'None',
             operation: raw.operation ?? raw.Operation ?? 'Add'
+        };
+    }
+
+    normalizeTribeModifier(raw) {
+        if (!raw || typeof raw !== 'object') {
+            return { tribe: '' };
+        }
+        return {
+            tribe: (raw.tribe ?? raw.Tribe ?? '').toString().trim()
+        };
+    }
+
+    normalizeAbilityKeywordModifier(raw) {
+        if (!raw || typeof raw !== 'object') {
+            return { keyword: 'None', layer: 'Additive', value: null };
+        }
+        return {
+            keyword: raw.keyword ?? raw.Keyword ?? 'None',
+            layer: raw.layer ?? raw.Layer ?? 'Additive',
+            value: raw.value ?? raw.Value ?? null
         };
     }
 
@@ -978,6 +1297,48 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         this.updateBuffConfig(buffIndex, { keywordModifiers: next });
     }
 
+    addTribeModifier(buffIndex) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.tribeModifiers || [])];
+        next.push({ tribe: '' });
+        this.updateBuffConfig(buffIndex, { tribeModifiers: next });
+    }
+
+    updateTribeModifier(buffIndex, index, updates) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.tribeModifiers || [])];
+        next[index] = { ...next[index], ...updates };
+        this.updateBuffConfig(buffIndex, { tribeModifiers: next });
+    }
+
+    removeTribeModifier(buffIndex, index) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.tribeModifiers || [])];
+        next.splice(index, 1);
+        this.updateBuffConfig(buffIndex, { tribeModifiers: next });
+    }
+
+    addAbilityKeywordModifier(buffIndex) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.abilityKeywordModifiers || [])];
+        next.push({ keyword: 'None', layer: 'Additive', value: null });
+        this.updateBuffConfig(buffIndex, { abilityKeywordModifiers: next });
+    }
+
+    updateAbilityKeywordModifier(buffIndex, index, updates) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.abilityKeywordModifiers || [])];
+        next[index] = { ...next[index], ...updates };
+        this.updateBuffConfig(buffIndex, { abilityKeywordModifiers: next });
+    }
+
+    removeAbilityKeywordModifier(buffIndex, index) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.abilityKeywordModifiers || [])];
+        next.splice(index, 1);
+        this.updateBuffConfig(buffIndex, { abilityKeywordModifiers: next });
+    }
+
     buildBuffConfigsForSave(buffConfigs) {
         const list = Array.isArray(buffConfigs) ? buffConfigs : [];
         return list.map(item => {
@@ -998,6 +1359,10 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 canStack: item.canStack ?? false,
                 statModifiers: type === 'stat' ? statModifiers : [],
                 keywordModifiers: type === 'keyword' ? (Array.isArray(item.keywordModifiers) ? item.keywordModifiers : []) : [],
+                tribeModifiers: type === 'tribe'
+                    ? (Array.isArray(item.tribeModifiers) ? item.tribeModifiers.filter(modifier => String(modifier?.tribe ?? '').trim() !== '') : [])
+                    : [],
+                abilityKeywordModifiers: type === 'abilityKeyword' ? (Array.isArray(item.abilityKeywordModifiers) ? item.abilityKeywordModifiers : []) : [],
                 grantedAbilities: type === 'ability' ? (Array.isArray(item.grantedAbilities) ? item.grantedAbilities : []) : []
             };
         });

@@ -131,6 +131,122 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void SetHealth_ResetsDamageAndCurrentHealthToNewMax()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(2101, env.PlayerId);
+            var target = env.CreateCard(2102, env.PlayerId);
+
+            using var context = env.CreateContext(source);
+
+            var growHealth = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: null,
+                healthModifier: 3,
+                costModifier: null,
+                durationType: DurationType.Permanent,
+                durationParameter: 0,
+                modifierLayer: ModifierLayer.Additive);
+            var growResult = growHealth.Commit(context);
+            Assert.True(growResult.Success);
+            CommitGeneratedEvents(growResult.GeneratedEvents, context);
+
+            Assert.Equal(4, env.BuffService.GetEffectiveMaxHealth(target, context));
+            target.Damage = 2;
+            Assert.Equal(2, target.CurrentHealth);
+
+            var setHealth = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: null,
+                healthModifier: 7,
+                costModifier: null,
+                durationType: DurationType.Permanent,
+                durationParameter: 0,
+                modifierLayer: ModifierLayer.Set);
+            var setResult = setHealth.Commit(context);
+            Assert.True(setResult.Success);
+            CommitGeneratedEvents(setResult.GeneratedEvents, context);
+
+            Assert.Equal(7, env.BuffService.GetEffectiveMaxHealth(target, context));
+            Assert.Equal(0, target.Damage);
+            Assert.Equal(7, target.CurrentHealth);
+        }
+
+        [Fact]
+        public void AdjustMaxHealth_DoesNotHealAndCapsCurrentHealth()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(2201, env.PlayerId);
+            var target = env.CreateCard(2202, env.PlayerId);
+
+            using var context = env.CreateContext(source);
+
+            var growHealth = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: null,
+                healthModifier: 3,
+                costModifier: null,
+                durationType: DurationType.Permanent,
+                durationParameter: 0,
+                modifierLayer: ModifierLayer.Additive);
+            var growResult = growHealth.Commit(context);
+            Assert.True(growResult.Success);
+            CommitGeneratedEvents(growResult.GeneratedEvents, context);
+
+            Assert.Equal(4, env.BuffService.GetEffectiveMaxHealth(target, context));
+            target.Damage = 2;
+            Assert.Equal(2, target.CurrentHealth);
+
+            var handler = new ModifyMaxHealthEffectHandler(
+                NullLogger<ModifyMaxHealthEffectHandler>.Instance,
+                new TargetProcessingService(NullLogger<TargetProcessingService>.Instance));
+
+            var setToSeven = new Effect(
+                new EffectConfig { Type = EffectType.AdjustMaxHealth },
+                env.PlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(target) },
+                parentAbilityId: null,
+                triggeredEventId: Guid.Empty,
+                sourceCardId: source.InstanceId);
+            var increaseParams = new ModifyMaxHealthEffectParams
+            {
+                DurationType = DurationType.Permanent,
+                DurationParameter = 0,
+                HealthModifier = 7,
+                ModifierLayer = ModifierLayer.Set
+            };
+
+            var increaseResult = handler.Apply(setToSeven, context, increaseParams);
+            Assert.True(increaseResult.Success);
+            CommitGeneratedEvents(increaseResult.GeneratedEvents, context);
+
+            Assert.Equal(7, env.BuffService.GetEffectiveMaxHealth(target, context));
+            Assert.Equal(2, target.CurrentHealth);
+
+            var setToOne = new Effect(
+                new EffectConfig { Type = EffectType.AdjustMaxHealth },
+                env.PlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(target) },
+                parentAbilityId: null,
+                triggeredEventId: Guid.Empty,
+                sourceCardId: source.InstanceId);
+            var decreaseParams = new ModifyMaxHealthEffectParams
+            {
+                DurationType = DurationType.Permanent,
+                DurationParameter = 0,
+                HealthModifier = 1,
+                ModifierLayer = ModifierLayer.Set
+            };
+
+            var decreaseResult = handler.Apply(setToOne, context, decreaseParams);
+            Assert.True(decreaseResult.Success);
+            CommitGeneratedEvents(decreaseResult.GeneratedEvents, context);
+
+            Assert.Equal(1, env.BuffService.GetEffectiveMaxHealth(target, context));
+            Assert.Equal(1, target.CurrentHealth);
+        }
+
+        [Fact]
         public void EffectCompletedEvent_ExposesGeneratedEvents()
         {
             var env = TestEnvironment.Create();
@@ -160,8 +276,8 @@ namespace ShadowverseBeyond.Server.Tests
             var effectResult = executor.ExecuteEffect(effect, effectContext);
             Assert.True(effectResult.Success);
 
-            var completion = Assert.Single(effectResult.GeneratedEvents.OfType<EffectCompletedEvent>());
-            Assert.Contains(completion.GeneratedEvents, ev =>
+            Assert.Empty(effectResult.GeneratedEvents.OfType<EffectCompletedEvent>());
+            Assert.Contains(effectResult.GeneratedEvents, ev =>
                 ev is SummonEvent summon && summon.SummonedCard?.InstanceId == generated.InstanceId);
         }
 

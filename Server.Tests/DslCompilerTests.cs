@@ -19,6 +19,7 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Effects;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -130,6 +131,31 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             // Assert
             Assert.True(resultForHighAttack);
             Assert.False(resultForLowAttack);
+        }
+
+        [Fact]
+        public void CompileGetter_WithMissingCardVariable_ReturnsZero()
+        {
+            var context = CreateTestGameContext();
+            var player = context.GetRequestingPlayer();
+            var card = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
+            var getter = _compiler.CompileGetter<CardInstance>("self.UnregisteredVariable");
+
+            var result = getter(card, context);
+
+            Assert.Equal(0, Convert.ToInt32(result));
+        }
+
+        [Fact]
+        public void CompileGetter_WithMissingPlayerVariable_ReturnsZero()
+        {
+            var context = CreateTestGameContext();
+            var player = context.GetRequestingPlayer();
+            var getter = _compiler.CompileGetter<PlayerState>("self.UnregisteredVariable");
+
+            var result = getter(player, context);
+
+            Assert.Equal(0, Convert.ToInt32(result));
         }
 
         [Theory]
@@ -323,6 +349,110 @@ namespace ShadowverseBeyond.Server.Tests.DSL
         }
 
         [Fact]
+        public void CompilePredicateWithTraceRuntime_WithTriggeringEventBareBoolean_Works()
+        {
+            var player1 = new PlayerState(Guid.NewGuid());
+            var player2 = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("test-game", player1, player2, player1.PlayerId);
+
+            var evolvedCard = new CardInstance(Guid.NewGuid(), 1, player1.PlayerId);
+            var evolveEventTrue = new EvolveEvent(
+                evolvedCard,
+                TargetInfo.ForPlayer(player1),
+                isSuperEvolution: false,
+                isManualEvolution: true);
+
+            var contextTrue = new GameContext(
+                _serviceProvider,
+                _mockMapper.Object,
+                _serviceProvider.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                player1.PlayerId,
+                triggeringEvent: evolveEventTrue);
+
+            var tscTrue = new TargetSelectionContext(contextTrue, null);
+            var traceCollectorTrue = new DslTraceCollector();
+            var predicateTrue = _compiler.CompilePredicateWithTraceRuntime(
+                "context.triggeringEvent.IsManualEvolution",
+                tscTrue,
+                selfType: null,
+                IDslCompiler.SelfResolutionMode.ContextOnly);
+
+            var resultTrue = predicateTrue(null!, traceCollectorTrue);
+            Assert.True(resultTrue);
+
+            var evolveEventFalse = new EvolveEvent(
+                evolvedCard,
+                TargetInfo.ForPlayer(player1),
+                isSuperEvolution: false,
+                isManualEvolution: false);
+
+            var contextFalse = new GameContext(
+                _serviceProvider,
+                _mockMapper.Object,
+                _serviceProvider.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                player1.PlayerId,
+                triggeringEvent: evolveEventFalse);
+
+            var tscFalse = new TargetSelectionContext(contextFalse, null);
+            var traceCollectorFalse = new DslTraceCollector();
+            var predicateFalse = _compiler.CompilePredicateWithTraceRuntime(
+                "context.triggeringEvent.IsManualEvolution",
+                tscFalse,
+                selfType: null,
+                IDslCompiler.SelfResolutionMode.ContextOnly);
+
+            var resultFalse = predicateFalse(null!, traceCollectorFalse);
+            Assert.False(resultFalse);
+        }
+
+        [Fact]
+        public void CompileGetter_WithTriggeringEffectCompletedOutputsCustomPool_ReturnsTargetPool()
+        {
+            var player1 = new PlayerState(Guid.NewGuid());
+            var player2 = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("test-game", player1, player2, player1.PlayerId);
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player1.PlayerId);
+            var pooledCard = new CardInstance(Guid.NewGuid(), 2, player2.PlayerId);
+
+            var outputs = new Dictionary<string, object?>
+            {
+                ["pickedCards"] = new Dictionary<string, List<CardInstance>>
+                {
+                    ["target1"] = new List<CardInstance> { pooledCard }
+                }
+            };
+
+            var triggeringEvent = new EffectCompletedEvent(
+                EffectType.GetToken,
+                new Dictionary<string, object>(),
+                new List<TargetInfo>(),
+                new List<IGameEvent>(),
+                new List<CardInstance>(),
+                new List<CardInstanceSnapshot>(),
+                outputs,
+                true,
+                sourceCard);
+
+            var context = new GameContext(
+                _serviceProvider,
+                _mockMapper.Object,
+                _serviceProvider.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                player1.PlayerId,
+                triggeringEvent: triggeringEvent);
+
+            var getter = _compiler.CompileGetter<object>("context.triggeringEvent.Outputs.pickedCards.target1");
+            var result = getter(null!, context);
+            var cards = Assert.IsAssignableFrom<IEnumerable<CardInstance>>(result).ToList();
+
+            Assert.Single(cards);
+            Assert.Equal(pooledCard.InstanceId, cards[0].InstanceId);
+        }
+
+        [Fact]
         public void CompileGetter_WithQueryPipeline_ReturnsFilteredAndSortedResults()
         {
             var cards = new List<TestCard>
@@ -342,6 +472,25 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             Assert.Equal(2, list.Count);
             Assert.Equal(5, list[0].Attack);
             Assert.Equal(3, list[1].Attack);
+        }
+
+        [Fact]
+        public void CompileGetter_WithSelectProjection_ReturnsTypedProjectionList()
+        {
+            var cards = new List<TestCard>
+            {
+                new TestCard { Attack = 1 },
+                new TestCard { Attack = 5 },
+                new TestCard { Attack = 3 }
+            };
+
+            var context = CreateTestGameContext();
+            var getter = _compiler.CompileGetter<List<TestCard>>("self.select(self.Attack)");
+
+            var result = getter(cards, context);
+            var list = Assert.IsAssignableFrom<IEnumerable<int>>(result).ToList();
+
+            Assert.Equal(new[] { 1, 5, 3 }, list);
         }
 
         [Fact]
@@ -468,6 +617,29 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             Assert.Equal(2, unionList.Count);
             Assert.Contains(unionList, card => card.InstanceId == leader.InstanceId);
             Assert.Contains(unionList, card => card.InstanceId == handCard.InstanceId);
+        }
+
+        [Fact]
+        public void CompileGetter_WithSetOperator_TwoSingletonOperands_IsAutoBoxed()
+        {
+            var context = CreateTestGameContext();
+            var player = context.GetRequestingPlayer();
+            var opponent = context.GetIdlePlayer();
+
+            var ownerLeader = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
+            var opponentLeader = new CardInstance(Guid.NewGuid(), 2, opponent.PlayerId);
+            player.Leader = ownerLeader;
+            opponent.Leader = opponentLeader;
+
+            var unionGetter = _compiler.CompileGetter<object>("player.Leader | opponent.Leader");
+            var unionResult = unionGetter(null!, context);
+
+            var unionEnumerable = Assert.IsAssignableFrom<IEnumerable>(unionResult);
+            var unionList = unionEnumerable.Cast<CardInstance>().ToList();
+
+            Assert.Equal(2, unionList.Count);
+            Assert.Contains(unionList, card => card.InstanceId == ownerLeader.InstanceId);
+            Assert.Contains(unionList, card => card.InstanceId == opponentLeader.InstanceId);
         }
 
         [Fact]

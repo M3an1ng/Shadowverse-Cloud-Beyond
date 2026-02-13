@@ -350,6 +350,19 @@
     color: #fff;
     margin-right: 10px;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+.stats-avatar.has-image {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.stats-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
 }
 
 .stats-info {
@@ -360,7 +373,8 @@
 }
 
 .class-name {
-    font-size: 10px;
+    font-size: var(--text-sm);
+    font-family:var(--font-line);
     color: var(--color-secondary);
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -373,6 +387,41 @@
     color: #fff;
     line-height: 1.1;
     text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.player-name-text {
+    display: inline-block;
+}
+
+.player-order-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-line);
+    min-width: 34px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    background: rgba(0, 0, 0, 0.32);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    line-height: 1;
+}
+
+.player-order-badge.first {
+    border-color: rgba(96, 165, 250, 0.75);
+    background: rgba(59, 130, 246, 0.32);
+}
+
+.player-order-badge.second {
+    border-color: rgba(251, 191, 36, 0.75);
+    background: rgba(217, 119, 6, 0.3);
 }
 
 .hp-display {
@@ -639,10 +688,10 @@
 /* --- Log UI --- */
 #game-log-container {
     position: absolute;
-    top: 400px;
+    top: 315px;
     /* Moved down to avoid overlapping the battle preview */
-    left: 0;
-    /* Anchored to the left edge */
+    right: 0;
+    /* Anchored to the right edge */
     z-index: 9000;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
@@ -650,10 +699,10 @@
     background: rgba(0, 0, 0, 0.8);
     /* Darker background for better contrast */
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-left: none;
-    /* Remove left border since it's docked */
-    border-radius: 0 8px 8px 0;
-    /* Rounded corners only on the right */
+    border-right: none;
+    /* Remove right border since it's docked */
+    border-radius: 8px 0 0 8px;
+    /* Rounded corners only on the left */
     backdrop-filter: blur(8px);
     transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     /* Bouncy "pop" effect */
@@ -676,15 +725,28 @@
 /* Hover effect for Collapsed State - "Pop out" feel */
 #game-log-container.collapsed:hover {
     background: rgba(255, 255, 255, 0.15);
-    width: 48px;
-    /* Expands slightly to the right */
-    box-shadow: 2px 0 10px rgba(255, 255, 255, 0.1);
+    width: 40px;
+    /* Keep fixed width in collapsed state (no left occupancy) */
+    box-shadow: -2px 0 10px rgba(255, 255, 255, 0.1);
+}
+
+#game-log-container.collapsed .log-header {
+    padding-left: 0;
+    padding-right: 40px;
+}
+
+#game-log-container.collapsed .log-header-marker {
+    display: none;
+}
+
+#game-log-container.collapsed .log-title-group {
+    display: none;
 }
 
 /* Expanded State */
 #game-log-container.expanded {
     width: 400px;
-    height: 300px;
+    height: 400px;
     box-shadow: 4px 4px 16px rgba(0, 0, 0, 0.6);
     background: rgba(10, 10, 15, 0.95);
     /* Solid dark background when reading */
@@ -694,15 +756,33 @@
 .log-header {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    position: relative;
     height: 40px;
     flex-shrink: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-left: 10px;
+    padding-right: 40px;
+}
+
+.log-header-marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 0px;
+    border: 1px solid rgba(125, 211, 252, 0.85);
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.38), rgba(14, 116, 144, 0.18));
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.38);
+    transform: rotate(45deg);
+    flex-shrink: 0;
 }
 
 /* Toggle Button */
 .log-toggle-btn {
+    position: absolute;
+    top: 0;
+    right: 0;
     width: 40px;
-    /* Match container width */
     height: 40px;
     background: transparent;
     border: none;
@@ -731,22 +811,39 @@
     fill: currentColor;
 }
 
-/* Log Title */
-.log-title {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 14px;
-    font-weight: 700;
-    color: rgba(255, 255, 255, 0.9);
-    margin-left: 8px;
+/* Log Title Group (left side) */
+.log-title-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1px;
     opacity: 0;
-    transform: translateX(-10px);
+    transform: translateX(-8px);
     transition: all 0.3s ease;
-    white-space: nowrap;
     pointer-events: none;
-    /* Let clicks pass through to container if needed */
 }
 
-#game-log-container.expanded .log-title {
+.log-title-main {
+    font-family: 'Orbitron', 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.95);
+    letter-spacing: 0.04em;
+}
+
+.log-title-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    line-height: 1;
+    font-weight: 700;
+    color: rgba(148, 163, 184, 0.95);
+    letter-spacing: 0.18em;
+    white-space: nowrap;
+}
+
+#game-log-container.expanded .log-title-group {
     opacity: 1;
     transform: translateX(0);
 }
@@ -1066,7 +1163,7 @@
     pointer-events: none;
 }
 
-/* In-card action buttons (Evolve / Super Evolve / Act) */
+/* In-card action buttons (stacked vertically via JS) */
 .card .evolve-button,
 .card .super-evolve-button,
 .card .act-button,
@@ -1074,7 +1171,7 @@
 .card .fusion-button {
     position: absolute;
     right: 6px;
-    top: 6px;
+    top: var(--action-button-top, 28px);
     padding: 4px 6px;
     font-size: 10px;
     font-family: var(--font-line);
@@ -1097,7 +1194,6 @@
 }
 
 .card .super-evolve-button {
-    top: 28px;
     border-color: rgba(251, 113, 133, 0.6);
     color: #fda4af;
 }
@@ -1105,12 +1201,10 @@
 .card .act-button {
     right: auto;
     left: 6px;
-    top: 28px;
     /* avoid overlapping the cost badge */
 }
 
 .card .use-button {
-    top: 28px;
     border-color: rgba(250, 204, 21, 0.62);
     color: #fde68a;
 }
@@ -1167,7 +1261,6 @@
 }
 
 .battle-card-preview .counter-summary-list {
-    margin-top: 8px;
     padding: 6px 8px;
     display: flex;
     flex-direction: column;
@@ -2073,67 +2166,85 @@ img.badge-icon {
 /* Specific Badge Styles - Only Icon Color Changes */
 
 /* Ward (守护) - Blue/Silver */
-.badge-ward {
+.keyword-badge[data-keyword="ward"] {
     color: #60a5fa;
     /* Blue-400 */
 }
 
+/* SpellWard (法术守护) - Teal */
+.keyword-badge[data-keyword="spellward"] {
+    color: #2dd4bf;
+    /* Teal-400 */
+}
+
 /* Rush (突进) - Yellow */
-.badge-rush {
+.keyword-badge[data-keyword="rush"] {
     color: #facc15;
     /* Yellow-400 */
 }
 
 /* Storm (疾驰) - Cyan */
-.badge-storm {
+.keyword-badge[data-keyword="storm"] {
     color: #22d3ee;
     /* Cyan-400 */
 }
 
 /* Bane (必杀) - Purple */
-.badge-bane {
+.keyword-badge[data-keyword="bane"] {
     color: #c084fc;
     /* Purple-400 */
 }
 
 /* Ambush (潜行) - Gray */
-.badge-ambush {
+.keyword-badge[data-keyword="ambush"] {
     color: #9ca3af;
     /* Gray-400 */
 }
 
 /* Drain (吸血) - Red */
-.badge-drain {
+.keyword-badge[data-keyword="drain"] {
     color: #f87171;
     /* Red-400 */
 }
 
 /* Pressure (威慑) - Violet */
-.badge-pressure {
+.keyword-badge[data-keyword="pressure"] {
     color: #a78bfa;
     /* Violet-400 */
 }
 
 /* Shackle (无法攻击) - Stone */
-.badge-shackle {
+.keyword-badge[data-keyword="shackle"] {
     color: #a8a29e;
     /* Stone-400 */
 }
 
+/* CannotUse (无法使用) - Rose */
+.keyword-badge[data-keyword="cannotuse"] {
+    color: #fb7185;
+    /* Rose-400 */
+}
+
 /* Shield (屏障) - Sky Blue */
-.badge-shield {
+.keyword-badge[data-keyword="shield"] {
     color: #7dd3fc;
     /* Sky-300 */
 }
 
 /* DestroyResist (无法被破坏) - White */
-.badge-destroy-resist {
+.keyword-badge[data-keyword="destroyresist"] {
     color: #f8fafc;
     /* Slate-50 */
 }
 
+/* AbilityResist (抗能力伤害) - Indigo */
+.keyword-badge[data-keyword="abilityresist"] {
+    color: #818cf8;
+    /* Indigo-400 */
+}
+
 /* Aura (灵气) - Amber */
-.badge-aura {
+.keyword-badge[data-keyword="aura"] {
     color: #fbbf24;
     /* Amber-400 */
 }

@@ -148,5 +148,33 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(DurationType.EndOfTurn, applied!.AppliedBuff.DurationType);
             Assert.Equal(2, applied.AppliedBuff.DurationParameter);
         }
+
+        [Fact]
+        public void StatChangedEvent_Announcement_UsesLayerSpecificText()
+        {
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+            var player1 = new PlayerState(player1Id);
+            var player2 = new PlayerState(player2Id);
+            var gameState = new GameState("stat-announcement-test", player1, player2, player1Id)
+            {
+                AbilityManager = Mock.Of<IAbilityManager>(),
+                BuffManager = Mock.Of<IBuffManager>()
+            };
+
+            var target = new CardInstance(Guid.NewGuid(), 1001, player1Id) { CurrentZone = CardZone.Field };
+            player1.Field.Add(target);
+            gameState.RegisterCardInstance(target);
+
+            var additive = new StatChangedEvent(target, attackModifier: 2, healthModifier: null, costModifier: null, modifierLayer: ModifierLayer.Additive);
+            var multiplicative = new StatChangedEvent(target, attackModifier: null, healthModifier: null, costModifier: 3, modifierLayer: ModifierLayer.Multiplicative);
+            var set = new StatChangedEvent(target, attackModifier: null, healthModifier: 7, costModifier: null, modifierLayer: ModifierLayer.Set);
+            var baseLayer = new StatChangedEvent(target, attackModifier: 1, healthModifier: null, costModifier: null, modifierLayer: ModifierLayer.Base);
+
+            Assert.Contains("攻击力增加[[num:2]]", additive.GetAnnouncement(gameState));
+            Assert.Contains("费用调整为[[num:3]]倍", multiplicative.GetAnnouncement(gameState));
+            Assert.Contains("生命值设为[[num:7]]", set.GetAnnouncement(gameState));
+            Assert.Contains("攻击力基础值设为[[num:1]]", baseLayer.GetAnnouncement(gameState));
+        }
     }
 }

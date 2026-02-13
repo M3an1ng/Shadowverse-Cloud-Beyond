@@ -319,7 +319,7 @@ namespace ShadowverseBeyond.Server.Services
                                 EventType.Destroy.ToString(),
                                 gameState.InGameIds.Format(InGameIdKind.Card, source.InstanceId),
                                 new[] { gameState.InGameIds.Format(InGameIdKind.Card, target.InstanceId) },
-                                new JsonObject { ["Reason"] = "DebugCommand" },
+                                new JsonObject { ["Reason"] = nameof(EventReasonSource.System) },
                                 "destroy");
                         }
                     case "vanish":

@@ -60,6 +60,8 @@ public class AuthControllerTests
 
         Assert.NotEqual(Guid.Empty, payload.UserId);
         Assert.Equal("player-one", payload.Username);
+        Assert.Equal("Player", payload.Role);
+        Assert.Equal(10, payload.PermissionLevel);
         Assert.Equal(2, payload.MigratedDecks);
         Assert.Equal(guestId, migration.LastGuestId);
         Assert.Equal(payload.UserId, migration.LastUserId);
@@ -103,5 +105,7 @@ public class AuthControllerTests
 
         Assert.Equal(userId, payload.UserId);
         Assert.Equal("tester", payload.Username);
+        Assert.Equal("Player", payload.Role);
+        Assert.Equal(10, payload.PermissionLevel);
     }
 }

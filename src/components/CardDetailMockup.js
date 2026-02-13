@@ -1,6 +1,7 @@
 import { renderDescriptionHtml } from '../descriptionParser.js';
 import { hydrateDescriptionReferences } from '../previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from '../enumLocalizationCache.js';
+import { showPreviewDescriptionTooltip } from '../previewDescriptionTooltip.js';
 
 const MODAL_ID = 'card-detail-modal';
 const IMAGE_MODAL_ID = 'card-detail-image-modal';
@@ -323,10 +324,7 @@ export function showCardDetailModal(card, options = {}) {
             currentCardId,
             currentCardName: name
         };
-        void import('../previewDescriptionTooltip.js')
-            .then(({ showPreviewDescriptionTooltip }) => {
-                void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, tooltipOptions);
-            });
+        void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, tooltipOptions);
     });
     document.addEventListener('keydown', onKeydown);
 

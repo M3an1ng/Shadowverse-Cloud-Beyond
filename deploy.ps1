@@ -7,7 +7,7 @@ param(
     [switch]$SetProductionEnv,
     [switch]$CreateProdConfig,
     [string]$Urls = "http://0.0.0.0:5100",
-    [string]$PublishDir = "publish_release"
+    [string]$PublishDir = "publish"
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,6 +102,15 @@ if (-not $SkipFrontend) {
     }
     Copy-Item "dist\index.html" "index.prod.html" -Force
 
+    $existingCardsPath = Join-Path $root "assets\cards"
+    $preservedCardsPath = Join-Path $root ("cards.preserve-" + $stamp)
+    $cardsPreserved = $false
+    if (Test-Path $existingCardsPath) {
+        Move-Item $existingCardsPath $preservedCardsPath -Force
+        $cardsPreserved = $true
+        Write-Host "Preserved existing assets/cards for redeploy" -ForegroundColor Yellow
+    }
+
     if (Test-Path "assets") {
         if ($NoBackup) {
             Remove-Item "assets" -Recurse -Force
@@ -110,6 +119,15 @@ if (-not $SkipFrontend) {
         }
     }
     Copy-Item "dist\assets" "assets" -Recurse -Force
+
+    if ($cardsPreserved -and (Test-Path $preservedCardsPath)) {
+        $targetCardsPath = Join-Path $root "assets\cards"
+        if (Test-Path $targetCardsPath) {
+            Remove-Item $targetCardsPath -Recurse -Force
+        }
+        Move-Item $preservedCardsPath $targetCardsPath -Force
+        Write-Host "Restored assets/cards after frontend asset refresh" -ForegroundColor Green
+    }
 
     Write-Host "Frontend prepared at root index.html + assets/" -ForegroundColor Green
 }

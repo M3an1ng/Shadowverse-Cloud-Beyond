@@ -6,6 +6,8 @@ using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Identifiers;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -17,28 +19,39 @@ namespace ShadowverseBeyond.Server.Domain.Events
     public class ReturnEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("返回原因", "卡牌被返回的原因。")]
-        public string Reason { get; }
+        public EventReasonSource Reason { get; }
 
         [GameEventParameter("返回的卡牌", "被返回的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? ReturnedCard => Target.FirstOrDefault()?.Card;
 
-        public ReturnEvent(PlayerState player, CardInstance card, string reason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("返回来源快照", "生成事件时记录的返回来源快照（若来源为卡牌）。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? ReturnSourceSnapshot { get; }
+
+        [GameEventParameter("返回目标快照", "生成事件时记录的返回目标快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? ReturnedCardSnapshot { get; }
+
+        public bool ReturnApplied { get; private set; }
+
+        public ReturnEvent(PlayerState player, CardInstance card, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Return, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
+            ReturnedCardSnapshot = CardInstanceSnapshot.From(card);
         }
 
-        public ReturnEvent(CardInstance card, string reason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
+        public ReturnEvent(CardInstance card, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Return, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
+            ReturnedCardSnapshot = CardInstanceSnapshot.From(card);
         }
 
         public DomainOperationResult Commit(GameContext context)
         {
+            ReturnApplied = false;
             var card = ReturnedCard;
             if (card == null)
             {
@@ -52,12 +65,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var result = new DomainOperationResult { Success = true };
+            ReturnApplied = card.CurrentZone != CardZone.Hand && player.Hand.Count < GameConstants.Hand.MaxHandSize;
             result.GeneratedEvents.Add(new AddCardToHandEvent(player, [card]));
             return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
+            if (!ReturnApplied)
+            {
+                return string.Empty;
+            }
+
             var card = ReturnedCard;
             if (card == null)
             {

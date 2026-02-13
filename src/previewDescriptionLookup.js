@@ -39,6 +39,22 @@ const cardKeywordGlossary = {
         name: '无法攻击',
         description: '该随从不能进行攻击。'
     },
+    CannotAttackLeader: {
+        name: '无法攻击主战者',
+        description: '该随从不能攻击敌方主战者。'
+    },
+    CannotAttackFollower: {
+        name: '无法攻击随从',
+        description: '该随从不能攻击敌方随从。'
+    },
+    SpellWard: {
+        name: '法术守护',
+        description: '只要在战场上，敌方的能力与法术无法指定其他从者或主战者为目标。\n若该从者同时拥有灵气，则法术守护无效。'
+    },
+    CannotUse: {
+        name: '无法使用',
+        description: '该卡牌不能被使用。'
+    },
     Shield: {
         name: '屏障',
         description: '拥有障壁的从者或主战者受到伤害时，将使该伤害转变为0。\n障壁发动1次后，便会失去能力。'
@@ -164,7 +180,7 @@ const abilityKeywordGlossary = {
     },
     Sacrifice: {
         name: '血祭',
-        description: '消耗随从以发动效果。'
+        description: '自己的血池数为指定的数值以上时，将消耗等同于该数值的血池数并发动能力。'
     },
     SuperEvolveEffect: {
         name: '超进化时',

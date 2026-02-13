@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using Microsoft.Extensions.Logging;
 using System.Linq.Expressions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -59,11 +60,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
             var builder = new ExpressionTreeBuilder(dummySelfParam, gameContextParam, dbContextParam, _functionRegistry);
             var body = builder.Build(ast);
-
-            if (body.Type != typeof(bool))
-            {
-                throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
-            }
+            body = EnsurePredicateBodyIsBoolean(body, dslExpression);
 
             var innerLambda = Expression.Lambda<Func<GameContext, IGameDataProvider, bool>>(body, gameContextParam, dbContextParam);
             var compiledInner = innerLambda.Compile();
@@ -106,11 +103,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
             var builder = new ExpressionTreeBuilder(selfParam, gameContextParam, dbContextParam, _functionRegistry);
             var body = builder.Build(ast);
-
-            if (body.Type != typeof(bool))
-            {
-                throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
-            }
+            body = EnsurePredicateBodyIsBoolean(body, dslExpression);
 
             var innerLambda = Expression.Lambda<Func<TItem, GameContext, IGameDataProvider, bool>>(body, selfParam, gameContextParam, dbContextParam);
             var compiledInner = innerLambda.Compile();
@@ -249,11 +242,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
                 var builder = new ExpressionTreeBuilder(selfParam, gameContextParam, tscParam, dbContextParam, _functionRegistry);
                 var body = builder.Build(ast);
-
-                if (body.Type != typeof(bool))
-                {
-                    throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
-                }
+                body = EnsurePredicateBodyIsBoolean(body, dslExpression);
 
                 var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, bool>>(
                     body,
@@ -296,11 +285,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
                 var builder = new ExpressionTreeBuilder(selfParam, gameContextParam, tscParam, dbContextParam, _functionRegistry, traceParam);
                 var body = builder.Build(ast);
-
-                if (body.Type != typeof(bool))
-                {
-                    throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
-                }
+                body = EnsurePredicateBodyIsBoolean(body, dslExpression);
 
                 var innerLambda = Expression.Lambda<Func<TItem, TargetSelectionContext, GameContext, IGameDataProvider, IDslTraceCollector?, bool>>(
                     body,
@@ -530,6 +515,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
                 return null;
             };
+        }
+
+        private static Expression EnsurePredicateBodyIsBoolean(Expression body, string dslExpression)
+        {
+            if (body.Type == typeof(bool))
+            {
+                return body;
+            }
+
+            if (body.Type == typeof(bool?))
+            {
+                return Expression.Coalesce(body, Expression.Constant(false));
+            }
+
+            if (body.Type == typeof(object))
+            {
+                var convertMethod = typeof(TypeConverter).GetMethod(nameof(TypeConverter.ConvertToBool), new[] { typeof(object) });
+                if (convertMethod == null)
+                {
+                    throw new InvalidOperationException("Cannot resolve TypeConverter.ConvertToBool(object).");
+                }
+
+                return Expression.Call(null, convertMethod, body);
+            }
+
+            throw new InvalidOperationException($"DSL expression '{dslExpression}' does not evaluate to a boolean value.");
         }
 
         private void EnsureSelfUsageIsValid(

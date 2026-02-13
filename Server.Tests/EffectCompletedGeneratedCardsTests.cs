@@ -84,11 +84,11 @@ namespace ShadowverseBeyond.Server.Tests
             var executor = BuildEffectExecutor(serviceProvider);
             var result = executor.ExecuteEffect(effect, context);
 
-            var completion = Assert.Single(result.GeneratedEvents.OfType<EffectCompletedEvent>());
             var copyEvent = Assert.Single(result.GeneratedEvents.OfType<CopyCardEvent>());
-            Assert.True(completion.ParentEffectSucceeded);
+            Assert.Empty(result.GeneratedEvents.OfType<EffectCompletedEvent>());
             Assert.NotNull(copyEvent.CopiedCard);
-            Assert.Empty(completion.GeneratedCards);
+            Assert.True(result.Outputs.TryGetValue("effectFailed", out var failed));
+            Assert.Equal(false, failed);
         }
 
         private static IEffectExecutor BuildEffectExecutor(IServiceProvider provider)

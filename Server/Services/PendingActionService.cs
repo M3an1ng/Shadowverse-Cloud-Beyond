@@ -121,7 +121,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 // Create the DTO to send to the client, matching the frontend handler's expectation.
                 var choiceEventDto = new PlayerChoiceRequestedEventDto(request.RequestingPlayerId, request);
-                string groupName = $"Player_{request.RequestingPlayerId}";
+                string groupName = SignalRGroupNames.Player(request.GameId, request.RequestingPlayerId);
 
                 // Asynchronously send the request to all clients in the game group.
                 // The client-side will be responsible for checking if the request is for them.

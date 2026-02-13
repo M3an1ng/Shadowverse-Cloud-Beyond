@@ -26,6 +26,7 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.PlayCard, AbilityEditorCategories.BaseActionId },
             { EventType.Act, AbilityEditorCategories.BaseActionId },
             { EventType.Fusion, AbilityEditorCategories.BaseActionId },
+            { EventType.CardFused, AbilityEditorCategories.BaseActionId },
             { EventType.Enhance, AbilityEditorCategories.BaseActionId },
 
             { EventType.Summon, AbilityEditorCategories.PositionChangeId },

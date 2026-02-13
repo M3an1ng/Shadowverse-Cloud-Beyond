@@ -21,6 +21,119 @@ export function getEventTypeHint(editor, segments) {
     return null;
 }
 
+export function resolveEventTypeHintFromSource(editor, sourceNode) {
+    return resolveByTypeHint(editor, sourceNode, new WeakSet());
+}
+
+function resolveByTypeHint(editor, node, visited) {
+    if (!node || (typeof node !== "object" && typeof node !== "function")) {
+        return null;
+    }
+
+    if (visited.has(node)) {
+        return null;
+    }
+    visited.add(node);
+
+    if (node.metadata?.type === "encapsulated" && node.metadata?.innerAST) {
+        return resolveByTypeHint(editor, node.metadata.innerAST, visited);
+    }
+
+    if (node.type === "listQuery" || node.type === "listSort" || node.type === "listTake"
+        || node.type === "listDistinct" || node.type === "listSelect") {
+        return resolveByTypeHint(editor, node.source, visited);
+    }
+
+    if (node.type === "functionCall") {
+        const name = String(node.functionName || "").toLowerCase();
+        if (name === "bytype") {
+            const arg = Array.isArray(node.args) ? node.args[1] : null;
+            return resolveCanonicalEventType(editor, readDeterministicLiteral(arg));
+        }
+        return null;
+    }
+
+    return null;
+}
+
+function readDeterministicLiteral(node) {
+    if (!node) {
+        return null;
+    }
+
+    if (node.metadata?.type === "encapsulated" && node.metadata?.innerAST) {
+        return readDeterministicLiteral(node.metadata.innerAST);
+    }
+
+    if (node.type !== "value") {
+        return null;
+    }
+
+    if (node.metadata?.type === "enumValue") {
+        return node.metadata.enumValue ?? node.metadata.staticValue ?? node.value ?? null;
+    }
+
+    if (node.metadata?.type === "staticValue") {
+        return node.metadata.staticValue ?? node.value ?? null;
+    }
+
+    if (typeof node.value === "string") {
+        return node.value;
+    }
+
+    return null;
+}
+
+function normalizeEventTypeToken(raw) {
+    if (raw === null || raw === undefined) {
+        return "";
+    }
+
+    let token = String(raw).trim();
+    if (!token) {
+        return "";
+    }
+
+    token = token.replace(/^['"]|['"]$/g, "");
+    if (token.toLowerCase().startsWith("eventtype.")) {
+        token = token.slice("eventType.".length);
+    }
+
+    return token.trim();
+}
+
+function resolveCanonicalEventType(editor, rawToken) {
+    const token = normalizeEventTypeToken(rawToken);
+    if (!token) {
+        return null;
+    }
+
+    const eventTypes = Array.isArray(editor?.metadata?.events)
+        ? editor.metadata.events
+            .map(e => e?.eventType ?? e?.EventType ?? "")
+            .filter(Boolean)
+        : [];
+
+    const findCanonical = (values) => values.find(v =>
+        String(v || "").toLowerCase() === token.toLowerCase()
+    ) || null;
+
+    const fromEvents = findCanonical(eventTypes);
+    if (fromEvents) {
+        return fromEvents;
+    }
+
+    const enumValues = typeof editor?.getEnumValues === "function"
+        ? editor.getEnumValues("EventType")
+        : [];
+    const fromEnum = findCanonical(Array.isArray(enumValues) ? enumValues : []);
+    if (fromEnum) {
+        return fromEnum;
+    }
+
+    return null;
+}
+
 export function resolveEventParameterMeta(editor, propertyName, eventType) {
     const normalizedProperty = String(propertyName || '').trim().toLowerCase();
     if (!normalizedProperty) {

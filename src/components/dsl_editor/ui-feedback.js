@@ -72,10 +72,13 @@ export function showExpressionError(editor, message) {
     closeBtn.addEventListener('click', () => errorDiv.remove());
     errorDiv.appendChild(closeBtn);
 
-    // 插入到编辑器容器中
+    // 插入到编辑器容器外层，避免渲染时被 .dsl-editor 内部清空
     const editorContainer = editor.container?.querySelector?.('.dsl-editor');
-    if (editorContainer) {
-        editorContainer.insertBefore(errorDiv, editorContainer.firstChild);
+    const host = editor.container || editorContainer;
+    if (editorContainer?.parentNode) {
+        editorContainer.parentNode.insertBefore(errorDiv, editorContainer);
+    } else if (host) {
+        host.insertBefore(errorDiv, host.firstChild || null);
     }
 
     // 3秒后自动消失

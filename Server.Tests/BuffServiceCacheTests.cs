@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AutoMapper;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -7,6 +8,7 @@ using Moq;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
@@ -282,6 +284,106 @@ namespace ShadowverseBeyond.Server.Tests
 
                 Assert.Equal(card.BaseHealth, newMaxHealth);
                 Assert.Equal(Math.Min(oldCurrent, newMaxHealth), newCurrent);
+            }
+        }
+
+        [Fact]
+        public void DerivedStateCache_MultiplicativeUsesMultiplierAndCeiling()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var setBuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Attack, 3, ModifierLayer.Set) },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(setBuff, gameState);
+
+            var multiplyBuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Attack, 1.5, ModifierLayer.Multiplicative) },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(multiplyBuff, gameState);
+
+            using (context)
+            {
+                var effectiveAttack = context.BuffService.GetEffectiveAttack(card, context);
+                Assert.Equal(5, effectiveAttack);
+            }
+        }
+
+        [Fact]
+        public void AbilityKeywordMultiplicative_UsesMultiplierAndCeiling()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, _) = CreateContext(gameState, buffManager, evaluator);
+
+            var buff = new Buff(
+                sourceAbilityId: Guid.Empty,
+                targetCardInstanceId: card.InstanceId,
+                currentTurn: 1,
+                effects: new List<IBuffEffect>
+                {
+                    new AbilityKeywordBuffEffect(new List<AbilityKeywordModification>
+                    {
+                        new(AbilityKeyword.Act, 0.5, ModifierLayer.Multiplicative)
+                    })
+                },
+                durationType: DurationType.Permanent,
+                durationParameter: null);
+
+            buffManager.RegisterBuffInstance(buff, gameState);
+
+            using (context)
+            {
+                var effective = context.BuffService.GetEffectiveAbilityKeywordValue(card, AbilityKeyword.Act, 3, context);
+                Assert.Equal(2, effective);
+            }
+        }
+
+        [Fact]
+        public void TribeBuff_ApplyAndRemove_UpdatesCardTribe()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, _) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                Assert.DoesNotContain(GameConstants.Tribes.Reanimate, card.Tribe);
+
+                var applyResult = context.BuffService.ApplyTribeBuff(
+                    context,
+                    card,
+                    new List<string> { GameConstants.Tribes.Reanimate },
+                    DurationType.Permanent,
+                    null);
+                Assert.True(applyResult.Success);
+
+                var appliedEvent = Assert.Single(applyResult.GeneratedEvents.OfType<BuffAppliedEvent>());
+                var applyCommit = appliedEvent.Commit(context);
+                Assert.True(applyCommit.Success);
+                Assert.Contains(GameConstants.Tribes.Reanimate, card.Tribe);
+
+                var removeResult = context.BuffService.RemoveBuffProcess(appliedEvent.AppliedBuff.Id, context);
+                Assert.True(removeResult.Success);
+
+                var removedEvent = Assert.Single(removeResult.GeneratedEvents.OfType<BuffRemovedEvent>());
+                var removeCommit = removedEvent.Commit(context);
+                Assert.True(removeCommit.Success);
+                Assert.DoesNotContain(GameConstants.Tribes.Reanimate, card.Tribe);
             }
         }
 

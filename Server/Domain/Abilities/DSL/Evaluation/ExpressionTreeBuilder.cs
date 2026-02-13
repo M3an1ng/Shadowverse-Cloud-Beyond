@@ -35,6 +35,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         private static readonly MethodInfo TraceCaptureMethod = typeof(DslTraceHelper)
             .GetMethod(nameof(DslTraceHelper.Capture))!;
+        private static readonly MethodInfo TscResolvedTargetCardsMethod = typeof(DslTargetSelectionContextAccess)
+            .GetMethod(nameof(DslTargetSelectionContextAccess.GetResolvedTargetCards), BindingFlags.Public | BindingFlags.Static)!;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ExpressionTreeBuilder"/> class with a unified context.
@@ -237,6 +239,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 return BuildRuntimeMemberAccess(targetInstance, memberName);
             }
 
+            // In target-selection query execution, allow context.resolvedTargets / context.resolvedTargetCards
+            // to read from the in-flight target pool (TargetSelectionContext) instead of stale GameContext data.
+            if (TryBuildTargetSelectionContextMemberAccess(targetInstance, memberName, out var redirectedAccess))
+            {
+                return redirectedAccess;
+            }
+
             var directAccess = TryBuildMemberAccess(targetInstance, memberName);
             if (directAccess != null)
             {
@@ -270,10 +279,46 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                     return definitionAccess;
                 }
 
+                var cardCounterMapAccess = TryBuildCounterMapAccess(targetInstance, memberName);
+                if (cardCounterMapAccess != null)
+                {
+                    return cardCounterMapAccess;
+                }
+
                 throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}' or its '{nameof(CardInstance.CurrentDefinition)}' property.");
             }
 
+            var counterMapAccess = TryBuildCounterMapAccess(targetInstance, memberName);
+            if (counterMapAccess != null)
+            {
+                return counterMapAccess;
+            }
+
             throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}'.");
+        }
+
+        private bool TryBuildTargetSelectionContextMemberAccess(Expression instance, string memberName, out Expression redirectedAccess)
+        {
+            redirectedAccess = null!;
+
+            if (_tscParam == null || instance.Type != typeof(GameContext) || string.IsNullOrWhiteSpace(memberName))
+            {
+                return false;
+            }
+
+            if (string.Equals(memberName, nameof(GameContext.ResolvedTargets), StringComparison.OrdinalIgnoreCase))
+            {
+                redirectedAccess = Expression.Property(_tscParam, nameof(TargetSelectionContext.ResolvedTargets));
+                return true;
+            }
+
+            if (string.Equals(memberName, nameof(GameContext.ResolvedTargetCards), StringComparison.OrdinalIgnoreCase))
+            {
+                redirectedAccess = Expression.Call(null, TscResolvedTargetCardsMethod, _tscParam);
+                return true;
+            }
+
+            return false;
         }
 
         private Expression BuildEventParameterAccess(Expression instance, string memberName)
@@ -369,6 +414,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 closedAccessor,
                 dictionaryExpression,
                 Expression.Constant(memberName));
+        }
+
+        private static Expression? TryBuildCounterMapAccess(Expression instance, string memberName)
+        {
+            if (string.IsNullOrWhiteSpace(memberName))
+            {
+                return null;
+            }
+
+            var counterMapProperty = instance.Type.GetProperty(
+                nameof(CardInstance.CounterMap),
+                BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+            if (counterMapProperty == null || counterMapProperty.GetIndexParameters().Length != 0)
+            {
+                return null;
+            }
+
+            var counterMapExpression = Expression.Property(instance, counterMapProperty);
+            return TryBuildDictionaryAccess(counterMapExpression, memberName);
         }
 
         private static Type? GetDictionaryInterface(Type type)
@@ -799,10 +863,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
             // 5. Convert the result from object to the function's actual return type
             // This is crucial for subsequent operations (like comparisons) to have correct type information.
-            var returnType = function.ReturnType;
+            var returnType = ResolveFunctionReturnType(function, argumentExpressions);
             var convertedCall = Expression.Convert(callExpression, returnType);
 
             return convertedCall;
+        }
+
+        private static Type ResolveFunctionReturnType(IFunctionDefinition function, IReadOnlyList<Expression> argumentExpressions)
+        {
+            if (function is IFunctionReturnTypeResolver resolver)
+            {
+                var argumentTypes = argumentExpressions.Select(arg => arg.Type).ToList();
+                var resolved = resolver.ResolveReturnType(argumentTypes);
+                if (resolved != null && resolved != typeof(void))
+                {
+                    return resolved;
+                }
+            }
+
+            return function.ReturnType;
         }
 
         private Expression VisitQueryFilter(QueryFilterNode node)
@@ -877,8 +956,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var elementType = ResolveQueryableElementType(sourceExpression.Type);
             var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
 
-            var selector = BuildKeySelectorLambda(node.Selector, elementType);
-            var selectMethod = GetEnumerableMethod(nameof(Enumerable.Select), 2).MakeGenericMethod(elementType, typeof(object));
+            var selector = BuildSelectorLambda(node.Selector, elementType, out var selectedType);
+            var selectMethod = GetEnumerableMethod(nameof(Enumerable.Select), 2).MakeGenericMethod(elementType, selectedType);
             return Expression.Call(null, selectMethod, enumerableSource, selector);
         }
 
@@ -915,7 +994,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         private LambdaExpression BuildPredicateLambda(ExpressionNode filterExpression, Type elementType)
         {
             var elementParam = Expression.Parameter(elementType, "item");
-            var builder = new ExpressionTreeBuilder(elementParam, _gameContextParam, _tscParam, _dbContextParam, _functionRegistry);
+            var builder = new ExpressionTreeBuilder(
+                elementParam,
+                _gameContextParam,
+                _tscParam,
+                _dbContextParam,
+                _functionRegistry,
+                _traceCollectorParam);
             var body = builder.Build(filterExpression);
             var booleanBody = EnsureBooleanExpression(body);
             return Expression.Lambda(booleanBody, elementParam);
@@ -924,12 +1009,33 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
         private LambdaExpression BuildKeySelectorLambda(ExpressionNode keyExpression, Type elementType)
         {
             var elementParam = Expression.Parameter(elementType, "item");
-            var builder = new ExpressionTreeBuilder(elementParam, _gameContextParam, _tscParam, _dbContextParam, _functionRegistry);
+            var builder = new ExpressionTreeBuilder(
+                elementParam,
+                _gameContextParam,
+                _tscParam,
+                _dbContextParam,
+                _functionRegistry,
+                _traceCollectorParam);
             var body = builder.Build(keyExpression);
             if (body.Type != typeof(object))
             {
                 body = Expression.Convert(body, typeof(object));
             }
+            return Expression.Lambda(body, elementParam);
+        }
+
+        private LambdaExpression BuildSelectorLambda(ExpressionNode selectorExpression, Type elementType, out Type selectedType)
+        {
+            var elementParam = Expression.Parameter(elementType, "item");
+            var builder = new ExpressionTreeBuilder(
+                elementParam,
+                _gameContextParam,
+                _tscParam,
+                _dbContextParam,
+                _functionRegistry,
+                _traceCollectorParam);
+            var body = builder.Build(selectorExpression);
+            selectedType = body.Type;
             return Expression.Lambda(body, elementParam);
         }
 
@@ -1114,6 +1220,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             return default;
+        }
+    }
+
+    internal static class DslTargetSelectionContextAccess
+    {
+        public static IReadOnlyDictionary<string, List<CardInstance>> GetResolvedTargetCards(TargetSelectionContext? context)
+        {
+            if (context?.ResolvedTargets == null || context.ResolvedTargets.Count == 0)
+            {
+                return new Dictionary<string, List<CardInstance>>();
+            }
+
+            return context.ResolvedTargets.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value
+                    .Where(target => target.Type == TargetType.Card && target.Card != null)
+                    .Select(target => target.Card!)
+                    .ToList());
         }
     }
 

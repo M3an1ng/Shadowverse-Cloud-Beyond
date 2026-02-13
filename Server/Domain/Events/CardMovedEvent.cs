@@ -31,8 +31,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("移动的卡牌", "被移动的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? MovedCard => Source?.Card;
 
+        [GameEventParameter("移动卡牌快照", "生成事件时记录的卡牌快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? MovedCardSnapshot { get; }
+
         [GameEventParameter("移动原因", "卡牌移动到目标区域的原因。")]
         public CardMoveReason MoveReason { get; }
+
+        [GameEventParameter("目标索引", "卡牌移动到目标区域时的插入索引。null 表示追加到末尾。")]
+        public int? DestinationIndex { get; }
 
         public CardMovedEvent(
             CardInstance card,
@@ -41,14 +47,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
             CardMoveReason moveReason = CardMoveReason.Unknown,
             DelayConfig? delayConfig = null,
             Guid? eventId = null,
-            DateTime? timestamp = null)
+            DateTime? timestamp = null,
+            int? destinationIndex = null)
             : base(EventType.CardMoved, eventId, timestamp)
         {
             FromZone = fromZone;
             ToZone = toZone;
             MoveReason = moveReason;
+            DestinationIndex = destinationIndex;
             ConfigureDelay(delayConfig ?? DelayConfig.Disabled);
             Source = TargetInfo.ForCard(card);
+            MovedCardSnapshot = CardInstanceSnapshot.From(card);
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -83,7 +92,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 card.Name, card.InstanceId, FromZone, effectiveToZone, effectiveMoveReason, preserveState);
 
             // Execute internal state mutation on the aggregate
-            bool ok = owner.ApplyCardZoneChange(card, FromZone, effectiveToZone, null);
+            bool ok = owner.ApplyCardZoneChange(card, FromZone, effectiveToZone, DestinationIndex);
             if (!ok)
             {
                 result.Success = false;
@@ -233,7 +242,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 : dataProvider.GetAbilityConfigs(card.BaseDefinitionId);
             if (abilityConfigs != null && abilityConfigs.Any())
             {
-                var abilities = context.AbilityManager.CreateAbilitiesForCard(card, abilityConfigs);
+                var abilities = context.AbilityManager.CreateAbilitiesForCard(card, abilityConfigs, null, context.CurrentGameState);
                 foreach (var ability in abilities)
                 {
                     context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);

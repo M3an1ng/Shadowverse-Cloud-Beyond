@@ -8,8 +8,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Events;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 {
@@ -19,10 +18,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     /// - list.find(1)
     /// - list.find(1, defaultValue)
     /// </summary>
-    public class FindFunction : BaseDslFunction
+    public class FindFunction : BaseDslFunction, IFunctionReturnTypeResolver
     {
         public override string Name => "find";
-        public override Type ReturnType => typeof(TargetInfo);
+        public override Type ReturnType => typeof(object);
         public override string Description => "按索引获取集合中的目标（索引从1开始，越界返回默认值或null）。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
@@ -44,6 +43,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             return args[0] == null || IsCollection(args[0]) || args[0] is Array || args[0] is IList;
         }
 
+        public Type? ResolveReturnType(IReadOnlyList<Type> argumentTypes)
+        {
+            if (argumentTypes == null || argumentTypes.Count == 0)
+            {
+                return ReturnType;
+            }
+
+            var sourceType = argumentTypes[0];
+            if (sourceType == null || sourceType == typeof(object) || sourceType == typeof(string))
+            {
+                return ReturnType;
+            }
+
+            return DslCollectionCoercion.TryGetEnumerableElementType(sourceType, out var elementType)
+                ? elementType
+                : sourceType;
+        }
+
         public override object? Execute(List<object?> args, GameContext context)
         {
             if (args.Count < 2)
@@ -53,7 +70,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
 
             var source = args[0];
             var index = ConvertToInt(args[1], 0) - 1;
-            var defaultValue = args.Count >= 3 ? ConvertToTargetInfo(args[2]) : null;
+            var defaultValue = args.Count >= 3 ? args[2] : null;
 
             if (source == null || index < 0)
             {
@@ -84,19 +101,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                 }
             }
 
-            return ConvertToTargetInfo(item) ?? defaultValue;
-        }
-
-        private static TargetInfo? ConvertToTargetInfo(object? value)
-        {
-            return value switch
-            {
-                null => null,
-                TargetInfo targetInfo => targetInfo,
-                CardInstance card => TargetInfo.ForCard(card),
-                PlayerState player => TargetInfo.ForPlayer(player),
-                _ => null
-            };
+            return item ?? defaultValue;
         }
     }
 }

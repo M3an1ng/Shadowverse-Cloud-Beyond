@@ -6,6 +6,8 @@
 import { router } from './router.js';
 import { getDeckOwnerQuery } from './userSession.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
+import { compareCardsForEditorAndDeck } from './cardListSort.js';
+import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 
 const DEFAULT_ENVIRONMENT = 'open';
 const ENVIRONMENT_OPTIONS = [
@@ -45,6 +47,7 @@ const RARITY_OPTIONS = [
 const state = {
     decks: [], // List of all decks
     currentDeck: null, // The deck currently being edited
+    rawCardsCache: null, // Raw card definitions from /api/cards
     availableCards: [], // All cards available for building
     cardIndex: new Map(),
     deckCreation: {
@@ -162,7 +165,14 @@ async function loadDecks() {
 }
 
 async function loadCards() {
-    const cards = await apiGetJson('/api/cards');
+    const cards = await loadCardDefinitions({
+        useCache: true,
+        force: false,
+        getCached: () => state.rawCardsCache,
+        setCached: cardsFromApi => {
+            state.rawCardsCache = cardsFromApi;
+        }
+    });
     const filtered = Array.isArray(cards)
         ? cards.filter(card => {
             const collectible = card?.isCollectible ?? card?.IsCollectible;
@@ -815,16 +825,7 @@ function getFilteredCards() {
         return true;
     });
 
-    return filtered.sort((a, b) => {
-        const costA = Number(a.cost ?? 0);
-        const costB = Number(b.cost ?? 0);
-        if (costA !== costB) return costA - costB;
-        const nameA = String(a.name ?? '');
-        const nameB = String(b.name ?? '');
-        const nameCompare = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
-        if (nameCompare !== 0) return nameCompare;
-        return Number(a.id ?? 0) - Number(b.id ?? 0);
-    });
+    return filtered.sort(compareCardsForEditorAndDeck);
 }
 
 function getLibraryPageCapacity(grid) {
@@ -937,7 +938,7 @@ function renderDeckList() {
             card: state.cardIndex.get(Number(entry.cardDefinitionId))
         }))
         .filter(item => item.card)
-        .sort((a, b) => (a.card.cost ?? 0) - (b.card.cost ?? 0));
+        .sort((a, b) => compareCardsForEditorAndDeck(a.card, b.card));
 
     // Render as vertical cards (miniature) for horizontal scroll
     list.innerHTML = deckCards.map(item => {

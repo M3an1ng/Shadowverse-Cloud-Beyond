@@ -63,6 +63,24 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     }
 
     /// <summary>
+    /// Represents tribes granted by a Buff.
+    /// </summary>
+    public class TribeBuffEffect : IBuffEffect
+    {
+        public List<string> AddedTribes { get; init; } = new();
+
+        public TribeBuffEffect(IEnumerable<string> addedTribes)
+        {
+            AddedTribes = addedTribes?
+                .Where(static tribe => !string.IsNullOrWhiteSpace(tribe))
+                .Select(static tribe => tribe.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()
+                ?? new List<string>();
+        }
+    }
+
+    /// <summary>
     /// Represents ability keyword value modifiers (e.g., Act cost adjustments) granted by a Buff.
     /// </summary>
     public class AbilityKeywordBuffEffect : IBuffEffect
@@ -125,17 +143,17 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     /// Defines a single modification to a specific stat.
     /// </summary>
     /// <param name="Stat">The type of stat being modified (e.g., Attack, Defense, Cost).</param>
-    /// <param name="Value">The value of the modification (can be positive or negative).</param>
+    /// <param name="Value">The value of the modification (can be positive or negative; multiplicative uses direct multiplier).</param>
     /// <param name="Layer">The layer in which this modification applies (determines calculation order).</param>
-    public record StatModification(StatType Stat, int Value, ModifierLayer Layer);
+    public record StatModification(StatType Stat, double Value, ModifierLayer Layer);
 
     /// <summary>
     /// Defines a single modification to a specific ability keyword value.
     /// </summary>
     /// <param name="Keyword">The ability keyword being modified (e.g., Act).</param>
-    /// <param name="Value">The value of the modification (can be positive or negative).</param>
+    /// <param name="Value">The value of the modification (can be positive or negative; multiplicative uses direct multiplier).</param>
     /// <param name="Layer">The layer in which this modification applies (determines calculation order).</param>
-    public record AbilityKeywordModification(AbilityKeyword Keyword, int Value, ModifierLayer Layer);
+    public record AbilityKeywordModification(AbilityKeyword Keyword, double Value, ModifierLayer Layer);
 
     /// <summary>
     /// Defines the layers for applying stat modifications to ensure correct calculation order.

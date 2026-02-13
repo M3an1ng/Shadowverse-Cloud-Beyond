@@ -774,7 +774,7 @@ class DevConsole {
 
     const results = [];
     const seen = new Set();
-    const regex = /([A-Za-z0-9_.]+)\s*->\(([^)]+)\)/g;
+    const regex = /([A-Za-z0-9_.,()]+)\s*->\(([^)]+)\)/g;
     let match;
     while ((match = regex.exec(trace)) !== null) {
       const key = match[1];

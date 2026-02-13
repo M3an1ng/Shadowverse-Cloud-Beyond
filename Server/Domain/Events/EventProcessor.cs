@@ -157,8 +157,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.GraveyardUpdated => ConvertGraveyardUpdatedEvent(gameEvent),
                     EventType.DeckUpdated => ConvertDeckUpdatedEvent(gameEvent),
                     EventType.CounterChanged => ConvertCounterChangedEvent(gameEvent),
+                    EventType.CardMoved => ConvertCardMovedEvent(gameEvent),
                     EventType.Vanish => ConvertVanishEvent(gameEvent),
                     EventType.Return => ConvertReturnEvent(gameEvent),
+                    EventType.Tuck => ConvertTuckEvent(gameEvent),
+                    EventType.Transform => ConvertTransformEvent(gameEvent),
                     EventType.GameEnd => ConvertGameEndEvent(gameEvent),
                     EventType.AddEmblem => ConvertAddEmblemEvent(gameEvent),
                     // 【重复伤害修复】Action Request Events - 不转换为DTO，避免重复广播
@@ -182,7 +185,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.EvolveStateUpdated => ConvertEvolveStateUpdatedEvent(gameEvent),
                     EventType.SuperEvolveStateUpdated => ConvertSuperEvolveStateUpdatedEvent(gameEvent),
                     EventType.CardRevealed => ConvertCardRevealedEvent(gameEvent),
-                    EventType.Fusion => ConvertFusionEvent(gameEvent),
+                    EventType.CardFused => ConvertFusionEvent(gameEvent),
                     _ => null
                 };
             }
@@ -268,7 +271,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 targetCard.OwnerPlayerId, // The owner of the card that was destroyed
                 targetCard.InstanceId,
                 targetCard.OwnerPlayerId,
-                e.Reason ?? "Destroyed"
+                e.Reason.ToString()
             );
         }
 
@@ -298,7 +301,41 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 playerId: playerId,
                 cardUid: card.InstanceId,
                 returnedCard: cardDto,
-                reason: e.Reason
+                reason: e.Reason.ToString()
+            );
+        }
+
+        private GameEventDto? ConvertTuckEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not TuckEvent e || e.TuckedCard == null) return null;
+            var card = e.TuckedCard;
+            var playerId = card.OwnerPlayerId;
+            var cardDto = _mapper.Map<CardInstanceDto>(card);
+
+            return new TuckEventDto(
+                sourcePlayerId: playerId,
+                playerId: playerId,
+                cardUid: card.InstanceId,
+                tuckedCard: cardDto,
+                reason: e.Reason.ToString()
+            );
+        }
+
+        private GameEventDto? ConvertCardMovedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not CardMovedEvent e || e.MovedCard == null) return null;
+            var card = e.MovedCard;
+            var sourcePlayerId = card.OwnerPlayerId;
+            var cardDto = _mapper.Map<CardInstanceDto>(card);
+
+            return new CardMovedEventDto(
+                sourcePlayerId: sourcePlayerId,
+                playerId: card.OwnerPlayerId,
+                cardUid: card.InstanceId,
+                fromZone: e.FromZone,
+                toZone: e.ToZone,
+                moveReason: e.MoveReason.ToString(),
+                movedCard: cardDto
             );
         }
 
@@ -378,9 +415,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return new AbilityTriggeredEventDto(
                 sourcePlayerId,
                 sourceCard?.InstanceId ?? Guid.Empty,
-                e.TriggeringEvent.EventType.ToString(),
+                e.TriggerEventType.ToString(),
                 parameters,
-                e.AbilityKeywords.ToList()
+                e.AbilityKeywords.Select(k => k.ToString()).ToList()
             );
         }
 
@@ -469,6 +506,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     case KeywordBuffEffect:
                         effectTypes.Add("AddKeyword");
                         break;
+                    case TribeBuffEffect:
+                        effectTypes.Add("AddTribe");
+                        break;
                     case AbilityBuffEffect:
                         effectTypes.Add("AddAbility");
                         break;
@@ -556,6 +596,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             var updatedCards = _mapper.Map<List<CardInstanceDto>>(e.UpdatedCards);
             return new CardInstanceUpdatedEventDto(Guid.Empty, updatedCards);
+        }
+
+        private GameEventDto? ConvertTransformEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not TransformEvent e) return null;
+            if (e.TransformingCard == null) return null;
+
+            var transformedCardDto = _mapper.Map<CardInstanceDto>(e.TransformingCard);
+            if (transformedCardDto == null) return null;
+
+            return new CardInstanceUpdatedEventDto(
+                e.TransformingCard.OwnerPlayerId,
+                new List<CardInstanceDto> { transformedCardDto });
         }
 
         private GameEventDto? ConvertPpUpdateEvent(IGameEvent gameEvent)

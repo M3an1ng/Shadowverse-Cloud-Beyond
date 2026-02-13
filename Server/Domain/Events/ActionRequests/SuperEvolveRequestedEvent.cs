@@ -80,13 +80,9 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} has already used their super evolution right this turn." };
             }
 
-            int superEvolutionStartTurn = requestingPlayer.IsFirst
-                ? GameConstants.SuperEvolution.FirstPlayerSuperEvolutionStartTurn
-                : GameConstants.SuperEvolution.SecondPlayerSuperEvolutionStartTurn;
-
-            if (requestingPlayer.TurnNumber < superEvolutionStartTurn)
+            if (!requestingPlayer.IsSuperEvolutionUnlocked)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} cannot super evolve on turn {requestingPlayer.TurnNumber}. Super evolution starts on turn {superEvolutionStartTurn}." };
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} has not unlocked super evolution yet." };
             }
 
             var evolveResult = requestingPlayer.SuperEvolveCard(cardToEvolve, evolutionSourceCard: null, isManualEvolution: true);

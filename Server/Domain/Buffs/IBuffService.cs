@@ -100,6 +100,15 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             string? effectKey = null,
             bool canStack = true);
 
+        DomainOperationResult ApplyTribeBuff(
+            GameContext context,
+            CardInstance target,
+            List<string> tribes,
+            DurationType durationType,
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true);
+
         /// <summary>
         /// Registers a new Buff instance, applying stacking rules and storing it.
         /// This is the primary method for adding a buff to a target.

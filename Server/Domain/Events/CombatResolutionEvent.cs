@@ -11,6 +11,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("战斗结算", "当攻击与交战效果全部处理完毕后结算战斗伤害。", EventType.CombatResolution, visibility: EventMetadataVisibility.System)]
     public class CombatResolutionEvent : DelayedEventBase, ICommittableEvent
     {
+        private readonly long _attackerContinuityVersionAtDeclare;
+        private readonly long _defenderContinuityVersionAtDeclare;
+
         [GameEventParameter("攻击者", "发起攻击的单位。", DslDisplayTypeName = "事件源")]
         public CardInstance? Attacker => Source?.Card;
 
@@ -20,6 +23,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public CombatResolutionEvent(CardInstance attacker, CardInstance defender, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.CombatResolution, eventId, timestamp)
         {
+            _attackerContinuityVersionAtDeclare = attacker.CombatContinuityVersion;
+            _defenderContinuityVersionAtDeclare = defender.CombatContinuityVersion;
             ConfigureDelay(DelayConfig.QueueDrained());
             Source = TargetInfo.ForCard(attacker);
             Target.Add(TargetInfo.ForCard(defender));
@@ -30,6 +35,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (Attacker == null || Defender == null)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "CombatResolutionEvent.Commit: Attacker or defender is null." };
+            }
+
+            if (Attacker.CombatContinuityVersion != _attackerContinuityVersionAtDeclare
+                || Defender.CombatContinuityVersion != _defenderContinuityVersionAtDeclare)
+            {
+                return new DomainOperationResult { Success = true };
             }
 
             if (!IsCombatParticipantActive(Attacker, isAttacker: true) || !IsCombatParticipantActive(Defender, isAttacker: false))

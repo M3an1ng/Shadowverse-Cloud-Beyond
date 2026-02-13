@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Tests.Scenarios
@@ -86,11 +87,11 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
 
     public sealed record CountdownTickAction(ScenarioPlayer Player, string CardKey, int ChangeAmount = -1) : ScenarioAction(Player);
 
-    public sealed record DestroyAction(ScenarioPlayer Player, string CardKey, string Reason = "Effect") : ScenarioAction(Player);
+    public sealed record DestroyAction(ScenarioPlayer Player, string CardKey, EventReasonSource Reason = EventReasonSource.Ability) : ScenarioAction(Player);
 
-    public sealed record ReturnAction(ScenarioPlayer Player, string CardKey, string Reason = "Effect") : ScenarioAction(Player);
+    public sealed record ReturnAction(ScenarioPlayer Player, string CardKey, EventReasonSource Reason = EventReasonSource.Ability) : ScenarioAction(Player);
 
-    public sealed record TuckAction(ScenarioPlayer Player, string CardKey, string Reason = "Effect") : ScenarioAction(Player);
+    public sealed record TuckAction(ScenarioPlayer Player, string CardKey, EventReasonSource Reason = EventReasonSource.Ability) : ScenarioAction(Player);
 
     public sealed record VanishAction(ScenarioPlayer Player, string CardKey, string Reason = "Effect") : ScenarioAction(Player);
 

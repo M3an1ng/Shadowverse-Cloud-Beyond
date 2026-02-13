@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
@@ -94,10 +95,9 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} has already used their evolution right this turn." };
             }
 
-            int evolutionStartTurn = requestingPlayer.IsFirst ? GameConstants.Evolution.FirstPlayerEvolutionStartTurn : GameConstants.Evolution.SecondPlayerEvolutionStartTurn;
-            if (requestingPlayer.TurnNumber < evolutionStartTurn)
+            if (!requestingPlayer.IsEvolutionUnlocked)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} cannot evolve on turn {requestingPlayer.TurnNumber}. Evolution starts on turn {evolutionStartTurn}." };
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Player {requestingPlayer.PlayerId} has not unlocked evolution yet." };
             }
 
             // =================================================================

@@ -37,10 +37,10 @@ export function renderWorkspaceUI(editor, container) {
   nodesContainer.className = "dsl-nodes-container";
   workspaceContainer.appendChild(nodesContainer);
 
-  // 渲染节点链/按钮/预览（模块化）
+  // 渲染节点链/预览（模块化）
   renderNodeChainUI(editor, nodesContainer);
-  renderPipelineEditorUI(editor, nodesContainer);
-  renderAddButtonUI(editor, nodesContainer);
+  // 管线操作区独立于横向滚动节点行，避免被附加到同一行
+  renderPipelineEditorUI(editor, workspaceContainer);
   if (!editor.isPipelineInline) {
     renderExpressionPreviewUI(editor, workspaceContainer);
   }
@@ -62,9 +62,9 @@ export function renderWorkspaceHeader(editor, container) {
       padding: 8px 12px;
       margin-bottom: 12px;
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      align-items: stretch;
       gap: 8px;
-      flex-wrap: wrap;
     `
     : `
       background: #fff3cd;
@@ -73,10 +73,14 @@ export function renderWorkspaceHeader(editor, container) {
       padding: 8px 12px;
       margin-bottom: 12px;
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      align-items: stretch;
       gap: 8px;
-      flex-wrap: wrap;
     `;
+
+  const headerMain = document.createElement("div");
+  headerMain.className = "workspace-header-main";
+  headerMain.style.cssText = "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;";
 
   const leftGroup = document.createElement("div");
   leftGroup.style.cssText = "display: flex; align-items: center; gap: 8px;";
@@ -101,7 +105,7 @@ export function renderWorkspaceHeader(editor, container) {
 
   leftGroup.appendChild(icon);
   leftGroup.appendChild(text);
-  workspaceHeader.appendChild(leftGroup);
+  headerMain.appendChild(leftGroup);
 
   const rightGroup = document.createElement("div");
   rightGroup.style.cssText = "margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;";
@@ -157,7 +161,14 @@ export function renderWorkspaceHeader(editor, container) {
   if (!editor.isPipelineInline) {
     rightGroup.appendChild(renderFavoritesToolbar(editor));
   }
-  workspaceHeader.appendChild(rightGroup);
+  headerMain.appendChild(rightGroup);
+  workspaceHeader.appendChild(headerMain);
+
+  const actionsRow = document.createElement("div");
+  actionsRow.className = "workspace-header-actions-row dsl-workspace-actions-row";
+  renderAddButtonUI(editor, actionsRow);
+  workspaceHeader.appendChild(actionsRow);
+
   container.appendChild(workspaceHeader);
 }
 
@@ -240,12 +251,16 @@ export function renderNodeChainUI(editor, container) {
 
 export function renderAddButtonUI(editor, container) {
   const buttonContainer = document.createElement("div");
-  buttonContainer.style.cssText = "display: inline-flex; gap: 4px; margin-left: 8px;";
+  buttonContainer.className = "dsl-workspace-actions";
+  const hasPathBack = Array.isArray(editor?.editingPath) && editor.editingPath.length > 1;
+  const canGoBack = typeof editor?.canGoBackFromWorkspace === "function"
+    ? editor.canGoBackFromWorkspace()
+    : Boolean(editor?.workspaceAST || editor?.isSubEditor || hasPathBack);
 
   // 添加节点按钮
   const addBtn = document.createElement("button");
-  addBtn.className = "dsl-add-btn";
-  addBtn.textContent = "[+]";
+  addBtn.className = "dsl-workspace-action-btn dsl-add-btn";
+  addBtn.textContent = "+ 添加";
   addBtn.title = "添加节点";
 
   addBtn.addEventListener("click", (e) => {
@@ -259,8 +274,8 @@ export function renderAddButtonUI(editor, container) {
   if (editor.isPipelineInline) {
     if (editor.workspaceAST || editor.awaitingRightOperand) {
       const clearBtn = document.createElement("button");
-      clearBtn.className = "dsl-clear-btn";
-      clearBtn.textContent = "[×]";
+      clearBtn.className = "dsl-workspace-action-btn dsl-clear-btn";
+      clearBtn.textContent = "× 清空";
       clearBtn.title = "清空当前表达式";
 
       clearBtn.addEventListener("click", (e) => {
@@ -271,13 +286,13 @@ export function renderAddButtonUI(editor, container) {
       buttonContainer.appendChild(clearBtn);
     }
 
-    if (editor.workspaceAST || editor.isSubEditor) {
+    if (canGoBack) {
       const backBtn = document.createElement("button");
-      backBtn.className = "dsl-back-btn";
-      backBtn.textContent = "[−]";
+      backBtn.className = "dsl-workspace-action-btn dsl-back-btn";
+      backBtn.textContent = "− 返回";
       backBtn.title = "退回上级";
 
-      if (editor.isSubEditor && !editor.workspaceAST) {
+      if (editor.isSubEditor && !editor.workspaceAST && !hasPathBack) {
         backBtn.title = "退出筛选编辑器";
         backBtn.addEventListener("click", (e) => {
           e.preventDefault();
@@ -300,8 +315,8 @@ export function renderAddButtonUI(editor, container) {
   // 清空按钮（新增）
   if (editor.workspaceAST || editor.awaitingRightOperand) {
     const clearBtn = document.createElement("button");
-    clearBtn.className = "dsl-clear-btn";
-    clearBtn.textContent = "[×]";
+    clearBtn.className = "dsl-workspace-action-btn dsl-clear-btn";
+    clearBtn.textContent = "× 清空";
     clearBtn.title = editor.awaitingRightOperand ? "取消操作符，返回上一级" : "清空当前表达式";
 
     clearBtn.addEventListener("click", (e) => {
@@ -313,13 +328,13 @@ export function renderAddButtonUI(editor, container) {
   }
 
   // 退回上级按钮（仅在有节点时显示，或者是子编辑器时总是显示）
-  if (editor.workspaceAST || editor.isSubEditor) {
+  if (canGoBack) {
     const backBtn = document.createElement("button");
-    backBtn.className = "dsl-back-btn";
-    backBtn.textContent = "[−]";
+    backBtn.className = "dsl-workspace-action-btn dsl-back-btn";
+    backBtn.textContent = "− 返回";
     backBtn.title = "退回上级";
 
-    if (editor.isSubEditor && !editor.workspaceAST) {
+    if (editor.isSubEditor && !editor.workspaceAST && !hasPathBack) {
       backBtn.title = "退出筛选编辑器";
       backBtn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -341,8 +356,8 @@ export function renderAddButtonUI(editor, container) {
     const isWorkspaceComplete = !findIncompleteNode(editor.workspaceAST);
     if (isWorkspaceComplete) {
       const elevateBtn = document.createElement("button");
-      elevateBtn.className = "dsl-elevate-btn";
-      elevateBtn.textContent = "()";
+      elevateBtn.className = "dsl-workspace-action-btn dsl-elevate-btn";
+      elevateBtn.textContent = "() 封装";
       elevateBtn.title = "将当前项创建为独立表达式";
 
       elevateBtn.addEventListener("click", (e) => {
@@ -354,8 +369,8 @@ export function renderAddButtonUI(editor, container) {
     }
 
     const completeBtn = document.createElement("button");
-    completeBtn.className = "dsl-complete-btn";
-    completeBtn.textContent = "[✓]";
+    completeBtn.className = "dsl-workspace-action-btn dsl-complete-btn";
+    completeBtn.textContent = "✓ 提交";
     completeBtn.title = "保存当前层（封装并返回上一级）";
 
     completeBtn.addEventListener("click", (e) => {
@@ -381,7 +396,11 @@ export function renderExpressionPreviewUI(editor, container) {
   label.style.cssText = "font-size: 12px; color: #2c3e50; font-weight: 600; margin-right: 8px;";
 
   const code = document.createElement("code");
-  code.textContent = editor.expression || "(空)";
+  const previewNode = editor.workspaceAST || editor.virtualRoot?.main || null;
+  const workspaceExpression = editor.workspaceAST?.toExpression?.() || "";
+  const committedExpression = editor.expression || "";
+  // 工作区预览优先展示当前编辑态，其次回退到已提交表达式。
+  code.textContent = workspaceExpression || committedExpression || "(空)";
   code.style.cssText = "font-size: 12px; color: #495057; background: #f8f9fa; padding: 2px 4px; border-radius: 3px;";
 
   preview.appendChild(label);
@@ -397,7 +416,13 @@ export function renderExpressionPreviewUI(editor, container) {
   readableLabel.style.cssText = "font-weight: 600; margin-right: 6px; color: #2c3e50;";
 
   const readableText = document.createElement("span");
-  readableText.textContent = typeof editor.getReadablePreviewText === "function" ? editor.getReadablePreviewText() : "(空)";
+  if (previewNode && typeof editor.toReadableText === "function") {
+    readableText.textContent = editor.toReadableText(previewNode);
+  } else if (typeof editor.getReadablePreviewText === "function") {
+    readableText.textContent = editor.getReadablePreviewText();
+  } else {
+    readableText.textContent = "(空)";
+  }
 
   readable.appendChild(readableLabel);
   readable.appendChild(readableText);

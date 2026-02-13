@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 
@@ -36,7 +37,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public TargetSelectionContext(GameContext gameContext, Dictionary<string, List<TargetInfo>>? initialResolvedTargets)
         {
             GameContext = gameContext;
-            ResolvedTargets = initialResolvedTargets ?? new();
+            ResolvedTargets = initialResolvedTargets != null
+                ? CloneResolvedTargets(initialResolvedTargets)
+                : CloneResolvedTargets(gameContext.ResolvedTargets);
+        }
+
+        private static Dictionary<string, List<TargetInfo>> CloneResolvedTargets(
+            IReadOnlyDictionary<string, List<TargetInfo>>? source)
+        {
+            if (source == null || source.Count == 0)
+            {
+                return new Dictionary<string, List<TargetInfo>>();
+            }
+
+            return source.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value?.Where(target => target != null).ToList() ?? new List<TargetInfo>());
         }
     }
 }

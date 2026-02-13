@@ -147,11 +147,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
                 return false;
             }
 
-            int evolutionStartTurn = evolverPlayerState.IsFirst ? GameConstants.Evolution.FirstPlayerEvolutionStartTurn : GameConstants.Evolution.SecondPlayerEvolutionStartTurn;
-            if (evolverPlayerState.TurnNumber < evolutionStartTurn)
+            if (!evolverPlayerState.IsEvolutionUnlocked)
             {
-                _logger?.LogWarning("{AbilityName}: Player {PlayerId} cannot evolve on turn {TurnNumber}. Evolution starts on turn {StartTurn}.",
-                    Name, requestEvent.PlayerId, evolverPlayerState.TurnNumber, evolutionStartTurn);
+                _logger?.LogWarning("{AbilityName}: Player {PlayerId} has not unlocked evolution yet.",
+                    Name, requestEvent.PlayerId);
                 return false;
             }
 

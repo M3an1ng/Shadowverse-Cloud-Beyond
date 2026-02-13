@@ -7,7 +7,6 @@
 
 import { MetadataManager } from './metadataManager.js';
 import { DynamicUIRenderer } from './dynamicUIRenderer.js';
-import { AbilityEditor } from './components/AbilityEditor.js';
 import { buildPreviewSlateHtml } from './previewSlate.js';
 import { showPreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
@@ -15,6 +14,8 @@ import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { getBlockingLoader } from './components/blockingLoader.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
 import { ensureAbilityData, refreshAbilityDataCache } from './abilityDataCache.js';
+import { compareCardsForEditorAndDeck } from './cardListSort.js';
+import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 
 function normalizeEnumName(value) {
     if (typeof value !== 'string') return value;
@@ -1171,7 +1172,8 @@ CardEditor.prototype.applyCardListFilters = function() {
         return true;
     });
 
-    this.renderCardList(filtered);
+    const sorted = filtered.slice().sort(compareCardsForEditorAndDeck);
+    this.renderCardList(sorted);
 };
 
 CardEditor.prototype.updateCardPreview = function() {
@@ -1692,6 +1694,10 @@ CardEditor.prototype.openArtCropModal = function(kind) {
             );
 
             const blob = await new Promise((resolve) => {
+                if (isPreview) {
+                    canvas.toBlob(resolve, 'image/webp', 0.9);
+                    return;
+                }
                 canvas.toBlob(resolve, 'image/png');
             });
 
@@ -1699,7 +1705,7 @@ CardEditor.prototype.openArtCropModal = function(kind) {
                 throw new Error('Failed to generate output.');
             }
 
-            const filename = isPreview ? 'preview.png' : 'detail.png';
+            const filename = isPreview ? 'preview.webp' : 'detail.png';
             await this.uploadCardArt(kind, blob, filename, { silent: true });
             setModalStatus('Upload complete.');
             setTimeout(closeModal, 400);
@@ -2412,23 +2418,17 @@ CardEditor.prototype.loadCardList = async function(options = {}) {
             </div>
         `;
 
-        const useCache = !options.force;
-        let allCards = null;
-
-        if (useCache && Array.isArray(this.cardListCache)) {
-            allCards = this.cardListCache;
-        } else {
-
-            // 调用后端API获取卡牌列表
-            const response = await fetch('/api/cards');
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const allCards = await loadCardDefinitions({
+            useCache: !options.force,
+            force: !!options.force,
+            getCached: () => this.cardListCache,
+            setCached: cards => {
+                this.cardListCache = cards;
+            },
+            onResponse: response => {
+                this.applyDataRevisionFromResponse(response);
             }
-            this.applyDataRevisionFromResponse(response);
-
-            allCards = await response.json();
-            this.cardListCache = Array.isArray(allCards) ? allCards : [];
-        }
+        });
 
         // 过滤卡牌：移除进化卡牌，只显示原始卡牌
         const filteredCards = this.filterCardsForList(allCards);
@@ -3325,6 +3325,7 @@ CardEditor.prototype.showAddAbilityEditorModal = async function(mode) {
     document.body.insertAdjacentHTML('beforeend', modalHTML);
 
     const editorContainer = document.getElementById('add-ability-editor-container');
+    const { AbilityEditor } = await import('./components/AbilityEditor.js');
     let abilityEditor = new AbilityEditor();
 
     const defaultAbilityConfig = {
@@ -3347,7 +3348,8 @@ CardEditor.prototype.showAddAbilityEditorModal = async function(mode) {
         conditions: [],
         targets: [],
         effects: [],
-        counterRegistrations: []
+        counterRegistrations: [],
+        playerCounterRegistrations: []
     };
 
     await abilityEditor.render(
@@ -4244,6 +4246,7 @@ CardEditor.prototype.showAbilityEditModal = async function(ability) {
 
         // 创建并渲染新的能力编辑器
         const editorContainer = document.getElementById('ability-editor-container');
+        const { AbilityEditor } = await import('./components/AbilityEditor.js');
         const abilityEditor = new AbilityEditor();
 
         await abilityEditor.render(
@@ -4294,7 +4297,8 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
         targets: [],
         effects: [],
         auras: [],
-        counterRegistrations: []
+        counterRegistrations: [],
+        playerCounterRegistrations: []
     };
 
     // 尝试解析JSON配置
@@ -4332,6 +4336,9 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
             }
             if (jsonConfig.counterRegistrations) {
                 config.counterRegistrations = jsonConfig.counterRegistrations;
+            }
+            if (jsonConfig.playerCounterRegistrations) {
+                config.playerCounterRegistrations = jsonConfig.playerCounterRegistrations;
             }
         } catch (error) {
             console.warn('CardEditor: Failed to parse ability JSON config:', error);

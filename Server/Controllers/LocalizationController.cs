@@ -86,11 +86,13 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "DamageDistributionMode", typeof(DamageDistributionMode) },
                 { "KeywordOperation", typeof(KeywordOperation) },
                 { "DamageKind", typeof(DamageKind) },
+                { "EventReasonSource", typeof(EventReasonSource) },
                 { "ModifierLayer", typeof(ModifierLayer) },
                 { "StatType", typeof(StatType) },
                 { "PlayMode", typeof(PlayMode) },
                 { "RemoveAbilityMode", typeof(RemoveAbilityMode) },
-
+                { "SequenceOrder", typeof(SequenceOrder) },
+                { "DeckInsertMode", typeof(DeckInsertMode) },
             };
 
             return enumTypes.TryGetValue(enumName, out var type) ? type : null;
@@ -159,6 +161,10 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "Self", "自身" },
                 { "Ally", "友方" },
                 { "Enemy", "敌方" },
+
+                // EventReasonSource
+                { "System", "系统" },
+                { "Ability", "能力" },
 
                 // EventType
                 { "CardPlayed", "卡牌打出" },

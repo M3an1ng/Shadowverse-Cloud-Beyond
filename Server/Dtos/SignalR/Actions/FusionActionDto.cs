@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-
 namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
 {
     /// <summary>
@@ -18,9 +16,5 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Actions
         /// </summary>
         public Guid? AbilityRuntimeId { get; set; }
 
-        /// <summary>
-        /// The unique identifiers (UIDs) of the material cards to be fused.
-        /// </summary>
-        public List<Guid> FusedCardUids { get; set; } = new();
     }
 }

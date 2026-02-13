@@ -8,7 +8,7 @@ import {
     createListDistinctNode,
     createListSelectNode
 } from "./core.js";
-import { getEventTypeHint, resolveEventParameterMeta } from "./event-translation.js";
+import { resolvePropertyChain } from "./property-chain-resolver.js";
 
 export function mapDslAstDtoToUiAst(editor, dto) {
     if (!dto || !dto.nodeType && !dto.NodeType) return null;
@@ -432,87 +432,25 @@ export function formatLiteralValue(editor, value, returnType) {
 
 export function createPropertyChainNode(editor, segments) {
     if (!Array.isArray(segments) || segments.length === 0) return null;
-    const ctx = editor.getDslContextObject(segments[0]);
-    let currentType = editor.normalizeTypeName(ctx?.typeName) || "Object";
-    let currentPath = segments[0];
-    let node = createValueNode(currentPath, currentType, {
+    const resolved = resolvePropertyChain(editor, segments);
+    if (!resolved || !Array.isArray(resolved.segments) || resolved.segments.length === 0) return null;
+
+    const rootName = resolved.segments[0];
+    let node = createValueNode(rootName, resolved.context?.typeName || "Object", {
         type: "context",
-        name: segments[0],
-        displayName: ctx?.displayName || segments[0]
+        name: rootName,
+        displayName: resolved.context?.displayName || rootName
     });
-    const eventTypeHint = getEventTypeHint(editor, segments);
-    const resolveDictionaryValueType = (typeName) => {
-        if (!editor || !typeName) return null;
-        const normalized = editor.normalizeTypeName(typeName);
-        if (!normalized) return null;
-        if (typeof editor.isDictionaryType === "function" && editor.isDictionaryType(normalized)) {
-            if (typeof editor.getDictionaryValueType === "function") {
-                const valueType = editor.getDictionaryValueType(normalized);
-                return editor.normalizeTypeName(valueType) || valueType;
-            }
-            const match = String(normalized).match(/<(.*)>/);
-            if (!match) return "Object";
-            const parts = match[1].split(",").map(part => part.trim());
-            return parts[1] || "Object";
-        }
-        return null;
-    };
 
-    for (let i = 1; i < segments.length; i++) {
-        const seg = segments[i];
-        currentPath = `${currentPath}.${seg}`;
-        const normalizedType = editor.normalizeTypeName(currentType);
-        const dictValueType = resolveDictionaryValueType(normalizedType);
-        if (dictValueType) {
-            currentType = editor.normalizeTypeName(dictValueType) || "Object";
-            node = createValueNode(currentPath, currentType, {
-                type: "property",
-                displayName: seg,
-                fullPath: currentPath
-            });
-            continue;
-        }
-        const isEventType = normalizedType === 'IGameEvent' || normalizedType === 'GameEventBase';
-        if (isEventType) {
-            const eventParam = resolveEventParameterMeta(editor, seg, eventTypeHint);
-            if (eventParam) {
-                currentType = editor.normalizeTypeName(eventParam.typeName) || "Object";
-                const enumType = typeof editor.isEnumType === "function" && editor.isEnumType(currentType)
-                    ? currentType
-                    : null;
-                const enumValues = enumType && typeof editor.getEnumValues === "function"
-                    ? editor.getEnumValues(enumType)
-                    : null;
-                node = createValueNode(currentPath, currentType, {
-                    type: "property",
-                    displayName: eventParam.displayName || seg,
-                    fullPath: currentPath,
-                    enumType,
-                    enumValues: Array.isArray(enumValues) ? enumValues : null
-                });
-                continue;
-            }
-        }
-
-        const tm = editor.getTypeMetadata(currentType);
-        const prop = (tm?.properties || []).find(p =>
-            String(p.name || "").toLowerCase() === String(seg).toLowerCase()
-        );
-        currentType = editor.normalizeTypeName(prop?.typeName) || "Object";
-        const enumType = typeof editor.isEnumType === "function" && editor.isEnumType(currentType)
-            ? currentType
-            : null;
-        const enumValues = enumType && typeof editor.getEnumValues === "function"
-            ? editor.getEnumValues(enumType)
-            : null;
-        node = createValueNode(currentPath, currentType, {
+    (resolved.steps || []).forEach((step) => {
+        node = createValueNode(step.path, step.typeName || "Object", {
             type: "property",
-            displayName: prop?.displayName || seg,
-            fullPath: currentPath,
-            enumType,
-            enumValues: Array.isArray(enumValues) ? enumValues : null
+            displayName: step.displayName || step.segment,
+            fullPath: step.path,
+            enumType: step.enumType || null,
+            enumValues: Array.isArray(step.enumValues) ? step.enumValues : null
         });
-    }
+    });
 
     return node;
 }

@@ -1,4 +1,4 @@
-import {
+﻿import {
     createValueNode,
     createOperatorNode,
     createFunctionCallNode,
@@ -7,11 +7,13 @@ import {
     createListTakeNode,
     createListDistinctNode,
     createListSelectNode,
+    getSemanticNodeType as getCoreSemanticNodeType,
     validateAST,
     findIncompleteNode,
     findRightmostLeafNode
 } from "./core.js";
 import { finalizeDraftInputs } from "./ast-normalize.js";
+import { resolveEventTypeHintFromSource } from "./event-translation.js";
 
 function createEnumValueNode(editor, option) {
     const enumType = editor.normalizeTypeName(
@@ -139,7 +141,7 @@ export function saveCurrentLayer(editor) {
         return;
     }
 
-    // 关键修复：在调用 ascend() 之前捕获要保存的 AST，因为 ascend() 会将 this.workspaceAST 设置为 null
+    // 在路径切换前捕获工作区 AST，避免后续重建流程影响当前引用
     const astToSave = editor.workspaceAST;
 
     const { parentNode, slot, index } = top;
@@ -171,19 +173,7 @@ export function saveCurrentLayer(editor) {
     // 遵循规则：保存时总是对工作区内容进行封装
     const valueToWrite = editor.createEncapsulatedFrom(astToSave);
 
-    let ok = false;
-    if (parentNode.type === 'virtualRoot' && slot === 'main') {
-        parentNode.main = valueToWrite;
-        ok = true;
-    } else if (parentNode.type === 'functionCall' && slot === 'arg') {
-        const argIndex = typeof index === 'number' ? index : 0;
-        if (typeof parentNode.setArg === 'function') {
-            parentNode.setArg(argIndex, valueToWrite);
-            ok = true;
-        }
-    } else {
-        ok = editor.writeBackToParentSlot(parentNode, slot, valueToWrite);
-    }
+    const ok = editor.writeBackToParentSlot(parentNode, slot, valueToWrite, index);
 
     if (!ok) {
         console.warn('DslEditor: writeBackToParentSlot failed unexpectedly.');
@@ -192,8 +182,21 @@ export function saveCurrentLayer(editor) {
 
     editor.popEditingPath();
 
-    // 关键修复：保存完成后，应该上升到刚刚被修改的父节点进行预览
+    // 路径是权威：保存后根据当前路径重建工作区，避免 AST 与路径脱节
+    if (typeof editor.rebuildWorkspaceFromPath === 'function') {
+        editor.rebuildWorkspaceFromPath();
+        if (typeof editor.updateExpressionFromAST === 'function') {
+            // 提交后需要刷新对外表达式（this.expression / onChange），但无需二次渲染。
+            editor.updateExpressionFromAST({ skipRender: true });
+        }
+        return;
+    }
+
+    // 兼容旧入口
     editor.ascend(parentNode);
+    if (typeof editor.updateExpressionFromAST === 'function') {
+        editor.updateExpressionFromAST({ skipRender: true });
+    }
 }
 
 export function createRootNode(editor, option) {
@@ -255,50 +258,9 @@ function getSlotNode(parentNode, slot, index) {
     return null;
 }
 
-function setSlotNode(parentNode, slot, index, node) {
-    if (!parentNode || !slot) return false;
-    if (parentNode.type === 'virtualRoot' && slot === 'main') {
-        parentNode.main = node;
-        return true;
-    }
-    if (parentNode.type === 'operator') {
-        if (slot === 'left') {
-            parentNode.setLeftOperand(node);
-            return true;
-        }
-        if (slot === 'right') {
-            parentNode.setRightOperand(node);
-            return true;
-        }
-    }
-    if (parentNode.type === 'functionCall' && slot === 'arg') {
-        const argIndex = typeof index === 'number' ? index : 0;
-        if (typeof parentNode.setArg === 'function') {
-            parentNode.setArg(argIndex, node);
-            return true;
-        }
-    }
-    if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
-        parentNode.setFilterExpression(node);
-        return true;
-    }
-    if (parentNode.type === 'listSort' && slot === 'sortExpression') {
-        parentNode.setSortExpression(node);
-        return true;
-    }
-    if (parentNode.type === 'listTake' && slot === 'countExpression') {
-        parentNode.setCountExpression(node);
-        return true;
-    }
-    if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
-        parentNode.setKeyExpression(node);
-        return true;
-    }
-    if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
-        parentNode.setSelectExpression(node);
-        return true;
-    }
-    return false;
+function setSlotNode(parentNode, slot, index, node, editor = null) {
+    if (!editor || typeof editor.setSlotNode !== 'function') return false;
+    return editor.setSlotNode(parentNode, slot, index, node);
 }
 
 function isEmptySlotNode(node) {
@@ -319,7 +281,7 @@ function applyOptionToFocusedSlot(editor, option) {
     };
 
     const setSlotAndKeepFocus = (node) => {
-        if (!setSlotNode(parentNode, slot, index, node)) return false;
+        if (!setSlotNode(parentNode, slot, index, node, editor)) return false;
         setFocus(parentNode, slot, index);
         return true;
     };
@@ -338,7 +300,7 @@ function applyOptionToFocusedSlot(editor, option) {
         }
         newOperatorNode.setLeftOperand(leftOperand);
         newOperatorNode.setRightOperand(null);
-        if (!setSlotNode(parentNode, slot, index, newOperatorNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, newOperatorNode, editor)) return false;
         setFocus(newOperatorNode, 'right');
         return true;
     }
@@ -351,7 +313,7 @@ function applyOptionToFocusedSlot(editor, option) {
         const sourceNode = editor.cloneAST(slotNode);
         const queryNode = createListQueryNode(sourceNode);
         queryNode.setFilterExpression(createValueNode("", "Void", { type: "empty" }));
-        if (!setSlotNode(parentNode, slot, index, queryNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, queryNode, editor)) return false;
         setFocus(queryNode, 'filterExpression');
         return true;
     }
@@ -364,7 +326,7 @@ function applyOptionToFocusedSlot(editor, option) {
         const sourceNode = editor.cloneAST(slotNode);
         const sortNode = createListSortNode(sourceNode);
         sortNode.setSortExpression(createValueNode("", "Void", { type: "empty" }));
-        if (!setSlotNode(parentNode, slot, index, sortNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, sortNode, editor)) return false;
         setFocus(sortNode, 'sortExpression');
         return true;
     }
@@ -377,7 +339,7 @@ function applyOptionToFocusedSlot(editor, option) {
         const sourceNode = editor.cloneAST(slotNode);
         const takeNode = createListTakeNode(sourceNode);
         takeNode.setCountExpression(createValueNode("", "Void", { type: "empty" }));
-        if (!setSlotNode(parentNode, slot, index, takeNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, takeNode, editor)) return false;
         setFocus(takeNode, 'countExpression');
         return true;
     }
@@ -390,7 +352,7 @@ function applyOptionToFocusedSlot(editor, option) {
         const sourceNode = editor.cloneAST(slotNode);
         const distinctNode = createListDistinctNode(sourceNode);
         distinctNode.setKeyExpression(createValueNode("", "Void", { type: "empty" }));
-        if (!setSlotNode(parentNode, slot, index, distinctNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, distinctNode, editor)) return false;
         setFocus(distinctNode, 'keyExpression');
         return true;
     }
@@ -403,7 +365,7 @@ function applyOptionToFocusedSlot(editor, option) {
         const sourceNode = editor.cloneAST(slotNode);
         const selectNode = createListSelectNode(sourceNode);
         selectNode.setSelectExpression(createValueNode("", "Void", { type: "empty" }));
-        if (!setSlotNode(parentNode, slot, index, selectNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, selectNode, editor)) return false;
         setFocus(selectNode, 'selectExpression');
         return true;
     }
@@ -416,7 +378,7 @@ function applyOptionToFocusedSlot(editor, option) {
         if (!isEmpty && parameters.length > 0) {
             functionNode.setArg(0, editor.cloneAST(slotNode));
         }
-        if (!setSlotNode(parentNode, slot, index, functionNode)) return false;
+        if (!setSlotNode(parentNode, slot, index, functionNode, editor)) return false;
         const nextIndex = parameters.findIndex((p, i) => !p?.isOptional && !functionNode.args[i]);
         if (nextIndex >= 0) {
             setFocus(functionNode, 'arg', nextIndex);
@@ -506,8 +468,15 @@ export function extendAST(editor, option) {
 
     // 关键修复：如果当前不在编辑模式（没有路径），但工作区有内容，则自动进入扩展主表达式模式
     if (!editor.isLightWorkspace && editor.editingPath.length === 0 && editor.workspaceAST && validateAST(editor.workspaceAST).isValid) {
+        const preservedWorkspace = editor.cloneAST(editor.workspaceAST);
         editor.expandMainExpression();
-        return;
+        if (editor.editingPath.length === 0) {
+            return;
+        }
+        if (preservedWorkspace) {
+            editor.workspaceAST = preservedWorkspace;
+            editor.astRoot = preservedWorkspace;
+        }
     }
 
     const incompleteNode = findIncompleteNode(editor.astRoot);
@@ -565,7 +534,7 @@ export function extendAST(editor, option) {
             editor.workspaceAST = newNode;
         }
     } else if (option.type === "listPipeline") {
-        editor.openPipelineFromCurrent();
+        editor.openPipelineFromCurrent({ forceFresh: true });
     } else if (option.type === "listQuery") {
         // 创建查询节点
         createQueryNodeFromCurrent(editor, option);
@@ -611,12 +580,16 @@ export function createFunctionCallFromCurrent(editor, option) {
     const top = editor.peekEditingPath ? editor.peekEditingPath() : null;
     if (top?.parentNode) {
         const encapsulated = editor.createEncapsulatedFrom(functionNode);
-        editor.writeBackToParentSlot(top.parentNode, top.slot, encapsulated);
+        editor.writeBackToParentSlot(top.parentNode, top.slot, encapsulated, top.index);
         const inner = encapsulated.metadata?.innerAST || functionNode;
         if (nextIndex >= 0) {
             editor.handleEnterEditModeForSlot(inner, 'arg', nextIndex, { preservePath: true });
         } else {
-            editor.ascend(top.parentNode);
+            if (typeof editor.rebuildWorkspaceFromPath === "function") {
+                editor.rebuildWorkspaceFromPath();
+            } else {
+                editor.ascend(top.parentNode);
+            }
         }
         return;
     }
@@ -627,7 +600,11 @@ export function createFunctionCallFromCurrent(editor, option) {
     if (nextIndex >= 0) {
         editor.handleEnterEditModeForSlot(inner, 'arg', nextIndex);
     } else {
-        editor.ascend(editor.virtualRoot);
+        if (typeof editor.rebuildWorkspaceFromPath === "function") {
+            editor.rebuildWorkspaceFromPath();
+        } else {
+            editor.ascend(editor.virtualRoot);
+        }
     }
 }
 
@@ -805,7 +782,7 @@ export function createOperatorFromCurrent(editor, option) {
     const leftOperandNode = rawLeftOperand?.metadata?.type === 'encapsulated'
         ? rawLeftOperand
         : editor.createEncapsulatedFrom(rawLeftOperand);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, leftOperandNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, leftOperandNode, top.index);
 
     // 步骤 B: 生成操作符和相应的占位符
     const rightOperandPlaceholder = createValueNode("", "Void", { type: 'empty' });
@@ -818,7 +795,7 @@ export function createOperatorFromCurrent(editor, option) {
 
     // 步骤 D: 更新主表达式，并将工作区切换到新加载的空白表达式
     // 再次写入同一个槽位，用包含操作符的新封装节点覆盖掉旧的
-    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode, top.index);
 
     // 从新的主AST节点中获取内部操作符节点的正确引用
     const operatorNodeInMainAST = newEncapsulatedNode.metadata.innerAST;
@@ -852,7 +829,7 @@ export function createQueryNodeFromCurrent(editor, option) {
 
     // 步骤 A: 自动保存当前工作区内容
     const sourceNode = editor.cloneAST(editor.workspaceAST);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode, top.index);
 
     // 步骤 B: 创建查询节点和占位符
     const queryNode = createListQueryNode(sourceNode);
@@ -863,7 +840,7 @@ export function createQueryNodeFromCurrent(editor, option) {
     const newEncapsulatedNode = editor.createEncapsulatedFrom(queryNode);
 
     // 步骤 D: 更新主表达式，并将工作区切换到新加载的空白表达式
-    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode, top.index);
 
     const queryNodeInMainAST = newEncapsulatedNode.metadata.innerAST;
 
@@ -895,14 +872,14 @@ export function createSortNodeFromCurrent(editor, option) {
     }
 
     const sourceNode = editor.cloneAST(editor.workspaceAST);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode, top.index);
 
     const sortNode = createListSortNode(sourceNode);
     const placeholder = createValueNode("", "Void", { type: 'empty' });
     sortNode.setSortExpression(placeholder);
 
     const newEncapsulatedNode = editor.createEncapsulatedFrom(sortNode);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode, top.index);
 
     const sortNodeInMainAST = newEncapsulatedNode.metadata.innerAST;
     // 保留编辑路径栈，避免覆盖外层上下文
@@ -932,14 +909,14 @@ export function createTakeNodeFromCurrent(editor, option) {
     }
 
     const sourceNode = editor.cloneAST(editor.workspaceAST);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode, top.index);
 
     const takeNode = createListTakeNode(sourceNode);
     const placeholder = createValueNode("", "Void", { type: 'empty' });
     takeNode.setCountExpression(placeholder);
 
     const newEncapsulatedNode = editor.createEncapsulatedFrom(takeNode);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode, top.index);
 
     const takeNodeInMainAST = newEncapsulatedNode.metadata.innerAST;
     // 保留编辑路径栈，避免覆盖外层上下文
@@ -969,14 +946,14 @@ export function createDistinctNodeFromCurrent(editor, option) {
     }
 
     const sourceNode = editor.cloneAST(editor.workspaceAST);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode, top.index);
 
     const distinctNode = createListDistinctNode(sourceNode);
     const placeholder = createValueNode("", "Void", { type: 'empty' });
     distinctNode.setKeyExpression(placeholder);
 
     const newEncapsulatedNode = editor.createEncapsulatedFrom(distinctNode);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode, top.index);
 
     const distinctNodeInMainAST = newEncapsulatedNode.metadata.innerAST;
     // 保留编辑路径栈，避免覆盖外层上下文
@@ -1006,14 +983,14 @@ export function createSelectNodeFromCurrent(editor, option) {
     }
 
     const sourceNode = editor.cloneAST(editor.workspaceAST);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, sourceNode, top.index);
 
     const selectNode = createListSelectNode(sourceNode);
     const placeholder = createValueNode("", "Void", { type: 'empty' });
     selectNode.setSelectExpression(placeholder);
 
     const newEncapsulatedNode = editor.createEncapsulatedFrom(selectNode);
-    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode);
+    editor.writeBackToParentSlot(top.parentNode, top.slot, newEncapsulatedNode, top.index);
 
     const selectNodeInMainAST = newEncapsulatedNode.metadata.innerAST;
     // 保留编辑路径栈，避免覆盖外层上下文
@@ -1031,10 +1008,24 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
     editor.slotExpectedType = null;
 
     const preservePath = options?.preservePath === true;
+    const isMainSlot = parentNode?.type === 'virtualRoot' && slot === 'main';
     if (!preservePath) {
         editor.clearEditingPath();
+        // 非 main 槽位编辑时，始终保留 main 作为基准路径帧，确保 pop 后能回到上一级
+        if (!isMainSlot && editor.virtualRoot) {
+            editor.pushEditingPath({
+                parentNode: editor.virtualRoot,
+                slot: 'main',
+                descriptor: '编辑 main'
+            });
+        }
     }
-    editor.pushEditingPath({ parentNode, slot, descriptor: `编辑 ${slot}`, index });
+    editor.pushEditingPath({
+        parentNode,
+        slot,
+        descriptor: isMainSlot ? '编辑 main' : `编辑 ${slot}`,
+        index
+    });
     const highlightTarget = editor.getHighlightTargetNode ? editor.getHighlightTargetNode() : null;
     editor.selectedNode = highlightTarget?.metadata?.type === 'encapsulated' ? highlightTarget : null;
 
@@ -1057,23 +1048,29 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
     } else if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
         contentToEdit = parentNode.filterExpression;
         editor.slotExpectedType = 'Boolean';
-        const sourceReturnType = parentNode.source.returnType;
+        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
         const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(sourceReturnType)
-                ? sourceReturnType
+            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
+                ? editor.normalizeTypeName(sourceReturnType)
                 : null);
         if (itemType) {
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                ? resolveEventTypeHintFromSource(editor, parentNode.source)
+                : null;
+            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
         }
     } else if (parentNode.type === 'listSort' && slot === 'sortExpression') {
         contentToEdit = parentNode.sortExpression;
-        const sourceReturnType = parentNode.source.returnType;
+        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
         const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(sourceReturnType)
-                ? sourceReturnType
+            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
+                ? editor.normalizeTypeName(sourceReturnType)
                 : null);
         if (itemType) {
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                ? resolveEventTypeHintFromSource(editor, parentNode.source)
+                : null;
+            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
         }
     } else if (parentNode.type === 'listTake' && slot === 'countExpression') {
         contentToEdit = parentNode.countExpression;
@@ -1081,23 +1078,29 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
         // Take 操作的参数通常是数字，不需要上下文覆盖
     } else if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
         contentToEdit = parentNode.keyExpression;
-        const sourceReturnType = parentNode.source.returnType;
+        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
         const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(sourceReturnType)
-                ? sourceReturnType
+            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
+                ? editor.normalizeTypeName(sourceReturnType)
                 : null);
         if (itemType) {
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                ? resolveEventTypeHintFromSource(editor, parentNode.source)
+                : null;
+            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
         }
     } else if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
         contentToEdit = parentNode.selectExpression;
-        const sourceReturnType = parentNode.source.returnType;
+        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
         const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(sourceReturnType)
-                ? sourceReturnType
+            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
+                ? editor.normalizeTypeName(sourceReturnType)
                 : null);
         if (itemType) {
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                ? resolveEventTypeHintFromSource(editor, parentNode.source)
+                : null;
+            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
         }
     }
 
@@ -1131,3 +1134,4 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
     }
     editor.renderEditor();
 }
+

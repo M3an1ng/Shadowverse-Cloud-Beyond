@@ -187,6 +187,7 @@ namespace ShadowverseBeyond.Server.Services
         private List<DslEnumTypeDto> BuildEnumMetadata()
         {
             var enumTypes = new HashSet<Type>();
+            enumTypes.Add(typeof(EventType));
             var assembly = Assembly.GetExecutingAssembly();
             var exposableTypes = assembly.GetTypes()
                 .Where(t => t.IsClass && t.GetCustomAttribute<DslExposableAttribute>() != null)

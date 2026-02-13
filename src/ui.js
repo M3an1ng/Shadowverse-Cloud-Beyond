@@ -37,41 +37,140 @@ import { showPreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
+import { getUserSession } from './userSession.js';
 import badgeWardUrl from './badge/Ward.png';
 import badgeBaneUrl from './badge/Bane.png';
 import badgeDrainUrl from './badge/Drain.png';
 import badgeAmbushUrl from './badge/Ambush.png';
 import badgePressureUrl from './badge/Pressure.png';
 import badgeAuraUrl from './badge/Aura.png';
+import badgeShieldUrl from './badge/Shield.png';
+import badgeAbilityResistUrl from './badge/AbilityResist.png';
+import badgeShackleUrl from './badge/Shackle.png';
 // getCardDefinition is obsolete. Card instances now contain all necessary data.
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 
 export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi };
 
 let mulliganSelectedUids = new Set();
-let fusionSelectedUids = new Set();
-let fusionSourceUid = null;
-let fusionSourceAbilityId = null;
 const EMBLEM_SLOT_COUNT = 5;
 const DOUBLE_CLICK_WINDOW_MS = 260;
 let lastCardClick = { uid: null, time: 0 };
+const cardArtLoadPromises = new Map();
+const CARD_ART_RETRY_COUNT = 2;
+const CARD_ART_RETRY_DELAY_MS = 120;
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeArtPath(rawPath) {
+    if (rawPath === null || rawPath === undefined) return '';
+
+    const trimmed = String(rawPath).trim();
+    if (!trimmed) return '';
+
+    if (/^(https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:')) {
+        return trimmed;
+    }
+
+    let normalized = trimmed.replace(/\\/g, '/');
+    if (!normalized.startsWith('/')) {
+        if (normalized.startsWith('assets/')) {
+            normalized = `/${normalized}`;
+        } else if (!normalized.startsWith('./') && !normalized.startsWith('../')) {
+            normalized = `/${normalized}`;
+        }
+    }
+
+    return normalized;
+}
+
+function resolveArtUrl(rawPath) {
+    const normalized = normalizeArtPath(rawPath);
+    if (!normalized) return '';
+    return encodeURI(normalized).replace(/'/g, '%27');
+}
+
+function withRetryQuery(url, attempt) {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}r=${Date.now()}_${attempt}`;
+}
+
+async function probeImage(url) {
+    await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.decoding = 'async';
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error(`Image load failed: ${url}`));
+        image.src = url;
+    });
+}
+
+function preloadArt(rawPath) {
+    const url = resolveArtUrl(rawPath);
+    if (!url) {
+        return Promise.resolve('');
+    }
+
+    const existing = cardArtLoadPromises.get(url);
+    if (existing) {
+        return existing;
+    }
+
+    const loadPromise = (async () => {
+        for (let attempt = 0; attempt <= CARD_ART_RETRY_COUNT; attempt++) {
+            const targetUrl = attempt === 0 ? url : withRetryQuery(url, attempt);
+            try {
+                await probeImage(targetUrl);
+                return url;
+            } catch (error) {
+                if (attempt >= CARD_ART_RETRY_COUNT) {
+                    throw error;
+                }
+                await delay(CARD_ART_RETRY_DELAY_MS * (attempt + 1));
+            }
+        }
+        return url;
+    })();
+
+    const guardedPromise = loadPromise.catch(error => {
+        cardArtLoadPromises.delete(url);
+        throw error;
+    });
+
+    cardArtLoadPromises.set(url, guardedPromise);
+    return guardedPromise;
+}
+
+function applyArtBackground(artEl, rawPath) {
+    if (!artEl) return;
+    const resolvedUrl = resolveArtUrl(rawPath);
+    artEl.dataset.artUrl = resolvedUrl;
+
+    if (!resolvedUrl) {
+        artEl.style.backgroundImage = '';
+        artEl.classList.remove('has-art');
+        return;
+    }
+
+    void preloadArt(rawPath)
+        .then(loadedUrl => {
+            if (artEl.dataset.artUrl !== loadedUrl) return;
+            artEl.style.backgroundImage = `url('${loadedUrl}')`;
+            artEl.classList.add('has-art');
+        })
+        .catch(() => {
+            if (artEl.dataset.artUrl !== resolvedUrl) return;
+            artEl.style.backgroundImage = '';
+            artEl.classList.remove('has-art');
+        });
+}
 
 function resetMulliganSelection() {
     mulliganSelectedUids = new Set();
     try {
         player1HandEl?.querySelectorAll?.('.card.selected-for-mulligan')?.forEach?.(el => el.classList.remove('selected-for-mulligan'));
-    } catch (_) {
-        // ignore
-    }
-}
-
-function resetFusionSelection() {
-    fusionSelectedUids = new Set();
-    fusionSourceUid = null;
-    fusionSourceAbilityId = null;
-    try {
-        document.querySelectorAll('.card.fusion-selected, .card.fusion-source')
-            .forEach(el => el.classList.remove('fusion-selected', 'fusion-source'));
     } catch (_) {
         // ignore
     }
@@ -318,7 +417,7 @@ function updateHealthDisplay(unitInstance) {
  */
 function updateHandDisplay(playerId, handCards = []) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
-    const revealOpponentHand = gameState.dualControl === true && !gameState.isSpectator;
+    const revealOpponentHand = gameState.dualControl === true || gameState.isSpectator === true;
     const handElement = isLocalPlayer ? player1HandEl : player2HandEl;
 
     if (!handElement) {
@@ -340,7 +439,7 @@ function updateHandDisplay(playerId, handCards = []) {
             return;
         }
 
-        // Opponent's hand is rendered with card backs unless dual-control is active
+        // Opponent's hand is rendered with card backs unless dual-control or spectator mode is active
         if (!isLocalPlayer && !revealOpponentHand) {
             const cardBackDiv = document.createElement('div');
             cardBackDiv.classList.add('card-back');
@@ -359,13 +458,6 @@ function updateHandDisplay(playerId, handCards = []) {
                             cardElement.classList.add('selected-for-mulligan');
                         }
                     }
-                }
-                const uid = cardElement.dataset.uid;
-                if (fusionSourceUid && uid && String(fusionSourceUid) === String(uid)) {
-                    cardElement.classList.add('fusion-source');
-                }
-                if (uid && fusionSelectedUids.has(String(uid))) {
-                    cardElement.classList.add('fusion-selected');
                 }
                 handElement.appendChild(cardElement);
             }
@@ -491,101 +583,29 @@ function updateUnitDisplay(unitInstance) {
         return;
     }
 
-    const cardType = unitInstance.Type ?? unitInstance.type;
-    const isFollowerType = equalsIgnoreCase(cardType, 'Follower') || equalsIgnoreCase(cardType, 'Follower_Evolved');
-    const isAmuletType = equalsIgnoreCase(cardType, 'Amulet');
-    const keywords = unitInstance.keywords ?? unitInstance.Keywords ?? [];
-    const hasCountdownKeyword = Array.isArray(keywords)
-        && keywords.some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
-    const hasEarthsigilKeyword = Array.isArray(keywords)
-        && keywords.some(keyword => equalsIgnoreCase(keyword, 'EarthSigil'));
-    const countdownValue = unitInstance.countdown
-        ?? unitInstance.CurrentCountdown
-        ?? unitInstance.currentCountdown
-        ?? unitInstance.Countdown;
-    const earthsigilValue = unitInstance.earthsigil
-        ?? unitInstance.Earthsigil
-        ?? unitInstance.EarthSigil
-        ?? unitInstance.counters?.earthsigil
-        ?? unitInstance.Counters?.Earthsigil
-        ?? 0;
-    const showCountdown = isAmuletType && hasCountdownKeyword
-        && (countdownValue !== null && countdownValue !== undefined);
-    const showEarthsigil = isAmuletType && (hasEarthsigilKeyword || earthsigilValue > 0);
-
-    // Update Stats
-    const attackEl = unitElement.querySelector('.attack');
-    const healthEl = unitElement.querySelector('.health');
-
-    if (isFollowerType && attackEl) {
-        attackEl.textContent = unitInstance.currentAttack ?? '?';
-    } else if (isFollowerType) {
-        console.warn(`UI Update Warning: Could not find .attack element for unit UID: ${unitInstance.uid}`);
+    // Rebuild the full field card DOM so transforms can update artwork/name/type immediately.
+    const replacement = createCardElement(unitInstance, 'field');
+    if (!replacement) {
+        console.warn(`UI Update Error: Failed to rebuild field element for unit UID: ${unitInstance.uid}`);
+        return;
     }
-    // 生命值更新已移至独立的 updateHealthDisplay 函数，以遵循单一职责原则
-    // if (healthEl) {
-    //     healthEl.textContent = unitInstance.currentHealth ?? '?';
-    // } else {
-    //     console.warn(`UI Update Warning: Could not find .health element for unit UID: ${unitInstance.uid}`);
-    // }
 
-    if (isAmuletType) {
-        let statsEl = unitElement.querySelector('.stats');
-        if (!statsEl && (showCountdown || showEarthsigil)) {
-            statsEl = document.createElement('div');
-            statsEl.className = 'stats stats-amulet';
-            unitElement.appendChild(statsEl);
-        }
+    const transientClasses = [
+        'selected-attacker',
+        'targetable',
+        'targetable-restricted',
+        'targeting-spell',
+        'targetable-spell',
+        'choice-selected'
+    ];
 
-        if (statsEl) {
-            statsEl.classList.toggle('stats-amulet', true);
-
-            let earthEl = statsEl.querySelector('.earthsigil');
-            if (showEarthsigil) {
-                if (!earthEl) {
-                    earthEl = document.createElement('span');
-                    earthEl.className = 'earthsigil';
-                    statsEl.appendChild(earthEl);
-                }
-                earthEl.textContent = earthsigilValue;
-            } else if (earthEl) {
-                earthEl.remove();
-            }
-
-            let countdownEl = statsEl.querySelector('.countdown');
-            if (showCountdown) {
-                if (!countdownEl) {
-                    countdownEl = document.createElement('span');
-                    countdownEl.className = 'countdown';
-                    statsEl.appendChild(countdownEl);
-                }
-                countdownEl.textContent = countdownValue;
-            } else if (countdownEl) {
-                countdownEl.remove();
-            }
-
-            if (!showCountdown && !showEarthsigil) {
-                statsEl.remove();
-            }
+    for (const className of transientClasses) {
+        if (unitElement.classList.contains(className)) {
+            replacement.classList.add(className);
         }
     }
 
-    // Update Evolved Status Class
-    if (unitInstance.isEvolved) {
-        unitElement.classList.add('evolved');
-    } else {
-        // Should typically not de-evolve, but handle just in case
-        unitElement.classList.remove('evolved');
-    }
-
-    // Update Ward Status Class
-    if (Array.isArray(unitInstance.keywords) && unitInstance.keywords.includes('Ward')) {
-        unitElement.classList.add('has-ward');
-    } else {
-        unitElement.classList.remove('has-ward');
-    }
-
-    applyAttackReadinessClasses(unitElement, unitInstance, 'field');
+    unitElement.replaceWith(replacement);
 }
 
 function refreshCardInstanceUi(cardInstance, handOwnersToRefresh = null, emblemOwnersToRefresh = null) {
@@ -696,24 +716,34 @@ function highlightTargets(attackerInstance) {
     // --- Start of Rush/Storm Validation Logic ---
     const opponentBoard = opponentPlayerState.field ?? [];
     const opponentLeader = opponentPlayerState.leaderCard;
+    const attackerKeywords = Array.isArray(attackerInstance.keywords) ? attackerInstance.keywords : [];
+    const attackerCannotAttackFollowers = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'CannotAttackFollower'));
+    const attackerCannotAttackLeader = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'CannotAttackLeader'));
+    const hasEffectiveWard = follower => {
+        const keywords = Array.isArray(follower?.keywords) ? follower.keywords : [];
+        const hasWard = keywords.some(keyword => equalsIgnoreCase(keyword, 'Ward'));
+        const hasAmbush = keywords.some(keyword => equalsIgnoreCase(keyword, 'Ambush'));
+        const hasPressure = keywords.some(keyword => equalsIgnoreCase(keyword, 'Pressure'));
+        return hasWard && !hasAmbush && !hasPressure;
+    };
     // 【BUG修复】在函数作用域内正确定义 hasWard 变量
-    const hasWard = opponentBoard.some(follower => follower?.keywords?.includes('Ward'));
-    const wardFollowers = opponentBoard.filter(f => f && f.keywords?.includes('Ward'));
+    const hasWard = opponentBoard.some(follower => hasEffectiveWard(follower));
+    const wardFollowers = opponentBoard.filter(f => hasEffectiveWard(f));
 
     let validTargets = [];
 
     if (wardFollowers.length > 0) {
         // If Ward is present, only Ward followers are valid targets
-        validTargets = wardFollowers;
+        validTargets = attackerCannotAttackFollowers ? [] : wardFollowers;
     } else {
         // If no Ward, all followers are valid targets
-        validTargets = [...opponentBoard];
+        validTargets = attackerCannotAttackFollowers ? [] : [...opponentBoard];
         
         // Check if the leader is a valid target
-        const hasStorm = attackerInstance.keywords?.includes("Storm");
+        const hasStorm = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'Storm'));
         const isSummoningSick = attackerInstance.fieldTurn === 0 && !attackerInstance.isEvolved;
 
-        if (hasStorm || !isSummoningSick) {
+        if (!attackerCannotAttackLeader && (hasStorm || !isSummoningSick)) {
             if (opponentLeader) {
                 validTargets.push(opponentLeader);
             }
@@ -802,6 +832,15 @@ function highlightTargets(attackerInstance) {
 let isAwaitingPlayerChoice = false;
 let currentChoiceRequest = null;
 let currentChoiceSelectedTargetIds = new Set();
+
+function isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId) {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) {
+        return false;
+    }
+
+    return String(currentChoiceRequest.PendingChoiceId) === String(pendingChoiceId)
+        && String(currentChoiceRequest.SourceAbilityRuntimeId) === String(sourceAbilityRuntimeId);
+}
 
 function startPlayerChoice(requestData) {
     isAwaitingPlayerChoice = true;
@@ -905,7 +944,7 @@ async function confirmPlayerChoice() {
     if (!isChoiceSelectionValid(currentChoiceRequest, chosenIds.length)) return;
 
     const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
-    if (ok) {
+    if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
         endPlayerChoice(false);
     }
 }
@@ -929,7 +968,7 @@ async function handleChoiceTargetClick(targetUid) {
 
     if (isSingleMandatoryChoice(currentChoiceRequest)) {
         const ok = await submitPlayerChoice(PendingChoiceId, [targetUid], SourceAbilityRuntimeId, false);
-        if (ok) {
+        if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
             endPlayerChoice(false);
         }
         return;
@@ -1062,7 +1101,7 @@ function renderGame(currentGameState) { // Remove second parameter
 
     if (spectatorToggleViewButtonEl) {
         if (gameState.isSpectator) {
-            spectatorToggleViewButtonEl.style.display = '';
+            spectatorToggleViewButtonEl.style.display = 'inline-block';
             spectatorToggleViewButtonEl.textContent = '切换视角';
             spectatorToggleViewButtonEl.title = `切换视角（当前底部玩家：${gameState.localPlayerId || 'unknown'}）`;
         } else {
@@ -1133,8 +1172,8 @@ function renderGame(currentGameState) { // Remove second parameter
     // 2. Render Hands (Ensure hand array exists, fallback to empty array)
     // Always render local player's hand with full details at the bottom
     renderPlayerHand(player1?.hand ?? [], player1HandEl);
-    // Render opponent hand with faces in dual-control, otherwise use card backs
-    if (currentGameState.dualControl && !currentGameState.isSpectator) {
+    // Render opponent hand with faces in dual-control or spectator mode, otherwise use card backs
+    if (currentGameState.dualControl || currentGameState.isSpectator) {
         renderPlayerHand(player2?.hand ?? [], player2HandEl);
     } else {
         renderOpponentHand(player2?.hand ?? [], player2HandEl);
@@ -1178,7 +1217,9 @@ function updateEmblemDisplay(playerState, statsContainer) {
 
         const emblem = emblems[i];
         if (emblem) {
+            const emblemUid = emblem.uid ?? emblem.InstanceId ?? emblem.instanceId ?? '';
             const previewPath = emblem.artPreview ?? emblem.ArtPreview ?? emblem.artDetail ?? emblem.ArtDetail ?? '';
+            const previewUrl = resolveArtUrl(previewPath);
             const rawCountdown = emblem.countdown
                 ?? emblem.CurrentCountdown
                 ?? emblem.currentCountdown
@@ -1188,13 +1229,19 @@ function updateEmblemDisplay(playerState, statsContainer) {
                 && rawCountdown !== '';
             const artWrapper = document.createElement('div');
             artWrapper.classList.add('emblem-art');
-            if (previewPath) {
+            if (previewUrl) {
                 const img = document.createElement('img');
-                img.src = previewPath;
+                img.src = previewUrl;
                 img.alt = emblem.name ?? emblem.Name ?? 'Emblem';
                 artWrapper.appendChild(img);
+                void preloadArt(previewPath).catch(() => {
+                    // ignore preload errors for emblem icons
+                });
             }
             slot.classList.add('filled');
+            if (emblemUid) {
+                slot.dataset.uid = String(emblemUid);
+            }
             slot.appendChild(artWrapper);
 
             if (showCountdown) {
@@ -1218,114 +1265,299 @@ function updateEmblemZone(playerState) {
     updateEmblemDisplay(playerState, statsContainer);
 }
 
+const CARD_CLASS_ENUM_KEYS = Object.freeze([
+    'Neutral',
+    'Forestcraft',
+    'Swordcraft',
+    'Runecraft',
+    'Dragoncraft',
+    'Abysscraft',
+    'Havencraft',
+    'Portalcraft'
+]);
+
+const CARD_CLASS_ALIAS_MAP = Object.freeze({
+    neutral: 'Neutral',
+    forest: 'Forestcraft',
+    forestcraft: 'Forestcraft',
+    sword: 'Swordcraft',
+    swordcraft: 'Swordcraft',
+    rune: 'Runecraft',
+    runecraft: 'Runecraft',
+    dragon: 'Dragoncraft',
+    dragoncraft: 'Dragoncraft',
+    abyss: 'Abysscraft',
+    abysscraft: 'Abysscraft',
+    blood: 'Abysscraft',
+    bloodcraft: 'Abysscraft',
+    haven: 'Havencraft',
+    havencraft: 'Havencraft',
+    portal: 'Portalcraft',
+    portalcraft: 'Portalcraft',
+    中立: 'Neutral',
+    精灵: 'Forestcraft',
+    皇家护卫: 'Swordcraft',
+    巫师: 'Runecraft',
+    龙族: 'Dragoncraft',
+    梦魇: 'Abysscraft',
+    主教: 'Havencraft',
+    复仇者: 'Portalcraft'
+});
+
+function normalizeCardClassKey(rawValue) {
+    if (rawValue === null || rawValue === undefined) return '';
+
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+        return CARD_CLASS_ENUM_KEYS[rawValue] ?? '';
+    }
+
+    const rawText = String(rawValue).trim();
+    if (!rawText) return '';
+
+    if (/^\d+$/.test(rawText)) {
+        const index = Number.parseInt(rawText, 10);
+        return CARD_CLASS_ENUM_KEYS[index] ?? '';
+    }
+
+    const aliasKey = rawText.replace(/[\s_-]/g, '').toLowerCase();
+    return CARD_CLASS_ALIAS_MAP[aliasKey] ?? '';
+}
+
+function resolvePlayerClassLabel(playerState) {
+    const classKey = normalizeCardClassKey(
+        playerState?.class
+        ?? playerState?.Class
+        ?? playerState?.deckClass
+        ?? playerState?.DeckClass
+        ?? 'Neutral'
+    ) || 'Neutral';
+    return getCachedEnumLabel('CardClass', classKey, normalizeEnumName(classKey || 'Neutral'));
+}
+
+function resolvePlayerDisplayName(playerState, isLocal) {
+    const rawName = playerState?.displayName
+        ?? playerState?.DisplayName
+        ?? playerState?.name
+        ?? playerState?.Name
+        ?? playerState?.username
+        ?? playerState?.Username
+        ?? '';
+    const normalizedName = String(rawName ?? '').trim();
+    if (normalizedName) return normalizedName;
+
+    if (isLocal && !gameState.isSpectator) {
+        const session = getUserSession();
+        const sessionName = String(session?.displayName ?? '').trim();
+        if (sessionName) return sessionName;
+    }
+
+    if (playerState?.isAI === true || playerState?.IsAI === true) {
+        return 'AI';
+    }
+
+    return isLocal ? 'PLAYER' : 'OPPONENT';
+}
+
+function resolveAvatarImageSource(rawValue) {
+    const text = String(rawValue ?? '').trim();
+    if (!text) return '';
+    if (/^data:image\//i.test(text)) return text;
+    if (/^(https?:)?\/\//i.test(text)) return text;
+    if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) {
+        return encodeURI(text).replace(/'/g, '%27');
+    }
+    return '';
+}
+
+function resolvePlayerAvatar(playerState, isLocal, displayName) {
+    const session = (isLocal && !gameState.isSpectator) ? getUserSession() : null;
+    const candidates = [
+        playerState?.avatarUrl,
+        playerState?.AvatarUrl,
+        playerState?.avatar,
+        playerState?.Avatar,
+        session?.avatar
+    ];
+
+    let imageSrc = '';
+    let textAvatar = '';
+    for (const candidate of candidates) {
+        const resolved = resolveAvatarImageSource(candidate);
+        if (resolved && !imageSrc) {
+            imageSrc = resolved;
+            continue;
+        }
+        if (!resolved && !textAvatar) {
+            const value = String(candidate ?? '').trim();
+            if (value) textAvatar = value;
+        }
+    }
+
+    const fallbackText = textAvatar || (isLocal ? 'YOU' : 'OPP');
+    return { imageSrc, fallbackText };
+}
+
+function resolvePlayerOrderBadge(playerState) {
+    const raw = playerState?.isFirst ?? playerState?.IsFirst;
+    if (typeof raw !== 'boolean') {
+        return null;
+    }
+    return raw
+        ? { text: '先手', className: 'first' }
+        : { text: '后手', className: 'second' };
+}
+
+const playerCounterLabelMap = new Map([
+    ['combo', '连击数'],
+    ['graveyard', '墓场数'],
+    ['bloodpool', '血池']
+]);
+
+function getPlayerCounterValue(playerState, key, fallbackValue = 0) {
+    const normalizedKey = String(key ?? '').trim().toLowerCase();
+    if (!normalizedKey) {
+        return fallbackValue;
+    }
+
+    const counterMap = playerState?.counters ?? playerState?.Counters;
+    if (counterMap && typeof counterMap === 'object') {
+        for (const [entryKey, entryValue] of Object.entries(counterMap)) {
+            if (String(entryKey).trim().toLowerCase() !== normalizedKey) continue;
+            const parsed = Number(entryValue);
+            if (Number.isFinite(parsed)) {
+                return Math.max(0, Math.trunc(parsed));
+            }
+        }
+    }
+
+    const parsedFallback = Number(fallbackValue);
+    return Number.isFinite(parsedFallback) ? Math.max(0, Math.trunc(parsedFallback)) : 0;
+}
+
 function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'player2'
     if (!playerState) {
         return;
     }
 
     try {
-        // We need the container element for the player stats block.
-        // Assuming index.html has a container like #player1-stats-container or we use the existing structure.
-        // Based on previous code, we were selecting individual elements.
-        // To implement the new layout, we should ideally target the parent container of these stats.
-        // However, since we might not want to rewrite index.html, we can inject the new structure into the existing parent
-        // if we can identify it, OR we can repurpose one of the existing elements as the root.
-        
-        // Let's assume the existing HTML structure has a container that holds these elements.
-        // If not, we might need to be creative.
-        // Looking at typical structure: <div id="player1-info"><div class="player-stats">...</div></div>
-        
         const infoContainer = document.getElementById(`${prefix}-info`);
         const statsContainer = infoContainer ? infoContainer.querySelector('.player-stats') : null;
-        
+
         if (!statsContainer) {
             console.warn(`UI: Stats container for ${prefix} not found.`);
             return;
         }
 
-        // Update Values
-        
-        // 1. HP
         const currentHp = playerState.leaderCard?.currentHealth ?? 0;
         const hpValueEl = statsContainer.querySelector('.hp-value');
         if (hpValueEl) {
             hpValueEl.textContent = currentHp;
-            // Optional: Add color change for low HP
-            if (currentHp <= 5) hpValueEl.style.color = '#ef4444'; // Red
-            else hpValueEl.style.color = '#fff';
+            hpValueEl.style.color = currentHp <= 5 ? '#ef4444' : '#fff';
         }
 
-        // 2. PP
         const currentPp = playerState.pp ?? 0;
         const maxPp = playerState.maxPP ?? 0;
         const ppTextEl = statsContainer.querySelector('.pp-text');
         if (ppTextEl) ppTextEl.textContent = `${currentPp} / ${maxPp}`;
         updatePpDisplay(playerState.id, currentPp, maxPp);
 
-        // 3. EP
-        // Default maxEP to 2 if 0 or undefined (User Request)
         const maxEp = (playerState.maxEP && playerState.maxEP > 0) ? playerState.maxEP : 2;
         updateEpDisplay(playerState.id, playerState.ep, maxEp);
 
-        // 4. SEP
-        // Default maxSEP to 2 if 0 or undefined (User Request)
         const maxSep = (playerState.maxSEP && playerState.maxSEP > 0) ? playerState.maxSEP : 2;
         updateSepDisplay(playerState.id, playerState.sep, maxSep);
 
-        // 4.5 PP+1
         updatePpBoostDisplay(playerState.id, playerState.ppBoostUsesAvailable ?? 0);
 
-        // 5. Deck
         const deckCountEl = statsContainer.querySelector(`#${prefix}-deck-count`);
         if (deckCountEl) deckCountEl.textContent = playerState.deckCount ?? 0;
 
-        // 6. Graveyard
-          const graveCountEl = statsContainer.querySelector(`#${prefix}-grave-count`);
-          if (graveCountEl) {
-              graveCountEl.textContent = playerState.graveyardCount
-                  ?? playerState.GraveyardCount
-                  ?? playerState.graveyard?.length
-                  ?? 0;
-          }
+        const graveCountEl = statsContainer.querySelector(`#${prefix}-grave-count`);
+        if (graveCountEl) {
+            graveCountEl.textContent = getPlayerCounterValue(
+                playerState,
+                'graveyard',
+                playerState.graveyardCount
+                ?? playerState.GraveyardCount
+                ?? playerState.graveyard?.length
+                ?? 0
+            );
+        }
 
-        // 7. BloodPool
         const bloodCountEl = statsContainer.querySelector(`#${prefix}-blood-count`);
         if (bloodCountEl) {
-            bloodCountEl.textContent = playerState.bloodPool
+            bloodCountEl.textContent = getPlayerCounterValue(
+                playerState,
+                'bloodpool',
+                playerState.bloodPool
                 ?? playerState.BloodPool
-                ?? 0;
+                ?? 0
+            );
         }
 
-        // 8. Combo
         const comboCountEl = statsContainer.querySelector(`#${prefix}-combo-count`);
         if (comboCountEl) {
-            comboCountEl.textContent = playerState.combo
+            comboCountEl.textContent = getPlayerCounterValue(
+                playerState,
+                'combo',
+                playerState.combo
                 ?? playerState.Combo
-                ?? 0;
+                ?? 0
+            );
         }
 
-        // 9. Class Name (Update if changed, e.g. transformation)
-        const classEl = statsContainer.querySelector('.class-name');
-        if (classEl && playerState.class) classEl.textContent = playerState.class;
-
-        // 10. Player Name & Avatar (Ensure they are correct)
         const isLocal = prefix === 'player1';
+        const displayName = resolvePlayerDisplayName(playerState, isLocal);
+        const classLabel = resolvePlayerClassLabel(playerState);
+
+        const classEl = statsContainer.querySelector('.class-name');
+        if (classEl) {
+            classEl.textContent = classLabel || 'Neutral';
+        }
+
         const playerNameEl = statsContainer.querySelector('.player-name');
         if (playerNameEl) {
-             // For now, static names, but could be dynamic from playerState.name
-             playerNameEl.textContent = isLocal ? 'PLAYER' : 'OPPONENT';
+            playerNameEl.textContent = '';
+            const nameTextEl = document.createElement('span');
+            nameTextEl.className = 'player-name-text';
+            nameTextEl.textContent = displayName;
+            playerNameEl.appendChild(nameTextEl);
+
+            const orderBadge = resolvePlayerOrderBadge(playerState);
+            if (orderBadge) {
+                const badgeEl = document.createElement('span');
+                badgeEl.className = `player-order-badge ${orderBadge.className}`;
+                badgeEl.textContent = orderBadge.text;
+                playerNameEl.appendChild(badgeEl);
+            }
         }
-          const avatarEl = statsContainer.querySelector('.stats-avatar');
-          if (avatarEl) {
-              avatarEl.textContent = isLocal ? 'YOU' : 'OPP';
-          }
 
-          updateEmblemDisplay(playerState, statsContainer);
+        const avatarEl = statsContainer.querySelector('.stats-avatar');
+        if (avatarEl) {
+            const avatar = resolvePlayerAvatar(playerState, isLocal, displayName);
+            avatarEl.textContent = '';
+            avatarEl.classList.toggle('has-image', Boolean(avatar.imageSrc));
 
-      } catch (error) {
-          console.error(`UI Error rendering stats for ${prefix}:`, error);
-      }
-  }
+            if (avatar.imageSrc) {
+                const imageEl = document.createElement('img');
+                imageEl.className = 'stats-avatar-img';
+                imageEl.src = avatar.imageSrc;
+                imageEl.alt = `${displayName} avatar`;
+                imageEl.onerror = () => {
+                    avatarEl.classList.remove('has-image');
+                    avatarEl.textContent = avatar.fallbackText;
+                };
+                avatarEl.appendChild(imageEl);
+            } else {
+                avatarEl.textContent = avatar.fallbackText;
+            }
+        }
+
+        updateEmblemDisplay(playerState, statsContainer);
+    } catch (error) {
+        console.error(`UI Error rendering stats for ${prefix}:`, error);
+    }
+}
 function renderPlayerHand(handCards = [], handElement) {
     if (!handElement) {
         // console.error("UI Error: Hand element (player1HandEl or player2HandEl?) not provided for rendering hand.");
@@ -1447,7 +1679,11 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
           const cardUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
           const playabilityInfo = cardUid ? gameState.playabilityCache[cardUid] : null;
           const selectedCost = playabilityInfo?.selectedPlayCost;
-          if (playabilityInfo && isEnhanceModeValue(playabilityInfo.selectedPlayMode) && Number.isFinite(selectedCost)) {
+          if (
+              playabilityInfo
+              && isEnhanceModeValue(playabilityInfo.selectedPlayMode)
+              && Number.isFinite(selectedCost)
+          ) {
               displayCost = selectedCost;
               enhanceActive = Number.isFinite(baseCostRaw) ? selectedCost !== baseCostRaw : true;
           }
@@ -1567,6 +1803,13 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
       const cardType = cardInstance.type ?? cardInstance.Type;
       const isEvolved = (cardInstance.isEvolved ?? cardInstance.IsEvolved) === true;
       const canEvolve = (cardInstance.canEvolve ?? cardInstance.CanEvolve) === true;
+      const keywordList = Array.isArray(cardInstance.keywords)
+          ? cardInstance.keywords
+          : (Array.isArray(cardInstance.Keywords) ? cardInstance.Keywords : []);
+      const hasFreeEvolve = keywordList.some(keyword => equalsIgnoreCase(keyword, 'FreeEvolve'));
+      const currentEp = Number(playerState.ep ?? 0);
+      const canPayEvolveCost = Number.isFinite(currentEp) && currentEp > 0;
+      const canUseEvolutionPointOrFreeEvolve = hasFreeEvolve || canPayEvolveCost;
       const hasActAbility = (cardInstance.hasActAbility === true) || (cardInstance.HasActAbility === true);
       const actAbilityList = Array.isArray(cardInstance.actAbilities)
           ? cardInstance.actAbilities
@@ -1597,7 +1840,7 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
           ),
           showEvolve: (
               isFieldContext &&
-              playerState.ep > 0 &&
+              canUseEvolutionPointOrFreeEvolve &&
               playerState.canEvolve === true &&
               cardType === 'Follower' &&
               isEvolved === false &&
@@ -1617,13 +1860,30 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
       };
   }
 
+  const CARD_ACTION_BUTTON_SELECTOR = '.super-evolve-button, .evolve-button, .fusion-button, .act-button, .use-button';
+  const CARD_ACTION_BUTTON_TOP_START = 28;
+  const CARD_ACTION_BUTTON_VERTICAL_GAP = 28;
+
+  function applyCardActionButtonStack(cardElement) {
+      if (!cardElement) return;
+      const buttons = cardElement.querySelectorAll(CARD_ACTION_BUTTON_SELECTOR);
+      buttons.forEach((button, index) => {
+          const top = CARD_ACTION_BUTTON_TOP_START + (index * CARD_ACTION_BUTTON_VERTICAL_GAP);
+          button.style.setProperty('--action-button-top', `${top}px`);
+      });
+  }
+
   const keywordBadgeConfig = new Map([
-      ['ward', { className: 'badge-ward', src: badgeWardUrl }],
-      ['bane', { className: 'badge-bane', src: badgeBaneUrl }],
-      ['drain', { className: 'badge-drain', src: badgeDrainUrl }],
-      ['ambush', { className: 'badge-ambush', src: badgeAmbushUrl }],
-      ['pressure', { className: 'badge-pressure', src: badgePressureUrl }],
-      ['aura', { className: 'badge-aura', src: badgeAuraUrl }]
+      ['ward', badgeWardUrl],
+      ['spellward', badgeWardUrl],
+      ['bane', badgeBaneUrl],
+      ['drain', badgeDrainUrl],
+      ['ambush', badgeAmbushUrl],
+      ['pressure', badgePressureUrl],
+      ['aura', badgeAuraUrl],
+      ['shield', badgeShieldUrl],
+      ['abilityresist', badgeAbilityResistUrl],
+      ['shackle', badgeShackleUrl],
   ]);
 
   function escapeAttributeValue(value) {
@@ -1648,13 +1908,13 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
       keywords.forEach(keyword => {
           const normalized = String(keyword ?? '').trim().toLowerCase();
           if (!normalized || seen.has(normalized)) return;
-          const config = keywordBadgeConfig.get(normalized);
-          if (!config) return;
+          const badgeSrc = keywordBadgeConfig.get(normalized);
+          if (!badgeSrc) return;
           seen.add(normalized);
           const label = escapeAttributeValue(getCardKeywordLabel(keyword) || normalizeEnumName(keyword));
           badges.push(
-              `<div class="keyword-badge ${config.className}" title="${label}" data-keyword="${normalized}">` +
-              `<img class="badge-icon" src="${config.src}" alt="${label}">` +
+              `<div class="keyword-badge" title="${label}" data-keyword="${normalized}">` +
+              `<img class="badge-icon" src="${badgeSrc}" alt="${label}">` +
               `</div>`
           );
       });
@@ -1757,13 +2017,9 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
     `;
 
     const previewPath = cardInstance.artPreview ?? cardInstance.ArtPreview ?? '';
-    const previewUrl = previewPath ? encodeURI(previewPath).replace(/'/g, '%27') : '';
-    if (previewUrl) {
-        const artEl = cardDiv.querySelector('.card-art');
-        if (artEl) {
-            artEl.style.backgroundImage = `url('${previewUrl}')`;
-            artEl.classList.add('has-art');
-        }
+    const artEl = cardDiv.querySelector('.card-art');
+    if (artEl) {
+        applyArtBackground(artEl, previewPath);
     }
 
     // 注意: 'playable', 'selected-attacker', 'targetable' 等交互状态相关的 class
@@ -1840,6 +2096,7 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
             cardDiv.appendChild(actBtn);
         });
     }
+    applyCardActionButtonStack(cardDiv);
     // --- END Action Buttons ---
 
     // 【修复】移除鼠标悬停时的可玩性检查请求，改为依赖服务器主动推送
@@ -1977,6 +2234,7 @@ function syncUseButtonForHandCard(cardInstance, cardElement) {
 
     if (!useActionState.showUse) {
         existingUseButton?.remove();
+        applyCardActionButtonStack(cardElement);
         return;
     }
 
@@ -2001,6 +2259,7 @@ function syncUseButtonForHandCard(cardInstance, cardElement) {
     if (!existingUseButton) {
         cardElement.appendChild(useBtn);
     }
+    applyCardActionButtonStack(cardElement);
 }
 
 function syncHandUseButtons() {
@@ -2139,22 +2398,62 @@ function applyAttackReadinessClasses(cardElement, cardInstance, context) {
 
 const previewCounterLabelMap = new Map([
     ['spellboost', '魔力增幅数'],
-    ['earthsigil', '土之印数']
+    ['earthsigil', '土之印数'],
+    ['combo', '连击数'],
+    ['graveyard', '墓场数'],
+    ['bloodpool', '血池']
 ]);
+const playerSystemCounterKeys = new Set(['combo', 'graveyard', 'bloodpool']);
 
-function getCounterLabel(key) {
+function getCounterLabel(labelMap, key) {
     const rawKey = String(key ?? '').trim();
     if (!rawKey) return '';
-    const localized = previewCounterLabelMap.get(rawKey.toLowerCase());
-    return localized || rawKey;
+    if (labelMap && typeof labelMap === 'object') {
+        const direct = labelMap[rawKey];
+        if (typeof direct === 'string' && direct.trim()) {
+            return direct.trim();
+        }
+        const lowerKey = rawKey.toLowerCase();
+        for (const [entryKey, entryValue] of Object.entries(labelMap)) {
+            if (String(entryKey).toLowerCase() !== lowerKey) continue;
+            if (typeof entryValue === 'string' && entryValue.trim()) {
+                return entryValue.trim();
+            }
+        }
+    }
+    const normalizedKey = rawKey.toLowerCase();
+    const localized = previewCounterLabelMap.get(normalizedKey) || playerCounterLabelMap.get(normalizedKey);
+    return localized || '';
+}
+
+function resolveCounterSummarySource(cardInstance) {
+    if (!cardInstance) {
+        return { counterMap: null, labelMap: null, isPlayerCounterSource: false };
+    }
+
+    const isLeader = equalsIgnoreCase(cardInstance.type ?? cardInstance.Type, 'Leader');
+    if (isLeader) {
+        const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId ?? null;
+        const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
+        if (ownerPlayer) {
+            return {
+                counterMap: ownerPlayer.counters ?? ownerPlayer.Counters ?? {},
+                labelMap: ownerPlayer.counterDisplayNames ?? ownerPlayer.CounterDisplayNames ?? {},
+                isPlayerCounterSource: true
+            };
+        }
+    }
+
+    return {
+        counterMap: cardInstance.counters ?? cardInstance.Counters ?? cardInstance.counterMap ?? cardInstance.CounterMap,
+        labelMap: cardInstance.counterDisplayNames ?? cardInstance.CounterDisplayNames ?? {},
+        isPlayerCounterSource: false
+    };
 }
 
 function getCounterSummaryHtml(cardInstance) {
     if (!cardInstance) return '';
-    const counterMap = cardInstance.counters
-        ?? cardInstance.Counters
-        ?? cardInstance.counterMap
-        ?? cardInstance.CounterMap;
+    const { counterMap, labelMap, isPlayerCounterSource } = resolveCounterSummarySource(cardInstance);
     if (!counterMap || typeof counterMap !== 'object') {
         return '';
     }
@@ -2163,13 +2462,16 @@ function getCounterSummaryHtml(cardInstance) {
         .map(([key, value]) => {
             const normalizedKey = String(key ?? '').trim();
             if (!normalizedKey) return null;
+            if (isPlayerCounterSource && playerSystemCounterKeys.has(normalizedKey.toLowerCase())) return null;
+            const label = getCounterLabel(labelMap, normalizedKey);
+            if (!label) return null;
             const numericValue = Number(value);
             if (!Number.isFinite(numericValue)) return null;
             const displayValue = Math.max(0, Math.trunc(numericValue));
             if (displayValue == 0) return null;
             return {
                 key: normalizedKey,
-                label: getCounterLabel(normalizedKey),
+                label,
                 value: displayValue
             };
         })
@@ -2275,6 +2577,7 @@ function buildBattlePreviewHtml(cardInstance) {
     const typeLabel = getCachedEnumLabel('CardType', rawType, typeKey);
     const rarityClass = String(rarityKey).toLowerCase();
     const normalizedType = normalizeEnumName(rawType);
+    const isLeader = equalsIgnoreCase(normalizedType, 'Leader');
     const isFollower = equalsIgnoreCase(normalizedType, 'Follower') || equalsIgnoreCase(normalizedType, 'Follower_Evolved');
     const cardZone = cardInstance.zone ?? cardInstance.Zone;
     const isHandZone = typeof cardZone === 'string' && cardZone.toLowerCase() === 'hand';
@@ -2284,9 +2587,19 @@ function buildBattlePreviewHtml(cardInstance) {
     const healthValue = cardInstance.currentHealth ?? cardInstance.CurrentHealth ?? cardInstance.health ?? cardInstance.Health ?? 0;
     const description = cardInstance.description ?? cardInstance.Description ?? '';
     const previewPath = cardInstance.artPreview ?? cardInstance.ArtPreview ?? '';
-    const previewUrl = previewPath ? encodeURI(previewPath) : '';
+    const previewUrl = resolveArtUrl(previewPath);
     const detailPath = cardInstance.artDetail ?? cardInstance.ArtDetail ?? '';
-    const detailUrl = detailPath ? encodeURI(detailPath) : '';
+    const detailUrl = resolveArtUrl(detailPath);
+    if (previewPath) {
+        void preloadArt(previewPath).catch(() => {
+            // Ignore preload errors in preview panel.
+        });
+    }
+    if (detailPath && detailPath !== previewPath) {
+        void preloadArt(detailPath).catch(() => {
+            // Ignore preload errors in preview panel.
+        });
+    }
     const tribeRaw = cardInstance.tribe ?? cardInstance.Tribe ?? [];
     const tribeList = Array.isArray(tribeRaw) ? tribeRaw : [tribeRaw];
     const tribeText = tribeList
@@ -2335,6 +2648,7 @@ function buildBattlePreviewHtml(cardInstance) {
         earthsigilValue,
         showEarthsigil,
         description,
+        hideEmptyDescriptionPlaceholder: isLeader,
         previewUrl,
         detailUrl,
         enableDetail: true,
@@ -2371,9 +2685,7 @@ function renderBattleCardPreview(cardInstance) {
         ?? cardInstance.artDetail
         ?? cardInstance.ArtDetail
         ?? '';
-    const fallbackPreviewUrl = fallbackPreviewPath
-        ? encodeURI(String(fallbackPreviewPath)).replace(/'/g, '%27')
-        : '';
+    const fallbackPreviewUrl = resolveArtUrl(fallbackPreviewPath);
     void hydrateDescriptionReferences(battleCardPreviewEl, { fallbackPreviewUrl });
 }
 
@@ -2757,13 +3069,28 @@ export function renderGameLog(logs) {
             }
         };
 
-        // Create Title
-        const title = document.createElement('span');
-        title.className = 'log-title';
-        title.textContent = 'BATTLE LOG';
+        // Create left title group
+        const headerMarker = document.createElement('span');
+        headerMarker.className = 'log-header-marker';
+        headerMarker.setAttribute('aria-hidden', 'true');
 
+        const titleGroup = document.createElement('div');
+        titleGroup.className = 'log-title-group';
+
+        const titleMain = document.createElement('span');
+        titleMain.className = 'log-title-main';
+        titleMain.textContent = '战斗记录';
+
+        const titleSub = document.createElement('span');
+        titleSub.className = 'log-title-sub';
+        titleSub.textContent = 'BATTLE TIMELINE';
+
+        titleGroup.appendChild(titleMain);
+        titleGroup.appendChild(titleSub);
+
+        header.appendChild(headerMarker);
+        header.appendChild(titleGroup);
         header.appendChild(toggleBtn);
-        header.appendChild(title);
 
         // Create Content Wrapper
         logContent = document.createElement('div');
@@ -3046,7 +3373,7 @@ export function updateCardActionButtons(cardInstance) {
     if (!cardElement) return;
 
     const actionState = getCardActionState(cardInstance, 'field');
-    const existingButtons = cardElement.querySelectorAll('.super-evolve-button, .evolve-button, .fusion-button, .act-button, .use-button');
+    const existingButtons = cardElement.querySelectorAll(CARD_ACTION_BUTTON_SELECTOR);
     existingButtons.forEach(button => button.remove());
 
     if (actionState.showSuperEvolve) {
@@ -3106,6 +3433,7 @@ export function updateCardActionButtons(cardInstance) {
             cardElement.appendChild(actBtn);
         });
     }
+    applyCardActionButtonStack(cardElement);
 }
 
 export function updateActButtonState(cardInstance) {
@@ -3427,7 +3755,7 @@ function handleGameClick(event) {
     const clickedPreviewRoot = event.target.closest('#battle-card-preview');
     const clickedPreviewTooltip = event.target.closest('.preview-description-tooltip');
     const clickedDetailModal = event.target.closest('#card-detail-modal, #card-detail-image-modal');
-    const clickedCardOrAvatar = event.target.closest('.card, #player1-avatar, #player2-avatar');
+    const clickedCardOrAvatar = event.target.closest('.card, #player1-avatar, #player2-avatar, .emblem-slot[data-uid]');
     if (!clickedPreviewRoot && !clickedPreviewTooltip && !clickedDetailModal && !clickedCardOrAvatar) {
         renderBattleCardPreview(null);
     }
@@ -3622,27 +3950,7 @@ function handleGameClick(event) {
         const fusionUid = clickedFusionButton.dataset.fusionUid;
         const fusionAbilityId = clickedFusionButton.dataset.fusionAbilityId || null;
         if (!fusionUid) return;
-
-        if (!fusionSourceUid || String(fusionSourceUid) !== String(fusionUid) || fusionSourceAbilityId !== fusionAbilityId) {
-            fusionSourceUid = fusionUid;
-            fusionSourceAbilityId = fusionAbilityId;
-            fusionSelectedUids = new Set();
-            document.querySelectorAll('.card.fusion-selected, .card.fusion-source')
-                .forEach(el => el.classList.remove('fusion-selected', 'fusion-source'));
-            const sourceEl = document.querySelector(`.card[data-uid="${fusionUid}"]`);
-            sourceEl?.classList.add('fusion-source');
-            alert("请选择融合素材（手牌）后再次点击融合按钮确认。");
-            return;
-        }
-
-        const materials = Array.from(fusionSelectedUids)
-            .filter(uid => String(uid) !== String(fusionSourceUid));
-        if (materials.length === 0) {
-            alert("需要选择至少一张融合素材。");
-            return;
-        }
-        requestFusion(fusionSourceUid, materials, fusionSourceAbilityId);
-        resetFusionSelection();
+        requestFusion(fusionUid, fusionAbilityId);
         return;
     }
     // --- END Check for Fusion Button ---
@@ -3675,12 +3983,15 @@ function handleGameClick(event) {
     }
 
     const clickedCardElement = event.target.closest('.card');
+    const clickedEmblemElement = event.target.closest('.emblem-slot[data-uid]');
     const clickedPlayer1Avatar = event.target.closest('#player1-avatar'); // Check player avatar
     const clickedPlayer2Avatar = event.target.closest('#player2-avatar'); // Check opponent avatar
 
     let targetUid = null;
     if (clickedCardElement) {
         targetUid = clickedCardElement.dataset.uid;
+    } else if (clickedEmblemElement) {
+        targetUid = clickedEmblemElement.dataset.uid;
     // --- BUG-017 FIX: Get actual leader UID instead of hardcoding L1/L2 ---
     } else if (clickedPlayer1Avatar || clickedPlayer2Avatar) {
         const clickedAvatarId = clickedPlayer1Avatar ? 'player1-avatar' : 'player2-avatar';
@@ -3706,15 +4017,14 @@ function handleGameClick(event) {
                 targetUid = leaderUid;
             }
         } else {
-            // Attack/other interactions: only opponent leader is actionable.
-            if (clickedPlayerActualId && clickedPlayerActualId === opponentPlayerId) {
-                const opponentPlayer = getPlayerState(opponentPlayerId);
-                const leaderUid = opponentPlayer?.leaderCard?.uid ?? opponentPlayer?.leaderCard?.InstanceId ?? null;
-                if (leaderUid) {
-                    targetUid = leaderUid;
-                } else {
-                    console.error(`UI Error: Could not find opponent leader card instance or its UID for player ${opponentPlayerId}`, opponentPlayer);
-                }
+            // Always resolve the clicked leader UID so spells/abilities can target either leader.
+            // Combat legality is still enforced later in handleCardClick/selectAttackTarget.
+            const clickedPlayer = clickedPlayerActualId ? getPlayerState(clickedPlayerActualId) : null;
+            const leaderUid = clickedPlayer?.leaderCard?.uid ?? clickedPlayer?.leaderCard?.InstanceId ?? null;
+            if (leaderUid) {
+                targetUid = leaderUid;
+            } else {
+                console.error(`UI Error: Could not find leader card instance or UID for player ${clickedPlayerActualId}`, clickedPlayer);
             }
         }
     // --- END BUG-017 FIX ---
@@ -3724,22 +4034,6 @@ function handleGameClick(event) {
         // We clicked a card or an avatar
         const cardInstance = findCardInstanceByUid(targetUid);
         if (cardInstance) {
-            const zone = cardInstance.zone ?? cardInstance.Zone;
-            const isHandZone = typeof zone === 'string' && zone.toLowerCase() === 'hand';
-            if (fusionSourceUid && isHandZone && cardInstance.ownerId === gameState.localPlayerId) {
-                const uid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
-                if (uid && String(uid) !== String(fusionSourceUid)) {
-                    if (fusionSelectedUids.has(String(uid))) {
-                        fusionSelectedUids.delete(String(uid));
-                    } else {
-                        fusionSelectedUids.add(String(uid));
-                    }
-                    const cardEl = document.querySelector(`.card[data-uid="${uid}"]`);
-                    cardEl?.classList.toggle('fusion-selected', fusionSelectedUids.has(String(uid)));
-                    renderBattleCardPreview(cardInstance);
-                    return;
-                }
-            }
             handleCardClick(cardInstance); // Call the unified handler
         } else {
             // console.warn(`UI: Clicked target (UID: ${targetUid}) instance not found in gameState.`);
@@ -3914,9 +4208,13 @@ export function showPlayerChoiceUI(choiceRequest) {
         // If there are no candidates and min==0, the only valid submission is an empty selection.
         if (min === 0 && choiceRequest?.PendingChoiceId && choiceRequest?.SourceAbilityRuntimeId) {
             void (async () => {
+                const pendingChoiceId = choiceRequest.PendingChoiceId;
+                const sourceAbilityRuntimeId = choiceRequest.SourceAbilityRuntimeId;
                 startPlayerChoice(choiceRequest);
-                const ok = await submitPlayerChoice(choiceRequest.PendingChoiceId, [], choiceRequest.SourceAbilityRuntimeId, false);
-                if (ok) endPlayerChoice(false);
+                const ok = await submitPlayerChoice(pendingChoiceId, [], sourceAbilityRuntimeId, false);
+                if (ok && isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId)) {
+                    endPlayerChoice(false);
+                }
             })();
             return;
         }

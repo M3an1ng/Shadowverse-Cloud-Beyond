@@ -254,6 +254,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             };
             newBuff.SourceEffectIndex = originalBuff.SourceEffectIndex;
             newBuff.EffectKey = originalBuff.EffectKey;
+            newBuff.SummaryRootAbilityId = originalBuff.SummaryRootAbilityId;
             newBuff.SourceCardInstanceId = originalBuff.SourceCardInstanceId;
             newBuff.SourceCardName = originalBuff.SourceCardName;
             newBuff.SourceAbilityName = originalBuff.SourceAbilityName;
@@ -344,6 +345,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                         break;
                     case KeywordBuffEffect keyword:
                         cloned.Add(new KeywordBuffEffect(new List<CardKeyword>(keyword.GrantedKeywords)));
+                        break;
+                    case TribeBuffEffect tribe:
+                        cloned.Add(new TribeBuffEffect(tribe.AddedTribes));
                         break;
                     case RemoveKeywordBuffEffect remove:
                         cloned.Add(new RemoveKeywordBuffEffect(remove.KeywordsToRemove.ToList()));
@@ -493,6 +497,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     case "addkeyword":
                         return CreateKeywordEffectFromConfig(effectConfig, customParameters);
 
+                    case "addtribe":
+                        return CreateTribeEffectFromConfig(effectConfig, customParameters);
+
                     default:
                         _logger.LogWarning("Unknown effect type: {EffectType}", effectConfig.Type);
                         return null;
@@ -514,7 +521,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             {
                 // 从配置中提取属性修改信息
                 var statType = GetParameterValue<string>(effectConfig.Parameters, "statType", customParameters) ?? "Attack";
-                var value = GetParameterValue<int?>(effectConfig.Parameters, "value", customParameters) ?? 1;
+                var value = GetParameterValue<double?>(effectConfig.Parameters, "value", customParameters) ?? 1d;
                 var layer = GetParameterValue<string>(effectConfig.Parameters, "layer", customParameters) ?? "Additive";
 
                 // 解析StatType
@@ -597,6 +604,50 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating keyword effect from config");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 创建种类效果
+        /// </summary>
+        private IBuffEffect? CreateTribeEffectFromConfig(BuffEffectConfig effectConfig, Dictionary<string, object?>? customParameters)
+        {
+            try
+            {
+                var tribe = GetParameterValue<string>(effectConfig.Parameters, "tribe", customParameters);
+                var tribes = GetParameterValue<List<string>>(effectConfig.Parameters, "tribes", customParameters);
+
+                var tribeList = new List<string>();
+                if (!string.IsNullOrWhiteSpace(tribe))
+                {
+                    tribeList.Add(tribe);
+                }
+
+                if (tribes != null && tribes.Any())
+                {
+                    tribeList.AddRange(tribes);
+                }
+
+                var normalized = tribeList
+                    .Where(static value => !string.IsNullOrWhiteSpace(value))
+                    .Select(static value => value.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (normalized.Count == 0)
+                {
+                    _logger.LogWarning("No tribes specified for tribe effect");
+                    return null;
+                }
+
+                var tribeEffect = new TribeBuffEffect(normalized);
+                _logger.LogDebug("Created tribe effect: [{Tribes}]", string.Join(", ", normalized));
+                return tribeEffect;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating tribe effect from config");
                 return null;
             }
         }

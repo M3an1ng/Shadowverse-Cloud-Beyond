@@ -177,10 +177,12 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
                 const desc = p.description;
                 const rawScope = p.scope || p.Scope;
                 const scope = String(rawScope || 'Input').toLowerCase() === 'output' ? '输出' : '输入';
+                const shouldShowCodeName = propertyName && String(propertyName).toLowerCase() !== String(name || '').toLowerCase();
                 
                 let display = `<span class="param-name">${name || 'Unknown'}</span>`;
-                if (type) display += ` <span class="param-type">(${type})</span>`;
-                if (scope) display += ` <span class="param-scope">[${scope}]</span>`;
+                if (shouldShowCodeName) display += ` <span class="param-code">(${propertyName})</span>`;
+                if (type) display += ` <span class="param-type">&lt;${type}&gt;</span>`;
+                if (scope) display += `<span class="param-scope">[${scope}]</span>`;
                 if (desc) display += `: <span class="param-desc">${desc}</span>`;
                 
                 return display;
@@ -641,6 +643,7 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
         container.className = 'trigger-count-limit-container';
 
         const currentLimit = this.config.countLimit || {};
+        const sameNameLimitEnabled = !!this.config.limitSameNameOncePerTransaction;
 
         const perTurnInput = this.createNumberInput(
             currentLimit.maxPerTurn ?? null,
@@ -663,10 +666,37 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
 
         container.appendChild(grid);
 
+        const sameNameLimitLabel = document.createElement('label');
+        sameNameLimitLabel.className = 'zone-checkbox-item special-option';
+
+        const sameNameLimitInput = document.createElement('input');
+        sameNameLimitInput.type = 'checkbox';
+        sameNameLimitInput.checked = sameNameLimitEnabled;
+
+        const sameNameLimitText = document.createElement('span');
+        sameNameLimitText.textContent = '同名能力单事务限一次';
+
+        sameNameLimitLabel.appendChild(sameNameLimitInput);
+        sameNameLimitLabel.appendChild(sameNameLimitText);
+        if (sameNameLimitEnabled) {
+            sameNameLimitLabel.classList.add('selected');
+        }
+
+        sameNameLimitInput.addEventListener('change', (e) => {
+            this.updateConfig({ limitSameNameOncePerTransaction: e.target.checked });
+            if (e.target.checked) {
+                sameNameLimitLabel.classList.add('selected');
+            } else {
+                sameNameLimitLabel.classList.remove('selected');
+            }
+        });
+
+        container.appendChild(sameNameLimitLabel);
+
         const formGroup = this.createFormGroup(
             this.resolveText('countLimitLabel', '触发次数限制'),
             container,
-            this.resolveText('countLimitHelp', '留空或填写 0/负数表示不限（全局限制对单个能力实例贯穿整局生效）')
+            this.resolveText('countLimitHelp', '留空或填写 0/负数表示不限（全局限制对单个能力实例贯穿整局生效；可选同名单事务限一次）')
         );
         formGroup.className += ' full-width';
         return formGroup;
@@ -700,6 +730,7 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
             ? validZones.map(zone => zoneLabelMap[zone] || zone).join(', ')
             : '不限';
         const revalidateDisplay = this.config?.revalidateZoneBeforeExecution ? '是' : '否';
+        const sameNameLimitDisplay = this.config?.limitSameNameOncePerTransaction ? '启用' : '关闭';
 
         container.innerHTML = `
             <div class="locked-summary-row">
@@ -713,6 +744,10 @@ export class TriggerConfigEditor extends MetadataDrivenComponent {
             <div class="locked-summary-row">
                 <span class="locked-label">关联方</span>
                 <span class="locked-value">${relationDisplay}</span>
+            </div>
+            <div class="locked-summary-row">
+                <span class="locked-label">同名单事务限制</span>
+                <span class="locked-value">${sameNameLimitDisplay}</span>
             </div>
             ${lockZones ? `
             <div class="locked-summary-row">

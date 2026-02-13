@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Interfaces;
+using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Hubs.Filters
@@ -66,6 +67,7 @@ namespace ShadowverseBeyond.Server.Hubs.Filters
             else
             {
                 _logger.LogWarning("UserIdentifier/PlayerId missing or invalid for {MethodName}. Cannot create GameContext.", invocationContext.HubMethodName);
+                RuntimeGuardrailMetrics.RecordCannotCreateGameContext("missing_or_invalid_player_id", gameId, invocationContext.HubMethodName);
                 return await next(invocationContext);
             }
 
@@ -74,6 +76,7 @@ namespace ShadowverseBeyond.Server.Hubs.Filters
             if (gameState == null)
             {
                 _logger.LogWarning("Failed to find game state for GameId: {GameId}. Cannot create GameContext.", gameId);
+                RuntimeGuardrailMetrics.RecordCannotCreateGameContext("missing_game_state", gameId, invocationContext.HubMethodName);
                 // Let the Hub method handle the logic of a missing game state.
                 return await next(invocationContext);
             }

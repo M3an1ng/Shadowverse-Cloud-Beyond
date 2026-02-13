@@ -76,6 +76,12 @@ namespace ShadowverseBeyond.Server.Dtos
         public Dictionary<string, int> Counters { get; set; } = new();
 
         /// <summary>
+        /// Optional localized display names for counter keys.
+        /// </summary>
+        [JsonPropertyName("counterDisplayNames")]
+        public Dictionary<string, string> CounterDisplayNames { get; set; } = new();
+
+        /// <summary>
         /// Base attack value (from CardDefinition).
         /// </summary>
         public int Attack { get; init; }
@@ -145,6 +151,11 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Fusion ability summaries for action button rendering.
         /// </summary>
         public List<AbilityActionSummaryDto> FusionAbilities { get; set; } = new();
+
+        /// <summary>
+        /// Material card instances that have been fused into this card.
+        /// </summary>
+        public List<CardInstanceDto> FusedCards { get; set; } = new();
 
         /// <summary>
         /// Number of attacks made by this follower instance this turn.

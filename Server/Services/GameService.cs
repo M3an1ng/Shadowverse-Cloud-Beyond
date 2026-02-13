@@ -28,6 +28,7 @@ using System;
 using System.Collections.Concurrent; // For ConcurrentDictionary
 using System.Collections.Generic; // Add for List<>
 using System.Linq; // For helper methods potentially
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events; // Base Event DTO
@@ -43,17 +44,20 @@ using ShadowverseBeyond.Server.Domain.Events; // Added for IEventProcessor and P
 using ShadowverseBeyond.Server.Domain.Factories; // Added for ICardFactory
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Query;
-
-using ShadowverseBeyond.Server.Domain.Abilities; // Added for AbilityManager
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for keyword constants
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
+using ShadowverseBeyond.Server.Infrastructure.Services;
+using Microsoft.EntityFrameworkCore;
+using ShadowverseBeyond.Server.Infrastructure.Data;
 
 namespace ShadowverseBeyond.Server.Services
 {
     public class GameService : IGameService
     {
+        private sealed record PlayerIdentitySnapshot(string DisplayName, string AvatarUrl);
+
         // Dictionary to track the player whose action chain is currently being processed per game - Declaration moved/exists elsewhere
         // Removed duplicate declaration from line 57
         private readonly IHubContext<GameHub> _hubContext; // Changed type to non-generic client
@@ -78,6 +82,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, Task> _gameProcessingLoops = new(); // Stores the running Task for each game's loop
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _gameLoopCancellationTokens = new(); // Stores cancellation tokens for each loop
         private readonly ConcurrentDictionary<string, Timer> _turnTimers = new();
+        private readonly ConcurrentDictionary<Guid, string> _trackedEntityGameIds = new();
 
         // Dictionary to manage DI scopes for each game session
         // Flag to prevent re-entrant EndTurn processing for the same game - REMOVED by Roo
@@ -580,7 +585,7 @@ namespace ShadowverseBeyond.Server.Services
                             throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
                         }
 
-                        initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Surrender"));
+                        initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "投降"));
                         break;
                     }
 
@@ -592,7 +597,7 @@ namespace ShadowverseBeyond.Server.Services
                             throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Opponent not found for player {actionWrapper.PlayerId}.");
                         }
 
-                        initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "Disconnect"));
+                        initialEvents.Add(new GameEndEvent(opponent.PlayerId, actionWrapper.PlayerId, "网络连接断开"));
                         break;
                     }
 
@@ -744,6 +749,7 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
+                selection.DeckClass ??= deck.Class;
                 return ExpandDeckCardIds(validation.Data);
             }
 
@@ -760,6 +766,7 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
+                selection.DeckClass ??= deckClass;
                 return ExpandDeckCardIds(validation.Data);
             }
 
@@ -798,6 +805,107 @@ namespace ShadowverseBeyond.Server.Services
             return expanded;
         }
 
+        private CardClass ResolveSelectionDeckClass(MatchDeckSelection selection, IReadOnlyList<int> expandedDeckIds)
+        {
+            if (selection.DeckClass.HasValue)
+            {
+                return selection.DeckClass.Value;
+            }
+
+            foreach (var cardId in expandedDeckIds)
+            {
+                var definition = _gameDataProvider.GetCardDefinition(cardId);
+                if (definition == null) continue;
+                if (definition.Class != CardClass.Neutral)
+                {
+                    return definition.Class;
+                }
+            }
+
+            return CardClass.Neutral;
+        }
+
+        private static string BuildFallbackDisplayName(Guid playerId)
+        {
+            return "PLAYER";
+        }
+
+        private async Task ApplyPlayerIdentityAsync(IServiceProvider scopeServiceProvider, params PlayerState[] players)
+        {
+            if (players == null || players.Length == 0)
+            {
+                return;
+            }
+
+            var nonAiPlayers = players
+                .Where(player => player != null && !player.IsAI && player.PlayerId != Guid.Empty)
+                .ToList();
+
+            var identities = new Dictionary<Guid, PlayerIdentitySnapshot>();
+            if (nonAiPlayers.Count > 0)
+            {
+                try
+                {
+                    var db = scopeServiceProvider.GetService<ApplicationDbContext>();
+                    if (db != null)
+                    {
+                        var playerIds = nonAiPlayers
+                            .Select(player => player.PlayerId)
+                            .Distinct()
+                            .ToList();
+
+                        var users = await db.Users
+                            .AsNoTracking()
+                            .Where(user => playerIds.Contains(user.Id))
+                            .Select(user => new { user.Id, user.Username, user.AvatarUrl })
+                            .ToListAsync();
+
+                        foreach (var user in users)
+                        {
+                            identities[user.Id] = new PlayerIdentitySnapshot(
+                                user.Username?.Trim() ?? string.Empty,
+                                user.AvatarUrl?.Trim() ?? string.Empty);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[GameService] Failed to load player identity info for active match.");
+                }
+            }
+
+            foreach (var player in players)
+            {
+                if (player == null)
+                {
+                    continue;
+                }
+
+                if (player.IsAI)
+                {
+                    player.DisplayName = "AI";
+                    player.AvatarUrl = string.Empty;
+                    continue;
+                }
+
+                if (identities.TryGetValue(player.PlayerId, out var identity))
+                {
+                    player.DisplayName = string.IsNullOrWhiteSpace(identity.DisplayName)
+                        ? BuildFallbackDisplayName(player.PlayerId)
+                        : identity.DisplayName;
+                    player.AvatarUrl = identity.AvatarUrl;
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(player.DisplayName))
+                {
+                    player.DisplayName = BuildFallbackDisplayName(player.PlayerId);
+                }
+
+                player.AvatarUrl ??= string.Empty;
+            }
+        }
+
         // --- Refactored to GetOrCreateGameStateAsync ---
         /// <summary>
         /// Gets the current game state domain entity for the given game ID, or creates a new one if it doesn't exist.
@@ -809,6 +917,7 @@ namespace ShadowverseBeyond.Server.Services
         {
             if (_gameStates.TryGetValue(gameId, out var existingState))
             {
+                await ApplyPlayerIdentityAsync(scopeServiceProvider, existingState.Player1, existingState.Player2);
                 return existingState;
             }
 
@@ -831,7 +940,27 @@ namespace ShadowverseBeyond.Server.Services
                     createAi = useAiFallback;
                 }
 
-                // 用户级追踪开关：不在新对局时重置
+                // 新对局开始时，重置三类追踪开关（用户级）
+                var traceSettings = scopeServiceProvider.GetService<IConditionTraceSettings>();
+                if (traceSettings != null)
+                {
+                    traceSettings.SetConditionEnabled(player1Id, false);
+                    traceSettings.SetTargetEnabled(player1Id, false);
+                    traceSettings.SetEffectEnabled(player1Id, false);
+
+                    if (player2Id != player1Id)
+                    {
+                        traceSettings.SetConditionEnabled(player2Id, false);
+                        traceSettings.SetTargetEnabled(player2Id, false);
+                        traceSettings.SetEffectEnabled(player2Id, false);
+                    }
+
+                    _logger.LogInformation(
+                        "[GameService:{GameId}] Reset trace switches on game creation. Player1={Player1Id}, Player2={Player2Id}",
+                        gameId,
+                        player1Id,
+                        player2Id);
+                }
 
                 var allCardDefinitions = _gameDataProvider.GetAllCardDefinitions();
                 if (!allCardDefinitions.Any())
@@ -843,6 +972,7 @@ namespace ShadowverseBeyond.Server.Services
                 bool player1IsFirst = new Random().Next(0, 2) == 0;
                 var player1State = new PlayerState(player1Id) { IsFirst = player1IsFirst };
                 var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = createAi };
+                await ApplyPlayerIdentityAsync(scopeServiceProvider, player1State, player2State);
 
                 var newGameState = new GameState(gameId, player1State, player2State, player1IsFirst ? player1Id : player2Id);
                 var secondPlayerState = player1IsFirst ? player2State : player1State;
@@ -850,9 +980,10 @@ namespace ShadowverseBeyond.Server.Services
                 // --- Manual Manager Creation ---
                 var loggerFactory = scopeServiceProvider.GetRequiredService<ILoggerFactory>();
                 var abilityFactory = scopeServiceProvider.GetRequiredService<IAbilityFactory>();
+                var triggerOrderingPolicy = scopeServiceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.Ordering.ITriggerOrderingPolicy>();
 
                 var systemAbilities = scopeServiceProvider.GetServices<IAbility>();
-                var abilityManager = new AbilityManager(loggerFactory.CreateLogger<AbilityManager>(), abilityFactory, systemAbilities);
+                var abilityManager = new AbilityManager(loggerFactory.CreateLogger<AbilityManager>(), abilityFactory, systemAbilities, triggerOrderingPolicy);
                 var buffManager = new BuffManager(loggerFactory.CreateLogger<BuffManager>(), abilityManager);
                 var auraManager = new AuraManager(
                     loggerFactory.CreateLogger<AuraManager>(),
@@ -932,6 +1063,9 @@ namespace ShadowverseBeyond.Server.Services
                     _logger.LogWarning("[GameService] Opponent deck selection invalid. GameId={GameId}", gameId);
                     return null;
                 }
+
+                player1State.Class = ResolveSelectionDeckClass(room.HostDeckSelection, hostDeckIds);
+                player2State.Class = ResolveSelectionDeckClass(opponentSelection, opponentDeckIds);
 
                 foreach (var cardId in hostDeckIds)
                 {
@@ -1077,19 +1211,27 @@ namespace ShadowverseBeyond.Server.Services
 
             try
             {
+                if (cardInHand.HasKeyword(CardKeyword.CannotUse))
+                {
+                    result.IsPlayable = false;
+                    result.FailureReason = "该卡牌处于【无法使用】状态。";
+                    return result;
+                }
+
                 // --- Basic Checks ---
                 var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
                 var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, gameContext, abilityConfigs);
                 result.PlayModes = modeResolution.Modes.ToList();
                 result.SelectedPlayMode = modeResolution.SelectedMode;
+                result.SelectedAbilityRuntimeId = modeResolution.SelectedAbilityRuntimeId;
 
                 if (!modeResolution.HasAvailableMode)
                 {
-                      result.IsPlayable = false;
-                      result.FailureReason = modeResolution.DefaultFailureReason ??
-                          $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
-                      return result;
-                  }
+                    result.IsPlayable = false;
+                    result.FailureReason = modeResolution.DefaultFailureReason ??
+                        $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
+                    return result;
+                }
 
                 // Field Space Check (if Follower)
                 if (cardDefinition.Type == CardType.Follower)
@@ -1320,22 +1462,16 @@ namespace ShadowverseBeyond.Server.Services
                     // Timestamp and Type are handled by the base GameEventDto constructor
                 };
 
+                TrackEntityOwnership(gameId, playabilityResults.Keys, nameof(HandPlayabilityUpdateDto));
+
                 // Broadcast the update specifically to the player
                 // Ensure _hubContext is injected and available
                 if (_hubContext != null)
                 {
-                    // 【修复】使用Group而不是User，因为前端使用查询字符串连接，没有设置用户身份验证
-                    // SignalR的Clients.User()需要用户身份验证，但我们使用的是查询字符串传递playerId
-                    // 所以改用Clients.Group()向整个游戏组广播，然后前端根据PlayerId过滤
-                    string groupName = $"Game_{gameId}";
+                    string groupName = SignalRGroupNames.Player(gameId, playerId);
                     var clientProxy = _hubContext.Clients.Group(groupName);
-                    // 【临时调试日志】序列化DTO以检查其确切内容
-                    var dtoAsJson = "Serialization failed";
-                    try { dtoAsJson = System.Text.Json.JsonSerializer.Serialize(updateDto); } catch { }
-                    _logger.LogInformation("[DEBUG_PLAYABILITY] Sending HandPlayabilityUpdate to Group {GroupName} for Player {PlayerId}. DTO JSON: {DtoJson}", groupName, playerId, dtoAsJson);
-
                     await clientProxy.SendAsync("ReceiveHandPlayabilityUpdate", updateDto);
-                    _logger.LogInformation("[GameService:{GameId}] Sent hand playability update to Game Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
+                    _logger.LogInformation("[GameService:{GameId}] Sent hand playability update to Player Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
                 }
                 else
                 {
@@ -1398,17 +1534,14 @@ namespace ShadowverseBeyond.Server.Services
                     PlayabilityResults = playabilityResults
                 };
 
+                TrackEntityOwnership(gameId, playabilityResults.Keys, nameof(ActPlayabilityUpdateDto));
+
                 if (_hubContext != null)
                 {
-                    string groupName = $"Game_{gameId}";
+                    string groupName = SignalRGroupNames.Player(gameId, playerId);
                     var clientProxy = _hubContext.Clients.Group(groupName);
-
-                    var dtoAsJson = "Serialization failed";
-                    try { dtoAsJson = System.Text.Json.JsonSerializer.Serialize(updateDto); } catch { }
-                    _logger.LogInformation("[DEBUG_PLAYABILITY] Sending ActPlayabilityUpdate to Group {GroupName} for Player {PlayerId}. DTO JSON: {DtoJson}", groupName, playerId, dtoAsJson);
-
                     await clientProxy.SendAsync("ReceiveActPlayabilityUpdate", updateDto);
-                    _logger.LogInformation("[GameService:{GameId}] Sent Act playability update to Game Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
+                    _logger.LogInformation("[GameService:{GameId}] Sent Act playability update to Player Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
                 }
                 else
                 {
@@ -1546,6 +1679,13 @@ namespace ShadowverseBeyond.Server.Services
         {
             StopTurnTimer(gameId);
 
+            if (!TryGetActiveRoom(gameId, out var roomClosedReason))
+            {
+                _logger.LogInformation("[TurnTimer:{GameId}] Match room is not active ({Reason}). Timer not started.", gameId, roomClosedReason);
+                StopTurnTimer(gameId, true);
+                return;
+            }
+
             if (!_gameStates.TryGetValue(gameId, out var gameState) || gameState == null)
             {
                 _logger.LogWarning("[TurnTimer:{GameId}] Cannot start timer because game state is missing.", gameId);
@@ -1609,6 +1749,13 @@ namespace ShadowverseBeyond.Server.Services
             {
                 StopTurnTimer(gameId);
 
+                if (!TryGetActiveRoom(gameId, out var roomClosedReason))
+                {
+                    _logger.LogInformation("[TurnTimeout:{GameId}] Match room is not active ({Reason}). Timeout ignored.", gameId, roomClosedReason);
+                    StopTurnTimer(gameId, true);
+                    return;
+                }
+
                 if (!_gameStates.TryGetValue(gameId, out var gameState) || gameState == null)
                 {
                     _logger.LogWarning("[TurnTimeout:{GameId}] Game state not found.", gameId);
@@ -1662,6 +1809,25 @@ namespace ShadowverseBeyond.Server.Services
             {
                 _logger.LogError(ex, "[TurnTimeout:{GameId}] Failed to handle turn timeout for Player {PlayerId}.", gameId, playerId);
             }
+        }
+
+        private bool TryGetActiveRoom(string gameId, out string reason)
+        {
+            reason = "Unknown";
+            var roomResult = _matchService.Get(gameId);
+            if (!roomResult.Success || roomResult.Room == null)
+            {
+                reason = roomResult.Message ?? "Room not found";
+                return false;
+            }
+
+            if (roomResult.Room.Status == MatchStatus.Closed)
+            {
+                reason = roomResult.Room.ClosedReason ?? "Room closed";
+                return false;
+            }
+
+            return true;
         }
 
         private void ResolvePendingChoiceForTimeout(PlayerChoiceRequest request)
@@ -1862,7 +2028,24 @@ namespace ShadowverseBeyond.Server.Services
         private async Task BroadcastEventAsync(string gameId, GameEventDto gameEvent)
         {
             if (gameEvent == null) return;
-            string groupName = $"Game_{gameId}";
+            var normalizedGameId = NormalizeGameId(gameId);
+            TrackEntityOwnership(normalizedGameId, ExtractTrackedEntityIds(gameEvent), gameEvent.GetType().Name);
+
+            if (TryGetPrivateTargetPlayerId(gameEvent, out var privateTargetPlayerId))
+            {
+                await BroadcastEventToPlayerAsync(normalizedGameId, privateTargetPlayerId, gameEvent);
+                return;
+            }
+
+            string groupName = SignalRGroupNames.Game(normalizedGameId);
+
+            if (IsPrivatePayloadEvent(gameEvent))
+            {
+                RuntimeGuardrailMetrics.RecordPrivatePayloadToGameGroup(normalizedGameId, gameEvent.GetType().Name, groupName);
+                _logger.LogWarning("[GUARDRAIL] private_payload_to_game_group detected. GameId={GameId}, EventType={EventType}, GroupName={GroupName}",
+                    normalizedGameId, gameEvent.GetType().Name, groupName);
+            }
+
             // <<< ADD DETAILED LOG BEFORE TRYING TO SEND >>>
             // Log the full event object if possible, otherwise key details. Using System.Text.Json for serialization.
             // --- Roo Add: Pre-Serialization Check ---
@@ -1870,20 +2053,20 @@ namespace ShadowverseBeyond.Server.Services
             try { eventDetails = System.Text.Json.JsonSerializer.Serialize(gameEvent, new System.Text.Json.JsonSerializerOptions { WriteIndented = false }); } // Use System.Text.Json
             catch (Exception jsonEx) { eventDetails = $"Error serializing: {jsonEx.Message}"; }
             _logger.LogInformation("[BROADCAST_ATTEMPT:{GameId}] Attempting to broadcast event of type {EventType} to group {GroupName}. Details: {EventDetails}",
-                gameId, gameEvent.GetType().Name, groupName, eventDetails);
+                normalizedGameId, gameEvent.GetType().Name, groupName, eventDetails);
             // <<< HUB_TRACE LOGGING ADDED BY ROO >>>
             // <<< END ADDED LOG >>>
-            _logger.LogDebug("[GameService:{GameId}] Broadcasting event {EventType} to group {GroupName}.", gameId, gameEvent.GetType().Name, groupName); // Keep original debug log too
+            _logger.LogDebug("[GameService:{GameId}] Broadcasting event {EventType} to group {GroupName}.", normalizedGameId, gameEvent.GetType().Name, groupName); // Keep original debug log too
 
             try
             {
                 // Using IClientMethodMapper for dispatch - Reverted to direct call
                 await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, gameEvent);
-                _logger.LogDebug("[GameService:{GameId}] Successfully invoked BroadcastEventToGroupAllAsync via mapper for event type {EventType}.", gameId, gameEvent.GetType().Name); // Updated log message
+                _logger.LogDebug("[GameService:{GameId}] Successfully invoked BroadcastEventToGroupAllAsync via mapper for event type {EventType}.", normalizedGameId, gameEvent.GetType().Name); // Updated log message
             }
             catch (Exception ex) // Catch potential errors during mapping or invocation
             {
-                _logger.LogError(ex, "[GameService:{GameId}] Error mapping or invoking client method for event type {EventType}.", gameId, gameEvent.GetType().Name);
+                _logger.LogError(ex, "[GameService:{GameId}] Error mapping or invoking client method for event type {EventType}.", normalizedGameId, gameEvent.GetType().Name);
                 // Do not re-throw here, as broadcasting failure shouldn't crash the main game logic flow.
             }
         } // <<< END BroadcastEventAsync method
@@ -1896,20 +2079,150 @@ namespace ShadowverseBeyond.Server.Services
             if (gameEvent == null) return;
             // Note: This relies on the client-side connection having its ConnectionId associated with the PlayerId group.
             // This is a common pattern but requires correct group management in the Hub.
-            string playerGroupName = $"Player_{playerId}";
+            string normalizedGameId = NormalizeGameId(gameId);
+            string playerGroupName = SignalRGroupNames.Player(normalizedGameId, playerId);
             _logger.LogInformation("[BROADCAST_PLAYER:{GameId}] Attempting to broadcast event of type {EventType} to player group {PlayerGroupName}.",
-                gameId, gameEvent.GetType().Name, playerGroupName);
+                normalizedGameId, gameEvent.GetType().Name, playerGroupName);
 
             try
             {
                 await _clientMethodMapper.BroadcastEventToGroupAsync(playerGroupName, gameEvent);
                 _logger.LogDebug("[GameService:{GameId}] Successfully invoked SendAsync for event type {EventType} to player group {PlayerGroupName}.",
-                    gameId, gameEvent.GetType().Name, playerGroupName);
+                    normalizedGameId, gameEvent.GetType().Name, playerGroupName);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[GameService:{GameId}] Error invoking client method for event type {EventType} to player group {PlayerGroupName}.",
-                    gameId, gameEvent.GetType().Name, playerGroupName);
+                    normalizedGameId, gameEvent.GetType().Name, playerGroupName);
+            }
+        }
+
+        private static string NormalizeGameId(string gameId)
+        {
+            if (Guid.TryParse(gameId, out var parsed))
+            {
+                return parsed.ToString("D");
+            }
+
+            return gameId;
+        }
+
+        private static bool IsPrivatePayloadEvent(GameEventDto gameEvent)
+        {
+            return gameEvent is HandUpdatedEventDto
+                or HandPlayabilityUpdateDto
+                or ActPlayabilityUpdateDto
+                or PlayerChoiceRequestedEventDto;
+        }
+
+        private static bool TryGetPrivateTargetPlayerId(GameEventDto gameEvent, out Guid playerId)
+        {
+            switch (gameEvent)
+            {
+                case HandUpdatedEventDto handUpdatedEvent:
+                    playerId = handUpdatedEvent.PlayerId;
+                    return playerId != Guid.Empty;
+                case HandPlayabilityUpdateDto handPlayabilityEvent:
+                    playerId = handPlayabilityEvent.PlayerId;
+                    return playerId != Guid.Empty;
+                case ActPlayabilityUpdateDto actPlayabilityEvent:
+                    playerId = actPlayabilityEvent.PlayerId;
+                    return playerId != Guid.Empty;
+                case PlayerChoiceRequestedEventDto choiceRequestedEvent:
+                    playerId = choiceRequestedEvent.ChoiceRequest?.RequestingPlayerId ?? Guid.Empty;
+                    return playerId != Guid.Empty;
+                default:
+                    playerId = Guid.Empty;
+                    return false;
+            }
+        }
+
+        private IEnumerable<Guid> ExtractTrackedEntityIds(GameEventDto gameEvent)
+        {
+            var properties = gameEvent.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public);
+            foreach (var property in properties)
+            {
+                if (!ShouldTrackEntityProperty(property.Name))
+                {
+                    continue;
+                }
+
+                object? value;
+                try
+                {
+                    value = property.GetValue(gameEvent);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (value is Guid guidValue)
+                {
+                    if (guidValue != Guid.Empty)
+                    {
+                        yield return guidValue;
+                    }
+                    continue;
+                }
+
+                if (value is IEnumerable<Guid> guidValues)
+                {
+                    foreach (var guid in guidValues)
+                    {
+                        if (guid != Guid.Empty)
+                        {
+                            yield return guid;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static bool ShouldTrackEntityProperty(string propertyName)
+        {
+            if (propertyName.Contains("Player", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Contains("Ability", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Contains("Buff", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Contains("Game", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Contains("Event", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return propertyName.Contains("Card", StringComparison.OrdinalIgnoreCase) ||
+                   propertyName.Contains("Unit", StringComparison.OrdinalIgnoreCase) ||
+                   propertyName.Contains("Entity", StringComparison.OrdinalIgnoreCase) ||
+                   propertyName.Contains("Uid", StringComparison.OrdinalIgnoreCase) ||
+                   propertyName.Contains("InstanceId", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void TrackEntityOwnership(string gameId, IEnumerable<Guid> entityIds, string eventType)
+        {
+            var normalizedGameId = NormalizeGameId(gameId);
+            if (_trackedEntityGameIds.Count > 200_000)
+            {
+                _trackedEntityGameIds.Clear();
+                _logger.LogWarning("[GUARDRAIL] Entity ownership tracker exceeded capacity and was reset.");
+            }
+
+            foreach (var entityId in entityIds)
+            {
+                if (entityId == Guid.Empty)
+                {
+                    continue;
+                }
+
+                if (_trackedEntityGameIds.TryGetValue(entityId, out var trackedGameId) &&
+                    !string.Equals(trackedGameId, normalizedGameId, StringComparison.OrdinalIgnoreCase))
+                {
+                    RuntimeGuardrailMetrics.RecordCrossGameEntityViolation(entityId.ToString("D"), trackedGameId, normalizedGameId, eventType);
+                    _logger.LogError("[GUARDRAIL] cross_game_entity_violation detected. EntityId={EntityId}, ExistingGameId={ExistingGameId}, ObservedGameId={ObservedGameId}, EventType={EventType}",
+                        entityId, trackedGameId, normalizedGameId, eventType);
+                    continue;
+                }
+
+                _trackedEntityGameIds[entityId] = normalizedGameId;
             }
         }
 

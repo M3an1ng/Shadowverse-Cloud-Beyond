@@ -116,9 +116,9 @@ namespace ShadowverseBeyond.Server.Tests
                 var effects = await ability.CreateEffectsAsync(cancellableContext, targetResult);
                 Assert.Single(effects);
                 Assert.Equal(EffectType.Choose, effects[0].Type);
-                Assert.Equal(2, effects[0].ChainedAbilities.Count);
-                Assert.Contains(effects[0].ChainedAbilities, a => a.Name == "Branch A");
-                Assert.Contains(effects[0].ChainedAbilities, a => a.Name == "Branch B");
+                Assert.Equal(2, effects[0].EffectConfig.ChainedAbilities.Count);
+                Assert.Contains(effects[0].EffectConfig.ChainedAbilities, a => a.Name == "Branch A");
+                Assert.Contains(effects[0].EffectConfig.ChainedAbilities, a => a.Name == "Branch B");
             }
 
             // Commit pass should keep the same option set without triggering player prompt.
@@ -138,9 +138,9 @@ namespace ShadowverseBeyond.Server.Tests
                 var effects = await ability.CreateEffectsAsync(committedContext, targetResult);
                 Assert.Single(effects);
                 Assert.Equal(EffectType.Choose, effects[0].Type);
-                Assert.Equal(2, effects[0].ChainedAbilities.Count);
-                Assert.Contains(effects[0].ChainedAbilities, a => a.Name == "Branch A");
-                Assert.Contains(effects[0].ChainedAbilities, a => a.Name == "Branch B");
+                Assert.Equal(2, effects[0].EffectConfig.ChainedAbilities.Count);
+                Assert.Contains(effects[0].EffectConfig.ChainedAbilities, a => a.Name == "Branch A");
+                Assert.Contains(effects[0].EffectConfig.ChainedAbilities, a => a.Name == "Branch B");
             }
 
             Assert.Equal(0, fakePending.WaitCallCount);
@@ -206,7 +206,15 @@ namespace ShadowverseBeyond.Server.Tests
 
         private sealed class NullAbilityManager : IAbilityManager
         {
-            public List<Ability> CreateAbilitiesForCard(CardInstance cardInstance, List<AbilityConfig> abilityConfigs, Guid? sourceBuffId = null) => new();
+            public List<Ability> CreateAbilitiesForCard(
+                CardInstance cardInstance,
+                List<AbilityConfig> abilityConfigs,
+                Guid? sourceBuffId = null) => new();
+            public List<Ability> CreateAbilitiesForCard(
+                CardInstance cardInstance,
+                List<AbilityConfig> abilityConfigs,
+                Guid? sourceBuffId,
+                GameState? gameState) => new();
             public void RegisterAbility(IAbility ability) { }
             public void UnregisterAbility(IAbility ability) { }
             public void UnregisterCardAbilities(Guid cardInstanceId) { }
@@ -248,6 +256,7 @@ namespace ShadowverseBeyond.Server.Tests
             public DomainOperationResult ApplyKeywordBuff(GameContext context, CardInstance target, List<CardKeyword> keywords, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
             public DomainOperationResult ApplyRemoveKeywordBuff(GameContext context, CardInstance target, List<CardKeyword> keywordsToRemove, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
             public DomainOperationResult ApplyStatBuff(GameContext context, CardInstance target, List<StatModification> modifications, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
+            public DomainOperationResult ApplyTribeBuff(GameContext context, CardInstance target, List<string> tribes, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
             public DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context, bool canStack = true) => throw new NotImplementedException();
             public DomainOperationResult RemoveBuffProcess(Guid buffId, GameContext context) => throw new NotImplementedException();
             public DomainOperationResult RemoveBuffsFromSource(long sourceAbilityId, GameContext context) => throw new NotImplementedException();

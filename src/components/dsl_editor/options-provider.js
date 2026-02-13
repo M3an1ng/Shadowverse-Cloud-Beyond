@@ -1,7 +1,7 @@
-import { findIncompleteNode } from "./core.js";
-import { isListOperationNode } from "./pipeline.js";
+import { findIncompleteNode, getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 import { getOptionsForType as getOptionsForTypeFromModule } from "./operators.js";
 import { prepareEditorForRecommendations } from "./ast-normalize.js";
+import { resolveEventTypeHintFromSource } from "./event-translation.js";
 
 function resolveExpectedType(editor) {
     if (!editor) return null;
@@ -19,8 +19,8 @@ function resolveQueryableItemType(editor, sourceType) {
     if (!editor || !sourceType) return null;
     const innerType = editor.getCollectionInnerType(sourceType);
     if (innerType) return innerType;
-    if (typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(sourceType)) {
-        return sourceType;
+    if (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceType)) {
+        return editor.normalizeTypeName(sourceType) || sourceType;
     }
     return null;
 }
@@ -107,14 +107,19 @@ export function getOptionsForIncompleteNode(editor, node) {
                 // 逻辑操作符需要布尔表达式
                 return getBooleanExpressionOptions(editor);
             } else if (['|', '&', '~'].includes(node.operator)) {
-                const leftType = node.leftOperand ? editor.calculateASTReturnType(node.leftOperand) : null;
-                if (leftType && editor.isCollectionType(leftType)) {
-                    editor.slotExpectedType = leftType;
+                const leftType = typeof editor.getSemanticNodeType === "function"
+                    ? editor.getSemanticNodeType(node.leftOperand)
+                    : getCoreSemanticNodeType(node.leftOperand);
+                if (leftType) {
+                    const expectedType = typeof editor.normalizeSetOperandExpectedType === "function"
+                        ? editor.normalizeSetOperandExpectedType(leftType)
+                        : editor.normalizeTypeName(leftType);
+                    editor.slotExpectedType = expectedType || null;
                 }
                 return getDataSourceOptions(editor);
             } else {
                 // 比较操作符需要兼容类型的值
-                const leftType = node.leftOperand ? editor.calculateASTReturnType(node.leftOperand) : null;
+                const leftType = getCoreSemanticNodeType(node.leftOperand);
                 if (leftType) {
                     const normalizedLeft = editor.normalizeTypeName(leftType);
                     if (['contains', 'startsWith', 'endsWith'].includes(node.operator)) {
@@ -139,22 +144,28 @@ export function getOptionsForIncompleteNode(editor, node) {
 
     if (node.type === 'listQuery') {
         editor.slotExpectedType = 'Boolean';
-        if (!editor.contextOverride?.name) {
-            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+        if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
+            const sourceType = getCoreSemanticNodeType(node.source);
             const itemType = resolveQueryableItemType(editor, sourceType);
             if (itemType) {
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                    ? resolveEventTypeHintFromSource(editor, node.source)
+                    : null;
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
             }
         }
         return getBooleanExpressionOptions(editor);
     }
 
     if (node.type === 'listSort') {
-        if (!editor.contextOverride?.name) {
-            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+        if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
+            const sourceType = getCoreSemanticNodeType(node.source);
             const itemType = resolveQueryableItemType(editor, sourceType);
             if (itemType) {
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                    ? resolveEventTypeHintFromSource(editor, node.source)
+                    : null;
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
             }
         }
         return getDataSourceOptions(editor);
@@ -166,22 +177,28 @@ export function getOptionsForIncompleteNode(editor, node) {
     }
 
     if (node.type === 'listDistinct') {
-        if (!editor.contextOverride?.name) {
-            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+        if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
+            const sourceType = getCoreSemanticNodeType(node.source);
             const itemType = resolveQueryableItemType(editor, sourceType);
             if (itemType) {
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                    ? resolveEventTypeHintFromSource(editor, node.source)
+                    : null;
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
             }
         }
         return getDataSourceOptions(editor);
     }
 
     if (node.type === 'listSelect') {
-        if (!editor.contextOverride?.name) {
-            const sourceType = node.source?.returnType || editor.calculateASTReturnType?.(node.source);
+        if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
+            const sourceType = getCoreSemanticNodeType(node.source);
             const itemType = resolveQueryableItemType(editor, sourceType);
             if (itemType) {
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
+                    ? resolveEventTypeHintFromSource(editor, node.source)
+                    : null;
+                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
             }
         }
         return getDataSourceOptions(editor);
@@ -192,18 +209,7 @@ export function getOptionsForIncompleteNode(editor, node) {
 }
 
 export function getOptionsForCompleteNode(editor, node) {
-
-    // 关键修复：基于表达式的最后一个节点来提供选项
-    const lastNode = editor.findLastNodeInExpression(node);
-
-    if (lastNode && lastNode !== node) {
-        // 如果最后一个节点不是根节点，基于最后节点的类型提供选项
-        const lastNodeType = editor.getNodeActualReturnType(lastNode);
-
-        const baseOptions = getOptionsForType(editor, lastNodeType);
-        return appendTriggeringEventFieldOptions(editor, baseOptions, lastNode);
-    }
-
+    // 架构约束：完整表达式的后续选项必须基于当前节点（工作区根）而非末端子节点
     // 回退：检查是否是封装的表达式或操作符节点
     const isEncapsulated = node.metadata && node.metadata.type === "encapsulated";
     const isOperatorNode = node.type === 'operator';
@@ -212,18 +218,20 @@ export function getOptionsForCompleteNode(editor, node) {
         // 封装的表达式或操作符节点：基于实际返回类型提供适当的操作符
         const actualReturnType = editor.getNodeActualReturnType(node);
 
-        const baseOptions = getOptionsForType(editor, actualReturnType);
-        return appendTriggeringEventFieldOptions(editor, baseOptions, node);
+        const baseOptions = getOptionsForType(editor, actualReturnType, node);
+        const withFields = appendTriggeringEventFieldOptions(editor, baseOptions, node);
+        return appendTriggeringEventOutputMemberOptions(editor, withFields, node);
     } else {
         // 未封装的表达式：只能继续属性访问或完成表达式
         const actualReturnType = editor.getNodeActualReturnType(node);
 
-        const typeOptions = getOptionsForType(editor, actualReturnType);
-        return appendTriggeringEventFieldOptions(editor, typeOptions, node);
+        const typeOptions = getOptionsForType(editor, actualReturnType, node);
+        const withFields = appendTriggeringEventFieldOptions(editor, typeOptions, node);
+        return appendTriggeringEventOutputMemberOptions(editor, withFields, node);
     }
 }
 
-export function getOptionsForType(editor, type) {
+export function getOptionsForType(editor, type, scopeNode = null) {
 
     const typeOptions = getOptionsForTypeFromModule(editor, type);
     const options = typeOptions.filter(option =>
@@ -241,39 +249,23 @@ export function getOptionsForType(editor, type) {
         option.type === 'enumValue'
     );
 
-    if (editor.isPipelineInline && editor.isLightWorkspace) {
-        return options.filter(option =>
-            option.type !== 'listPipeline' && option.type !== 'listQuery'
-        );
-    }
+    // 允许在管线轻工作区内部继续开启子管线。
+    // 连续 query 的限制由下方 scope 规则控制，避免误伤跨子表达式的合法筛选。
 
-    const hasPipeline = hasListPipelineInEditor(editor);
-    if (hasPipeline) {
-        return options.filter(option => option.type !== 'listPipeline');
+    const scope = unwrapEncapsulatedNode(scopeNode);
+    if (scope?.type === "listQuery") {
+        // 仅限制“同一链路中筛选后紧接筛选”
+        return options.filter(option => option.type !== "listQuery");
     }
 
     return options;
 }
 
-function hasListPipelineInEditor(editor) {
-    if (!editor) return false;
-    const root = editor.virtualRoot?.main || editor.workspaceAST;
-    return containsListOperation(root);
-}
-
-function containsListOperation(node) {
-    if (!node) return false;
-    if (node.metadata?.type === 'encapsulated' && node.metadata?.innerAST) {
-        return containsListOperation(node.metadata.innerAST);
+function unwrapEncapsulatedNode(node) {
+    if (node?.metadata?.type === 'encapsulated' && node?.metadata?.innerAST) {
+        return node.metadata.innerAST;
     }
-    if (isListOperationNode(node)) return true;
-    if (node.type === 'operator') {
-        return containsListOperation(node.leftOperand) || containsListOperation(node.rightOperand);
-    }
-    if (node.type === 'functionCall') {
-        return (node.args || []).some(arg => containsListOperation(arg));
-    }
-    return false;
+    return node;
 }
 
 export function getBooleanExpressionOptions(editor) {
@@ -303,13 +295,20 @@ export function getBooleanExpressionOptions(editor) {
     // 3. 布尔函数 (返回布尔值的函数)
     const functions = editor.metadata?.dsl?.functions || [];
     const booleanFunctions = functions
-        .filter(f => f.returnType === 'Boolean')
+        .filter(f => {
+            const returnType = editor.normalizeTypeName(
+                f.returnType || f.returnTypeName || f.ReturnType || f.ReturnTypeName
+            );
+            return returnType === 'Boolean';
+        })
         .map(f => ({
             type: "function",
             value: f.name,
             label: typeof editor.getReadableFunctionName === "function" ? editor.getReadableFunctionName(f.name) : f.name,
             description: f.description,
-            returnType: f.returnType,
+            returnType: editor.normalizeTypeName(
+                f.returnType || f.returnTypeName || f.ReturnType || f.ReturnTypeName
+            ) || 'Boolean',
             meta: f
         }));
     options.push(...booleanFunctions);
@@ -387,49 +386,53 @@ export function getTriggeringEventFieldOptions(editor) {
     }
 
     const timing = (ctx?.timing || 'On').toString();
-    const allowOutput = timing.toLowerCase() === 'after';
-
     const selected = eventTypes[0];
+    const normalizedSelected = String(selected || '').toLowerCase();
+    const isEffectCompletedEvent = normalizedSelected === 'effectcompleted';
+    const allowOutput = timing.toLowerCase() === 'after' || isEffectCompletedEvent;
     const ev = (editor.metadata?.events || []).find(e =>
         String(e.eventType ?? e.EventType ?? '').toLowerCase() === String(selected).toLowerCase()
     );
-    if (!ev) return [];
+    const baseFieldOptions = [];
+    if (ev) {
+        const parameters = ev.parameters || ev.Parameters || [];
 
-    const parameters = ev.parameters || ev.Parameters || [];
+        const normalizeScope = (s) => String(s || 'both').toLowerCase();
+        const scopeAllowed = (scope) => {
+            const sc = normalizeScope(scope);
+            if (sc === 'both') return true;
+            if (sc === 'input') return true;
+            if (sc === 'output') return allowOutput;
+            return true;
+        };
 
-    const normalizeScope = (s) => String(s || 'both').toLowerCase();
-    const scopeAllowed = (scope) => {
-        const sc = normalizeScope(scope);
-        if (sc === 'both') return true;
-        if (sc === 'input') return true;
-        if (sc === 'output') return allowOutput;
-        return true;
-    };
+        baseFieldOptions.push(...parameters
+            .filter(p => scopeAllowed(p.scope ?? p.Scope))
+            .map(p => {
+                const propertyName = p.propertyName || p.PropertyName || p.name;
+                const fieldDisplayName = p.displayName || p.DisplayName || propertyName;
+                const typeName = editor.normalizeTypeName(p.typeName || p.TypeName || p.type) || 'Object';
+                const typeOverride = p.dslDisplayTypeName || p.DslDisplayTypeName;
+                const displayType = typeOverride
+                    ? (editor.isCollectionType(typeName) ? `${typeOverride}列表` : typeOverride)
+                    : editor.getDisplayTypeName(typeName);
+                const scope = normalizeScope(p.scope || p.Scope);
+                return {
+                    type: 'property',
+                    value: propertyName,
+                    label: fieldDisplayName,
+                    description: `${p.description || p.Description || ''}（${scope}，${displayType}）`,
+                    returnType: typeName,
+                    meta: {
+                        eventType: selected,
+                        propertyName,
+                        scope
+                    }
+                };
+            }));
+    }
 
-    return parameters
-        .filter(p => scopeAllowed(p.scope ?? p.Scope))
-        .map(p => {
-            const propertyName = p.propertyName || p.PropertyName || p.name;
-            const fieldDisplayName = p.displayName || p.DisplayName || propertyName;
-            const typeName = editor.normalizeTypeName(p.typeName || p.TypeName || p.type) || 'Object';
-            const typeOverride = p.dslDisplayTypeName || p.DslDisplayTypeName;
-            const displayType = typeOverride
-                ? (editor.isCollectionType(typeName) ? `${typeOverride}列表` : typeOverride)
-                : editor.getDisplayTypeName(typeName);
-            const scope = normalizeScope(p.scope || p.Scope);
-            return {
-                type: 'property',
-                value: propertyName,
-                label: fieldDisplayName,
-                description: `${p.description || p.Description || ''}（${scope}，${displayType}）`,
-                returnType: typeName,
-                meta: {
-                    eventType: selected,
-                    propertyName,
-                    scope
-                }
-            };
-        });
+    return baseFieldOptions;
 }
 
 function appendTriggeringEventFieldOptions(editor, options, node) {
@@ -437,6 +440,13 @@ function appendTriggeringEventFieldOptions(editor, options, node) {
     const eventFieldOptions = getTriggeringEventFieldOptions(editor);
     if (!eventFieldOptions.length) return options;
     return [...eventFieldOptions, ...options];
+}
+
+function appendTriggeringEventOutputMemberOptions(editor, options, node) {
+    if (!isTriggeringEventOutputsNode(node)) return options;
+    const outputMemberOptions = getTriggeringEventOutputMemberOptions(editor);
+    if (!outputMemberOptions.length) return options;
+    return [...outputMemberOptions, ...options];
 }
 
 function isTriggeringEventContextNode(node) {
@@ -447,4 +457,50 @@ function isTriggeringEventContextNode(node) {
     if (node.type !== 'value') return false;
     const path = String(node.metadata?.fullPath || node.value || '');
     return path.toLowerCase() === 'context.triggeringevent';
+}
+
+function isTriggeringEventOutputsNode(node) {
+    if (!node) return false;
+    if (node.type === 'value' && node.metadata?.type === 'encapsulated') {
+        return isTriggeringEventOutputsNode(node.metadata?.innerAST);
+    }
+    if (node.type !== 'value') return false;
+    const path = String(node.metadata?.fullPath || node.value || '');
+    return path.toLowerCase() === 'context.triggeringevent.outputs';
+}
+
+function getTriggeringEventOutputMemberOptions(editor) {
+    const outputVariables = Array.isArray(editor?.triggeringEventContext?.outputVariables)
+        ? editor.triggeringEventContext.outputVariables
+        : [];
+    if (outputVariables.length === 0) return [];
+
+    const seen = new Set();
+    const options = [];
+    outputVariables.forEach((entry) => {
+        const name = String(entry?.name || '').trim();
+        if (!name) return;
+
+        const dedupeKey = name.toLowerCase();
+        if (seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+
+        const typeName = editor.normalizeTypeName(entry?.typeName || 'Object') || 'Object';
+        const displayType = typeof editor.getDisplayTypeName === 'function'
+            ? editor.getDisplayTypeName(typeName)
+            : typeName;
+        options.push({
+            type: 'property',
+            value: name,
+            label: name,
+            description: `输出参数（${displayType}）`,
+            returnType: typeName,
+            meta: {
+                propertyName: name,
+                scope: 'output',
+                source: 'effectOutputVariable'
+            }
+        });
+    });
+    return options;
 }

@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using Shadowverse.Domain.Interfaces; // Add using for the interface
+using ShadowverseBeyond.Server.Dtos.Enums;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
 {
@@ -13,6 +15,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public Guid PlayerId { get; init; } = Guid.Empty;
         public bool IsAI { get; init; } // Flag to indicate if the player is AI controlled
         public bool IsFirst { get; set; } // Indicates if this player goes first
+        public CardClass Class { get; set; } = CardClass.Neutral;
+        public string DisplayName { get; set; } = string.Empty;
+        public string AvatarUrl { get; set; } = string.Empty;
 
         // Resources & Limits
         public int CurrentPP { get; set; }
@@ -20,13 +25,19 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public int PpBoostUsesAvailable { get; set; }
         public int CurrentEP { get; set; }
         public int MaxEP { get; set; }
+        public bool IsEvolutionUnlocked { get; set; }
         public bool CanEvolve { get; set; } // Whether the player can use an evolution point this turn
         public int CurrentSEP { get; set; }
         public int MaxSEP { get; set; }
+        public bool IsSuperEvolutionUnlocked { get; set; }
         public bool CanSuperEvolve { get; set; }
 
         public int GraveyardCount { get; set; }
         public int BloodPool { get; set; }
+        [JsonPropertyName("counters")]
+        public Dictionary<string, int> Counters { get; set; } = new();
+        [JsonPropertyName("counterDisplayNames")]
+        public Dictionary<string, string> CounterDisplayNames { get; set; } = new();
 
         // Leader Info
         // public int LeaderHealth { get; set; } // Removed: Use LeaderCard.CurrentHealth

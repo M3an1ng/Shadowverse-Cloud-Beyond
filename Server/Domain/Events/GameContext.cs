@@ -86,7 +86,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public IReadOnlyDictionary<string, List<TargetInfo>> ResolvedTargets { get; init; } = new Dictionary<string, List<TargetInfo>>();
 
         [DslExposable("目标池", Description = "当前能力已解析的卡牌目标池")]
-        public IReadOnlyDictionary<string, List<CardInstance>> ResolvedTargetCards { get; init; } = new Dictionary<string, List<CardInstance>>();
+        public IReadOnlyDictionary<string, List<CardInstance>> ResolvedTargetCards =>
+            ExtractCardTargets(ResolvedTargets);
 
         public IReadOnlyList<TargetInfo> SelectedTargets =>
             (IReadOnlyList<TargetInfo>?)CurrentEffect?.SelectedTargets ?? Array.Empty<TargetInfo>();
@@ -121,7 +122,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
             IsCancellable = isCancellable;
             IsAuraRefresh = isAuraRefresh;
             ResolvedTargets = resolvedTargets ?? new Dictionary<string, List<TargetInfo>>();
-            ResolvedTargetCards = ExtractCardTargets(ResolvedTargets);
 
             // Get managers directly from the GameState
             AbilityManager = currentGameState.AbilityManager;

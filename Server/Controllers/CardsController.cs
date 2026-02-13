@@ -27,6 +27,9 @@ using System.Text.Json.Serialization;
 using System.IO;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Formats.Webp;
 
 namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 {
@@ -514,15 +517,37 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             var cardFolder = Path.Combine(workspaceRoot, "assets", "cards", id.ToString());
             Directory.CreateDirectory(cardFolder);
 
-            var fileName = $"{kind}{extension.ToLowerInvariant()}";
+            var versionToken = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var normalizedExtension = extension.ToLowerInvariant();
+            var targetExtension = string.Equals(kind, "preview", StringComparison.OrdinalIgnoreCase)
+                ? ".webp"
+                : normalizedExtension;
+            var fileName = $"{kind}-{versionToken}{targetExtension}";
             var filePath = Path.Combine(cardFolder, fileName);
             var newPath = $"/assets/cards/{id}/{fileName}";
 
             var existingPath = kind == "preview" ? card.ArtPreview : card.ArtDetail;
             TryDeleteExistingArt(workspaceRoot, existingPath, newPath);
 
-            await using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            if (string.Equals(kind, "preview", StringComparison.OrdinalIgnoreCase))
             {
+                try
+                {
+                    await ConvertPreviewToWebpAsync(file, filePath);
+                }
+                catch (UnknownImageFormatException)
+                {
+                    return BadRequest("Unsupported image content.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to convert preview art to WebP for card {CardId}.", id);
+                    return StatusCode(StatusCodes.Status500InternalServerError, "Failed to process preview art.");
+                }
+            }
+            else
+            {
+                await using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
                 await file.CopyToAsync(stream);
             }
 
@@ -539,6 +564,17 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             await _gameService.NotifyCardDefinitionUpdatedAsync(id);
             var dto = _mapper.Map<CardDefinitionDto>(card);
             return Ok(dto);
+        }
+
+        private static async Task ConvertPreviewToWebpAsync(IFormFile file, string outputPath)
+        {
+            await using var inputStream = file.OpenReadStream();
+            using var image = await Image.LoadAsync(inputStream);
+            var encoder = new WebpEncoder
+            {
+                Quality = 82
+            };
+            await image.SaveAsWebpAsync(outputPath, encoder);
         }
 
         private string GetWorkspaceRoot()

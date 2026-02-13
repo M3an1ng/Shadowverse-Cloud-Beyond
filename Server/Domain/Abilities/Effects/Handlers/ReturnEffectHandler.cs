@@ -55,7 +55,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new ReturnEvent(owner, card, "ReturnEffect"));
+                    result.GeneratedEvents.Add(new ReturnEvent(owner, card, EventReasonSource.Ability));
                     return result;
                 };
 

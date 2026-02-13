@@ -52,6 +52,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.AddBuff, AbilityEditorCategories.TempStateId },
             { EffectType.RemoveBuff, AbilityEditorCategories.TempStateId },
             { EffectType.SetKeyword, AbilityEditorCategories.TempStateId },
+            { EffectType.AddTribe, AbilityEditorCategories.TempStateId },
             { EffectType.SetAttackTimes, AbilityEditorCategories.TempStateId },
             { EffectType.ResetAttackTimes, AbilityEditorCategories.TempStateId },
             { EffectType.AddAura, AbilityEditorCategories.TempStateId },
@@ -59,6 +60,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.SetPP, AbilityEditorCategories.ResourceValueId },
             { EffectType.Ramp, AbilityEditorCategories.ResourceValueId },
             { EffectType.SetEP, AbilityEditorCategories.ResourceValueId },
+            { EffectType.SetSEP, AbilityEditorCategories.ResourceValueId },
             { EffectType.SetEPMax, AbilityEditorCategories.ResourceValueId },
             { EffectType.ModifyStatus, AbilityEditorCategories.ResourceValueId },
             { EffectType.SpellBoost, AbilityEditorCategories.ResourceValueId },
@@ -75,8 +77,10 @@ namespace ShadowverseBeyond.Server.Services
 
             { EffectType.RewriteEventParams, AbilityEditorCategories.SpecialId },
             { EffectType.ReplaceEvent, AbilityEditorCategories.SpecialId },
+            { EffectType.PreventEvent, AbilityEditorCategories.SpecialId },
             { EffectType.Choose, AbilityEditorCategories.SpecialId },
-            { EffectType.Random, AbilityEditorCategories.SpecialId }
+            { EffectType.Random, AbilityEditorCategories.SpecialId },
+            { EffectType.Sequence, AbilityEditorCategories.SpecialId }
         };
 
         public EffectUIMetadataService(IEffectHandlerRegistry effectHandlerRegistry)

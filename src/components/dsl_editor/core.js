@@ -1,3 +1,5 @@
+import { stringifyAstNode } from "./ast-stringify.js";
+
 // Phase C - 核心 AST 类与工具函数迁移
 
 function formatTypeName(typeName) {
@@ -32,6 +34,303 @@ function formatTypeName(typeName) {
     };
 
     return map[trimmed] || trimmed;
+}
+
+function splitGenericTypeArguments(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return [];
+    const result = [];
+    let depth = 0;
+    let current = "";
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === "<") {
+            depth += 1;
+            current += ch;
+            continue;
+        }
+        if (ch === ">") {
+            depth = Math.max(0, depth - 1);
+            current += ch;
+            continue;
+        }
+        if (ch === "," && depth === 0) {
+            const token = current.trim();
+            if (token) result.push(token);
+            current = "";
+            continue;
+        }
+        current += ch;
+    }
+    const tail = current.trim();
+    if (tail) result.push(tail);
+    return result;
+}
+
+export function normalizeSemanticTypeName(typeName) {
+    if (!typeName) return null;
+    const trimmed = String(typeName).trim().replace(/^global::/i, "");
+    if (!trimmed) return null;
+
+    const aliasMap = {
+        bool: "Boolean",
+        boolean: "Boolean",
+        "system.boolean": "Boolean",
+        string: "String",
+        "system.string": "String",
+        object: "Object",
+        "system.object": "Object",
+        guid: "Guid",
+        "system.guid": "Guid",
+        int: "Int32",
+        int32: "Int32",
+        "system.int32": "Int32",
+        long: "Int64",
+        int64: "Int64",
+        "system.int64": "Int64",
+        float: "Single",
+        single: "Single",
+        "system.single": "Single",
+        double: "Double",
+        "system.double": "Double",
+        decimal: "Decimal",
+        "system.decimal": "Decimal",
+        number: "Number",
+        cardinstancesnapshot: "CardInstance",
+        cardinstanceresetsnapshot: "CardInstance",
+        carddefinitionsnapshot: "CardDefinition"
+    };
+
+    const lower = trimmed.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(aliasMap, lower)) {
+        return aliasMap[lower];
+    }
+
+    const nullable = trimmed.match(/^Nullable<(.+)>$/i);
+    if (nullable) {
+        return normalizeSemanticTypeName(nullable[1]) || nullable[1].trim();
+    }
+
+    const genericMatch = trimmed.match(/^([^<]+)<(.+)>$/);
+    if (genericMatch) {
+        const containerRaw = genericMatch[1].trim();
+        const containerLower = containerRaw.toLowerCase();
+        const rawArgs = splitGenericTypeArguments(genericMatch[2]);
+        const normalizedArgs = rawArgs.map((arg) => normalizeSemanticTypeName(arg) || arg.trim());
+
+        if (["list", "ienumerable", "ireadonlylist", "ireadonlycollection", "icollection"].includes(containerLower)) {
+            const inner = normalizedArgs[0] || "Object";
+            return `List<${inner}>`;
+        }
+
+        if (["dictionary", "idictionary", "ireadonlydictionary"].includes(containerLower)) {
+            const keyType = normalizedArgs[0] || "Object";
+            const valueType = normalizedArgs[1] || "Object";
+            const dictionaryNameMap = {
+                dictionary: "Dictionary",
+                idictionary: "IDictionary",
+                ireadonlydictionary: "IReadOnlyDictionary"
+            };
+            const name = dictionaryNameMap[containerLower] || containerRaw;
+            return `${name}<${keyType}, ${valueType}>`;
+        }
+
+        return `${containerRaw}<${normalizedArgs.join(", ")}>`;
+    }
+
+    if (["list", "ienumerable", "ireadonlylist", "ireadonlycollection", "icollection"].includes(lower)) {
+        return "List<Object>";
+    }
+
+    return trimmed;
+}
+
+export function isSemanticCollectionType(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    if (!normalized) return false;
+    return /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(normalized));
+}
+
+export function getSemanticCollectionInnerType(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    if (!normalized || !isSemanticCollectionType(normalized)) {
+        return null;
+    }
+    const match = normalized.match(/<(.*)>/);
+    if (!match) return "Object";
+    const inner = String(match[1] || "").trim();
+    return normalizeSemanticTypeName(inner) || inner || "Object";
+}
+
+export function isSemanticDictionaryType(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    if (!normalized) return false;
+    return /^(Dictionary|IDictionary|IReadOnlyDictionary)<.+>$/.test(String(normalized));
+}
+
+export function isSemanticBusinessObjectType(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    if (!normalized) return false;
+    return ["PlayerState", "CardInstance", "CardDefinition", "EffectInstance", "EventInstance"].includes(normalized);
+}
+
+export function isSemanticNumericType(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    return ["Int32", "Int64", "Single", "Double", "Decimal", "Number"].includes(normalized);
+}
+
+function isSemanticSetSingletonType(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    if (!normalized) return false;
+    if (normalized === "Void") return false;
+    if (normalized === "String") return false;
+    if (normalized === "Object") return false;
+    return !isSemanticCollectionType(normalized);
+}
+
+function getSemanticSetOperandInfo(typeName) {
+    const normalized = normalizeSemanticTypeName(typeName);
+    if (!normalized || normalized === "Void" || normalized === "String") {
+        return null;
+    }
+
+    if (isSemanticCollectionType(normalized)) {
+        const inner = getSemanticCollectionInnerType(normalized) || "Object";
+        return {
+            normalized,
+            collectionType: normalized,
+            innerType: inner,
+            promoted: false
+        };
+    }
+
+    if (!isSemanticSetSingletonType(normalized)) {
+        return null;
+    }
+
+    return {
+        normalized,
+        collectionType: `List<${normalized}>`,
+        innerType: normalized,
+        promoted: true
+    };
+}
+
+export function canSemanticOperateAsSetOperand(typeName) {
+    return Boolean(getSemanticSetOperandInfo(typeName));
+}
+
+function resolveSemanticSetResultCollectionType(leftType, rightType) {
+    const leftInfo = getSemanticSetOperandInfo(leftType);
+    const rightInfo = getSemanticSetOperandInfo(rightType);
+    if (!leftInfo && !rightInfo) {
+        return null;
+    }
+    if (!leftInfo) {
+        return rightInfo.collectionType;
+    }
+    if (!rightInfo) {
+        return leftInfo.collectionType;
+    }
+
+    const leftInner = leftInfo.innerType;
+    const rightInner = rightInfo.innerType;
+    if (leftInner === rightInner) {
+        return `List<${leftInner}>`;
+    }
+    if (leftInner === "Object") {
+        return `List<${rightInner}>`;
+    }
+    if (rightInner === "Object") {
+        return `List<${leftInner}>`;
+    }
+    return null;
+}
+
+function inferFunctionCallReturnType(node, traversing) {
+    const functionName = String(node?.functionName || "").toLowerCase();
+    if (!functionName) {
+        return normalizeSemanticTypeName(node?.returnType) || "Object";
+    }
+
+    if (functionName === "find") {
+        const sourceNode = (node.args || [])[0] || null;
+        const sourceType = getSemanticNodeTypeInternal(sourceNode, traversing);
+        const normalizedSource = normalizeSemanticTypeName(sourceType);
+        if (!normalizedSource) {
+            return normalizeSemanticTypeName(node.returnType) || "Object";
+        }
+        if (isSemanticCollectionType(normalizedSource)) {
+            return getSemanticCollectionInnerType(normalizedSource) || "Object";
+        }
+        if (normalizedSource === "Object") {
+            return "Object";
+        }
+        return normalizedSource;
+    }
+
+    return normalizeSemanticTypeName(node.returnType) || "Object";
+}
+
+function getSemanticNodeTypeInternal(node, traversing) {
+    if (!node) return null;
+
+    const trackable = typeof node === "object" || typeof node === "function";
+    if (trackable) {
+        if (traversing.has(node)) {
+            return normalizeSemanticTypeName(node.returnType) || "Object";
+        }
+        traversing.add(node);
+    }
+
+    try {
+        if (node.type === "virtualRoot") {
+            return getSemanticNodeTypeInternal(node.main, traversing) || null;
+        }
+
+        if (node.metadata?.type === "encapsulated" && node.metadata?.innerAST) {
+            return getSemanticNodeTypeInternal(node.metadata.innerAST, traversing);
+        }
+
+        if (node.type === "operator") {
+            const leftType = getSemanticNodeTypeInternal(node.leftOperand, traversing);
+            const rightType = getSemanticNodeTypeInternal(node.rightOperand, traversing);
+            if (["|", "&", "~"].includes(node.operator)) {
+                const setResultType = resolveSemanticSetResultCollectionType(leftType, rightType);
+                if (setResultType) return setResultType;
+            }
+            return normalizeSemanticTypeName(inferOperatorReturnType(node.operator)) || "Object";
+        }
+
+        if (node.type === "listQuery" || node.type === "listSort" || node.type === "listTake" || node.type === "listDistinct") {
+            const sourceType = getSemanticNodeTypeInternal(node.source, traversing);
+            return sourceType || normalizeSemanticTypeName(node.returnType) || "Object";
+        }
+
+        if (node.type === "listSelect") {
+            const sourceType = getSemanticNodeTypeInternal(node.source, traversing);
+            const selectedType = getSemanticNodeTypeInternal(node.selectExpression, traversing);
+            if (sourceType && isSemanticCollectionType(sourceType)) {
+                const inner = normalizeSemanticTypeName(selectedType) || "Object";
+                return `List<${inner}>`;
+            }
+            return normalizeSemanticTypeName(selectedType) || sourceType || normalizeSemanticTypeName(node.returnType) || "Object";
+        }
+
+        if (node.type === "functionCall") {
+            return inferFunctionCallReturnType(node, traversing);
+        }
+
+        return normalizeSemanticTypeName(node.returnType) || "Object";
+    } finally {
+        if (trackable) {
+            traversing.delete(node);
+        }
+    }
+}
+
+export function getSemanticNodeType(node) {
+    return getSemanticNodeTypeInternal(node, new WeakSet());
 }
 
 /**
@@ -88,8 +387,7 @@ export class FunctionCallNode extends ASTNode {
     }
 
     toExpression() {
-        const parts = this.args.map((a) => (a ? a.toExpression() : ''));
-        return `${this.functionName}(${parts.join(', ')})`;
+        return stringifyAstNode(this);
     }
 
     validate() {
@@ -142,11 +440,7 @@ export class ValueNode extends ASTNode {
     }
 
     toExpression() {
-        // 如果是封装的表达式，返回其显示值
-        if (this.metadata && this.metadata.type === "encapsulated") {
-            return this.metadata.displayValue || this.value;
-        }
-        return this.value;
+        return stringifyAstNode(this);
     }
 
     validate() {
@@ -211,18 +505,7 @@ export class OperatorNode extends ASTNode {
     }
 
     toExpression() {
-        // 检查操作数是否为 'empty' 节点，如果是，也视为空
-        const leftNode = this.leftOperand;
-        const rightNode = this.rightOperand;
-
-        const leftIsEmpty = !leftNode || (leftNode.metadata && leftNode.metadata.type === 'empty');
-        const rightIsEmpty = !rightNode || (rightNode.metadata && rightNode.metadata.type === 'empty');
-
-        const left = leftIsEmpty ? '()' : leftNode.toExpression();
-        const right = rightIsEmpty ? '()' : rightNode.toExpression();
-
-        // 即使右侧为空，也返回完整的表达式结构
-        return `${left} ${this.operator} ${right}`;
+        return stringifyAstNode(this);
     }
 
     validate() {
@@ -258,51 +541,7 @@ export class OperatorNode extends ASTNode {
     }
 
     validateOperandTypes() {
-        const resolveNodeType = (node) => {
-            if (!node) return null;
-            if (node.metadata?.type === 'encapsulated' && node.metadata?.innerAST) {
-                return resolveNodeType(node.metadata.innerAST);
-            }
-            return node.returnType;
-        };
-
-        const normalizeTypeName = (typeName) => {
-            if (!typeName) return null;
-            const trimmed = String(typeName).trim();
-            if (!trimmed) return null;
-            const aliasMap = {
-                CardInstanceSnapshot: 'CardInstance',
-                CardInstanceResetSnapshot: 'CardInstance',
-                CardDefinitionSnapshot: 'CardDefinition'
-            };
-            const nullable = trimmed.match(/^Nullable<(.+)>$/);
-            if (nullable) return aliasMap[nullable[1]] || nullable[1];
-            if (trimmed === 'List' || trimmed === 'IEnumerable' || trimmed === 'IReadOnlyList' || trimmed === 'IReadOnlyCollection' || trimmed === 'ICollection') {
-                return 'List<Object>';
-            }
-            const roListMatch = trimmed.match(/^IReadOnlyList<(.+)>$/);
-            if (roListMatch) return `List<${aliasMap[roListMatch[1]] || roListMatch[1]}>`;
-            const roCollectionMatch = trimmed.match(/^IReadOnlyCollection<(.+)>$/);
-            if (roCollectionMatch) return `List<${aliasMap[roCollectionMatch[1]] || roCollectionMatch[1]}>`;
-            const collectionMatch = trimmed.match(/^ICollection<(.+)>$/);
-            if (collectionMatch) return `List<${aliasMap[collectionMatch[1]] || collectionMatch[1]}>`;
-            const enumerableMatch = trimmed.match(/^IEnumerable<(.+)>$/);
-            if (enumerableMatch) return `List<${aliasMap[enumerableMatch[1]] || enumerableMatch[1]}>`;
-            return aliasMap[trimmed] || trimmed;
-        };
-
-        const isCollectionType = (typeName) => {
-            const normalized = normalizeTypeName(typeName);
-            if (!normalized) return false;
-            return /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(normalized));
-        };
-
-        const getCollectionInnerType = (typeName) => {
-            const normalized = normalizeTypeName(typeName);
-            if (!normalized) return null;
-            const match = String(normalized).match(/<(.*)>/);
-            return match ? match[1] : 'Object';
-        };
+        const normalizeTypeName = (typeName) => normalizeSemanticTypeName(typeName);
 
         const areElementTypesCompatible = (leftInner, rightInner) => {
             if (!leftInner || !rightInner) return true;
@@ -310,16 +549,8 @@ export class OperatorNode extends ASTNode {
             return leftInner === rightInner;
         };
 
-        const isScalarCompatibleWithCollection = (scalarType, collectionType) => {
-            const scalar = normalizeTypeName(scalarType);
-            const collectionInner = getCollectionInnerType(collectionType);
-            if (!scalar || !collectionInner) return false;
-            if (scalar.toLowerCase() === 'string') return false;
-            return collectionInner === 'Object' || scalar === collectionInner;
-        };
-
-        const leftType = resolveNodeType(this.leftOperand);
-        const rightType = resolveNodeType(this.rightOperand);
+        const leftType = normalizeTypeName(getSemanticNodeType(this.leftOperand));
+        const rightType = normalizeTypeName(getSemanticNodeType(this.rightOperand));
 
 
         // 逻辑操作符要求两个操作数都是布尔类型
@@ -334,32 +565,21 @@ export class OperatorNode extends ASTNode {
 
         // 集合操作符：允许 集合↔集合，以及 集合↔单体元素（自动包装为集合）
         if (['|', '&', '~'].includes(this.operator)) {
-            const leftIsCollection = isCollectionType(leftType);
-            const rightIsCollection = isCollectionType(rightType);
+            const leftInfo = getSemanticSetOperandInfo(leftType);
+            const rightInfo = getSemanticSetOperandInfo(rightType);
 
-            if (!leftIsCollection && !rightIsCollection) {
-                return `集合操作符 ${this.operator} 至少需要一个集合操作数，当前类型：${formatTypeName(leftType)} 与 ${formatTypeName(rightType)}`;
+            if (!leftInfo && !rightInfo) {
+                return `集合操作符 ${this.operator} 的操作数必须是集合或可提升的单体类型，当前类型：${formatTypeName(leftType)} 与 ${formatTypeName(rightType)}`;
+            }
+            if (!leftInfo) {
+                return `集合操作符 ${this.operator} 的左操作数必须是集合或可提升的单体类型，当前类型：${formatTypeName(leftType)}`;
+            }
+            if (!rightInfo) {
+                return `集合操作符 ${this.operator} 的右操作数必须是集合或可提升的单体类型，当前类型：${formatTypeName(rightType)}`;
             }
 
-            const referenceCollectionType = leftIsCollection ? leftType : rightType;
-            const referenceInnerType = getCollectionInnerType(referenceCollectionType);
-
-            if (leftIsCollection) {
-                const leftInner = getCollectionInnerType(leftType);
-                if (!areElementTypesCompatible(leftInner, referenceInnerType)) {
-                    return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(leftInner)} 与 ${formatTypeName(referenceInnerType)}`;
-                }
-            } else if (!isScalarCompatibleWithCollection(leftType, referenceCollectionType)) {
-                return `集合操作符 ${this.operator} 的左操作数必须是集合或兼容的元素类型，当前类型：${formatTypeName(leftType)}`;
-            }
-
-            if (rightIsCollection) {
-                const rightInner = getCollectionInnerType(rightType);
-                if (!areElementTypesCompatible(rightInner, referenceInnerType)) {
-                    return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(referenceInnerType)} 与 ${formatTypeName(rightInner)}`;
-                }
-            } else if (!isScalarCompatibleWithCollection(rightType, referenceCollectionType)) {
-                return `集合操作符 ${this.operator} 的右操作数必须是集合或兼容的元素类型，当前类型：${formatTypeName(rightType)}`;
+            if (!areElementTypesCompatible(leftInfo.innerType, rightInfo.innerType)) {
+                return `集合操作符 ${this.operator} 的集合元素类型不兼容：${formatTypeName(leftInfo.innerType)} 与 ${formatTypeName(rightInfo.innerType)}`;
             }
         }
 
@@ -393,7 +613,7 @@ export class OperatorNode extends ASTNode {
 export class ListQueryNode extends ASTNode {
     constructor(sourceNode) {
         // .query() 操作本身返回一个新的集合，其类型与源集合相同
-        super('listQuery', sourceNode.returnType);
+        super('listQuery', getSemanticNodeType(sourceNode) || sourceNode?.returnType || 'Object');
         this.source = sourceNode;
         this.filterExpression = null; // 将在后续步骤中填充
         if (sourceNode) {
@@ -421,15 +641,7 @@ export class ListQueryNode extends ASTNode {
     }
 
     toExpression() {
-        const sourceExpr = this.source ? this.source.toExpression() : '';
-        const filterExpr = this.filterExpression ? this.filterExpression.toExpression() : '';
-        const isEmpty = !this.filterExpression
-            || this.filterExpression.metadata?.type === 'empty'
-            || (this.filterExpression.metadata?.type === 'encapsulated'
-                && this.filterExpression.metadata?.innerAST?.metadata?.type === 'empty')
-            || !filterExpr;
-        if (isEmpty) return sourceExpr;
-        return `${sourceExpr}.query(${filterExpr})`;
+        return stringifyAstNode(this);
     }
 
         validate() {
@@ -446,8 +658,9 @@ export class ListQueryNode extends ASTNode {
                 if (!filterValidation.isValid) {
                     errors.push(...filterValidation.errors);
                 }
-                if (this.filterExpression.returnType !== 'Boolean') {
-                    errors.push(`Query查询表达式必须返回布尔值，当前返回: ${formatTypeName(this.filterExpression.returnType)}`);
+                const filterType = getSemanticNodeType(this.filterExpression);
+                if (filterType !== 'Boolean') {
+                    errors.push(`Query查询表达式必须返回布尔值，当前返回: ${formatTypeName(filterType)}`);
                 }
             }
             return { isValid: errors.length === 0, errors };
@@ -467,7 +680,7 @@ export class ListQueryNode extends ASTNode {
      */
 export class ListSortNode extends ASTNode {
     constructor(sourceNode) {
-        super('listSort', sourceNode.returnType);
+        super('listSort', getSemanticNodeType(sourceNode) || sourceNode?.returnType || 'Object');
         this.source = sourceNode;
         this.sortExpression = null; // 排序表达式
         this.direction = 'asc';
@@ -499,17 +712,7 @@ export class ListSortNode extends ASTNode {
         }
 
     toExpression() {
-        const sourceExpr = this.source ? this.source.toExpression() : '';
-        const sortExpr = this.sortExpression ? this.sortExpression.toExpression() : '';
-        const isEmpty = !this.sortExpression
-            || this.sortExpression.metadata?.type === 'empty'
-            || (this.sortExpression.metadata?.type === 'encapsulated'
-                && this.sortExpression.metadata?.innerAST?.metadata?.type === 'empty')
-            || !sortExpr;
-        if (isEmpty) return sourceExpr;
-        const dir = String(this.direction || 'asc').toLowerCase();
-        const suffix = dir === 'desc' ? ' desc' : '';
-        return `${sourceExpr}.orderBy(${sortExpr}${suffix})`;
+        return stringifyAstNode(this);
     }
     
         validate() {
@@ -522,17 +725,8 @@ export class ListSortNode extends ASTNode {
             if (!isEmpty) {
                 const v = this.sortExpression.validate();
                 if (!v.isValid) errors.push(...v.errors);
-                const sortType = this.sortExpression.returnType;
-                const isCollectionType = (typeName) => /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(typeName || ''));
-                const isDictionaryType = (typeName) => /^(Dictionary|IDictionary|IReadOnlyDictionary)<.+>$/.test(String(typeName || ''));
-                const businessObjectTypes = [
-                    'PlayerState',
-                    'CardInstance',
-                    'CardDefinition',
-                    'EffectInstance',
-                    'EventInstance'
-                ];
-                if (sortType && (isCollectionType(sortType) || isDictionaryType(sortType) || businessObjectTypes.includes(sortType))) {
+                const sortType = normalizeSemanticTypeName(getSemanticNodeType(this.sortExpression));
+                if (sortType && (isSemanticCollectionType(sortType) || isSemanticDictionaryType(sortType) || isSemanticBusinessObjectType(sortType))) {
                     errors.push(`OrderBy排序键必须为非实体类型，当前返回: ${formatTypeName(sortType)}`);
                 }
             }
@@ -554,7 +748,7 @@ export class ListSortNode extends ASTNode {
      */
 export class ListDistinctNode extends ASTNode {
     constructor(sourceNode) {
-        super('listDistinct', sourceNode.returnType);
+        super('listDistinct', getSemanticNodeType(sourceNode) || sourceNode?.returnType || 'Object');
         this.source = sourceNode;
         this.keyExpression = null;
         if (sourceNode) {
@@ -580,9 +774,7 @@ export class ListDistinctNode extends ASTNode {
     }
 
     toExpression() {
-        const sourceExpr = this.source ? this.source.toExpression() : '';
-        const keyExpr = this.keyExpression ? this.keyExpression.toExpression() : '';
-        return `${sourceExpr}.distinct(${keyExpr})`;
+        return stringifyAstNode(this);
     }
 
     validate() {
@@ -595,17 +787,8 @@ export class ListDistinctNode extends ASTNode {
         const v = this.keyExpression.validate();
         if (!v.isValid) errors.push(...v.errors);
 
-        const keyType = this.keyExpression.returnType;
-        const isCollectionType = (typeName) => /^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)(<.+>)?$/.test(String(typeName || ''));
-        const isDictionaryType = (typeName) => /^(Dictionary|IDictionary|IReadOnlyDictionary)<.+>$/.test(String(typeName || ''));
-        const businessObjectTypes = [
-            'PlayerState',
-            'CardInstance',
-            'CardDefinition',
-            'EffectInstance',
-            'EventInstance'
-        ];
-        if (keyType && (isCollectionType(keyType) || isDictionaryType(keyType) || businessObjectTypes.includes(keyType))) {
+        const keyType = normalizeSemanticTypeName(getSemanticNodeType(this.keyExpression));
+        if (keyType && (isSemanticCollectionType(keyType) || isSemanticDictionaryType(keyType) || isSemanticBusinessObjectType(keyType))) {
             errors.push(`Distinct去重键必须为非实体类型，当前返回: ${formatTypeName(keyType)}`);
         }
 
@@ -626,7 +809,7 @@ export class ListDistinctNode extends ASTNode {
  */
 export class ListSelectNode extends ASTNode {
     constructor(sourceNode) {
-        super('listSelect', sourceNode.returnType);
+        super('listSelect', getSemanticNodeType(sourceNode) || sourceNode?.returnType || 'Object');
         this.source = sourceNode;
         this.selectExpression = null;
         if (sourceNode) {
@@ -640,21 +823,18 @@ export class ListSelectNode extends ASTNode {
         if (node) {
             node.parent = this;
         }
-        const resolveCollectionInnerType = (typeName) => {
-            const trimmed = String(typeName || "").trim();
-            if (!trimmed) return null;
-            if (trimmed === 'List' || trimmed === 'IEnumerable' || trimmed === 'IReadOnlyList' || trimmed === 'IReadOnlyCollection' || trimmed === 'ICollection') {
-                return 'Object';
-            }
-            const match = trimmed.match(/^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)<(.+)>$/);
-            return match ? match[2] : null;
-        };
-        const inner = resolveCollectionInnerType(this.source?.returnType);
+        const sourceType = getSemanticNodeType(this.source);
+        const inner = getSemanticCollectionInnerType(sourceType);
         if (inner !== null) {
-            const selectedType = node?.returnType || "Object";
+            const selectedType = normalizeSemanticTypeName(getSemanticNodeType(node)) || "Object";
             this.returnType = `List<${selectedType}>`;
-        } else if (node?.returnType) {
-            this.returnType = node.returnType;
+        } else {
+            const selectedType = normalizeSemanticTypeName(getSemanticNodeType(node));
+            if (selectedType) {
+                this.returnType = selectedType;
+            } else if (sourceType) {
+                this.returnType = sourceType;
+            }
         }
         this.updateCompleteness();
     }
@@ -668,9 +848,7 @@ export class ListSelectNode extends ASTNode {
     }
 
     toExpression() {
-        const sourceExpr = this.source ? this.source.toExpression() : '';
-        const selectExpr = this.selectExpression ? this.selectExpression.toExpression() : '';
-        return `${sourceExpr}.select(${selectExpr})`;
+        return stringifyAstNode(this);
     }
 
     validate() {
@@ -700,7 +878,7 @@ export class ListSelectNode extends ASTNode {
      */
 export class ListTakeNode extends ASTNode {
     constructor(sourceNode) {
-        super('listTake', sourceNode.returnType);
+        super('listTake', getSemanticNodeType(sourceNode) || sourceNode?.returnType || 'Object');
         this.source = sourceNode;
         this.countExpression = null; // 数量表达式
         this.strategy = 'first';
@@ -738,22 +916,7 @@ export class ListTakeNode extends ASTNode {
         }
 
     toExpression() {
-        const sourceExpr = this.source ? this.source.toExpression() : '';
-        const strategy = String(this.strategy || 'first').toLowerCase();
-        if (strategy === 'all') {
-            return `${sourceExpr}.take(all)`;
-        }
-        const countExpr = this.countExpression ? this.countExpression.toExpression() : '';
-        const isEmpty = !this.countExpression
-            || this.countExpression.metadata?.type === 'empty'
-            || (this.countExpression.metadata?.type === 'encapsulated'
-                && this.countExpression.metadata?.innerAST?.metadata?.type === 'empty')
-            || !countExpr;
-        if (isEmpty) return sourceExpr;
-        if (strategy && strategy !== 'first') {
-            return `${sourceExpr}.take(${strategy} ${countExpr})`;
-        }
-        return `${sourceExpr}.take(${countExpr})`;
+        return stringifyAstNode(this);
     }
     
     validate() {
@@ -770,9 +933,8 @@ export class ListTakeNode extends ASTNode {
                 const v = this.countExpression.validate();
                 if (!v.isValid) errors.push(...v.errors);
 
-                const t = this.countExpression.returnType;
-                const numericTypes = ['Int32', 'Int64', 'Single', 'Double', 'Number'];
-                if (t && !numericTypes.includes(t)) {
+                const t = normalizeSemanticTypeName(getSemanticNodeType(this.countExpression));
+                if (t && !isSemanticNumericType(t)) {
                     errors.push(`Take数量表达式必须返回数值，当前返回: ${formatTypeName(t)}`);
                 }
             }

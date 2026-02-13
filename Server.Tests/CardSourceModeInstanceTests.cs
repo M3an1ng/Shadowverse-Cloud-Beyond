@@ -150,7 +150,37 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 Assert.NotNull(evt.TargetPlayer);
                 Assert.All(evt.CardsToAdd, card => Assert.Equal(evt.TargetPlayer!.PlayerId, card.OwnerPlayerId));
+                Assert.Equal(DeckInsertMode.Random, evt.InsertMode);
             });
+        }
+
+        [Fact]
+        public void AddDeck_InstanceMode_UsesConfiguredInsertMode()
+        {
+            var serviceProvider = BuildServiceProvider();
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+            var gameState = BuildGameState(player1Id, player2Id);
+            var card = new CardInstance(Guid.NewGuid(), 1, player1Id);
+
+            var effectConfig = new EffectConfig { Type = EffectType.AddDeck };
+            var effect = new Effect(effectConfig, player1Id, new List<TargetInfo> { TargetInfo.ForCard(card) }, null, Guid.NewGuid(), null);
+            var parameters = new AddDeckEffectParams
+            {
+                CardSourceMode = CardSourceMode.Instance,
+                InsertMode = DeckInsertMode.Bottom
+            };
+            var handler = new AddDeckEffectHandler(
+                NullLogger<AddDeckEffectHandler>.Instance,
+                new Mock<ITargetProcessingService>().Object,
+                new Mock<ICardFactory>().Object);
+
+            using var context = BuildContext(gameState, player1Id, serviceProvider);
+            var result = handler.Apply(effect, context, parameters);
+
+            Assert.True(result.Success);
+            var addDeckEvent = Assert.Single(result.GeneratedEvents.OfType<AddCardToDeckEvent>());
+            Assert.Equal(DeckInsertMode.Bottom, addDeckEvent.InsertMode);
         }
     }
 }

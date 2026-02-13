@@ -21,10 +21,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("目标玩家", "接收卡牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public AddCardToDeckEvent(PlayerState targetPlayer, List<CardInstance> cardsToAdd, Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("插入方式", "卡牌插入的位置")]
+        public DeckInsertMode InsertMode { get; }
+
+        public AddCardToDeckEvent(
+            PlayerState targetPlayer,
+            List<CardInstance> cardsToAdd,
+            DeckInsertMode insertMode = DeckInsertMode.Random,
+            Guid? eventId = null,
+            DateTime? timestamp = null)
             : base(EventType.AddDeck, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(targetPlayer);
+            InsertMode = insertMode;
             foreach (var card in cardsToAdd ?? new List<CardInstance>())
             {
                 if (card != null)
@@ -42,7 +51,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target player is null in AddCardToDeckEvent." };
             }
 
-            return player.AddCardsToDeck(CardsToAdd);
+            return player.AddCardsToDeck(CardsToAdd, InsertMode);
         }
 
         public string GetAnnouncement(GameState gameState)

@@ -11,6 +11,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Models;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
@@ -23,6 +24,7 @@ namespace ShadowverseBeyond.Server.Controllers
         private readonly IMatchService _matchService;
         private readonly ILogger<MatchController> _logger;
         private readonly IHubContext<GameHub, IGameClient> _hubContext;
+        private readonly IGameService _gameService;
         private readonly IDeckService _deckService;
         private readonly IDeckValidationService _deckValidation;
         private readonly IDeckCodeService _deckCodeService;
@@ -31,6 +33,7 @@ namespace ShadowverseBeyond.Server.Controllers
             IMatchService matchService,
             ILogger<MatchController> logger,
             IHubContext<GameHub, IGameClient> hubContext,
+            IGameService gameService,
             IDeckService deckService,
             IDeckValidationService deckValidation,
             IDeckCodeService deckCodeService)
@@ -38,6 +41,7 @@ namespace ShadowverseBeyond.Server.Controllers
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
+            _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _deckService = deckService ?? throw new ArgumentNullException(nameof(deckService));
             _deckValidation = deckValidation ?? throw new ArgumentNullException(nameof(deckValidation));
             _deckCodeService = deckCodeService ?? throw new ArgumentNullException(nameof(deckCodeService));
@@ -127,6 +131,11 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             var playerDeckId = request.DeckId;
+            var playerDeck = await _deckService.GetAsync(owner, playerDeckId, cancellationToken);
+            if (playerDeck == null)
+            {
+                return NotFound("Deck not found.");
+            }
             var playerDeckValidation = await _deckService.ExportCodeAsync(owner, playerDeckId, cancellationToken);
             if (!playerDeckValidation.Success)
             {
@@ -137,7 +146,8 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 UserId = owner.UserId,
                 GuestId = owner.GuestId,
-                DeckId = playerDeckId
+                DeckId = playerDeckId,
+                DeckClass = playerDeck.Class
             };
 
             MatchDeckSelection? aiSelection = null;
@@ -151,6 +161,11 @@ namespace ShadowverseBeyond.Server.Controllers
                 if (request.AiDeckId.HasValue)
                 {
                     var aiDeckId = request.AiDeckId.Value;
+                    var aiDeck = await _deckService.GetAsync(aiOwner, aiDeckId, cancellationToken);
+                    if (aiDeck == null)
+                    {
+                        return NotFound("AI deck not found.");
+                    }
                     var aiDeckValidation = await _deckService.ExportCodeAsync(aiOwner, aiDeckId, cancellationToken);
                     if (!aiDeckValidation.Success)
                     {
@@ -161,7 +176,8 @@ namespace ShadowverseBeyond.Server.Controllers
                     {
                         UserId = aiOwner.UserId,
                         GuestId = aiOwner.GuestId,
-                        DeckId = aiDeckId
+                        DeckId = aiDeckId,
+                        DeckClass = aiDeck.Class
                     };
                 }
                 else if (!string.IsNullOrWhiteSpace(request.AiDeckCode))
@@ -179,7 +195,8 @@ namespace ShadowverseBeyond.Server.Controllers
 
                     aiSelection = new MatchDeckSelection
                     {
-                        DeckCode = request.AiDeckCode
+                        DeckCode = request.AiDeckCode,
+                        DeckClass = aiDeckClass
                     };
                 }
             }
@@ -212,10 +229,24 @@ namespace ShadowverseBeyond.Server.Controllers
                 ? "房主已退出，房间已解散。"
                 : "访客已退出，房间已解散。";
 
+            // Best-effort: explicitly end the running game now instead of waiting for disconnect timeout.
+            var gameState = _gameService.GetGameState(id);
+            if (gameState != null && !gameState.IsGameOver)
+            {
+                var disconnectAction = new PlayerActionWrapper
+                {
+                    ActionType = "Disconnect",
+                    PlayerId = request.PlayerId,
+                    ActionData = new { Reason = "LeaveRoom" }
+                };
+
+                await _gameService.EnqueuePlayerActionAsync(id, disconnectAction);
+            }
+
             _matchService.Close(id, reason);
 
             // Notify any connected gameplay clients immediately; lobby clients rely on polling.
-            await _hubContext.Clients.Group($"Game_{id}").ReceiveError($"ROOM_CLOSED:{reason}");
+            await _hubContext.Clients.Group(SignalRGroupNames.Game(id)).ReceiveError($"ROOM_CLOSED:{reason}");
 
             var closed = _matchService.Get(id);
             return MapResult(closed, includeTokens: false);

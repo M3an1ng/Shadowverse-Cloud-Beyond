@@ -108,6 +108,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task CardInstanceUpdated(CardInstanceUpdatedEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client that a card moved between zones.
+        /// </summary>
+        Task CardMoved(CardMovedEventDto eventDto);
+
+        /// <summary>
         /// Notifies the client that a counter value has changed on a card or player.
         /// </summary>
         Task CounterChanged(CounterChangedEventDto eventDto);
@@ -143,6 +148,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Notifies the client that a card has been returned to hand.
         /// </summary>
         Task CardReturned(CardReturnedDto eventDto);
+
+        /// <summary>
+        /// Notifies the client that a card was tucked into deck (effect placeholder only).
+        /// </summary>
+        Task Tuck(TuckEventDto eventDto);
 
         /// <summary>
         /// Notifies the client that an attack has been declared.

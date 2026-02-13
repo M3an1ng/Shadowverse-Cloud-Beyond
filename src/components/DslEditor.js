@@ -68,10 +68,10 @@ import {
     markPipelineContextDirty
 } from "./dsl_editor/pipeline-editor.js";
 import { buildAstFromExpression } from "./dsl_editor/ast-parse.js";
-import { calculateASTReturnType, validateExpressionSemantics } from "./dsl_editor/type-check.js";
-import { fetchFavoritesApi, markFavoriteUsedApi, createFavoriteApi } from "./dsl_editor/services/favorites.js";
+import { validateExpressionSemantics } from "./dsl_editor/type-check.js";
+import { fetchFavoritesApi, markFavoriteUsedApi, createFavoriteApi, deleteFavoriteApi } from "./dsl_editor/services/favorites.js";
 import { requestParseAstApi } from "./dsl_editor/services/parse.js";
-import { createValueNode, createOperatorNode, createFunctionCallNode, createListQueryNode, createListSortNode, createListTakeNode, createListDistinctNode, createListSelectNode, validateAST, findIncompleteNode, findRightmostLeafNode } from "./dsl_editor/core.js";
+import { createValueNode, createOperatorNode, createFunctionCallNode, createListQueryNode, createListSortNode, createListTakeNode, createListDistinctNode, createListSelectNode, validateAST, findIncompleteNode, findRightmostLeafNode, getSemanticNodeType as getCoreSemanticNodeType, canSemanticOperateAsSetOperand } from "./dsl_editor/core.js";
 import { renderPipelineBlock, renderListQueryNodeAST } from "./dsl_editor/ui-pipeline.js";
 import { finalizeDraftInputs, refreshCompleteness, refreshValueNodeReturnTypes } from "./dsl_editor/ast-normalize.js";
 import {
@@ -91,6 +91,7 @@ import {
     renderFavoritesSection
 } from "./dsl_editor/ui-favorites.js";
 import { getReadablePreviewText, toReadableText } from "./dsl_editor/ui-preview.js";
+import { resolveEventTypeHintFromSource } from "./dsl_editor/event-translation.js";
 import {
     mapDslAstDtoToUiAst,
     mapLiteralDtoToNode,
@@ -172,6 +173,10 @@ export class DslEditor extends MetadataDrivenComponent {
             query: "",
             items: [],
             recentItems: [],
+            page: 1,
+            limit: 6,
+            total: 0,
+            totalPages: 1,
             loading: false,
             error: null
         };
@@ -180,6 +185,7 @@ export class DslEditor extends MetadataDrivenComponent {
         this.favoriteMenuOutsideHandler = null;
         this.pipelineOpen = false;
         this.pipelineOpenSource = null;
+        this.pipelineOpenMode = null;
         this.pipelineEditState = createPipelineEditState();
         this.pipelineContextStore = new Map();
         this.pipelineNodeIds = new WeakMap();
@@ -221,25 +227,109 @@ export class DslEditor extends MetadataDrivenComponent {
         await this.preloadEnumLocalizations();
     }
 
+    splitGenericTypeArguments(raw) {
+        const text = String(raw || "").trim();
+        if (!text) return [];
+        const result = [];
+        let depth = 0;
+        let current = "";
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (ch === "<") {
+                depth++;
+                current += ch;
+                continue;
+            }
+            if (ch === ">") {
+                depth = Math.max(0, depth - 1);
+                current += ch;
+                continue;
+            }
+            if (ch === "," && depth === 0) {
+                const token = current.trim();
+                if (token) result.push(token);
+                current = "";
+                continue;
+            }
+            current += ch;
+        }
+        const tail = current.trim();
+        if (tail) result.push(tail);
+        return result;
+    }
+
     normalizeTypeName(typeName) {
         if (!typeName) return null;
-        const trimmed = String(typeName).trim();
+        const trimmed = String(typeName).trim().replace(/^global::/i, "");
         if (!trimmed) return null;
-        const nullable = trimmed.match(/^Nullable<(.+)>$/);
-        if (nullable) return nullable[1];
-        if (trimmed === 'List') return 'List<Object>';
-        if (trimmed === 'IEnumerable') return 'List<Object>';
-        if (trimmed === 'IReadOnlyList') return 'List<Object>';
-        if (trimmed === 'IReadOnlyCollection') return 'List<Object>';
-        if (trimmed === 'ICollection') return 'List<Object>';
-        const listMatch = trimmed.match(/^IReadOnlyList<(.+)>$/);
-        if (listMatch) return `List<${listMatch[1]}>`;
-        const roCollectionMatch = trimmed.match(/^IReadOnlyCollection<(.+)>$/);
-        if (roCollectionMatch) return `List<${roCollectionMatch[1]}>`;
-        const collectionMatch = trimmed.match(/^ICollection<(.+)>$/);
-        if (collectionMatch) return `List<${collectionMatch[1]}>`;
-        const enumerableMatch = trimmed.match(/^IEnumerable<(.+)>$/);
-        if (enumerableMatch) return `List<${enumerableMatch[1]}>`;
+
+        const simpleAliasMap = {
+            "bool": "Boolean",
+            "boolean": "Boolean",
+            "system.boolean": "Boolean",
+            "string": "String",
+            "system.string": "String",
+            "object": "Object",
+            "system.object": "Object",
+            "guid": "Guid",
+            "system.guid": "Guid",
+            "int": "Int32",
+            "int32": "Int32",
+            "system.int32": "Int32",
+            "long": "Int64",
+            "int64": "Int64",
+            "system.int64": "Int64",
+            "float": "Single",
+            "single": "Single",
+            "system.single": "Single",
+            "double": "Double",
+            "system.double": "Double",
+            "decimal": "Decimal",
+            "system.decimal": "Decimal",
+            "number": "Number"
+        };
+
+        const lower = trimmed.toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(simpleAliasMap, lower)) {
+            return simpleAliasMap[lower];
+        }
+
+        const nullable = trimmed.match(/^Nullable<(.+)>$/i);
+        if (nullable) {
+            return this.normalizeTypeName(nullable[1]) || nullable[1].trim();
+        }
+
+        const genericMatch = trimmed.match(/^([^<]+)<(.+)>$/);
+        if (genericMatch) {
+            const containerRaw = genericMatch[1].trim();
+            const containerLower = containerRaw.toLowerCase();
+            const rawArgs = this.splitGenericTypeArguments(genericMatch[2]);
+            const normalizedArgs = rawArgs.map(arg => this.normalizeTypeName(arg) || arg.trim());
+
+            if (["list", "ienumerable", "ireadonlylist", "ireadonlycollection", "icollection"].includes(containerLower)) {
+                const inner = normalizedArgs[0] || "Object";
+                return `List<${inner}>`;
+            }
+
+            if (["dictionary", "idictionary", "ireadonlydictionary"].includes(containerLower)) {
+                const keyType = normalizedArgs[0] || "Object";
+                const valueType = normalizedArgs[1] || "Object";
+                const dictionaryNameMap = {
+                    dictionary: "Dictionary",
+                    idictionary: "IDictionary",
+                    ireadonlydictionary: "IReadOnlyDictionary"
+                };
+                const name = dictionaryNameMap[containerLower] || containerRaw;
+                return `${name}<${keyType}, ${valueType}>`;
+            }
+
+            return `${containerRaw}<${normalizedArgs.join(", ")}>`;
+        }
+
+        if (["list", "ienumerable", "ireadonlylist", "ireadonlycollection", "icollection"].includes(lower)) {
+            return "List<Object>";
+        }
+
         return trimmed;
     }
 
@@ -372,28 +462,31 @@ export class DslEditor extends MetadataDrivenComponent {
                 return;
             }
 
-            const setSelfContext = (sourceType) => {
+            const setSelfContext = (sourceType, sourceNode) => {
                 const itemType = this.getCollectionInnerType(sourceType)
-                    || (typeof this.isBusinessObjectType === "function" && this.isBusinessObjectType(sourceType)
-                        ? sourceType
+                    || (typeof this.canOpenPipelineOnType === "function" && this.canOpenPipelineOnType(sourceType)
+                        ? this.normalizeTypeName(sourceType)
                         : null);
                 if (itemType) {
-                    this.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType };
+                    const eventType = this.normalizeTypeName(itemType) === "IGameEvent"
+                        ? resolveEventTypeHintFromSource(this, sourceNode)
+                        : null;
+                    this.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
                 }
             };
 
             if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
                 this.slotExpectedType = 'Boolean';
-                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
-                setSelfContext(sourceReturnType);
+                const sourceReturnType = this.getSemanticNodeType(parentNode.source);
+                setSelfContext(sourceReturnType, parentNode.source);
                 restoreContext();
                 return;
             }
 
             if (parentNode.type === 'listSort' && slot === 'sortExpression') {
                 this.slotExpectedType = 'NonEntity';
-                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
-                setSelfContext(sourceReturnType);
+                const sourceReturnType = this.getSemanticNodeType(parentNode.source);
+                setSelfContext(sourceReturnType, parentNode.source);
                 restoreContext();
                 return;
             }
@@ -406,15 +499,15 @@ export class DslEditor extends MetadataDrivenComponent {
 
             if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
                 this.slotExpectedType = 'NonEntity';
-                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
-                setSelfContext(sourceReturnType);
+                const sourceReturnType = this.getSemanticNodeType(parentNode.source);
+                setSelfContext(sourceReturnType, parentNode.source);
                 restoreContext();
                 return;
             }
             if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
                 this.slotExpectedType = 'Object';
-                const sourceReturnType = parentNode.source?.returnType || this.calculateASTReturnType(parentNode.source);
-                setSelfContext(sourceReturnType);
+                const sourceReturnType = this.getSemanticNodeType(parentNode.source);
+                setSelfContext(sourceReturnType, parentNode.source);
                 restoreContext();
                 return;
             }
@@ -432,8 +525,8 @@ export class DslEditor extends MetadataDrivenComponent {
          * 将封装后的 newValueNode 写回父节点指定槽位
          * 注意：slot='self' 需要由上一层路径项决定如何替换，此处只处理 left/right
          */
-    writeBackToParentSlot(parentNode, slot, newValueNode) {
-            return writeBackToParentSlot(this, parentNode, slot, newValueNode);
+    writeBackToParentSlot(parentNode, slot, newValueNode, index = null) {
+            return writeBackToParentSlot(this, parentNode, slot, newValueNode, index);
     }
 
     /**
@@ -528,15 +621,50 @@ export class DslEditor extends MetadataDrivenComponent {
      * 获取节点的实际返回类型（处理封装表达式）
      */
     getNodeActualReturnType(node) {
-        if (!node) return 'Object';
+        return this.getSemanticNodeType(node) || 'Object';
+    }
 
-        // 如果是封装的表达式，使用其内部AST的返回类型
-        if (node.metadata && node.metadata.type === "encapsulated" && node.metadata.innerAST) {
-            return this.calculateASTReturnType(node.metadata.innerAST);
+    /**
+     * 语义类型统一入口：业务判定只依赖 AST 推导结果
+     */
+    getSemanticNodeType(node) {
+        if (!node) return null;
+        const computedType = getCoreSemanticNodeType(node);
+        const normalized = this.normalizeTypeName(computedType);
+        if (!normalized || normalized === 'Void') {
+            return null;
         }
+        return normalized;
+    }
 
-        // 否则计算节点的实际返回类型
-        return this.calculateASTReturnType(node);
+    normalizeSetOperandExpectedType(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized) return null;
+        if (this.isCollectionType(normalized)) return normalized;
+        if (normalized === 'String' || normalized === 'Void' || normalized === 'Object') return normalized;
+        return `List<${normalized}>`;
+    }
+
+    canOperateAsSetOperand(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        return canSemanticOperateAsSetOperand(normalized);
+    }
+
+    canPromoteToCollection(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized || this.isCollectionType(normalized)) return false;
+        return this.canOperateAsSetOperand(normalized);
+    }
+
+    canOpenPipelineOnType(typeName) {
+        const normalized = this.normalizeTypeName(typeName);
+        if (!normalized || normalized === 'Void' || normalized === 'Object') return false;
+        if (this.isCollectionType(normalized)) return true;
+        if (this.isDictionaryType(normalized)) return false;
+        if (this.isNumericType(normalized)) return false;
+        if (normalized === 'Boolean') return false;
+        if (this.isTextType(normalized)) return false;
+        return this.isObjectType(normalized) || this.isBusinessObjectType(normalized);
     }
 
     /**
@@ -546,6 +674,20 @@ export class DslEditor extends MetadataDrivenComponent {
         if (!parentNode) {
             return this.normalizeTypeName(this.expectedType);
         }
+
+        const isEmptyValueNode = (node) => {
+            if (!node || node.type !== 'value') return false;
+            if (node.metadata?.type === 'empty') return true;
+            if (node.metadata?.type === 'encapsulated' && node.metadata?.innerAST?.metadata?.type === 'empty') {
+                return true;
+            }
+            return false;
+        };
+
+        const resolveUsableNodeType = (node) => {
+            if (!node || isEmptyValueNode(node)) return null;
+            return this.getSemanticNodeType(node);
+        };
 
         if (parentNode.type === 'virtualRoot' && slot === 'main') {
             return this.normalizeTypeName(this.expectedType);
@@ -560,7 +702,7 @@ export class DslEditor extends MetadataDrivenComponent {
             }
             if (argIndex > 0) {
                 const receiver = (parentNode.args || [])[0];
-                const receiverType = receiver ? this.calculateASTReturnType(receiver) : null;
+                const receiverType = receiver ? this.getSemanticNodeType(receiver) : null;
                 if (receiverType) {
                     if (this.isCollectionType(receiverType)) {
                         return this.normalizeTypeName(this.getCollectionInnerType(receiverType)) || 'Object';
@@ -599,16 +741,21 @@ export class DslEditor extends MetadataDrivenComponent {
             }
             if (['|', '&', '~'].includes(op)) {
                 const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
-                return sibling ? this.calculateASTReturnType(sibling) : null;
+                const siblingType = resolveUsableNodeType(sibling);
+                if (siblingType) return this.normalizeSetOperandExpectedType(siblingType);
+                const currentNode = slot === 'left' ? parentNode.leftOperand : parentNode.rightOperand;
+                return this.normalizeSetOperandExpectedType(resolveUsableNodeType(currentNode));
             }
             if (['==', '!=', '>', '<', '>=', '<='].includes(op)) {
                 const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
-                return sibling ? this.calculateASTReturnType(sibling) : null;
+                const siblingType = resolveUsableNodeType(sibling);
+                if (siblingType) return siblingType;
+                const currentNode = slot === 'left' ? parentNode.leftOperand : parentNode.rightOperand;
+                return resolveUsableNodeType(currentNode);
             }
             if (['contains', 'startsWith', 'endsWith'].includes(op)) {
                 const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
-                const siblingType = sibling ? this.calculateASTReturnType(sibling) : null;
-                const normalizedSibling = this.normalizeTypeName(siblingType);
+                const normalizedSibling = resolveUsableNodeType(sibling);
                 if (normalizedSibling) {
                     if (this.isCollectionType(normalizedSibling)) {
                         const inner = this.getCollectionInnerType(normalizedSibling);
@@ -620,7 +767,9 @@ export class DslEditor extends MetadataDrivenComponent {
                         return 'String';
                     }
                 }
-                return normalizedSibling || 'String';
+                const currentNode = slot === 'left' ? parentNode.leftOperand : parentNode.rightOperand;
+                const currentType = resolveUsableNodeType(currentNode);
+                return currentType || 'String';
             }
             if (op === '-') {
                 return 'Number';
@@ -630,7 +779,8 @@ export class DslEditor extends MetadataDrivenComponent {
             }
         }
 
-        return this.normalizeTypeName(this.slotExpectedType || this.expectedType);
+        // 不再回退到 slotExpectedType，避免工作区状态污染主表达式推断
+        return this.normalizeTypeName(this.expectedType);
     }
 
     /**
@@ -660,7 +810,7 @@ export class DslEditor extends MetadataDrivenComponent {
 
 
         // 计算实际类型
-        result.actualType = this.calculateASTReturnType(node);
+        result.actualType = this.getSemanticNodeType(node) || 'Object';
 
         const hasEffectiveParent = node.parent && node.parent.type !== 'virtualRoot';
 
@@ -675,24 +825,25 @@ export class DslEditor extends MetadataDrivenComponent {
                 result.expectedType = 'Boolean';
             } else if (['|', '&', '~'].includes(parentOperator)) {
                 if (isRightOperand && node.parent.leftOperand) {
-                    result.expectedType = this.calculateASTReturnType(node.parent.leftOperand);
+                    const leftType = this.getSemanticNodeType(node.parent.leftOperand);
+                    result.expectedType = this.normalizeSetOperandExpectedType(leftType);
                 }
             } else if (['>', '<', '>=', '<='].includes(parentOperator)) {
                 // 比较操作符：如果左操作数是数值，右操作数也应该是数值
                 if (isRightOperand && node.parent.leftOperand) {
-                    const leftType = this.calculateASTReturnType(node.parent.leftOperand);
-                    if (leftType === 'Int32' || leftType === 'Number') {
+                    const leftType = this.normalizeTypeName(this.getSemanticNodeType(node.parent.leftOperand));
+                    if (leftType && this.isNumericType(leftType)) {
                         result.expectedType = leftType;
                     }
                 }
             } else if (['==', '!='].includes(parentOperator)) {
                 // 相等操作符：两个操作数类型应该匹配
                 if (isRightOperand && node.parent.leftOperand) {
-                    result.expectedType = this.calculateASTReturnType(node.parent.leftOperand);
+                    result.expectedType = this.getSemanticNodeType(node.parent.leftOperand);
                 }
             } else if (['contains', 'startsWith', 'endsWith'].includes(parentOperator)) {
                 if (isRightOperand && node.parent.leftOperand) {
-                    const leftType = this.calculateASTReturnType(node.parent.leftOperand);
+                    const leftType = this.getSemanticNodeType(node.parent.leftOperand);
                     const normalizedLeft = this.normalizeTypeName(leftType);
                     if (normalizedLeft) {
                         if (this.isCollectionType(normalizedLeft)) {
@@ -707,7 +858,7 @@ export class DslEditor extends MetadataDrivenComponent {
                 }
             } else if (parentOperator === '-') {
                 if (isRightOperand && node.parent.leftOperand) {
-                    const leftType = this.calculateASTReturnType(node.parent.leftOperand);
+                    const leftType = this.getSemanticNodeType(node.parent.leftOperand);
                     if (['Int32', 'Int64', 'Single', 'Double', 'Number'].includes(leftType)) {
                         result.expectedType = leftType;
                     }
@@ -722,7 +873,7 @@ export class DslEditor extends MetadataDrivenComponent {
                 let expectedType = this.normalizeTypeName(p.typeName);
                 if (expectedType === 'Object' && index > 0) {
                     const receiver = args[0];
-                    const receiverType = receiver ? this.calculateASTReturnType(receiver) : null;
+                    const receiverType = receiver ? this.getSemanticNodeType(receiver) : null;
                     if (receiverType) {
                         if (this.isCollectionType(receiverType)) {
                             expectedType = this.normalizeTypeName(this.getCollectionInnerType(receiverType)) || expectedType;
@@ -847,7 +998,7 @@ export class DslEditor extends MetadataDrivenComponent {
      * 计算AST节点的实际返回类型
      */
     calculateASTReturnType(node) {
-        return calculateASTReturnType(this, node);
+        return this.getSemanticNodeType(node) || "Object";
     }
 
     /**
@@ -911,8 +1062,8 @@ export class DslEditor extends MetadataDrivenComponent {
         return getPipelineContext(this);
     }
 
-    openPipelineFromCurrent() {
-        return openPipelineFromCurrent(this);
+    openPipelineFromCurrent(options = undefined) {
+        return openPipelineFromCurrent(this, options);
     }
 
     syncPipelineContext() {
@@ -1000,15 +1151,7 @@ export class DslEditor extends MetadataDrivenComponent {
             return;
         }
 
-        // 最终封装结果
-        const finalNode = this.createEncapsulatedFrom(rootNode);
-
-        this.virtualRoot.main = finalNode;
-        this.workspaceAST = this.cloneAST(rootNode);
-        this.astRoot = this.workspaceAST;
-        this.expression = this.astRoot?.toExpression?.() || raw;
-        this.normalizeLoadedAst();
-
+        this.applyParsedAst(rootNode, raw);
     }
 
 
@@ -1017,6 +1160,8 @@ export class DslEditor extends MetadataDrivenComponent {
      * 渲染编辑器界面
      */
     renderEditor() {
+        this.ensureEditingPathConsistency();
+
         if (!this.isPipelineInline) {
             this.syncPipelineContext();
         }
@@ -1043,41 +1188,58 @@ export class DslEditor extends MetadataDrivenComponent {
     }
 
     getFavoriteExpectedType() {
-        const expected = this.slotExpectedType || this.expectedType || null;
-        return expected ? this.normalizeTypeName(expected) : null;
+        return null;
     }
 
-    async fetchFavorites(query = "", expectedType = null, limit = 12, page = 1) {
+    async fetchFavorites(query = "", limit = this.favoriteState.limit || 6, page = 1) {
         return fetchFavoritesApi({
             userId: this.userId,
             query,
-            expectedType,
             limit,
             page
         });
     }
 
-    async refreshFavorites(query = this.favoriteState.query) {
+    async refreshFavorites(query = this.favoriteState.query, page = this.favoriteState.page || 1) {
+        const normalizedQuery = String(query || "").trim();
         this.favoriteState.loading = true;
         this.favoriteState.error = null;
-        this.favoriteState.query = query;
+        this.favoriteState.query = normalizedQuery;
+        this.favoriteState.page = Math.max(1, Number(page) || 1);
 
         try {
-            const expectedType = this.getFavoriteExpectedType();
-            const result = await this.fetchFavorites(query, expectedType);
-            this.favoriteState.items = result.items;
-            if (query) {
+            const limit = this.favoriteState.limit || 6;
+            let activePage = this.favoriteState.page;
+
+            let result = await this.fetchFavorites(normalizedQuery, limit, activePage);
+            const total = Math.max(0, Number(result.total) || 0);
+            const totalPages = Math.max(1, Math.ceil(total / limit));
+
+            if (total > 0 && activePage > totalPages) {
+                activePage = totalPages;
+                result = await this.fetchFavorites(normalizedQuery, limit, activePage);
+            }
+
+            this.favoriteState.items = result.items || [];
+            this.favoriteState.total = Math.max(0, Number(result.total) || 0);
+            this.favoriteState.totalPages = Math.max(1, Math.ceil(this.favoriteState.total / limit));
+            this.favoriteState.page = activePage;
+
+            if (normalizedQuery) {
                 this.favoriteState.recentItems = [];
             } else {
-                this.favoriteState.recentItems = result.items
+                const recentResult = await this.fetchFavorites("", 24, 1);
+                this.favoriteState.recentItems = (recentResult.items || [])
                     .filter(item => item.lastUsedAt || item.usageCount > 0)
-                    .slice(0, 6);
+                    .slice(0, 1);
             }
         } catch (error) {
             console.error("DslEditor: Failed to fetch favorites", error);
             this.favoriteState.error = error?.message || "收藏加载失败";
             this.favoriteState.items = [];
             this.favoriteState.recentItems = [];
+            this.favoriteState.total = 0;
+            this.favoriteState.totalPages = 1;
         } finally {
             this.favoriteState.loading = false;
         }
@@ -1126,6 +1288,7 @@ export class DslEditor extends MetadataDrivenComponent {
         this.astRoot = this.workspaceAST;
         this.expression = this.astRoot?.toExpression?.() || expression;
         this.normalizeLoadedAst();
+        this.syncMainWorkspaceContext();
         this.setParseStatus("parsed", "解析成功");
     }
 
@@ -1159,7 +1322,114 @@ export class DslEditor extends MetadataDrivenComponent {
         this.astRoot = this.workspaceAST;
         this.expression = this.astRoot?.toExpression?.() || expression;
         this.maintainASTRelationships(this.virtualRoot.main);
+        this.syncMainWorkspaceContext();
         this.setParseStatus("fallback", message, errors);
+    }
+
+    syncMainWorkspaceContext() {
+        this.contextOverride = null;
+        this.slotExpectedType = typeof this.getExpectedTypeForSlot === "function"
+            ? this.getExpectedTypeForSlot(this.virtualRoot, "main")
+            : this.normalizeTypeName(this.expectedType);
+
+        this.clearEditingPath();
+        this.pushEditingPath({
+            parentNode: this.virtualRoot,
+            slot: "main",
+            descriptor: "编辑 main"
+        });
+
+        const mainNode = this.virtualRoot?.main || null;
+        this.selectedNode = mainNode?.metadata?.type === "encapsulated" ? mainNode : null;
+    }
+
+    collectAstChildren(node) {
+        if (!node) return [];
+        const children = [];
+        if (node.type === "operator") {
+            if (node.leftOperand) children.push(node.leftOperand);
+            if (node.rightOperand) children.push(node.rightOperand);
+        } else if (node.type === "functionCall") {
+            (node.args || []).forEach((arg) => {
+                if (arg) children.push(arg);
+            });
+        } else if (node.type === "listQuery") {
+            if (node.source) children.push(node.source);
+            if (node.filterExpression) children.push(node.filterExpression);
+        } else if (node.type === "listSort") {
+            if (node.source) children.push(node.source);
+            if (node.sortExpression) children.push(node.sortExpression);
+        } else if (node.type === "listTake") {
+            if (node.source) children.push(node.source);
+            if (node.countExpression) children.push(node.countExpression);
+        } else if (node.type === "listDistinct") {
+            if (node.source) children.push(node.source);
+            if (node.keyExpression) children.push(node.keyExpression);
+        } else if (node.type === "listSelect") {
+            if (node.source) children.push(node.source);
+            if (node.selectExpression) children.push(node.selectExpression);
+        }
+        if (node.metadata?.innerAST) {
+            children.push(node.metadata.innerAST);
+        }
+        return children;
+    }
+
+    isNodeAttachedToMainAst(targetNode) {
+        if (!targetNode) return false;
+        if (targetNode === this.virtualRoot) return true;
+        const mainNode = this.virtualRoot?.main || null;
+        if (!mainNode) return false;
+        if (targetNode === mainNode) return true;
+
+        const stack = [mainNode];
+        const visited = new Set();
+        while (stack.length > 0) {
+            const current = stack.pop();
+            if (!current || visited.has(current)) continue;
+            visited.add(current);
+            if (current === targetNode) return true;
+            const children = this.collectAstChildren(current);
+            for (const child of children) {
+                if (child && !visited.has(child)) {
+                    stack.push(child);
+                }
+            }
+        }
+        return false;
+    }
+
+    isEditingPathEntryValid(entry) {
+        if (!entry?.parentNode || !entry?.slot) return false;
+        if (entry.parentNode === this.virtualRoot) {
+            return entry.slot === "main";
+        }
+        return this.isNodeAttachedToMainAst(entry.parentNode);
+    }
+
+    ensureEditingPathConsistency() {
+        if (this.isLightWorkspace) return;
+        if (!this.virtualRoot?.main) return;
+        const top = this.peekEditingPath ? this.peekEditingPath() : null;
+        if (!this.isEditingPathEntryValid(top)) {
+            this.syncMainWorkspaceContext();
+        }
+    }
+
+    rebuildWorkspaceFromPath() {
+        this.ensureEditingPathConsistency();
+        const top = this.peekEditingPath ? this.peekEditingPath() : null;
+        if (this.isEditingPathEntryValid(top)) {
+            this.handleEnterEditModeForSlot(top.parentNode, top.slot, top.index, { preservePath: false });
+            return;
+        }
+        if (this.virtualRoot?.main) {
+            this.enterMainEditMode();
+            return;
+        }
+        this.workspaceAST = null;
+        this.astRoot = null;
+        this.renderEditor();
     }
 
     mapDslAstDtoToUiAst(dto) {
@@ -1226,6 +1496,15 @@ export class DslEditor extends MetadataDrivenComponent {
         }
     }
 
+    async deleteFavorite(favoriteId) {
+        if (!this.userId || !favoriteId) return { success: false };
+        const result = await deleteFavoriteApi(this.userId, favoriteId);
+        if (!result?.success) {
+            console.warn("DslEditor: Failed to delete favorite.", result?.status);
+        }
+        return result;
+    }
+
     async createFavoriteFromCurrentExpression() {
         if (!this.userId) {
             this.showExpressionError("登录后才能使用收藏功能。");
@@ -1257,8 +1536,7 @@ export class DslEditor extends MetadataDrivenComponent {
         const payload = {
             userId: this.userId,
             label: label.trim(),
-            expression,
-            expectedType: this.getFavoriteExpectedType()
+            expression
         };
 
         try {
@@ -1403,8 +1681,8 @@ export class DslEditor extends MetadataDrivenComponent {
         return renderNodeContent(this, node, container);
     }
 
-    renderPipelineBlock(node, container, renderNodeFn) {
-        return renderPipelineBlock(this, node, container, renderNodeFn);
+    renderPipelineBlock(node, container, renderNodeFn, options = undefined) {
+        return renderPipelineBlock(this, node, container, renderNodeFn, options);
     }
 
     renderFunctionCallNodeAST(node, container, options = undefined) {
@@ -1743,25 +2021,40 @@ export class DslEditor extends MetadataDrivenComponent {
     exitSubEditor() {
         if (this.isSubEditor && this.parentEditor) {
             // 清空子编辑器的表达式
-            if (this.onChange) {
-                this.onChange("");
-            }
+            this.expression = "";
+            this.emitExpressionChange("");
             // 重新渲染父编辑器以移除子编辑器焦点
             this.parentEditor.renderEditor();
         }
+    }
+
+    canGoBackFromWorkspace() {
+        if (this.isSubEditor) return true;
+        if (this.workspaceAST) return true;
+        return Array.isArray(this.editingPath) && this.editingPath.length > 1;
     }
 
     /**
      * 退回上级节点 (AST重构版)
      */
     goBack() {
-        // 如果是子编辑器且没有AST，则退出子编辑器
-        if (this.isSubEditor && !this.workspaceAST) {
+        const hasPathBack = Array.isArray(this.editingPath) && this.editingPath.length > 1;
+
+        // 子编辑器且无可回退路径时，退回父编辑器
+        if (this.isSubEditor && !this.workspaceAST && !hasPathBack) {
             this.exitSubEditor();
             return;
         }
 
-        if (!this.workspaceAST) return;
+        // 工作区为空但路径仍有上级：按路径回退
+        if (!this.workspaceAST) {
+            if (hasPathBack) {
+                this.popEditingPath();
+                this.rebuildWorkspaceFromPath();
+                this.updateExpressionFromAST({ skipRender: true });
+            }
+            return;
+        }
 
 
         // 重置表达式完成状态
@@ -1772,16 +2065,22 @@ export class DslEditor extends MetadataDrivenComponent {
 
         if (backResult.success) {
             this.workspaceAST = backResult.newRoot;
+            this.astRoot = this.workspaceAST;
 
-            // 如果是子编辑器，在回到根节点后检查是否需要退出
-            if (this.isSubEditor && !this.workspaceAST) {
-                // 在子编辑器中，从context回到根节点后，再次点击back应该退出子编辑器
-                // 这里不直接退出，让用户再次点击back按钮来退出
+            // 当前层已清空时，优先沿编辑路径回退到父层，避免卡死在空工作区
+            if (!this.workspaceAST) {
+                const canAscend = Array.isArray(this.editingPath) && this.editingPath.length > 1;
+                if (canAscend) {
+                    this.popEditingPath();
+                    this.rebuildWorkspaceFromPath();
+                    this.updateExpressionFromAST({ skipRender: true });
+                    return;
+                }
             }
         }
 
 
-        this.updateExpressionFromAST();
+        this.updateExpressionFromAST({ skipRender: true });
         this.renderEditor();
     }
 
@@ -2006,6 +2305,7 @@ export class DslEditor extends MetadataDrivenComponent {
                 : this.createEncapsulatedFrom(this.workspaceAST);
             this.virtualRoot.main = mainNode;
             this.ascend(this.virtualRoot);
+            this.updateExpressionFromAST({ skipRender: true });
         }
     }
 
@@ -2020,20 +2320,22 @@ export class DslEditor extends MetadataDrivenComponent {
      * 上升：在子表达式保存后，将父表达式置于工作区
      */
     ascend(parentNode) {
-        
-        // 决定性修复：ascend 的职责是加载指定节点到工作区进行“预览”
-        if (parentNode.type === 'virtualRoot') {
-            // 合并预览/编辑：回到虚拟根时直接进入主表达式编辑态
+        // 路径是权威。ascend 只负责触发基于路径的重建，避免工作区与路径脱节。
+        if (typeof this.rebuildWorkspaceFromPath === "function") {
+            this.rebuildWorkspaceFromPath();
+            return;
+        }
+
+        if (parentNode?.type === "virtualRoot") {
             this.enterMainEditMode();
             return;
-        } else {
-            // 如果上升到普通节点，则在工作区预览该节点
+        }
+        if (parentNode) {
             this.workspaceAST = this.cloneAST(parentNode);
             this.astRoot = this.workspaceAST;
+            this.updateExpressionFromAST();
+            this.renderEditor();
         }
-    
-        this.updateExpressionFromAST();
-        this.renderEditor();
     }
 
     // completeToTop 已移除 - 封装完最上层表达式即视为完成
@@ -2834,7 +3136,12 @@ export class DslEditor extends MetadataDrivenComponent {
 
         const top = this.peekEditingPath ? this.peekEditingPath() : null;
         const isEditingMain = top?.parentNode?.type === 'virtualRoot' && top?.slot === 'main';
-        if (isEditingMain || !top?.parentNode) {
+        if (!top?.parentNode) {
+            const fallbackNode = mainNode?.metadata?.innerAST ?? mainNode;
+            return fallbackNode?.toExpression?.() || "";
+        }
+
+        if (isEditingMain) {
             const fallbackNode = mainNode?.metadata?.innerAST ?? mainNode;
             const expressionNode = this.workspaceAST ?? fallbackNode;
             return expressionNode?.toExpression?.() || "";
@@ -2854,17 +3161,20 @@ export class DslEditor extends MetadataDrivenComponent {
             : this.createEncapsulatedFrom(this.workspaceAST);
 
         const updated = this.setSlotNode(parentNode, slot, index, injectedNode);
-        const expressionSource = mainNode.metadata?.innerAST ?? mainNode;
-        const expression = expressionSource?.toExpression?.() || "";
-        if (updated) {
-            this.setSlotNode(parentNode, slot, index, originalNode);
+        try {
+            const expressionSource = mainNode.metadata?.innerAST ?? mainNode;
+            return expressionSource?.toExpression?.() || "";
+        } finally {
+            if (updated) {
+                this.setSlotNode(parentNode, slot, index, originalNode);
+            }
         }
-        return expression;
     }
 
     getSlotNode(parentNode, slot, index = null) {
         if (!parentNode || !slot) return null;
         if (parentNode.type === 'virtualRoot' && slot === 'main') return parentNode.main || null;
+        if (parentNode.type === 'value' && slot === 'innerAST') return parentNode.metadata?.innerAST || null;
         if (parentNode.type === 'operator') {
             if (slot === 'left') return parentNode.leftOperand || null;
             if (slot === 'right') return parentNode.rightOperand || null;
@@ -2872,6 +3182,16 @@ export class DslEditor extends MetadataDrivenComponent {
         if (parentNode.type === 'functionCall' && slot === 'arg') {
             const argIndex = typeof index === 'number' ? index : 0;
             return (parentNode.args || [])[argIndex] || null;
+        }
+        if (
+            (parentNode.type === 'listQuery'
+                || parentNode.type === 'listSort'
+                || parentNode.type === 'listTake'
+                || parentNode.type === 'listDistinct'
+                || parentNode.type === 'listSelect')
+            && slot === 'source'
+        ) {
+            return parentNode.source || null;
         }
         if (parentNode.type === 'listQuery' && slot === 'filterExpression') return parentNode.filterExpression || null;
         if (parentNode.type === 'listSort' && slot === 'sortExpression') return parentNode.sortExpression || null;
@@ -2887,13 +3207,34 @@ export class DslEditor extends MetadataDrivenComponent {
             parentNode.main = node;
             return true;
         }
+        if (parentNode.type === 'value' && slot === 'innerAST') {
+            if (!parentNode.metadata || typeof parentNode.metadata !== 'object') {
+                parentNode.metadata = {};
+            }
+            parentNode.metadata.innerAST = node || null;
+            if (node) node.parent = parentNode;
+            parentNode.updateCompleteness?.();
+            return true;
+        }
         if (parentNode.type === 'operator') {
             if (slot === 'left') {
-                parentNode.setLeftOperand?.(node);
+                if (typeof parentNode.setLeftOperand === 'function') {
+                    parentNode.setLeftOperand(node);
+                } else {
+                    parentNode.leftOperand = node;
+                    if (node) node.parent = parentNode;
+                    parentNode.updateCompleteness?.();
+                }
                 return true;
             }
             if (slot === 'right') {
-                parentNode.setRightOperand?.(node);
+                if (typeof parentNode.setRightOperand === 'function') {
+                    parentNode.setRightOperand(node);
+                } else {
+                    parentNode.rightOperand = node;
+                    if (node) node.parent = parentNode;
+                    parentNode.updateCompleteness?.();
+                }
                 return true;
             }
         }
@@ -2903,25 +3244,69 @@ export class DslEditor extends MetadataDrivenComponent {
                 parentNode.setArg(argIndex, node);
                 return true;
             }
+            return false;
+        }
+        if (
+            (parentNode.type === 'listQuery'
+                || parentNode.type === 'listSort'
+                || parentNode.type === 'listTake'
+                || parentNode.type === 'listDistinct'
+                || parentNode.type === 'listSelect')
+            && slot === 'source'
+        ) {
+            parentNode.source = node || null;
+            if (node) node.parent = parentNode;
+            parentNode.updateCompleteness?.();
+            return true;
         }
         if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
-            parentNode.setFilterExpression?.(node);
+            if (typeof parentNode.setFilterExpression === 'function') {
+                parentNode.setFilterExpression(node);
+            } else {
+                parentNode.filterExpression = node || null;
+                if (node) node.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
             return true;
         }
         if (parentNode.type === 'listSort' && slot === 'sortExpression') {
-            parentNode.setSortExpression?.(node);
+            if (typeof parentNode.setSortExpression === 'function') {
+                parentNode.setSortExpression(node);
+            } else {
+                parentNode.sortExpression = node || null;
+                if (node) node.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
             return true;
         }
         if (parentNode.type === 'listTake' && slot === 'countExpression') {
-            parentNode.setCountExpression?.(node);
+            if (typeof parentNode.setCountExpression === 'function') {
+                parentNode.setCountExpression(node);
+            } else {
+                parentNode.countExpression = node || null;
+                if (node) node.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
             return true;
         }
         if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
-            parentNode.setKeyExpression?.(node);
+            if (typeof parentNode.setKeyExpression === 'function') {
+                parentNode.setKeyExpression(node);
+            } else {
+                parentNode.keyExpression = node || null;
+                if (node) node.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
             return true;
         }
         if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
-            parentNode.setSelectExpression?.(node);
+            if (typeof parentNode.setSelectExpression === 'function') {
+                parentNode.setSelectExpression(node);
+            } else {
+                parentNode.selectExpression = node || null;
+                if (node) node.parent = parentNode;
+                parentNode.updateCompleteness?.();
+            }
             return true;
         }
         return false;
@@ -3381,8 +3766,9 @@ export class DslEditor extends MetadataDrivenComponent {
      * 检查是否为数值类型
      */
     isNumericType(typeName) {
-        const numericTypes = ['Int32', 'Int64', 'Single', 'Double', 'Number'];
-        return numericTypes.includes(typeName);
+        const normalized = this.normalizeTypeName(typeName);
+        const numericTypes = ['Int32', 'Int64', 'Single', 'Double', 'Decimal', 'Number'];
+        return numericTypes.includes(normalized);
     }
 
 
@@ -3501,7 +3887,7 @@ export class DslEditor extends MetadataDrivenComponent {
      */
     getCollectionFunctions(typeName = null) {
         const functions = this.metadata?.dsl?.functions || [];
-        const collectionFunctionNames = ['count', 'sum', 'min', 'max', 'contains', 'isEmpty'];
+        const collectionFunctionNames = ['count', 'sum', 'min', 'max', 'contains', 'isEmpty', 'byType'];
 
         return functions
             .filter(f => collectionFunctionNames.includes(f.name))
@@ -3697,19 +4083,58 @@ export class DslEditor extends MetadataDrivenComponent {
             }];
         }
 
-        const typeMetadata = this.getTypeMetadata(typeName);
-        if (!typeMetadata || !typeMetadata.properties) {
-            return [];
-        }
-
-        const displayTypeName = this.getDisplayTypeName(typeName);
-        return typeMetadata.properties.map(prop => ({
+        const normalizedType = this.normalizeTypeName(typeName) || typeName;
+        const typeMetadata = this.getTypeMetadata(normalizedType);
+        const baseProperties = (typeMetadata?.properties || []).map(prop => ({
             type: "property",
             value: prop.name,
             label: prop.displayName || prop.name,
-            description: prop.description || `${displayTypeName}的${prop.name}属性`,
+            description: prop.description || `${this.getDisplayTypeName(normalizedType)}的${prop.name}属性`,
             returnType: prop.typeName
         }));
+
+        const isEventBaseType = normalizedType === "IGameEvent" || normalizedType === "GameEventBase";
+        const eventTypeHint = this.contextOverride?.name === "self"
+            ? this.contextOverride?.eventType
+            : null;
+
+        if (!isEventBaseType || !eventTypeHint) {
+            return baseProperties;
+        }
+
+        const eventMeta = (this.metadata?.events || []).find(ev =>
+            String(ev.eventType ?? ev.EventType ?? "").toLowerCase() === String(eventTypeHint).toLowerCase()
+        );
+        if (!eventMeta) {
+            return baseProperties;
+        }
+
+        const params = eventMeta.parameters || eventMeta.Parameters || [];
+        const eventProperties = params.map(param => {
+            const propertyName = param.propertyName || param.PropertyName || param.name;
+            const typeNameFromMeta = this.normalizeTypeName(param.typeName || param.TypeName || param.type) || "Object";
+            const scope = String(param.scope || param.Scope || "both").toLowerCase();
+            const scopeLabel = scope === "input" ? "输入" : scope === "output" ? "输出" : "输入/输出";
+            return {
+                type: "property",
+                value: propertyName,
+                label: param.displayName || param.DisplayName || propertyName,
+                description: `${param.description || param.Description || "事件参数"}（${scopeLabel}）`,
+                returnType: typeNameFromMeta
+            };
+        });
+
+        const dedupe = new Set();
+        const merged = [...eventProperties, ...baseProperties].filter(option => {
+            const key = String(option.value || "").toLowerCase();
+            if (!key || dedupe.has(key)) {
+                return false;
+            }
+            dedupe.add(key);
+            return true;
+        });
+
+        return merged;
     }
 
     /**

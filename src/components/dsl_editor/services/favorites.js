@@ -1,4 +1,4 @@
-export async function fetchFavoritesApi({ userId, query = "", expectedType = null, limit = 12, page = 1 }) {
+export async function fetchFavoritesApi({ userId, query = "", limit = 6, page = 1 }) {
     if (!userId) {
         return { items: [], total: 0 };
     }
@@ -7,9 +7,6 @@ export async function fetchFavoritesApi({ userId, query = "", expectedType = nul
     params.set("userId", userId);
     params.set("page", String(page));
     params.set("limit", String(limit));
-    if (expectedType) {
-        params.set("expectedType", expectedType);
-    }
     if (query) {
         params.set("query", query);
     }
@@ -46,4 +43,15 @@ export async function createFavoriteApi(payload) {
         throw new Error(msg || `收藏失败 (${res.status})`);
     }
     return res.json();
+}
+
+export async function deleteFavoriteApi(userId, favoriteId) {
+    if (!userId || !favoriteId) return { success: false };
+    const res = await fetch(`/api/dsl-favorites/${favoriteId}?userId=${encodeURIComponent(userId)}`, {
+        method: "DELETE"
+    });
+    if (!res.ok) {
+        return { success: false, status: res.status };
+    }
+    return { success: true };
 }

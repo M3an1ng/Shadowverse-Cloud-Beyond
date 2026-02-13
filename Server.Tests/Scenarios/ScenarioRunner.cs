@@ -140,6 +140,8 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
             }
             player.TurnNumber = setup.TurnNumber;
             player.Combo = setup.PlayedCardCountThisTurn;
+            player.IsEvolutionUnlocked = setup.MaxEvolutionPoints > 0 || setup.CanEvolve;
+            player.IsSuperEvolutionUnlocked = setup.MaxSuperEvolutionPoints > 0 || setup.CanSuperEvolve;
             player.CanEvolve = setup.CanEvolve;
             player.CanSuperEvolve = setup.CanSuperEvolve;
         }
@@ -256,7 +258,7 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
                     continue;
                 }
 
-                gameState.AbilityManager.CreateAbilitiesForCard(card, configs);
+                gameState.AbilityManager.CreateAbilitiesForCard(card, configs, null, gameState);
             }
         }
 

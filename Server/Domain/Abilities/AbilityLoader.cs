@@ -199,6 +199,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 config.Description = cardAbility.Description ?? string.Empty;
                 config.IsEnabled = cardAbility.IsActive;
                 NormalizeLegacyAuraType(config);
+                NormalizeAuraTriggerTiming(config);
                 config.NormalizeKeywords();
 
                 return config;
@@ -232,6 +233,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             {
                 config.Type = AbilityType.Continuous;
             }
+        }
+
+        private static void NormalizeAuraTriggerTiming(AbilityConfig config)
+        {
+            if (config?.Type != AbilityType.Continuous)
+            {
+                return;
+            }
+
+            if (config.Trigger == null)
+            {
+                return;
+            }
+
+            config.Trigger.Timing = TriggerTiming.After;
         }
     }
 }

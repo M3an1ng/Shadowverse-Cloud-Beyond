@@ -53,17 +53,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = false, ErrorMessage = "No EarthSigil present to consume." };
                     }
 
-                    var current = earthSigil.GetCounter(CardInstance.EarthsigilCounterKey);
-                    if (current < parameters.Amount)
+                    var oldValue = earthSigil.GetCounter(CardInstance.EarthsigilCounterKey);
+                    if (oldValue < parameters.Amount)
                     {
                         return new DomainOperationResult { Success = false, ErrorMessage = "Not enough EarthSigil to consume." };
                     }
 
-                    var next = earthSigil.AddCounter(CardInstance.EarthsigilCounterKey, -parameters.Amount);
+                    var newValue = earthSigil.AddCounter(CardInstance.EarthsigilCounterKey, -parameters.Amount);
                     var result = new DomainOperationResult { Success = true };
-                    if (next == 0)
+                    if (newValue != oldValue)
                     {
-                        result.GeneratedEvents.Add(new DestroyEvent(earthSigil, earthSigil, "EarthSigilDepleted"));
+                        result.GeneratedEvents.Add(new CounterChangedEvent(earthSigil, CardInstance.EarthsigilCounterKey, oldValue, newValue));
+                    }
+
+                    if (newValue == 0)
+                    {
+                        result.GeneratedEvents.Add(new DestroyEvent(earthSigil, earthSigil, EventReasonSource.System));
                     }
                     return result;
                 };

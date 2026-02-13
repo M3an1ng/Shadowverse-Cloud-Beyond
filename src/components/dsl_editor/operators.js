@@ -9,16 +9,19 @@
  */
 export function getOptionsForType(ctx, typeName) {
   let options = [];
+  const normalizedType = typeof ctx.normalizeTypeName === "function"
+    ? (ctx.normalizeTypeName(typeName) || typeName)
+    : typeName;
 
   // 数值类型：提供数值操作符和函数
-  if (ctx.isNumericType(typeName)) {
-    const smartOperators = ctx.getSmartOperators(typeName) || [];
+  if (ctx.isNumericType(normalizedType)) {
+    const smartOperators = ctx.getSmartOperators(normalizedType) || [];
     options.push(...smartOperators);
 
     // 数值函数（来自 DSL 元数据）
     const functions = ctx.metadata?.dsl?.functions || [];
     const numericFunctions = functions
-      .filter((f) => ctx.isFunctionCompatibleWithType(f, typeName))
+      .filter((f) => ctx.isFunctionCompatibleWithType(f, normalizedType))
       .map((f) => ({
         type: "function",
         value: f.name,
@@ -31,12 +34,12 @@ export function getOptionsForType(ctx, typeName) {
   }
 
   // 枚举类型：提供枚举操作符和枚举值
-  else if (typeof ctx.isEnumType === "function" && ctx.isEnumType(typeName)) {
-    options.push(...getEnumOperators(ctx, typeName));
+  else if (typeof ctx.isEnumType === "function" && ctx.isEnumType(normalizedType)) {
+    options.push(...getEnumOperators(ctx, normalizedType));
   }
 
   // 文本类型（包括 GUID）：提供文本操作符和函数
-  else if (ctx.isTextType(typeName)) {
+  else if (ctx.isTextType(normalizedType)) {
     const textOperators = ctx.getTextOperators() || [];
     options.push(...textOperators);
 
@@ -45,49 +48,52 @@ export function getOptionsForType(ctx, typeName) {
   }
 
   // 布尔类型：提供布尔操作符
-  else if (typeName === 'Boolean') {
-    const smartOperators = ctx.getSmartOperators(typeName) || [];
+  else if (normalizedType === 'Boolean') {
+    const smartOperators = ctx.getSmartOperators(normalizedType) || [];
     options.push(...smartOperators);
   }
 
-  // 集合类型：提供集合函数和查询操作
-  else if (ctx.isCollectionType(typeName)) {
-    options.push(...getCollectionOperators());
-
-    const collectionFunctions = ctx.getCollectionFunctions(typeName) || [];
+  // 集合类型：提供集合函数
+  else if (ctx.isCollectionType(normalizedType)) {
+    const collectionFunctions = ctx.getCollectionFunctions(normalizedType) || [];
     options.push(...collectionFunctions);
-
-    options.push({
-      type: "listPipeline",
-      value: "pipeline",
-      label: "筛选",
-      description: "打开筛选/排序/选择面板"
-    });
-  }
-
-  // 业务对象类型：允许单元素筛选
-  else if (ctx.isBusinessObjectType(typeName)) {
-    const objectProperties = ctx.getObjectProperties(typeName) || [];
-    options.push(...objectProperties);
-
-    options.push({
-      type: "listPipeline",
-      value: "pipeline",
-      label: "筛选",
-      description: "对单个实体进行查询，命中则返回该实体"
-    });
   }
 
   // 对象类型：提供属性访问或通用比较操作符
-  else if (ctx.isObjectType(typeName)) {
-    if (typeName === 'Object') {
+  else if (ctx.isObjectType(normalizedType)) {
+    if (normalizedType === 'Object') {
       options.push(
         { type: "operator", value: "==", label: "等于 (==)", description: "相等比较" },
         { type: "operator", value: "!=", label: "不等于 (!=)", description: "不等比较" }
       );
     } else {
-      const objectProperties = ctx.getObjectProperties(typeName) || [];
+      const objectProperties = ctx.getObjectProperties(normalizedType) || [];
       options.push(...objectProperties);
+    }
+  }
+
+  const canSetOperate = typeof ctx.canOperateAsSetOperand === "function"
+    ? ctx.canOperateAsSetOperand(normalizedType)
+    : (
+      ctx.isCollectionType(normalizedType)
+      || (typeof ctx.canPromoteToCollection === "function" && ctx.canPromoteToCollection(normalizedType))
+      || (typeof ctx.isBusinessObjectType === "function" && ctx.isBusinessObjectType(normalizedType))
+    );
+  if (canSetOperate) {
+    options = pushUniqueOptions(options, getSetOperators());
+    const canOpenPipeline = typeof ctx.canOpenPipelineOnType === "function"
+      ? ctx.canOpenPipelineOnType(normalizedType)
+      : (ctx.isCollectionType(normalizedType)
+        || (typeof ctx.isBusinessObjectType === "function" && ctx.isBusinessObjectType(normalizedType)));
+    if (canOpenPipeline) {
+      options = pushUniqueOptions(options, [{
+        type: "listPipeline",
+        value: "pipeline",
+        label: "筛选",
+        description: ctx.isCollectionType(normalizedType)
+          ? "打开筛选/排序/选择面板"
+          : "对单个元素启动管线（自动提升为集合）"
+      }]);
     }
   }
 
@@ -176,4 +182,20 @@ function getCollectionOperators() {
     { type: "operator", value: "&", label: "交集 (&)", description: "取两个集合的交集" },
     { type: "operator", value: "~", label: "差集 (~)", description: "从左侧集合中排除右侧集合" }
   ];
+}
+
+function getSetOperators() {
+  return getCollectionOperators();
+}
+
+function pushUniqueOptions(base, incoming) {
+  const options = Array.isArray(base) ? [...base] : [];
+  const exists = new Set(options.map(opt => `${opt?.type || ""}:${opt?.value || ""}`));
+  (incoming || []).forEach((opt) => {
+    const key = `${opt?.type || ""}:${opt?.value || ""}`;
+    if (exists.has(key)) return;
+    exists.add(key);
+    options.push(opt);
+  });
+  return options;
 }

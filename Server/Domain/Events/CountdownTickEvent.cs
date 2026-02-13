@@ -57,7 +57,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (OldCountdown.HasValue && OldCountdown.Value > 0 && NewCountdown == 0)
             {
-                result.GeneratedEvents.Add(new DestroyEvent(card, card, "CountdownExpired"));
+                result.GeneratedEvents.Add(new DestroyEvent(card, card, EventReasonSource.System));
             }
 
             return result;

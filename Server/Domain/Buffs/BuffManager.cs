@@ -172,7 +172,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     var created = _abilityManager.CreateAbilitiesForCard(
                         targetCardInstance,
                         abilityEffect.GrantedAbilityConfigs,
-                        buff.Id);
+                        buff.Id,
+                        gameState);
 
                     foreach (var ability in created)
                     {

@@ -92,13 +92,26 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(handBefore - 2, player1.Hand.Count);
             Assert.Equal(CardZone.Removed, cardA.CurrentZone);
             Assert.Equal(CardZone.Removed, cardB.CurrentZone);
+            Assert.Contains(sourceCard.FusedCards, c => c.InstanceId == cardA.InstanceId);
+            Assert.Contains(sourceCard.FusedCards, c => c.InstanceId == cardB.InstanceId);
 
-            var completed = result.GeneratedEvents.OfType<EffectCompletedEvent>().Single();
-            Assert.Equal(2, completed.Outputs["fusedCount"]);
+            Assert.Empty(result.GeneratedEvents.OfType<EffectCompletedEvent>());
+            Assert.Equal(2, result.Outputs["fusedCount"]);
 
-            var fusedIds = Assert.IsType<List<Guid>>(completed.Outputs["fusedIds"]);
+            var fusedIds = Assert.IsType<List<Guid>>(result.Outputs["fusedIds"]);
             Assert.Contains(cardA.InstanceId, fusedIds);
             Assert.Contains(cardB.InstanceId, fusedIds);
+
+            var completed = new EffectCompletedEvent(
+                effectConfig.Type,
+                result.ResolvedParameters,
+                effect.SelectedTargets.AsReadOnly(),
+                result.GeneratedEvents.AsReadOnly(),
+                new List<CardInstance>(),
+                new List<CardInstanceSnapshot>(),
+                result.Outputs,
+                result.Success,
+                sourceCard);
 
             using var downstreamCtx = new GameContext(
                 sp,

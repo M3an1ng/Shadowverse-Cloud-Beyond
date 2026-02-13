@@ -108,8 +108,9 @@ namespace ShadowverseBeyond.Server.Tests
 
             var result = executor.ExecuteEffect(effect, context);
 
-            var completion = Assert.Single(result.GeneratedEvents.OfType<EffectCompletedEvent>());
-            Assert.Empty(completion.GeneratedCardSnapshots);
+            Assert.Empty(result.GeneratedEvents.OfType<EffectCompletedEvent>());
+            Assert.True(result.Outputs.TryGetValue("effectFailed", out var failed));
+            Assert.Equal(false, failed);
 
             var destroyEvent = Assert.Single(result.GeneratedEvents.OfType<DestroyEvent>());
             var destroyResult = destroyEvent.Commit(context);

@@ -59,6 +59,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     }
 
     /// <summary>
+    /// Optional capability for functions whose return type depends on argument types.
+    /// </summary>
+    public interface IFunctionReturnTypeResolver
+    {
+        /// <summary>
+        /// Resolve function return type from compiled argument types.
+        /// </summary>
+        /// <param name="argumentTypes">Argument expression types in call order.</param>
+        /// <returns>Resolved return type; fallback to <see cref="IFunctionDefinition.ReturnType"/> when null.</returns>
+        Type? ResolveReturnType(IReadOnlyList<Type> argumentTypes);
+    }
+
+    /// <summary>
     /// DSL函数的基础抽象类，提供通用的参数验证和类型转换功能
     /// </summary>
     public abstract class BaseDslFunction : IFunctionDefinition

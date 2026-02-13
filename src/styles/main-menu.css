@@ -196,6 +196,14 @@
     overflow: hidden;
 }
 
+.user-info-card > .user-card-header {
+    order: 1;
+}
+
+.user-info-card > .user-card-body {
+    order: 2;
+}
+
 .user-widget:hover .user-card-popup,
 .user-card-popup:hover,
 .user-card-popup.active {
@@ -349,27 +357,26 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
 }
 
 .user-logout-btn {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-    padding: 6px 10px;
-    font-size: 0.62rem;
+    order: 3;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 8px 12px;
+    margin-top: 2px;
+    font-size: 0.68rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     font-family: var(--menu-font-mono);
     color: rgba(255, 255, 255, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 999px;
+    border-radius: 8px;
     background: rgba(255, 255, 255, 0.08);
-    opacity: 0;
-    pointer-events: none;
-    transition: all 0.2s ease;
-    z-index: 2;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .user-info-card.is-user .user-logout-btn {
-    opacity: 1;
-    pointer-events: auto;
+    display: inline-flex;
 }
 
 .user-logout-btn:hover {
@@ -435,7 +442,6 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     .user-info-card {
         width: min(280px, 88vw);
     }
-}
 }
 
 .user-auth {

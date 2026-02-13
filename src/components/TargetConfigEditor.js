@@ -265,7 +265,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                 expectedType: 'List<CardInstance>',
                 triggeringEventContext: {
                     eventTypes: this.options?.trigger?.eventTypes || [],
-                    timing: this.options?.trigger?.timing || 'On'
+                    timing: this.options?.trigger?.timing || 'On',
+                    outputVariables: this.options?.triggeringEventOutputs || []
                 }
             }
         );
@@ -345,7 +346,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                 expectedType,
                 triggeringEventContext: {
                     eventTypes: this.options?.trigger?.eventTypes || [],
-                    timing: this.options?.trigger?.timing || 'On'
+                    timing: this.options?.trigger?.timing || 'On',
+                    outputVariables: this.options?.triggeringEventOutputs || []
                 }
             });
             return dslContainer;
@@ -774,14 +776,15 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         container.appendChild(dynamicContent);
 
         // 2. 生效方 (Player Scope)
-        const scopeGroup = this.createCheckboxGroup(
+        const scopeGroup = this.createButtonGroup(
             '生效方',
             [
                 { value: 'Self', label: '自己' },
-                { value: 'Opponent', label: '对手' }
+                { value: 'Opponent', label: '对手' },
+                { value: 'Both', label: '双方' }
             ],
-            target._simpleScope || ['Self'],
-            (vals) => this.updateSimplifiedTarget(index, { _simpleScope: vals }),
+            this.normalizeSimplifiedScope(target._simpleScope),
+            (val) => this.updateSimplifiedTarget(index, { _simpleScope: val }),
             'scope-group'
         );
         container.appendChild(scopeGroup);
@@ -808,10 +811,25 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                 { value: 'Unit', label: '随从' },
                 { value: 'Spell', label: '法术' },
                 { value: 'Amulet', label: '护符' },
-                { value: 'Leader', label: '主战者' }
+                { value: 'Leader', label: '主战者' },
+                { value: 'SourceCard', label: '本卡牌' }
             ],
             target._simpleType || ['Unit'],
-            (vals) => this.updateSimplifiedTarget(index, { _simpleType: vals }),
+            (vals) => {
+                const currentTypes = Array.isArray(this.targets[index]?._simpleType)
+                    ? this.targets[index]._simpleType
+                    : ['Unit'];
+                const normalizedTypes = this.normalizeSimplifiedTypes(vals, currentTypes);
+                const updates = { _simpleType: normalizedTypes };
+
+                if (normalizedTypes.includes('SourceCard')) {
+                    // 本卡牌是独立目标来源，不参与随机/选择配置。
+                    updates._simpleMethod = 'All';
+                    updates.playerChoiceOptions = null;
+                }
+
+                this.updateSimplifiedTarget(index, updates);
+            },
             'type-group'
         );
         container.appendChild(typeGroup);
@@ -1005,11 +1023,54 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         return wrapper;
     }
 
+    normalizeSimplifiedTypes(nextValues, currentValues) {
+        const next = Array.from(new Set((nextValues || []).filter(Boolean)));
+        if (next.length === 0) {
+            return ['Unit'];
+        }
+
+        const hasSourceCard = next.includes('SourceCard');
+        if (!hasSourceCard || next.length === 1) {
+            return next;
+        }
+
+        const currentHasSourceCard = Array.isArray(currentValues) && currentValues.includes('SourceCard');
+        if (currentHasSourceCard) {
+            return next.filter(type => type !== 'SourceCard');
+        }
+
+        return ['SourceCard'];
+    }
+
+    normalizeSimplifiedScope(rawScope) {
+        if (Array.isArray(rawScope)) {
+            const normalized = rawScope
+                .map(value => String(value || '').trim())
+                .filter(Boolean);
+            if (normalized.includes('Both')) {
+                return 'Both';
+            }
+            const hasSelf = normalized.includes('Self');
+            const hasOpponent = normalized.includes('Opponent');
+            if (hasSelf && hasOpponent) {
+                return 'Both';
+            }
+            if (hasOpponent) {
+                return 'Opponent';
+            }
+            return 'Self';
+        }
+
+        const scope = String(rawScope || '').trim();
+        if (scope === 'Both' || scope === 'Opponent') {
+            return scope;
+        }
+        return 'Self';
+    }
+
     buildSimplifiedTargetQuery(target) {
         const method = target._simpleMethod || 'All';
-        const scopes = Array.isArray(target._simpleScope) && target._simpleScope.length > 0
-            ? target._simpleScope
-            : ['Self'];
+        const scope = this.normalizeSimplifiedScope(target._simpleScope);
         const zones = Array.isArray(target._simpleZone) && target._simpleZone.length > 0
             ? target._simpleZone
             : ['Battlefield'];
@@ -1017,9 +1078,15 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             ? target._simpleType
             : ['Unit'];
 
-        const scopeSet = new Set(scopes);
         const zoneSet = new Set(zones);
         const typeSet = new Set(types);
+        if (typeSet.has('SourceCard')) {
+            return {
+                query: { sourcePoolExpression: 'context.SourceCard', operations: [] },
+                playerChoiceOptions: null
+            };
+        }
+
         const hasLeaderType = typeSet.has('Leader');
         const nonLeaderTypes = Array.from(typeSet).filter(type => type !== 'Leader');
 
@@ -1034,6 +1101,19 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                 case 'Battlefield':
                 default:
                     return 'field';
+            }
+        };
+        const mapBothZoneProperty = (zone) => {
+            switch (zone) {
+                case 'Hand':
+                    return 'allHand';
+                case 'Deck':
+                    return 'allDeck';
+                case 'Graveyard':
+                    return 'allGraveyard';
+                case 'Battlefield':
+                default:
+                    return 'allField';
             }
         };
         const mapTypePredicate = (type) => {
@@ -1063,23 +1143,24 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             return trimmed;
         };
 
-        const scopeRoots = [];
-        if (scopeSet.has('Self')) scopeRoots.push('context.owner');
-        if (scopeSet.has('Opponent')) scopeRoots.push('context.opponent');
-        if (scopeRoots.length === 0) scopeRoots.push('context.owner');
+        const scopeRoot = scope === 'Opponent' ? 'context.opponent' : 'context.owner';
 
         const zoneValues = zoneSet.size > 0 ? Array.from(zoneSet) : ['Battlefield'];
         const zoneSources = [];
-        scopeRoots.forEach((scopeRoot) => {
+        if (scope === 'Both') {
+            zoneValues.forEach((zone) => {
+                zoneSources.push(`context.currentGameState.${mapBothZoneProperty(zone)}`);
+            });
+        } else {
             zoneValues.forEach((zone) => {
                 zoneSources.push(`${scopeRoot}.${mapZoneProperty(zone)}`);
             });
-        });
+        }
 
         let nonLeaderSource = null;
         if (nonLeaderTypes.length > 0) {
             if (zoneSources.length === 0) {
-                zoneSources.push('context.owner.field');
+                zoneSources.push(scope === 'Both' ? 'context.currentGameState.allField' : 'context.owner.field');
             }
             nonLeaderSource = zoneSources.length > 1
                 ? `(${zoneSources.join(' | ')})`
@@ -1098,10 +1179,9 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
         let leaderSource = null;
         if (hasLeaderType) {
-            const leaderSources = scopeRoots.map(scopeRoot => `${scopeRoot}.leader`);
-            leaderSource = leaderSources.length > 1
-                ? `(${leaderSources.join(' | ')})`
-                : leaderSources[0];
+            leaderSource = scope === 'Both'
+                ? 'context.currentGameState.allLeaders'
+                : `${scopeRoot}.leader`;
         }
 
         let sourcePoolExpression = '';
@@ -1175,7 +1255,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         };
 
         updateGroup('.method-group', target._simpleMethod || 'All');
-        updateGroup('.scope-group', target._simpleScope || ['Self']);
+        updateGroup('.scope-group', this.normalizeSimplifiedScope(target._simpleScope));
         updateGroup('.zone-group', target._simpleZone || ['Battlefield']);
         updateGroup('.type-group', target._simpleType || ['Unit']);
 
@@ -1276,43 +1356,96 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         if (!baseExpr) {
             return null;
         }
+        const compactBaseExpr = baseExpr.replace(/\s+/g, '');
+        if (/^context\.(SourceCard|sourceCard)$/.test(compactBaseExpr)) {
+            if (method !== 'All' || queryExpr || target?.playerChoiceOptions) {
+                return null;
+            }
+            return {
+                _simpleMethod: 'All',
+                _simpleScope: 'Self',
+                _simpleZone: ['Battlefield'],
+                _simpleType: ['SourceCard']
+            };
+        }
 
         const segments = splitTopLevelUnion(baseExpr);
         if (segments.length === 0) {
             return null;
         }
 
-        const scopes = new Set();
+        const scopeFlags = { self: false, opponent: false, both: false };
         const zones = new Set();
         let hasLeader = false;
 
         for (const seg of segments) {
             const normalized = stripOuterParens(seg);
-            const match = normalized.match(/^context\.(owner|opponent)\.(field|hand|deck|graveyard|leader)$/);
-            if (!match) {
+            const ownerOrOpponentMatch = normalized.match(/^context\.(owner|opponent)\.(field|hand|deck|graveyard|leader)$/);
+            if (ownerOrOpponentMatch) {
+                const ownerOrOpponent = ownerOrOpponentMatch[1];
+                const zone = ownerOrOpponentMatch[2];
+                if (ownerOrOpponent === 'owner') {
+                    scopeFlags.self = true;
+                } else {
+                    scopeFlags.opponent = true;
+                }
+
+                if (zone === 'leader') {
+                    hasLeader = true;
+                } else {
+                    switch (zone) {
+                        case 'hand':
+                            zones.add('Hand');
+                            break;
+                        case 'deck':
+                            zones.add('Deck');
+                            break;
+                        case 'graveyard':
+                            zones.add('Graveyard');
+                            break;
+                        default:
+                            zones.add('Battlefield');
+                            break;
+                    }
+                }
+                continue;
+            }
+
+            const bothMatch = normalized.match(/^context\.currentGameState\.(allField|allHand|allDeck|allGraveyard|allLeaders)$/);
+            if (!bothMatch) {
                 return null;
             }
-            const scope = match[1] === 'owner' ? 'Self' : 'Opponent';
-            const zone = match[2];
-            scopes.add(scope);
-            if (zone === 'leader') {
-                hasLeader = true;
-            } else {
-                switch (zone) {
-                    case 'hand':
-                        zones.add('Hand');
-                        break;
-                    case 'deck':
-                        zones.add('Deck');
-                        break;
-                    case 'graveyard':
-                        zones.add('Graveyard');
-                        break;
-                    default:
-                        zones.add('Battlefield');
-                        break;
-                }
+
+            scopeFlags.both = true;
+            switch (bothMatch[1]) {
+                case 'allHand':
+                    zones.add('Hand');
+                    break;
+                case 'allDeck':
+                    zones.add('Deck');
+                    break;
+                case 'allGraveyard':
+                    zones.add('Graveyard');
+                    break;
+                case 'allLeaders':
+                    hasLeader = true;
+                    break;
+                case 'allField':
+                default:
+                    zones.add('Battlefield');
+                    break;
             }
+        }
+
+        if (scopeFlags.both && (scopeFlags.self || scopeFlags.opponent)) {
+            return null;
+        }
+
+        let simplifiedScope = 'Self';
+        if (scopeFlags.both || (scopeFlags.self && scopeFlags.opponent)) {
+            simplifiedScope = 'Both';
+        } else if (scopeFlags.opponent) {
+            simplifiedScope = 'Opponent';
         }
 
         const types = new Set();
@@ -1361,7 +1494,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
         const simplified = {
             _simpleMethod: method,
-            _simpleScope: scopes.size ? Array.from(scopes) : ['Self'],
+            _simpleScope: simplifiedScope,
             _simpleZone: zones.size ? Array.from(zones) : ['Battlefield'],
             _simpleType: Array.from(types)
         };
@@ -1382,7 +1515,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             query: { sourcePoolExpression: '', operations: [] },
             _uiMode: 'simplified', // 默认使用简化模式
             _simpleMethod: 'All',
-            _simpleScope: ['Self'],
+            _simpleScope: 'Self',
             _simpleZone: ['Battlefield'],
             _simpleType: ['Unit']
         });
@@ -1426,6 +1559,10 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
         if (rest.isEnabled === undefined) {
             rest.isEnabled = true;
+        }
+
+        if (rest._simpleScope !== undefined) {
+            rest._simpleScope = this.normalizeSimplifiedScope(rest._simpleScope);
         }
 
         const sourceExpr = rest?.query?.sourcePoolExpression || '';

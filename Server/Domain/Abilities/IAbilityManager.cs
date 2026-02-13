@@ -22,7 +22,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// Creates and registers all abilities for a given card instance based on its configurations.
         /// </summary>
-        List<Ability> CreateAbilitiesForCard(CardInstance cardInstance, List<AbilityConfig> abilityConfigs, Guid? sourceBuffId = null);
+        List<Ability> CreateAbilitiesForCard(
+            CardInstance cardInstance,
+            List<AbilityConfig> abilityConfigs,
+            Guid? sourceBuffId = null);
+
+        List<Ability> CreateAbilitiesForCard(
+            CardInstance cardInstance,
+            List<AbilityConfig> abilityConfigs,
+            Guid? sourceBuffId,
+            GameState? gameState);
 
 
         /// <summary>

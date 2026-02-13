@@ -206,8 +206,8 @@ namespace ShadowverseBeyond.Server.Services
             }
             var (aiState, _) = states.Value;
 
-            // 1. Check if AI can evolve this turn
-            if (aiState.CurrentEP <= 0 || !aiState.CanEvolve)
+            // 1. Check if AI has evolution right this turn.
+            if (!aiState.CanEvolve)
             {
                 return Task.FromResult<EvolveActionDto?>(null);
             }
@@ -219,7 +219,9 @@ namespace ShadowverseBeyond.Server.Services
                 if (unit != null && unit.Type == CardType.Follower && !unit.IsEvolved)
                 {
                     var hasBanEvolve = unit.Keywords?.Any(k => k == CardKeyword.BanEvolve) ?? false;
-                    if (unit.CanEvolve && !hasBanEvolve)
+                    var hasFreeEvolve = unit.Keywords?.Any(k => k == CardKeyword.FreeEvolve) ?? false;
+                    var hasEvolutionResource = aiState.CurrentEP > 0 || hasFreeEvolve;
+                    if (unit.CanEvolve && !hasBanEvolve && hasEvolutionResource)
                     {
                         evolvableUnits.Add(unit);
                     }
@@ -396,10 +398,26 @@ namespace ShadowverseBeyond.Server.Services
             var opponentField = opponentState.Field?
                 .Where(u => u != null && u.Type == CardType.Follower && u.Zone == CardZone.Field)
                 .ToList() ?? new List<CardInstanceDto>();
+            var attackerCannotAttackFollowers = attacker.HasKeyword(CardKeyword.Shackle)
+                                                || attacker.HasKeyword(CardKeyword.CannotAttackFollower);
+            var attackerCannotAttackLeader = attacker.HasKeyword(CardKeyword.Shackle)
+                                             || attacker.HasKeyword(CardKeyword.CannotAttackLeader);
 
             bool IsFollowerUnattackable(CardInstanceDto target)
             {
+                if (attackerCannotAttackFollowers)
+                {
+                    return true;
+                }
+
                 return target.HasKeyword(CardKeyword.Ambush) || target.HasKeyword(CardKeyword.Pressure);
+            }
+
+            static bool HasEffectiveWard(CardInstanceDto target)
+            {
+                return target.HasKeyword(CardKeyword.Ward)
+                       && !target.HasKeyword(CardKeyword.Ambush)
+                       && !target.HasKeyword(CardKeyword.Pressure);
             }
 
             bool CanAttackLeader(CardInstanceDto attackerCard, CardInstanceDto? leaderCard, bool hasWardFollowers)
@@ -414,6 +432,11 @@ namespace ShadowverseBeyond.Server.Services
                     return false;
                 }
 
+                if (attackerCannotAttackLeader)
+                {
+                    return false;
+                }
+
                 if (attackerCard.FieldTurn == 0 && !attackerCard.HasStorm())
                 {
                     return false;
@@ -422,11 +445,11 @@ namespace ShadowverseBeyond.Server.Services
                 return true;
             }
 
-            var hasWardFollowers = opponentField.Any(u => u.HasKeyword(CardKeyword.Ward));
+            var hasWardFollowers = opponentField.Any(HasEffectiveWard);
 
             // 1. Prioritize units with Ward
             var wardTargets = opponentField
-                .Where(u => u != null && u.HasKeyword(CardKeyword.Ward))
+                .Where(u => u != null && HasEffectiveWard(u))
                 .Where(u => !IsFollowerUnattackable(u))
                 .Select(u => new { Unit = u, SortAttack = u.CurrentAttack })
                 .OrderByDescending(x => x.SortAttack)

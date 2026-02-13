@@ -266,7 +266,7 @@ export class DslEditorV2 extends DslEditor {
             </div>
             <div class="inspector-row">
                 <label>RETURN</label>
-                <span>${this.calculateASTReturnType(node)}</span>
+                <span>${this.getSemanticNodeType(node) || "Object"}</span>
             </div>
         `;
         inspectorContainer.appendChild(infoSection);

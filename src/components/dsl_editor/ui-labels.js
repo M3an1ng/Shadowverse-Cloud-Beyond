@@ -7,6 +7,7 @@ export function getReadableFunctionName(editor, functionName) {
         min: "最小值",
         max: "最大值",
         isempty: "为空",
+        bytype: "按类型筛选",
         if: "如果",
         find: "查找",
         var: "计数器",

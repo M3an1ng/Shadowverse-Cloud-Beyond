@@ -18,6 +18,14 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
     public static class DataSeeder
     {
         private const int AbilityIndexWidth = 3;
+        private static readonly string[] PreferredArtExtensions = { ".webp", ".png", ".jpg", ".jpeg" };
+        private static readonly HashSet<string> SupportedArtExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".webp",
+            ".png",
+            ".jpg",
+            ".jpeg"
+        };
 
         private record CardPackSeedDto
         {
@@ -461,6 +469,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 // Construct the path relative to the application's content root
                 var dataDirectory = Path.Combine(environment.ContentRootPath, "..", "data");
                 dataDirectory = Path.GetFullPath(dataDirectory);
+                var workspaceRoot = Path.GetFullPath(Path.Combine(environment.ContentRootPath, ".."));
 
 
                 var jsonOptions = new JsonSerializerOptions
@@ -488,197 +497,200 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     {
                         logger.LogInformation("Database already contains {Count} card definitions. Backfilling set links.", existingCardCount);
                         await BackfillCardSetLinksAsync(context, setLookup, packBySetId, legacySet, logger);
-                        return;
-                    }
-
-                    logger.LogInformation("Database is empty. Proceeding with data seeding from card_data files in {Directory}...", dataDirectory);
-
-                    if (!Directory.Exists(dataDirectory))
-                    {
-                        logger.LogError("Seed data directory not found at {Directory}. Cannot seed database.", dataDirectory);
-                        return;
-                    }
-
-                    var cardDataFiles = Directory
-                        .GetFiles(dataDirectory, "card_data*.json", SearchOption.TopDirectoryOnly)
-                        .OrderBy(path => Path.GetFileName(path))
-                        .ToArray();
-                    if (cardDataFiles.Length == 0)
-                    {
-                        logger.LogError("No card_data*.json files found in {Directory}. Cannot seed database.", dataDirectory);
-                        return;
-                    }
-
-                    logger.LogInformation("Reading seed data files: {Files}", string.Join(", ", cardDataFiles.Select(Path.GetFileName)));
-                    var cardDtosById = new Dictionary<int, CardDataSeedDto>();
-                    foreach (var cardDataFile in cardDataFiles)
-                    {
-                        logger.LogInformation("Reading seed data file: {FilePath}", cardDataFile);
-                        var jsonData = await File.ReadAllTextAsync(cardDataFile);
-                        var fileCards = JsonSerializer.Deserialize<List<CardDataSeedDto>>(jsonData, jsonOptions);
-                        if (fileCards == null || fileCards.Count == 0)
-                        {
-                            logger.LogWarning("No card data found in {FilePath}.", cardDataFile);
-                            continue;
-                        }
-                        foreach (var cardDto in fileCards)
-                        {
-                            if (!cardDtosById.TryAdd(cardDto.CardId, cardDto))
-                            {
-                                logger.LogWarning("Duplicate CardId {CardId} found in {FilePath}. Keeping the first occurrence.",
-                                    cardDto.CardId, cardDataFile);
-                            }
-                        }
-                        logger.LogInformation("Loaded {Count} cards from {FilePath}.", fileCards.Count, cardDataFile);
-                    }
-
-                    var cardDtos = cardDtosById.Values.ToList();
-                    if (!cardDtos.Any())
-                    {
-                        logger.LogWarning("No card data found after deserializing card_data files, or the file format is incorrect.");
-                        return;
-                    }
-                    logger.LogInformation("Successfully deserialized {Count} card DTOs.", cardDtos.Count);
-
-                    logger.LogInformation("Mapping DTOs to CardDefinition entities...");
-                    // Filter out DTOs with null/empty names first
-                    var validCardDtos = cardDtos.Where(dto => !string.IsNullOrEmpty(dto.Name));
-                    int originalCount = cardDtos.Count;
-                    int validCount = validCardDtos.Count();
-                    if (originalCount != validCount)
-                    {
-                        logger.LogWarning("Filtered out {FilteredCount} card DTOs due to missing or empty names.", originalCount - validCount);
-                    }
-                    logger.LogInformation("Mapping {ValidCount} valid DTOs to CardDefinition entities...", validCount);
-
-                    var cardEntities = validCardDtos.Select(dto =>
-                    {
-                        var setDefinition = ResolveSetDefinition(dto.CardSet, setLookup) ?? legacySet;
-                        var normalizedCardSet = setDefinition?.Name ?? dto.CardSet;
-                        var packDefinition = setDefinition != null && packBySetId.TryGetValue(setDefinition.Id, out var pack)
-                            ? pack
-                            : null;
-
-                        return new CardDefinition
-                        {
-                            Id = dto.CardId,
-                            Name = dto.Name,
-                            Cost = dto.Cost,
-                            Type = dto.Type,
-                            Rarity = Enum.TryParse<CardRarity>(dto.Rarity, true, out var rarity) ? rarity : CardRarity.Bronze,
-                            CardSet = normalizedCardSet,
-                            CardSetDefinitionId = setDefinition?.Id,
-                            Attack = dto.Attack,
-                            Health = dto.Health,
-                            Countdown = dto.Countdown,
-                            Description = dto.Description ?? string.Empty,
-                            IsCollectible = dto.IsCollectible,
-                            Keywords = dto.Keywords,
-                            Tribe = dto.Tribe,
-                            Class = Enum.TryParse<CardClass>(dto.Class, true, out var cardClass) ? cardClass : CardClass.Neutral,
-                            AbilityIds = new List<long>()
-                        };
-                    }).ToList();
-                    // Note: Removed filtering logic that discarded entities with ID 0,
-                    // as 0 is now a valid ID for the Leader card.
-                    // int originalEntityCount = cardEntities.Count;
-                    // cardEntities = cardEntities.Where(e => e.Id != 0).ToList();
-                    // if (cardEntities.Count != originalEntityCount)
-                    // {
-                    //     logger.LogWarning("Removed {RemovedCount} entities due to ID parsing errors (ID became 0).", originalEntityCount - cardEntities.Count);
-                    // }
-                    logger.LogInformation("Mapping complete. {Count} valid entities created.", cardEntities.Count.ToString());
-
-                    logger.LogInformation("Adding entities to the DbContext...");
-                    await context.CardDefinitions.AddRangeAsync(cardEntities);
-                    logger.LogInformation("Entities added to DbContext.");
-
-                    logger.LogInformation("Saving changes to the database...");
-                    await context.SaveChangesAsync();
-                    logger.LogInformation("Successfully seeded {Count} card definitions into the database.", cardEntities.Count.ToString());
-
-                    // --- BEGIN SEEDING CARD ABILITIES FROM CARD_DATA ---
-                    logger.LogInformation("Seeding CardAbility data from card_data abilities...");
-                    var abilityEntities = new List<AbilityDefinition>();
-                    var abilityIdsByCard = new Dictionary<int, List<long>>();
-                    var abilityIdSet = new HashSet<long>();
-
-                    foreach (var cardDto in validCardDtos)
-                    {
-                        if (cardDto.Abilities == null || cardDto.Abilities.Count == 0)
-                        {
-                            continue;
-                        }
-
-                        for (int index = 0; index < cardDto.Abilities.Count; index++)
-                        {
-                            var abilityJson = cardDto.Abilities[index];
-                            // Deterministic ability ID generation by appending a fixed-width index after CardId.
-                            var abilityId = BuildAbilityId(cardDto.CardId, index);
-
-                            if (!abilityIdSet.Add(abilityId))
-                            {
-                                throw new InvalidOperationException($"Duplicate ability ID detected during seeding: {abilityId}. CardId={cardDto.CardId}, Index={index}");
-                            }
-
-                            var abilityName = GetJsonString(abilityJson, "name") ?? $"{cardDto.Name}-Ability-{index + 1}";
-                            var abilityDescription = GetJsonString(abilityJson, "description") ?? string.Empty;
-                            var abilityType = ParseAbilityType(GetJsonString(abilityJson, "type"));
-                            var priority = GetJsonInt32(abilityJson, "priority") ?? 0;
-
-                            abilityEntities.Add(new AbilityDefinition
-                            {
-                                Id = abilityId,
-                                CardId = cardDto.CardId,
-                                Name = abilityName,
-                                Description = abilityDescription,
-                                AbilityType = (int)abilityType,
-                                Priority = priority,
-                                IsActive = true,
-                                JsonConfig = abilityJson.GetRawText(),
-                                CreatedAt = DateTime.UtcNow,
-                                UpdatedAt = DateTime.UtcNow
-                            });
-
-                            if (!abilityIdsByCard.TryGetValue(cardDto.CardId, out var abilityIds))
-                            {
-                                abilityIds = new List<long>();
-                                abilityIdsByCard[cardDto.CardId] = abilityIds;
-                            }
-                            abilityIds.Add(abilityId);
-                        }
-                    }
-
-                    if (abilityEntities.Count > 0)
-                    {
-                        await context.CardAbilities.AddRangeAsync(abilityEntities);
-                        await context.SaveChangesAsync();
-                        logger.LogInformation("Successfully seeded {Count} card abilities into the database.", abilityEntities.Count);
                     }
                     else
                     {
-                        logger.LogInformation("No abilities found in card_data. Skipping CardAbilities seeding.");
-                    }
-                    // --- END SEEDING CARD ABILITIES FROM CARD_DATA ---
+                        logger.LogInformation("Database is empty. Proceeding with data seeding from card_data files in {Directory}...", dataDirectory);
 
-                    // --- UPDATE CARD ABILITY ASSOCIATIONS ---
-                    logger.LogInformation("Updating card ability associations...");
-
-                    foreach (var cardDefinition in cardEntities)
-                    {
-                        if (abilityIdsByCard.TryGetValue(cardDefinition.Id, out var abilityIds))
+                        if (!Directory.Exists(dataDirectory))
                         {
-                            cardDefinition.AbilityIds = abilityIds;
-                            logger.LogInformation("Updated card {CardId} with {Count} ability IDs: [{AbilityIds}]",
-                                cardDefinition.Id,
-                                abilityIds.Count,
-                                string.Join(", ", abilityIds));
+                            logger.LogError("Seed data directory not found at {Directory}. Cannot seed database.", dataDirectory);
+                            return;
                         }
+
+                        var cardDataFiles = Directory
+                            .GetFiles(dataDirectory, "card_data*.json", SearchOption.TopDirectoryOnly)
+                            .OrderBy(path => Path.GetFileName(path))
+                            .ToArray();
+                        if (cardDataFiles.Length == 0)
+                        {
+                            logger.LogError("No card_data*.json files found in {Directory}. Cannot seed database.", dataDirectory);
+                            return;
+                        }
+
+                        logger.LogInformation("Reading seed data files: {Files}", string.Join(", ", cardDataFiles.Select(Path.GetFileName)));
+                        var cardDtosById = new Dictionary<int, CardDataSeedDto>();
+                        foreach (var cardDataFile in cardDataFiles)
+                        {
+                            logger.LogInformation("Reading seed data file: {FilePath}", cardDataFile);
+                            var jsonData = await File.ReadAllTextAsync(cardDataFile);
+                            var fileCards = JsonSerializer.Deserialize<List<CardDataSeedDto>>(jsonData, jsonOptions);
+                            if (fileCards == null || fileCards.Count == 0)
+                            {
+                                logger.LogWarning("No card data found in {FilePath}.", cardDataFile);
+                                continue;
+                            }
+                            foreach (var cardDto in fileCards)
+                            {
+                                if (!cardDtosById.TryAdd(cardDto.CardId, cardDto))
+                                {
+                                    logger.LogWarning("Duplicate CardId {CardId} found in {FilePath}. Keeping the first occurrence.",
+                                        cardDto.CardId, cardDataFile);
+                                }
+                            }
+                            logger.LogInformation("Loaded {Count} cards from {FilePath}.", fileCards.Count, cardDataFile);
+                        }
+
+                        var cardDtos = cardDtosById.Values.ToList();
+                        if (!cardDtos.Any())
+                        {
+                            logger.LogWarning("No card data found after deserializing card_data files, or the file format is incorrect.");
+                            return;
+                        }
+                        logger.LogInformation("Successfully deserialized {Count} card DTOs.", cardDtos.Count);
+
+                        logger.LogInformation("Mapping DTOs to CardDefinition entities...");
+                        // Filter out DTOs with null/empty names first
+                        var validCardDtos = cardDtos.Where(dto => !string.IsNullOrEmpty(dto.Name));
+                        int originalCount = cardDtos.Count;
+                        int validCount = validCardDtos.Count();
+                        if (originalCount != validCount)
+                        {
+                            logger.LogWarning("Filtered out {FilteredCount} card DTOs due to missing or empty names.", originalCount - validCount);
+                        }
+                        logger.LogInformation("Mapping {ValidCount} valid DTOs to CardDefinition entities...", validCount);
+
+                        var cardEntities = validCardDtos.Select(dto =>
+                        {
+                            var setDefinition = ResolveSetDefinition(dto.CardSet, setLookup) ?? legacySet;
+                            var normalizedCardSet = setDefinition?.Name ?? dto.CardSet;
+                            var packDefinition = setDefinition != null && packBySetId.TryGetValue(setDefinition.Id, out var pack)
+                                ? pack
+                                : null;
+
+                            return new CardDefinition
+                            {
+                                Id = dto.CardId,
+                                Name = dto.Name,
+                                Cost = dto.Cost,
+                                Type = dto.Type,
+                                Rarity = Enum.TryParse<CardRarity>(dto.Rarity, true, out var rarity) ? rarity : CardRarity.Bronze,
+                                CardSet = normalizedCardSet,
+                                CardSetDefinitionId = setDefinition?.Id,
+                                Attack = dto.Attack,
+                                Health = dto.Health,
+                                Countdown = dto.Countdown,
+                                Description = dto.Description ?? string.Empty,
+                                IsCollectible = dto.IsCollectible,
+                                Keywords = dto.Keywords,
+                                Tribe = dto.Tribe,
+                                Class = Enum.TryParse<CardClass>(dto.Class, true, out var cardClass) ? cardClass : CardClass.Neutral,
+                                AbilityIds = new List<long>()
+                            };
+                        }).ToList();
+                        // Note: Removed filtering logic that discarded entities with ID 0,
+                        // as 0 is now a valid ID for the Leader card.
+                        // int originalEntityCount = cardEntities.Count;
+                        // cardEntities = cardEntities.Where(e => e.Id != 0).ToList();
+                        // if (cardEntities.Count != originalEntityCount)
+                        // {
+                        //     logger.LogWarning("Removed {RemovedCount} entities due to ID parsing errors (ID became 0).", originalEntityCount - cardEntities.Count);
+                        // }
+                        logger.LogInformation("Mapping complete. {Count} valid entities created.", cardEntities.Count.ToString());
+
+                        logger.LogInformation("Adding entities to the DbContext...");
+                        await context.CardDefinitions.AddRangeAsync(cardEntities);
+                        logger.LogInformation("Entities added to DbContext.");
+
+                        logger.LogInformation("Saving changes to the database...");
+                        await context.SaveChangesAsync();
+                        logger.LogInformation("Successfully seeded {Count} card definitions into the database.", cardEntities.Count.ToString());
+
+                        // --- BEGIN SEEDING CARD ABILITIES FROM CARD_DATA ---
+                        logger.LogInformation("Seeding CardAbility data from card_data abilities...");
+                        var abilityEntities = new List<AbilityDefinition>();
+                        var abilityIdsByCard = new Dictionary<int, List<long>>();
+                        var abilityIdSet = new HashSet<long>();
+
+                        foreach (var cardDto in validCardDtos)
+                        {
+                            if (cardDto.Abilities == null || cardDto.Abilities.Count == 0)
+                            {
+                                continue;
+                            }
+
+                            for (int index = 0; index < cardDto.Abilities.Count; index++)
+                            {
+                                var abilityJson = cardDto.Abilities[index];
+                                // Deterministic ability ID generation by appending a fixed-width index after CardId.
+                                var abilityId = BuildAbilityId(cardDto.CardId, index);
+
+                                if (!abilityIdSet.Add(abilityId))
+                                {
+                                    throw new InvalidOperationException($"Duplicate ability ID detected during seeding: {abilityId}. CardId={cardDto.CardId}, Index={index}");
+                                }
+
+                                var abilityName = GetJsonString(abilityJson, "name") ?? $"{cardDto.Name}-Ability-{index + 1}";
+                                var abilityDescription = GetJsonString(abilityJson, "description") ?? string.Empty;
+                                var abilityType = ParseAbilityType(GetJsonString(abilityJson, "type"));
+                                var priority = GetJsonInt32(abilityJson, "priority") ?? 0;
+
+                                abilityEntities.Add(new AbilityDefinition
+                                {
+                                    Id = abilityId,
+                                    CardId = cardDto.CardId,
+                                    Name = abilityName,
+                                    Description = abilityDescription,
+                                    AbilityType = (int)abilityType,
+                                    Priority = priority,
+                                    IsActive = true,
+                                    JsonConfig = abilityJson.GetRawText(),
+                                    CreatedAt = DateTime.UtcNow,
+                                    UpdatedAt = DateTime.UtcNow
+                                });
+
+                                if (!abilityIdsByCard.TryGetValue(cardDto.CardId, out var abilityIds))
+                                {
+                                    abilityIds = new List<long>();
+                                    abilityIdsByCard[cardDto.CardId] = abilityIds;
+                                }
+                                abilityIds.Add(abilityId);
+                            }
+                        }
+
+                        if (abilityEntities.Count > 0)
+                        {
+                            await context.CardAbilities.AddRangeAsync(abilityEntities);
+                            await context.SaveChangesAsync();
+                            logger.LogInformation("Successfully seeded {Count} card abilities into the database.", abilityEntities.Count);
+                        }
+                        else
+                        {
+                            logger.LogInformation("No abilities found in card_data. Skipping CardAbilities seeding.");
+                        }
+                        // --- END SEEDING CARD ABILITIES FROM CARD_DATA ---
+
+                        // --- UPDATE CARD ABILITY ASSOCIATIONS ---
+                        logger.LogInformation("Updating card ability associations...");
+
+                        foreach (var cardDefinition in cardEntities)
+                        {
+                            if (abilityIdsByCard.TryGetValue(cardDefinition.Id, out var abilityIds))
+                            {
+                                cardDefinition.AbilityIds = abilityIds;
+                                logger.LogInformation("Updated card {CardId} with {Count} ability IDs: [{AbilityIds}]",
+                                    cardDefinition.Id,
+                                    abilityIds.Count,
+                                    string.Join(", ", abilityIds));
+                            }
+                        }
+
+                        await context.SaveChangesAsync();
+                        logger.LogInformation("Card ability associations updated successfully.");
+                        // --- END UPDATE CARD ABILITY ASSOCIATIONS ---
                     }
 
-                    await context.SaveChangesAsync();
-                    logger.LogInformation("Card ability associations updated successfully.");
-                    // --- END UPDATE CARD ABILITY ASSOCIATIONS ---
+                    await NormalizeCardArtPathsAsync(context, workspaceRoot, logger);
                 }
                 catch (JsonException jsonEx)
                 {
@@ -701,6 +713,133 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     // Optionally rethrow or handle to prevent app startup
                 }
             }
+        }
+
+        private static async Task NormalizeCardArtPathsAsync(ApplicationDbContext context, string workspaceRoot, ILogger logger)
+        {
+            var cardsDirectory = Path.Combine(workspaceRoot, "assets", "cards");
+            if (!Directory.Exists(cardsDirectory))
+            {
+                logger.LogWarning("Card art directory not found at {CardsDirectory}. Skipping art path normalization.", cardsDirectory);
+                return;
+            }
+
+            var cards = await context.CardDefinitions.ToListAsync();
+            if (cards.Count == 0)
+            {
+                return;
+            }
+
+            var previewUpdates = 0;
+            var detailUpdates = 0;
+
+            foreach (var card in cards)
+            {
+                var cardFolder = Path.Combine(cardsDirectory, card.Id.ToString());
+                if (!Directory.Exists(cardFolder))
+                {
+                    continue;
+                }
+
+                var normalizedPreview = ResolveNormalizedArtPath(cardFolder, card.Id, "preview", card.ArtPreview);
+                if (!string.Equals(card.ArtPreview, normalizedPreview, StringComparison.Ordinal))
+                {
+                    card.ArtPreview = normalizedPreview;
+                    previewUpdates++;
+                }
+
+                var normalizedDetail = ResolveNormalizedArtPath(cardFolder, card.Id, "detail", card.ArtDetail);
+                if (!string.Equals(card.ArtDetail, normalizedDetail, StringComparison.Ordinal))
+                {
+                    card.ArtDetail = normalizedDetail;
+                    detailUpdates++;
+                }
+            }
+
+            var totalUpdates = previewUpdates + detailUpdates;
+            if (totalUpdates <= 0)
+            {
+                logger.LogInformation("Card art path normalization complete. No updates were required.");
+                return;
+            }
+
+            await context.SaveChangesAsync();
+            logger.LogInformation(
+                "Card art path normalization updated {Total} fields (preview: {PreviewCount}, detail: {DetailCount}).",
+                totalUpdates,
+                previewUpdates,
+                detailUpdates);
+        }
+
+        private static string? ResolveNormalizedArtPath(string cardFolder, int cardId, string kind, string? currentPath)
+        {
+            var currentFileName = GetFileNameFromArtPath(currentPath);
+            if (!string.IsNullOrWhiteSpace(currentFileName))
+            {
+                var currentDiskPath = Path.Combine(cardFolder, currentFileName);
+                if (File.Exists(currentDiskPath))
+                {
+                    return BuildArtPath(cardId, currentFileName);
+                }
+            }
+
+            var preferredFileName = FindPreferredArtFileName(cardFolder, kind);
+            if (!string.IsNullOrWhiteSpace(preferredFileName))
+            {
+                return BuildArtPath(cardId, preferredFileName);
+            }
+
+            return currentPath;
+        }
+
+        private static string? FindPreferredArtFileName(string cardFolder, string kind)
+        {
+            var versioned = Directory
+                .EnumerateFiles(cardFolder, $"{kind}-*", SearchOption.TopDirectoryOnly)
+                .Where(path => SupportedArtExtensions.Contains(Path.GetExtension(path)))
+                .OrderByDescending(path => Path.GetFileNameWithoutExtension(path), StringComparer.Ordinal)
+                .Select(Path.GetFileName)
+                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
+
+            if (!string.IsNullOrWhiteSpace(versioned))
+            {
+                return versioned;
+            }
+
+            foreach (var extension in PreferredArtExtensions)
+            {
+                var fileName = $"{kind}{extension}";
+                var diskPath = Path.Combine(cardFolder, fileName);
+                if (File.Exists(diskPath))
+                {
+                    return fileName;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? GetFileNameFromArtPath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
+            var normalized = path.Replace('\\', '/').Trim();
+            var queryIndex = normalized.IndexOf('?', StringComparison.Ordinal);
+            if (queryIndex >= 0)
+            {
+                normalized = normalized[..queryIndex];
+            }
+
+            var fileName = Path.GetFileName(normalized);
+            return string.IsNullOrWhiteSpace(fileName) ? null : fileName;
+        }
+
+        private static string BuildArtPath(int cardId, string fileName)
+        {
+            return $"/assets/cards/{cardId}/{fileName}";
         }
 
         private static string? GetJsonString(JsonElement element, string propertyName)

@@ -1,4 +1,11 @@
-import { createListQueryNode, createListSortNode, createListTakeNode, createListDistinctNode, createListSelectNode } from "./core.js";
+import {
+    createListQueryNode,
+    createListSortNode,
+    createListTakeNode,
+    createListDistinctNode,
+    createListSelectNode,
+    getSemanticNodeType as getCoreSemanticNodeType
+} from "./core.js";
 
 export const PIPELINE_STAGE_META = {
     source: { label: "来源", dslMethod: null, backendOp: "QueryConfig.SourcePoolExpression" },
@@ -50,7 +57,10 @@ export function rebuildListChainFromStages(sourceNode, stages) {
         if (!stage || !stage.node) return;
         const node = stage.node;
         node.source = current;
-        node.returnType = current?.returnType ?? node.returnType;
+        const semanticType = getCoreSemanticNodeType(node);
+        if (semanticType) {
+            node.returnType = semanticType;
+        }
         if (current) {
             current.parent = node;
         }

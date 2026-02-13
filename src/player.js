@@ -23,6 +23,11 @@ export function createPlayer(id, isAI = false) {
     return {
         id: id,
         isAI: isAI,
+        isFirst: false,
+        class: null,
+        displayName: '',
+        avatarUrl: '',
+        deckClass: '',
         hasCompletedMulligan: false,
         leaderCard: null, // Initialize leaderCard as null, will be populated during hydration
         // NOTE: Direct 'health' and 'maxHealth' properties are removed. Use getters below.
@@ -36,6 +41,7 @@ export function createPlayer(id, isAI = false) {
         canEvolveThisTurn: false, // ADDED: Flag to track if evolve is possible this turn
         canSuperEvolve: false,
         hasUnlockedEvolution: false, // Flag to track if EP has been unlocked for this player
+        hasUnlockedSuperEvolution: false, // Flag to track if SEP has been unlocked for this player
         turn: 0,       // 玩家经历的回合数 (可用于进化点解锁)
 
         deck: [],      // 牌库 (存储卡牌 ID)
@@ -46,6 +52,8 @@ export function createPlayer(id, isAI = false) {
         graveyardCount: 0, // 墓场计数
         bloodPool: 0, // 血池
         combo: 0, // 连击数
+        counters: {}, // 玩家变量映射
+        counterDisplayNames: {}, // 玩家变量显示名
 
         maxFieldSize: 5, // 战场格子数量
         maxHandSize: 9,  // 手牌上限

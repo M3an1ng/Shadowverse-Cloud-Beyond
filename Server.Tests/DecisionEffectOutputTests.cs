@@ -40,17 +40,17 @@ public class DecisionEffectOutputTests
         var serviceProvider = services.BuildServiceProvider();
         var context = BuildContext(serviceProvider);
 
-        var optionIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+        var optionIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
         var randomEvent = new RandomEvent(
             optionIds,
-            selectionCount: 1,
-            allowRepeat: false,
-            weights: new List<double> { 1, 0 });
+            selectionCount: 3,
+            allowRepeat: true,
+            weights: new List<double> { 1, 1, 1 });
 
-        randomEvent.SetSelectedOptionIndexes(new List<int> { 0 });
+        randomEvent.SetSelectedOptionIndexes(new List<int> { 2, 0, 2 });
         randomEvent.Commit(context);
 
-        Assert.Equal(new List<int> { 0 }, randomEvent.SelectedOptionIds.ToList());
+        Assert.Equal(new List<int> { 0, 2, 2 }, randomEvent.SelectedOptionIds.ToList());
     }
 
     [Fact]
@@ -60,15 +60,15 @@ public class DecisionEffectOutputTests
         var serviceProvider = services.BuildServiceProvider();
         var context = BuildContext(serviceProvider);
 
-        var optionIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+        var optionIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
         var chooseEvent = new ChooseEvent(
             optionIds,
-            selectionCount: 1);
+            selectionCount: 3);
 
-        chooseEvent.SetSelectedOptionIndexes(new List<int> { 1 });
+        chooseEvent.SetSelectedOptionIndexes(new List<int> { 2, 0, 1 });
         chooseEvent.Commit(context);
 
-        Assert.Equal(new List<int> { 1 }, chooseEvent.SelectedOptionIds.ToList());
+        Assert.Equal(new List<int> { 0, 1, 2 }, chooseEvent.SelectedOptionIds.ToList());
     }
 
     private static GameContext BuildContext(ServiceProvider serviceProvider)

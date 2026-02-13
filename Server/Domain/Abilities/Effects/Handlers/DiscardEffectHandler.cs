@@ -33,7 +33,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, DiscardEffectParams parameters)
         {
             const string effectName = "DiscardEffect";
-            Logger.LogDebug("{EffectName}: Starting with DiscardReason={Reason}.", effectName, "Effect");
+            Logger.LogDebug("{EffectName}: Starting with DiscardReason={Reason}.", effectName, EventReasonSource.Ability);
 
             Func<TargetInfo, GameContext, DomainOperationResult> discardAction =
                 (targetInfo, ctx) =>
@@ -53,7 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new CardDiscardedEvent(ownerPlayer, card, "Effect"));
+                    result.GeneratedEvents.Add(new CardDiscardedEvent(ownerPlayer, card, EventReasonSource.Ability));
                     return result;
                 };
 

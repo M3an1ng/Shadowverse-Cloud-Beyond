@@ -66,6 +66,13 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return result;
             }
 
+            if (cardToPlay.HasKeyword(CardKeyword.CannotUse))
+            {
+                result.Success = false;
+                result.ErrorMessage = "该卡牌处于【无法使用】状态。";
+                return result;
+            }
+
             var abilityConfigs = cardToPlay.Abilities.Select(a => a.Config).ToList();
             Ability? selectedAbility = null;
             if (ActionDto.AbilityRuntimeId.HasValue && ActionDto.AbilityRuntimeId.Value != Guid.Empty)
@@ -96,6 +103,13 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return result;
             }
 
+            if (selectedAbility == null && selectedMode.Value == PlayMode.Enhance && modeResolution.SelectedAbilityRuntimeId.HasValue)
+            {
+                var selectedRuntimeId = modeResolution.SelectedAbilityRuntimeId.Value;
+                selectedAbility = cardToPlay.Abilities.FirstOrDefault(a => a.RuntimeId == selectedRuntimeId)
+                    ?? context.AbilityManager.GetAbilityByRuntimeId(selectedRuntimeId) as Ability;
+            }
+
             var selectedAvailability = modeResolution.Modes.FirstOrDefault(m => m.Mode == selectedMode.Value);
             if (selectedAvailability == null || !selectedAvailability.IsAvailable)
             {
@@ -106,8 +120,15 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
             var paidCost = ActionDto.PaidCost ?? selectedAvailability.EffectiveCost;
             var expectedCost = selectedAvailability.EffectiveCost;
-            if (selectedMode.Value == PlayMode.Enhance && selectedAbility != null)
+            if (selectedMode.Value == PlayMode.Enhance)
             {
+                if (selectedAbility == null)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Selected Enhance ability could not be resolved.";
+                    return result;
+                }
+
                 var enhanceCost = cardToPlay.GetEnhanceCostForAbility(selectedAbility, context);
                 if (enhanceCost <= 0)
                 {

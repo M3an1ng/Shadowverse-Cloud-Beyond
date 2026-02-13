@@ -72,11 +72,34 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     AppliedBuff.SourceEffectIndex);
             }
 
+            var targetCard = context.CurrentGameState.FindCardInstance(AppliedBuff.TargetCardInstanceId);
+            int? previousCurrentHealth = null;
+            if (AppliedBuff.PreserveCurrentHealthOnApply && targetCard != null)
+            {
+                var previousMaxHealth = context.BuffService.GetEffectiveMaxHealth(targetCard, context);
+                previousCurrentHealth = Math.Max(0, previousMaxHealth - targetCard.Damage);
+            }
+
             // The commit action is now the single, atomic operation of registering the buff.
             // All business logic (stacking, etc.) has already been processed and resulted in this event.
             context.BuffManager.RegisterBuffInstance(this.AppliedBuff, context.CurrentGameState);
             context.CurrentGameState.IncrementBuffRevision();
             context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.AppliedBuff.TargetCardInstanceId);
+
+            if (AppliedBuff.PreserveCurrentHealthOnApply && targetCard != null && previousCurrentHealth.HasValue)
+            {
+                var newMaxHealth = context.BuffService.GetEffectiveMaxHealth(targetCard, context);
+                var cappedCurrentHealth = Math.Min(previousCurrentHealth.Value, newMaxHealth);
+                targetCard.Damage = Math.Max(0, newMaxHealth - cappedCurrentHealth);
+            }
+
+            if (targetCard != null)
+            {
+                foreach (var tribe in AppliedBuff.GetAddedTribes())
+                {
+                    targetCard.AddTribeMarker(tribe);
+                }
+            }
 
             var suppressionEffects = AppliedBuff.Effects.OfType<AbilitySuppressionBuffEffect>().ToList();
             if (suppressionEffects.Count > 0)

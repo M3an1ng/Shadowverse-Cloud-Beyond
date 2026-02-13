@@ -69,7 +69,8 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             // Generate the two events that represent the full turn transition
             var turnEndEvent = new TurnEndEvent(currentPlayerState);
             result.GeneratedEvents.Add(turnEndEvent);
-            result.GeneratedEvents.Add(new TurnStartEvent(nextPlayerState));
+            var turnStartTransitionResult = nextPlayerState.BuildTurnStartTransitionEvents();
+            result.GeneratedEvents.AddRange(turnStartTransitionResult.GeneratedEvents);
             result.Success = true;
 
             return result;

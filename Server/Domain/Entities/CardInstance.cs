@@ -24,8 +24,8 @@ using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetInfo
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For DomainOperationResult
 using ShadowverseBeyond.Server.Services; // For GameDataProvider static instance
-using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
+using ShadowverseBeyond.Server.Domain.Identifiers;
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
@@ -48,6 +48,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         [DslExposable("卡牌ID", Description = "卡牌的唯一标识符")]
         public Guid InstanceId { get; set; } = Guid.Empty;
+
+        // Tracks whether this card preserved combat continuity between attack declaration and resolution.
+        // Intentionally not DSL-exposed.
+        internal long CombatContinuityVersion { get; private set; }
 
         /// <summary>
         /// Identifier linking to the static CardDefinition, providing base stats, text, type, etc.
@@ -229,6 +233,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         private readonly List<string> _additionalTribes = new();
         private readonly List<string> _additionalNames = new();
+        private readonly List<CardInstance> _fusedCards = new();
 
         private readonly Counters _counters;
 
@@ -236,6 +241,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("变量", Description = "卡牌上的系统与临时计数器")]
         public IReadOnlyDictionary<string, int> CounterMap => _counters;
+
+        [DslExposable("已融合卡牌列表", Description = "该卡牌已融合素材实例列表")]
+        public IReadOnlyList<CardInstance> FusedCards => _fusedCards;
 
         // [DslExposable("重置前快照", Description = "卡牌上一次重置前保存的轻量快照")]
         // public CardInstanceResetSnapshot? LastPreResetSnapshot { get; private set; }
@@ -620,11 +628,28 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             var opponentField = opponentPlayer.Field;
-            var wardFollowers = opponentField.Where(f => f.HasKeyword(CardKeyword.Ward)).ToList();
+            static bool HasEffectiveWard(CardInstance follower)
+            {
+                return follower.HasKeyword(CardKeyword.Ward)
+                       && !follower.HasKeyword(CardKeyword.Ambush)
+                       && !follower.HasKeyword(CardKeyword.Pressure);
+            }
+
+            var wardFollowers = opponentField.Where(HasEffectiveWard).ToList();
 
             if (wardFollowers.Any() && !wardFollowers.Contains(target))
             {
                 // If there are Ward followers, the target must be one of them.
+                return false;
+            }
+
+            if (target.IsLeader && HasKeyword(CardKeyword.CannotAttackLeader))
+            {
+                return false;
+            }
+
+            if (target.IsFollower && HasKeyword(CardKeyword.CannotAttackFollower))
+            {
                 return false;
             }
 
@@ -677,7 +702,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // Attack count consumption is committed in AttackEvent.Commit to keep request preflight reversible.
             result.GeneratedEvents.Add(new AttackEvent(this, target, consumeAttackCount: true));
-            result.GeneratedEvents.Add(new ClashEvent(this, target));
+            if (target.CardType != CardType.Leader)
+            {
+                result.GeneratedEvents.Add(new ClashEvent(this, target));
+            }
             result.GeneratedEvents.Add(new CombatResolutionEvent(this, target));
             result.Success = true;
             return result;
@@ -693,16 +721,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult PerformAttack(CardInstance target)
         {
             var result = new DomainOperationResult();
-            // Determine damage values
-            var damageToTarget = IsSuperEvolveDamageImmune(target) ? 0 : CurrentAttack;
+            var hasCounterAttack = target.CardType == CardType.Follower;
+            var attackerHadBane = HasKeyword(CardKeyword.Bane);
+            var defenderHadBane = hasCounterAttack && target.HasKeyword(CardKeyword.Bane);
+
+            // Determine intended damage values; final mitigation is resolved in DamageEvent.Commit.
+            var damageToTarget = CurrentAttack;
             result.GeneratedEvents.Add(new DamageEvent(target, damageToTarget, this, DamageKind.Combat));
 
             // Generate DamageEvent for the attacker (counter-attack)
-            if (target.CardType == CardType.Follower)
+            if (hasCounterAttack)
             {
-                var damageToAttacker = IsSuperEvolveDamageImmune(this) ? 0 : target.CurrentAttack;
+                var damageToAttacker = target.CurrentAttack;
                 result.GeneratedEvents.Add(new DamageEvent(this, damageToAttacker, target, DamageKind.Combat, isCounterAttack: true));
             }
+            result.GeneratedEvents.Add(new CombatDestroyResolutionEvent(this, target, attackerHadBane, defenderHadBane, hasCounterAttack));
 
             result.Success = true;
             return result;
@@ -896,6 +929,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             _additionalNames.AddRange(source._additionalNames);
             _additionalTribes.Clear();
             _additionalTribes.AddRange(source._additionalTribes);
+            _fusedCards.Clear();
+            _fusedCards.AddRange(source._fusedCards);
             _counters.CopyFrom(source._counters);
         }
 
@@ -925,6 +960,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             AbilityState.Clear();
             _additionalNames.Clear();
             _additionalTribes.Clear();
+            _fusedCards.Clear();
             ResetCounters();
 
             var baseDef = GameDataProvider.Instance?.GetCardDefinition(BaseDefinitionId);
@@ -1063,6 +1099,20 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             _additionalTribes.Add(tribe);
         }
 
+        public void RemoveTribeMarker(string tribe)
+        {
+            if (string.IsNullOrWhiteSpace(tribe))
+            {
+                return;
+            }
+
+            var index = _additionalTribes.FindIndex(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+            {
+                _additionalTribes.RemoveAt(index);
+            }
+        }
+
         public void AddCardNameAlias(string cardName)
         {
             if (string.IsNullOrWhiteSpace(cardName))
@@ -1081,6 +1131,39 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             _additionalNames.Add(cardName);
+        }
+
+        internal void AddFusedCards(IEnumerable<CardInstance> fusedCards)
+        {
+            if (fusedCards == null)
+            {
+                return;
+            }
+
+            foreach (var fusedCard in fusedCards)
+            {
+                if (fusedCard == null)
+                {
+                    continue;
+                }
+
+                AddFusedCard(fusedCard);
+            }
+        }
+
+        internal void AddFusedCard(CardInstance fusedCard)
+        {
+            if (fusedCard == null || fusedCard.InstanceId == Guid.Empty || fusedCard.InstanceId == InstanceId)
+            {
+                return;
+            }
+
+            if (_fusedCards.Any(card => card.InstanceId == fusedCard.InstanceId))
+            {
+                return;
+            }
+
+            _fusedCards.Add(fusedCard);
         }
 
 
@@ -1104,28 +1187,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (amount <= 0) return result;
 
             // Only generate the DamageEvent; actual state change happens via HealthChangedEvent.Commit
-            var normalizedAmount = IsSuperEvolveDamageImmune(this) ? 0 : amount;
             if (source != null)
             {
-                result.GeneratedEvents.Add(new DamageEvent(this, normalizedAmount, source, DamageKind.Ability));
+                result.GeneratedEvents.Add(new DamageEvent(this, amount, source, DamageKind.Ability));
             }
             else
             {
                 // Allow self-damage event if source is null by falling back to self
-                result.GeneratedEvents.Add(new DamageEvent(this, normalizedAmount, this, DamageKind.Ability));
+                result.GeneratedEvents.Add(new DamageEvent(this, amount, this, DamageKind.Ability));
             }
             return result;
-        }
-
-        private static bool IsSuperEvolveDamageImmune(CardInstance target)
-        {
-            if (!target.IsSuperEvolved || !target.IsFollower)
-            {
-                return false;
-            }
-
-            var context = GameServiceProvider.CurrentGameContext;
-            return context != null && target.OwnerPlayerId == context.CurrentGameState.CurrentPlayerId;
         }
 
         /// <summary>
@@ -1160,10 +1231,17 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult Transform(CardDefinition newDefinition, GameContext context)
         {
             var result = new DomainOperationResult();
-            var abilityManager = context.ServiceProvider.GetRequiredService<IAbilityManager>();
+            var abilityManager = context.AbilityManager;
 
-            // 1. Unregister all old abilities associated with this card instance.
-            abilityManager.UnregisterCardAbilities(this.InstanceId);
+            // Align transform cleanup with CardMovedEvent.ResetCardState:
+            // remove buffs -> remove auras -> unregister abilities -> reset runtime state.
+            var removeBuffsResult = context.BuffService.RemoveAllBuffs(this.InstanceId, context)
+                ?? new DomainOperationResult { Success = true };
+            if (!removeBuffsResult.Success)
+            {
+                return removeBuffsResult;
+            }
+            result.GeneratedEvents.AddRange(removeBuffsResult.GeneratedEvents);
 
             var auraResult = context.AuraManager.UnregisterBySourceCard(this.InstanceId, context);
             if (!auraResult.Success)
@@ -1172,17 +1250,23 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
             result.GeneratedEvents.AddRange(auraResult.GeneratedEvents);
 
-            // 2. Perform the basic transformation on the card instance
+            abilityManager.UnregisterCardAbilities(this.InstanceId);
+
+            // 2. Perform the transformation and reset runtime state to the new definition baseline.
             this.BaseDefinitionId = newDefinition.Id;
-            this.Damage = 0; // Reset damage on transform
-            InitializeCountdown(newDefinition);
+            ResetToDefinitionState();
+            MarkCombatContinuityChanged();
 
             // 3. Get ability configurations for the new card definition.
             var newAbilityConfigs = GameDataProvider.Instance.GetAbilityConfigs(newDefinition.Id);
             if (newAbilityConfigs != null && newAbilityConfigs.Any())
             {
                 // 4. Create and register new abilities for the transformed card.
-                abilityManager.CreateAbilitiesForCard(this, newAbilityConfigs);
+                var abilities = abilityManager.CreateAbilitiesForCard(this, newAbilityConfigs, null, context.CurrentGameState);
+                foreach (var ability in abilities)
+                {
+                    context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
+                }
             }
 
             // 5. Generate the notification event (after transform)
@@ -1191,6 +1275,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             result.Success = true;
 
             return result;
+        }
+
+        internal void MarkCombatContinuityChanged()
+        {
+            CombatContinuityVersion++;
         }
 
 

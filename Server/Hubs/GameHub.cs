@@ -130,7 +130,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued PlayCard action for Card {CardUid} in Game {GameId}.",
-                    playerId, gameId, actionDto.CardUid);
+                    playerId, actionDto.CardUid, gameId);
 
                 // Event broadcasting is now handled by the GameService processing loop.
             } // End of try block
@@ -874,7 +874,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
                 Context.Items["GameId"] = gameIdStr;
 
-                var spectatorGroupName = $"Game_{gameId}";
+                var spectatorGroupName = SignalRGroupNames.Game(gameId);
                 await Groups.AddToGroupAsync(Context.ConnectionId, spectatorGroupName);
 
                 _logger.LogInformation("Spectator connected: ConnectionId={ConnectionId}, GameId={GameId}, Added to Group={GroupName}",
@@ -954,10 +954,10 @@ namespace ShadowverseBeyond.Server.Hubs
                 }
             }
 
-            string groupName = $"Game_{gameId}"; // Consistent group naming convention
+            string groupName = SignalRGroupNames.Game(gameId); // Consistent group naming convention
             await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
 
-            string playerGroupName = $"Player_{playerIdStr}";
+            string playerGroupName = SignalRGroupNames.Player(gameIdStr, playerGuid);
             await Groups.AddToGroupAsync(Context.ConnectionId, playerGroupName);
 
             _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}, Added to Group={GroupName}",
@@ -1004,8 +1004,8 @@ namespace ShadowverseBeyond.Server.Hubs
                         currentState = _mapper.Map<GameStateDto>(currentStateEntity);
                     }
 
-                    _logger.LogInformation("Broadcasting initial game state to Game {GameId}", gameId);
-                    await Clients.Group(groupName).ReceiveGameState(currentState);
+                    _logger.LogInformation("Sending initial game state to caller for Game {GameId}, Player {PlayerId}", gameId, playerIdStr);
+                    await Clients.Caller.ReceiveGameState(currentState);
                 }
                 else
                 {
@@ -1046,7 +1046,7 @@ namespace ShadowverseBeyond.Server.Hubs
             // Remove from group (SignalR might handle this, but explicit is safer)
             if (gameId != Guid.Empty)
             {
-                string groupName = $"Game_{gameId}";
+                string groupName = SignalRGroupNames.Game(gameId);
                 try
                 {
                     await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
@@ -1054,6 +1054,8 @@ namespace ShadowverseBeyond.Server.Hubs
 
                     if (!string.IsNullOrEmpty(playerId) && Guid.TryParse(playerId, out var playerGuid))
                     {
+                        var playerGroupName = SignalRGroupNames.Player(gameId.ToString("D"), playerGuid);
+                        await Groups.RemoveFromGroupAsync(Context.ConnectionId, playerGroupName);
                         await NotifyPlayerConnectionStatusAsync(gameId, playerGuid, false, "Disconnect");
                         _gameService.MarkPlayerDisconnected(gameId.ToString(), playerGuid);
                         ScheduleDisconnectTimeout(gameId, playerGuid);
@@ -1080,7 +1082,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
         private async Task NotifyPlayerConnectionStatusAsync(Guid gameId, Guid playerId, bool isConnected, string reason)
         {
-            var groupName = $"Game_{gameId}";
+            var groupName = SignalRGroupNames.Game(gameId);
             var dto = new PlayerConnectionStatusEventDto
             {
                 PlayerId = playerId,

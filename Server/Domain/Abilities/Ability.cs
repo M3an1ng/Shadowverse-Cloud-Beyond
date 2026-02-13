@@ -59,6 +59,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// Gets the definition ID of the ability, linking to its static configuration.
         /// </summary>
+        [DslExposable("静态ID", Description = "该能力的定义ID")]
         public long DefinitionId => Config.Id; // Implement DefinitionId
 
         /// <summary>
@@ -134,6 +135,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public Guid? SourceBuffId { get; private set; }
 
         /// <summary>
+        /// Root ability runtime id used by UI-only buff summary grouping.
+        /// Defaults to this ability runtime id and is inherited by chained/decision abilities.
+        /// </summary>
+        public Guid SummaryRootAbilityId { get; internal set; }
+
+        /// <summary>
+        /// Stable scope prefix for sequence cursor tracking.
+        /// Root abilities default to runtime-id based prefix, and chained/decision abilities
+        /// can overwrite it with a deterministic path inherited from parent effects.
+        /// </summary>
+        public string SequenceScopePathPrefix { get; internal set; } = string.Empty;
+
+        /// <summary>
         /// Gets the card instance that is the source of this ability by looking it up in the current game context.
         /// This is a computed property and may be null if the card is not found or if SourceCardId is null.
         /// </summary>
@@ -167,7 +181,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
         private readonly Dictionary<(Guid TriggerEventId, int EffectIndex, int ExecutionIndex), DecisionState> _chooseDecisions = new();
         private readonly Dictionary<(Guid TriggerEventId, int EffectIndex, int ExecutionIndex), DecisionState> _randomDecisions = new();
+        private readonly Dictionary<(Guid TriggerEventId, int EffectIndex, int ExecutionIndex), DecisionState> _sequenceDecisions = new();
+        private readonly Dictionary<string, int> _sequenceCursorsByScopePath = new(StringComparer.Ordinal);
         private readonly Dictionary<Guid, PreflightPrimaryAbilityState> _preflightPrimaryAbilityStates = new();
+        private const string SequenceCursorCounterPrefix = "sequence.cursor.";
+
+        internal enum DecisionMode
+        {
+            Choose,
+            Random,
+            Sequence
+        }
 
         private sealed class DecisionOption
         {
@@ -201,7 +225,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             IReadOnlyList<Guid> OptionIds,
             int SelectionCount,
             bool AllowRepeat,
-            IReadOnlyList<double> Weights);
+            IReadOnlyList<double> Weights,
+            bool LoopSelection = false,
+            SequenceOrder SequenceOrder = SequenceOrder.Forward);
 
         private static readonly JsonSerializerOptions AbilityConfigJsonOptions = new()
         {
@@ -230,6 +256,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             Guid? sourceBuffId = null)
         {
             RuntimeId = Guid.NewGuid(); // Initialize RuntimeId here as it's part of the interface
+            SummaryRootAbilityId = RuntimeId;
+            SequenceScopePathPrefix = $"ability/{RuntimeId:N}";
             Config = config ?? throw new ArgumentNullException(nameof(config));
             _conditionFactory = conditionFactory ?? throw new ArgumentNullException(nameof(conditionFactory));
             _targetFactory = targetFactory ?? throw new ArgumentNullException(nameof(targetFactory));
@@ -433,11 +461,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
                 if (success)
                 {
-                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceSucceeded(dto);
+                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceSucceeded(dto);
                 }
                 else
                 {
-                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceFailed(dto);
+                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceFailed(dto);
                 }
             }
         }
@@ -480,8 +508,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 .Where(e => e.IsEnabled)
                 .ToList();
 
-            // 从上下文中获取IAbilityFactory，用于创建连锁能力
-            var abilityFactory = context.ServiceProvider.GetRequiredService<IAbilityFactory>();
             var triggeringEventId = context.TriggeringEvent?.EventId ?? Guid.Empty;
 
             for (var effectIndex = 0; effectIndex < enabledEffectConfigs.Count; effectIndex++)
@@ -515,17 +541,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 effectRequest.EffectIndex = effectIndex;
                 effectRequest.Priority = effectConfig.ExecutionOrder * 1000 + effectIndex;
                 effectRequest.SourceAbility = this;
+                effectRequest.SummaryRootAbilityId = SummaryRootAbilityId;
+                effectRequest.SequenceScopePath = $"{SequenceScopePathPrefix}/effect/{effectIndex}";
 
                 context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Effect, effectRequest.Id);
-
-                // --- 核心修改：生成时填充能力链 ---
-                if (effectConfig.ChainedAbilities.Any())
-                {
-                    // 使用批量创建方法，虽然当前场景下差别不大，但更符合API设计
-                    var chainedAbilities = abilityFactory.CreateAbilities(this.SourceCard, effectConfig.ChainedAbilities);
-                    effectRequest.ChainedAbilities.AddRange(chainedAbilities);
-                }
-                // --- 修改结束 ---
 
                 resultingEffects.Add(effectRequest);
             }
@@ -538,16 +557,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             Guid triggeringEventId,
             int effectIndex,
             EffectConfig effectConfig,
-            bool isRandom,
+            DecisionMode mode,
             int executionIndex = 0)
         {
             var valueResolver = context.ServiceProvider.GetRequiredService<IValueSourceResolver>();
             var branchConfigs = ResolveAbilityConfigs(effectConfig, "abilityConfigs", context, valueResolver);
             if (branchConfigs.Count == 0)
             {
-                throw new GameLogicException(isRandom
-                    ? "Random effect requires abilityConfigs."
-                    : "Choose effect requires abilityConfigs.");
+                throw new GameLogicException(mode switch
+                {
+                    DecisionMode.Random => "Random effect requires abilityConfigs.",
+                    DecisionMode.Sequence => "Sequence effect requires abilityConfigs.",
+                    _ => "Choose effect requires abilityConfigs."
+                });
             }
 
             var state = EnsureDecisionState(
@@ -555,36 +577,43 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 triggeringEventId,
                 effectIndex,
                 executionIndex,
-                isRandom,
+                mode,
                 branchConfigs);
 
             var optionIds = state.Options.Select(option => option.Id).ToList();
             if (optionIds.Count == 0)
             {
-                throw new GameLogicException(isRandom
-                    ? "Random effect has no available options."
-                    : "Choose effect has no available options.");
+                throw new GameLogicException(mode switch
+                {
+                    DecisionMode.Random => "Random effect has no available options.",
+                    DecisionMode.Sequence => "Sequence effect has no available options.",
+                    _ => "Choose effect has no available options."
+                });
             }
 
             var selectionCount = ResolveSelectionCount(effectConfig, "selectionCount", 1, context, valueResolver);
             selectionCount = Math.Max(1, selectionCount);
 
-            var allowRepeat = isRandom && ResolveBooleanParameter(effectConfig, "allowRepeat", false, context, valueResolver);
-            var weights = isRandom
+            var allowRepeat = mode == DecisionMode.Random && ResolveBooleanParameter(effectConfig, "allowRepeat", false, context, valueResolver);
+            var weights = mode == DecisionMode.Random
                 ? ResolveWeights(effectConfig, "weights", optionIds.Count, context, valueResolver)
                 : new List<double>();
+            var loopSelection = mode == DecisionMode.Sequence && ResolveBooleanParameter(effectConfig, "loopSelection", true, context, valueResolver);
+            var selectionOrder = mode == DecisionMode.Sequence
+                ? ResolveSequenceOrder(effectConfig, "selectionOrder", SequenceOrder.Forward, context, valueResolver)
+                : SequenceOrder.Forward;
 
-            return new DecisionInput(optionIds, selectionCount, allowRepeat, weights);
+            return new DecisionInput(optionIds, selectionCount, allowRepeat, weights, loopSelection, selectionOrder);
         }
 
         internal IReadOnlyList<DecisionOptionSnapshot> GetDecisionOptions(
             Guid triggeringEventId,
             int effectIndex,
-            bool isRandom,
+            DecisionMode mode,
             int executionIndex = 0)
         {
             var key = (triggeringEventId, effectIndex, executionIndex);
-            if (isRandom)
+            if (mode == DecisionMode.Random)
             {
                 if (!_randomDecisions.TryGetValue(key, out var state))
                 {
@@ -593,12 +622,114 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return state.Options.Select(option => new DecisionOptionSnapshot(option.Id, option.Config, option.Index)).ToList();
             }
 
+            if (mode == DecisionMode.Sequence)
+            {
+                if (!_sequenceDecisions.TryGetValue(key, out var sequenceState))
+                {
+                    throw new GameLogicException("Sequence decision options are missing.");
+                }
+
+                return sequenceState.Options.Select(option => new DecisionOptionSnapshot(option.Id, option.Config, option.Index)).ToList();
+            }
+
             if (!_chooseDecisions.TryGetValue(key, out var chooseState))
             {
                 throw new GameLogicException("Choose decision options are missing.");
             }
 
             return chooseState.Options.Select(option => new DecisionOptionSnapshot(option.Id, option.Config, option.Index)).ToList();
+        }
+
+        internal IReadOnlyList<int> ResolveSequenceSelection(
+            string sequenceScopePath,
+            int optionCount,
+            int selectionCount,
+            bool loopSelection,
+            SequenceOrder selectionOrder)
+        {
+            if (optionCount <= 0 || selectionCount <= 0)
+            {
+                return Array.Empty<int>();
+            }
+
+            var normalizedScopePath = string.IsNullOrWhiteSpace(sequenceScopePath)
+                ? "default"
+                : sequenceScopePath.Trim();
+            var cursorCounterKey = $"{SequenceCursorCounterPrefix}{normalizedScopePath}";
+            var cursor = TryGetPersistedSequenceCursor(cursorCounterKey);
+
+            if (cursor < 0)
+            {
+                cursor = 0;
+            }
+            if (optionCount > 0)
+            {
+                cursor %= optionCount;
+            }
+
+            var selectedIndexes = new List<int>(selectionCount);
+            if (loopSelection)
+            {
+                for (var offset = 0; offset < selectionCount; offset++)
+                {
+                    var orderedIndex = (cursor + offset) % optionCount;
+                    selectedIndexes.Add(MapOrderedIndexToSourceIndex(orderedIndex, optionCount, selectionOrder));
+                }
+
+                cursor = (cursor + selectionCount) % optionCount;
+            }
+            else
+            {
+                var available = Math.Max(0, optionCount - cursor);
+                var takeCount = Math.Min(selectionCount, available);
+                for (var offset = 0; offset < takeCount; offset++)
+                {
+                    var orderedIndex = cursor + offset;
+                    selectedIndexes.Add(MapOrderedIndexToSourceIndex(orderedIndex, optionCount, selectionOrder));
+                }
+
+                cursor += takeCount;
+                if (cursor > optionCount)
+                {
+                    cursor = optionCount;
+                }
+            }
+
+            PersistSequenceCursor(cursorCounterKey, cursor);
+            return selectedIndexes;
+        }
+
+        private int TryGetPersistedSequenceCursor(string counterKey)
+        {
+            if (SourceCard != null)
+            {
+                return SourceCard.GetCounter(counterKey);
+            }
+
+            if (_sequenceCursorsByScopePath.TryGetValue(counterKey, out var cursor))
+            {
+                return cursor;
+            }
+
+            return 0;
+        }
+
+        private void PersistSequenceCursor(string counterKey, int cursor)
+        {
+            if (SourceCard != null)
+            {
+                SourceCard.SetCounter(counterKey, cursor);
+                return;
+            }
+
+            _sequenceCursorsByScopePath[counterKey] = cursor;
+        }
+
+        private static int MapOrderedIndexToSourceIndex(int orderedIndex, int optionCount, SequenceOrder selectionOrder)
+        {
+            return selectionOrder == SequenceOrder.Reverse
+                ? optionCount - 1 - orderedIndex
+                : orderedIndex;
         }
 
         internal static List<CardInstanceDto> BuildDecisionOptionCards(
@@ -648,11 +779,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             Guid triggeringEventId,
             int effectIndex,
             int executionIndex,
-            bool isRandom,
+            DecisionMode mode,
             IReadOnlyList<AbilityConfig> branchConfigs)
         {
             var key = (triggeringEventId, effectIndex, executionIndex);
-            var cache = isRandom ? _randomDecisions : _chooseDecisions;
+            var cache = mode switch
+            {
+                DecisionMode.Random => _randomDecisions,
+                DecisionMode.Sequence => _sequenceDecisions,
+                _ => _chooseDecisions
+            };
             if (!cache.TryGetValue(key, out var state))
             {
                 state = new DecisionState();
@@ -806,6 +942,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var key = (triggeringEventId, effectIndex, executionIndex);
             _chooseDecisions.Remove(key);
             _randomDecisions.Remove(key);
+            _sequenceDecisions.Remove(key);
         }
 
         internal void ClearDecisionCache(Guid triggeringEventId)
@@ -820,6 +957,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             foreach (var key in randomKeys)
             {
                 _randomDecisions.Remove(key);
+            }
+
+            var sequenceKeys = _sequenceDecisions.Keys.Where(k => k.TriggerEventId == triggeringEventId).ToList();
+            foreach (var key in sequenceKeys)
+            {
+                _sequenceDecisions.Remove(key);
             }
 
             foreach (var condition in Conditions)
@@ -873,6 +1016,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
 
             return CoerceToBool(resolved, fallback);
+        }
+
+        private static SequenceOrder ResolveSequenceOrder(
+            EffectConfig effectConfig,
+            string key,
+            SequenceOrder fallback,
+            GameContext context,
+            IValueSourceResolver resolver)
+        {
+            if (!TryResolveParameterValue(effectConfig, key, context, resolver, out var resolved))
+            {
+                return fallback;
+            }
+
+            return CoerceToSequenceOrder(resolved, fallback);
         }
 
         private static List<double> ResolveWeights(
@@ -977,6 +1135,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                         return jsonBool;
                     }
                     return fallback;
+                default:
+                    return fallback;
+            }
+        }
+
+        private static SequenceOrder CoerceToSequenceOrder(object? value, SequenceOrder fallback)
+        {
+            switch (value)
+            {
+                case null:
+                    return fallback;
+                case SequenceOrder order:
+                    return order;
+                case string s when Enum.TryParse<SequenceOrder>(s, true, out var parsed):
+                    return parsed;
+                case int i when Enum.IsDefined(typeof(SequenceOrder), i):
+                    return (SequenceOrder)i;
+                case long l when Enum.IsDefined(typeof(SequenceOrder), (int)l):
+                    return (SequenceOrder)(int)l;
+                case JsonElement jsonElement when jsonElement.ValueKind == JsonValueKind.String
+                    && Enum.TryParse<SequenceOrder>(jsonElement.GetString(), true, out var jsonParsed):
+                    return jsonParsed;
+                case JsonElement jsonElement when jsonElement.ValueKind == JsonValueKind.Number
+                    && jsonElement.TryGetInt32(out var jsonNumber)
+                    && Enum.IsDefined(typeof(SequenceOrder), jsonNumber):
+                    return (SequenceOrder)jsonNumber;
                 default:
                     return fallback;
             }

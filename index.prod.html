@@ -12,13 +12,12 @@
         href="https://fonts.loli.net/css2?family=Cinzel:wght@400;700;900&family=Rajdhani:wght@300;500;700&family=Inter:wght@300;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap"
         rel="stylesheet">
 
-    <!-- Styles -->
-    <link rel="stylesheet" href="src/styles/animations.css"> <!-- Legacy styles, to be refactored -->
+    <!-- Styles --> <!-- Legacy styles, to be refactored -->
 
     <!-- defer 确保在 HTML 解析完成后执行脚本 -->
     <!-- type="module" 启用 ES Module 功能 -->
-  <script type="module" crossorigin src="/assets/index-BTkQcdl_.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DKOhY9kh.css">
+  <script type="module" crossorigin src="/assets/index-C1eLIQgD.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DExXRLe5.css">
 </head>
 
 <body>
@@ -238,7 +237,7 @@
                 <!-- DevTools Option -->
                 <div class="nav-item" data-route="dev-tools" role="button" tabindex="0">
                     <div class="nav-content">
-                        <div class="nav-text">系统核心</div>
+                        <div class="nav-text">系统设置</div>
                         <div class="nav-desc">
                             <span class="desc-line">SETTING</span>
                             <span class="desc-detail">API 测试 / 数据监控</span>
@@ -721,6 +720,12 @@
                         <p>查看卡牌和能力数据</p>
                         <button class="tool-button" onclick="openDataViewer()">打开查看器</button>
                     </div>
+
+                    <section id="admin-user-management" class="tool-card admin-user-management" aria-label="当前用户管理">
+                        <h3>当前用户管理</h3>
+                        <p>仅管理员可访问，用于查看当前注册用户并调整权限等级。</p>
+                        <button id="admin-user-open-btn" class="tool-button" type="button">打开用户管理</button>
+                    </section>
                 </div>
 
                 <div id="log-viewer-modal" class="log-viewer-modal" aria-hidden="true">
@@ -758,6 +763,45 @@
                             </div>
                             <div id="log-stream-status" class="log-stream-status" data-tone="neutral">等待连接</div>
                             <div id="log-stream-list" class="log-stream-list" aria-live="polite"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="admin-user-modal" class="log-viewer-modal admin-user-modal" aria-hidden="true">
+                    <div class="log-viewer-panel admin-user-panel" role="dialog" aria-label="当前用户管理">
+                        <div class="log-viewer-panel-header">
+                            <div class="log-viewer-panel-title">当前用户管理</div>
+                            <button id="admin-user-close-btn" class="tool-button" type="button">关闭</button>
+                        </div>
+                        <div class="admin-user-management-actions">
+                            <input id="admin-user-search" class="form-input admin-user-search" type="text" placeholder="输入用户名关键字">
+                            <button id="admin-user-search-btn" class="tool-button" type="button">搜索</button>
+                            <button id="admin-user-refresh" class="tool-button" type="button">刷新</button>
+                        </div>
+                        <div id="admin-user-management-message" class="admin-user-management-message" data-tone="neutral">
+                            请登录后加载用户管理。
+                        </div>
+                        <div id="admin-user-management-panel" class="admin-user-management-panel" hidden>
+                            <div class="admin-user-management-meta">
+                                当前结果：<span id="admin-user-count">0</span> 用户
+                            </div>
+                            <div class="admin-user-table-wrap">
+                                <table class="admin-user-table">
+                                    <thead>
+                                        <tr>
+                                            <th>UserId</th>
+                                            <th>用户名</th>
+                                            <th>角色</th>
+                                            <th>等级</th>
+                                            <th>状态</th>
+                                            <th>创建时间</th>
+                                            <th>最后登录</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="admin-user-table-body"></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>

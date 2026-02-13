@@ -19,6 +19,9 @@ namespace ShadowverseBeyond.Server.Mappings
     /// </summary>
     public class CardInstanceProfile : Profile
     {
+        private const string FusionCountCounterKey = "fusion_count";
+        private const string FusionCountDisplayName = "融合数";
+
         public CardInstanceProfile()
         {
             CreateMap<CardInstance, CardInstanceDto>()
@@ -38,6 +41,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.Tribe, opt => opt.MapFrom(src => src.Tribe))
                 .ForMember(dest => dest.Earthsigil, opt => opt.MapFrom(src => src.Earthsigil))
                 .ForMember(dest => dest.Counters, opt => opt.MapFrom(src => BuildCounterSnapshot(src)))
+                .ForMember(dest => dest.CounterDisplayNames, opt => opt.MapFrom(src => BuildCounterDisplayNameSnapshot(src)))
 
                 // --- Base Stats (Mapping from direct properties) ---
                 .ForMember(dest => dest.Attack, opt => opt.MapFrom(src => src.BaseAttack))
@@ -55,6 +59,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.ActAbilities, opt => opt.MapFrom(src => BuildActionSummaries(src, AbilityKeyword.Act)))
                 .ForMember(dest => dest.ActLastUsedTurnNumber, opt => opt.MapFrom(src => src.ActLastUsedTurnNumber))
                 .ForMember(dest => dest.FusionAbilities, opt => opt.MapFrom(src => BuildActionSummaries(src, AbilityKeyword.Fusion)))
+                .ForMember(dest => dest.FusedCards, opt => opt.MapFrom(src => src.FusedCards))
                 .ForMember(dest => dest.AttacksThisTurn, opt => opt.MapFrom(src => src.AttacksThisTurn))
                 .ForMember(dest => dest.FieldTurn, opt => opt.MapFrom(src => src.FieldTurn)) // BUG修复：添加缺失的FieldTurn映射
                 .ForMember(dest => dest.CurrentCountdown, opt => opt.MapFrom(src => src.CurrentCountdown))
@@ -84,6 +89,58 @@ namespace ShadowverseBeyond.Server.Mappings
                     continue;
                 }
                 result[pair.Key] = Math.Max(0, pair.Value);
+            }
+
+            var fusedCount = Math.Max(0, cardInstance.FusedCards?.Count ?? 0);
+            if (fusedCount > 0)
+            {
+                result[FusionCountCounterKey] = fusedCount;
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, string> BuildCounterDisplayNameSnapshot(CardInstance cardInstance)
+        {
+            if (cardInstance == null)
+            {
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var abilities = cardInstance.Abilities ?? new List<Ability>();
+            foreach (var ability in abilities)
+            {
+                var registrations = ability?.Config?.CounterRegistrations;
+                if (registrations == null || registrations.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var registration in registrations)
+                {
+                    if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                    {
+                        continue;
+                    }
+
+                    var name = registration.Name.Trim();
+                    if (result.ContainsKey(name))
+                    {
+                        continue;
+                    }
+
+                    var displayName = string.IsNullOrWhiteSpace(registration.DisplayName)
+                        ? name
+                        : registration.DisplayName.Trim();
+                    result[name] = displayName;
+                }
+            }
+
+            var fusedCount = Math.Max(0, cardInstance.FusedCards?.Count ?? 0);
+            if (fusedCount > 0 && !result.ContainsKey(FusionCountCounterKey))
+            {
+                result[FusionCountCounterKey] = FusionCountDisplayName;
             }
 
             return result;
@@ -116,7 +173,7 @@ namespace ShadowverseBeyond.Server.Mappings
         {
             var context = GameServiceProvider.CurrentGameContext;
             var buffManager = context?.BuffManager;
-            if (buffManager == null)
+            if (context == null || buffManager == null)
             {
                 return new List<BuffSummaryDto>();
             }
@@ -128,22 +185,34 @@ namespace ShadowverseBeyond.Server.Mappings
             }
 
             var logger = GameServiceProvider.Logger;
+
+            static string BuildDisplayGroupKey(Buff buff)
+            {
+                if (buff.SummaryRootAbilityId.HasValue && buff.SummaryRootAbilityId.Value != Guid.Empty)
+                {
+                    return $"ability:{buff.SummaryRootAbilityId.Value:N}";
+                }
+
+                if (buff.SourceAbilityId != Guid.Empty)
+                {
+                    return $"ability:{buff.SourceAbilityId:N}";
+                }
+
+                if (!string.IsNullOrWhiteSpace(buff.EffectKey))
+                {
+                    return $"effect:{buff.EffectKey}";
+                }
+
+                return $"buff:{buff.Id:N}";
+            }
+
             static string FormatBuff(Buff buff)
             {
                 return $"BuffId={buff.Id} EffectKey={buff.EffectKey ?? "<null>"} SourceAbilityId={buff.SourceAbilityId} " +
+                    $"SummaryRootAbilityId={buff.SummaryRootAbilityId?.ToString() ?? "<null>"} " +
                     $"SourceEffectIndex={buff.SourceEffectIndex?.ToString() ?? "<null>"} SourceCardId={buff.SourceCardInstanceId?.ToString() ?? "<null>"} " +
                     $"SourceCardName={buff.SourceCardName ?? "<null>"} SourceAbilityName={buff.SourceAbilityName ?? "<null>"} " +
                     $"DefinitionId={buff.DefinitionId ?? "<null>"} Duration={buff.DurationType} Active={buff.IsActive}";
-            }
-
-            var missingEffectKeyBuffs = buffs.Where(buff => string.IsNullOrWhiteSpace(buff.EffectKey)).ToList();
-            if (missingEffectKeyBuffs.Count > 0)
-            {
-                logger?.LogInformation(
-                    "[BuffSummary] Card {CardId} has {MissingCount} buffs missing EffectKey. Details: {Buffs}",
-                    cardInstance.InstanceId,
-                    missingEffectKeyBuffs.Count,
-                    string.Join(" | ", missingEffectKeyBuffs.Select(FormatBuff)));
             }
 
             var abilityManager = context.AbilityManager;
@@ -152,8 +221,7 @@ namespace ShadowverseBeyond.Server.Mappings
             var summaries = new List<BuffSummaryDto>();
 
             var groupedBuffs = buffs
-                .Where(buff => !string.IsNullOrWhiteSpace(buff.EffectKey))
-                .GroupBy(buff => buff.EffectKey!, StringComparer.Ordinal)
+                .GroupBy(BuildDisplayGroupKey, StringComparer.Ordinal)
                 .OrderBy(group => group.Key, StringComparer.Ordinal)
                 .ToList();
 
@@ -165,19 +233,38 @@ namespace ShadowverseBeyond.Server.Mappings
                     continue;
                 }
 
-                var ability = abilityManager?.GetAbilityByRuntimeId(sample.SourceAbilityId);
+                var preferredAbilityId = sample.SummaryRootAbilityId.HasValue && sample.SummaryRootAbilityId.Value != Guid.Empty
+                    ? sample.SummaryRootAbilityId.Value
+                    : sample.SourceAbilityId;
+
+                IAbility? ability = null;
                 AbilitySnapshot? abilitySnapshot = null;
-                if (ability == null && abilityManager != null && abilityManager.TryGetAbilitySnapshot(sample.SourceAbilityId, out var snapshot))
+                if (preferredAbilityId != Guid.Empty)
                 {
-                    abilitySnapshot = snapshot;
+                    ability = abilityManager?.GetAbilityByRuntimeId(preferredAbilityId);
+                    if (ability == null && abilityManager != null && abilityManager.TryGetAbilitySnapshot(preferredAbilityId, out var preferredSnapshot))
+                    {
+                        abilitySnapshot = preferredSnapshot;
+                    }
                 }
+
+                if (ability == null && abilitySnapshot == null && sample.SourceAbilityId != Guid.Empty && sample.SourceAbilityId != preferredAbilityId)
+                {
+                    ability = abilityManager?.GetAbilityByRuntimeId(sample.SourceAbilityId);
+                    if (ability == null && abilityManager != null && abilityManager.TryGetAbilitySnapshot(sample.SourceAbilityId, out var sourceSnapshot))
+                    {
+                        abilitySnapshot = sourceSnapshot;
+                    }
+                }
+
                 if (ability == null)
                 {
                     logger?.LogInformation(
-                        "[BuffSummary] Ability not found for buff {BuffId} (EffectKey {EffectKey}) on card {CardId}. SourceAbilityId={SourceAbilityId} CachedSourceCardName={CachedSourceCardName} CachedSourceAbilityName={CachedSourceAbilityName} TombstoneAbilityName={TombstoneAbilityName} TombstoneCardName={TombstoneCardName}",
+                        "[BuffSummary] Ability not found for buff {BuffId} (DisplayKey {DisplayKey}) on card {CardId}. PreferredAbilityId={PreferredAbilityId} SourceAbilityId={SourceAbilityId} CachedSourceCardName={CachedSourceCardName} CachedSourceAbilityName={CachedSourceAbilityName} TombstoneAbilityName={TombstoneAbilityName} TombstoneCardName={TombstoneCardName}",
                         sample.Id,
-                        sample.EffectKey ?? "<null>",
+                        group.Key,
                         cardInstance.InstanceId,
+                        preferredAbilityId == Guid.Empty ? "<empty>" : preferredAbilityId.ToString(),
                         sample.SourceAbilityId,
                         sample.SourceCardName ?? "<null>",
                         sample.SourceAbilityName ?? "<null>",
@@ -211,14 +298,15 @@ namespace ShadowverseBeyond.Server.Mappings
                 if (string.IsNullOrWhiteSpace(sourceCardName) || string.IsNullOrWhiteSpace(sourceAbilityName))
                 {
                     logger?.LogInformation(
-                        "[BuffSummary] Missing source names for buff {BuffId} (EffectKey {EffectKey}) on card {CardId}. SourceCardName={SourceCardName} SourceAbilityName={SourceAbilityName} CachedSourceCardName={CachedSourceCardName} CachedSourceAbilityName={CachedSourceAbilityName}",
+                        "[BuffSummary] Missing source names for buff {BuffId} (DisplayKey {DisplayKey}) on card {CardId}. SourceCardName={SourceCardName} SourceAbilityName={SourceAbilityName} CachedSourceCardName={CachedSourceCardName} CachedSourceAbilityName={CachedSourceAbilityName}. Details: {BuffDetails}",
                         sample.Id,
-                        sample.EffectKey ?? "<null>",
+                        group.Key,
                         cardInstance.InstanceId,
                         sourceCardName ?? "<null>",
                         sourceAbilityName ?? "<null>",
                         sample.SourceCardName ?? "<null>",
-                        sample.SourceAbilityName ?? "<null>");
+                        sample.SourceAbilityName ?? "<null>",
+                        string.Join(" | ", group.Select(FormatBuff)));
                     continue;
                 }
 
@@ -230,7 +318,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 });
 
                 logger?.LogDebug(
-                    "BuffSummary built: Card {CardId} EffectKey {EffectKey} SourceCard {SourceCardName} SourceAbility {SourceAbilityName}.",
+                    "BuffSummary built: Card {CardId} DisplayKey {DisplayKey} SourceCard {SourceCardName} SourceAbility {SourceAbilityName}.",
                     cardInstance.InstanceId,
                     group.Key,
                     sourceCardName,

@@ -145,6 +145,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             var coreFunctions = new List<IFunctionDefinition>
             {
                 new CountFunction(),
+                new ByTypeFunction(),
                 new FindFunction(),
                 new MaxFunction(),
                 new MinFunction(),

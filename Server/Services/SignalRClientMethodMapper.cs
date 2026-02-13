@@ -50,6 +50,7 @@ namespace ShadowverseBeyond.Server.Services
                     PpUpdateEventDto e => clientProxy.PpUpdate(e),
                     HandUpdatedEventDto e => clientProxy.HandUpdated(e), // Restored for mulligan functionality
                     CardInstanceUpdatedEventDto e => clientProxy.CardInstanceUpdated(e),
+                    CardMovedEventDto e => clientProxy.CardMoved(e),
                     CounterChangedEventDto e => clientProxy.CounterChanged(e),
                     DeckUpdateEventDto e => clientProxy.DeckUpdate(e), // Restored case
                     AttackDeclaredEventDto e => clientProxy.AttackDeclared(e),
@@ -58,6 +59,7 @@ namespace ShadowverseBeyond.Server.Services
                     UnitDestroyedEventDto e => clientProxy.UnitDestroyed(e),
                     CardVanishedEventDto e => clientProxy.CardVanished(e),
                     CardReturnedDto e => clientProxy.CardReturned(e),
+                    TuckEventDto e => clientProxy.Tuck(e),
                     GameOverEventDto e => clientProxy.GameOver(e),
                     TurnEndedEventDto e => clientProxy.TurnEnded(e),
                     ErrorOccurredEventDto e => clientProxy.ReceiveError(e.ErrorMessage),

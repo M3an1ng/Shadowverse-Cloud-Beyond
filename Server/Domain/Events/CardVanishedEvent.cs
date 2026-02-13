@@ -28,20 +28,31 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("消失的卡牌", "被消失的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? VanishedCard => Target.FirstOrDefault()?.Card;
 
+        [GameEventParameter("消失来源快照", "生成事件时记录的消失来源快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? VanishSourceSnapshot { get; }
+
+        [GameEventParameter("消失目标快照", "生成事件时记录的消失目标快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? VanishedCardSnapshot { get; }
+
+        public bool VanishApplied { get; private set; }
+
         public CardVanishedEvent(CardInstance card, CardZone originalZone, string vanishReason = "Effect", CardInstance? sourceCard = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Vanish, eventId, timestamp)
         {
             if (sourceCard != null)
             {
                 Source = TargetInfo.ForCard(sourceCard);
+                VanishSourceSnapshot = CardInstanceSnapshot.From(sourceCard);
             }
             Target.Add(TargetInfo.ForCard(card));
+            VanishedCardSnapshot = CardInstanceSnapshot.From(card);
             OriginalZone = originalZone;
             VanishReason = vanishReason;
         }
 
         public DomainOperationResult Commit(GameContext context)
         {
+            VanishApplied = false;
             var card = VanishedCard;
             if (card == null)
             {
@@ -57,11 +68,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
             // Important: Commit MUST NOT call a method that enqueues another CardVanishedEvent to avoid recursion.
             var result = new DomainOperationResult { Success = true };
             result.GeneratedEvents.Add(new CardMovedEvent(card, card.CurrentZone, CardZone.Removed, CardMoveReason.Vanished));
+            VanishApplied = true;
             return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
+            if (!VanishApplied)
+            {
+                return string.Empty;
+            }
+
             var card = VanishedCard;
             if (card == null)
             {

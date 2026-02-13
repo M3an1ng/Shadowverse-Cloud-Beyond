@@ -425,10 +425,14 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     return false;
                 }
 
-                var reason = "DebugCommand";
+                var reason = EventReasonSource.System;
                 if (Payload.TryGetString(input.Payload, "Reason", out var reasonVal) && !string.IsNullOrWhiteSpace(reasonVal))
                 {
-                    reason = reasonVal!;
+                    if (!TryParseReason(reasonVal!, out reason))
+                    {
+                        errorMessage = "destroy Reason 仅支持 System 或 Ability（兼容值：Effect）";
+                        return false;
+                    }
                 }
 
                 if (!Resolver.TryResolveCardOrLeader(gameState, input.SourceId, out var source) || source == null)
@@ -445,6 +449,17 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
 
                 gameEvent = new DestroyEvent(target, source, reason);
                 return true;
+            }
+
+            private static bool TryParseReason(string rawReason, out EventReasonSource reason)
+            {
+                if (string.Equals(rawReason, "Effect", StringComparison.OrdinalIgnoreCase))
+                {
+                    reason = EventReasonSource.Ability;
+                    return true;
+                }
+
+                return Enum.TryParse(rawReason, true, out reason);
             }
         }
 

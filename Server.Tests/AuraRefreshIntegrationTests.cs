@@ -273,7 +273,7 @@ namespace ShadowverseBeyond.Server.Tests
                     new BuffConfig
                     {
                         DurationType = DurationType.Permanent,
-                        DurationParameter = 0,
+                        DurationParameter = new StaticValueConfig { Value = 0 },
                         CanStack = canStack,
                         StatModifiers = new List<StatModifierConfig>
                         {

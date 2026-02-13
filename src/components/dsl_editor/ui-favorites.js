@@ -6,6 +6,7 @@ export function removeFavoritesMenu(editor) {
     if (editor.favoriteMenuOutsideHandler) {
         document.removeEventListener("click", editor.favoriteMenuOutsideHandler);
     }
+    clearTimeout(editor.favoriteSearchTimer);
     editor.favoriteMenuOutsideHandler = null;
     editor.favoriteMenuAnchor = null;
 }
@@ -141,7 +142,6 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
     addButton.addEventListener("click", async (event) => {
         event.stopPropagation();
         await editor.createFavoriteFromCurrentExpression();
-        await editor.refreshFavorites(editor.favoriteState.query);
         renderLists();
     });
     addWrapper.appendChild(addButton);
@@ -164,6 +164,27 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
     favoritesTitle.className = "dsl-favorites-section-title";
 
     const favoritesList = document.createElement("div");
+    const pagination = document.createElement("div");
+    pagination.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;";
+
+    const prevPageBtn = document.createElement("button");
+    prevPageBtn.type = "button";
+    prevPageBtn.textContent = "上一页";
+    prevPageBtn.className = "dsl-favorites-btn";
+    prevPageBtn.style.cssText = "padding:4px 8px;font-size:12px;";
+
+    const pageInfo = document.createElement("span");
+    pageInfo.style.cssText = "font-size:12px;color:#6b7280;";
+
+    const nextPageBtn = document.createElement("button");
+    nextPageBtn.type = "button";
+    nextPageBtn.textContent = "下一页";
+    nextPageBtn.className = "dsl-favorites-btn";
+    nextPageBtn.style.cssText = "padding:4px 8px;font-size:12px;";
+
+    pagination.appendChild(prevPageBtn);
+    pagination.appendChild(pageInfo);
+    pagination.appendChild(nextPageBtn);
 
     const createStateLine = (container, message) => {
         const line = document.createElement("div");
@@ -172,14 +193,42 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
         container.appendChild(line);
     };
 
-    const createFavoriteItem = (favorite) => {
+    const createFavoriteItem = (favorite, { showDelete = false } = {}) => {
+        const favoriteId = favorite.id || favorite.Id;
         const item = document.createElement("div");
         item.className = "dsl-favorites-item";
+
+        const topRow = document.createElement("div");
+        topRow.className = "dsl-favorites-item__top";
 
         const label = document.createElement("div");
         label.textContent = favorite.label || favorite.Label || "(未命名)";
         label.className = "dsl-favorites-item__label";
-        item.appendChild(label);
+        topRow.appendChild(label);
+
+        if (showDelete) {
+            const deleteBtn = document.createElement("button");
+            deleteBtn.type = "button";
+            deleteBtn.textContent = "删除";
+            deleteBtn.className = "dsl-favorites-item__delete";
+            deleteBtn.title = "删除收藏";
+            deleteBtn.addEventListener("click", async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!favoriteId) return;
+                const confirmed = window.confirm("确定删除这个收藏吗？");
+                if (!confirmed) return;
+                const result = await editor.deleteFavorite(favoriteId);
+                if (!result?.success) {
+                    editor.showExpressionError?.("删除收藏失败，请稍后重试。");
+                    return;
+                }
+                await editor.refreshFavorites(editor.favoriteState.query, editor.favoriteState.page);
+                renderLists();
+            });
+            topRow.appendChild(deleteBtn);
+        }
+        item.appendChild(topRow);
 
         const desc = document.createElement("div");
         desc.textContent = favorite.expression || favorite.Expression || "";
@@ -189,7 +238,7 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
             const expr = favorite.expression || favorite.Expression || "";
             if (expr) {
                 editor.insertFavoriteExpression(expr);
-                editor.markFavoriteUsed(favorite.id || favorite.Id);
+                editor.markFavoriteUsed(favoriteId);
                 closeMenu();
             }
         });
@@ -197,7 +246,7 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
         return item;
     };
 
-    const renderList = (container, items, emptyText) => {
+    const renderList = (container, items, emptyText, options = {}) => {
         container.innerHTML = "";
         if (!editor.userId) {
             createStateLine(container, "登录后可使用收藏功能。");
@@ -215,7 +264,7 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
             createStateLine(container, emptyText);
             return;
         }
-        items.forEach(item => container.appendChild(createFavoriteItem(item)));
+        items.forEach(item => container.appendChild(createFavoriteItem(item, options)));
     };
 
     const renderLists = () => {
@@ -223,14 +272,53 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
         recentTitle.style.display = hasQuery ? "none" : "block";
         recentList.style.display = hasQuery ? "none" : "block";
         renderList(recentList, editor.favoriteState.recentItems, "暂无最近使用。");
-        renderList(favoritesList, editor.favoriteState.items, "暂无收藏。");
+        renderList(favoritesList, editor.favoriteState.items, "暂无收藏。", { showDelete: true });
+        renderPagination();
     };
+
+    const renderPagination = () => {
+        if (!editor.userId || editor.favoriteState.loading || editor.favoriteState.error) {
+            pagination.style.display = "none";
+            return;
+        }
+
+        const total = Math.max(0, Number(editor.favoriteState.total) || 0);
+        const totalPages = Math.max(1, Number(editor.favoriteState.totalPages) || 1);
+        const page = Math.max(1, Number(editor.favoriteState.page) || 1);
+        const shouldShow = total > 0;
+
+        pagination.style.display = shouldShow ? "flex" : "none";
+        pageInfo.textContent = `${page} / ${totalPages} · 共 ${total} 条`;
+        prevPageBtn.disabled = page <= 1;
+        nextPageBtn.disabled = page >= totalPages;
+    };
+
+    prevPageBtn.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (editor.favoriteState.loading) return;
+        const targetPage = Math.max(1, (editor.favoriteState.page || 1) - 1);
+        if (targetPage === editor.favoriteState.page) return;
+        await editor.refreshFavorites(editor.favoriteState.query, targetPage);
+        renderLists();
+    });
+
+    nextPageBtn.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (editor.favoriteState.loading) return;
+        const totalPages = Math.max(1, Number(editor.favoriteState.totalPages) || 1);
+        const targetPage = Math.min(totalPages, (editor.favoriteState.page || 1) + 1);
+        if (targetPage === editor.favoriteState.page) return;
+        await editor.refreshFavorites(editor.favoriteState.query, targetPage);
+        renderLists();
+    });
 
     searchInput.addEventListener("input", () => {
         const value = searchInput.value.trim();
         clearTimeout(editor.favoriteSearchTimer);
         editor.favoriteSearchTimer = setTimeout(async () => {
-            await editor.refreshFavorites(value);
+            await editor.refreshFavorites(value, 1);
             renderLists();
         }, 300);
     });
@@ -241,11 +329,12 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
     section.appendChild(recentList);
     section.appendChild(favoritesTitle);
     section.appendChild(favoritesList);
+    section.appendChild(pagination);
 
     menu.appendChild(section);
 
     if (editor.userId) {
-        editor.refreshFavorites(editor.favoriteState.query).then(renderLists);
+        editor.refreshFavorites(editor.favoriteState.query, editor.favoriteState.page || 1).then(renderLists);
     } else {
         renderLists();
     }

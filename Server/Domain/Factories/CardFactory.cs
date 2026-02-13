@@ -4,6 +4,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using System;
+using System.Collections.Generic;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Identifiers;
@@ -46,7 +47,7 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             var cardInstance = new CardInstance(instanceId, cardDefinition.Id, ownerPlayerId);
 
             cardInstance.CurrentZone = initialZone;
-            // TODO: Set ZoneIndex
+            cardInstance.ZoneIndex = null;
 
             gameState.RegisterCardInstance(cardInstance);
             // var readableCardId = gameState.InGameIds.Format(InGameIdKind.Card, instanceId);
@@ -56,10 +57,17 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             var abilityConfigs = GameDataProvider.Instance.GetAbilityConfigs(cardDefinition.Id);
             if (abilityConfigs != null && abilityConfigs.Any())
             {
-                var abilities = gameState.AbilityManager.CreateAbilitiesForCard(cardInstance, abilityConfigs);
-                foreach (var ability in abilities)
+                if (gameState.AbilityManager == null)
                 {
-                    gameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
+                    _logger.LogWarning("AbilityManager is null when creating card {InstanceId}; skipping ability registration.", instanceId);
+                }
+                else
+                {
+                    var abilities = gameState.AbilityManager.CreateAbilitiesForCard(cardInstance, abilityConfigs, null, gameState);
+                    foreach (var ability in abilities)
+                    {
+                        gameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
+                    }
                 }
             }
 
@@ -96,6 +104,8 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                         _logger.LogWarning("Attempted to add card {InstanceId} to an unhandled zone: {InitialZone}", instanceId, initialZone);
                         break;
                 }
+
+                InitializeZoneMetadataOnAppend(ownerPlayer, cardInstance, initialZone);
                 // _logger.LogInformation("Added card instance {CardId} (guid={InstanceId}) to Player {OwnerPlayerId}'s {InitialZone} list.",
                 //     readableCardId, instanceId, ownerPlayerId, initialZone);
             }
@@ -161,7 +171,7 @@ namespace ShadowverseBeyond.Server.Domain.Factories
 
                 // Use the BuffFactory to create deep copies of each buff.
                 // Use the BuffFactory to create deep copies of each buff and register them to the new card.
-                var originalBuffs = runtimeBuffManager.GetBuffsForCard(originalCardToCopy.InstanceId);
+                var originalBuffs = runtimeBuffManager.GetBuffsForCard(originalCardToCopy.InstanceId) ?? new List<Buff>();
                 foreach (var buff in originalBuffs)
                 {
                     // Use the enhanced factory method to create a copy already retargeted to the new card.
@@ -178,20 +188,28 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                 var abilityConfigs = GameDataProvider.Instance.GetAbilityConfigs(originalCardToCopy.CurrentDefinitionId);
                 if (abilityConfigs != null && abilityConfigs.Any())
                 {
-                    var abilities = gameState.AbilityManager.CreateAbilitiesForCard(newCardCopy, abilityConfigs);
-                    foreach (var ability in abilities)
+                    if (gameState.AbilityManager == null)
                     {
-                        gameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
+                        _logger.LogWarning("AbilityManager is null when creating copied card {InstanceId}; skipping ability registration.", newInstanceId);
+                    }
+                    else
+                    {
+                        var abilities = gameState.AbilityManager.CreateAbilitiesForCard(newCardCopy, abilityConfigs, null, gameState);
+                        foreach (var ability in abilities)
+                        {
+                            gameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
+                        }
                     }
                 }
 
+                var copiedBuffCount = runtimeBuffManager.GetBuffsForCard(newCardCopy.InstanceId)?.Count ?? 0;
                 _logger.LogInformation("Created an exact copy of card {OriginalInstanceId} as {NewInstanceId}. Copied {BuffCount} buffs and {Damage} damage.",
-                   originalCardToCopy.InstanceId, newInstanceId, runtimeBuffManager.GetBuffsForCard(newCardCopy.InstanceId).Count, newCardCopy.Damage);
+                   originalCardToCopy.InstanceId, newInstanceId, copiedBuffCount, newCardCopy.Damage);
             }
             // If not exactCopy, it's a fresh instance based on its definition, which is the default state.
 
             newCardCopy.CurrentZone = initialZone;
-            // TODO: Set ZoneIndex
+            newCardCopy.ZoneIndex = null;
 
             if (gameState.FindCardInstance(newCardCopy.InstanceId) == null)
             {
@@ -227,6 +245,8 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                         _logger.LogWarning("Attempted to add copied card {InstanceId} to an unhandled zone: {InitialZone}", newInstanceId, initialZone);
                         break;
                 }
+
+                InitializeZoneMetadataOnAppend(ownerPlayer, newCardCopy, initialZone);
             }
             else
             {
@@ -238,6 +258,39 @@ namespace ShadowverseBeyond.Server.Domain.Factories
             //     readableNewId, newInstanceId, newCardCopy.CurrentDefinitionId, readableOriginalId, originalCardToCopy.InstanceId, newOwnerPlayerId, initialZone, exactCopy);
 
             return newCardCopy;
+        }
+
+        private static void InitializeZoneMetadataOnAppend(PlayerState ownerPlayer, CardInstance card, CardZone zone)
+        {
+            var zoneList = ResolveZoneList(ownerPlayer, zone);
+            if (zoneList == null)
+            {
+                card.ZoneIndex = null;
+                return;
+            }
+
+            var index = zoneList.LastIndexOf(card);
+            if (index < 0)
+            {
+                card.ZoneIndex = null;
+                return;
+            }
+
+            card.ZoneIndex = index;
+        }
+
+        private static List<CardInstance>? ResolveZoneList(PlayerState ownerPlayer, CardZone zone)
+        {
+            return zone switch
+            {
+                CardZone.Deck => ownerPlayer.Deck,
+                CardZone.Hand => ownerPlayer.Hand,
+                CardZone.Field => ownerPlayer.Field,
+                CardZone.Graveyard => ownerPlayer.Graveyard,
+                CardZone.Extra => ownerPlayer.Extra,
+                CardZone.Emblem => ownerPlayer.Emblem,
+                _ => null
+            };
         }
     }
 }

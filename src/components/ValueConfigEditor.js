@@ -46,6 +46,9 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         this.placeholderValue = options?.placeholderValue;
         this.expectedType = this.normalizeExpectedType(options.parameterType || options.expectedType);
         this.triggeringEventContext = options.triggeringEventContext || null;
+        this.inline = options?.inline === true;
+        this.hideValueLabel = options?.hideValueLabel === true;
+        this.hideFormulaHelp = options?.hideFormulaHelp === true;
         this.valueConfig = this.normalizeValueConfig(valueConfig);
         this.coerceValueConfigForDisplay();
         // 首次渲染时缓存当前配置，便于外部直接读取
@@ -142,6 +145,9 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         this.clearContainer(this.container);
         const editorContainer = document.createElement('div');
         editorContainer.className = 'value-config-editor';
+        if (this.inline) {
+            editorContainer.classList.add('inline');
+        }
 
         // 模式切换入口（默认静态值，可切换到高级DSL）
         const currentType = this.valueConfig.$type || 'StaticValueConfig';
@@ -158,16 +164,52 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         } else {
             headerRow.classList.add('no-label');
         }
+        const meta = document.createElement('div');
+        meta.className = 'parameter-meta';
 
-        const modeSwitchContainer = document.createElement('div');
-        modeSwitchContainer.className = 'mode-switch-container';
-        const switchBtn = this.createButton(
-            isAdvanced ? '切换至简化模式' : '切换至高级模式',
-            () => this.changeValueType(isAdvanced ? 'StaticValueConfig' : 'FormulaValueConfig'),
-            'secondary small'
-        );
-        modeSwitchContainer.appendChild(switchBtn);
-        headerRow.appendChild(modeSwitchContainer);
+        const typeHint = this.getTypeHintText();
+        if (typeHint) {
+            const badge = document.createElement('span');
+            badge.className = 'parameter-badge';
+            badge.textContent = typeHint;
+            meta.appendChild(badge);
+        }
+
+        const modeToggle = document.createElement('div');
+        modeToggle.className = 'parameter-mode-toggle';
+
+        const structuredBtn = document.createElement('button');
+        structuredBtn.type = 'button';
+        structuredBtn.className = 'mode-btn';
+        structuredBtn.textContent = '简化';
+        if (!isAdvanced) {
+            structuredBtn.classList.add('active');
+        }
+        structuredBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (isAdvanced) {
+                this.changeValueType('StaticValueConfig');
+            }
+        });
+
+        const dslBtn = document.createElement('button');
+        dslBtn.type = 'button';
+        dslBtn.className = 'mode-btn';
+        dslBtn.textContent = '高级';
+        if (isAdvanced) {
+            dslBtn.classList.add('active');
+        }
+        dslBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!isAdvanced) {
+                this.changeValueType('FormulaValueConfig');
+            }
+        });
+
+        modeToggle.appendChild(structuredBtn);
+        modeToggle.appendChild(dslBtn);
+        meta.appendChild(modeToggle);
+        headerRow.appendChild(meta);
 
         editorContainer.appendChild(headerRow);
 
@@ -176,6 +218,17 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         editorContainer.appendChild(valueEditor);
 
         this.container.appendChild(editorContainer);
+    }
+
+    getTypeHintText() {
+        const kind = this.getStaticInputKindForType(this.expectedType);
+        return kind === 'number'
+            ? '整数'
+            : kind === 'boolean'
+                ? '布尔'
+                : kind === 'string'
+                    ? '文本'
+                    : '值';
     }
 
     /**
@@ -250,13 +303,18 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         }
 
         // 值输入控件
-        const placeholderText = this.usePlaceholder && this.placeholderValue !== undefined
+        const placeholderText = this.usePlaceholder && this.placeholderValue !== undefined && this.placeholderValue !== null
             ? String(this.placeholderValue)
             : undefined;
-        const displayValue = this.usePlaceholder ? null : currentValue;
+        const hasConcreteValue = !(currentValue === null || currentValue === undefined || (typeof currentValue === 'string' && currentValue.trim() === ''));
+        const displayValue = this.usePlaceholder && !hasConcreteValue ? null : currentValue;
         const valueInput = this.createStaticValueInput(displayValue, valueType, placeholderText);
-        const valueGroup = this.createFormGroup('值', valueInput);
-        container.appendChild(valueGroup);
+        if (this.hideValueLabel) {
+            container.appendChild(valueInput);
+        } else {
+            const valueGroup = this.createFormGroup('值', valueInput);
+            container.appendChild(valueGroup);
+        }
 
         return container;
     }
@@ -266,9 +324,15 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
      */
     createStaticValueInput(value, valueType, placeholder) {
         if (valueType === 'number') {
-            return this.createNumberInput(value, (newValue) => {
+            const input = this.createNumberInput(value, (newValue) => {
                 this.updateValueConfig({ Value: newValue });
             }, { placeholder });
+            // Number inputs previously only updated on `change`, which could miss last edits before save.
+            input.addEventListener('input', (event) => {
+                const nextValue = parseFloat(event.target.value);
+                this.updateValueConfig({ Value: Number.isNaN(nextValue) ? null : nextValue });
+            });
+            return input;
         } else if (valueType === 'boolean') {
             return this.createCheckbox(value, (newValue) => {
                 this.updateValueConfig({ Value: newValue });
@@ -309,18 +373,24 @@ export class ValueConfigEditor extends MetadataDrivenComponent {
         );
         dslEditorContainer._dslEditor = dslEditor;
 
-        const formulaGroup = this.createFormGroup('DSL公式', dslEditorContainer);
-        container.appendChild(formulaGroup);
+        if (this.hideValueLabel) {
+            container.appendChild(dslEditorContainer);
+        } else {
+            const formulaGroup = this.createFormGroup('DSL公式', dslEditorContainer);
+            container.appendChild(formulaGroup);
+        }
 
         // 帮助文本
-        const helpText = document.createElement('div');
-        helpText.className = 'formula-help-text';
-        helpText.innerHTML = `
-            <small class="help-text">
-                使用可视化编辑器构建表达式，或直接在上方输入。
-            </small>
-        `;
-        container.appendChild(helpText);
+        if (!this.hideFormulaHelp) {
+            const helpText = document.createElement('div');
+            helpText.className = 'formula-help-text';
+            helpText.innerHTML = `
+                <small class="help-text">
+                    使用可视化编辑器构建表达式，或直接在上方输入。
+                </small>
+            `;
+            container.appendChild(helpText);
+        }
 
         return container;
     }

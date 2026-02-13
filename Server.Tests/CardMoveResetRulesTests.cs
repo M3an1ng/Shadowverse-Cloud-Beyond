@@ -178,6 +178,107 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void Transform_UsesResetLevelCleanup_AndRebuildsNewDefinitionAbilities()
+        {
+            const int originalDefinitionId = 1;
+            const int transformedDefinitionId = 2;
+
+            var transformedAbilityConfigs = new List<AbilityConfig>
+            {
+                new AbilityConfig { Id = 2001, CardId = transformedDefinitionId, Name = "TransformAbility" }
+            };
+
+            var mockProvider = new Mock<IGameDataProvider>();
+            mockProvider.SetupGet(provider => provider.IsInitialized).Returns(true);
+            mockProvider.Setup(provider => provider.GetCardDefinition(originalDefinitionId)).Returns(new CardDefinition
+            {
+                Id = originalDefinitionId,
+                Name = "OriginalCard",
+                Type = CardType.Follower,
+                Attack = 1,
+                Health = 1
+            });
+            mockProvider.Setup(provider => provider.GetCardDefinition(transformedDefinitionId)).Returns(new CardDefinition
+            {
+                Id = transformedDefinitionId,
+                Name = "TransformedCard",
+                Type = CardType.Follower,
+                Attack = 3,
+                Health = 4
+            });
+            mockProvider.Setup(provider => provider.GetAbilityConfigs(originalDefinitionId)).Returns(new List<AbilityConfig>());
+            mockProvider.Setup(provider => provider.GetAbilityConfigs(transformedDefinitionId)).Returns(transformedAbilityConfigs);
+            GameDataProvider.SetInstanceForTesting(mockProvider.Object);
+
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+
+            var abilityManager = new Mock<IAbilityManager>();
+            abilityManager.Setup(manager => manager.CreateAbilitiesForCard(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<List<AbilityConfig>>(),
+                    It.IsAny<Guid?>()))
+                .Returns(new List<Ability>());
+
+            var gameState = BuildGameState(player1Id, player2Id, abilityManager);
+
+            var buffService = new Mock<IBuffService>();
+            buffService.Setup(service => service.RemoveAllBuffs(
+                    It.IsAny<Guid>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Func<Buff, bool>>()))
+                .Returns(new DomainOperationResult { Success = true });
+
+            var serviceProvider = BuildServiceProvider(buffService);
+            using var context = BuildContext(gameState, player1Id, serviceProvider);
+
+            var card = new CardInstance(Guid.NewGuid(), originalDefinitionId, player1Id)
+            {
+                Damage = 5,
+                IsEvolved = true,
+                FieldTurn = 2,
+                AttacksThisTurn = 1,
+                MaxAttacksPerTurn = 2,
+                ActsThisTurn = 1,
+                MaxActsPerTurn = 2,
+                CurrentZone = CardZone.Field
+            };
+            card.AbilityState["act.lastUsedTurnNumber"] = 4;
+            card.AbilityState["custom"] = 9;
+            card.SetCounter("custom.counter", 7);
+            card.ApplySilence();
+
+            var transformedDefinition = mockProvider.Object.GetCardDefinition(transformedDefinitionId)!;
+            var result = card.Transform(transformedDefinition, context);
+
+            Assert.True(result.Success);
+            Assert.Equal(transformedDefinitionId, card.BaseDefinitionId);
+            Assert.Equal(0, card.Damage);
+            Assert.False(card.IsEvolved);
+            Assert.False(card.IsSilenced);
+            Assert.Equal(0, card.FieldTurn);
+            Assert.Equal(0, card.AttacksThisTurn);
+            Assert.Equal(1, card.MaxAttacksPerTurn);
+            Assert.Equal(0, card.ActsThisTurn);
+            Assert.Equal(1, card.MaxActsPerTurn);
+            Assert.Empty(card.AbilityState);
+            Assert.Equal(0, card.GetCounter("custom.counter"));
+            Assert.Contains(result.GeneratedEvents, gameEvent => gameEvent is TransformEvent);
+
+            buffService.Verify(service => service.RemoveAllBuffs(
+                    card.InstanceId,
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Func<Buff, bool>>()),
+                Times.Once);
+            abilityManager.Verify(manager => manager.UnregisterCardAbilities(card.InstanceId), Times.Once);
+            abilityManager.Verify(manager => manager.CreateAbilitiesForCard(
+                    card,
+                    It.Is<List<AbilityConfig>>(configs => configs.Count == transformedAbilityConfigs.Count),
+                    It.IsAny<Guid?>()),
+                Times.Once);
+        }
+
+        [Fact]
         public void CardMoved_ToHand_WhenHandFull_BurnsCardAndEmitsCardBurnedEvent()
         {
             const int definitionId = 1;

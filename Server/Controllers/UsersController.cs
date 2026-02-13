@@ -11,6 +11,9 @@ namespace ShadowverseBeyond.Server.Controllers;
 [Route("api/[controller]")]
 public class UsersController : ControllerBase
 {
+    private const int DefaultListLimit = 50;
+    private const int MaxListLimit = 200;
+
     private readonly ApplicationDbContext _db;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<UsersController> _logger;
@@ -30,6 +33,110 @@ public class UsersController : ControllerBase
         _db = db;
         _environment = environment;
         _logger = logger;
+    }
+
+    [HttpGet]
+    [ProducesResponseType(typeof(UserListResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<UserListResponse>> GetUsers(
+        [FromQuery] Guid actorUserId,
+        [FromQuery] string? keyword = null,
+        [FromQuery] int limit = DefaultListLimit,
+        CancellationToken cancellationToken = default)
+    {
+        if (actorUserId == Guid.Empty)
+        {
+            return BadRequest("actorUserId is required.");
+        }
+
+        var actor = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == actorUserId, cancellationToken);
+        if (!CanManageUsers(actor))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can access user management.");
+        }
+
+        var take = Math.Clamp(limit, 1, MaxListLimit);
+        var normalizedKeyword = (keyword ?? string.Empty).Trim();
+
+        var query = _db.Users.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(normalizedKeyword))
+        {
+            var lowered = normalizedKeyword.ToLowerInvariant();
+            query = query.Where(u => u.Username.ToLower().Contains(lowered));
+        }
+
+        var entities = await query
+            .OrderByDescending(u => u.UpdatedAt)
+            .ThenBy(u => u.Username)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+        var users = entities.Select(ToUserSummary).ToList();
+
+        return Ok(new UserListResponse
+        {
+            Count = users.Count,
+            Items = users
+        });
+    }
+
+    [HttpPut("{userId:guid}/role")]
+    [ProducesResponseType(typeof(UserSummaryResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UserSummaryResponse>> UpdateUserRole(
+        Guid userId,
+        [FromBody] UpdateUserRoleRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request == null)
+        {
+            return BadRequest("Request body is required.");
+        }
+
+        if (request.ActorUserId == Guid.Empty)
+        {
+            return BadRequest("actorUserId is required.");
+        }
+
+        var actor = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == request.ActorUserId, cancellationToken);
+        if (!CanManageUsers(actor))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can update user roles.");
+        }
+
+        if (!TryParseManageableRole(request.Role, out var nextRole, out var errorMessage))
+        {
+            return BadRequest(errorMessage);
+        }
+
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (target == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        if (target.Role == UserRole.Admin && nextRole != UserRole.Admin)
+        {
+            var activeAdminCount = await _db.Users.CountAsync(
+                u => u.IsActive && u.Role == UserRole.Admin,
+                cancellationToken);
+            if (activeAdminCount <= 1)
+            {
+                return BadRequest("系统至少需要保留一个管理员账号。");
+            }
+        }
+
+        target.Role = nextRole;
+        target.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(ToUserSummary(target));
     }
 
     [HttpPost("{userId:guid}/avatar")]
@@ -81,6 +188,63 @@ public class UsersController : ControllerBase
         });
     }
 
+    private static bool CanManageUsers(User? user)
+    {
+        return user != null && user.IsActive && user.Role == UserRole.Admin;
+    }
+
+    private static int ResolvePermissionLevel(UserRole role)
+    {
+        return role switch
+        {
+            UserRole.Admin => 100,
+            UserRole.Player => 10,
+            _ => 0
+        };
+    }
+
+    private static bool TryParseManageableRole(string? rawRole, out UserRole role, out string? errorMessage)
+    {
+        role = UserRole.Player;
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(rawRole))
+        {
+            errorMessage = "role is required.";
+            return false;
+        }
+
+        if (!Enum.TryParse<UserRole>(rawRole.Trim(), ignoreCase: true, out role))
+        {
+            errorMessage = "Unsupported role.";
+            return false;
+        }
+
+        if (role == UserRole.Guest)
+        {
+            errorMessage = "Guest role cannot be assigned to persisted users.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static UserSummaryResponse ToUserSummary(User user)
+    {
+        return new UserSummaryResponse
+        {
+            UserId = user.Id,
+            Username = user.Username,
+            Role = user.Role.ToString(),
+            PermissionLevel = ResolvePermissionLevel(user.Role),
+            IsActive = user.IsActive,
+            CreatedAt = user.CreatedAt,
+            UpdatedAt = user.UpdatedAt,
+            LastLoginAt = user.LastLoginAt,
+            AvatarUrl = user.AvatarUrl
+        };
+    }
+
     private string GetWorkspaceRoot()
     {
         return Path.GetFullPath(Path.Combine(_environment.ContentRootPath, ".."));
@@ -122,5 +286,30 @@ public class UsersController : ControllerBase
     {
         public Guid UserId { get; set; }
         public string AvatarUrl { get; set; } = string.Empty;
+    }
+
+    public class UpdateUserRoleRequest
+    {
+        public Guid ActorUserId { get; set; }
+        public string Role { get; set; } = string.Empty;
+    }
+
+    public class UserListResponse
+    {
+        public int Count { get; set; }
+        public List<UserSummaryResponse> Items { get; set; } = new();
+    }
+
+    public class UserSummaryResponse
+    {
+        public Guid UserId { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string Role { get; set; } = UserRole.Player.ToString();
+        public int PermissionLevel { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+        public DateTime? LastLoginAt { get; set; }
+        public string? AvatarUrl { get; set; }
     }
 }

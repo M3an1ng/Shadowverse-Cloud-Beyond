@@ -2,6 +2,24 @@ import { defineConfig } from 'vite';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      onwarn(warning, warn) {
+        const message = String(warning?.message || '');
+        const id = String(warning?.id || '');
+
+        // Ignore known harmless annotation warnings from @microsoft/signalr package.
+        if (
+          id.includes('@microsoft/signalr/dist/esm/Utils.js') &&
+          message.includes('annotation that Rollup cannot interpret')
+        ) {
+          return;
+        }
+
+        warn(warning);
+      }
+    }
+  },
   server: {
     host: '127.0.0.1',
     port: 5173,

@@ -193,7 +193,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// 原子事实事件：当卡牌因手牌已满而被爆牌时触发。
     /// </summary>
     [GameEventMetadata("爆牌", "当卡牌因手牌已满而被爆牌时触发。", EventType.CardBurned, visibility: EventMetadataVisibility.Visible)]
-    public class CardBurnedEvent : GameEventBase
+    public class CardBurnedEvent : GameEventBase, ILogAnnounceableEvent
     {
         [GameEventParameter("爆牌玩家", "发生爆牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? BurnedPlayer => Source?.Player;
@@ -206,6 +206,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));
+        }
+
+        public string GetAnnouncement(GameState gameState)
+        {
+            var player = BurnedPlayer;
+            var card = BurnedCard;
+            if (card == null)
+            {
+                return string.Empty;
+            }
+
+            return player != null
+                ? $"{AnnouncementTokens.Player(player)}爆掉了{AnnouncementTokens.Card(card)}。"
+                : $"{AnnouncementTokens.Card(card)}被爆牌。";
         }
     }
 
@@ -270,7 +284,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 };
             }
 
-            result.GeneratedEvents.Add(new GameEndEvent(opponent.PlayerId, player.PlayerId, "Deck out"));
+            result.GeneratedEvents.Add(new GameEndEvent(opponent.PlayerId, player.PlayerId, "牌堆抽空"));
             return result;
         }
     }
@@ -301,6 +315,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         [GameEventParameter("解析目标", "父效果执行时使用的目标列表")]
         [DslExposable("解析目标", Description = "父效果执行时使用的目标列表")]
+        public IReadOnlyList<CardInstance> ResolvedTargetCards =>
+            ResolvedTargets.Select(static t => t.Card).OfType<CardInstance>().ToList().AsReadOnly();
+
         public IReadOnlyList<TargetInfo> ResolvedTargets { get; }
 
         /// <summary>
@@ -311,14 +328,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public IReadOnlyList<IGameEvent> GeneratedEvents { get; }
 
         /// <summary>
-        /// 效果执行过程中生成事件的目标卡牌集合。
+        /// 从 GeneratedEvents 汇总得到的生成卡牌引用集合（指向同一批运行时卡实例）。
         /// </summary>
         [GameEventParameter("上述卡牌", "效果执行过程中事件的目标卡牌列表。")]
         [DslExposable("上述卡牌", Description = "效果执行过程中事件的目标卡牌集合")]
         public IReadOnlyList<CardInstance> GeneratedCards { get; }
 
         /// <summary>
-        /// 效果执行完成时刻生成卡牌的不可变快照。
+        /// 与 GeneratedCards 对应的不可变快照集合，用于冻结同一批卡当时状态。
         /// </summary>
         [GameEventParameter("上述卡牌（快照）", "效果执行完成时刻生成卡牌的不可变快照列表。")]
         [DslExposable("上述卡牌（快照）", Description = "效果执行完成时刻生成卡牌的不可变快照集合")]
@@ -384,9 +401,39 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     continue;
                 }
 
-                payload[kv.Key] = JsonSerializer.SerializeToNode(kv.Value, kv.Value?.GetType() ?? typeof(object));
+                if (kv.Value is IReadOnlyDictionary<string, List<CardInstance>> cardPools)
+                {
+                    payload[kv.Key] = BuildCardPoolPayload(cardPools);
+                    continue;
+                }
+
+                try
+                {
+                    payload[kv.Key] = JsonSerializer.SerializeToNode(kv.Value, kv.Value?.GetType() ?? typeof(object));
+                }
+                catch
+                {
+                    payload[kv.Key] = JsonValue.Create(kv.Value?.ToString());
+                }
             }
             return payload;
+        }
+
+        private static JsonObject BuildCardPoolPayload(IReadOnlyDictionary<string, List<CardInstance>> cardPools)
+        {
+            var result = new JsonObject();
+            foreach (var pair in cardPools)
+            {
+                var ids = new JsonArray();
+                foreach (var card in pair.Value.Where(card => card != null))
+                {
+                    ids.Add(card.InstanceId.ToString());
+                }
+
+                result[pair.Key] = ids;
+            }
+
+            return result;
         }
 
     }

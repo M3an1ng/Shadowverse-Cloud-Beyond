@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
@@ -27,6 +28,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// </summary>
         [ParameterMetadata("数量", UiControlType.NumberStepper, DefaultValue = 1, Min = 1, Description = "要添加的卡牌数量。可以是固定数值，也可以是基于游戏状态的动态公式。")]
         public int Amount { get; set; } = 1;
+
+        [ParameterMetadata("插入方式", UiControlType.Dropdown, DefaultValue = DeckInsertMode.Random, Description = "卡牌加入牌库时的插入方式。默认随机插入。")]
+        public DeckInsertMode InsertMode { get; set; } = DeckInsertMode.Random;
     }
 }
 

@@ -128,8 +128,6 @@ export function renderClickableASTNode(editor, node, container, encapsulatedNode
         valueSpan.textContent = editor.getReadableValueLabel(node);
 
         valueSpan.className = "dsl-value-chip dsl-value-chip--sub";
-        valueSpan.dataset.dslNode = "true";
-        valueSpan.__dslNode = node;
         valueSpan.dataset.nodeType = node.metadata?.type || node.type;
         valueSpan.classList.toggle("is-highlighted", highlightTarget === node);
         valueSpan.classList.toggle("is-selected", editor.selectedNode === node);
@@ -138,10 +136,6 @@ export function renderClickableASTNode(editor, node, container, encapsulatedNode
             valueSpan.classList.add("dsl-value-node--error");
             valueSpan.title = `类型不匹配：期望 ${node._typeMatchInfo.expectedType}，实际 ${node._typeMatchInfo.actualType}`;
         }
-        valueSpan.addEventListener("click", (e) => {
-            e.stopPropagation();
-            editor.editSubExpression(node);
-        });
 
         container.appendChild(valueSpan);
     } else if (node.type === 'operator') {
@@ -180,6 +174,8 @@ export function renderClickableListNode(editor, node, container, encapsulatedNod
     }
     const rendered = editor.renderPipelineBlock(node, container, (target, targetContainer) => {
         renderClickableASTNode(editor, target, targetContainer, encapsulatedNode);
+    }, {
+        interactionMode: "main"
     });
     if (rendered) return;
 

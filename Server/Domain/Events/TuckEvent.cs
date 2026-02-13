@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Identifiers;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -17,20 +18,30 @@ namespace ShadowverseBeyond.Server.Domain.Events
     public class TuckEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("置入原因", "卡牌被置入牌库的原因。")]
-        public string Reason { get; }
+        public EventReasonSource Reason { get; }
 
         [GameEventParameter("置入的卡牌", "被置入牌库的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? TuckedCard => Target.FirstOrDefault()?.Card;
 
-        public TuckEvent(CardInstance card, string reason = "Effect", Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("置入来源快照", "生成事件时记录的置入来源快照（若来源为卡牌）。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? TuckSourceSnapshot { get; }
+
+        [GameEventParameter("置入目标快照", "生成事件时记录的置入目标快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? TuckedCardSnapshot { get; }
+
+        public bool TuckApplied { get; private set; }
+
+        public TuckEvent(CardInstance card, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Tuck, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
+            TuckedCardSnapshot = CardInstanceSnapshot.From(card);
         }
 
         public DomainOperationResult Commit(GameContext context)
         {
+            TuckApplied = false;
             var card = TuckedCard;
             if (card == null)
             {
@@ -44,12 +55,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var result = new DomainOperationResult { Success = true };
+            TuckApplied = card.CurrentZone != CardZone.Deck;
             result.GeneratedEvents.Add(new AddCardToDeckEvent(owner, new List<CardInstance> { card }));
             return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
+            if (!TuckApplied)
+            {
+                return string.Empty;
+            }
+
             var card = TuckedCard;
             if (card == null)
             {

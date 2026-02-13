@@ -15,7 +15,7 @@ namespace ShadowverseBeyond.Server.Tests
             var legacyTemplate = new BuffTemplateConfig
             {
                 DurationType = DurationType.Permanent,
-                DurationParameter = 0,
+                DurationParameter = new StaticValueConfig { Value = 0 },
                 CanStack = true,
                 StatModifiers = new List<StatModifierConfig>
                 {
@@ -33,6 +33,13 @@ namespace ShadowverseBeyond.Server.Tests
                         Keyword = CardKeyword.Storm,
                         Operation = KeywordOperation.Add
                     }
+                },
+                TribeModifiers = new List<TribeModifierConfig>
+                {
+                    new TribeModifierConfig
+                    {
+                        Tribe = "Reanimate"
+                    }
                 }
             };
 
@@ -41,14 +48,18 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Single(configs);
             var config = configs[0];
             Assert.Equal(legacyTemplate.DurationType, config.DurationType);
-            Assert.Equal(legacyTemplate.DurationParameter, config.DurationParameter);
+            var templateDuration = Assert.IsType<StaticValueConfig>(legacyTemplate.DurationParameter);
+            var configDuration = Assert.IsType<StaticValueConfig>(config.DurationParameter);
+            Assert.Equal(templateDuration.Value, configDuration.Value);
             Assert.Equal(legacyTemplate.CanStack, config.CanStack);
             Assert.Equal(legacyTemplate.StatModifiers.Count, config.StatModifiers.Count);
             Assert.Equal(legacyTemplate.KeywordModifiers.Count, config.KeywordModifiers.Count);
+            Assert.Equal(legacyTemplate.TribeModifiers.Count, config.TribeModifiers.Count);
             Assert.Equal(legacyTemplate.StatModifiers[0].Stat, config.StatModifiers[0].Stat);
             Assert.Equal(legacyTemplate.StatModifiers[0].Layer, config.StatModifiers[0].Layer);
             Assert.Equal(legacyTemplate.KeywordModifiers[0].Keyword, config.KeywordModifiers[0].Keyword);
             Assert.Equal(legacyTemplate.KeywordModifiers[0].Operation, config.KeywordModifiers[0].Operation);
+            Assert.Equal(legacyTemplate.TribeModifiers[0].Tribe, config.TribeModifiers[0].Tribe);
         }
     }
 }

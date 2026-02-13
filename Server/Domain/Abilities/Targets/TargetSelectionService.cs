@@ -407,11 +407,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                 if (success)
                 {
-                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceSucceeded(dto);
+                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceSucceeded(dto);
                 }
                 else
                 {
-                    _ = hubContext.Clients.Group($"Player_{playerId}").ConditionTraceFailed(dto);
+                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceFailed(dto);
                 }
             }
         }
@@ -423,6 +423,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             bool applyChoiceRestrictions)
         {
             var abilityOwnerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
+            var opponentPlayer = context.CurrentGameState.GetOpponentPlayerState(abilityOwnerId);
+            var activeSpellWardFollowerIds = new HashSet<Guid>(
+                (opponentPlayer?.Field ?? new List<CardInstance>())
+                    .Where(card => card != null
+                                   && card.IsFollower
+                                   && card.HasKeyword(CardKeyword.SpellWard)
+                                   && !card.HasKeyword(CardKeyword.Aura))
+                    .Select(card => card.InstanceId));
+            var hasActiveSpellWard = activeSpellWardFollowerIds.Any();
 
             // Ability targeted: only enforce for opponent target selection by default.
             return potentialTargets.Where(targetInfo =>
@@ -433,7 +442,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 }
 
                 var card = targetInfo.Card;
-                if (card.OwnerPlayerId != abilityOwnerId && card.HasKeyword(CardKeyword.EarthSigil))
+                var isOpponentCard = card.OwnerPlayerId != abilityOwnerId;
+                if (isOpponentCard && hasActiveSpellWard && !activeSpellWardFollowerIds.Contains(card.InstanceId))
                 {
                     return false;
                 }
@@ -443,12 +453,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     return true;
                 }
 
-                if (card.OwnerPlayerId == abilityOwnerId)
+                if (!isOpponentCard)
                 {
                     return true;
                 }
 
-                return !card.HasKeyword(CardKeyword.Aura) && !card.HasKeyword(CardKeyword.Ambush);
+                return !card.HasKeyword(CardKeyword.EarthSigil) && !card.HasKeyword(CardKeyword.Aura) && !card.HasKeyword(CardKeyword.Ambush);
             }).ToList();
         }
 
@@ -483,6 +493,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     break;
                 case FailureHandling.CompleteWithFailure:
                     _logger.LogWarning(exception, "Target selection failed. Continuing due to CompleteWithFailure.");
+                    break;
+                default:
+                    _logger.LogWarning(exception, "Target selection failed with unknown FailureHandling value '{FailureHandling}'. Falling back to CompleteWithFailure behavior.", failureHandling);
                     break;
             }
         }

@@ -41,8 +41,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             const string effectName = "AddDeckEffect";
             var cardDefinitionIds = parameters.CardDefinitionId?.Where(id => id > 0).ToList() ?? new List<int>();
             var cardIdText = cardDefinitionIds.Count > 0 ? string.Join(",", cardDefinitionIds) : "[]";
-            Logger.LogDebug("{EffectName}: Starting with CardDefinitionIds={CardDefIds}, Amount={Amount}.",
-                effectName, cardIdText, parameters.Amount);
+            Logger.LogDebug("{EffectName}: Starting with CardDefinitionIds={CardDefIds}, Amount={Amount}, InsertMode={InsertMode}.",
+                effectName, cardIdText, parameters.Amount, parameters.InsertMode);
 
             if (parameters.CardSourceMode == Common.CardSourceMode.Instance)
             {
@@ -73,7 +73,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         };
                     }
 
-                    instanceResult.GeneratedEvents.Add(new AddCardToDeckEvent(owner, group.ToList()));
+                    instanceResult.GeneratedEvents.Add(new AddCardToDeckEvent(owner, group.ToList(), parameters.InsertMode));
                 }
 
                 return instanceResult;
@@ -127,7 +127,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     if (copies.Count > 0)
                     {
-                        copyResult.GeneratedEvents.Add(new AddCardToDeckEvent(player, copies));
+                        copyResult.GeneratedEvents.Add(new AddCardToDeckEvent(player, copies, parameters.InsertMode));
                     }
                 }
 
@@ -166,7 +166,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         }
                     }
 
-                    var addCardToDeckEvent = new AddCardToDeckEvent(player, cardsToAdd);
+                    var addCardToDeckEvent = new AddCardToDeckEvent(player, cardsToAdd, parameters.InsertMode);
                     result.GeneratedEvents.Add(addCardToDeckEvent);
                     result.Success = true;
 

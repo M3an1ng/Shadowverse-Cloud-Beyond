@@ -9,7 +9,7 @@
 import * as signalR from "@microsoft/signalr";
 import { LogLevel } from "@microsoft/signalr"; // Added for Trace logging
 import { router } from './router.js'; // 导入路由系统
-import { clearUserSession, getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, setUserSession } from './userSession.js';
+import { clearUserSession, getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from './userSession.js';
 import {
     gameState, initializeGame, initializeSpectator, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
     // Import specific event handlers instead of processGameEvent
@@ -17,7 +17,7 @@ import {
     handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealApplied,
     handleCardSummoned, handleCardPlayed, handleHealthChanged, handleCardVanished,
     handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleAttackStateUpdated,
-    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate, handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested, handleCardRevealed, handleFusion, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated, handleEmblemUpdated, handleCounterChanged, handleCardReturned, appendGameLog // 【新增】导入最大值更新处理函数
+    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate, handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested, handleCardRevealed, handleFusion, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated, handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
 import { renderGame, setConnectionStatus, setOpponentConnectionStatus } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
@@ -377,6 +377,43 @@ function clearCachedHandshake() {
     }
 }
 
+const TRANSIENT_MATCH_QUERY_KEYS = [
+    'spectate',
+    'gameId',
+    'playerId',
+    'token',
+    'joinCode',
+    'useAiFallback'
+];
+
+function clearTransientMatchQueryParams() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        let changed = false;
+        for (const key of TRANSIENT_MATCH_QUERY_KEYS) {
+            if (params.has(key)) {
+                params.delete(key);
+                changed = true;
+            }
+        }
+
+        if (!changed) return;
+
+        const query = params.toString();
+        const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`;
+        window.history.replaceState(window.history.state, '', nextUrl);
+    } catch (err) {
+        console.warn("Failed to clear transient match query params", err);
+    }
+}
+
+function resetTransientConnectionUiState() {
+    reconnectInProgress = false;
+    manualReconnectInProgress = false;
+    setConnectionStatus('connected');
+    setOpponentConnectionStatus(true);
+}
+
 async function createMatch(useAiFallback) {
     const session = getUserSession();
     const payload = await apiPostJson("/api/match", {
@@ -502,6 +539,8 @@ async function setupActionSignalRConnection(gameId, playerId, token) {
         .configureLogging(signalR.LogLevel.Warning)
         .build();
 
+    registerActionSignalREventHandlers(guestConnection);
+
     try {
         await guestConnection.start();
         return guestConnection;
@@ -510,6 +549,30 @@ async function setupActionSignalRConnection(gameId, playerId, token) {
         guestConnection = null;
         throw err;
     }
+}
+
+function registerActionSignalREventHandlers(conn) {
+    if (!conn) return;
+
+    let lastChoiceRequestKey = null;
+
+    // Dual-control guest connection must receive player-scoped choice events,
+    // otherwise the selected seat cannot submit a decision and the game stalls.
+    conn.on("PlayerChoiceRequested", (eventData) => {
+        const choiceRequest = eventData?.ChoiceRequest;
+        const pendingChoiceId = choiceRequest?.PendingChoiceId;
+        const sourceAbilityRuntimeId = choiceRequest?.SourceAbilityRuntimeId;
+        const requestKey = pendingChoiceId && sourceAbilityRuntimeId
+            ? `${pendingChoiceId}:${sourceAbilityRuntimeId}`
+            : null;
+
+        if (requestKey && requestKey === lastChoiceRequestKey) {
+            return;
+        }
+        lastChoiceRequestKey = requestKey;
+
+        handlePlayerChoiceRequested(eventData);
+    });
 }
 
 async function setupSpectatorSignalRConnection(gameId, resolveInitialState, options = {}) {
@@ -559,12 +622,14 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
         "PpBoostStateUpdated",
         "GraveyardUpdate",
         "EmblemUpdated",
+        "CardMoved",
         "CardPlayed",
         "CardSummoned",
         "AttackDeclared",
         "UnitDestroyed",
         "CardVanished",
         "CardReturned",
+        "Tuck",
         "DamageDealt",
         "HealApplied",
         "HealthChanged",
@@ -657,6 +722,7 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     wireEvent("UnitDestroyed", handleUnitDestroyed);
     wireEvent("CardVanished", handleCardVanished);
     wireEvent("CardReturned", handleCardReturned);
+    wireEvent("Tuck", handleTuck);
     wireEvent("DamageDealt", handleDamageDealt);
     wireEvent("HealApplied", handleHealApplied);
     wireEvent("HealthChanged", handleHealthChanged); // Added handler
@@ -667,6 +733,7 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     wireEvent("UnitEvolved", handleUnitEvolved); // Added handler (was missing)
     wireEvent("HandUpdated", handleHandUpdated);
     wireEvent("CardInstanceUpdated", handleCardInstanceUpdated);
+    wireEvent("CardMoved", handleCardMoved);
     wireEvent("PlayerMulliganCompleted", handlePlayerMulliganCompleted);
     wireEvent("GameOver", handleGameOver);
     wireEvent("AttackStateUpdated", handleAttackStateUpdated);
@@ -1523,6 +1590,8 @@ function setupSingleplayerUI() {
 
         setStartOutput('创建对战中...');
         try {
+            resetTransientConnectionUiState();
+            clearTransientMatchQueryParams();
             clearCachedHandshake();
             if (mode === 'dual') {
                 const hostHandshake = await createMatch(false);
@@ -1625,6 +1694,32 @@ function setupUserInfoUI() {
         if (logoutBtn) logoutBtn.disabled = busy;
     };
 
+    const normalizeRole = (role) => {
+        const normalized = String(role || "").trim().toLowerCase();
+        if (normalized === "admin") return "admin";
+        if (normalized === "guest") return "guest";
+        return "player";
+    };
+
+    const resolvePermissionLevel = (role, permissionLevel) => {
+        if (Number.isFinite(permissionLevel)) {
+            return Math.max(0, Math.trunc(permissionLevel));
+        }
+        const normalizedRole = normalizeRole(role);
+        if (normalizedRole === "admin") return 100;
+        if (normalizedRole === "player") return 10;
+        return 0;
+    };
+
+    const formatRoleDisplay = (role, permissionLevel) => {
+        const normalizedRole = normalizeRole(role);
+        const level = resolvePermissionLevel(normalizedRole, permissionLevel);
+        const label = normalizedRole === "admin"
+            ? "ADMIN"
+            : (normalizedRole === "guest" ? "GUEST" : "PLAYER");
+        return `${label} · L${level}`;
+    };
+
     const maskIdValue = (value) => {
         if (!value || value === '-') return '-';
         return '********';
@@ -1715,7 +1810,7 @@ function setupUserInfoUI() {
         const isUser = session.mode === "user";
         // toggle button is now an icon, no text content update needed
         nameEl.textContent = session.displayName || (isUser ? "用户" : "游客");
-        roleEl.textContent = isUser ? "USER" : "GUEST";
+        roleEl.textContent = formatRoleDisplay(session.role, session.permissionLevel);
         card.classList.toggle('is-user', isUser);
         resetIdRow(session.userId || session.guestId || "-");
         const avatarValue = session.avatar || (isUser ? "U" : "G");
@@ -1760,6 +1855,10 @@ function setupUserInfoUI() {
     };
 
     applySession();
+
+    document.addEventListener(USER_SESSION_CHANGED_EVENT, () => {
+        applySession();
+    });
 
     toggle.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2080,7 +2179,9 @@ function setupUserInfoUI() {
                 setUserSession({
                     userId: session.userId,
                     username: session.displayName,
-                    avatar: cacheBusted || session.avatar
+                    avatar: cacheBusted || session.avatar,
+                    role: session.role,
+                    permissionLevel: session.permissionLevel
                 });
                 applySession();
                 setModalStatus('上传完成。');
@@ -2134,7 +2235,13 @@ function setupUserInfoUI() {
                     password,
                     guestId: session.guestId || null
                 });
-                setUserSession({ userId: payload.userId, username: payload.username, avatar: payload.avatarUrl });
+                setUserSession({
+                    userId: payload.userId,
+                    username: payload.username,
+                    avatar: payload.avatarUrl,
+                    role: payload.role,
+                    permissionLevel: payload.permissionLevel
+                });
                 passwordInput.value = '';
                 applySession();
                 const migrated = payload.migratedDecks || 0;
@@ -2170,7 +2277,13 @@ function setupUserInfoUI() {
                     return;
                 }
                 const payload = await apiPostJson('/api/auth/login', { username, password });
-                setUserSession({ userId: payload.userId, username: payload.username, avatar: payload.avatarUrl });
+                setUserSession({
+                    userId: payload.userId,
+                    username: payload.username,
+                    avatar: payload.avatarUrl,
+                    role: payload.role,
+                    permissionLevel: payload.permissionLevel
+                });
                 passwordInput.value = '';
                 applySession();
                 setStatus('登录成功。');
@@ -2834,6 +2947,8 @@ document.addEventListener('cleanupGame', () => {
     connection = null;
     guestConnection = null;
     initialStateReceived = false;
+    resetTransientConnectionUiState();
+    clearTransientMatchQueryParams();
     // clearCachedHandshake() is called inside leaveCurrentPvpRoom (or directly for VS-AI)
     window.gameInitialized = false;
 });

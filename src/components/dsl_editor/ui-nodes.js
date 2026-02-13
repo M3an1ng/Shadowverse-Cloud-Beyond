@@ -1,4 +1,5 @@
 import { getEventTypeHint, resolveEventParameterMeta } from "./event-translation.js";
+import { getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 
 export function renderFunctionCallNodeAST(editor, node, container, options = {}) {
     const args = node.args || [];
@@ -10,15 +11,6 @@ export function renderFunctionCallNodeAST(editor, node, container, options = {})
     const encapsulatedNode = options?.encapsulatedNode || null;
     const isParentSelected = options?.isParentSelected || false;
     const omitParensForSingleArg = Boolean(options?.omitParensForSingleArg);
-
-    if (clickableArgs) {
-        wrapper.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (typeof editor.editSubExpression === 'function') {
-                editor.editSubExpression(node);
-            }
-        });
-    }
 
     const renderArgNode = (arg, index) => {
         if (arg) {
@@ -119,6 +111,32 @@ export function renderFunctionCallNodeAST(editor, node, container, options = {})
 }
 
 function getExpectedTypeForSlot(editor, parentNode, slot, index) {
+    const normalizeType = (typeName) => editor.normalizeTypeName ? editor.normalizeTypeName(typeName) : typeName;
+    const isEmptyValueNode = (node) => {
+        if (!node || node.type !== 'value') return false;
+        if (node.metadata?.type === 'empty') return true;
+        if (node.metadata?.type === 'encapsulated' && node.metadata?.innerAST?.metadata?.type === 'empty') {
+            return true;
+        }
+        return false;
+    };
+    const isUsableType = (typeName) => {
+        const normalized = normalizeType(typeName);
+        return Boolean(normalized && normalized !== 'Void');
+    };
+    const resolveNodeType = (node) => {
+        if (!node || isEmptyValueNode(node)) return null;
+        const semantic = normalizeType(getCoreSemanticNodeType(node));
+        return isUsableType(semantic) ? semantic : null;
+    };
+
+    if (typeof editor.getExpectedTypeForSlot === 'function') {
+        const centralized = editor.getExpectedTypeForSlot(parentNode, slot, index);
+        if (isUsableType(centralized)) {
+            return normalizeType(centralized);
+        }
+    }
+
     if (parentNode?.type === 'virtualRoot' && slot === 'main') {
         return editor.normalizeTypeName(editor.expectedType);
     }
@@ -132,7 +150,7 @@ function getExpectedTypeForSlot(editor, parentNode, slot, index) {
         }
         if (argIndex > 0) {
             const receiver = (parentNode.args || [])[0];
-            const receiverType = receiver ? editor.calculateASTReturnType?.(receiver) : null;
+            const receiverType = receiver ? getCoreSemanticNodeType(receiver) : null;
             if (receiverType) {
                 if (editor.isCollectionType?.(receiverType)) {
                     return editor.normalizeTypeName(editor.getCollectionInnerType?.(receiverType)) || 'Object';
@@ -179,8 +197,7 @@ function getExpectedTypeForSlot(editor, parentNode, slot, index) {
         }
         if (compareOps.includes(op)) {
             const sibling = slot === 'left' ? parentNode.rightOperand : parentNode.leftOperand;
-            const siblingType = sibling?.returnType || editor.calculateASTReturnType?.(sibling);
-            const normalizedSibling = editor.normalizeTypeName(siblingType);
+            const normalizedSibling = resolveNodeType(sibling);
             if (['contains', 'startsWith', 'endsWith'].includes(op)) {
                 if (normalizedSibling && editor.isCollectionType?.(normalizedSibling)) {
                     const inner = editor.getCollectionInnerType?.(normalizedSibling);
@@ -196,7 +213,7 @@ function getExpectedTypeForSlot(editor, parentNode, slot, index) {
         }
     }
 
-    return editor.normalizeTypeName(editor.slotExpectedType || editor.expectedType);
+    return editor.normalizeTypeName(editor.expectedType);
 }
 
 function getPlaceholderLabel(editor, expectedType) {
@@ -657,9 +674,6 @@ export function renderStaticValueInput(editor, node, container) {
             node.parent.updateCompleteness();
         }
         editor.updateExpressionFromAST();
-        if (editor.onChange) {
-            editor.onChange(editor.expression);
-        }
     };
 
     inputElement.addEventListener("input", (e) => {
@@ -752,9 +766,6 @@ export function renderPropertyInput(editor, node, container) {
             node.parent.updateCompleteness();
         }
         editor.updateExpressionFromAST();
-        if (editor.onChange) {
-            editor.onChange(editor.expression);
-        }
     };
 
     inputElement.addEventListener("input", (e) => {
@@ -845,7 +856,7 @@ export function renderEmptySlotPlaceholder(editor, parentNode, slot, container, 
 
 export function renderPropertyChainUI(editor, node, container) {
     const chainContainer = document.createElement("div");
-    const finalReturnType = editor.calculateASTReturnType(node);
+    const finalReturnType = getCoreSemanticNodeType(node);
     const style = getStyleForValueType(editor, finalReturnType);
     chainContainer.className = "dsl-property-chain";
     chainContainer.classList.add(`dsl-value-style--${style.key}`);

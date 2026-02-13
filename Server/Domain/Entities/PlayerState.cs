@@ -25,7 +25,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public const string GraveyardCounterKey = "graveyard";
         public const string BloodPoolCounterKey = "bloodpool";
         private static readonly string[] SystemCounterKeys = { ComboCounterKey, GraveyardCounterKey, BloodPoolCounterKey };
-
         private readonly Counters _counters = new Counters(SystemCounterKeys);
 
         [DslExposable("玩家ID", Description = "玩家的唯一标识符")]
@@ -50,10 +49,20 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("当前SEP", Description = "玩家当前可用的超进化点数")]
         public int CurrentSuperEvolutionPoints { get; set; } = 0;
+
+        [DslExposable("是否已解禁进化", Description = "玩家是否已解禁手动进化（通常达到指定回合后为 true）")]
+        public bool IsEvolutionUnlocked { get; set; } = false;
+
+        [DslExposable("是否已解禁超进化", Description = "玩家是否已解禁手动超进化（通常达到指定回合后为 true）")]
+        public bool IsSuperEvolutionUnlocked { get; set; } = false;
         public bool IsAI { get; set; } = false;
 
         [DslExposable("是否先手", Description = "玩家是否为先手")]
         public bool IsFirst { get; set; } = false;
+        [DslExposable("职业", Description = "玩家本局使用卡组的职业")]
+        public CardClass Class { get; set; } = CardClass.Neutral;
+        public string DisplayName { get; set; } = string.Empty;
+        public string AvatarUrl { get; set; } = string.Empty;
         public bool HasCompletedMulligan { get; set; } = false;
 
         [DslExposable("回合数", Description = "当前回合数")]
@@ -117,7 +126,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("纹章区", Description = "玩家纹章区域中的卡牌列表")]
         public List<CardInstance> Emblem { get; set; } = new List<CardInstance>();
         public int DeckCount => Deck?.Count ?? 0;
+
+        [DslExposable("本回合可进化", Description = "玩家本回合是否还能进行手动进化（受解禁与回合内进化权影响）")]
         public bool CanEvolve { get; set; } = false;
+
+        [DslExposable("本回合可超进化", Description = "玩家本回合是否还能进行手动超进化（受解禁、SEP 与回合内超进化权影响）")]
         public bool CanSuperEvolve { get; set; } = false;
 
         [DslExposable("变量", Description = "玩家上的系统与临时计数器")]
@@ -241,13 +254,19 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             card.CurrentZone = to;
+            card.MarkCombatContinuityChanged();
             if (destinationList != null)
             {
                 if (index.HasValue && index.Value >= 0 && index.Value <= destinationList.Count)
                     destinationList.Insert(index.Value, card);
                 else
                     destinationList.Add(card);
+
                 UpdateZoneIndices(to);
+            }
+            else
+            {
+                card.ZoneIndex = null;
             }
 
             return true;
@@ -266,7 +285,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             // Emit only the atomic move; notifications will be derived in CardMovedEvent.Commit
-            result.GeneratedEvents.Add(new CardMovedEvent(card, sourceZone, destination, moveReason));
+            result.GeneratedEvents.Add(new CardMovedEvent(card, sourceZone, destination, moveReason, destinationIndex: index));
             result.Success = true;
             return result;
         }
@@ -296,6 +315,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void ApplyEvolutionPointsMaxChange(int maxEp)
         {
             MaxEvolutionPoints = Math.Max(0, maxEp);
+            if (MaxEvolutionPoints > 0)
+            {
+                IsEvolutionUnlocked = true;
+            }
             if (CurrentEvolutionPoints > MaxEvolutionPoints)
             {
                 CurrentEvolutionPoints = MaxEvolutionPoints;
@@ -310,6 +333,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void ApplySuperEvolutionPointsMaxChange(int maxSep)
         {
             MaxSuperEvolutionPoints = Math.Max(0, maxSep);
+            if (MaxSuperEvolutionPoints > 0)
+            {
+                IsSuperEvolutionUnlocked = true;
+            }
             if (CurrentSuperEvolutionPoints > MaxSuperEvolutionPoints)
             {
                 CurrentSuperEvolutionPoints = MaxSuperEvolutionPoints;
@@ -370,7 +397,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return MoveCard(card, CardZone.Graveyard, null, moveReason);
         }
 
-        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance cause, string reason = "Effect", CardMoveReason moveReason = CardMoveReason.Destroyed)
+        public DomainOperationResult DestroyCard(CardInstance cardToDestroy, CardInstance cause, EventReasonSource reason = EventReasonSource.Ability, CardMoveReason moveReason = CardMoveReason.Destroyed)
         {
             var moveResult = MoveCardToGraveyard(cardToDestroy, moveReason);
             // As per two-method pattern, DestroyEvent is a high-level command and should not be re-enqueued here.
@@ -480,6 +507,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     ? GameConstants.Evolution.FirstPlayerEvolutionPoints
                     : GameConstants.Evolution.SecondPlayerEvolutionPoints;
 
+                IsEvolutionUnlocked = true;
                 this.MaxEvolutionPoints = newEp;
                 this.CurrentEvolutionPoints = newEp;
                 this.CanEvolve = true; // Grant evolution right for the turn
@@ -543,6 +571,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     ? GameConstants.SuperEvolution.FirstPlayerSuperEvolutionPoints
                     : GameConstants.SuperEvolution.SecondPlayerSuperEvolutionPoints;
 
+                IsSuperEvolutionUnlocked = true;
                 this.MaxSuperEvolutionPoints = newSep;
                 this.CurrentSuperEvolutionPoints = newSep;
                 this.CanSuperEvolve = true;
@@ -574,8 +603,18 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
         internal void ApplyTurnStart(GameState gameState)
         {
-            CanEvolve = CurrentEvolutionPoints > 0;
-            CanSuperEvolve = CurrentSuperEvolutionPoints > 0;
+            if (MaxEvolutionPoints > 0)
+            {
+                IsEvolutionUnlocked = true;
+            }
+            if (MaxSuperEvolutionPoints > 0)
+            {
+                IsSuperEvolutionUnlocked = true;
+            }
+            // Evolve right is turn-scoped and independent from EP.
+            // EP payment is validated at evolve request time and can be bypassed by FreeEvolve.
+            CanEvolve = IsEvolutionUnlocked;
+            CanSuperEvolve = IsSuperEvolutionUnlocked && CurrentSuperEvolutionPoints > 0;
             TurnNumber += 1;
             HasTakenFirstTurn = true;
             gameState.CurrentPlayerId = PlayerId;
@@ -643,6 +682,18 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
         }
 
+        public DomainOperationResult BuildTurnStartTransitionEvents(DelayConfig? turnStartDelayConfig = null)
+        {
+            var result = new DomainOperationResult();
+
+            var ppResult = RestorePlayPoints();
+            result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
+
+            result.GeneratedEvents.Add(new TurnStartEvent(this, turnStartDelayConfig));
+            result.Success = true;
+            return result;
+        }
+
         public DomainOperationResult StartTurn(GameContext context, DelayConfig? drawDelayConfig = null)
         {
             var gameState = context.CurrentGameState;
@@ -686,11 +737,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var sepResult = CheckAndUnlockSuperEvolutionPoints();
             result.GeneratedEvents.AddRange(sepResult.GeneratedEvents);
 
-            var ppResult = RestorePlayPoints();
-            result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
-
             int cardsToDraw = GameConstants.Hand.CardsPerTurn;
-            var drawResult = DrawCards(cardsToDraw, drawDelayConfig);
+            var drawResult = DrawCards(cardsToDraw, DelayConfig.QueueDrained());
             result.GeneratedEvents.AddRange(drawResult.GeneratedEvents);
 
             result.Success = true;
@@ -848,7 +896,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        public DomainOperationResult AddCardsToDeck(List<CardInstance> cardInstancesToAdd)
+        public DomainOperationResult AddCardsToDeck(List<CardInstance> cardInstancesToAdd, DeckInsertMode insertMode = DeckInsertMode.Random)
         {
             var result = new DomainOperationResult();
             if (cardInstancesToAdd == null)
@@ -859,14 +907,22 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             var generatedExpectedMoveEvent = false;
+            var projectedDeckCount = Deck.Count;
             foreach (var cardInstance in cardInstancesToAdd)
             {
                 if (cardInstance.CurrentZone == CardZone.Deck)
                 {
                     continue;
                 }
-                var addResult = MoveCard(cardInstance, CardZone.Deck, null, CardMoveReason.AddedToDeck);
-                generatedExpectedMoveEvent = generatedExpectedMoveEvent || HasMoveToZone(addResult, CardZone.Deck);
+
+                var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount);
+                var addResult = MoveCard(cardInstance, CardZone.Deck, insertIndex, CardMoveReason.AddedToDeck);
+                var movedToDeck = HasMoveToZone(addResult, CardZone.Deck);
+                generatedExpectedMoveEvent = generatedExpectedMoveEvent || movedToDeck;
+                if (movedToDeck)
+                {
+                    projectedDeckCount++;
+                }
                 result.GeneratedEvents.AddRange(addResult.GeneratedEvents);
             }
 
@@ -876,6 +932,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
             result.Success = true;
             return result;
+        }
+
+        private static int ResolveDeckInsertIndex(DeckInsertMode insertMode, int currentDeckCount)
+        {
+            return insertMode switch
+            {
+                DeckInsertMode.Top => 0,
+                DeckInsertMode.Bottom => currentDeckCount,
+                _ => Random.Shared.Next(0, currentDeckCount + 1)
+            };
         }
 
         public DomainOperationResult ShuffleCardsIntoDeck(List<CardInstance> cardInstancesToShuffle)
@@ -958,6 +1024,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 result.ErrorMessage = $"Card {cardInHand.InstanceId} not found in hand.";
                 return result;
             }
+            if (cardInHand.HasKeyword(CardKeyword.CannotUse))
+            {
+                result.Success = false;
+                result.ErrorMessage = "该卡牌处于【无法使用】状态。";
+                return result;
+            }
             var effectiveCost = paidCost ?? cardInHand.CurrentCost;
             if (this.CurrentPlayPoints < effectiveCost)
             {
@@ -975,6 +1047,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult ExecutePlayCard(CardInstance cardInHand, Guid parentEventId, int? paidCost = null)
         {
             var result = new DomainOperationResult();
+            if (cardInHand.HasKeyword(CardKeyword.CannotUse))
+            {
+                result.Success = false;
+                result.ErrorMessage = "该卡牌处于【无法使用】状态。";
+                return result;
+            }
 
             // Pay PP cost and increment play count now that the action is confirmed.
             var effectiveCost = paidCost ?? cardInHand.CurrentCost;
@@ -1022,7 +1100,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        public DomainOperationResult DiscardCard(CardInstance cardToDiscard, string reason)
+        public DomainOperationResult DiscardCard(CardInstance cardToDiscard, EventReasonSource reason)
         {
             if (!this.Hand.Contains(cardToDiscard))
             {

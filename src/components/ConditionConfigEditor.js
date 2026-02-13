@@ -298,7 +298,8 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
                 expectedType: 'Boolean',
                 triggeringEventContext: {
                     eventTypes: this.options?.trigger?.eventTypes || [],
-                    timing: this.options?.trigger?.timing || 'On'
+                    timing: this.options?.trigger?.timing || 'On',
+                    outputVariables: this.options?.triggeringEventOutputs || []
                 }
             }
         ).catch(error => {

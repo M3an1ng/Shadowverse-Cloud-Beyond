@@ -65,6 +65,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Triggers
         public TriggerCountLimitConfig? CountLimit { get; set; }
 
         /// <summary>
+        /// 是否在单次事务中限制同名能力仅触发一次。
+        /// 开启后按（能力拥有者玩家、能力定义ID）进行同名判定。
+        /// </summary>
+        public bool LimitSameNameOncePerTransaction { get; set; } = false;
+
+        /// <summary>
         /// 检查指定区域是否在有效区域列表中
         /// </summary>
         /// <param name="zone">要检查的区域</param>

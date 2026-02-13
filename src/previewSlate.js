@@ -21,6 +21,7 @@ export function buildPreviewSlateHtml(options) {
         earthsigilValue = 0,
         showEarthsigil = false,
         description = '',
+        hideEmptyDescriptionPlaceholder = false,
         previewUrl = '',
         detailUrl = '',
         enableDetail = false,
@@ -32,7 +33,11 @@ export function buildPreviewSlateHtml(options) {
 
     const descriptionHtml = description
         ? renderDescriptionHtml(description)
-        : DEFAULT_DESCRIPTION_HTML;
+        : (hideEmptyDescriptionPlaceholder ? '' : DEFAULT_DESCRIPTION_HTML);
+
+    const descriptionBlockHtml = descriptionHtml
+        ? `<div class="slate-content-area"><div class="slate-description custom-scrollbar">${descriptionHtml}</div></div>`
+        : '';
 
     const nameClasses = ['slate-name'];
     let nameDetailAttr = '';
@@ -119,9 +124,7 @@ export function buildPreviewSlateHtml(options) {
 
             <div class="slate-body">
                 ${counterSummaryHtml || ''}
-                <div class="slate-content-area">
-                    <div class="slate-description custom-scrollbar">${descriptionHtml}</div>
-                </div>
+                ${descriptionBlockHtml}
                 ${buffSummaryHtml || ''}
                 ${actionsHtml || ''}
             </div>

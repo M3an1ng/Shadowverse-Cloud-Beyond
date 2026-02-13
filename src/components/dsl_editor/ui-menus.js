@@ -250,10 +250,16 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
     const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
 
+    const estimatedItemHeight = options.some(option => option.description) ? 64 : 48;
+    const maxSubmenuHeight = Math.min(380, viewportHeight - 20);
+    const rowsPerColumn = Math.max(4, Math.floor((maxSubmenuHeight - 20) / estimatedItemHeight));
+    const desiredColumns = Math.max(1, Math.ceil(options.length / rowsPerColumn));
+    const maxColumnsByViewport = Math.max(1, Math.floor((viewportWidth - 40) / 220));
+    const columnCount = Math.max(1, Math.min(4, maxColumnsByViewport, desiredColumns));
+    const submenuWidth = Math.min(viewportWidth - 20, columnCount * 210 + 16);
+
     let submenuLeft = mainMenuRect.right + 5;
     let submenuTop = parentRect.top;
-    const submenuWidth = 250;
-    const maxSubmenuHeight = Math.min(350, viewportHeight - parentRect.top - 20);
 
     if (submenuLeft + submenuWidth > viewportWidth) {
         submenuLeft = mainMenuRect.left - submenuWidth - 5;
@@ -274,7 +280,8 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         left: ${submenuLeft}px;
         top: ${submenuTop}px;
         min-width: 200px;
-        max-width: 300px;
+        max-width: ${submenuWidth}px;
+        width: ${submenuWidth}px;
         max-height: ${maxSubmenuHeight}px;
         overflow-y: auto;
         overflow-x: hidden;
@@ -283,9 +290,14 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         border-radius: 6px;
         box-shadow: 0 8px 20px rgba(0,0,0,0.35);
         z-index: 1002;
-        padding: 6px 0;
+        padding: 6px;
         font-size: 14px;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        box-sizing: border-box;
+        display: grid;
+        grid-template-columns: repeat(${columnCount}, minmax(180px, 1fr));
+        gap: 4px 8px;
+        align-content: start;
     `;
 
     options.forEach((option) => {
@@ -298,7 +310,9 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
             background: #223041;
             transition: background-color 0.15s ease, color 0.15s ease;
             border-radius: 4px;
-            margin: 2px 4px;
+            margin: 0;
+            width: 100%;
+            box-sizing: border-box;
         `;
 
         const label = document.createElement("span");

@@ -433,7 +433,7 @@
 }
 
 .card-detail-modal .ability-text {
-    font-size: 1rem;
+    font-size: 0.9rem;
     line-height: 1.6;
     color: var(--cd-text-color);
     white-space: pre-wrap;
@@ -528,7 +528,7 @@
 }
 
 .card-detail-modal .preview-ref-title {
-    font-size: 1rem;
+    font-size: 0.9rem;
     font-weight: 600;
     color: rgba(226, 232, 240, 0.95);
     letter-spacing: 0.06em;
@@ -542,7 +542,7 @@
 }
 
 .card-detail-modal .preview-ref-body {
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     line-height: 1.5;
     color: rgba(226, 232, 240, 0.85);
     white-space: pre-line;

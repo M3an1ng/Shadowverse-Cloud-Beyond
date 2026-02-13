@@ -7,7 +7,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
     [EffectMetadata("修改变量", "修改玩家或卡牌的计数器/临时变量。", AbilityEditorCategories.ResourceValueId)]
     public class ModifyCounterEffectParams : BaseEffectParams
     {
-        [ParameterMetadata("变量名", UiControlType.TextInput, DefaultValue = "", Description = "计数器名称（大小写不敏感）。")]
+        [ParameterMetadata("变量名", UiControlType.TextInput, DefaultValue = "", Description = "计数器名称（大小写不敏感）。填写未注册的计数器默认从0开始计算。")]
         public string CounterName { get; set; } = string.Empty;
 
         [ParameterMetadata("操作", UiControlType.Dropdown, DefaultValue = CounterOperation.Add, Description = "计数器操作类型。")]

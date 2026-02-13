@@ -1,42 +1,66 @@
 import { PIPELINE_STAGE_META, extractListPipeline, isListOperationNode } from "./pipeline.js";
 
-export function renderPipelineBlock(editor, node, container, renderNodeFn) {
+export function renderPipelineBlock(editor, node, container, renderNodeFn, options = {}) {
     const pipeline = extractListPipeline(node);
     if (!pipeline || !pipeline.source) return false;
 
-    const pipelineWrapper = document.createElement("span");
-    pipelineWrapper.className = "dsl-pipeline-wrap";
+    const interactionMode = options?.interactionMode === "main" ? "main" : "workspace";
+    const isMainExpression = interactionMode === "main";
+    const pipelineWrap = document.createElement("span");
+    pipelineWrap.className = "dsl-pipeline-wrap";
+    pipelineWrap.classList.add(isMainExpression ? "dsl-pipeline-wrap--main" : "dsl-pipeline-wrap--workspace");
 
-    const sourceIsEncapsulated = pipeline.source?.type === 'value' && pipeline.source?.metadata?.type === 'encapsulated';
-    if (sourceIsEncapsulated) {
-        renderNodeFn(pipeline.source, pipelineWrapper);
-    } else {
-        const sourceWrapper = document.createElement("span");
-        sourceWrapper.className = "dsl-pipeline-source";
-        renderNodeFn(pipeline.source, sourceWrapper);
-        pipelineWrapper.appendChild(sourceWrapper);
+    // 仅用于展示分组：前置路径保持常规表达式样式
+    const pipelineSource = document.createElement("span");
+    pipelineSource.className = "dsl-pipeline-source";
+    if (typeof renderNodeFn === "function") {
+        renderNodeFn(pipeline.source, pipelineSource);
     }
+    pipelineWrap.appendChild(pipelineSource);
 
     const pipelineBadge = document.createElement("span");
     const stageCount = pipeline.stages.length;
-    pipelineBadge.textContent = stageCount > 0 ? `筛选 · ${stageCount}步` : "筛选";
+    pipelineBadge.textContent = stageCount > 0 ? `管线 · ${stageCount}步` : "管线";
     pipelineBadge.className = "dsl-pipeline-badge";
-    pipelineWrapper.appendChild(pipelineBadge);
 
-    pipelineWrapper.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (typeof editor.syncPipelineContext === "function") {
-            editor.syncPipelineContext();
-        }
-        editor.pipelineOpen = true;
-        editor.pipelineOpenSource = pipeline.source || null;
-        if (typeof editor.markPipelineContextDirty === "function") {
-            editor.markPipelineContextDirty();
-        }
-        editor.renderEditor();
-    });
+    if (isMainExpression) {
+        pipelineBadge.dataset.dslNode = "true";
+        pipelineBadge.__dslNode = node;
+        pipelineBadge.classList.toggle("is-selected", editor.selectedNode === node);
+        pipelineBadge.addEventListener("click", (event) => {
+            event.stopPropagation();
+            editor.selectedNode = node;
+            editor.renderEditor();
+            if (typeof editor.editSubExpression === "function") {
+                editor.editSubExpression(node);
+            }
+        });
+    } else {
+        pipelineBadge.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (typeof editor.syncPipelineContext === "function") {
+                editor.syncPipelineContext();
+            }
+            const nextSource = pipeline.source || null;
+            const sourceChanged = editor.pipelineOpenSource !== nextSource;
+            editor.pipelineOpen = true;
+            editor.pipelineOpenMode = null;
+            editor.pipelineOpenSource = nextSource;
+            if (sourceChanged && editor.pipelineEditState) {
+                editor.pipelineEditState.node = null;
+                editor.pipelineEditState.slot = null;
+                editor.pipelineEditState.draftExpression = "";
+                editor.pipelineEditState.draftCountValue = "";
+            }
+            if (typeof editor.markPipelineContextDirty === "function") {
+                editor.markPipelineContextDirty();
+            }
+            editor.renderEditor();
+        });
+    }
 
-    container.appendChild(pipelineWrapper);
+    pipelineWrap.appendChild(pipelineBadge);
+    container.appendChild(pipelineWrap);
     return true;
 }
 
@@ -44,33 +68,23 @@ export function renderListQueryNodeAST(editor, node, container) {
     if (node.parent && isListOperationNode(node.parent)) {
         return;
     }
-    const rendered = renderPipelineBlock(editor, node, container, editor.renderASTNodeRecursive.bind(editor));
+    const rendered = renderPipelineBlock(editor, node, container, editor.renderASTNodeRecursive.bind(editor), {
+        interactionMode: "workspace"
+    });
     if (rendered) return;
 
-    const queryContainer = document.createElement("div");
-    queryContainer.className = "dsl-list-query-container";
-
     if (node.source) {
-        editor.renderASTNodeRecursive(node.source, queryContainer);
+        editor.renderASTNodeRecursive(node.source, container);
     }
-
-    const queryElement = document.createElement("div");
-    queryElement.className = "dsl-list-query-operator";
+    const queryElement = document.createElement("span");
+    queryElement.className = "dsl-list-operator";
     let operatorName = node.type.replace('list', '').toLowerCase();
     if (node.type === 'listSort') {
         operatorName = 'orderBy';
     }
     queryElement.textContent = `.${operatorName}`;
-
-    const arrowLeft = document.createElement("div");
-    arrowLeft.className = "dsl-list-query-arrow dsl-list-query-arrow--left";
-
-    const arrowRight = document.createElement("div");
-    arrowRight.className = "dsl-list-query-arrow dsl-list-query-arrow--right";
-
-    queryElement.appendChild(arrowLeft);
-    queryElement.appendChild(arrowRight);
-    queryContainer.appendChild(queryElement);
+    queryElement.dataset.listOperator = operatorName;
+    container.appendChild(queryElement);
 
     let expressionNode = null;
     if (node.type === 'listQuery') {
@@ -86,7 +100,7 @@ export function renderListQueryNodeAST(editor, node, container) {
     }
 
     if (expressionNode) {
-        editor.renderASTNodeRecursive(expressionNode, queryContainer);
+        editor.renderASTNodeRecursive(expressionNode, container);
     } else {
         const slotName = node.type === 'listQuery'
             ? 'filterExpression'
@@ -95,12 +109,10 @@ export function renderListQueryNodeAST(editor, node, container) {
                 : node.type === 'listDistinct'
                     ? 'keyExpression'
                     : node.type === 'listSelect'
-                        ? 'selectExpression'
+                    ? 'selectExpression'
                     : 'countExpression';
-        editor.renderEmptySlotPlaceholder(node, slotName, queryContainer);
+        editor.renderEmptySlotPlaceholder(node, slotName, container);
     }
-
-    container.appendChild(queryContainer);
 }
 
 export function renderPipelineEditorUI(editor, container) {

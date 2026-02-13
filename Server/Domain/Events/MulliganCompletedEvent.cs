@@ -55,7 +55,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     var firstPlayer = gameState.GetPlayerState(firstPlayerId.Value);
                     if (firstPlayer != null)
                     {
-                        result.GeneratedEvents.Add(new TurnStartEvent(firstPlayer));
+                        var turnStartTransitionResult = firstPlayer.BuildTurnStartTransitionEvents();
+                        result.GeneratedEvents.AddRange(turnStartTransitionResult.GeneratedEvents);
                     }
                 }
             }
