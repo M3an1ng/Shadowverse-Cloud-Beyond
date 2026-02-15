@@ -231,6 +231,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered HubExceptionLoggerFilter."); // Added Log
     builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IClientMethodMapper, SignalRClientMethodMapper>(); // Register the client method mapper
     Log.Information("Registered IClientMethodMapper."); // Added Log
+    builder.Services.AddSingleton<IGameChatService, InMemoryGameChatService>();
+    Log.Information("Registered IGameChatService (in-memory).");
     builder.Services.AddScoped<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
     Log.Information("Registered IDebugCommandParser."); // Added Log
     builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
@@ -243,8 +245,14 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register Economy Service
     builder.Services.AddScoped<IEconomyService, EconomyService>(); // Register the economy service
     Log.Information("Registered IEconomyService."); // Added Log
+    builder.Services.AddScoped<IOfficialMatchEvaluator, OfficialMatchEvaluator>();
+    Log.Information("Registered IOfficialMatchEvaluator.");
     builder.Services.AddScoped<IMetaProgressionService, MetaProgressionService>();
     Log.Information("Registered IMetaProgressionService.");
+    builder.Services.AddSingleton<IGameStatsRuntimeTracker, GameStatsRuntimeTracker>();
+    Log.Information("Registered IGameStatsRuntimeTracker.");
+    builder.Services.AddScoped<IWinrateStatsService, WinrateStatsService>();
+    Log.Information("Registered IWinrateStatsService.");
 
     // Register DSL Function System (includes DslEvaluator, DslExpressionParser, IFunctionRegistry)
     builder.Services.AddDslFunctionSystem();

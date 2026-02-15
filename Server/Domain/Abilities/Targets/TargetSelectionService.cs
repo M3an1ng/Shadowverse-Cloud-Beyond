@@ -268,6 +268,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public async Task<TargetAvailabilityResult> CheckTargetAvailabilityAsync(IAbility ability, GameContext context)
         {
             var queryExecutor = context.ServiceProvider.GetRequiredService<IQueryExecutor>();
+            var anyChoiceTarget = false;
+            var hasAnyValidChoiceTarget = false;
+            var canPlayWithoutTarget = false;
+            var choiceValidTargetIds = new HashSet<Guid>();
 
             foreach (var target in ability.Targets)
             {
@@ -276,8 +280,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     continue;
                 }
 
+                var requiresPlayerChoice = target.Config.PlayerChoiceOptions?.IsRequired == true;
+
                 // Only check targets that are explicitly configured to require a valid target for the ability to be playable.
-                if (!target.Config.RequireValidTarget)
+                // Also evaluate player-choice targets so UI can receive target availability metadata.
+                if (!target.Config.RequireValidTarget && !requiresPlayerChoice)
                 {
                     continue;
                 }
@@ -291,7 +298,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     _logger.LogWarning("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': Query execution failed: {Error}",
                         ability.KeywordSummary, target.Key, queryResult.ErrorMessage);
                     // If the query itself fails, we consider targets unavailable.
-                    return new TargetAvailabilityResult(false, $"目标查询失败: {queryResult.ErrorMessage}");
+                    return new TargetAvailabilityResult(
+                        false,
+                        $"目标查询失败: {queryResult.ErrorMessage}",
+                        HasValidTargets: false,
+                        ValidTargetIds: new List<Guid>());
                 }
 
                 var potentialTargets = queryResult.Results.Select(item => item switch
@@ -303,36 +314,75 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     .Select(t => t!)
                     .ToList();
 
-                var applyChoiceRestrictions = target.Config.PlayerChoiceOptions?.IsRequired == true;
+                var applyChoiceRestrictions = requiresPlayerChoice;
                 potentialTargets = ApplyAbilityTargetKeywordRules(
                     potentialTargets,
                     target.Config,
                     context,
                     applyChoiceRestrictions: applyChoiceRestrictions);
 
-                if (applyChoiceRestrictions)
+                if (requiresPlayerChoice)
                 {
+                    anyChoiceTarget = true;
+                    if (potentialTargets.Any())
+                    {
+                        hasAnyValidChoiceTarget = true;
+                        foreach (var targetId in potentialTargets.Select(t => t.InstanceId))
+                        {
+                            choiceValidTargetIds.Add(targetId);
+                        }
+                    }
+
                     var minSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions!.MinCount);
                     if (potentialTargets.Count < minSelectionCount)
                     {
                         _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': requires {Min} targets but only {Available} available.",
                             ability.KeywordSummary, target.Key, minSelectionCount, potentialTargets.Count);
-                        return new TargetAvailabilityResult(false, $"目标数量不足，至少需要{minSelectionCount}个目标。");
+                        if (target.Config.RequireValidTarget)
+                        {
+                            return new TargetAvailabilityResult(
+                                false,
+                                $"目标数量不足，至少需要{minSelectionCount}个目标。",
+                                HasValidTargets: potentialTargets.Any(),
+                                ValidTargetIds: potentialTargets.Select(t => t.InstanceId).ToList());
+                        }
+
+                        canPlayWithoutTarget = true;
                     }
                 }
 
                 if (!potentialTargets.Any())
                 {
+                    if (requiresPlayerChoice && !target.Config.RequireValidTarget)
+                    {
+                        canPlayWithoutTarget = true;
+                        continue;
+                    }
+
                     _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': No valid targets found.",
                         ability.KeywordSummary, target.Key);
                     // If the query returns no results, and a target is required, the ability is not available.
-                    return new TargetAvailabilityResult(false, "没有有效的目标。");
+                    return new TargetAvailabilityResult(
+                        false,
+                        "没有有效的目标。",
+                        HasValidTargets: false,
+                        ValidTargetIds: new List<Guid>());
                 }
             }
 
             await Task.CompletedTask;
             // If all required targets have at least one potential target, the ability is available to be played.
-            return new TargetAvailabilityResult(true);
+            if (!anyChoiceTarget)
+            {
+                return new TargetAvailabilityResult(true);
+            }
+
+            return new TargetAvailabilityResult(
+                true,
+                FailureReason: null,
+                HasValidTargets: hasAnyValidChoiceTarget,
+                ValidTargetIds: choiceValidTargetIds.ToList(),
+                CanPlayWithoutTarget: canPlayWithoutTarget);
         }
 
         private static int GetResolvedTargetCount(Dictionary<string, List<TargetInfo>>? resolvedTargets)
@@ -511,5 +561,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
     /// </summary>
     /// <param name="IsAvailable">Indicates whether all required targets have at least one potential target.</param>
     /// <param name="FailureReason">Provides a reason if the targets are not available.</param>
-    public record TargetAvailabilityResult(bool IsAvailable, string? FailureReason = null);
+    /// <param name="HasValidTargets">For player-choice targets, indicates whether any selectable targets exist.</param>
+    /// <param name="ValidTargetIds">For player-choice targets, provides selectable target IDs when available.</param>
+    /// <param name="CanPlayWithoutTarget">Indicates optional target selection where play can continue even without selectable targets.</param>
+    public record TargetAvailabilityResult(
+        bool IsAvailable,
+        string? FailureReason = null,
+        bool HasValidTargets = true,
+        List<Guid>? ValidTargetIds = null,
+        bool CanPlayWithoutTarget = false);
 }

@@ -1,6 +1,7 @@
 import { createListQueryNode, createListSortNode, createListTakeNode, createListSelectNode, createOperatorNode, createValueNode } from '../src/components/dsl_editor/core.js';
 import { extractListPipeline, rebuildListChainFromStages } from '../src/components/dsl_editor/pipeline.js';
-import { syncPipelineContext } from '../src/components/dsl_editor/pipeline-editor.js';
+import { commitPipelineStageEdit, syncPipelineContext } from '../src/components/dsl_editor/pipeline-editor.js';
+import { renderPipelineEditorUI } from '../src/components/dsl_editor/ui-pipeline.js';
 import { DslEditor } from '../src/components/DslEditor.js';
 
 function buildModuloEqualityExpression() {
@@ -20,6 +21,170 @@ function buildModuloEqualityExpression() {
 }
 
 describe('DslEditor Pipeline helpers', () => {
+    test('DslEditor keeps empty workspace but always exposes fixed self context option', async () => {
+        const editor = new DslEditor();
+        const container = document.createElement('div');
+        const onChange = jest.fn();
+        editor.initialize = jest.fn(async () => {
+            editor.isInitialized = true;
+            editor.metadata = editor.metadata || {
+                dsl: {
+                    contextObjects: [
+                        { name: 'context', displayName: '游戏上下文', typeName: 'GameContext' }
+                    ]
+                }
+            };
+        });
+
+        await editor.render(container, '', onChange, {
+            expectedType: 'Boolean',
+            fixedRootContext: {
+                name: 'self',
+                displayName: '当前项',
+                typeName: 'CardInstance'
+            },
+            hideFavoritesToolbar: true
+        });
+
+        expect(editor.workspaceAST?.type).toBe('value');
+        expect(editor.workspaceAST?.metadata?.type).toBe('empty');
+        const options = editor.getCurrentEditingOptions();
+        expect(options.some(option => option.type === 'context' && option.value === 'self')).toBe(true);
+        expect(editor.getDslContextObject('self')?.typeName).toBe('CardInstance');
+    });
+
+    test('clearWorkspace keeps self context accessible instead of forcing self expression root', () => {
+        const editor = new DslEditor();
+        editor.renderEditor = jest.fn();
+        editor.updateExpressionFromAST = jest.fn();
+        editor.metadata = {
+            dsl: {
+                contextObjects: [
+                    { name: 'context', displayName: '游戏上下文', typeName: 'GameContext' }
+                ]
+            }
+        };
+        editor.fixedRootContext = {
+            name: 'self',
+            displayName: '当前项',
+            typeName: 'CardInstance'
+        };
+
+        editor.clearWorkspace(true);
+
+        expect(editor.workspaceAST?.type).toBe('value');
+        expect(editor.workspaceAST?.metadata?.type).toBe('empty');
+        const options = editor.getCurrentEditingOptions();
+        expect(options.some(option => option.type === 'context' && option.value === 'self')).toBe(true);
+    });
+
+    test('pipeline stage editing renders modal instead of inline panel', () => {
+        const source = createValueNode('context.owner.field', 'List<CardInstance>', { type: 'property' });
+        const stageNode = createListQueryNode(source);
+        const stage = { type: 'filter', node: stageNode };
+
+        const editor = {
+            getPipelineContext: () => ({ source, stages: [stage], allowEmpty: true }),
+            isPipelineStageEditing: (current) => current === stage,
+            getPipelineStageTypeIssue: () => null,
+            getPipelineStageLabel: () => '查询',
+            getPipelineStageSummary: () => '查询条件',
+            movePipelineStage: jest.fn(),
+            editPipelineStage: jest.fn(),
+            removePipelineStage: jest.fn(),
+            commitPipelineStageEdit: jest.fn(),
+            cancelPipelineStageEdit: jest.fn(),
+            renderPipelineStageInlineEditor: jest.fn((_, host) => {
+                host.textContent = 'inline-editor';
+            }),
+            insertPipelineStage: jest.fn()
+        };
+
+        const container = document.createElement('div');
+        renderPipelineEditorUI(editor, container);
+
+        expect(container.querySelectorAll('.dsl-pipeline-stage-row')).toHaveLength(1);
+        expect(container.querySelector('.dsl-pipeline-stage-modal-overlay')).not.toBeNull();
+        expect(container.querySelector('.dsl-pipeline-edit-panel')).toBeNull();
+        expect(editor.renderPipelineStageInlineEditor).toHaveBeenCalledTimes(1);
+    });
+
+    test('pipeline stage modal apply and close interactions route to commit/cancel handlers', () => {
+        const source = createValueNode('context.owner.field', 'List<CardInstance>', { type: 'property' });
+        const stageNode = createListQueryNode(source);
+        const stage = { type: 'filter', node: stageNode };
+
+        const editor = {
+            getPipelineContext: () => ({ source, stages: [stage], allowEmpty: true }),
+            isPipelineStageEditing: () => true,
+            getPipelineStageTypeIssue: () => null,
+            getPipelineStageLabel: () => '查询',
+            getPipelineStageSummary: () => '查询条件',
+            movePipelineStage: jest.fn(),
+            editPipelineStage: jest.fn(),
+            removePipelineStage: jest.fn(),
+            commitPipelineStageEdit: jest.fn(),
+            cancelPipelineStageEdit: jest.fn(),
+            renderPipelineStageInlineEditor: jest.fn(),
+            insertPipelineStage: jest.fn()
+        };
+
+        const container = document.createElement('div');
+        renderPipelineEditorUI(editor, container);
+
+        const modal = container.querySelector('.dsl-pipeline-stage-modal');
+        const overlay = container.querySelector('.dsl-pipeline-stage-modal-overlay');
+        const applyBtn = container.querySelector('.dsl-pipeline-stage-modal-footer .dsl-pipeline-btn--success');
+
+        expect(modal).not.toBeNull();
+        expect(overlay).not.toBeNull();
+        expect(applyBtn).not.toBeNull();
+
+        applyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(editor.commitPipelineStageEdit).toHaveBeenCalledTimes(1);
+
+        modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(editor.cancelPipelineStageEdit).toHaveBeenCalledTimes(1);
+
+        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(editor.cancelPipelineStageEdit).toHaveBeenCalledTimes(2);
+    });
+
+    test('listTake stage commits DSL expression from sub editor instead of fixed numeric input', () => {
+        const editor = new DslEditor();
+        editor.updateExpressionFromAST = jest.fn();
+
+        const source = createValueNode('context.owner.field', 'List<CardInstance>', { type: 'property' });
+        const takeNode = createListTakeNode(source);
+        takeNode.strategy = 'first';
+        editor.workspaceAST = takeNode;
+        editor.astRoot = takeNode;
+        editor.pipelineOpen = true;
+        editor.pipelineOpenSource = source;
+        editor.syncPipelineContext();
+
+        const inlineEditor = {
+            workspaceAST: createValueNode('self.cost', 'Int32', { type: 'property', fullPath: 'self.cost' }),
+            expression: 'self.cost',
+            showExpressionError: jest.fn()
+        };
+
+        editor.pipelineEditState = {
+            node: takeNode,
+            slot: 'countExpression',
+            editor: inlineEditor,
+            draftExpression: 'self.cost',
+            draftCountValue: ''
+        };
+
+        commitPipelineStageEdit(editor);
+
+        expect(takeNode.countExpression).toBeTruthy();
+        expect(takeNode.countExpression?.metadata?.type).toBe('encapsulated');
+        expect(takeNode.countExpression?.metadata?.innerAST?.toExpression?.()).toBe('self.cost');
+        expect(editor.updateExpressionFromAST).toHaveBeenCalled();
+    });
+
     test('ListQuery validate uses semantic type for encapsulated boolean filter', () => {
         const source = createValueNode('context.owner.field', 'List<CardInstance>', { type: 'property' });
         const query = createListQueryNode(source);
@@ -390,6 +555,32 @@ describe('DslEditor Pipeline helpers', () => {
 
         expect(editor.expression).toBe(equals.toExpression());
         expect(onChange).toHaveBeenCalledWith(equals.toExpression());
+    });
+
+    test('submit does not overwrite main when editingPath is lost while main exists', () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const editor = new DslEditor();
+            editor.renderEditor = jest.fn();
+            editor.syncPipelineContext = jest.fn();
+            editor.showExpressionError = jest.fn();
+
+            const mainExpr = buildModuloEqualityExpression();
+            editor.virtualRoot.main = editor.createEncapsulatedFrom(mainExpr);
+
+            const staleWorkspace = createValueNode('context.sourceCard.currentHealth', 'Int32', { type: 'property' });
+            editor.workspaceAST = staleWorkspace;
+            editor.astRoot = staleWorkspace;
+            editor.clearEditingPath();
+
+            editor.saveWorkspace();
+
+            const committedMain = editor.virtualRoot.main?.metadata?.innerAST?.toExpression?.() || editor.virtualRoot.main?.toExpression?.();
+            expect(committedMain).toBe(mainExpr.toExpression());
+            expect(editor.showExpressionError).toHaveBeenCalled();
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 
     test('computeCurrentExpression falls back to main expression when path is missing', () => {

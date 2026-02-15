@@ -35,6 +35,12 @@ namespace ShadowverseBeyond.Server.Dtos
         public List<Guid> ValidTargetIds { get; set; } = new List<Guid>(); // Assuming InstanceId is int based on other DTOs/design
 
         /// <summary>
+        /// Indicates whether the card can still be played when no selectable targets are available
+        /// (for example, optional target selection).
+        /// </summary>
+        public bool CanPlayWithoutTarget { get; set; }
+
+        /// <summary>
         /// The available play modes for this card.
         /// </summary>
         public List<PlayModeAvailabilityDto> PlayModes { get; set; } = new();

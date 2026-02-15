@@ -203,7 +203,7 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         Heal = 104,
 
         /// <summary>
-        /// 摧毁效果 - 直接摧毁目标单位
+        /// 破坏效果 - 直接破坏目标单位
         /// ✅ 已实现：DestroyUnitEffectHandler
         /// </summary>
         [Description("破坏")]

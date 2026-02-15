@@ -25,6 +25,83 @@ export function resolveEventTypeHintFromSource(editor, sourceNode) {
     return resolveByTypeHint(editor, sourceNode, new WeakSet());
 }
 
+export function resolveScopedSelfContextFromSource(editor, sourceNode, sourceType = null) {
+    if (!editor || !sourceNode) {
+        return null;
+    }
+
+    const normalizedSourceType = normalizeTypeName(editor, sourceType)
+        || resolveSourceTypeFromNode(editor, sourceNode);
+    if (!normalizedSourceType) {
+        return null;
+    }
+
+    const itemType = resolveQueryableItemType(editor, normalizedSourceType);
+    if (!itemType) {
+        return null;
+    }
+
+    const eventType = itemType === "IGameEvent"
+        ? resolveEventTypeHintFromSource(editor, sourceNode)
+        : null;
+
+    return {
+        name: "self",
+        displayName: "当前项",
+        typeName: itemType,
+        eventType
+    };
+}
+
+function resolveSourceTypeFromNode(editor, sourceNode) {
+    if (!sourceNode) {
+        return null;
+    }
+
+    if (typeof editor?.getSemanticNodeType === "function") {
+        return normalizeTypeName(editor, editor.getSemanticNodeType(sourceNode));
+    }
+
+    return normalizeTypeName(editor, sourceNode.returnType);
+}
+
+function resolveQueryableItemType(editor, sourceType) {
+    if (!editor || !sourceType) {
+        return null;
+    }
+
+    const normalizedSource = normalizeTypeName(editor, sourceType);
+    if (!normalizedSource) {
+        return null;
+    }
+
+    const innerType = typeof editor.getCollectionInnerType === "function"
+        ? editor.getCollectionInnerType(normalizedSource)
+        : null;
+    const normalizedInner = normalizeTypeName(editor, innerType);
+    if (normalizedInner) {
+        return normalizedInner;
+    }
+
+    if (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(normalizedSource)) {
+        return normalizedSource;
+    }
+
+    return null;
+}
+
+function normalizeTypeName(editor, typeName) {
+    if (!typeName) {
+        return null;
+    }
+
+    if (typeof editor?.normalizeTypeName === "function") {
+        return editor.normalizeTypeName(typeName) || String(typeName);
+    }
+
+    return String(typeName);
+}
+
 function resolveByTypeHint(editor, node, visited) {
     if (!node || (typeof node !== "object" && typeof node !== "function")) {
         return null;

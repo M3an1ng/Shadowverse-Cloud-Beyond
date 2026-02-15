@@ -69,7 +69,8 @@ export function writeBackToParentSlot(editor, parentNode, slot, newValueNode, in
 }
 
 export function getDslContextObject(editor, name) {
-    if (editor.contextOverride && editor.contextOverride.name === name) {
+    const normalizedName = String(name || "").trim().toLowerCase();
+    if (editor.contextOverride && String(editor.contextOverride.name || "").toLowerCase() === normalizedName) {
         return {
             name: editor.contextOverride.name,
             displayName: editor.contextOverride.displayName,
@@ -78,7 +79,16 @@ export function getDslContextObject(editor, name) {
         };
     }
 
+    if (editor.fixedRootContext && String(editor.fixedRootContext.name || "").toLowerCase() === normalizedName) {
+        return {
+            name: editor.fixedRootContext.name,
+            displayName: editor.fixedRootContext.displayName || editor.fixedRootContext.name,
+            typeName: editor.fixedRootContext.typeName,
+            properties: editor.getTypeMetadata(editor.fixedRootContext.typeName)?.properties || []
+        };
+    }
+
     const contextObjects = editor.metadata?.dsl?.contextObjects || [];
-    const result = contextObjects.find((obj) => obj.name === name);
+    const result = contextObjects.find((obj) => String(obj.name || "").toLowerCase() === normalizedName);
     return result;
 }

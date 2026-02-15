@@ -168,7 +168,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(harness.GameState.BuffManager.GetBuffsForCard(target.InstanceId));
 
             var dummyBuff = new Buff(Guid.Empty, dummy.InstanceId, harness.Player1.TurnNumber, new List<IBuffEffect>());
-            var dummyEvent = new BuffAppliedEvent(dummyBuff, null);
+            var dummyEvent = new BuffAppliedEvent(dummyBuff, null, null);
             var refreshResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
                 new IGameEvent[] { dummyEvent });

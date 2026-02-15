@@ -365,8 +365,9 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
 
         private static IGameEvent BuildCountdownTickEvent(ScenarioContext context, CountdownTickAction action)
         {
+            var player = context.GetPlayer(action.Player);
             var card = context.GetCard(action.CardKey);
-            return new CountdownTickEvent(card, action.ChangeAmount);
+            return new CountdownTickEvent(player, card, action.ChangeAmount);
         }
 
         private static IGameEvent BuildDestroyEvent(ScenarioContext context, DestroyAction action)

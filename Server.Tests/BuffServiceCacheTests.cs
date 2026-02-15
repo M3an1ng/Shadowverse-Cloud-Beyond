@@ -275,7 +275,7 @@ namespace ShadowverseBeyond.Server.Tests
                 card.Damage = 1;
                 var oldCurrent = Math.Max(0, oldMaxHealth - card.Damage);
 
-                var removeEvent = new BuffRemovedEvent(healthBuff, null, "test_remove");
+                var removeEvent = new BuffRemovedEvent(healthBuff, null, null, "test_remove");
                 var result = removeEvent.Commit(context);
                 Assert.True(result.Success);
 

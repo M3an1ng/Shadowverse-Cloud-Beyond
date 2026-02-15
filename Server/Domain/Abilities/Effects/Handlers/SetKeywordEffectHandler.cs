@@ -56,6 +56,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         result.GeneratedEvents.Add(new KeywordAddedEvent(
                             parameters.Keyword,
                             targetInfo.Card,
+                            context.SourceCard,
                             parameters.DurationType,
                             parameters.DurationParameter,
                             effectKey,
@@ -65,6 +66,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         result.GeneratedEvents.Add(new KeywordRemovedEvent(
                             parameters.Keyword,
                             targetInfo.Card,
+                            context.SourceCard,
                             parameters.DurationType,
                             parameters.DurationParameter,
                             effectKey,

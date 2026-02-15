@@ -424,7 +424,8 @@ namespace ShadowverseBeyond.Server.Services
                 GuestId = selection.GuestId,
                 DeckId = selection.DeckId,
                 DeckCode = selection.DeckCode,
-                DeckClass = selection.DeckClass
+                DeckClass = selection.DeckClass,
+                Environment = selection.Environment
             };
         }
     }

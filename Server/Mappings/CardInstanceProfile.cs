@@ -54,6 +54,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.CurrentHealth, opt => opt.MapFrom(src => src.CurrentHealth))
                 .ForMember(dest => dest.MaxHealth, opt => opt.MapFrom(src => src.MaxHealth))
                 .ForMember(dest => dest.IsEvolved, opt => opt.MapFrom(src => src.IsEvolved))
+                .ForMember(dest => dest.IsSuperEvolved, opt => opt.MapFrom(src => src.IsSuperEvolved))
                 .ForMember(dest => dest.CanAttack, opt => opt.MapFrom(src => src.CanAttack))
                 .ForMember(dest => dest.HasActAbility, opt => opt.MapFrom(src => src.HasActAbility))
                 .ForMember(dest => dest.ActAbilities, opt => opt.MapFrom(src => BuildActionSummaries(src, AbilityKeyword.Act)))

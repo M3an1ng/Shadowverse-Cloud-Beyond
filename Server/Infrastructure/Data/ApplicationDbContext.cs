@@ -59,6 +59,26 @@ public class ApplicationDbContext : DbContext
   /// </summary>
   public DbSet<GameSettlement> GameSettlements { get; set; } = null!;
 
+  /// <summary>
+  /// Gets or sets the DbSet for GameParticipantStatsFact entities.
+  /// </summary>
+  public DbSet<GameParticipantStatsFact> GameParticipantStatsFacts { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for CardStatsAgg entities.
+  /// </summary>
+  public DbSet<CardStatsAgg> CardStatsAggs { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for DeckStatsAgg entities.
+  /// </summary>
+  public DbSet<DeckStatsAgg> DeckStatsAggs { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for UserClassStatsAgg entities.
+  /// </summary>
+  public DbSet<UserClassStatsAgg> UserClassStatsAggs { get; set; } = null!;
+
   // 经济系统相关实体
   /// <summary>
   /// Gets or sets the DbSet for UserEconomy entities. Represents the UserEconomies table.
@@ -167,6 +187,7 @@ public class ApplicationDbContext : DbContext
 
     // 配置元进度实体
     ConfigureMetaProgressionEntities(modelBuilder);
+    ConfigureWinrateStatsEntities(modelBuilder);
 
     ConfigureDslFavoriteEntities(modelBuilder);
 
@@ -726,6 +747,55 @@ public class ApplicationDbContext : DbContext
       entity.Property(e => e.Compression).HasMaxLength(16).IsRequired();
       entity.Property(e => e.PayloadHash).HasMaxLength(64).IsRequired();
       entity.Property(e => e.Payload).IsRequired();
+    });
+  }
+
+  private void ConfigureWinrateStatsEntities(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<GameParticipantStatsFact>(entity =>
+    {
+      entity.ToTable("GameParticipantStatsFacts");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.GameId, e.PlayerId }).IsUnique();
+      entity.HasIndex(e => new { e.Environment, e.EndedAtUtc });
+      entity.HasIndex(e => e.IsOfficial);
+
+      entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.DeckShapeHash).HasMaxLength(128).IsRequired();
+      entity.Property(e => e.InitialDeckCardCountsJson).HasColumnType("TEXT").IsRequired();
+      entity.Property(e => e.DrawnCardIdsJson).HasColumnType("TEXT").IsRequired();
+      entity.Property(e => e.PlayedCardIdsJson).HasColumnType("TEXT").IsRequired();
+    });
+
+    modelBuilder.Entity<CardStatsAgg>(entity =>
+    {
+      entity.ToTable("CardStatsAggs");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.Environment, e.CardDefinitionId }).IsUnique();
+      entity.HasIndex(e => e.UpdatedAtUtc);
+    });
+
+    modelBuilder.Entity<DeckStatsAgg>(entity =>
+    {
+      entity.ToTable("DeckStatsAggs");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.Environment, e.DeckShapeHash }).IsUnique();
+      entity.HasIndex(e => e.UpdatedAtUtc);
+
+      entity.Property(e => e.DeckShapeHash).HasMaxLength(128).IsRequired();
+    });
+
+    modelBuilder.Entity<UserClassStatsAgg>(entity =>
+    {
+      entity.ToTable("UserClassStatsAggs");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.UserId, e.DeckClass }).IsUnique();
+      entity.HasIndex(e => e.UpdatedAtUtc);
+      entity.HasIndex(e => e.UserId);
     });
   }
 

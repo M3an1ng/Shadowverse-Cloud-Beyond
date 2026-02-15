@@ -1,7 +1,7 @@
 import { findIncompleteNode, getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 import { getOptionsForType as getOptionsForTypeFromModule } from "./operators.js";
 import { prepareEditorForRecommendations } from "./ast-normalize.js";
-import { resolveEventTypeHintFromSource } from "./event-translation.js";
+import { resolveScopedSelfContextFromSource } from "./event-translation.js";
 
 function resolveExpectedType(editor) {
     if (!editor) return null;
@@ -15,14 +15,13 @@ function resolveExpectedType(editor) {
     return editor.normalizeTypeName(editor.slotExpectedType || editor.expectedType);
 }
 
-function resolveQueryableItemType(editor, sourceType) {
-    if (!editor || !sourceType) return null;
-    const innerType = editor.getCollectionInnerType(sourceType);
-    if (innerType) return innerType;
-    if (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceType)) {
-        return editor.normalizeTypeName(sourceType) || sourceType;
+function applySelfContextFromSource(editor, sourceNode) {
+    if (!editor || !sourceNode) return;
+    const sourceType = getCoreSemanticNodeType(sourceNode);
+    const scopedContext = resolveScopedSelfContextFromSource(editor, sourceNode, sourceType);
+    if (scopedContext) {
+        editor.contextOverride = scopedContext;
     }
-    return null;
 }
 
 export function getCurrentEditingOptions(editor) {
@@ -145,28 +144,14 @@ export function getOptionsForIncompleteNode(editor, node) {
     if (node.type === 'listQuery') {
         editor.slotExpectedType = 'Boolean';
         if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
-            const sourceType = getCoreSemanticNodeType(node.source);
-            const itemType = resolveQueryableItemType(editor, sourceType);
-            if (itemType) {
-                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                    ? resolveEventTypeHintFromSource(editor, node.source)
-                    : null;
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-            }
+            applySelfContextFromSource(editor, node.source);
         }
         return getBooleanExpressionOptions(editor);
     }
 
     if (node.type === 'listSort') {
         if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
-            const sourceType = getCoreSemanticNodeType(node.source);
-            const itemType = resolveQueryableItemType(editor, sourceType);
-            if (itemType) {
-                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                    ? resolveEventTypeHintFromSource(editor, node.source)
-                    : null;
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-            }
+            applySelfContextFromSource(editor, node.source);
         }
         return getDataSourceOptions(editor);
     }
@@ -178,28 +163,14 @@ export function getOptionsForIncompleteNode(editor, node) {
 
     if (node.type === 'listDistinct') {
         if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
-            const sourceType = getCoreSemanticNodeType(node.source);
-            const itemType = resolveQueryableItemType(editor, sourceType);
-            if (itemType) {
-                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                    ? resolveEventTypeHintFromSource(editor, node.source)
-                    : null;
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-            }
+            applySelfContextFromSource(editor, node.source);
         }
         return getDataSourceOptions(editor);
     }
 
     if (node.type === 'listSelect') {
         if (!editor.contextOverride?.name || editor.contextOverride.name === "self") {
-            const sourceType = getCoreSemanticNodeType(node.source);
-            const itemType = resolveQueryableItemType(editor, sourceType);
-            if (itemType) {
-                const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                    ? resolveEventTypeHintFromSource(editor, node.source)
-                    : null;
-                editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-            }
+            applySelfContextFromSource(editor, node.source);
         }
         return getDataSourceOptions(editor);
     }
@@ -360,21 +331,46 @@ export function getDataSourceOptions(editor) {
 }
 
 export function getContextObjectsForOptions(editor) {
-    const contextObjects = editor.metadata?.dsl?.contextObjects || [];
-    if (!editor.contextOverride?.name) {
-        return contextObjects;
-    }
+    const contextObjects = Array.isArray(editor.metadata?.dsl?.contextObjects)
+        ? editor.metadata.dsl.contextObjects
+        : [];
+    const merged = [];
+    const seenNames = new Set();
 
-    const override = {
-        name: editor.contextOverride.name,
-        displayName: editor.contextOverride.displayName || editor.contextOverride.name,
-        description: editor.contextOverride.description || editor.contextOverride.displayName || editor.contextOverride.name,
-        typeName: editor.contextOverride.typeName
+    const addContextObject = (obj) => {
+        const name = String(obj?.name || "").trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        if (seenNames.has(key)) return;
+        seenNames.add(key);
+        merged.push({
+            name,
+            displayName: obj.displayName || obj.description || name,
+            description: obj.description || obj.displayName || name,
+            typeName: obj.typeName || "Object"
+        });
     };
 
-    const overrideName = String(override.name || '').toLowerCase();
-    const filtered = contextObjects.filter(obj => String(obj.name || '').toLowerCase() !== overrideName);
-    return [override, ...filtered];
+    if (editor.contextOverride?.name) {
+        addContextObject({
+            name: editor.contextOverride.name,
+            displayName: editor.contextOverride.displayName || editor.contextOverride.name,
+            description: editor.contextOverride.description || editor.contextOverride.displayName || editor.contextOverride.name,
+            typeName: editor.contextOverride.typeName
+        });
+    }
+
+    if (editor.fixedRootContext?.name) {
+        addContextObject({
+            name: editor.fixedRootContext.name,
+            displayName: editor.fixedRootContext.displayName || editor.fixedRootContext.name,
+            description: editor.fixedRootContext.description || editor.fixedRootContext.displayName || editor.fixedRootContext.name,
+            typeName: editor.fixedRootContext.typeName
+        });
+    }
+
+    contextObjects.forEach(addContextObject);
+    return merged;
 }
 
 export function getTriggeringEventFieldOptions(editor) {

@@ -17,12 +17,19 @@ import {
     handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealApplied,
     handleCardSummoned, handleCardPlayed, handleHealthChanged, handleCardVanished,
     handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleAttackStateUpdated,
-    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate, handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested, handleCardRevealed, handleFusion, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated, handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
+    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
+    handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
+    handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
+    handleChatHistory, handleChatMessage,
+    handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
 import { renderGame, setConnectionStatus, setOpponentConnectionStatus } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 import { initDevConsole } from './devConsole.js'; // 开发者控制台
 import { ensureEnumLocalizations } from './enumLocalizationCache.js';
+import { getRouteNameFromHash, shouldReuseCachedHandshake } from './handshakePolicy.js';
+import { shouldDeferRoomLeaveForDecision } from './roomExitDecisionPolicy.js';
+import { getStoredValue, removeStoredValue, setStoredValue } from './storageFallback.js';
 // import { endTurn } from './turnManager.js'; // Keep commented out
 // Old SignalR setup code removed. New setup will be added later.
 // --- End SignalR Setup ---
@@ -53,8 +60,15 @@ let initialStateReceived = false; // Flag to track if initial state has been han
 let forceFullStateOnNextReceive = false;
 let reconnectInProgress = false;
 let manualReconnectInProgress = false;
+let suppressNextConnectionCloseAlert = false;
 let lobbyHandshake = null; // { gameId, playerId, token, joinCode?, role, useAiFallback?, dualControl?, hostPlayerId?, hostToken?, guestPlayerId?, guestToken? }
 let pendingHandshake = null; // Set by multiplayer UI before initialization
+let pendingRouteTransition = null; // { fromRoute, toRoute }
+let pendingRoomExitDecision = null; // { sourceRoute, targetRoute, gameId }
+let roomExitDecisionModalEl = null;
+let roomExitDecisionPromise = null;
+let roomExitDecisionResolve = null;
+const LOBBY_HANDSHAKE_STORAGE_KEY = 'svb.lobby.handshake';
 const DEBUG_FLAG = isDebugModeEnabled();
 let DEBUG_CONSOLE_ENABLED = DEBUG_FLAG;
 let DEBUG_CONSOLE_AUTOSHOW = false;
@@ -62,7 +76,7 @@ let DEBUG_CONSOLE_AUTOSHOW = false;
 function isDebugModeEnabled() {
     try {
         const fromQuery = new URLSearchParams(window.location.search).get('debug');
-        const fromStorage = localStorage.getItem('svb.debug') || localStorage.getItem('svb.debug.console');
+        const fromStorage = getStoredValue('svb.debug') || getStoredValue('svb.debug.console');
         return fromQuery === '1' || fromQuery === 'true' || fromStorage === 'true' || fromStorage === '1';
     } catch (err) {
         console.warn('DEBUG flag detection failed, defaulting to disabled.', err);
@@ -343,17 +357,17 @@ async function submitDeckSelection(handshake, options) {
 function cacheHandshake(handshake) {
     lobbyHandshake = handshake;
     pendingHandshake = handshake;
-    try {
-        localStorage.setItem("svb.lobby.handshake", JSON.stringify(handshake));
-    } catch (err) {
-        console.warn("Failed to cache handshake", err);
+    const serialized = JSON.stringify(handshake);
+    const didStore = setStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY, serialized);
+    if (!didStore) {
+        console.warn("Failed to cache handshake: no writable storage backend");
     }
 }
 
 function loadCachedHandshake() {
     if (lobbyHandshake) return lobbyHandshake;
     try {
-        const raw = localStorage.getItem("svb.lobby.handshake");
+        const raw = getStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed.gameId && parsed.playerId && parsed.token) {
@@ -370,10 +384,10 @@ function loadCachedHandshake() {
 function clearCachedHandshake() {
     lobbyHandshake = null;
     pendingHandshake = null;
-    try {
-        localStorage.removeItem("svb.lobby.handshake");
-    } catch (err) {
-        console.warn("Failed to clear cached handshake", err);
+    clearPendingRoomExitDecision();
+    const removed = removeStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
+    if (!removed) {
+        console.warn("Failed to clear cached handshake from storage backends");
     }
 }
 
@@ -412,6 +426,207 @@ function resetTransientConnectionUiState() {
     manualReconnectInProgress = false;
     setConnectionStatus('connected');
     setOpponentConnectionStatus(true);
+}
+
+function closeRoomExitDecisionModalElement() {
+    if (roomExitDecisionModalEl) {
+        roomExitDecisionModalEl.remove();
+        roomExitDecisionModalEl = null;
+    }
+}
+
+function settleRoomExitDecision(action) {
+    closeRoomExitDecisionModalElement();
+    const resolve = roomExitDecisionResolve;
+    roomExitDecisionResolve = null;
+    roomExitDecisionPromise = null;
+    if (typeof resolve === 'function') {
+        resolve(action);
+    }
+}
+
+function clearPendingRoomExitDecision() {
+    pendingRoomExitDecision = null;
+    if (roomExitDecisionResolve) {
+        settleRoomExitDecision('cleared');
+        return;
+    }
+    closeRoomExitDecisionModalElement();
+    roomExitDecisionPromise = null;
+}
+
+function getActiveNonAiRoomHandshake() {
+    const handshake = getReconnectHandshake();
+    if (!handshake) return null;
+    if (handshake.useAiFallback === true) return null;
+    if (!handshake.gameId || !handshake.playerId || !handshake.token) return null;
+    return handshake;
+}
+
+function rememberPendingRoomExitDecision() {
+    const handshake = getActiveNonAiRoomHandshake();
+    if (!handshake) return false;
+
+    pendingRoomExitDecision = {
+        sourceRoute: pendingRouteTransition?.fromRoute || null,
+        targetRoute: pendingRouteTransition?.toRoute || null,
+        gameId: handshake.gameId
+    };
+    return true;
+}
+
+function showRoomExitDecisionPrompt() {
+    if (roomExitDecisionPromise) {
+        return roomExitDecisionPromise;
+    }
+
+    roomExitDecisionPromise = new Promise((resolve) => {
+        roomExitDecisionResolve = resolve;
+
+        const modal = document.createElement('div');
+        modal.className = 'room-exit-decision-modal';
+        modal.innerHTML = `
+            <div class="room-exit-decision-card" role="dialog" aria-label="对战连接确认" aria-modal="true">
+                <div class="room-exit-decision-title">已返回主界面</div>
+                <div class="room-exit-decision-body">
+                    你可以返回当前多人对战，或断开并退出该房间。
+                </div>
+                <div class="room-exit-decision-actions">
+                    <button type="button" class="room-exit-decision-btn room-exit-decision-return">返回对战</button>
+                    <button type="button" class="room-exit-decision-btn room-exit-decision-disconnect">断开连接</button>
+                </div>
+            </div>
+        `;
+
+        const returnBtn = modal.querySelector('.room-exit-decision-return');
+        const disconnectBtn = modal.querySelector('.room-exit-decision-disconnect');
+
+        returnBtn?.addEventListener('click', () => settleRoomExitDecision('return'));
+        disconnectBtn?.addEventListener('click', () => settleRoomExitDecision('disconnect'));
+
+        document.body.appendChild(modal);
+        roomExitDecisionModalEl = modal;
+    });
+
+    return roomExitDecisionPromise;
+}
+
+async function handlePendingRoomExitDecisionOnNavigation() {
+    if (!pendingRoomExitDecision) return;
+
+    const activeHandshake = getActiveNonAiRoomHandshake();
+    if (!activeHandshake || activeHandshake.gameId !== pendingRoomExitDecision.gameId) {
+        clearPendingRoomExitDecision();
+        return;
+    }
+
+    const action = await showRoomExitDecisionPrompt();
+
+    if (!pendingRoomExitDecision) {
+        return;
+    }
+
+    if (action === 'return') {
+        clearPendingRoomExitDecision();
+        await router.navigateTo('game');
+        return;
+    }
+
+    clearPendingRoomExitDecision();
+    await leaveCurrentPvpRoom('mainmenu-room-exit-decision');
+}
+
+function registerRoomExitDecisionRouteHooks() {
+    if (!router || typeof router.setBeforeRouteChange !== 'function') {
+        return;
+    }
+
+    const originalBefore = router.beforeRouteChange;
+    router.setBeforeRouteChange(async (oldRoute, newRoute) => {
+        if (typeof originalBefore === 'function') {
+            const shouldContinue = await originalBefore(oldRoute, newRoute);
+            if (!shouldContinue) {
+                return false;
+            }
+        }
+
+        pendingRouteTransition = {
+            fromRoute: oldRoute || '',
+            toRoute: newRoute || ''
+        };
+        return true;
+    });
+
+    if (typeof router.setAfterRouteChange !== 'function') {
+        return;
+    }
+
+    const originalAfter = router.afterRouteChange;
+    router.setAfterRouteChange(async (oldRoute, newRoute) => {
+        if (typeof originalAfter === 'function') {
+            await originalAfter(oldRoute, newRoute);
+        }
+
+        try {
+            if (newRoute === 'navigation') {
+                await handlePendingRoomExitDecisionOnNavigation();
+            }
+        } finally {
+            pendingRouteTransition = null;
+        }
+    });
+}
+
+async function handleStateHydrationFailure(statusMessage = '重连失败') {
+    reconnectInProgress = false;
+    setConnectionStatus('disconnected', statusMessage);
+
+    const activeConnection = connection;
+    if (!activeConnection || activeConnection.state === signalR.HubConnectionState.Disconnected) {
+        return;
+    }
+
+    suppressNextConnectionCloseAlert = true;
+    try {
+        await activeConnection.stop();
+    } catch (err) {
+        suppressNextConnectionCloseAlert = false;
+        console.warn("MAIN: Failed to stop connection after hydration failure.", err);
+    } finally {
+        if (connection === activeConnection) {
+            connection = null;
+            setSignalRConnection(null);
+        }
+    }
+}
+
+function shouldWarnBeforeUnload() {
+    const routeFromHash = getRouteNameFromHash(window.location.hash);
+    const currentRoute = routeFromHash || (typeof router?.getCurrentRoute === 'function' ? router.getCurrentRoute() : '');
+    const isMatchRelatedRoute = currentRoute === 'game' || currentRoute === 'multiplayer';
+
+    if (!isMatchRelatedRoute && !pendingRoomExitDecision) {
+        return false;
+    }
+
+    return !!getActiveNonAiRoomHandshake();
+}
+
+function registerBeforeUnloadGuard() {
+    if (window.__svbBeforeUnloadGuardRegistered === true) {
+        return;
+    }
+    window.__svbBeforeUnloadGuardRegistered = true;
+
+    window.addEventListener('beforeunload', (event) => {
+        if (!shouldWarnBeforeUnload()) {
+            return;
+        }
+
+        // Required by modern browsers to trigger native leave confirmation.
+        event.preventDefault();
+        event.returnValue = '';
+    });
 }
 
 async function createMatch(useAiFallback) {
@@ -488,10 +703,10 @@ async function leaveCurrentPvpRoom(reasonForLog) {
  * @param {string} gameId - The ID of the game.
  * @param {string} playerId - The ID of the player.
  * @param {string} token - Lobby token for hub validation.
- * @param {function} resolveInitialState - The resolve function for the initialStatePromise.
+ * @param {{resolve?: Function, reject?: Function}|null} initialStateGate - Initial-state gate for resolve/reject.
  * @returns {Promise<signalR.HubConnection>} A promise that resolves with the connection object, or rejects on failure.
  */
-async function setupSignalRConnection(gameId, playerId, token, resolveInitialState, options = {}) { // ADDED token parameter
+async function setupSignalRConnection(gameId, playerId, token, initialStateGate, options = {}) { // ADDED token parameter
     if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
         console.warn("MAIN: SignalR connection already exists and is not disconnected. Stopping existing one.");
         await connection.stop();
@@ -510,7 +725,7 @@ async function setupSignalRConnection(gameId, playerId, token, resolveInitialSta
         .configureLogging(signalR.LogLevel.Trace) // Changed level to Trace
         .build();
 
-    registerSignalREventHandlers(connection, resolveInitialState); // Pass resolver down
+    registerSignalREventHandlers(connection, initialStateGate); // Pass resolver down
 
     try {
         await connection.start();
@@ -575,7 +790,7 @@ function registerActionSignalREventHandlers(conn) {
     });
 }
 
-async function setupSpectatorSignalRConnection(gameId, resolveInitialState, options = {}) {
+async function setupSpectatorSignalRConnection(gameId, initialStateGate, options = {}) {
     if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
         console.warn("MAIN: SignalR connection already exists and is not disconnected. Stopping existing one.");
         await connection.stop();
@@ -585,7 +800,32 @@ async function setupSpectatorSignalRConnection(gameId, resolveInitialState, opti
         initialStateReceived = false;
     }
 
-    const hubUrlWithParams = `${HUB_URL}?gameId=${encodeURIComponent(gameId)}&spectate=1`;
+    const session = getUserSession();
+    const query = new URLSearchParams();
+    query.set('gameId', gameId);
+    query.set('spectate', '1');
+
+    const spectatorName = String(session?.displayName || '').trim();
+    if (spectatorName) {
+        query.set('spectatorName', spectatorName);
+    }
+
+    const spectatorUserId = String(session?.userId || session?.guestId || '').trim();
+    if (spectatorUserId) {
+        query.set('spectatorUserId', spectatorUserId);
+    }
+
+    const spectatorAvatar = String(session?.avatar || '').trim();
+    if (spectatorAvatar && (
+        spectatorAvatar.startsWith('/')
+        || spectatorAvatar.startsWith('http://')
+        || spectatorAvatar.startsWith('https://')
+        || spectatorAvatar.startsWith('data:image/')
+    )) {
+        query.set('spectatorAvatar', spectatorAvatar);
+    }
+
+    const hubUrlWithParams = `${HUB_URL}?${query.toString()}`;
 
     connection = new signalR.HubConnectionBuilder()
         .withUrl(hubUrlWithParams)
@@ -593,7 +833,7 @@ async function setupSpectatorSignalRConnection(gameId, resolveInitialState, opti
         .configureLogging(signalR.LogLevel.Trace)
         .build();
 
-    registerSignalREventHandlers(connection, resolveInitialState);
+    registerSignalREventHandlers(connection, initialStateGate);
 
     try {
         await connection.start();
@@ -610,7 +850,7 @@ async function setupSpectatorSignalRConnection(gameId, resolveInitialState, opti
  * Registers handlers for events received from the SignalR Hub.
  * @param {signalR.HubConnection} conn - The SignalR connection instance.
  */
-function registerSignalREventHandlers(conn, resolveInitialState) { // Accept resolver as parameter
+function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolver as parameter
     const EVENT_STREAM_NAMES = [
         "TurnStarted",
         "TurnEnded",
@@ -645,6 +885,8 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
         "ReceiveHandPlayabilityUpdate",
         "ReceiveActPlayabilityUpdate",
         "EvolveStateUpdated",
+        "Fusion",
+        "AbilityTriggered",
         "PlayerChoiceRequested",
         "LogEvent"
     ];
@@ -663,10 +905,15 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     // --- MODIFIED FOR M6 ---
     conn.on("ReceiveGameState", (receivedGameState) => {
         const timestamp = new Date().toISOString();
-        if (!initialStateReceived && typeof resolveInitialState === 'function') {
+        if (!initialStateReceived && typeof initialStateGate?.resolve === 'function') {
+            if (!receivedGameState) {
+                initialStateReceived = true;
+                initialStateGate.reject?.(new Error('初始对局状态为空'));
+                return;
+            }
             // Initial state handling during initializeApp
             setConnectionStatus('connected');
-            resolveInitialState(receivedGameState); // Resolve the promise in initializeApp
+            initialStateGate.resolve(receivedGameState); // Resolve the promise in initializeApp
             initialStateReceived = true; // Mark initial state as received
             // NOTE: updateFullGameState is called in initializeApp after Promise.all resolves based on this promise.
         } else if (initialStateReceived) {
@@ -684,9 +931,14 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
             // Ensure gameManager and updateFullGameState are imported correctly
             try {
                 setConnectionStatus('connected');
-                updateFullGameState(receivedGameState); // Directly update the game state and UI
+                const hydrationSucceeded = updateFullGameState(receivedGameState); // Directly update the game state and UI
+                if (hydrationSucceeded === false) {
+                    void handleStateHydrationFailure('重连失败');
+                    return;
+                }
             } catch (error) { // Catch for outer try (Line 98)
                 console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
+                void handleStateHydrationFailure('重连失败');
                 alert("处理游戏状态更新时出错！");
             } // Closes outer catch
         } else {
@@ -747,6 +999,9 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
     wireEvent("PlayerChoiceRequested", handlePlayerChoiceRequested);
     wireEvent("CardRevealed", handleCardRevealed);
     wireEvent("Fusion", handleFusion);
+    wireEvent("AbilityTriggered", handleAbilityTriggered);
+    wireEvent("ChatHistory", handleChatHistory);
+    wireEvent("ChatMessage", handleChatMessage);
     // Generic log entries (for events without specific DTO)
     conn.on("LogEvent", (eventData) => {
         appendGameLog("LogEvent", eventData);
@@ -777,6 +1032,12 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
             return;
         }
 
+        if (!initialStateReceived && typeof initialStateGate?.reject === 'function') {
+            initialStateReceived = true;
+            initialStateGate.reject(new Error(message || '初始化阶段收到服务器错误'));
+            setConnectionStatus('disconnected', '连接失败，请点击重连');
+        }
+
         alert(`服务器错误: ${message}`); // Use alert instead of displayError
     });
 
@@ -802,6 +1063,13 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
         console.error(`MAIN: SignalR Connection Closed. Error: "${error}". State: ${conn.state}.`);
         if (manualReconnectInProgress) {
             connection = null;
+            setSignalRConnection(null);
+            return;
+        }
+        if (suppressNextConnectionCloseAlert) {
+            suppressNextConnectionCloseAlert = false;
+            connection = null;
+            reconnectInProgress = false;
             setSignalRConnection(null);
             return;
         }
@@ -837,12 +1105,16 @@ function registerSignalREventHandlers(conn, resolveInitialState) { // Accept res
 async function requestFullStateSync(reason) {
     if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
         console.warn("MAIN: Skip full state sync (connection not ready).", reason || "");
-        return;
+        await handleStateHydrationFailure('重连失败');
+        return false;
     }
     try {
         await connection.invoke("RequestInitialGameState");
+        return true;
     } catch (err) {
         console.error("MAIN: RequestInitialGameState failed:", err);
+        await handleStateHydrationFailure('重连失败');
+        return false;
     }
 }
 
@@ -908,10 +1180,9 @@ async function ensureLobbyHandshake() {
 
     // 2) Cached handshake (refresh/reconnect)
     const cached = loadCachedHandshake();
-    // Avoid reusing multiplayer room when user is entering single-player (game route) from main menu.
-    // Multiplayer rooms have useAiFallback=false; single-player should auto-create a fresh AI room.
+    const routeName = getRouteNameFromHash(window.location.hash);
     const isInMultiplayerUi = document.body.classList.contains('show-multiplayer');
-    if (cached && (isInMultiplayerUi || cached.useAiFallback === true || cached.dualControl === true)) {
+    if (shouldReuseCachedHandshake(cached, { routeName, isInMultiplayerUi })) {
         return cached;
     }
 
@@ -939,6 +1210,16 @@ async function performManualReconnect() {
     setConnectionStatus('reconnecting', '正在重连...');
 
     try {
+        if (handshake.role === "spectator") {
+            initializeSpectator(handshake.gameId);
+        } else {
+            initializeGame(handshake.gameId, handshake.playerId, {
+                dualControl: handshake.dualControl === true,
+                hostPlayerId: handshake.hostPlayerId || handshake.playerId,
+                guestPlayerId: handshake.guestPlayerId || null
+            });
+        }
+
         if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
             await connection.stop();
         }
@@ -970,7 +1251,10 @@ async function performManualReconnect() {
             setGuestSignalRConnection(newGuestConnection);
         }
 
-        await requestFullStateSync("manual-reconnect");
+        const syncSucceeded = await requestFullStateSync("manual-reconnect");
+        if (!syncSucceeded) {
+            throw new Error("请求完整状态失败");
+        }
     } catch (err) {
         console.error("MAIN: Manual reconnect failed:", err);
         setConnectionStatus('disconnected', '重连失败，请重试');
@@ -987,7 +1271,7 @@ async function performManualReconnect() {
 async function initializeApp() {
     if (isInitializing) {
         console.warn("MAIN: Initialization already in progress.");
-        return;
+        return false;
     }
     isInitializing = true;
 
@@ -1006,16 +1290,46 @@ async function initializeApp() {
         // 3. Render initial empty/loading state (optional)
         // renderGame(createEmptyGameState());
 
-        // Create a promise that resolves when the initial game state is received
-        let resolveInitialStatePromise;
-        const initialStatePromise = new Promise(resolve => {
-            resolveInitialStatePromise = resolve;
+        // Create an initial-state gate that supports resolve/reject + timeout.
+        let initialStateResolve;
+        let initialStateReject;
+        let initialStateGateSettled = false;
+        let initialStateTimeoutId = null;
+        const initialStatePromise = new Promise((resolve, reject) => {
+            initialStateResolve = resolve;
+            initialStateReject = reject;
         });
+        const settleInitialStateResolve = (value) => {
+            if (initialStateGateSettled) return;
+            initialStateGateSettled = true;
+            if (initialStateTimeoutId) {
+                clearTimeout(initialStateTimeoutId);
+                initialStateTimeoutId = null;
+            }
+            initialStateResolve(value);
+        };
+        const settleInitialStateReject = (reason) => {
+            if (initialStateGateSettled) return;
+            initialStateGateSettled = true;
+            if (initialStateTimeoutId) {
+                clearTimeout(initialStateTimeoutId);
+                initialStateTimeoutId = null;
+            }
+            const error = reason instanceof Error ? reason : new Error(String(reason || '初始化失败'));
+            initialStateReject(error);
+        };
+        const initialStateGate = {
+            resolve: settleInitialStateResolve,
+            reject: settleInitialStateReject
+        };
+        initialStateTimeoutId = setTimeout(() => {
+            settleInitialStateReject(new Error('等待初始对局状态超时'));
+        }, 15000);
 
         // 4. Start SignalR connection setup (PASSING the resolver)
         const connectionPromise = handshake.role === "spectator"
-            ? setupSpectatorSignalRConnection(gameId, resolveInitialStatePromise)
-            : setupSignalRConnection(gameId, playerId, token, resolveInitialStatePromise); // Pass resolver + token
+            ? setupSpectatorSignalRConnection(gameId, initialStateGate)
+            : setupSignalRConnection(gameId, playerId, token, initialStateGate); // Pass resolver + token
 
         const guestConnectionPromise = (handshake.role === "spectator" || !handshake.dualControl)
             ? Promise.resolve(null)
@@ -1055,7 +1369,11 @@ async function initializeApp() {
             // This ensures the *initial* state (received via the promise)
             // is processed and rendered correctly (e.g., showing the Mulligan phase).
             // The ReceiveGameState handler handles *subsequent* updates directly.
-            updateFullGameState(serverState); // <-- RESTORED
+            const hydrationSucceeded = updateFullGameState(serverState); // <-- RESTORED
+            if (hydrationSucceeded === false) {
+                await handleStateHydrationFailure('重连失败');
+                return false;
+            }
 
             // 7. Setup core event listeners (AFTER connection and UI are ready)
             setupEventListeners();
@@ -1070,22 +1388,36 @@ async function initializeApp() {
 
 
         } catch (error) {
+            if (initialStateTimeoutId) {
+                clearTimeout(initialStateTimeoutId);
+                initialStateTimeoutId = null;
+            }
             console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
             // Handle errors from loadCards, setupSignalRConnection, or state reception issues
             alert(`游戏初始化失败：${error.message || '未知错误'}. 请刷新页面重试。`);
             // Optionally disable UI or show persistent error
-            return; // Stop initialization on error
+            const cached = getReconnectHandshake();
+            if (cached?.gameId) {
+                setConnectionStatus('disconnected', '连接失败，请点击重连');
+            }
+            return false; // Stop initialization on error
         }
         // --- M6 Coordination Logic End ---
+        return true;
 
     } catch (error) {
         console.error("MAIN: Application initialization failed:", error);
+        const cached = getReconnectHandshake();
+        if (cached?.gameId) {
+            setConnectionStatus('disconnected', '连接失败，请点击重连');
+        }
         // Display error via ui.js, check if connection error already shown
         if (connection === null || connection.state === signalR.HubConnectionState.Disconnected) {
             // alert might have already been called in setupSignalRConnection
         } else {
             alert(`游戏初始化失败: ${error.message || '未知错误'}`); // Use alert instead of displayError
         }
+        return false;
     } finally {
         isInitializing = false;
     }
@@ -1258,6 +1590,97 @@ function setupMultiplayerUI() {
         outDeck.style.color = isError ? '#ff4f00' : 'rgba(255,255,255,0.85)';
     };
 
+    const roomDeckSyncState = {
+        gameId: null,
+        lastDeckId: null,
+        inFlight: null,
+        queuedDeckId: null
+    };
+
+    const markRoomDeckSynced = (handshake, deckId) => {
+        const normalizedDeckId = normalizeDeckId(deckId);
+        if (!handshake?.gameId || !normalizedDeckId) return;
+        roomDeckSyncState.gameId = handshake.gameId;
+        roomDeckSyncState.lastDeckId = normalizedDeckId;
+        roomDeckSyncState.queuedDeckId = null;
+    };
+
+    const getDeckSyncHandshake = () => {
+        const handshake = pendingHandshake || lobbyHandshake || loadCachedHandshake();
+        if (!handshake) return null;
+        if (handshake.role === 'spectator') return null;
+        if (handshake.useAiFallback === true) return null;
+        if (!handshake.gameId || !handshake.playerId || !handshake.token) return null;
+
+        if (roomDeckSyncState.gameId !== handshake.gameId) {
+            roomDeckSyncState.gameId = handshake.gameId;
+            roomDeckSyncState.lastDeckId = null;
+            roomDeckSyncState.queuedDeckId = null;
+        }
+
+        return handshake;
+    };
+
+    const syncSelectedDeckToRoom = async (deckId, options = {}) => {
+        const normalizedDeckId = normalizeDeckId(deckId);
+        if (!normalizedDeckId) return;
+
+        const handshake = getDeckSyncHandshake();
+        if (!handshake) {
+            if (!options.silentWhenNoRoom) {
+                setDeckOutput('卡组已切换。创建或加入房间后会自动提交。');
+            }
+            return;
+        }
+
+        if (roomDeckSyncState.lastDeckId === normalizedDeckId && !roomDeckSyncState.inFlight) {
+            if (!options.silentWhenAlreadySynced) {
+                setDeckOutput('当前房间卡组已是最新。');
+            }
+            return;
+        }
+
+        roomDeckSyncState.queuedDeckId = normalizedDeckId;
+        if (roomDeckSyncState.inFlight) {
+            return roomDeckSyncState.inFlight;
+        }
+
+        roomDeckSyncState.inFlight = (async () => {
+            while (roomDeckSyncState.queuedDeckId) {
+                const targetDeckId = roomDeckSyncState.queuedDeckId;
+                roomDeckSyncState.queuedDeckId = null;
+
+                const latestHandshake = getDeckSyncHandshake();
+                if (!latestHandshake) break;
+
+                try {
+                    await submitDeckSelection(latestHandshake, { deckId: targetDeckId });
+                    markRoomDeckSynced(latestHandshake, targetDeckId);
+                    setDeckOutput('已同步到当前房间。');
+                } catch (err) {
+                    const message = err?.message || String(err);
+                    if (message.includes('房间已开始')) {
+                        setDeckOutput('房间已开始，切换卡组不会影响本局。', true);
+                    } else if (
+                        message.includes('房间已关闭') ||
+                        message.includes('房间不存在') ||
+                        message.includes('房间已过期')
+                    ) {
+                        setDeckOutput('房间不可用，卡组仅保留本地选择。', true);
+                    } else {
+                        setDeckOutput(`同步房间卡组失败：${message}`, true);
+                    }
+                }
+            }
+        })();
+
+        try {
+            await roomDeckSyncState.inFlight;
+        } finally {
+            roomDeckSyncState.inFlight = null;
+        }
+    };
+
     const getSelectedMultiplayerDeckId = () => {
         const current = normalizeDeckId(deckSelectionState.selected.multiplayer);
         if (current) return current;
@@ -1273,9 +1696,14 @@ function setupMultiplayerUI() {
         const index = currentIndex >= 0 ? currentIndex : 0;
         const nextIndex = (index + delta + decks.length) % decks.length;
         const deck = decks[nextIndex];
-        deckSelectionState.selected.multiplayer = resolveDeckId(deck);
+        const selectedDeckId = resolveDeckId(deck);
+        deckSelectionState.selected.multiplayer = selectedDeckId;
         updateMultiplayerDeckSwitcher();
         setDeckOutput('');
+        void syncSelectedDeckToRoom(selectedDeckId, {
+            silentWhenNoRoom: true,
+            silentWhenAlreadySynced: true
+        });
     };
 
     deckPrev?.addEventListener('click', () => cycleDeck(-1));
@@ -1301,6 +1729,7 @@ function setupMultiplayerUI() {
                 setOutput(outCreate, `卡组选择失败：${selection.message}`, true);
                 return;
             }
+            markRoomDeckSynced(handshake, deckId);
             setPendingHandshake(handshake);
             setOutput(outCreate, `房间已创建，等待对手加入。<br>${formatHandshakeOutput(handshake)}`);
 
@@ -1370,6 +1799,7 @@ function setupMultiplayerUI() {
                 setOutput(outJoin, `卡组选择失败：${selection.message}`, true);
                 return;
             }
+            markRoomDeckSynced(handshake, deckId);
             try {
                 await startMatch(handshake.gameId, handshake.playerId, handshake.token);
             } catch (err) {
@@ -1435,6 +1865,7 @@ function setupMultiplayerUI() {
                     alert(selection.message || "无法选择卡组。");
                     return;
                 }
+                markRoomDeckSynced(handshake, deckId);
                 const room = await getMatch(handshake.gameId);
                 if (room.status === "Ready") {
                     try {
@@ -2924,16 +3355,46 @@ function setupMetaProgressionUI() {
 // 设置路由系统的游戏初始化钩子
 document.addEventListener('initializeGame', async () => {
     if (!window.gameInitialized) {
-        await initializeApp();
-        window.gameInitialized = true;
+        const initialized = await initializeApp();
+        if (initialized) {
+            window.gameInitialized = true;
+        }
     }
 });
+
+function ensureGameRouteInitialization() {
+    const hashRoute = getRouteNameFromHash(window.location.hash);
+    const routerRoute = (typeof router?.getCurrentRoute === 'function')
+        ? router.getCurrentRoute()
+        : '';
+    const activeRoute = hashRoute || routerRoute;
+
+    if (activeRoute !== 'game') return;
+    if (window.gameInitialized === true || isInitializing) return;
+
+    document.dispatchEvent(new CustomEvent('initializeGame'));
+}
+
+// Router may dispatch initializeGame before this module finishes listener registration.
+// Run a fallback check once listener wiring is complete.
+ensureGameRouteInitialization();
 
 // 设置路由系统的游戏清理钩子
 document.addEventListener('cleanupGame', () => {
     // 这里可以添加游戏清理逻辑
-    // Best-effort: if this is a PVP room, explicitly close it so the opponent can be notified.
-    leaveCurrentPvpRoom("cleanupGame").catch(() => { });
+    const handshake = getActiveNonAiRoomHandshake();
+    const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
+        pendingRouteTransition?.fromRoute,
+        pendingRouteTransition?.toRoute,
+        handshake
+    );
+    if (shouldDeferLeave) {
+        rememberPendingRoomExitDecision();
+    } else {
+        // Best-effort: if this is a PVP room, explicitly close it so the opponent can be notified.
+        leaveCurrentPvpRoom("cleanupGame").catch(() => { });
+    }
+
     if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
         connection.stop().catch(err => {
             console.error('MAIN: Error stopping SignalR connection:', err);
@@ -2961,9 +3422,20 @@ document.addEventListener('cleanupMultiplayer', () => {
         return;
     }
 
-    // Leaving the multiplayer page (e.g., back to main menu) is treated as leaving the current room
-    // to avoid stale pendingHandshake reuse and to notify the other participant.
-    leaveCurrentPvpRoom("cleanupMultiplayer").catch(() => { });
+    const handshake = getActiveNonAiRoomHandshake();
+    const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
+        pendingRouteTransition?.fromRoute,
+        pendingRouteTransition?.toRoute,
+        handshake
+    );
+    if (shouldDeferLeave) {
+        rememberPendingRoomExitDecision();
+    } else {
+        // Leaving the multiplayer page (e.g., back to main menu) is treated as leaving the current room
+        // to avoid stale pendingHandshake reuse and to notify the other participant.
+        leaveCurrentPvpRoom("cleanupMultiplayer").catch(() => { });
+    }
+
     stopMultiplayerPolling();
 });
 
@@ -3067,6 +3539,18 @@ document.addEventListener('DOMContentLoaded', () => {
         setupMenuStarrySky();
     } catch (error) {
         console.error('MAIN: Failed to initialize menu starry sky:', error);
+    }
+
+    try {
+        registerRoomExitDecisionRouteHooks();
+    } catch (error) {
+        console.error('MAIN: Failed to register room exit decision route hooks:', error);
+    }
+
+    try {
+        registerBeforeUnloadGuard();
+    } catch (error) {
+        console.error('MAIN: Failed to register beforeunload guard:', error);
     }
 
     // Meta progression panel is currently hidden on main menu; keep wiring disabled.

@@ -657,6 +657,15 @@ function syncInlineSuggestionEditor(editor, inlineEditor, expectedType, contextO
     inlineEditor.slotExpectedType = expectedType;
     inlineEditor.triggeringEventContext = editor.triggeringEventContext;
     inlineEditor.contextOverride = contextOverride;
+    inlineEditor.fixedRootContext = contextOverride?.name === "self"
+        ? {
+            name: contextOverride.name,
+            displayName: contextOverride.displayName || contextOverride.name,
+            typeName: contextOverride.typeName,
+            eventType: contextOverride.eventType || null
+        }
+        : null;
+    inlineEditor.hideFavoritesToolbar = true;
     inlineEditor.enumLocalizationCache = editor.enumLocalizationCache;
     inlineEditor.enumLocalizationRequests = editor.enumLocalizationRequests;
 }
@@ -665,40 +674,11 @@ export function renderPipelineStageInlineEditor(editor, stage, container) {
     syncPipelineContext(editor);
     if (!isPipelineStageEditing(editor, stage)) return;
     const state = editor.pipelineEditState;
-    if (stage?.node?.type === "listTake") {
-        const strategy = String(stage.node.strategy || "first").toLowerCase();
-        if (strategy !== "all") {
-            const inputWrap = document.createElement("div");
-            inputWrap.className = "dsl-pipeline-inline-input";
-
-            const inputId = `dsl-take-count-${Math.random().toString(36).slice(2, 10)}`;
-            const label = document.createElement("label");
-            label.textContent = "数量";
-            label.className = "dsl-pipeline-select-label";
-            label.htmlFor = inputId;
-            inputWrap.appendChild(label);
-
-            const input = document.createElement("input");
-            input.type = "number";
-            input.min = "0";
-            input.step = "1";
-            input.placeholder = "输入数量";
-            input.id = inputId;
-            input.value = state.draftCountValue || "";
-            input.className = "dsl-pipeline-inline-field";
-
-            input.addEventListener("input", (event) => {
-                state.draftCountValue = event.target.value;
-            });
-
-            inputWrap.appendChild(input);
-            container.appendChild(inputWrap);
-        } else {
-            const hint = document.createElement("div");
-            hint.className = "dsl-pipeline-empty-state";
-            hint.textContent = "当前策略无需填写数量。";
-            container.appendChild(hint);
-        }
+    if (stage?.node?.type === "listTake" && String(stage.node.strategy || "first").toLowerCase() === "all") {
+        const hint = document.createElement("div");
+        hint.className = "dsl-pipeline-empty-state";
+        hint.textContent = "当前策略无需填写数量。";
+        container.appendChild(hint);
         return;
     }
     const inlineEditor = state.editor || new editor.constructor();
@@ -708,8 +688,8 @@ export function renderPipelineStageInlineEditor(editor, stage, container) {
     inlineEditor.parentEditor = editor;
     inlineEditor.pipelineOpen = false;
     inlineEditor.pipelineOpenSource = null;
-    inlineEditor.isPipelineInline = true;
-    inlineEditor.isLightWorkspace = true;
+    inlineEditor.isPipelineInline = false;
+    inlineEditor.isLightWorkspace = false;
 
     const slot = state.slot;
     const fallbackExpectedType = slot === "filterExpression"
@@ -765,7 +745,9 @@ export function renderPipelineStageInlineEditor(editor, stage, container) {
             },
             {
                 expectedType,
-                triggeringEventContext: editor.triggeringEventContext
+                triggeringEventContext: editor.triggeringEventContext,
+                fixedRootContext: inlineEditor.fixedRootContext,
+                hideFavoritesToolbar: inlineEditor.hideFavoritesToolbar
             }
         )
         .catch((error) => {
@@ -777,46 +759,8 @@ export function commitPipelineStageEdit(editor) {
     syncPipelineContext(editor);
     const state = editor.pipelineEditState;
     if (!state?.node || !state.slot) return;
-    if (state.node.type === "listTake") {
-        const strategy = String(state.node.strategy || "first").toLowerCase();
-        const trimmedCount = String(state.draftCountValue || "").trim();
-        const previousExpression = String(state.draftExpression || "").trim();
-        if (strategy === "all") {
-            state.node.countExpression = null;
-        } else if (trimmedCount) {
-            const normalized = /^-?\d+$/.test(trimmedCount) ? trimmedCount : String(parseInt(trimmedCount, 10) || "");
-            if (normalized) {
-                const valueNode = createValueNode(normalized, "Int32", {
-                    type: "staticValue",
-                    staticValue: normalized,
-                    isAwaitingInput: false
-                });
-                state.node.setCountExpression?.(valueNode);
-            }
-        } else if (!previousExpression) {
-            const placeholder = createValueNode("", "Void", { type: "empty" });
-            state.node.setCountExpression?.(placeholder);
-        }
-
-        editor.pipelineEditState.node = null;
-        editor.pipelineEditState.slot = null;
-        editor.pipelineEditState.draftExpression = "";
-        editor.pipelineEditState.draftCountValue = "";
-        markPipelineContextDirty(editor);
-
-        const shouldRemove = strategy !== "all" && !trimmedCount && !previousExpression;
-        if (shouldRemove) {
-            const pipeline = getPipelineContext(editor);
-            const index = pipeline?.stages?.findIndex(stage => stage.node === state.node);
-            if (typeof index === "number" && index >= 0) {
-                removePipelineStage(editor, index);
-                return;
-            }
-        }
-
-        editor.updateExpressionFromAST();
-        return;
-    }
+    const isTakeStage = state.node.type === "listTake";
+    const isTakeAll = isTakeStage && String(state.node.strategy || "first").toLowerCase() === "all";
     const inlineEditor = state.editor;
     const inlineAst = inlineEditor?.workspaceAST || null;
     const isEmptyAst = inlineAst?.type === "value" && inlineAst.metadata?.type === "empty";
@@ -845,12 +789,17 @@ export function commitPipelineStageEdit(editor) {
         applyPipelineStageExpression(editor, state.node, state.slot, expression);
     }
 
+    if (isTakeAll) {
+        state.node.setCountExpression?.(null);
+        trimmed = "";
+    }
+
     editor.pipelineEditState.node = null;
     editor.pipelineEditState.slot = null;
     editor.pipelineEditState.draftExpression = "";
     editor.pipelineEditState.draftCountValue = "";
     markPipelineContextDirty(editor);
-    if (!trimmed) {
+    if (!trimmed && !isTakeAll) {
         const pipeline = getPipelineContext(editor);
         const index = pipeline?.stages?.findIndex(stage => stage.node === state.node);
         if (typeof index === "number" && index >= 0) {

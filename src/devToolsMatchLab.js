@@ -1,5 +1,6 @@
 import { getDeckOwnerQuery, getUserSession } from "./userSession.js";
 import { router } from "./router.js";
+import { setStoredValue } from "./storageFallback.js";
 
 let initialized = false;
 let handlers = [];
@@ -255,10 +256,9 @@ export async function initializeDevToolsMatchLab() {
                 handshake.guestToken = response.guestToken;
             }
 
-            try {
-                localStorage.setItem(HANDSHAKE_STORAGE_KEY, JSON.stringify(handshake));
-            } catch (err) {
-                console.warn("Failed to cache devtools handshake.", err);
+            const didStore = setStoredValue(HANDSHAKE_STORAGE_KEY, JSON.stringify(handshake));
+            if (!didStore) {
+                console.warn("Failed to cache devtools handshake: no writable storage backend.");
             }
 
             await router.navigateTo("game");

@@ -105,6 +105,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             abilityType: ability.abilityType || 1,
             priority: ability.priority || 0,
             isActive: ability.isActive !== false,
+            broadcastOnTrigger: ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true,
             cardName: ability.cardName || ability.CardName || ability.card?.name || '',
             abilitySequence: ability.abilitySequence ?? ability.sequence ?? null,
             type: normalizedType,
@@ -759,7 +760,16 @@ export class AbilityEditor extends MetadataDrivenComponent {
         // activeGroup.className += ' full-width'; // 不再强制全宽，使其适应网格布局
         formGrid.appendChild(activeGroup);
 
-        // 3. 能力关键字 (全宽，横向排列)
+        // 3. 前台播报开关
+        const broadcastSwitch = this.createToggleSwitch(
+            this.ability.broadcastOnTrigger !== false,
+            (checked) => this.updateAbility({ broadcastOnTrigger: checked }),
+            '能力触发时播报到前台'
+        );
+        const broadcastGroup = this.createFormGroup('前台播报', broadcastSwitch);
+        formGrid.appendChild(broadcastGroup);
+
+        // 4. 能力关键字 (全宽，横向排列)
         const abilityTagOptions = await this.loadAbilityTagOptions();
         const keywordOptions = abilityTagOptions.filter(opt => opt.value && String(opt.value).toLowerCase() !== 'none');
         const keywordContainer = document.createElement('div');
@@ -833,7 +843,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         tagGroup.classList.add('full-width');
         formGrid.appendChild(tagGroup);
 
-        // 4. 变量注册 (全宽)
+        // 5. 变量注册 (全宽)
         const counterGroup = document.createElement('div');
         counterGroup.className = 'counter-registration-group';
 
@@ -970,7 +980,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         counterForm.classList.add('full-width');
         formGrid.appendChild(counterForm);
 
-        // 5. 能力描述 (全宽)
+        // 6. 能力描述 (全宽)
         const descriptionInput = this.createTextInput(
             this.ability.description,
             (value) => this.updateAbility({ description: value }),
@@ -1258,6 +1268,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 auras: isAuraMode ? [auraPayload] : (cleanedAbility.auras || []),
                 counterRegistrations: cleanedAbility.counterRegistrations,
                 playerCounterRegistrations: cleanedAbility.playerCounterRegistrations,
+                broadcastOnTrigger: cleanedAbility.broadcastOnTrigger !== false,
                 isActive: cleanedAbility.isActive,
                 version: "1.0"
             })

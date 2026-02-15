@@ -83,6 +83,29 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             Assert.Empty(events);
         }
 
+        [Fact]
+        public void Frequency_OnSelectedPlayCardDefinitionIds_ReturnsCount()
+        {
+            var (context, historyService) = CreateGameContext();
+            var owner = context.GetRequestingPlayer();
+
+            var playedA1 = new CardInstance(Guid.NewGuid(), 1001, owner.PlayerId);
+            var playedA2 = new CardInstance(Guid.NewGuid(), 1001, owner.PlayerId);
+            var playedB = new CardInstance(Guid.NewGuid(), 2002, owner.PlayerId);
+
+            var gameId = context.CurrentGameState.GameId;
+            historyService.StoreEventAsync(gameId, new PlayCardEvent(owner, playedA1)).GetAwaiter().GetResult();
+            historyService.StoreEventAsync(gameId, new PlayCardEvent(owner, playedB)).GetAwaiter().GetResult();
+            historyService.StoreEventAsync(gameId, new PlayCardEvent(owner, playedA2)).GetAwaiter().GetResult();
+
+            var compiler = CreateCompilerWithRealRegistry();
+            var getter = compiler.CompileGetter<object>(
+                "context.eventHistory.events.byType(\"PlayCard\").select(self.playedCard.currentDefinition.id).frequency(1001)");
+
+            var result = getter(null!, context);
+            Assert.Equal(2, result);
+        }
+
         private static DslCompiler CreateCompilerWithRealRegistry()
         {
             var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);

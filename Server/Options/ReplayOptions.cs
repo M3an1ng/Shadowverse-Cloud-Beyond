@@ -3,6 +3,7 @@ namespace ShadowverseBeyond.Server.Options
     public sealed class ReplayOptions
     {
         public bool EnableJournalWrites { get; set; } = false;
+        public bool PersistClientDtos { get; set; } = false;
 
         public bool EnableSnapshots { get; set; } = true;
         public bool CompressSnapshots { get; set; } = true;

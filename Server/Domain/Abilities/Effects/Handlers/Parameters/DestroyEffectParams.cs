@@ -16,7 +16,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         /// Useful for logging or triggering specific Last Words variations.
         /// Defaults to "Effect".
         /// </summary>
-        // [ParameterMetadata("摧毁原因", UiControlType.TextInput, DefaultValue = "Effect", Description = "摧毁的原因描述，用于日志记录和特殊逻辑判断。")]
+        // [ParameterMetadata("破坏原因", UiControlType.TextInput, DefaultValue = "Effect", Description = "破坏的原因描述，用于日志记录和特殊逻辑判断。")]
         // public string DestroyReason { get; set; } = "Effect";
 
         // Potential future parameters:

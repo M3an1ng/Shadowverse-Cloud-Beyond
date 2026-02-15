@@ -17,19 +17,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("破坏", "当一张卡牌被破坏时触发的事件。", EventType.Destroy)]
     public class DestroyEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("摧毁原因", "卡牌被摧毁的原因。")]
+        [GameEventParameter("破坏原因", "卡牌被破坏的原因。")]
         public EventReasonSource Reason { get; }
 
-        [GameEventParameter("摧毁来源", "导致摧毁的卡牌。", DslDisplayTypeName = "事件源")]
+        [GameEventParameter("破坏来源", "导致破坏的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? DestroySource => Source?.Card;
 
-        [GameEventParameter("被摧毁的卡牌", "被摧毁的目标卡牌。", DslDisplayTypeName = "事件目标")]
+        [GameEventParameter("被破坏的卡牌", "被破坏的目标卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DestroyTarget => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("摧毁来源快照", "生成事件时记录的摧毁来源快照。", Scope = GameEventParameterScope.Input)]
+        [GameEventParameter("破坏来源快照", "生成事件时记录的破坏来源快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? DestroySourceSnapshot { get; }
 
-        [GameEventParameter("被摧毁目标快照", "生成事件时记录的被摧毁目标快照。", Scope = GameEventParameterScope.Input)]
+        [GameEventParameter("被破坏目标快照", "生成事件时记录的被破坏目标快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? DestroyTargetSnapshot { get; }
 
         public bool DestroyApplied { get; private set; }

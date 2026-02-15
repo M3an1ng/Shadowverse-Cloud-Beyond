@@ -9,6 +9,19 @@ public partial class EconomyService
 
     public async Task<UserEconomy> GetOrCreateUserEconomyAsync(Guid userId)
     {
+        if (!await UserExistsAsync(userId))
+        {
+            _logger.LogWarning("[Economy] Skip creating UserEconomy for missing user. UserId={UserId}", userId);
+            return new UserEconomy
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                Coins = 0,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+        }
+
         var userEconomy = await _context.UserEconomies
             .FirstOrDefaultAsync(ue => ue.UserId == userId);
 
@@ -37,6 +50,11 @@ public partial class EconomyService
     {
         try
         {
+            if (!await EnsurePersistedUserAsync(userId, nameof(InitializeUserEconomyAsync)))
+            {
+                return false;
+            }
+
             await GetOrCreateUserEconomyAsync(userId);
             return true;
         }
@@ -49,4 +67,3 @@ public partial class EconomyService
 
     #endregion
 }
-

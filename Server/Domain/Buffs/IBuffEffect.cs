@@ -2,6 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common; // For StatType, ModifierLayer etc. if defined there
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities; // For CardInstance etc.
+using System.ComponentModel;
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
 {
@@ -162,12 +163,16 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     public enum ModifierLayer
     {
         /// <summary> Modifies the base value (rarely used by buffs). </summary>
+        [Description("基础")]
         Base,
         /// <summary> Additive bonuses (+X). </summary>
+        [Description("修正")]
         Additive,
         /// <summary> Multiplicative bonuses (*X). </summary>
+        [Description("倍乘")]
         Multiplicative,
         /// <summary> Sets the value directly (=X), usually applied last. </summary>
+        [Description("设置")]
         Set
     }
 
@@ -177,8 +182,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     /// </summary>
     public enum StatType
     {
+        [Description("攻击力")]
         Attack,
+        [Description("生命值")]
         Health,
+        [Description("费用")]
         Cost
         // Add other relevant stats (MaxEP, etc.)
     }

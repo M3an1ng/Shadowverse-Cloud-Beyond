@@ -14,17 +14,26 @@ namespace ShadowverseBeyond.Server.Domain.Events
         AbilityEditorCategories.PositionChangeLabel)]
     public class AddEmblemEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("添加的纹章", "被添加到纹章区的卡牌列表。")]
-        public List<CardInstance> CardsToAdd { get; }
+        [GameEventParameter("添加的纹章", "被添加到纹章区的卡牌列表。", DslDisplayTypeName = "事件目标")]
+        public List<CardInstance> CardsToAdd => Target
+            .Where(t => t.Card != null)
+            .Select(t => t.Card!)
+            .ToList();
 
-        [GameEventParameter("目标玩家", "接收纹章的玩家。", DslDisplayTypeName = "事件目标")]
-        public PlayerState? TargetPlayer => Target.FirstOrDefault()?.Player;
+        [GameEventParameter("目标玩家", "接收纹章的玩家。", DslDisplayTypeName = "事件源")]
+        public PlayerState? TargetPlayer => Source?.Player;
 
         public AddEmblemEvent(PlayerState targetPlayer, List<CardInstance> cardsToAdd, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.AddEmblem, eventId, timestamp)
         {
-            Target.Add(TargetInfo.ForPlayer(targetPlayer));
-            CardsToAdd = cardsToAdd ?? new List<CardInstance>();
+            Source = TargetInfo.ForPlayer(targetPlayer ?? throw new ArgumentNullException(nameof(targetPlayer)));
+            foreach (var card in cardsToAdd ?? new List<CardInstance>())
+            {
+                if (card != null)
+                {
+                    Target.Add(TargetInfo.ForCard(card));
+                }
+            }
         }
 
         public DomainOperationResult Commit(GameContext context)

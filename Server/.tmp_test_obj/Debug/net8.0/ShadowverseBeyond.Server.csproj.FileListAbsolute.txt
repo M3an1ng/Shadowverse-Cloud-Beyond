@@ -1,6 +1,7 @@
 D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\appsettings.Development.json
 D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\appsettings.json
 D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\appsettings.Production.json
+D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\ShadowverseBeyond.Server.exe
 D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\ShadowverseBeyond.Server.deps.json
 D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\ShadowverseBeyond.Server.runtimeconfig.json
 D:\workspace\Shadowverse-beyond\Server\.tmp_test_out\Debug\net8.0\ShadowverseBeyond.Server.dll

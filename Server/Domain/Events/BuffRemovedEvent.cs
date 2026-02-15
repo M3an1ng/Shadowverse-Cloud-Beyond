@@ -28,11 +28,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("移除来源", "导致Buff移除的来源卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? RemovalSource => Source?.Card;
 
-        public BuffRemovedEvent(Buff removedBuff, CardInstance? source, string removalReason = "manual", Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("移除目标", "失去Buff的目标卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? RemovalTarget => Target.FirstOrDefault()?.Card;
+
+        public BuffRemovedEvent(Buff removedBuff, CardInstance? target, CardInstance? source, string removalReason = "manual", Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.BuffRemoved, eventId, timestamp)
         {
             RemovedBuff = removedBuff ?? throw new ArgumentNullException(nameof(removedBuff));
             RemovalReason = removalReason ?? "unknown";
+            if (target != null)
+            {
+                Target.Add(TargetInfo.ForCard(target));
+            }
             if (source != null)
             {
                 Source = TargetInfo.ForCard(source);
@@ -42,7 +49,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public DomainOperationResult Commit(GameContext context)
         {
             var result = new DomainOperationResult { Success = true };
-            var targetCard = context.CurrentGameState.FindCardInstance(RemovedBuff.TargetCardInstanceId);
+            var targetCard = RemovalTarget ?? context.CurrentGameState.FindCardInstance(RemovedBuff.TargetCardInstanceId);
             var affectsHealth = RemovedBuff.GetStatModifications().Any(mod => mod.Stat == StatType.Health);
             var previousCurrentHealth = 0;
             if (affectsHealth && targetCard != null && (targetCard.IsFollower || targetCard.IsLeader))

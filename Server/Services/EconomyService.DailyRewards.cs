@@ -9,6 +9,11 @@ public partial class EconomyService
 
     public async Task<DailyRewardDto?> ClaimDailyRewardAsync(Guid userId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(ClaimDailyRewardAsync)))
+        {
+            return null;
+        }
+
         try
         {
             return await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -45,6 +50,11 @@ public partial class EconomyService
 
     public async Task<bool> CanClaimDailyRewardAsync(Guid userId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(CanClaimDailyRewardAsync)))
+        {
+            return false;
+        }
+
         var userDailyReward = await GetOrCreateUserDailyRewardAsync(userId);
         return userDailyReward.CanClaimDailyReward();
     }

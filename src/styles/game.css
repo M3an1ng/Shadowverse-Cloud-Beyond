@@ -215,6 +215,7 @@
         flex-direction: column;
         align-items: flex-start;
     }
+
     .grant-ability-actions {
         width: 100%;
         justify-content: flex-end;
@@ -222,9 +223,76 @@
 }
 
 /* --- Player Stats (HP, EP, SEP) --- */
+.player-info-collapse-btn {
+    position: absolute;
+    top: 5px;
+    right: -5px;
+    width: 15px;
+    height: 15px;
+    border-radius: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(15, 23, 42, 0.58);
+    color: rgba(241, 245, 249, 0.9);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 2;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.player-info-collapse-btn:hover {
+    border-color: rgba(191, 219, 254, 0.72);
+    background: rgba(30, 41, 59, 0.86);
+    color: rgba(255, 255, 255, 0.96);
+}
+
+.player-info.is-collapsed {
+    width: 72px;
+    padding: 8px;
+}
+
+.player-info.is-collapsed .player-stats {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+    background: transparent;
+}
+
+.player-info.is-collapsed .stats-header {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+    padding-top: 10px;
+}
+
+.player-info.is-collapsed .stats-info,
+.player-info.is-collapsed .hp-display,
+.player-info.is-collapsed .emblem-zone,
+.player-info.is-collapsed .resources-grid {
+    display: none;
+}
+
+.player-info.is-collapsed .stats-avatar {
+    margin-right: 0;
+}
+
+.opponent-info.is-collapsed .stats-header {
+    justify-content: flex-end;
+}
+
+.player-info-self.is-collapsed .stats-header {
+    justify-content: flex-start;
+}
+
 .player-stats {
     display: flex;
     flex-direction: column;
+    position: relative;
     gap: 8px;
     min-width: 280px;
     /* Increased width for new layout */
@@ -374,7 +442,7 @@
 
 .class-name {
     font-size: var(--text-sm);
-    font-family:var(--font-line);
+    font-family: var(--font-line);
     color: var(--color-secondary);
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -714,7 +782,6 @@
 /* Collapsed State */
 #game-log-container.collapsed {
     width: 40px;
-    /* Slightly wider for better click target */
     height: 40px;
     background: rgba(0, 0, 0, 0.6);
     border-color: rgba(255, 255, 255, 0.1);
@@ -726,7 +793,6 @@
 #game-log-container.collapsed:hover {
     background: rgba(255, 255, 255, 0.15);
     width: 40px;
-    /* Keep fixed width in collapsed state (no left occupancy) */
     box-shadow: -2px 0 10px rgba(255, 255, 255, 0.1);
 }
 
@@ -777,40 +843,6 @@
     flex-shrink: 0;
 }
 
-/* Toggle Button */
-.log-toggle-btn {
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 40px;
-    height: 40px;
-    background: transparent;
-    border: none;
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px;
-    transition: color 0.2s, transform 0.3s ease;
-    flex-shrink: 0;
-}
-
-/* Rotate icon when expanded */
-#game-log-container.expanded .log-toggle-btn {
-    transform: rotate(180deg);
-}
-
-.log-toggle-btn:hover {
-    color: #fff;
-}
-
-.log-toggle-btn svg {
-    width: 100%;
-    height: 100%;
-    fill: currentColor;
-}
-
 /* Log Title Group (left side) */
 .log-title-group {
     display: flex;
@@ -822,6 +854,7 @@
     transform: translateX(-8px);
     transition: all 0.3s ease;
     pointer-events: none;
+    max-width: 104px;
 }
 
 .log-title-main {
@@ -848,25 +881,416 @@
     transform: translateX(0);
 }
 
+.log-toggle-btn,
+.log-chat-toggle-btn {
+    position: absolute;
+    top: 0;
+    width: 40px;
+    height: 40px;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    transition: color 0.2s ease, transform 0.24s ease;
+    flex-shrink: 0;
+    pointer-events: auto;
+    box-sizing: border-box;
+}
+
+/* Rotate icon when expanded */
+#game-log-container.expanded .log-toggle-btn {
+    transform: rotate(180deg);
+}
+
+.log-toggle-btn {
+    right: 0;
+    z-index: 2;
+}
+
+.log-chat-toggle-btn {
+    right: 40px;
+    z-index: 2;
+}
+
+.log-toggle-btn:hover {
+    color: #fff;
+}
+
+.log-toggle-btn.is-active {
+    color: #fff;
+}
+
+.log-toggle-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.log-chat-toggle-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.log-chat-toggle-btn:hover {
+    color: #fff;
+}
+
+.log-chat-toggle-btn.is-active {
+    color: #fff;
+}
+
+.log-panel-content {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.log-panel-view {
+    display: none;
+    height: 100%;
+}
+
+.log-panel-view.is-active {
+    display: flex;
+    flex-direction: column;
+}
+
 /* Log Content Wrapper */
 #game-log-content {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px 12px;
     opacity: 1;
     transition: opacity 0.2s ease-in;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    mask-image: none;
+    -webkit-mask-image: none;
+}
 
-    /* Gradient Mask for "Fade-in" effect */
-    /* Top is transparent (faded out), bottom is opaque (visible) */
+#game-log-content.has-scroll-up {
     mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
 }
 
-#game-log-container.collapsed #game-log-content {
+#game-log-container.collapsed .log-panel-content {
     display: none;
     opacity: 0;
+}
+
+/* Chat View */
+#game-chat-content {
+    padding: 8px 12px;
+    gap: 6px;
+}
+
+.chat-message-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    mask-image: none;
+    -webkit-mask-image: none;
+}
+
+#game-chat-content.has-scroll-up .chat-message-list {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
+}
+
+.chat-message-entry {
+    position: relative;
+    margin-bottom: 10px;
+    padding: 0 0 0 42px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    line-height: 1.35;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.82);
+}
+
+.chat-message-entry:last-child {
+    margin-bottom: 0;
+}
+
+.chat-message-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    margin: 0;
+}
+
+.chat-message-avatar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    /* border: 1px solid rgba(255, 255, 255, 0.36); */
+    background: rgba(15, 23, 42, 0.9);
+    color: rgba(226, 232, 240, 0.92);
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.chat-message-avatar.has-image {
+    border-color: rgba(255, 255, 255, 0.48);
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55);
+}
+
+.chat-message-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.chat-message-author {
+    max-width: 62%;
+    margin-left: 5px;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(226, 232, 240, 0.96);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-message-order-badge {
+    min-width: 30px;
+    height: 16px;
+    padding: 0 5px;
+    font-size: 10px;
+}
+
+.chat-message-time {
+    margin-left: auto;
+    margin-right: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(148, 163, 184, 0.9);
+    flex-shrink: 0;
+}
+
+.chat-message-text {
+    display: inline-block;
+    margin-top: 4px;
+    margin-left: 0;
+    width: fit-content;
+    max-width: min(100%, 520px);
+    padding: 4px 8px;
+    border-radius: 12px;
+    background: rgba(30, 41, 59, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    font-size: 14px;
+    line-height: 1.45;
+    color: rgba(241, 245, 249, 0.96);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.chat-message-entry.is-spectator .chat-message-author {
+    color: #fcd34d;
+}
+
+.chat-message-entry.is-system .chat-message-author {
+    margin-left: 0;
+    max-width: none;
+    color: rgba(148, 163, 184, 0.95);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.chat-message-entry.is-system {
+    margin: 8px 0;
+    padding-left: 0;
+    text-align: center;
+}
+
+.chat-message-entry.is-system .chat-message-avatar {
+    display: none;
+}
+
+.chat-message-entry.is-system .chat-message-meta {
+    justify-content: center;
+    gap: 8px;
+    min-height: 16px;
+}
+
+.chat-message-entry.is-system .chat-message-time {
+    margin: 0;
+    font-size: 10px;
+    color: rgba(100, 116, 139, 0.9);
+}
+
+.chat-message-entry.is-system .chat-message-text {
+    display: inline-block;
+    width: auto;
+    max-width: 100%;
+    margin-top: 2px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(226, 232, 240, 0.9);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.chat-message-entry.is-self .chat-message-text {
+    background: rgba(30, 64, 175, 0.35);
+    border-color: rgba(96, 165, 250, 0.35);
+}
+
+.chat-message-entry.is-opponent .chat-message-text {
+    background: rgba(69, 10, 10, 0.34);
+    border-color: rgba(248, 113, 113, 0.3);
+}
+
+.chat-input-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-send-status {
+    min-height: 14px;
+    font-size: 10px;
+    color: rgba(148, 163, 184, 0.9);
+}
+
+.chat-send-status[data-tone="error"] {
+    color: rgba(252, 165, 165, 0.95);
+}
+
+.chat-send-status[data-tone="success"] {
+    color: rgba(134, 239, 172, 0.95);
+}
+
+.chat-input {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.7);
+    color: rgba(241, 245, 249, 0.95);
+    padding: 0 8px;
+    font-size: 12px;
+    font-family: var(--font-sans);
+}
+
+.chat-input:focus {
+    outline: none;
+    border-color: rgba(125, 211, 252, 0.8);
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.45);
+}
+
+.chat-send-btn {
+    height: 30px;
+    min-width: 52px;
+    border: 1px solid rgba(59, 130, 246, 0.55);
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.8), rgba(30, 64, 175, 0.88));
+    color: rgba(248, 250, 252, 0.96);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+
+.chat-send-btn:hover {
+    filter: brightness(1.08);
+}
+
+.chat-barrage-root {
+    position: fixed;
+    top: 72px;
+    left: 16px;
+    right: 16px;
+    height: 148px;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 9300;
+}
+
+.chat-barrage-item {
+    position: absolute;
+    top: 0;
+    left: 0;
+    min-height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(241, 245, 249, 0.96);
+    font-size: 20px;
+    font-family: var(--font-line);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    box-shadow: none;
+    text-shadow: 0 1px 4px rgba(2, 6, 23, 0.85);
+    will-change: transform;
+}
+
+.chat-barrage-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    flex: 0 0 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    /* border: 1px solid rgba(255, 255, 255, 0.22); */
+    background: rgba(15, 23, 42, 0.78);
+    color: rgba(241, 245, 249, 0.9);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.chat-barrage-avatar.has-image {
+    border-color: rgba(148, 163, 184, 0.55);
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.chat-barrage-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.chat-barrage-text {
+    line-height: 1.25;
 }
 
 .log-entry {
@@ -917,6 +1341,24 @@
     color: #fca5a5;
 }
 
+.log-token-clickable {
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.log-token-clickable:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.log-token-clickable:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.85);
+}
+
 /* #game-container layout is now handled in src/styles/layout.css */
 /* Removed conflicting grid and max-width styles */
 
@@ -955,9 +1397,65 @@
     box-shadow: var(--shadow-md);
     position: relative;
     cursor: pointer;
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
     flex-shrink: 0;
     color: var(--color-primary);
+}
+
+.card-fade-enter {
+    animation: card-fade-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.card-fade-exit {
+    animation: card-fade-out 190ms ease-in forwards;
+}
+
+.card-fade-move {
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
+    will-change: transform, opacity;
+}
+
+.card-fade-exit-overlay {
+    pointer-events: none;
+}
+
+@keyframes card-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.96);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes card-fade-out {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+
+    to {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.96);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .card-fade-enter,
+    .card-fade-exit {
+        animation: none !important;
+    }
+
+    .card-fade-move {
+        transition: none !important;
+    }
+
+    .field-card.super-evolved::before {
+        animation: none !important;
+    }
 }
 
 .card:hover {
@@ -965,6 +1463,43 @@
     box-shadow: var(--shadow-lg);
     border-color: var(--color-primary);
     z-index: 20;
+}
+
+.field-card.super-evolved::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    border: 1px solid rgba(251, 113, 133, 0.75);
+    box-shadow:
+        0 0 8px rgba(251, 113, 133, 0.65),
+        0 0 18px rgba(236, 72, 153, 0.35),
+        inset 0 0 8px rgba(251, 113, 133, 0.32);
+    pointer-events: none;
+    z-index: 6;
+    animation: super-evolved-edge-glow 1.9s ease-in-out infinite alternate;
+}
+
+.field-card.super-evolved .name {
+    text-shadow: 0 0 6px rgba(251, 113, 133, 0.45);
+}
+
+@keyframes super-evolved-edge-glow {
+    from {
+        border-color: rgba(251, 113, 133, 0.55);
+        box-shadow:
+            0 0 6px rgba(251, 113, 133, 0.5),
+            0 0 14px rgba(236, 72, 153, 0.25),
+            inset 0 0 6px rgba(251, 113, 133, 0.24);
+    }
+
+    to {
+        border-color: rgba(253, 164, 175, 0.9);
+        box-shadow:
+            0 0 12px rgba(253, 164, 175, 0.82),
+            0 0 22px rgba(244, 114, 182, 0.45),
+            inset 0 0 12px rgba(253, 164, 175, 0.36);
+    }
 }
 
 .card-back {
@@ -1657,6 +2192,188 @@
     }
 }
 
+/* Ability trigger toast */
+.ability-trigger-toast-root {
+    position: fixed;
+    left: 16px;
+    bottom: 220px;
+    width: min(300px, 34vw);
+    z-index: 9400;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ability-trigger-toast-item {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 320ms ease, transform 320ms ease;
+    will-change: transform, opacity;
+}
+
+.ability-trigger-toast-item.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.ability-trigger-toast-item.is-hiding {
+    opacity: 0;
+    transform: translateY(-8px);
+}
+
+.ability-trigger-toast {
+    width: 100%;
+    border-radius: 7px;
+    overflow: hidden;
+    border: 1px solid rgba(96, 165, 250, 0.38);
+    box-shadow:
+        0 8px 18px rgba(0, 0, 0, 0.36),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    background: linear-gradient(180deg, rgba(8, 14, 22, 0.94), rgba(12, 19, 30, 0.94));
+}
+
+.ability-trigger-toast.ability-trigger-toast--ally {
+    border-color: rgba(96, 165, 250, 0.38);
+}
+
+.ability-trigger-toast.no-detail {
+    border-color: rgba(96, 165, 250, 0.3);
+}
+
+.ability-trigger-toast-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 50px;
+    padding: 8px 10px;
+    background: linear-gradient(90deg, rgba(16, 74, 130, 0.9), rgba(12, 46, 84, 0.9));
+}
+
+.ability-trigger-toast.ability-trigger-toast--enemy {
+    border-color: rgba(248, 113, 113, 0.45);
+    box-shadow:
+        0 8px 18px rgba(0, 0, 0, 0.36),
+        inset 0 0 0 1px rgba(248, 113, 113, 0.08);
+}
+
+.ability-trigger-toast.ability-trigger-toast--enemy.no-detail {
+    border-color: rgba(248, 113, 113, 0.35);
+}
+
+.ability-trigger-toast.ability-trigger-toast--enemy .ability-trigger-toast-header {
+    background: linear-gradient(90deg, rgba(153, 27, 27, 0.9), rgba(127, 29, 29, 0.9));
+}
+
+.ability-trigger-toast.no-detail .ability-trigger-toast-header {
+    min-height: 46px;
+    padding-bottom: 9px;
+}
+
+.ability-trigger-toast-icon {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.44);
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.45);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-line);
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(226, 232, 240, 0.88);
+}
+
+.ability-trigger-toast-icon.is-empty {
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.ability-trigger-toast-title-group {
+    min-width: 0;
+}
+
+.ability-trigger-toast-title {
+    font-family: var(--font-line);
+    font-size: 16px;
+    line-height: 1.2;
+    color: rgba(240, 249, 255, 0.98);
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ability-trigger-toast-subtitle {
+    margin-top: 1px;
+    font-family: var(--font-line);
+    font-size: 11px;
+    line-height: 1.2;
+    color: rgba(191, 219, 254, 0.86);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ability-trigger-toast-body {
+    padding: 8px 10px;
+    border-top: 1px solid rgba(96, 165, 250, 0.2);
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.92));
+    font-family: var(--font-line);
+    font-size: 14px;
+    line-height: 1.45;
+    color: rgba(226, 232, 240, 0.95);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    white-space: pre-wrap;
+}
+
+.ability-trigger-toast.ability-trigger-toast--enemy .ability-trigger-toast-subtitle {
+    color: rgba(254, 202, 202, 0.9);
+}
+
+.ability-trigger-toast.ability-trigger-toast--enemy .ability-trigger-toast-body {
+    border-top-color: rgba(248, 113, 113, 0.28);
+    background: linear-gradient(180deg, rgba(69, 10, 10, 0.86), rgba(39, 12, 12, 0.9));
+}
+
+@media (max-width: 900px) {
+    .ability-trigger-toast-root {
+        width: min(360px, 68vw);
+    }
+
+    .ability-trigger-toast-title {
+        font-size: 14px;
+    }
+
+    .ability-trigger-toast-body {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 600px) {
+    .ability-trigger-toast-root {
+        left: 8px;
+        width: min(320px, calc(100vw - 16px));
+    }
+
+    .ability-trigger-toast-title {
+        font-size: 13px;
+    }
+
+    .ability-trigger-toast-subtitle {
+        font-size: 10px;
+    }
+
+    .ability-trigger-toast-body {
+        font-size: 12px;
+        padding: 7px 9px;
+    }
+}
+
 /* Fusion animation */
 .fusion-float-card {
     position: fixed;
@@ -2162,460 +2879,3 @@ img.badge-icon {
     object-fit: cover;
     filter: none;
 }
-
-/* Specific Badge Styles - Only Icon Color Changes */
-
-/* Ward (守护) - Blue/Silver */
-.keyword-badge[data-keyword="ward"] {
-    color: #60a5fa;
-    /* Blue-400 */
-}
-
-/* SpellWard (法术守护) - Teal */
-.keyword-badge[data-keyword="spellward"] {
-    color: #2dd4bf;
-    /* Teal-400 */
-}
-
-/* Rush (突进) - Yellow */
-.keyword-badge[data-keyword="rush"] {
-    color: #facc15;
-    /* Yellow-400 */
-}
-
-/* Storm (疾驰) - Cyan */
-.keyword-badge[data-keyword="storm"] {
-    color: #22d3ee;
-    /* Cyan-400 */
-}
-
-/* Bane (必杀) - Purple */
-.keyword-badge[data-keyword="bane"] {
-    color: #c084fc;
-    /* Purple-400 */
-}
-
-/* Ambush (潜行) - Gray */
-.keyword-badge[data-keyword="ambush"] {
-    color: #9ca3af;
-    /* Gray-400 */
-}
-
-/* Drain (吸血) - Red */
-.keyword-badge[data-keyword="drain"] {
-    color: #f87171;
-    /* Red-400 */
-}
-
-/* Pressure (威慑) - Violet */
-.keyword-badge[data-keyword="pressure"] {
-    color: #a78bfa;
-    /* Violet-400 */
-}
-
-/* Shackle (无法攻击) - Stone */
-.keyword-badge[data-keyword="shackle"] {
-    color: #a8a29e;
-    /* Stone-400 */
-}
-
-/* CannotUse (无法使用) - Rose */
-.keyword-badge[data-keyword="cannotuse"] {
-    color: #fb7185;
-    /* Rose-400 */
-}
-
-/* Shield (屏障) - Sky Blue */
-.keyword-badge[data-keyword="shield"] {
-    color: #7dd3fc;
-    /* Sky-300 */
-}
-
-/* DestroyResist (无法被破坏) - White */
-.keyword-badge[data-keyword="destroyresist"] {
-    color: #f8fafc;
-    /* Slate-50 */
-}
-
-/* AbilityResist (抗能力伤害) - Indigo */
-.keyword-badge[data-keyword="abilityresist"] {
-    color: #818cf8;
-    /* Indigo-400 */
-}
-
-/* Aura (灵气) - Amber */
-.keyword-badge[data-keyword="aura"] {
-    color: #fbbf24;
-    /* Amber-400 */
-}
-
-/* --- Comparative Card Styles (Full Card Effects) --- */
-
-/* Ward (守护) - Silver Shield/Border */
-.card.style-ward {
-    box-shadow: 0 0 0 2px #94a3b8, 0 4px 12px rgba(148, 163, 184, 0.4);
-    border-color: #cbd5e1;
-    z-index: 5;
-}
-
-/* Rush (突进) - Yellow Speed/Momentum */
-.card.style-rush {
-    border-bottom: 3px solid #eab308;
-}
-.card.style-rush::after {
-    content: '>>>';
-    position: absolute;
-    bottom: 2px;
-    left: 50%;
-    transform: translateX(-50%) skewX(-15deg);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 900;
-    color: #eab308;
-    letter-spacing: -1px;
-    opacity: 0.8;
-    pointer-events: none;
-}
-
-/* Storm (疾驰) - Cyan Lightning/Energy */
-.card.style-storm {
-    border-color: #06b6d4;
-    animation: style-storm-pulse 1.5s infinite alternate ease-in-out;
-}
-@keyframes style-storm-pulse {
-    0% { box-shadow: 0 0 8px rgba(6, 182, 212, 0.4); }
-    100% { box-shadow: 0 0 16px rgba(6, 182, 212, 0.8), 0 0 4px #22d3ee; }
-}
-
-/* Bane (必杀) - Purple Poison/Deadly */
-.card.style-bane .attack {
-    background-color: #7e22ce !important;
-    color: #fff !important;
-    box-shadow: 0 0 6px rgba(126, 34, 206, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-/* Ambush (潜行) - Smoke/Shadow */
-.card.style-ambush {
-    opacity: 0.8;
-    filter: grayscale(0.4);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
-}
-.card.style-ambush::before {
-    content: '';
-    position: absolute;
-    inset: -4px;
-    background: radial-gradient(circle at center, transparent 30%, rgba(0, 0, 0, 0.6) 100%);
-    border-radius: var(--radius-md);
-    pointer-events: none;
-    z-index: 15;
-    animation: style-ambush-smoke 4s infinite alternate;
-}
-@keyframes style-ambush-smoke {
-    0% { opacity: 0.6; transform: scale(1); }
-    100% { opacity: 0.9; transform: scale(1.02); }
-}
-
-/* Drain (吸血) - Crimson Glow */
-.card.style-drain {
-    border-color: #be123c;
-    box-shadow: 0 0 12px rgba(190, 18, 60, 0.4);
-}
-.card.style-drain::after {
-    content: '';
-    position: absolute;
-    top: -10px;
-    right: 50%;
-    transform: translateX(50%);
-    font-size: 12px;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
-    animation: style-drain-drip 2s infinite ease-in-out;
-}
-@keyframes style-drain-drip {
-    0%, 100% { transform: translateX(50%) translateY(0); }
-    50% { transform: translateX(50%) translateY(3px); }
-}
-
-/* Pressure (威慑) - Dark Pulse */
-.card.style-pressure {
-    animation: style-pressure-pulse 2s infinite;
-}
-@keyframes style-pressure-pulse {
-    0% { box-shadow: 0 0 0 0 rgba(88, 28, 135, 0.7); }
-    70% { box-shadow: 0 0 0 10px rgba(88, 28, 135, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(88, 28, 135, 0); }
-}
-
-/* Shackle (无法攻击) - Locked/Chains */
-.card.style-shackle {
-    filter: grayscale(0.8) brightness(0.7);
-    cursor: not-allowed;
-}
-.card.style-shackle::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 24px;
-    opacity: 0.8;
-    z-index: 25;
-}
-
-/* Shield (屏障) - Energy Bubble */
-.card.style-shield::before {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border: 1px solid rgba(147, 197, 253, 0.6);
-    border-radius: 10px;
-    background: radial-gradient(circle at 50% 30%, rgba(191, 219, 254, 0.2), transparent 70%);
-    box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
-    pointer-events: none;
-    z-index: 20;
-}
-
-/* DestroyResist (无法被破坏) - Diamond/Indestructible */
-.card.style-destroy-resist {
-    border: 1px solid #e2e8f0;
-    background: linear-gradient(135deg, var(--color-surface) 0%, #334155 100%);
-}
-.card.style-destroy-resist::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(45deg, transparent 45%, rgba(255, 255, 255, 0.4) 50%, transparent 55%);
-    background-size: 200% 200%;
-    animation: style-metal-sheen 3s infinite linear;
-    pointer-events: none;
-    z-index: 2;
-}
-@keyframes style-metal-sheen {
-    0% { background-position: 100% 100%; }
-    100% { background-position: 0% 0%; }
-}
-
-/* Aura (灵气) - Holy Shimmer */
-.card.style-aura {
-    position: relative;
-    overflow: hidden;
-}
-.card.style-aura::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.15) 50%, transparent 70%);
-    background-size: 200% 100%;
-    animation: style-aura-shine 3s linear infinite;
-    pointer-events: none;
-    z-index: 1;
-}
-@keyframes style-aura-shine {
-    0% { background-position: 100% 0; }
-    100% { background-position: -100% 0; }
-}
-
-
-/* --- Modern Style Effects (Cyber/Holographic) --- */
-
-/* Modern Ward: Hex Shield */
-.card.modern-ward::before {
-    content: '';
-    position: absolute;
-    inset: -4px;
-    background: 
-        repeating-linear-gradient(60deg,
-            transparent 0,
-            transparent 9px,
-            rgba(56, 189, 248, 0.3) 10px,
-            transparent 11px
-        ),
-        repeating-linear-gradient(-60deg,
-            transparent 0,
-            transparent 9px,
-            rgba(56, 189, 248, 0.3) 10px,
-            transparent 11px
-        );
-    z-index: 20;
-    pointer-events: none;
-    opacity: 0.6;
-    mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
-    animation: hex-scan 3s linear infinite;
-    border: 1px solid rgba(56, 189, 248, 0.5);
-    border-radius: var(--radius-md);
-    box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
-}
-
-@keyframes hex-scan {
-    0% { background-position: 0 0; }
-    100% { background-position: 20px 34px; }
-}
-
-/* Modern Storm: Electric Arcs */
-.card.modern-storm {
-    box-shadow: 0 0 10px #06b6d4, 0 0 20px #06b6d4, inset 0 0 10px #06b6d4;
-    animation: electric-pulse 0.1s infinite alternate;
-}
-
-.card.modern-storm::after {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border: 2px solid #22d3ee;
-    clip-path: polygon(
-        0% 0%, 100% 0%, 100% 100%, 0% 100%, 
-        0% 40%, 10% 30%, 0% 20%, 
-        0% 80%, 10% 90%, 0% 100%
-    );
-    animation: lightning-twitch 2s infinite steps(5);
-    z-index: 25;
-}
-
-@keyframes electric-pulse {
-    0% { box-shadow: 0 0 5px #06b6d4; }
-    100% { box-shadow: 0 0 15px #22d3ee; }
-}
-
-@keyframes lightning-twitch {
-    0%, 100% { clip-path: inset(0 0 0 0); }
-    5% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 40%, 5% 45%, 0 50%); }
-    10% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 90% 90%, 95% 95%, 90% 100%); }
-}
-
-/* Modern Rush: Speed Lines */
-.card.modern-rush {
-    transform: skewX(-5deg);
-    transition: transform 0.3s;
-}
-
-.card.modern-rush::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, 
-        transparent 0%, 
-        rgba(234, 179, 8, 0.1) 50%, 
-        rgba(234, 179, 8, 0.4) 100%);
-    z-index: 1;
-    opacity: 0;
-    animation: speed-lines 1s infinite linear;
-    pointer-events: none;
-}
-
-.card.modern-rush:hover::before {
-    opacity: 1;
-}
-
-@keyframes speed-lines {
-    0% { transform: translateX(-100%); opacity: 0; }
-    50% { opacity: 1; }
-    100% { transform: translateX(100%); opacity: 0; }
-}
-
-/* Modern Bane: Venomous Ooze */
-.card.modern-bane {
-    border: 1px solid #7e22ce;
-}
-
-.card.modern-bane::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: radial-gradient(circle at bottom, rgba(126, 34, 206, 0.6), transparent 70%);
-    filter: blur(4px);
-    mix-blend-mode: color-dodge;
-    animation: venom-pulse 3s infinite ease-in-out;
-    pointer-events: none;
-}
-
-@keyframes venom-pulse {
-    0%, 100% { opacity: 0.4; transform: scaleY(0.8); }
-    50% { opacity: 0.8; transform: scaleY(1.1); }
-}
-
-/* Modern Ambush: Glitch/Stealth */
-.card.modern-ambush {
-    animation: glitch-anim 3s infinite;
-}
-
-.card.modern-ambush::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, #000 3px);
-    pointer-events: none;
-    z-index: 20;
-    opacity: 0.3;
-}
-
-@keyframes glitch-anim {
-    0% { clip-path: inset(0 0 0 0); transform: translate(0); filter: grayscale(0.5); }
-    92% { clip-path: inset(0 0 0 0); transform: translate(0); filter: grayscale(0.5); }
-    94% { clip-path: inset(10% 0 80% 0); transform: translate(-2px, 2px); filter: grayscale(1) invert(1); }
-    96% { clip-path: inset(80% 0 5% 0); transform: translate(2px, -2px); filter: grayscale(1); }
-    98% { clip-path: inset(40% 0 40% 0); transform: translate(-2px, 0); }
-    100% { clip-path: inset(0 0 0 0); transform: translate(0); filter: grayscale(0.5); }
-}
-
-/* Modern DestroyResist: Holographic Foil */
-.card.modern-destroy-resist::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(135deg, 
-        rgba(255,0,0,0.2) 0%, 
-        rgba(255,154,0,0.2) 10%, 
-        rgba(208,222,33,0.2) 20%, 
-        rgba(79,220,74,0.2) 30%, 
-        rgba(63,218,216,0.2) 40%, 
-        rgba(47,201,226,0.2) 50%, 
-        rgba(28,127,238,0.2) 60%, 
-        rgba(95,21,242,0.2) 70%, 
-        rgba(186,12,248,0.2) 80%, 
-        rgba(251,7,217,0.2) 90%, 
-        rgba(255,0,0,0.2) 100%
-    );
-    background-size: 300% 300%;
-    mix-blend-mode: overlay;
-    animation: holo-shift 4s linear infinite;
-    pointer-events: none;
-    z-index: 15;
-    border-radius: var(--radius-md);
-    border: 1px solid rgba(255,255,255,0.4);
-}
-
-@keyframes holo-shift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-}
-
-/* Modern Drain: Life Siphon */
-.card.modern-drain {
-    box-shadow: 0 0 15px rgba(220, 38, 38, 0.4);
-}
-
-.card.modern-drain::after {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border-radius: var(--radius-md);
-    background: conic-gradient(from 0deg, transparent, rgba(220, 38, 38, 0.8), transparent);
-    animation: rotate-drain 2s linear infinite;
-    z-index: -1; /* Behind card if possible, but card has bg */
-}
-
-/* Fix z-index for border effect */
-.card.modern-drain {
-    z-index: 1;
-}
-
-@keyframes rotate-drain {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-

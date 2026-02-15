@@ -462,3 +462,4 @@ D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_test_obj\Debug\net8.0\refint\S
 D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.pdb
 D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.genruntimeconfig.cache
 D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_test_obj\Debug\net8.0\ref\ShadowverseBeyond.Server.Tests.dll
+D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_test_out\Debug\net8.0\ShadowverseBeyond.Server.exe

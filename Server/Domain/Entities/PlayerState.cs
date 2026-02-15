@@ -61,6 +61,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public bool IsFirst { get; set; } = false;
         [DslExposable("职业", Description = "玩家本局使用卡组的职业")]
         public CardClass Class { get; set; } = CardClass.Neutral;
+        public DeckEnvironment Environment { get; set; } = DeckEnvironment.Open;
+        public Guid? UserDeckId { get; set; }
         public string DisplayName { get; set; } = string.Empty;
         public string AvatarUrl { get; set; } = string.Empty;
         public bool HasCompletedMulligan { get; set; } = false;
@@ -99,6 +101,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("初始卡组", Description = "玩家进入游戏时使用的卡组（不会随对局变化）")]
         public List<CardInstance> InitialDeck { get; set; } = new List<CardInstance>();
+
+        /// <summary>
+        /// Immutable initial deck definition ids captured at game start.
+        /// Used by post-match statistics to avoid runtime card mutation pollution.
+        /// </summary>
+        public List<int> InitialDeckDefinitionIds { get; set; } = new List<int>();
 
         [DslExposable("战场", Description = "玩家战场上的卡牌列表")]
         public List<CardInstance> Field { get; set; } = new List<CardInstance>();
@@ -144,6 +152,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Hand = new List<CardInstance>();
             Deck = new List<CardInstance>();
             InitialDeck = new List<CardInstance>();
+            InitialDeckDefinitionIds = new List<int>();
             Field = new List<CardInstance>();
             Graveyard = new List<CardInstance>();
             Extra = new List<CardInstance>();
@@ -156,6 +165,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             Hand = new List<CardInstance>();
             Deck = new List<CardInstance>();
             InitialDeck = new List<CardInstance>();
+            InitialDeckDefinitionIds = new List<int>();
             Field = new List<CardInstance>();
             Graveyard = new List<CardInstance>();
             Extra = new List<CardInstance>();
@@ -723,12 +733,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             foreach (var amulet in this.Field.Where(c => c.CurrentCountdown.HasValue && c.CurrentCountdown.Value > 0))
             {
-                result.GeneratedEvents.Add(new CountdownTickEvent(amulet, -1, drawDelayConfig));
+                result.GeneratedEvents.Add(new CountdownTickEvent(this, amulet, -1, drawDelayConfig));
             }
 
             foreach (var crest in this.Emblem.Where(c => c.CurrentCountdown.HasValue && c.CurrentCountdown.Value > 0))
             {
-                result.GeneratedEvents.Add(new CountdownTickEvent(crest, -1, drawDelayConfig));
+                result.GeneratedEvents.Add(new CountdownTickEvent(this, crest, -1, drawDelayConfig));
             }
 
             var epResult = CheckAndUnlockEvolutionPoints();
@@ -793,7 +803,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public DomainOperationResult DrawCards(int drawCount, DelayConfig? delayConfig = null)
         {
             var result = new DomainOperationResult();
-            var drawnCardIds = new List<Guid>();
 
             if (drawCount <= 0)
             {
@@ -801,29 +810,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return result;
             }
 
-            // 仅选择要抽取的卡牌实例ID，不在此处进行状态移动；移动逻辑在 DrawEvent.Commit -> DrawCards(List<Guid>) 中执行
-            var drawnCards = new List<CardInstance>();
-            int available = Math.Min(drawCount, this.Deck.Count);
-            for (int i = 0; i < available; i++)
-            {
-                var topCard = this.Deck[i];
-                if (topCard != null)
-                {
-                    drawnCardIds.Add(topCard.InstanceId);
-                    drawnCards.Add(topCard);
-                }
-            }
-
-            if (available < drawCount)
-            {
-                // 牌库不足时，记录一次 DeckEmptyOnDrawEvent 提示
-                result.GeneratedEvents.Add(new DeckEmptyOnDrawEvent(this));
-            }
-
-            if (drawnCards.Any())
-            {
-                result.GeneratedEvents.Add(new DrawEvent(this, drawnCards, delayConfig));
-            }
+            // 抽牌目标在 DrawEvent.Commit 时按当前牌库状态计算并回填，避免提前锁定实例ID导致失效。
+            result.GeneratedEvents.Add(new DrawEvent(this, drawCount, delayConfig));
 
             result.Success = true;
             return result;

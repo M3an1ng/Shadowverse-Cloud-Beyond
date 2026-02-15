@@ -301,7 +301,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                             DurationType.OpponentTurnEnd => "duration_opponent_turn_end",
                             _ => "duration_end_of_turn"
                         };
-                        events.Add(new BuffRemovedEvent(buff, sourceCard, reason));
+                        events.Add(new BuffRemovedEvent(buff, card, sourceCard, reason));
                         continue;
                     }
 
@@ -351,7 +351,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                             DurationType.OpponentTurnStart => "duration_opponent_turn_start",
                             _ => "duration_start_of_turn"
                         };
-                        events.Add(new BuffRemovedEvent(buff, sourceCard, reason));
+                        events.Add(new BuffRemovedEvent(buff, card, sourceCard, reason));
                         continue;
                     }
 
@@ -736,17 +736,18 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             foreach (var buffToRemove in stackingResult.BuffsToRemove)
             {
                 var sourceCard = ResolveSourceCard(context, buffToRemove.SourceAbilityId);
+                var targetCardForRemoval = context.CurrentGameState.FindCardInstance(buffToRemove.TargetCardInstanceId);
 
                 // If sourceCard is null, it might be a system-generated buff without a card source.
                 // We still need to generate the removal event.
-                result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, sourceCard, "replaced"));
+                result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, targetCardForRemoval, sourceCard, "replaced"));
                 _logger.LogDebug("Generated BuffRemovedEvent for Buff {BuffId} from Card {CardInstanceId} to make room for new buff", buffToRemove.Id, cardId);
             }
 
             // Generate the event for adding the new buff
             var sourceCardForNewBuff = ResolveSourceCard(context, buff.SourceAbilityId);
-
-            result.GeneratedEvents.Add(new BuffAppliedEvent(buff, sourceCardForNewBuff));
+            var targetCardForNewBuff = context.CurrentGameState.FindCardInstance(buff.TargetCardInstanceId);
+            result.GeneratedEvents.Add(new BuffAppliedEvent(buff, targetCardForNewBuff, sourceCardForNewBuff));
             _logger.LogDebug("Generated BuffAppliedEvent for Buff {BuffId} for Card {CardInstanceId}. It will replace {ReplacedCount} buffs.", buff.Id, cardId, stackingResult.BuffsToRemove.Count);
 
             result.Success = true;
@@ -770,9 +771,10 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 _logger.LogDebug("Found Buff {BuffId} on Card {CardInstanceId} for removal. Generating event.", buffId, buffToRemove.TargetCardInstanceId);
 
                 var sourceCard = ResolveSourceCard(context, buffToRemove.SourceAbilityId);
+                var targetCard = context.CurrentGameState.FindCardInstance(buffToRemove.TargetCardInstanceId);
 
                 // Generate the event that will perform the atomic removal upon commit.
-                result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, sourceCard, "manual"));
+                result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, targetCard, sourceCard, "manual"));
                 result.Success = true;
                 return result;
             }
@@ -808,10 +810,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     {
                         ResolveBuffManager(context).UnregisterBuffInstance(buffToRemove.Id);
                         var sourceCardSourceRemoved = ResolveSourceCard(context, buffToRemove.SourceAbilityId);
-                        if (sourceCardSourceRemoved != null)
-                        {
-                            result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, sourceCardSourceRemoved, "source_removed"));
-                        }
+                        var targetCardSourceRemoved = context.CurrentGameState.FindCardInstance(buffToRemove.TargetCardInstanceId);
+                        result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, targetCardSourceRemoved, sourceCardSourceRemoved, "source_removed"));
                     }
 
                     InvalidateDerivedState(context.CurrentGameState, cardId);
@@ -842,10 +842,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     {
                         ResolveBuffManager(context).UnregisterBuffInstance(buffToRemove.Id);
                         var sourceCardAllRemoved = ResolveSourceCard(context, buffToRemove.SourceAbilityId);
-                        if (sourceCardAllRemoved != null)
-                        {
-                            result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, sourceCardAllRemoved, "removed_all"));
-                        }
+                        var targetCardAllRemoved = context.CurrentGameState.FindCardInstance(buffToRemove.TargetCardInstanceId);
+                        result.GeneratedEvents.Add(new BuffRemovedEvent(buffToRemove, targetCardAllRemoved, sourceCardAllRemoved, "removed_all"));
                     }
                     _logger.LogDebug("Removed {Count} buffs from Card {CardInstanceId}.", buffsToRemove.Count, cardInstanceId);
                     InvalidateDerivedState(context.CurrentGameState, cardInstanceId);

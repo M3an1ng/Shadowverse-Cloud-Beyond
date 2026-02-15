@@ -10,6 +10,11 @@ public partial class EconomyService
 
     public async Task<List<UserQuestDto>> GetUserQuestsAsync(Guid userId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(GetUserQuestsAsync)))
+        {
+            return new List<UserQuestDto>();
+        }
+
         var userQuests = await _context.UserQuests
             .Include(uq => uq.QuestDefinition)
             .Where(uq => uq.UserId == userId)
@@ -22,6 +27,11 @@ public partial class EconomyService
 
     public async Task<bool> UpdateQuestProgressAsync(Guid userId, QuestType type, int increment = 1)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(UpdateQuestProgressAsync)))
+        {
+            return false;
+        }
+
         try
         {
             return await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -77,6 +87,11 @@ public partial class EconomyService
 
     public async Task<QuestRewardClaimDto?> ClaimQuestRewardAsync(Guid userId, Guid userQuestId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(ClaimQuestRewardAsync)))
+        {
+            return null;
+        }
+
         try
         {
             return await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -142,6 +157,11 @@ public partial class EconomyService
     {
         var completedQuests = new List<UserQuestDto>();
 
+        if (!await EnsurePersistedUserAsync(userId, nameof(CheckAndCompleteQuestsAsync)))
+        {
+            return completedQuests;
+        }
+
         try
         {
             // 检查各种类型的任务
@@ -167,4 +187,3 @@ public partial class EconomyService
 
     #endregion
 }
-

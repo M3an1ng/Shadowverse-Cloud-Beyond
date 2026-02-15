@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ShadowverseBeyond.Server.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+91ebad59c6629e6d964ce60425de27dd98fd5720")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+74d057ea33a60622c1efab6cd72ad52d829d9ba2")]
 [assembly: System.Reflection.AssemblyProductAttribute("ShadowverseBeyond.Server.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ShadowverseBeyond.Server.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

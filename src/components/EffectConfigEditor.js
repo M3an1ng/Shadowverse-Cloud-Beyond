@@ -2618,6 +2618,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             normalized.counterRegistrations = ability.counterRegistrations ?? ability.CounterRegistrations ?? [];
             normalized.playerCounterRegistrations = ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [];
             normalized.isActive = ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true;
+            normalized.broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
             normalized.version = ability.version ?? ability.Version ?? '1.0';
 
             delete normalized.id;
@@ -2653,6 +2654,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 description: ability?.description ?? ability?.Description ?? base.description ?? '',
                 abilityKeywords: ability?.abilityKeywords ?? ability?.AbilityKeywords ?? base.abilityKeywords ?? [],
                 isActive: ability?.isActive ?? ability?.IsActive ?? base.isActive ?? true,
+                broadcastOnTrigger: ability?.broadcastOnTrigger ?? ability?.BroadcastOnTrigger ?? base.broadcastOnTrigger ?? true,
                 version: base.version ?? base.Version ?? '1.0'
             };
             return this.normalizeAbilityConfigForList(config);
@@ -2714,7 +2716,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 type: 'Triggered',
                 counterRegistrations: [],
                 playerCounterRegistrations: [],
-                isActive: true
+                isActive: true,
+                broadcastOnTrigger: true
             };
         }
 
@@ -2735,7 +2738,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 auras: ability.auras ?? ability.Auras ?? [],
                 counterRegistrations: ability.counterRegistrations ?? ability.CounterRegistrations ?? [],
                 playerCounterRegistrations: ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [],
-                isActive: ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true
+                isActive: ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true,
+                broadcastOnTrigger: ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true
             };
         }
 
@@ -2770,6 +2774,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 counterRegistrations: finalConfig.counterRegistrations ?? [],
                 playerCounterRegistrations: finalConfig.playerCounterRegistrations ?? [],
                 isActive: finalConfig.isActive ?? true,
+                broadcastOnTrigger: finalConfig.broadcastOnTrigger ?? true,
                 version: finalConfig.version ?? '1.0'
             };
 

@@ -22,7 +22,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     {
         public override string Name => "find";
         public override Type ReturnType => typeof(object);
-        public override string Description => "按索引获取集合中的目标（索引从1开始，越界返回默认值或null）。";
+        public override string Description => "按索引获取集合中的第X个目标（X从1开始，越界返回默认值或null）。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
         {

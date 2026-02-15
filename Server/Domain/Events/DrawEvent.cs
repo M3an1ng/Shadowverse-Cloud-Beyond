@@ -15,7 +15,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
     /// Event triggered when a player draws one or more cards.
-    /// This event contains the specific instances of the cards that were drawn.
+    /// The concrete drawn cards are resolved and backfilled during Commit.
     /// </summary>
     [GameEventMetadata("抽牌", "当玩家抽取一张或多张卡牌时触发的事件。", EventType.Draw)]
     public class DrawEvent : DelayedEventBase, ICommittableEvent, ILogAnnounceableEvent
@@ -23,10 +23,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("抽牌玩家", "执行抽牌的玩家。", Scope = GameEventParameterScope.Input, DslDisplayTypeName = "事件源")]
         public PlayerState? DrawingPlayer => Source?.Player;
 
+        [GameEventParameter("抽牌数量", "本事件请求抽取的卡牌数量。", Scope = GameEventParameterScope.Input)]
+        public int Count { get; }
+
         [GameEventParameter("抽取的卡牌", "被抽取的卡牌列表。", Scope = GameEventParameterScope.Output, DslDisplayTypeName = "事件目标")]
         public List<CardInstance> DrawnCards => Target.Where(t => t.Card != null).Select(t => t.Card!).ToList();
-
-        public List<Guid> DrawnCardInstanceIds => DrawnCards.Select(c => c.InstanceId).ToList();
 
         public object? SearchTargets { get; }
 
@@ -34,44 +35,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DrawEvent(
             PlayerState player,
-            List<CardInstance> drawnCards,
+            int count,
             DelayConfig? delayConfig = null,
             Guid? eventId = null,
             DateTime? timestamp = null)
             : base(EventType.Draw, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
+            Count = Math.Max(0, count);
             SearchTargets = null;
             SearchSourceCardInstanceId = null;
             ConfigureDelay(delayConfig ?? DelayConfig.Disabled);
-            foreach (var card in drawnCards ?? new List<CardInstance>())
-            {
-                Target.Add(TargetInfo.ForCard(card));
-            }
-        }
-
-        // 向后兼容的构造函数
-        public DrawEvent(
-            PlayerState player,
-            List<Guid> drawnCardInstanceIds,
-            GameContext context,
-            DelayConfig? delayConfig = null,
-            Guid? eventId = null,
-            DateTime? timestamp = null)
-            : base(EventType.Draw, eventId, timestamp)
-        {
-            Source = TargetInfo.ForPlayer(player);
-            SearchTargets = null;
-            SearchSourceCardInstanceId = null;
-            ConfigureDelay(delayConfig ?? DelayConfig.Disabled);
-            foreach (var cardId in drawnCardInstanceIds ?? new List<Guid>())
-            {
-                var card = context.CurrentGameState.FindCardInstance(cardId);
-                if (card != null)
-                {
-                    Target.Add(TargetInfo.ForCard(card));
-                }
-            }
         }
 
         public DrawEvent(
@@ -84,6 +58,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             : base(EventType.Draw, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
+            Count = 0;
             SearchTargets = searchTargets;
             SearchSourceCardInstanceId = sourceCard?.InstanceId;
             ConfigureDelay(delayConfig ?? DelayConfig.Disabled);
@@ -140,14 +115,44 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return player.DrawCards(selectedCards.Select(card => card.InstanceId).ToList());
             }
 
-            // DrawEvent 必须包含固定的卡牌实例ID；Commit 仅按指定ID执行抽牌移动
-            return player.DrawCards(DrawnCardInstanceIds);
+            if (Count <= 0)
+            {
+                Target.Clear();
+                return new DomainOperationResult { Success = true };
+            }
+
+            var selectedCardsByCount = player.Deck.Take(Math.Min(Count, player.Deck.Count)).ToList();
+            Target.Clear();
+            foreach (var card in selectedCardsByCount)
+            {
+                Target.Add(TargetInfo.ForCard(card));
+            }
+
+            var result = new DomainOperationResult { Success = true };
+            if (selectedCardsByCount.Count < Count)
+            {
+                result.GeneratedEvents.Add(new DeckEmptyOnDrawEvent(player));
+            }
+
+            if (selectedCardsByCount.Count == 0)
+            {
+                return result;
+            }
+
+            var drawResult = player.DrawCards(selectedCardsByCount.Select(card => card.InstanceId).ToList());
+            if (!drawResult.Success)
+            {
+                return drawResult;
+            }
+
+            result.GeneratedEvents.AddRange(drawResult.GeneratedEvents);
+            return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
             var player = DrawingPlayer;
-            var count = DrawnCardInstanceIds.Count;
+            var count = DrawnCards.Count;
             if (player == null || count <= 0)
             {
                 return string.Empty;

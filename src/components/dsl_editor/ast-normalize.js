@@ -1,5 +1,6 @@
 import { getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 import { resolvePropertyChain } from "./property-chain-resolver.js";
+import { resolveScopedSelfContextFromSource } from "./event-translation.js";
 
 function withScopedSelfContext(editor, sourceNode, callback) {
     if (typeof callback !== "function") return;
@@ -9,14 +10,8 @@ function withScopedSelfContext(editor, sourceNode, callback) {
     }
 
     const sourceType = getCoreSemanticNodeType(sourceNode);
-    const isCollection = sourceType
-        && typeof editor.isCollectionType === "function"
-        && editor.isCollectionType(sourceType);
-    const itemType = isCollection && typeof editor.getCollectionInnerType === "function"
-        ? editor.normalizeTypeName(editor.getCollectionInnerType(sourceType))
-        : null;
-
-    if (!itemType) {
+    const scopedContext = resolveScopedSelfContextFromSource(editor, sourceNode, sourceType);
+    if (!scopedContext) {
         callback();
         return;
     }
@@ -24,9 +19,7 @@ function withScopedSelfContext(editor, sourceNode, callback) {
     const previousOverride = editor.contextOverride;
     editor.contextOverride = {
         ...(previousOverride || {}),
-        name: "self",
-        displayName: "当前项",
-        typeName: itemType
+        ...scopedContext
     };
     try {
         callback();
@@ -190,9 +183,7 @@ export function refreshValueNodeReturnTypes(editor, node) {
 
     if (node.type === "value") {
         const refreshed = inferValueNodeReturnType(editor, node);
-        if (refreshed) {
-            node.returnType = refreshed;
-        }
+        applyRefreshedValueType(editor, node, refreshed);
         if (node.metadata?.type === "staticValue") {
             coerceStaticValueToEnum(editor, node);
         }
@@ -378,6 +369,49 @@ function coerceEncapsulatedToEnum(editor, node) {
 function inferPropertyChainReturnType(editor, path) {
     const resolved = resolvePropertyChain(editor, path);
     return resolved?.finalType || null;
+}
+
+function applyRefreshedValueType(editor, node, refreshedType) {
+    const normalizedRefreshed = normalizeTypeName(editor, refreshedType);
+    if (!normalizedRefreshed) {
+        return;
+    }
+
+    const normalizedExisting = normalizeTypeName(editor, node?.returnType);
+    if (isFallbackType(normalizedRefreshed)
+        && normalizedExisting
+        && !isFallbackType(normalizedExisting)) {
+        return;
+    }
+
+    node.returnType = normalizedRefreshed;
+}
+
+function normalizeTypeName(editor, typeName) {
+    if (!typeName) {
+        return null;
+    }
+
+    if (typeof editor?.normalizeTypeName === "function") {
+        return editor.normalizeTypeName(typeName) || String(typeName);
+    }
+
+    return String(typeName);
+}
+
+function isFallbackType(typeName) {
+    if (!typeName) {
+        return true;
+    }
+
+    const compact = String(typeName).replace(/\s+/g, "");
+    return compact === "Object"
+        || compact === "Void"
+        || compact === "List<Object>"
+        || compact === "IEnumerable<Object>"
+        || compact === "IReadOnlyList<Object>"
+        || compact === "IReadOnlyCollection<Object>"
+        || compact === "ICollection<Object>";
 }
 
 export function refreshCompleteness(node) {

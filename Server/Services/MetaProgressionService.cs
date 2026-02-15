@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Infrastructure.Data;
@@ -19,17 +20,20 @@ public sealed class MetaProgressionService : IMetaProgressionService
     private readonly ApplicationDbContext _db;
     private readonly IEconomyService _economyService;
     private readonly ITransactionService _transactionService;
+    private readonly IOfficialMatchEvaluator _officialMatchEvaluator;
     private readonly ILogger<MetaProgressionService> _logger;
 
     public MetaProgressionService(
         ApplicationDbContext db,
         IEconomyService economyService,
         ITransactionService transactionService,
+        IOfficialMatchEvaluator officialMatchEvaluator,
         ILogger<MetaProgressionService> logger)
     {
         _db = db;
         _economyService = economyService;
         _transactionService = transactionService;
+        _officialMatchEvaluator = officialMatchEvaluator;
         _logger = logger;
     }
 
@@ -57,6 +61,12 @@ public sealed class MetaProgressionService : IMetaProgressionService
             gameContext.CurrentGameState.Player2
         };
 
+        var officialMatch = await _officialMatchEvaluator.EvaluateAsync(
+            gameContext.CurrentGameState,
+            gameEndEvent,
+            cancellationToken);
+        var coinRewardEligible = officialMatch.IsOfficial;
+
         foreach (var participant in participants)
         {
             if (participant == null) continue;
@@ -69,6 +79,8 @@ public sealed class MetaProgressionService : IMetaProgressionService
                 winnerId: gameEndEvent.WinnerId,
                 loserId: gameEndEvent.LoserId,
                 reason: gameEndEvent.Reason,
+                coinRewardEligible: coinRewardEligible,
+                nonOfficialReason: officialMatch.NonOfficialReason,
                 cancellationToken);
         }
     }
@@ -80,6 +92,8 @@ public sealed class MetaProgressionService : IMetaProgressionService
         Guid winnerId,
         Guid loserId,
         string? reason,
+        bool coinRewardEligible,
+        string? nonOfficialReason,
         CancellationToken cancellationToken)
     {
         await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -104,15 +118,10 @@ public sealed class MetaProgressionService : IMetaProgressionService
             }
 
             var isWin = userId == winnerId;
-            var result = isWin
-                ? GameResult.Win
-                : reason switch
-                {
-                    "Surrender" => GameResult.Surrender,
-                    "Disconnect" => GameResult.Disconnect,
-                    _ => GameResult.Loss
-                };
-            var rewardCoins = isWin ? WinCoinReward : LossCoinReward;
+            var result = ResolveGameResult(isWin, reason);
+            var rewardCoins = coinRewardEligible
+                ? (isWin ? WinCoinReward : LossCoinReward)
+                : 0;
             var now = DateTime.UtcNow;
             var durationSeconds = Math.Max(0, (long)(now - gameStartedAtUtc).TotalSeconds);
 
@@ -163,12 +172,23 @@ public sealed class MetaProgressionService : IMetaProgressionService
 
             // Rank + coin rewards (uses the same transaction when already in one).
             await _economyService.UpdateUserRankAsync(userId, isWin);
-            await _economyService.AddCoinsAsync(
-                userId,
-                rewardCoins,
-                isWin ? CoinTransactionType.GameWin : CoinTransactionType.GameLoss,
-                description: isWin ? $"对局胜利奖励: {gameId}" : $"对局参与奖励: {gameId}",
-                relatedEntityId: gameId);
+            if (rewardCoins > 0)
+            {
+                await _economyService.AddCoinsAsync(
+                    userId,
+                    rewardCoins,
+                    isWin ? CoinTransactionType.GameWin : CoinTransactionType.GameLoss,
+                    description: isWin ? $"对局胜利奖励: {gameId}" : $"对局参与奖励: {gameId}",
+                    relatedEntityId: gameId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[MetaProgression] Coin reward skipped for non-official match. GameId={GameId} UserId={UserId} Reason={Reason}",
+                    gameId,
+                    userId,
+                    nonOfficialReason ?? "Unknown");
+            }
 
             // MVP quest progression from game result.
             await _economyService.UpdateQuestProgressAsync(userId, QuestType.PlayGames, increment: 1);
@@ -178,8 +198,51 @@ public sealed class MetaProgressionService : IMetaProgressionService
             }
 
             _logger.LogInformation(
-                "[MetaProgression] Settled GameId={GameId} UserId={UserId} Result={Result} Coins={Coins}",
-                gameId, userId, result, rewardCoins);
+                "[MetaProgression] Settled GameId={GameId} UserId={UserId} Result={Result} Coins={Coins} CoinRewardEligible={CoinRewardEligible}",
+                gameId, userId, result, rewardCoins, coinRewardEligible);
         });
+    }
+
+    private static GameResult ResolveGameResult(bool isWin, string? reason)
+    {
+        if (isWin)
+        {
+            return GameResult.Win;
+        }
+
+        if (IsSurrenderReason(reason))
+        {
+            return GameResult.Surrender;
+        }
+
+        if (IsDisconnectReason(reason))
+        {
+            return GameResult.Disconnect;
+        }
+
+        return GameResult.Loss;
+    }
+
+    private static bool IsSurrenderReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return false;
+        }
+
+        return reason.Contains("Surrender", StringComparison.OrdinalIgnoreCase)
+               || reason.Contains("投降", StringComparison.Ordinal);
+    }
+
+    private static bool IsDisconnectReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return false;
+        }
+
+        return reason.Contains("Disconnect", StringComparison.OrdinalIgnoreCase)
+               || reason.Contains("网络连接断开", StringComparison.Ordinal)
+               || reason.Contains("断线", StringComparison.Ordinal);
     }
 }

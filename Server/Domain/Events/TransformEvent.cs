@@ -5,6 +5,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Services.Abstractions; // IGameDataProvider
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using System.Linq;
+using ShadowverseBeyond.Server.Domain.Identifiers;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -21,27 +23,50 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("新卡牌定义ID", "变形后的卡牌定义ID。")]
         public int NewCardDefinitionId { get; }
 
-        [GameEventParameter("变形的卡牌", "发生变形的卡牌。", DslDisplayTypeName = "事件源")]
-        public CardInstance? TransformingCard => Source?.Card;
+        [GameEventParameter("变形来源", "导致变形的卡牌。", DslDisplayTypeName = "事件源")]
+        public CardInstance? TransformSource => Source?.Card;
+
+        [GameEventParameter("变形的卡牌", "发生变形的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? TransformingCard => Target.FirstOrDefault()?.Card;
+
+        [GameEventParameter("变形来源快照", "生成事件时记录的变形来源快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? TransformSourceSnapshot { get; }
+
+        [GameEventParameter("变形目标快照", "生成事件时记录的变形目标快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? TransformingCardSnapshot { get; }
 
         /// <summary>
         /// 通知用构造：在卡面已变更后，用当前卡面的定义ID作为 NewCardDefinitionId。
         /// 供 CardInstance.Transform 内部在完成变形后派发。
         /// </summary>
-        public TransformEvent(CardInstance transformedCard, Guid? eventId = null, DateTime? timestamp = null)
+        public TransformEvent(CardInstance transformedCard, CardInstance? sourceCard = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Transform, eventId, timestamp)
         {
-            Source = TargetInfo.ForCard(transformedCard);
+            if (sourceCard != null)
+            {
+                Source = TargetInfo.ForCard(sourceCard);
+                TransformSourceSnapshot = CardInstanceSnapshot.From(sourceCard);
+            }
+
+            Target.Add(TargetInfo.ForCard(transformedCard));
+            TransformingCardSnapshot = CardInstanceSnapshot.From(transformedCard);
             NewCardDefinitionId = transformedCard.BaseDefinitionId;
         }
 
         /// <summary>
         /// 提交用构造：携带目标定义ID，由 Commit 执行实体实际变形。
         /// </summary>
-        public TransformEvent(CardInstance targetCard, int newDefinitionId, Guid? eventId = null, DateTime? timestamp = null)
+        public TransformEvent(CardInstance targetCard, int newDefinitionId, CardInstance? sourceCard = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Transform, eventId, timestamp)
         {
-            Source = TargetInfo.ForCard(targetCard);
+            if (sourceCard != null)
+            {
+                Source = TargetInfo.ForCard(sourceCard);
+                TransformSourceSnapshot = CardInstanceSnapshot.From(sourceCard);
+            }
+
+            Target.Add(TargetInfo.ForCard(targetCard));
+            TransformingCardSnapshot = CardInstanceSnapshot.From(targetCard);
             NewCardDefinitionId = newDefinitionId;
         }
 
@@ -54,14 +79,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var card = TransformingCard;
             if (card == null)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "TransformEvent.Commit: Source card is null." };
-            }
-
-            // Notification events are emitted after a transform has already been applied.
-            // If the card already matches the requested definition, skip re-transforming to avoid recursion.
-            if (card.BaseDefinitionId == NewCardDefinitionId)
-            {
-                return new DomainOperationResult { Success = true };
+                return new DomainOperationResult { Success = false, ErrorMessage = "TransformEvent.Commit: target card is null." };
             }
 
             var data = context.ServiceProvider.GetRequiredService<IGameDataProvider>();

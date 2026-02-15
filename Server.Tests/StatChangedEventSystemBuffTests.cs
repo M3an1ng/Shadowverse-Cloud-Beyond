@@ -9,6 +9,7 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services;
@@ -175,6 +176,75 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Contains("费用调整为[[num:3]]倍", multiplicative.GetAnnouncement(gameState));
             Assert.Contains("生命值设为[[num:7]]", set.GetAnnouncement(gameState));
             Assert.Contains("攻击力基础值设为[[num:1]]", baseLayer.GetAnnouncement(gameState));
+        }
+
+        [Fact]
+        public void StatChanged_LethalFollowerInAbilityContext_UsesSystemDestroyReason()
+        {
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+            var player1 = new PlayerState(player1Id);
+            var player2 = new PlayerState(player2Id);
+
+            var gameState = new GameState("stat-lethal-system-reason-test", player1, player2, player1Id)
+            {
+                AbilityManager = Mock.Of<IAbilityManager>(),
+                BuffManager = Mock.Of<IBuffManager>()
+            };
+
+            var source = new CardInstance(Guid.NewGuid(), 1002, player1Id) { CurrentZone = CardZone.Field };
+            var target = new CardInstance(Guid.NewGuid(), 1001, player2Id) { CurrentZone = CardZone.Field };
+            player1.Field.Add(source);
+            player2.Field.Add(target);
+            gameState.RegisterCardInstance(source);
+            gameState.RegisterCardInstance(target);
+
+            var buffManager = new Mock<IBuffManager>();
+            buffManager.Setup(m => m.GetBuffsForCard(It.IsAny<Guid>())).Returns(new List<Buff>());
+            gameState.BuffManager = buffManager.Object;
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffFactory>(new BuffFactory(NullLogger<BuffFactory>.Instance));
+            services.AddSingleton(Mock.Of<IConditionEvaluator>());
+            services.AddSingleton<IBuffEvaluator>(sp =>
+                new BuffEvaluator(sp.GetRequiredService<IConditionEvaluator>(), NullLogger<BuffEvaluator>.Instance));
+            services.AddSingleton(new BuffStackingEngine(NullLogger<BuffStackingEngine>.Instance));
+            services.AddSingleton<IBuffService>(sp =>
+                new BuffService(
+                    buffManager.Object,
+                    sp.GetRequiredService<IBuffEvaluator>(),
+                    sp.GetRequiredService<IBuffFactory>(),
+                    NullLogger<BuffService>.Instance,
+                    sp.GetRequiredService<BuffStackingEngine>()));
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+
+            var sp = services.BuildServiceProvider();
+
+            using var ctx = new GameContext(
+                sp,
+                Mock.Of<IMapper>(),
+                sp.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                requestingPlayerId: player1Id,
+                triggeringEvent: null,
+                sourceCard: source,
+                currentEffect: new Effect(player1Id));
+
+            var ev = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: null,
+                healthModifier: 0,
+                costModifier: null,
+                modifierLayer: ModifierLayer.Set);
+
+            var result = ev.Commit(ctx);
+            Assert.True(result.Success);
+
+            var destroy = Assert.Single(result.GeneratedEvents, e => e is DestroyEvent) as DestroyEvent;
+            Assert.NotNull(destroy);
+            Assert.Equal(EventReasonSource.System, destroy!.Reason);
         }
     }
 }

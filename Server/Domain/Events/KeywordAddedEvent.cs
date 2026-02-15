@@ -23,8 +23,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("添加的关键字", "被添加的关键字类型。")]
         public CardKeyword KeywordAdded { get; }
 
-        [GameEventParameter("目标卡牌", "获得关键字的卡牌。", DslDisplayTypeName = "事件源")]
-        public CardInstance? TargetCard => Source?.Card;
+        [GameEventParameter("关键字来源", "授予关键字的来源卡牌。", DslDisplayTypeName = "事件源")]
+        public CardInstance? KeywordSource => Source?.Card;
+
+        [GameEventParameter("目标卡牌", "获得关键字的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? TargetCard => Target.FirstOrDefault()?.Card;
 
         [GameEventParameter("持续时间", "关键字持续时间类型。")]
         public DurationType DurationType { get; }
@@ -35,12 +38,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public string? EffectKey { get; }
         public bool CanStack { get; }
 
-        public KeywordAddedEvent(CardKeyword keywordAdded, CardInstance source, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, Guid? eventId = null, DateTime? timestamp = null)
+        public KeywordAddedEvent(CardKeyword keywordAdded, CardInstance target, CardInstance? source = null, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.KeywordApplied, eventId, timestamp)
         {
             KeywordAdded = keywordAdded;
-            Source = TargetInfo.ForCard(source);
-            Target.Add(TargetInfo.ForCard(source));
+            if (source != null)
+            {
+                Source = TargetInfo.ForCard(source);
+            }
+            Target.Add(TargetInfo.ForCard(target ?? throw new ArgumentNullException(nameof(target))));
             DurationType = durationType;
             DurationParameter = durationParameter;
             EffectKey = effectKey;
@@ -52,7 +58,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var card = TargetCard;
             if (card == null)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "KeywordAddedEvent.Commit: Source card is null." };
+                return new DomainOperationResult { Success = false, ErrorMessage = "KeywordAddedEvent.Commit: target card is null." };
             }
 
             var buffService = context.ServiceProvider.GetRequiredService<IBuffService>();

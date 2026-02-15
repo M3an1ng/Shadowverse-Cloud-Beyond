@@ -73,7 +73,6 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return result;
             }
 
-            var abilityConfigs = cardToPlay.Abilities.Select(a => a.Config).ToList();
             Ability? selectedAbility = null;
             if (ActionDto.AbilityRuntimeId.HasValue && ActionDto.AbilityRuntimeId.Value != Guid.Empty)
             {
@@ -85,7 +84,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                     return result;
                 }
             }
-            var modeResolution = PlayModeResolver.Resolve(cardToPlay, activePlayerState, context, abilityConfigs);
+            var modeResolution = PlayModeResolver.Resolve(cardToPlay, activePlayerState, context);
 
             if (!modeResolution.HasAvailableMode)
             {

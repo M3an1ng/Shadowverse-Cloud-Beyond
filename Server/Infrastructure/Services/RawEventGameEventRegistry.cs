@@ -345,7 +345,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
         {
             private static readonly HashSet<string> Allowed = new(StringComparer.OrdinalIgnoreCase)
             {
-                "Count"
+                "Count",
+                "DrawnCards"
             };
 
             public bool TryCreate(RawEventEnvelopeDto input, GameState gameState, Guid requestingPlayerId, out IGameEvent? gameEvent, out string? errorMessage)
@@ -371,7 +372,18 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     return false;
                 }
 
-                if (!Payload.TryGetInt(input.Payload, "Count", out var count) || count <= 0)
+                var hasCount = Payload.TryGetInt(input.Payload, "Count", out var count);
+                if (!hasCount)
+                {
+                    if (input.Payload.TryGetPropertyValue("DrawnCards", out var drawnCardsNode)
+                        && drawnCardsNode is JsonArray drawnCardsArray)
+                    {
+                        count = drawnCardsArray.Count;
+                        hasCount = true;
+                    }
+                }
+
+                if (!hasCount || count <= 0)
                 {
                     errorMessage = "draw payload 缺少 Count 或 Count 非法";
                     return false;
@@ -383,14 +395,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     return false;
                 }
 
-                var cards = player.Deck.Take(Math.Min(count, player.Deck.Count)).ToList();
-                if (cards.Count == 0)
-                {
-                    errorMessage = "牌库为空，无法抽牌";
-                    return false;
-                }
-
-                gameEvent = new DrawEvent(player, cards);
+                gameEvent = new DrawEvent(player, count);
                 return true;
             }
         }

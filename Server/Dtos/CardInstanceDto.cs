@@ -126,6 +126,12 @@ namespace ShadowverseBeyond.Server.Dtos
         public bool IsEvolved { get; set; }
 
         /// <summary>
+        /// Indicates if the card instance is currently super evolved.
+        /// Relevant primarily for followers on the field.
+        /// </summary>
+        public bool IsSuperEvolved { get; set; }
+
+        /// <summary>
         /// Indicates if the follower instance can currently attack.
         /// Affected by summon sickness, effects, and turn progression.
         /// Relevant primarily for followers on the field.
@@ -291,6 +297,7 @@ namespace ShadowverseBeyond.Server.Dtos
             CurrentHealth = definition.Health ?? 0; // Initial health = base health
             MaxHealth = definition.Health ?? 0;     // Initial max health = base health
             IsEvolved = false;
+            IsSuperEvolved = false;
             CanAttack = false; // Usually false initially (unless Rush etc.)
             AttacksThisTurn = 0;
             var hasCountdown = definition.Keywords?.Any(k => string.Equals(k, nameof(CardKeyword.Countdown), StringComparison.OrdinalIgnoreCase)) ?? false;

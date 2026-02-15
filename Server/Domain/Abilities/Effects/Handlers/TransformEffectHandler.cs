@@ -63,7 +63,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     var card = targetInfo.Card;
 
                     // 通过唯一的 TransformEvent 表达意图，提交阶段执行实体变更
-                    var evt = new TransformEvent(card, parameters.TargetCardDefinitionId);
+                    var evt = new TransformEvent(card, parameters.TargetCardDefinitionId, context.SourceCard);
                     var result = new DomainOperationResult { Success = true };
                     result.GeneratedEvents.Add(evt);
                     return result;

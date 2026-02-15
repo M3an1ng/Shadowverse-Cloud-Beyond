@@ -27,8 +27,8 @@ export class MetadataDrivenComponent {
         const trimmed = String(typeName).trim();
         if (!trimmed) return '未知类型';
 
-        // 泛型集合：List<T> / IEnumerable<T>
-        const match = trimmed.match(/^(List|IEnumerable)<(.+)>$/);
+        // 泛型集合统一按“列表”显示
+        const match = trimmed.match(/^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)<(.+)>$/);
         if (match) {
             const inner = match[2];
             return `${this.getDisplayTypeName(inner)}列表`;

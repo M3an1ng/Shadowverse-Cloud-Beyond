@@ -74,6 +74,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public string Description => Config.Description;
 
         /// <summary>
+        /// Whether this ability should emit AbilityTriggered to clients when triggered.
+        /// </summary>
+        public bool BroadcastOnTrigger => Config.BroadcastOnTrigger;
+
+        /// <summary>
         /// 能力关键字列表，用于标识能力类型（如"Fanfare", "LastWords", "Rush"等）
         /// </summary>
         [DslExposable("能力关键字", Description = "该能力的关键字")]

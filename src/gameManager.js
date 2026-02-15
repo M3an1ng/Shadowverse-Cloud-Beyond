@@ -10,15 +10,18 @@
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, appendInMatchChatMessage, clearInMatchChatUiState } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+import { getUserSession } from "./userSession.js";
 
 // --- Constants ---
 const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
 const GAME_LOG_LIMIT = 200; // Prevent unbounded growth in UI log
+const CHAT_HISTORY_LIMIT = 200;
 
 // --- SignalR Connection ---
 let signalRConnection = null; // Holds the connection object passed from main.js
 let signalRGuestConnection = null;
+const pendingChatClientMessageIds = new Set();
 
 // 核心游戏状态 (可导出或通过函数访问)
 export let gameState = {
@@ -42,6 +45,7 @@ export let gameState = {
     playabilityCache: {}, // NEW: Cache for card playability check results { cardUid: PlayabilityResultDto }
     actPlayabilityCache: {}, // Cache for Act playability results { cardUid: ActPlayabilityResultDto }
     gameLog: [], // Local rolling log for UI display
+    chatMessages: [], // Room chat history shown in chat panel
     isSpectator: false, // Spectator mode disables actions
     turnTimeoutSeconds: 0,
     turnStartedAtUtc: null,
@@ -260,7 +264,10 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     gameState.selectedCardUid = null;
     gameState.selectedAttackerUid = null;
     gameState.gameLog = []; // Reset log on new session
+    gameState.chatMessages = [];
+    pendingChatClientMessageIds.clear();
     renderGameLog(gameState.gameLog);
+    clearInMatchChatUiState();
 
 } // Closing brace for initializeGame
 
@@ -285,7 +292,10 @@ export function initializeSpectator(gameId) {
     gameState.selectedCardUid = null;
     gameState.selectedAttackerUid = null;
     gameState.gameLog = [];
+    gameState.chatMessages = [];
+    pendingChatClientMessageIds.clear();
     renderGameLog(gameState.gameLog);
+    clearInMatchChatUiState();
 }
 
 // --- Game Log Helpers ---
@@ -519,76 +529,6 @@ function adjustZoneCount(player, zoneName, delta) {
 // context can contain { targetUid: "some-uid" } for targeted effects
 // Removed resolveEffects - Server now handles effect resolution.
 
-// Helper to validate if a target instance matches the spell's requirements
-export function isValidSpellTarget(
-    targetInstance,
-    validTargets,
-    castingPlayerId
-) {
-    if (
-        !targetInstance ||
-        !Array.isArray(validTargets) ||
-        validTargets.length === 0
-    ) {
-        console.warn(
-            "isValidSpellTarget: Invalid input - targetInstance or validTargets missing/empty."
-        );
-        return false; // Basic sanity checks
-    }
-
-    const targetType = targetInstance.type; // e.g., 'Follower', 'Leader', 'Follower_Evolved'
-    const targetOwnerId = targetInstance.ownerId;
-    const isAlly = targetOwnerId === castingPlayerId;
-    const isEnemy = targetOwnerId !== castingPlayerId;
-
-    for (const validTarget of validTargets) {
-        switch (validTarget) {
-            case "EnemyFollower":
-                if (
-                    isEnemy &&
-                    (targetType === "Follower" || targetType === "Follower_Evolved")
-                ) {
-                    return true;
-                }
-                break;
-            case "EnemyLeader":
-                if (isEnemy && targetType === "Leader") {
-                    return true;
-                }
-                break;
-            case "AllyFollower":
-                if (
-                    isAlly &&
-                    (targetType === "Follower" || targetType === "Follower_Evolved")
-                ) {
-                    return true;
-                }
-                break;
-            case "AllyLeader":
-                if (isAlly && targetType === "Leader") {
-                    return true;
-                }
-                break;
-            case "AnyFollower": // Example of potentially targeting any follower
-                if (targetType === "Follower" || targetType === "Follower_Evolved") {
-                    return true;
-                }
-                break;
-            case "AnyLeader": // Example of potentially targeting any leader
-                if (targetType === "Leader") {
-                    return true;
-                }
-                break;
-            // Add more cases as needed (e.g., 'EnemyCharacter', 'AllyCharacter')
-            default:
-                console.warn(
-                    `isValidSpellTarget: Unknown validTarget type '${validTarget}'`
-                );
-                break;
-        }
-    }
-    return false; // If no criteria matched
-}
 export async function playCard(cardUid, targetUid = null) {
     if (gameState.isSpectator) {
         alert("观战模式：不能进行操作。");
@@ -696,11 +636,8 @@ export async function playCard(cardUid, targetUid = null) {
         }
     }
 
-    // Spell target check (basic) - Requires cardData access
-    // NOTE: This check might be better handled server-side for consistency,
-    // but a basic client-side check can provide faster feedback.
-    // We need access to card definitions here, assuming getCardDefinition is available.
-    // The 'requires_target' property should now exist directly on the cardInstance
+    // Legacy single-target spell guard. Final target legality is server-authoritative
+    // via playability + PlayerChoice workflow.
     if (
         cardInstance.type === "Spell" &&
         cardInstance.requires_target && // Check the instance directly
@@ -710,10 +647,8 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard rejected - Spell ${cardInstance.name} requires a target, but none provided.`
         );
         alert("该法术需要指定一个目标！");
-        // TODO: Add more specific target validation later if needed (e.g., using isValidSpellTarget helper)
         return;
     }
-    // Consider adding isValidSpellTarget check here if spell has targets
 
     // --- SignalR Invocation ---
     const connection = getActiveConnection();
@@ -909,17 +844,12 @@ export async function selectAttackTarget(targetUid) {
         return;
     }
 
-    const attackerKeywords = Array.isArray(attackerInstance.keywords) ? attackerInstance.keywords : [];
-    const attackerCannotAttackLeader = attackerKeywords.includes("CannotAttackLeader");
-    const attackerCannotAttackFollower = attackerKeywords.includes("CannotAttackFollower");
+    const attackerCannotAttackLeader = cardHasKeyword(attackerInstance, "CannotAttackLeader");
+    const attackerCannotAttackFollower = cardHasKeyword(attackerInstance, "CannotAttackFollower");
     const targetIsFollower =
         targetInstance.type === "Follower" ||
         targetInstance.type === "Follower_Evolved";
     const targetIsLeader = targetInstance.type === "Leader";
-
-    // REMOVED: Redundant Summoning Sickness Check for Leader Target.
-    // The general 'canAttack' flag (set in playCard based on Storm,
-    // and checked in initiateAttack) now handles this correctly for all targets.
 
     // Validation 5: Check for Ward (守护)
     const opponentPlayer = getPlayerState(targetInstance.ownerId); // Get the owner of the target
@@ -931,10 +861,9 @@ export async function selectAttackTarget(targetUid) {
     }
 
     const hasEffectiveWard = card => {
-        const cardKeywords = Array.isArray(card?.keywords) ? card.keywords : [];
-        const hasWard = cardKeywords.includes("Ward");
-        const hasAmbush = cardKeywords.includes("Ambush");
-        const hasPressure = cardKeywords.includes("Pressure");
+        const hasWard = cardHasKeyword(card, "Ward");
+        const hasAmbush = cardHasKeyword(card, "Ambush");
+        const hasPressure = cardHasKeyword(card, "Pressure");
         return hasWard && !hasAmbush && !hasPressure;
     };
 
@@ -963,8 +892,9 @@ export async function selectAttackTarget(targetUid) {
     // If opponent does NOT have Ward, any valid target (follower or leader, respecting other rules) is fine.
     else if (targetIsLeader) {
         // If target is the leader and there's no Ward, check Rush/Storm rules
-        const hasStorm = attackerKeywords.includes("Storm");
-        const isSummoningSick = attackerInstance.fieldTurn === 0 && !attackerInstance.isEvolved;
+        const hasStorm = cardHasKeyword(attackerInstance, "Storm");
+        const attackerFieldTurn = attackerInstance.fieldTurn ?? attackerInstance.FieldTurn ?? 0;
+        const isSummoningSick = attackerFieldTurn === 0;
 
         // Can attack leader if: has Storm OR is not summoning sick.
         // Rush alone is not enough on the first turn.
@@ -993,9 +923,25 @@ export async function selectAttackTarget(targetUid) {
         return;
     }
 
+    if (targetIsFollower && cardHasKeyword(targetInstance, "Ambush")) {
+        console.warn(
+            `GM: SelectTarget failed - Target ${targetInstance.name} cannot be targeted due to Ambush.`
+        );
+        alert("该随从处于【潜行】状态，无法被攻击！");
+        return;
+    }
+
+    if (targetIsFollower && cardHasKeyword(targetInstance, "Pressure")) {
+        console.warn(
+            `GM: SelectTarget failed - Target ${targetInstance.name} cannot be targeted due to Pressure.`
+        );
+        alert("该随从处于【威慑】状态，无法被攻击！");
+        return;
+    }
+
     // All validations passed (including Ward and Rush/Storm checks)
 
-    // Execute the attack (this will now handle both follower and leader targets)
+    // Execute the attack
     // --- SignalR Invocation ---
     const connection = getActiveConnection();
     if (!connection || connection.state !== "Connected") {
@@ -1517,6 +1463,39 @@ export async function endTurnRequest() {
         alert(`结束回合失败：${errorMessage}`);
     }
 }
+
+/**
+ * Sends in-match chat message through SignalR.
+ * @param {string} content
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function sendChatMessage(content) {
+    const normalizedContent = String(content ?? '').replace(/\s+/g, ' ').trim();
+    if (!normalizedContent) {
+        return { ok: false, error: '消息不能为空。' };
+    }
+
+    const connection = getActiveConnection();
+    if (!connection || connection.state !== "Connected") {
+        return { ok: false, error: '连接已断开，无法发送消息。' };
+    }
+
+    const clientMessageId = generateRequestId();
+    const actionDto = {
+        ClientMessageId: clientMessageId,
+        Content: normalizedContent
+    };
+
+    try {
+        pendingChatClientMessageIds.add(clientMessageId);
+        await connection.invoke("SendChatMessage", actionDto);
+        return { ok: true };
+    } catch (err) {
+        pendingChatClientMessageIds.delete(clientMessageId);
+        const errorMessage = err?.message || '服务器通信错误';
+        return { ok: false, error: errorMessage };
+    }
+}
 /**
  * Sends a generic game action object to the SignalR Hub.
  * Used for actions initiated by the client (Player or AI) that need server processing,
@@ -1612,6 +1591,7 @@ export function handleHandPlayabilityUpdate(updateDto) {
 
     const normalizeInstanceId = value => String(value ?? '').trim().toLowerCase();
     let hasHandCacheUpdate = false;
+    let hasHandDisplayImpact = false;
 
     // 【修复】更新缓存：将服务器端的 InstanceId (Guid) 映射到客户端的 uid (string)
     const rawResults = updateDto.PlayabilityResults;
@@ -1626,6 +1606,7 @@ export function handleHandPlayabilityUpdate(updateDto) {
         if (cardInstance) {
             // 使用统一的UID作为缓存键
             const cardUid = cardInstance.uid ?? cardInstance.InstanceId;
+            const previousInfo = gameState.playabilityCache[cardUid] ?? null;
             const playModes = (playabilityResult.PlayModes || []).map(mode => ({
                 mode: mode.Mode,
                 effectiveCost: mode.EffectiveCost,
@@ -1648,13 +1629,20 @@ export function handleHandPlayabilityUpdate(updateDto) {
             };
             gameState.playabilityCache[cardUid] = playabilityInfo;
             hasHandCacheUpdate = true;
+            const previousMode = normalizePlayModeValue(previousInfo?.selectedPlayMode);
+            const nextMode = normalizePlayModeValue(playabilityInfo.selectedPlayMode);
+            const previousCost = previousInfo?.selectedPlayCost ?? null;
+            const nextCost = playabilityInfo.selectedPlayCost ?? null;
+            if (!previousInfo || previousMode !== nextMode || previousCost !== nextCost) {
+                hasHandDisplayImpact = true;
+            }
             refreshBattleCardPreviewIfCurrent(cardInstance);
         } else {
             console.warn(`GM: Could not find card instance with UID ${instanceId} in local player's hand`);
         }
     });
 
-    if (hasHandCacheUpdate && gameState.phase !== 'Mulligan' && gameState.phase !== 'GameOver') {
+    if (hasHandCacheUpdate && hasHandDisplayImpact && gameState.phase !== 'Mulligan' && gameState.phase !== 'GameOver') {
         updateHandDisplay(localPlayer.id, localPlayer.hand);
     }
 
@@ -1723,13 +1711,13 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
           playerDto.IsEvolutionUnlocked ?? playerDto.HasUnlockedEvolution ?? false;
       playerInstance.hasUnlockedSuperEvolution =
           playerDto.IsSuperEvolutionUnlocked ?? playerDto.HasUnlockedSuperEvolution ?? false;
-      playerInstance.turnNumber = playerDto.TurnNumber ?? 0; // 【架构重构】使用turnNumber属性名保持一致性
-      playerInstance.deckCount = playerDto.DeckCount ?? (Array.isArray(playerDto.Deck) ? playerDto.Deck.length : 0); // PascalCase (x2)
+      playerInstance.turnNumber = playerDto.TurnNumber ?? playerDto.turnNumber ?? 0; // PascalCase/camelCase
+      playerInstance.deckCount = playerDto.DeckCount ?? playerDto.deckCount ?? (Array.isArray(playerDto.Deck ?? playerDto.deck) ? (playerDto.Deck ?? playerDto.deck).length : 0); // PascalCase/camelCase
       playerInstance.graveyardCount = readCounter('graveyard', playerDto.GraveyardCount ?? playerInstance.graveyardCount ?? 0);
       // Keep deck as simple array of IDs/DTOs from server if no methods needed client-side
-      playerInstance.deck = Array.isArray(playerDto.Deck) ? [...playerDto.Deck] : []; // PascalCase (x2)
+      playerInstance.deck = Array.isArray(playerDto.Deck ?? playerDto.deck) ? [...(playerDto.Deck ?? playerDto.deck)] : []; // PascalCase/camelCase
       // Mulligan
-    playerInstance.hasCompletedMulligan = playerDto.HasCompletedMulligan ?? false; // PascalCase
+    playerInstance.hasCompletedMulligan = playerDto.HasCompletedMulligan ?? playerDto.hasCompletedMulligan ?? false; // PascalCase/camelCase
 
 
 }
@@ -1784,6 +1772,7 @@ function _hydrateCardZone(zoneDtoArray, ownerId, zoneName) {
                 cardInstance.currentAttack = cardDto.CurrentAttack ?? cardInstance.attack; // PascalCase
                 cardInstance.currentHealth = cardDto.CurrentHealth ?? cardInstance.health; // PascalCase
                 cardInstance.isEvolved = cardDto.IsEvolved ?? false; // PascalCase
+                cardInstance.isSuperEvolved = cardDto.IsSuperEvolved ?? cardDto.isSuperEvolved ?? false;
                 cardInstance.fieldTurn = cardDto.FieldTurn ?? 0; // Hydrate FieldTurn
                 // ADDED: Hydrate keywords (Ensure DTO has 'Keywords' property as an array)
                 cardInstance.keywords = Array.isArray(cardDto.Keywords) ? [...cardDto.Keywords] : []; // PascalCase
@@ -1810,15 +1799,19 @@ function _hydrateCardZone(zoneDtoArray, ownerId, zoneName) {
  * @param {object} serverState - The complete game state object from the server.
  */
 export function updateFullGameState(serverState) {
+    const readStateField = (source, pascal, camel) => source?.[pascal] ?? source?.[camel];
+    const normalizeId = (value) => String(value ?? '').trim().toLowerCase();
+    const playersDto = readStateField(serverState, 'Players', 'players');
+    const incomingStateGameId = readStateField(serverState, 'GameId', 'gameId');
 
     // Use PascalCase: Players, GameId
-    if (!serverState || !serverState.Players || !serverState.GameId) { // PascalCase check for Players and GameId
+    if (!serverState || !Array.isArray(playersDto) || !incomingStateGameId) { // PascalCase/camelCase compatible check
         console.error(
             "GAME MANAGER: Received invalid or incomplete full game state object:",
             serverState
         );
         alert("错误：收到无效的游戏状态数据！");
-        return;
+        return false;
     }
 
     // Deep merge or careful assignment is needed if local state has properties server doesn't send.
@@ -1827,40 +1820,60 @@ export function updateFullGameState(serverState) {
 
     // Merge the server state into the local gameState
     // --- Smart Hydration: Assign top-level properties ---
-    const incomingGameId = serverState.GameId;
+    const incomingGameId = incomingStateGameId;
     const isNewGameSession = incomingGameId && incomingGameId !== gameState.gameId;
     if (isNewGameSession) {
         gameState.gameLog = [];
+        gameState.chatMessages = [];
+        pendingChatClientMessageIds.clear();
         renderGameLog(gameState.gameLog);
+        clearInMatchChatUiState();
     }
     // Use PascalCase: GameId
     gameState.gameId = incomingGameId; // PascalCase
     // IMPORTANT:
     // - In PVP, localPlayerId MUST come from the lobby handshake (initializeGame), and MUST NOT be inferred here.
     // - In VS-AI, localPlayerId may be inferred as the only non-AI player if the handshake is missing.
-    if (Array.isArray(serverState.Players) && serverState.Players.length > 0) {
-        const serverPlayerIds = serverState.Players.map(p => p?.PlayerId).filter(Boolean);
+    if (playersDto.length > 0) {
+        const serverPlayerIds = playersDto
+            .map(p => p?.PlayerId ?? p?.playerId ?? p?.Id ?? p?.id)
+            .filter(Boolean);
+        const serverPlayerIdMap = new Map(
+            serverPlayerIds.map(id => [normalizeId(id), id])
+        );
         const existingLocalPlayerId = gameState.localPlayerId;
-        const localPlayerIdIsValid =
-            !!existingLocalPlayerId && serverPlayerIds.includes(existingLocalPlayerId);
+        const matchedLocalPlayerId = serverPlayerIdMap.get(normalizeId(existingLocalPlayerId)) || null;
+        const localPlayerIdIsValid = !!matchedLocalPlayerId;
         const isDualControl = gameState.dualControl && !gameState.isSpectator;
 
+        if (localPlayerIdIsValid && gameState.localPlayerId !== matchedLocalPlayerId) {
+            gameState.localPlayerId = matchedLocalPlayerId;
+        }
+
         if (isDualControl) {
-            if (serverState.Phase !== 'Mulligan' && serverState.CurrentPlayerId) {
-                gameState.localPlayerId = serverState.CurrentPlayerId;
+            const phase = readStateField(serverState, 'Phase', 'phase');
+            const currentPlayerId = readStateField(serverState, 'CurrentPlayerId', 'currentPlayerId');
+            if (phase !== 'Mulligan' && currentPlayerId) {
+                gameState.localPlayerId = currentPlayerId;
             } else if (!localPlayerIdIsValid) {
+                const normalizedHostSeatId = normalizeId(gameState.dualControlSeatIds?.hostPlayerId);
+                const resolvedHostSeatId = serverPlayerIdMap.get(normalizedHostSeatId) || null;
                 gameState.localPlayerId =
-                    gameState.dualControlSeatIds?.hostPlayerId || serverPlayerIds[0] || null;
+                    resolvedHostSeatId || serverPlayerIds[0] || null;
             }
         } else if (!localPlayerIdIsValid) {
             if (gameState.isSpectator) {
                 gameState.localPlayerId = serverPlayerIds[0] || null;
             }
 
-            const nonAiPlayers = serverState.Players.filter(p => p?.PlayerId && p.IsAI === false);
+            const nonAiPlayers = playersDto.filter(p => {
+                const playerId = p?.PlayerId ?? p?.playerId ?? p?.Id ?? p?.id;
+                const isAi = p?.IsAI ?? p?.isAI;
+                return !!playerId && isAi === false;
+            });
 
             if (nonAiPlayers.length === 1) {
-                gameState.localPlayerId = nonAiPlayers[0].PlayerId;
+                gameState.localPlayerId = nonAiPlayers[0].PlayerId ?? nonAiPlayers[0].playerId ?? nonAiPlayers[0].Id ?? nonAiPlayers[0].id;
                 console.warn(
                     `GM HYDRATION: localPlayerId was missing/invalid; inferred non-AI player ${gameState.localPlayerId} for VS-AI.`
                 );
@@ -1870,23 +1883,24 @@ export function updateFullGameState(serverState) {
                         "GM HYDRATION: localPlayerId is missing/invalid and cannot be inferred safely for PVP.",
                         { existingLocalPlayerId, serverPlayerIds }
                     );
+                    return false;
                 }
             }
         }
     }
     // Use PascalCase: CurrentPlayerId
-    gameState.currentPlayerId = serverState.CurrentPlayerId; // PascalCase
+    gameState.currentPlayerId = readStateField(serverState, 'CurrentPlayerId', 'currentPlayerId'); // PascalCase/camelCase
     // 【架构重构】不再从serverState获取全局TurnNumber，改为从当前玩家的PlayerState获取
     // Use PascalCase: Phase
-    gameState.phase = serverState.Phase || "Unknown"; // PascalCase // Use the phase from the server state
+    gameState.phase = readStateField(serverState, 'Phase', 'phase') || "Unknown"; // PascalCase/camelCase
     const timeoutSeconds = serverState.TurnTimeoutSeconds ?? serverState.turnTimeoutSeconds;
     gameState.turnTimeoutSeconds = Number.isFinite(timeoutSeconds) ? timeoutSeconds : gameState.turnTimeoutSeconds;
     gameState.turnStartedAtUtc = serverState.TurnStartedAtUtc ?? serverState.turnStartedAtUtc ?? null;
     gameState.turnEndsAtUtc = serverState.TurnEndsAtUtc ?? serverState.turnEndsAtUtc ?? null;
     // Use PascalCase: GameOver
-    gameState.gameOver = serverState.GameOver || false; // PascalCase
+    gameState.gameOver = readStateField(serverState, 'GameOver', 'gameOver') || false; // PascalCase/camelCase
     // Use PascalCase: Winner
-    gameState.winner = serverState.Winner || null; // PascalCase
+    gameState.winner = readStateField(serverState, 'Winner', 'winner') || null; // PascalCase/camelCase
     gameState.selectedCardUid = null; // Reset selections on full update
     gameState.selectedAttackerUid = null; // Reset selections on full update
     // Find player DTOs to get mulligan status
@@ -1900,27 +1914,28 @@ export function updateFullGameState(serverState) {
     // --- Smart Hydration: Hydrate Players using Helper Functions ---
     const hydratedPlayers = [];
     // Use PascalCase: Players
-    if (Array.isArray(serverState.Players)) { // PascalCase
+    if (playersDto.length > 0) {
         // Use PascalCase: Players
-        for (const playerDto of serverState.Players) { // PascalCase
+        for (const playerDto of playersDto) {
+            const playerDtoId = playerDto?.PlayerId ?? playerDto?.playerId ?? playerDto?.Id ?? playerDto?.id;
             // Use PascalCase: PlayerId
-            if (!playerDto || !playerDto.PlayerId) { // PascalCase
+            if (!playerDto || !playerDtoId) {
                 console.warn("GM HYDRATION: Skipping invalid player DTO:", playerDto);
                 continue;
             }
 
             // --- REFACTOR: Find existing or create new player instance ---
-            let playerInstance = gameState.players.find(p => p && p.id === playerDto.PlayerId); // Find existing by ID
+            let playerInstance = gameState.players.find(p => p && normalizeId(p.id) === normalizeId(playerDtoId)); // Find existing by ID (case-insensitive)
             let isNewPlayer = false;
 
             if (!playerInstance) {
                 // If not found, create a new one using the modified createPlayer
                 // Use PascalCase: PlayerId, IsAI
-                playerInstance = createPlayer(playerDto.PlayerId, playerDto.IsAI ?? false); // PascalCase (x2)
+                playerInstance = createPlayer(playerDtoId, playerDto.IsAI ?? playerDto.isAI ?? false); // PascalCase/camelCase
                 isNewPlayer = true; // Flag that this is a new instance
                 if (!playerInstance) {
                     // Use PascalCase: PlayerId
-                    console.error(`GM HYDRATION: Failed to create NEW player instance for ID ${playerDto.PlayerId}. Skipping.`); // PascalCase
+                    console.error(`GM HYDRATION: Failed to create NEW player instance for ID ${playerDtoId}. Skipping.`); // PascalCase/camelCase
                     continue; // Skip this player DTO if creation fails
                 }
             }
@@ -1931,9 +1946,10 @@ export function updateFullGameState(serverState) {
 
             // --- REFACTOR: Integrate Leader Card Hydration ---
             // Use PascalCase: LeaderCard
-            if (playerDto.LeaderCard) { // PascalCase
+            const leaderDto = playerDto.LeaderCard ?? playerDto.leaderCard;
+            if (leaderDto) {
                 // Use PascalCase: LeaderCard
-                const serverLeaderDto = playerDto.LeaderCard; // PascalCase
+                const serverLeaderDto = leaderDto;
                 // Use PascalCase: InstanceId, instanceId, Uid, uid
                 const serverLeaderUid = serverLeaderDto.InstanceId || serverLeaderDto.instanceId || serverLeaderDto.Uid || serverLeaderDto.uid; // PascalCase (multiple checks)
 
@@ -1972,13 +1988,13 @@ export function updateFullGameState(serverState) {
 
             // Hydrate other zones (using existing _hydrateCardZone which recreates zones)
             // Use PascalCase: Hand
-            playerInstance.hand = _hydrateCardZone(playerDto.Hand, playerInstance.id, 'Hand'); // PascalCase
+            playerInstance.hand = _hydrateCardZone(playerDto.Hand ?? playerDto.hand, playerInstance.id, 'Hand'); // PascalCase/camelCase
             // Use PascalCase: Field
-            playerInstance.field = _hydrateCardZone(playerDto.Field, playerInstance.id, 'Field'); // PascalCase
+            playerInstance.field = _hydrateCardZone(playerDto.Field ?? playerDto.field, playerInstance.id, 'Field'); // PascalCase/camelCase
             // Use PascalCase: Graveyard
-            playerInstance.graveyard = _hydrateCardZone(playerDto.Graveyard, playerInstance.id, 'Graveyard'); // PascalCase
+            playerInstance.graveyard = _hydrateCardZone(playerDto.Graveyard ?? playerDto.graveyard, playerInstance.id, 'Graveyard'); // PascalCase/camelCase
             // Use PascalCase: Emblem
-            playerInstance.emblem = _hydrateCardZone(playerDto.Emblem, playerInstance.id, 'Emblem'); // PascalCase
+            playerInstance.emblem = _hydrateCardZone(playerDto.Emblem ?? playerDto.emblem, playerInstance.id, 'Emblem'); // PascalCase/camelCase
             // Deck is handled in _hydratePlayerProperties
 
             // Add the updated or new instance to the temporary array
@@ -2001,12 +2017,12 @@ export function updateFullGameState(serverState) {
     // Find the active and opponent player *instances* within the *new* players array.
     gameState.activePlayer =
         gameState.players.find(
-            (p) => p && p.id === gameState.currentPlayerId // FIX: Use p.id
+            (p) => p && normalizeId(p.id) === normalizeId(gameState.currentPlayerId) // FIX: Use p.id (case-insensitive)
         ) || null;
 
     gameState.opponentPlayer =
         gameState.players.find(
-            (p) => p && p.id !== gameState.currentPlayerId // FIX: Use p.id
+            (p) => p && normalizeId(p.id) !== normalizeId(gameState.currentPlayerId) // FIX: Use p.id (case-insensitive)
         ) || null;
 
 
@@ -2042,6 +2058,8 @@ export function updateFullGameState(serverState) {
             "GAME MANAGER: renderGame function is not available for UI update after full state update."
         );
     }
+
+    return true;
 }
 
 // TODO: Add other exports here later if needed (e.g., processGameEvent) - Updated export list
@@ -2074,7 +2092,11 @@ export function handleTurnStarted(eventData) {
     // Delegate the processing to the function designed for full state updates, passing the nested object.
     // Use PascalCase: GameState
     if (eventData && eventData.GameState) { // PascalCase
-        updateFullGameState(eventData.GameState); // Pass the nested GameState object
+        const hydrationSucceeded = updateFullGameState(eventData.GameState); // Pass the nested GameState object
+        if (hydrationSucceeded === false) {
+            console.error("GM: TurnStarted state hydration failed; skipping turn-start banner.");
+            return;
+        }
         if (typeof showTurnStartBanner === 'function') {
             showTurnStartBanner(gameState.currentPlayerId);
         }
@@ -3072,7 +3094,8 @@ export function handleGameOver(eventData) {
     // Use PascalCase: Reason
 
     appendSystemLog('提示：结算完成后，可返回主菜单右上角「元进度」面板刷新查看金币/任务。');
-    const maybeUserId = gameState.localPlayerId;
+    const session = getUserSession();
+    const maybeUserId = session?.mode === "user" ? session.userId : null;
     if (looksLikeGuid(maybeUserId)) {
         tryFetchMetaProgressionState(maybeUserId).catch(() => { });
     }
@@ -3291,6 +3314,80 @@ export function handleCardRevealed(eventData) {
     appendGameLog("Reveal", { name, cost, instanceId: revealedCard.InstanceId, cardId: revealedCard.CardId });
 }
 
+function readAbilityParameter(parameters, keys) {
+    if (!parameters || typeof parameters !== 'object' || !Array.isArray(keys)) return null;
+
+    for (const key of keys) {
+        if (!key) continue;
+        const value = parameters[key];
+        if (value === undefined || value === null) continue;
+        const normalized = String(value).trim();
+        if (normalized.length > 0) {
+            return normalized;
+        }
+    }
+
+    return null;
+}
+
+export function handleAbilityTriggered(eventData) {
+    const sourceCardUid = eventData?.SourceCardUid ?? eventData?.sourceCardUid ?? null;
+    const sourcePlayerId = eventData?.SourcePlayerId ?? eventData?.sourcePlayerId ?? null;
+    const sourceCard = sourceCardUid ? findCardInstanceByUid(sourceCardUid) : null;
+    const localPlayerId = gameState.localPlayerId ?? null;
+    const parameters = (eventData?.AbilityParameters && typeof eventData.AbilityParameters === 'object')
+        ? eventData.AbilityParameters
+        : ((eventData?.abilityParameters && typeof eventData.abilityParameters === 'object')
+            ? eventData.abilityParameters
+            : {});
+
+    const abilityDescription = readAbilityParameter(parameters, [
+        'ability_description',
+        'AbilityDescription',
+        'description',
+        'Description'
+    ]) || '';
+
+    const sourceCardName = readAbilityParameter(parameters, [
+        'source_card_name',
+        'SourceCardName',
+        'card_name',
+        'CardName'
+    ]) || String(sourceCard?.name ?? '').trim() || '能力触发';
+
+    const abilityName = readAbilityParameter(parameters, [
+        'ability_name',
+        'AbilityName'
+    ]) || '';
+
+    const previewPath = readAbilityParameter(parameters, [
+        'source_card_art_preview',
+        'SourceCardArtPreview',
+        'art_preview',
+        'ArtPreview'
+    ]) || String(sourceCard?.artPreview ?? sourceCard?.ArtPreview ?? '').trim();
+    const ownerId = sourcePlayerId ?? sourceCard?.ownerId ?? sourceCard?.OwnerPlayerId ?? null;
+    const tone = (localPlayerId && ownerId && String(ownerId) !== String(localPlayerId))
+        ? 'enemy'
+        : 'ally';
+
+    try {
+        if (showAbilityTriggerToast) {
+            showAbilityTriggerToast({
+                title: sourceCardName,
+                subtitle: abilityName && abilityName !== sourceCardName ? abilityName : '',
+                description: abilityDescription,
+                previewPath,
+                tone,
+                sourcePlayerId,
+                sourceCardUid
+            });
+        }
+    } catch (error) {
+        console.error("GM Error: Failed to show ability trigger toast:", error);
+    }
+}
+
 export function handleFusion(eventData) {
     // DTO: FusionEventDto { SourcePlayerId, FusedCount, FusedCardInstanceIds }
 
@@ -3300,8 +3397,11 @@ export function handleFusion(eventData) {
 
     if (!sourcePlayerId || fusedCount <= 0) return;
 
-    const who = sourcePlayerId === gameState.localPlayerId ? '你' : '对手';
-    appendSystemLog(`${who}融合了${fusedCount}张卡`);
+    const hasAnnouncement = Boolean(eventData?.Announcement || eventData?.announcement);
+    if (!hasAnnouncement) {
+        const who = sourcePlayerId === gameState.localPlayerId ? '你' : '对手';
+        appendSystemLog(`${who}融合了${fusedCount}张卡`);
+    }
 
     try {
         if (showFusionAnimation) {
@@ -3310,6 +3410,106 @@ export function handleFusion(eventData) {
     } catch (error) {
         console.error("GM Error: Failed to show fusion animation:", error);
     }
+}
+
+function normalizeChatMessageDto(rawMessage) {
+    if (!rawMessage || typeof rawMessage !== 'object') {
+        return null;
+    }
+
+    const messageId = String(rawMessage.MessageId ?? rawMessage.messageId ?? '').trim();
+    const senderTypeRaw = String(rawMessage.SenderType ?? rawMessage.senderType ?? '').trim().toLowerCase();
+    const senderType = senderTypeRaw === 'spectator'
+        ? 'spectator'
+        : senderTypeRaw === 'system'
+            ? 'system'
+            : 'player';
+
+    const senderId = String(rawMessage.SenderId ?? rawMessage.senderId ?? '').trim();
+    const senderNameFallback = senderType === 'spectator' ? '观战者' : (senderType === 'system' ? '系统' : '玩家');
+    const senderName = String(rawMessage.SenderName ?? rawMessage.senderName ?? senderNameFallback).trim() || senderNameFallback;
+    const content = String(rawMessage.Content ?? rawMessage.content ?? '').trim();
+    if (!content) {
+        return null;
+    }
+
+    const sentAtUtc = String(rawMessage.SentAtUtc ?? rawMessage.sentAtUtc ?? '').trim();
+    const clientMessageId = String(rawMessage.ClientMessageId ?? rawMessage.clientMessageId ?? '').trim();
+    const localPlayerId = String(gameState.localPlayerId ?? '').trim();
+    const senderIdLower = senderId.toLowerCase();
+    const localPlayerIdLower = localPlayerId.toLowerCase();
+    const isSelfBySenderId = senderType === 'player'
+        && senderIdLower.length > 0
+        && localPlayerIdLower.length > 0
+        && senderIdLower === localPlayerIdLower;
+    const isSelfByClientId = clientMessageId.length > 0 && pendingChatClientMessageIds.has(clientMessageId);
+    const isSelf = isSelfBySenderId || isSelfByClientId;
+
+    if (clientMessageId) {
+        pendingChatClientMessageIds.delete(clientMessageId);
+    }
+
+    return {
+        messageId,
+        senderType,
+        senderId,
+        senderName,
+        senderAvatarUrl: String(rawMessage.SenderAvatarUrl ?? rawMessage.senderAvatarUrl ?? '').trim(),
+        content,
+        sentAtUtc,
+        clientMessageId,
+        isSelf
+    };
+}
+
+function pushChatMessageToState(message) {
+    if (!message) return false;
+    const messages = Array.isArray(gameState.chatMessages) ? gameState.chatMessages : [];
+    if (message.messageId && messages.some(entry => entry?.messageId === message.messageId)) {
+        return false;
+    }
+    messages.push(message);
+    if (messages.length > CHAT_HISTORY_LIMIT) {
+        messages.splice(0, messages.length - CHAT_HISTORY_LIMIT);
+    }
+    gameState.chatMessages = messages;
+    return true;
+}
+
+export function handleChatHistory(eventData) {
+    const rawMessages = Array.isArray(eventData?.Messages)
+        ? eventData.Messages
+        : (Array.isArray(eventData?.messages) ? eventData.messages : []);
+
+    const normalizedMessages = [];
+    for (const rawMessage of rawMessages) {
+        const normalized = normalizeChatMessageDto(rawMessage);
+        if (normalized) {
+            normalizedMessages.push(normalized);
+        }
+    }
+
+    if (normalizedMessages.length > CHAT_HISTORY_LIMIT) {
+        normalizedMessages.splice(0, normalizedMessages.length - CHAT_HISTORY_LIMIT);
+    }
+
+    gameState.chatMessages = normalizedMessages;
+    replaceInMatchChatHistory(gameState.chatMessages);
+}
+
+export function handleChatMessage(eventData) {
+    const normalizedMessage = normalizeChatMessageDto(eventData);
+    if (!normalizedMessage) {
+        return;
+    }
+
+    const appended = pushChatMessageToState(normalizedMessage);
+    if (!appended) {
+        return;
+    }
+
+    const shouldPlayBarrage = normalizedMessage.senderType !== 'system';
+    appendInMatchChatMessage(normalizedMessage, shouldPlayBarrage);
 }
 
 /**

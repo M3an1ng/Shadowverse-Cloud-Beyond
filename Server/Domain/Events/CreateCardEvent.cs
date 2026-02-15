@@ -8,6 +8,8 @@ using ShadowverseBeyond.Server.Dtos.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 using ShadowverseBeyond.Server.Services;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -16,6 +18,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
     {
         [GameEventParameter("目标玩家", "创建卡牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
+
+        [GameEventParameter("创造的卡牌", "创建完成后的卡牌列表。", Scope = GameEventParameterScope.Output, DslDisplayTypeName = "事件目标")]
+        public List<CardInstance> CreatedCards => Target
+            .Where(t => t.Card != null)
+            .Select(t => t.Card!)
+            .ToList();
 
         [GameEventParameter("卡牌定义ID", "要创建的卡牌定义ID。")]
         public int CardDefinitionId { get; }
@@ -47,6 +55,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 result.ErrorMessage = "create-card 卡牌创建失败";
                 return result;
             }
+
+            Target.Clear();
+            Target.Add(TargetInfo.ForCard(card));
 
             result.Success = true;
             return result;

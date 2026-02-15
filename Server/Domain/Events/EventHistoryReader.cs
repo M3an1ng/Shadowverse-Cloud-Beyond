@@ -10,7 +10,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
     {
         private readonly IEventHistoryService _eventHistoryService;
         private readonly string _gameId;
-        private IReadOnlyList<IGameEvent>? _cachedEvents;
 
         public EventHistoryReader(IEventHistoryService eventHistoryService, string gameId)
         {
@@ -28,8 +27,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     return Array.Empty<IGameEvent>();
                 }
 
-                _cachedEvents ??= _eventHistoryService.GetEvents(_gameId) ?? Array.Empty<IGameEvent>();
-                return _cachedEvents;
+                return _eventHistoryService.GetEvents(_gameId) ?? Array.Empty<IGameEvent>();
             }
         }
     }

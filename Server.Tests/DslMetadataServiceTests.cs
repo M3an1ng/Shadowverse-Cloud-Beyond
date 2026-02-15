@@ -81,5 +81,21 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Contains("System", reasonSourceEnum!.Values);
             Assert.Contains("Ability", reasonSourceEnum.Values);
         }
+
+        [Fact]
+        public void BuildMetadata_Contains_Frequency_Function()
+        {
+            var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);
+            var service = new DslMetadataService(registry);
+
+            var metadata = service.GetDslMetadata();
+            Assert.NotNull(metadata);
+
+            var frequency = metadata.Functions.FirstOrDefault(f =>
+                string.Equals(f.Name, "frequency", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(frequency);
+            Assert.Equal("Int32", frequency!.ReturnTypeName);
+            Assert.Equal(2, frequency.Parameters.Count);
+        }
     }
 }

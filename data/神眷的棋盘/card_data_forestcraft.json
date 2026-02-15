@@ -1755,52 +1755,52 @@
               },
               "abilityConfigs": {
                 "value": [
-              {
-                "name": "森友合击-选择-护甲置1(占位)",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "targets": [],
-                "effects": []
-              },
-              {
-                "name": "森友合击-选择-伤害",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "targets": [
                   {
-                    "playerChoiceOptions": {
-                      "isRequired": true,
-                      "minCount": 1,
-                      "maxCount": 1,
-                      "prompt": "选择1个敌方随从"
+                    "name": "森友合击-选择-护甲置1(占位)",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
                     },
-                    "requireValidTarget": true,
-                    "query": {
-                      "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
-                    }
-                  }
-                ],
-                "effects": [
+                    "conditions": [],
+                    "targets": [],
+                    "effects": []
+                  },
                   {
-                    "type": "Damage",
-                    "parameters": {
-                      "damageAmount": {
-                        "value": 1
+                    "name": "森友合击-选择-伤害",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
+                    },
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "playerChoiceOptions": {
+                          "isRequired": true,
+                          "minCount": 1,
+                          "maxCount": 1,
+                          "prompt": "选择1个敌方随从"
+                        },
+                        "requireValidTarget": true,
+                        "query": {
+                          "sourcePoolExpression": "opponent.field.query(self.Type == \"Follower\")"
+                        }
                       }
-                    }
+                    ],
+                    "effects": [
+                      {
+                        "type": "Damage",
+                        "parameters": {
+                          "damageAmount": {
+                            "value": 1
+                          }
+                        }
+                      }
+                    ]
                   }
-                ]
-              }
                 ]
               }
             }
@@ -2228,7 +2228,7 @@
         ]
       },
       {
-        "name": "游牧之地-启动摧毁",
+        "name": "游牧之地-启动破坏",
         "type": "Activated",
         "abilityKeywords": [
           {
@@ -2385,105 +2385,105 @@
               },
               "abilityConfigs": {
                 "value": [
-              {
-                "name": "指挥的奇迹-选择-强化",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "targets": [
                   {
-                    "playerChoiceOptions": {
-                      "isRequired": true,
-                      "minCount": 1,
-                      "maxCount": 1,
-                      "prompt": "选择1个友方随从"
+                    "name": "指挥的奇迹-选择-强化",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
                     },
-                    "requireValidTarget": true,
-                    "query": {
-                      "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\")"
-                    }
-                  }
-                ],
-                "effects": [
-                  {
-                    "type": "ModifyStatus",
-                    "parameters": {
-                      "attackModifier": {
-                        "value": 1
-                      },
-                      "healthModifier": {
-                        "value": 2
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "playerChoiceOptions": {
+                          "isRequired": true,
+                          "minCount": 1,
+                          "maxCount": 1,
+                          "prompt": "选择1个友方随从"
+                        },
+                        "requireValidTarget": true,
+                        "query": {
+                          "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\")"
+                        }
                       }
-                    }
-                  }
-                ]
-              },
-              {
-                "name": "指挥的奇迹-选择-洗回抽牌",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "effects": [
-                  {
-                    "type": "AddDeck",
-                    "parameters": {
-                      "playerScope": {
-                        "value": "Self"
-                      },
-                      "cardSourceMode": {
-                        "value": "Definition"
-                      },
-                      "cardDefinitionId": {
-                        "value": 1511304
-                      },
-                      "amount": {
-                        "value": 2
+                    ],
+                    "effects": [
+                      {
+                        "type": "ModifyStatus",
+                        "parameters": {
+                          "attackModifier": {
+                            "value": 1
+                          },
+                          "healthModifier": {
+                            "value": 2
+                          }
+                        }
                       }
-                    }
+                    ]
                   },
                   {
-                    "type": "Draw",
-                    "parameters": {
-                      "playerScope": {
-                        "value": "Self"
+                    "name": "指挥的奇迹-选择-洗回抽牌",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
+                    },
+                    "conditions": [],
+                    "effects": [
+                      {
+                        "type": "AddDeck",
+                        "parameters": {
+                          "playerScope": {
+                            "value": "Self"
+                          },
+                          "cardSourceMode": {
+                            "value": "Definition"
+                          },
+                          "cardDefinitionId": {
+                            "value": 1511304
+                          },
+                          "amount": {
+                            "value": 2
+                          }
+                        }
                       },
-                      "drawAmount": {
-                        "value": 2
+                      {
+                        "type": "Draw",
+                        "parameters": {
+                          "playerScope": {
+                            "value": "Self"
+                          },
+                          "drawAmount": {
+                            "value": 2
+                          }
+                        }
                       }
-                    }
-                  }
-                ]
-              },
-              {
-                "name": "指挥的奇迹-选择-消失牌库",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "targets": [
+                    ]
+                  },
                   {
-                    "query": {
-                      "sourcePoolExpression": "owner.deck.query(self.Id == 1511304)"
-                    }
+                    "name": "指挥的奇迹-选择-消失牌库",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
+                    },
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "query": {
+                          "sourcePoolExpression": "owner.deck.query(self.Id == 1511304)"
+                        }
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "type": "Vanish"
+                      }
+                    ]
                   }
-                ],
-                "effects": [
-                  {
-                    "type": "Vanish"
-                  }
-                ]
-              }
                 ]
               }
             }
@@ -2734,104 +2734,104 @@
               },
               "abilityConfigs": {
                 "value": [
-              {
-                "name": "秘园妖精-选择-强化",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "targets": [
                   {
-                    "playerChoiceOptions": {
-                      "isRequired": true,
-                      "minCount": 1,
-                      "maxCount": 1,
-                      "prompt": "选择1个友方随从"
+                    "name": "秘园妖精-选择-强化",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
                     },
-                    "requireValidTarget": true,
-                    "query": {
-                      "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\")"
-                    }
-                  }
-                ],
-                "effects": [
-                  {
-                    "type": "ModifyStatus",
-                    "parameters": {
-                      "attackModifier": {
-                        "value": 1
-                      },
-                      "healthModifier": {
-                        "value": 1
-                      }
-                    }
-                  }
-                ]
-              },
-              {
-                "name": "秘园妖精-选择-加入妖精",
-                "type": "Triggered",
-                "abilityKeywords": [],
-                "trigger": {
-                  "eventTypes": ["EffectCompleted"],
-                  "relationType": "Any"
-                },
-                "conditions": [],
-                "effects": [
-                  {
-                    "type": "GetToken",
-                    "parameters": {
-                      "playerScope": {
-                        "value": "Self"
-                      },
-                      "cardSourceMode": {
-                        "value": "Definition"
-                      },
-                      "cardDefinitionId": {
-                        "value": 1010402
-                      },
-                      "amount": {
-                        "value": 1
-                      }
-                    },
-                    "chainedAbilities": [
+                    "conditions": [],
+                    "targets": [
                       {
-                        "name": "秘园妖精-选择-加入妖精减费",
-                        "type": "Triggered",
-                        "abilityKeywords": [],
-                        "trigger": {
-                          "eventTypes": ["EffectCompleted"],
-                          "relationType": "Any"
+                        "playerChoiceOptions": {
+                          "isRequired": true,
+                          "minCount": 1,
+                          "maxCount": 1,
+                          "prompt": "选择1个友方随从"
                         },
-                        "conditions": [],
-                        "targets": [
-                          {
-                            "query": {
-                              "sourcePoolExpression": "context.triggeringEvent.GeneratedCards"
-                            }
+                        "requireValidTarget": true,
+                        "query": {
+                          "sourcePoolExpression": "owner.field.query(self.Type == \"Follower\")"
+                        }
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "type": "ModifyStatus",
+                        "parameters": {
+                          "attackModifier": {
+                            "value": 1
+                          },
+                          "healthModifier": {
+                            "value": 1
                           }
-                        ],
-                        "effects": [
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "name": "秘园妖精-选择-加入妖精",
+                    "type": "Triggered",
+                    "abilityKeywords": [],
+                    "trigger": {
+                      "eventTypes": ["EffectCompleted"],
+                      "relationType": "Any"
+                    },
+                    "conditions": [],
+                    "effects": [
+                      {
+                        "type": "GetToken",
+                        "parameters": {
+                          "playerScope": {
+                            "value": "Self"
+                          },
+                          "cardSourceMode": {
+                            "value": "Definition"
+                          },
+                          "cardDefinitionId": {
+                            "value": 1010402
+                          },
+                          "amount": {
+                            "value": 1
+                          }
+                        },
+                        "chainedAbilities": [
                           {
-                            "type": "SetStatus",
-                            "parameters": {
-                              "costModifier": {
-                                "value": 0
-                              },
-                              "durationType": {
-                                "value": "EndOfTurn"
+                            "name": "秘园妖精-选择-加入妖精减费",
+                            "type": "Triggered",
+                            "abilityKeywords": [],
+                            "trigger": {
+                              "eventTypes": ["EffectCompleted"],
+                              "relationType": "Any"
+                            },
+                            "conditions": [],
+                            "targets": [
+                              {
+                                "query": {
+                                  "sourcePoolExpression": "context.triggeringEvent.GeneratedCards"
+                                }
                               }
-                            }
+                            ],
+                            "effects": [
+                              {
+                                "type": "SetStatus",
+                                "parameters": {
+                                  "costModifier": {
+                                    "value": 0
+                                  },
+                                  "durationType": {
+                                    "value": "EndOfTurn"
+                                  }
+                                }
+                              }
+                            ]
                           }
                         ]
                       }
                     ]
                   }
-                ]
-              }
                 ]
               }
             }

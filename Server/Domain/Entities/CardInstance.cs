@@ -353,10 +353,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         /// <summary>
-        /// Computes all Enhance costs for this card, applying buff-based keyword modifiers.
-        /// Falls back to ability configs if runtime abilities are not available.
+        /// Computes all Enhance costs for this card from effective runtime abilities only.
         /// </summary>
-        public IReadOnlyList<int> GetEnhanceCostCandidates(GameContext context, IEnumerable<AbilityConfig>? fallbackConfigs = null)
+        public IReadOnlyList<int> GetEnhanceCostCandidates(GameContext context)
         {
             if (context == null)
             {
@@ -375,23 +374,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 foreach (var ability in enhanceAbilities)
                 {
                     var cost = GetEnhanceCostForAbility(ability, context);
-                    if (cost > 0)
-                    {
-                        costs.Add(cost);
-                    }
-                }
-            }
-            else if (fallbackConfigs != null)
-            {
-                foreach (var config in fallbackConfigs)
-                {
-                    var baseValue = config.GetKeywordValue(AbilityKeyword.Enhance);
-                    if (!baseValue.HasValue || baseValue.Value <= 0)
-                    {
-                        continue;
-                    }
-
-                    var cost = context.BuffService.GetEffectiveAbilityKeywordValue(this, AbilityKeyword.Enhance, baseValue.Value, context);
                     if (cost > 0)
                     {
                         costs.Add(cost);
@@ -1271,7 +1253,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // 5. Generate the notification event (after transform)
             context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.InstanceId);
-            result.GeneratedEvents.Add(new TransformEvent(this));
+            result.GeneratedEvents.Add(new TransformEvent(this, context.SourceCard));
             result.Success = true;
 
             return result;

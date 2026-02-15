@@ -76,6 +76,17 @@ vite-dev.err.log
 
 # Local backup files
 index.prod.html.bak-*
+assets.bak-*/
+
+# Temporary build/check artifacts
+.tmpbuild/
+.tmp_build/
+.tmp_bin/
+.tmp_bool_probe/
+Server/.tmp_build/
+Server/.tmp_test_obj/
+Server/.tmp_test_out/
+Server.Tests/.tmp_test_*/
 
 # OS generated files
 .DS_Store

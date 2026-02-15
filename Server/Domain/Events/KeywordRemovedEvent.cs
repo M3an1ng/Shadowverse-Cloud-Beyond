@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects; // DomainOperationResul
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using System.Linq;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -22,8 +23,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("移除的关键字", "被移除的关键字类型。")]
         public CardKeyword Keyword { get; }
 
-        [GameEventParameter("目标卡牌", "失去关键字的卡牌。", DslDisplayTypeName = "事件源")]
-        public CardInstance? TargetCard => Source?.Card;
+        [GameEventParameter("关键字移除来源", "导致关键字移除的来源卡牌。", DslDisplayTypeName = "事件源")]
+        public CardInstance? KeywordRemovalSource => Source?.Card;
+
+        [GameEventParameter("目标卡牌", "失去关键字的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? TargetCard => Target.FirstOrDefault()?.Card;
 
         [GameEventParameter("持续时间", "关键字移除持续时间类型。")]
         public DurationType DurationType { get; }
@@ -34,12 +38,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public string? EffectKey { get; }
         public bool CanStack { get; }
 
-        public KeywordRemovedEvent(CardKeyword keyword, CardInstance source, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, Guid? eventId = null, DateTime? timestamp = null)
+        public KeywordRemovedEvent(CardKeyword keyword, CardInstance target, CardInstance? source = null, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.KeywordRemoved, eventId, timestamp)
         {
             Keyword = keyword;
-            Source = TargetInfo.ForCard(source);
-            Target.Add(TargetInfo.ForCard(source));
+            if (source != null)
+            {
+                Source = TargetInfo.ForCard(source);
+            }
+            Target.Add(TargetInfo.ForCard(target ?? throw new ArgumentNullException(nameof(target))));
             DurationType = durationType;
             DurationParameter = durationParameter;
             EffectKey = effectKey;
@@ -48,10 +55,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
-            var card = Source?.Card;
+            var card = TargetCard;
             if (card == null)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "KeywordRemovedEvent.Commit: Source card is null." };
+                return new DomainOperationResult { Success = false, ErrorMessage = "KeywordRemovedEvent.Commit: target card is null." };
             }
 
             var buffService = context.ServiceProvider.GetRequiredService<IBuffService>();

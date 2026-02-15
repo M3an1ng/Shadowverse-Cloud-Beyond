@@ -93,7 +93,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var player = targetInfo.Player;
-                    // 由实体方法生成 DrawEvent，固定本次抽牌的卡牌实例ID（遵循两方法模式）
+                    // 由实体方法生成 DrawEvent；具体抽牌目标在 DrawEvent.Commit 时按当前牌库计算。
                     var op = player.DrawCards(parameters.DrawAmount);
                     return op;
                 };

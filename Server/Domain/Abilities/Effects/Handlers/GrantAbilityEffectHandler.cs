@@ -48,6 +48,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     result.GeneratedEvents.Add(new GrantAbilityEvent(
                         parameters.AbilityConfigs,
                         targetInfo.Card,
+                        context.SourceCard,
                         parameters.DurationType,
                         parameters.DurationParameter,
                         effectKey,

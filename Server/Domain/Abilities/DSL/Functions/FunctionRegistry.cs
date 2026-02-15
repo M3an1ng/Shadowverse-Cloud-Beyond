@@ -153,6 +153,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
                 new AbsFunction(),
                 new IfFunction(),
                 new ContainsFunction(),
+                new FrequencyFunction(),
                 new IsEmptyFunction(),
                 new VarFunction(),
                 new EventIntFunction(),

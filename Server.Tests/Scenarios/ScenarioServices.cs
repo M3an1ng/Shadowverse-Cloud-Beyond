@@ -102,6 +102,7 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
             var recordedMapper = new JsonRecordedEventMapper();
             var rawMapper = new JsonGameEventRawEventMapper();
             var metaProgression = new NoopMetaProgressionService();
+            var winrateStats = new NoopWinrateStatsService();
             var options = Microsoft.Extensions.Options.Options.Create(new ReplayOptions());
 
             return new GameActionTransactionService(
@@ -116,6 +117,7 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
                 recordedMapper,
                 rawMapper,
                 metaProgression,
+                winrateStats,
                 options);
         }
 
@@ -192,6 +194,14 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
         private sealed class NoopMetaProgressionService : IMetaProgressionService
         {
             public Task ApplyPostCommitAsync(Domain.Events.GameContext context, IReadOnlyList<Domain.Events.IGameEvent> committedEvents, CancellationToken cancellationToken)
+            {
+                return Task.CompletedTask;
+            }
+        }
+
+        private sealed class NoopWinrateStatsService : IWinrateStatsService
+        {
+            public Task ApplyPostCommitAsync(Domain.Events.GameContext gameContext, IReadOnlyList<Domain.Events.IGameEvent> processedEvents, CancellationToken cancellationToken)
             {
                 return Task.CompletedTask;
             }

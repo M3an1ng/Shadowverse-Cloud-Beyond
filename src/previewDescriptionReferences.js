@@ -21,7 +21,7 @@ function resolveNumber(card, keys) {
 }
 
 function resolvePreviewUrl(card) {
-    const path = resolveField(card, ['artPreview', 'ArtPreview', 'artDetail', 'ArtDetail']);
+    const path = resolveField(card, ['artPreview', 'ArtPreview']);
     if (!path) return '';
     return normalizePreviewUrl(path);
 }

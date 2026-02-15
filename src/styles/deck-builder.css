@@ -268,7 +268,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 16px;
+    padding: 14px;
     opacity: 0;
     transition: opacity var(--transition-fast);
     z-index: 10;
@@ -279,14 +281,14 @@
 }
 
 .deck-action-btn {
-    min-width: 120px;
+    min-width: 128px;
     height: 36px;
     padding: 0 18px;
     border: 1px solid rgba(255, 255, 255, 0.25);
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.08);
     color: #fff;
-    font-family: var(--db-font-mono);
+    font-family: var(--font-line);
     font-size: 0.85rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -298,6 +300,16 @@
     border-color: var(--db-accent-gold);
     color: var(--db-accent-gold);
     box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.deck-action-btn.preview-deck-btn {
+    border-color: rgba(0, 255, 204, 0.35);
+}
+
+.deck-action-btn.preview-deck-btn:hover {
+    border-color: var(--db-accent-cyan);
+    color: var(--db-accent-cyan);
+    box-shadow: 0 0 12px rgba(0, 255, 204, 0.25);
 }
 
 .deck-action-btn.delete-deck-btn {
@@ -398,6 +410,53 @@
     letter-spacing: 0.1em;
 }
 
+.deck-create-mode-switch {
+    display: inline-flex;
+    align-self: flex-start;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.deck-mode-btn {
+    min-width: 112px;
+    height: 34px;
+    padding: 0 14px;
+    border: none;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(255, 255, 255, 0.7);
+    font-family: var(--db-font-tech);
+    font-size: 0.82rem;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.deck-mode-btn + .deck-mode-btn {
+    border-left: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.deck-mode-btn.selected {
+    background: rgba(0, 255, 204, 0.14);
+    color: #fff;
+}
+
+.deck-mode-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.deck-create-panel.hidden,
+.deck-create-actions.hidden {
+    display: none;
+}
+
+.deck-create-panel[data-mode-panel="import"] {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
 .deck-create-step-title {
     font-size: 0.95rem;
     color: rgba(255, 255, 255, 0.7);
@@ -458,6 +517,487 @@
     gap: 12px;
     padding-top: 10px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.deck-import-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.deck-import-label {
+    font-family: var(--font-sans);
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.deck-import-input,
+.deck-import-textarea {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--db-font-mono);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.deck-import-textarea {
+    resize: vertical;
+    min-height: 110px;
+}
+
+.deck-import-input:focus,
+.deck-import-textarea:focus {
+    outline: none;
+    border-color: var(--db-accent-cyan);
+    box-shadow: 0 0 12px rgba(0, 255, 204, 0.2);
+}
+
+.deck-import-hint {
+    margin-top: 4px;
+    font-size: 0.74rem;
+    color: rgba(255, 255, 255, 0.58);
+}
+
+/* --- Deck Preview / Export Modal --- */
+.deck-preview-modal,
+.deck-code-modal {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(6px);
+    z-index: 24;
+}
+
+.deck-preview-modal.open,
+.deck-code-modal.open {
+    display: flex;
+}
+
+.deck-preview-dialog {
+    width: min(1200px, 94vw);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 22px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    background:
+        linear-gradient(145deg, rgba(4, 8, 18, 0.95), rgba(0, 0, 0, 0.95));
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+}
+
+.deck-preview-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 12px;
+}
+
+.deck-preview-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+.deck-preview-title-group {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.deck-preview-caption {
+    font-family: var(--db-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    color: rgba(255, 255, 255, 0.55);
+    text-transform: uppercase;
+}
+
+.deck-preview-title {
+    margin: 2px 0 0;
+    font-family: var(--db-font-serif);
+    font-size: 1.55rem;
+    line-height: 1.2;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.deck-preview-meta {
+    font-family: var(--db-font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.58);
+}
+
+.deck-preview-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.deck-preview-summary {
+    display: flex;
+    align-items: stretch;
+    gap: 18px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.deck-preview-curve {
+    display: grid;
+    grid-template-columns: repeat(9, minmax(20px, 1fr));
+    gap: 6px;
+    width: min(500px, 60vw);
+    min-height: 92px;
+}
+
+.deck-preview-curve-col {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    min-height: 90px;
+}
+
+.deck-preview-curve-bar {
+    width: 100%;
+    min-height: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: linear-gradient(to top, rgba(245, 158, 11, 0.95), rgba(245, 158, 11, 0.26));
+}
+
+.deck-preview-curve-label {
+    font-family: var(--db-font-mono);
+    font-size: 0.68rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.deck-preview-counts {
+    margin-left: auto;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+    font-family: var(--db-font-mono);
+}
+
+.deck-preview-total {
+    font-family: var(--db-font-serif);
+    font-size: 1.8rem;
+    color: #fff;
+    text-align: right;
+}
+
+.deck-preview-type-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.deck-preview-cards {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 130px;
+    grid-template-rows: repeat(2, max-content);
+    justify-content: flex-start;
+    align-content: flex-start;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 2px 4px 0;
+}
+
+.deck-preview-card {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    border: 2px solid rgba(255, 255, 255, 0.34);
+    background: #131313;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.deck-preview-card.has-art {
+    background-image: var(--deck-preview-art, none);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+.deck-preview-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(8, 8, 12, 0.2), rgba(0, 0, 0, 0.92));
+    pointer-events: none;
+}
+
+.deck-preview-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--db-accent-cyan);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.deck-preview-card-cost,
+.deck-preview-card-count {
+    position: absolute;
+    top: 8px;
+    z-index: 2;
+    min-width: 24px;
+    padding: 3px 6px;
+    border-radius: 999px;
+    font-family: var(--db-font-mono);
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
+.deck-preview-card-cost {
+    left: 8px;
+    border: 1px solid rgba(0, 255, 204, 0.72);
+    color: var(--db-accent-cyan);
+    background: rgba(0, 0, 0, 0.82);
+}
+
+.deck-preview-card-count {
+    right: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+    background: rgba(0, 0, 0, 0.82);
+}
+
+.deck-preview-card-name,
+.deck-preview-card-type {
+    position: relative;
+    z-index: 2;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.deck-preview-card-name {
+    padding: 20px 8px 3px;
+    font-family: var(--db-font-serif);
+    font-size: 0.82rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.deck-preview-card-type {
+    padding: 0 8px 8px;
+    font-family: var(--db-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    color: rgba(255, 255, 255, 0.76);
+}
+
+.deck-preview-empty {
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    min-width: 280px;
+    padding: 28px 16px;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.6);
+    font-family: var(--db-font-mono);
+}
+
+.deck-code-dialog {
+    width: min(640px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px 22px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(8, 10, 18, 0.96);
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.62);
+}
+
+.deck-code-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.deck-code-caption {
+    font-family: var(--db-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.deck-code-title {
+    margin: 2px 0 0;
+    font-family: var(--db-font-serif);
+    font-size: 1.4rem;
+    color: #fff;
+}
+
+.deck-code-output {
+    width: 100%;
+    min-height: 110px;
+    resize: none;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(0, 0, 0, 0.42);
+    color: rgba(255, 255, 255, 0.92);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: var(--db-font-mono);
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+
+.deck-code-output:focus {
+    outline: none;
+    border-color: var(--db-accent-cyan);
+}
+
+.deck-code-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.deck-code-status {
+    min-height: 18px;
+    font-family: var(--db-font-mono);
+    font-size: 0.74rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.deck-code-status.error {
+    color: #f87171;
+}
+
+@media (max-width: 1024px) {
+    .deck-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .deck-preview-dialog {
+        width: min(980px, 96vw);
+        max-height: 94vh;
+        padding: 16px;
+    }
+
+    .deck-preview-toolbar {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .deck-preview-toolbar-left {
+        width: 100%;
+    }
+
+    .deck-preview-toolbar-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .deck-preview-summary {
+        flex-direction: column;
+    }
+
+    .deck-preview-curve {
+        width: 100%;
+    }
+
+    .deck-preview-counts {
+        margin-left: 0;
+        min-width: 0;
+        width: 100%;
+        align-items: flex-end;
+    }
+}
+
+@media (max-width: 720px) {
+    .deck-selection-view {
+        padding: 20px 16px;
+    }
+
+    .deck-create-dialog {
+        width: min(720px, 96vw);
+        padding: 16px;
+    }
+
+    .deck-create-mode-switch {
+        width: 100%;
+    }
+
+    .deck-mode-btn {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .deck-card.wide-banner {
+        height: 180px;
+    }
+
+    .deck-actions-overlay {
+        gap: 10px;
+        padding: 10px;
+    }
+
+    .deck-action-btn {
+        min-width: 110px;
+        height: 34px;
+        font-size: 0.75rem;
+        padding: 0 10px;
+    }
+
+    .deck-preview-title {
+        font-size: 1.2rem;
+    }
+
+    .deck-preview-type-row {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 8px 12px;
+    }
+
+    .deck-preview-total {
+        font-size: 1.4rem;
+        text-align: left;
+    }
+
+    .deck-preview-cards {
+        grid-auto-columns: 112px;
+        grid-template-rows: repeat(2, max-content);
+        gap: 10px;
+    }
+
+    .deck-code-dialog {
+        padding: 16px;
+    }
 }
 
 /* --- Deck Builder View (Editor) - Vertical Layout --- */
@@ -946,21 +1486,29 @@
 }
 
 /* Rarity Borders */
+.deck-preview-card.rarity-bronze,
 .deck-card-mini.rarity-bronze,
 .library-card.rarity-bronze {
     --db-card-border: #be7936;
+    border-color: #be7936;
 }
 
+.deck-preview-card.rarity-silver,
 .deck-card-mini.rarity-silver,
 .library-card.rarity-silver {
     --db-card-border: #c0c0c0;
+    border-color: #c0c0c0;
 }
 
+.deck-preview-card.rarity-gold,
 .deck-card-mini.rarity-gold,
 .library-card.rarity-gold {
     --db-card-border: #ffc800;
+    border-color: #ffc800;
 }
 
+.deck-preview-card.rarity-legend,
+.deck-preview-card.rarity-legendary,
 .deck-card-mini.rarity-legend,
 .deck-card-mini.rarity-legendary,
 .library-card.rarity-legend,
@@ -989,6 +1537,30 @@
         0 0 8px rgba(255, 210, 77, 0.45),
         0 0 14px rgba(0, 255, 204, 0.3),
         0 0 18px rgba(255, 106, 213, 0.25);
+}
+
+.deck-preview-card.rarity-legend,
+.deck-preview-card.rarity-legendary {
+    border-color: transparent;
+    background-image:
+        var(--deck-preview-art, none),
+        conic-gradient(
+            from 0deg,
+            #ffd24d,
+            #ff6ad5,
+            #7c83ff,
+            #3dffdf,
+            #ffd24d
+        );
+    background-clip: padding-box, border-box;
+    background-origin: padding-box, border-box;
+    background-size: cover, 100% 100%;
+    background-position: center, center;
+    background-repeat: no-repeat, no-repeat;
+    box-shadow:
+        0 0 10px rgba(255, 210, 77, 0.5),
+        0 0 18px rgba(0, 255, 204, 0.35),
+        0 0 26px rgba(255, 106, 213, 0.3);
 }
 
 .library-card.rarity-legend,

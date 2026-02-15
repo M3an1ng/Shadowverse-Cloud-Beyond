@@ -9,6 +9,11 @@ public partial class EconomyService
 
     public async Task<UserRankDto?> GetUserRankAsync(Guid userId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(GetUserRankAsync)))
+        {
+            return null;
+        }
+
         var userEconomy = await GetOrCreateUserEconomyAsync(userId);
         var userRanking = await GetOrCreateUserRankingAsync(userId);
         var userDailyReward = await GetOrCreateUserDailyRewardAsync(userId);
@@ -17,6 +22,16 @@ public partial class EconomyService
 
     public async Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(GetMetaProgressionStateAsync)))
+        {
+            return new MetaProgressionStateDto
+            {
+                UserId = userId,
+                Rank = null,
+                Quests = new List<UserQuestDto>()
+            };
+        }
+
         var rank = await GetUserRankAsync(userId);
         var quests = await GetUserQuestsAsync(userId);
 
@@ -30,6 +45,11 @@ public partial class EconomyService
 
     public async Task<bool> UpdateUserRankAsync(Guid userId, bool isWin)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(UpdateUserRankAsync)))
+        {
+            return false;
+        }
+
         try
         {
             return await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -85,4 +105,3 @@ public partial class EconomyService
 
     #endregion
 }
-

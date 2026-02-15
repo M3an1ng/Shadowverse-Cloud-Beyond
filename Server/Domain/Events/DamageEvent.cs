@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
 using System;
+using System.ComponentModel;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
@@ -13,8 +14,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
 {
     public enum DamageKind
     {
+        [Description("未知")]
         Unknown = 0,
+        [Description("战斗")]
         Combat = 1,
+        [Description("能力")]
         Ability = 2
     }
 
@@ -91,7 +95,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (hasShield)
             {
                 // Consume shield on first incoming positive damage.
-                result.GeneratedEvents.Add(new KeywordRemovedEvent(CardKeyword.Shield, card));
+                result.GeneratedEvents.Add(new KeywordRemovedEvent(CardKeyword.Shield, card, DamageSource));
             }
 
             // Generate the atomic HealthChangedEvent; it will apply state in its Commit
@@ -100,8 +104,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (Kind == DamageKind.Combat && DamageSource != null)
             {
                 var sourceKeywords = context.BuffService.GetEffectiveKeywords(DamageSource, context);
-
-                if (DamageSource.IsSuperEvolved && card.IsFollower && newHealth <= 0)
+                var activePlayerId = context.CurrentGameState.CurrentPlayerId;
+                if (DamageSource.IsSuperEvolved && activePlayerId.HasValue && DamageSource.OwnerPlayerId == activePlayerId.Value && card.IsFollower && newHealth <= 0)
                 {
                     var defenderOwner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
                     if (defenderOwner?.Leader != null)

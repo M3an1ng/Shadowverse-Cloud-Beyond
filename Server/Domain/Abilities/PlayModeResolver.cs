@@ -48,13 +48,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public static PlayModeResolution Resolve(
             CardInstance card,
             PlayerState player,
-            GameContext context,
-            IEnumerable<AbilityConfig> abilityConfigs)
+            GameContext context)
         {
             if (card == null) throw new ArgumentNullException(nameof(card));
             if (player == null) throw new ArgumentNullException(nameof(player));
             if (context == null) throw new ArgumentNullException(nameof(context));
-            if (abilityConfigs == null) throw new ArgumentNullException(nameof(abilityConfigs));
 
             var modes = new List<PlayModeAvailabilityDto>();
             var currentPp = player.CurrentPlayPoints;
@@ -62,7 +60,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var baseCost = Math.Max(0, card.CurrentCost);
             modes.Add(BuildAvailability(PlayMode.Base, baseCost, currentPp));
 
-            var (selectedEnhanceCost, minEnhanceCost, selectedEnhanceAbilityRuntimeId) = ResolveEnhanceCost(card, context, abilityConfigs, currentPp);
+            var (selectedEnhanceCost, minEnhanceCost, selectedEnhanceAbilityRuntimeId) = ResolveEnhanceCost(card, context, currentPp);
             if (minEnhanceCost.HasValue)
             {
                 var isDisabled = IsEnhanceDisabled(card);
@@ -104,62 +102,50 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private static (int? SelectedCost, int? MinCost, Guid? SelectedAbilityRuntimeId) ResolveEnhanceCost(
             CardInstance card,
             GameContext context,
-            IEnumerable<AbilityConfig> abilityConfigs,
             int currentPp)
         {
             var enhanceAbilities = context.AbilityManager?
-                .GetAbilitiesForCard(card.InstanceId)
+                .GetEffectiveAbilitiesForCard(card.InstanceId, context)
                 .Where(a => a.HasKeyword(AbilityKeyword.Enhance))
                 .ToList() ?? new List<IAbility>();
 
-            if (enhanceAbilities.Count > 0)
-            {
-                var runtimeCandidates = new List<(int Cost, Guid RuntimeId)>();
-                foreach (var ability in enhanceAbilities)
-                {
-                    if (ability == null || context.AbilityManager.IsAbilitySuppressed(ability, context))
-                    {
-                        continue;
-                    }
-
-                    var cost = card.GetEnhanceCostForAbility(ability, context);
-                    if (cost > 0)
-                    {
-                        runtimeCandidates.Add((cost, ability.RuntimeId));
-                    }
-                }
-
-                if (runtimeCandidates.Count > 0)
-                {
-                    var runtimeMinCost = runtimeCandidates.Min(c => c.Cost);
-                    var selected = runtimeCandidates
-                        .Where(c => c.Cost <= currentPp)
-                        .OrderByDescending(c => c.Cost)
-                        .FirstOrDefault();
-
-                    if (selected.Cost > 0)
-                    {
-                        return (selected.Cost, runtimeMinCost, selected.RuntimeId);
-                    }
-
-                    return (null, runtimeMinCost, null);
-                }
-            }
-
-            var costs = card.GetEnhanceCostCandidates(context, abilityConfigs)
-                .Where(value => value > 0)
-                .Distinct()
-                .ToList();
-
-            if (costs.Count == 0)
+            if (enhanceAbilities.Count == 0)
             {
                 return (null, null, null);
             }
 
-            var minCost = costs.Min();
-            var affordable = costs.Where(c => c <= currentPp).ToList();
-            var selectedCost = affordable.Count > 0 ? affordable.Max() : (int?)null;
-            return (selectedCost, minCost, null);
+            var runtimeCandidates = new List<(int Cost, Guid RuntimeId)>();
+            foreach (var ability in enhanceAbilities)
+            {
+                if (ability == null)
+                {
+                    continue;
+                }
+
+                var cost = card.GetEnhanceCostForAbility(ability, context);
+                if (cost > 0)
+                {
+                    runtimeCandidates.Add((cost, ability.RuntimeId));
+                }
+            }
+
+            if (runtimeCandidates.Count == 0)
+            {
+                return (null, null, null);
+            }
+
+            var minCost = runtimeCandidates.Min(c => c.Cost);
+            var selected = runtimeCandidates
+                .Where(c => c.Cost <= currentPp)
+                .OrderByDescending(c => c.Cost)
+                .FirstOrDefault();
+
+            if (selected.Cost > 0)
+            {
+                return (selected.Cost, minCost, selected.RuntimeId);
+            }
+
+            return (null, minCost, null);
         }
 
         private static PlayMode? SelectMode(IReadOnlyList<PlayModeAvailabilityDto> modes)

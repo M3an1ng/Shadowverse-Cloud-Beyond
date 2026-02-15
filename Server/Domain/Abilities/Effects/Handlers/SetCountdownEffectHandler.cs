@@ -47,8 +47,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = true };
                     }
 
+                    var owner = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
+                    if (owner == null)
+                    {
+                        return new DomainOperationResult
+                        {
+                            Success = false,
+                            ErrorMessage = $"SetCountdown effect could not resolve owner for card {card.InstanceId}."
+                        };
+                    }
+
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new CountdownTickEvent(card, parameters.ChangeAmount));
+                    result.GeneratedEvents.Add(new CountdownTickEvent(owner, card, parameters.ChangeAmount));
                     return result;
                 };
 

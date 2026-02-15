@@ -107,6 +107,7 @@ namespace ShadowverseBeyond.Server.Tests
             var recordedMapper = new JsonRecordedEventMapper();
             var rawEventMapper = new JsonGameEventRawEventMapper();
             var metaProgression = new Mock<IMetaProgressionService>();
+            var winrateStats = new Mock<IWinrateStatsService>();
             eventJournal
                 .Setup(j => j.AppendBundleAsync(
                     It.IsAny<string>(),
@@ -130,6 +131,7 @@ namespace ShadowverseBeyond.Server.Tests
                 recordedMapper,
                 rawEventMapper,
                 metaProgression.Object,
+                winrateStats.Object,
                 options);
 
             var ppUpdate = new PpUpdateEvent(player, 5);

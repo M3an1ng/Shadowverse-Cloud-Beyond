@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services;
@@ -23,21 +24,18 @@ namespace ShadowverseBeyond.Server.Tests
         [Fact]
         public void Resolve_selects_enhance_when_available()
         {
-            using var context = CreateContext(baseCost: 2, currentPp: 7, out var player, out var card);
-            var abilityConfigs = new List<AbilityConfig>
-            {
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 6 }
-                    }
-                }
-            };
+            var enhanceAbility = CreateEnhanceAbility(6);
+            using var context = CreateContext(
+                baseCost: 2,
+                currentPp: 7,
+                effectiveAbilities: new[] { enhanceAbility },
+                out var player,
+                out var card);
 
-            var resolution = PlayModeResolver.Resolve(card, player, context, abilityConfigs);
+            var resolution = PlayModeResolver.Resolve(card, player, context);
 
             Assert.Equal(PlayMode.Enhance, resolution.SelectedMode);
+            Assert.Equal(enhanceAbility.RuntimeId, resolution.SelectedAbilityRuntimeId);
 
             var enhanceMode = resolution.Modes.Single(m => m.Mode == PlayMode.Enhance);
             Assert.True(enhanceMode.IsAvailable);
@@ -47,35 +45,20 @@ namespace ShadowverseBeyond.Server.Tests
         [Fact]
         public void Resolve_selects_highest_affordable_enhance_cost()
         {
-            using var context = CreateContext(baseCost: 10, currentPp: 7, out var player, out var card);
-            var abilityConfigs = new List<AbilityConfig>
-            {
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 4 }
-                    }
-                },
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 6 }
-                    }
-                },
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 8 }
-                    }
-                }
-            };
+            var enhance4 = CreateEnhanceAbility(4);
+            var enhance6 = CreateEnhanceAbility(6);
+            var enhance8 = CreateEnhanceAbility(8);
+            using var context = CreateContext(
+                baseCost: 10,
+                currentPp: 7,
+                effectiveAbilities: new[] { enhance4, enhance6, enhance8 },
+                out var player,
+                out var card);
 
-            var resolution = PlayModeResolver.Resolve(card, player, context, abilityConfigs);
+            var resolution = PlayModeResolver.Resolve(card, player, context);
 
             Assert.Equal(PlayMode.Enhance, resolution.SelectedMode);
+            Assert.Equal(enhance6.RuntimeId, resolution.SelectedAbilityRuntimeId);
 
             var enhanceMode = resolution.Modes.Single(m => m.Mode == PlayMode.Enhance);
             Assert.True(enhanceMode.IsAvailable);
@@ -85,28 +68,17 @@ namespace ShadowverseBeyond.Server.Tests
         [Fact]
         public void Resolve_marks_enhance_unavailable_when_costs_exceed_pp()
         {
-            using var context = CreateContext(baseCost: 2, currentPp: 3, out var player, out var card);
-            var abilityConfigs = new List<AbilityConfig>
-            {
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 4 }
-                    }
-                },
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 6 }
-                    }
-                }
-            };
+            using var context = CreateContext(
+                baseCost: 2,
+                currentPp: 3,
+                effectiveAbilities: new[] { CreateEnhanceAbility(4), CreateEnhanceAbility(6) },
+                out var player,
+                out var card);
 
-            var resolution = PlayModeResolver.Resolve(card, player, context, abilityConfigs);
+            var resolution = PlayModeResolver.Resolve(card, player, context);
 
             Assert.Equal(PlayMode.Base, resolution.SelectedMode);
+            Assert.Null(resolution.SelectedAbilityRuntimeId);
 
             var enhanceMode = resolution.Modes.Single(m => m.Mode == PlayMode.Enhance);
             Assert.False(enhanceMode.IsAvailable);
@@ -117,30 +89,63 @@ namespace ShadowverseBeyond.Server.Tests
         [Fact]
         public void Resolve_disables_enhance_when_flag_set()
         {
-            using var context = CreateContext(baseCost: 2, currentPp: 7, out var player, out var card);
+            using var context = CreateContext(
+                baseCost: 2,
+                currentPp: 7,
+                effectiveAbilities: new[] { CreateEnhanceAbility(6) },
+                out var player,
+                out var card);
             card.AbilityState[PlayModeResolver.EnhanceDisabledKey] = true;
 
-            var abilityConfigs = new List<AbilityConfig>
-            {
-                new AbilityConfig
-                {
-                    AbilityKeywords = new List<AbilityKeywordConfig>
-                    {
-                        new AbilityKeywordConfig { Keyword = ShadowverseBeyond.Server.Domain.Constants.AbilityKeyword.Enhance, Value = 6 }
-                    }
-                }
-            };
-
-            var resolution = PlayModeResolver.Resolve(card, player, context, abilityConfigs);
+            var resolution = PlayModeResolver.Resolve(card, player, context);
 
             Assert.Equal(PlayMode.Base, resolution.SelectedMode);
+            Assert.Null(resolution.SelectedAbilityRuntimeId);
 
             var enhanceMode = resolution.Modes.Single(m => m.Mode == PlayMode.Enhance);
             Assert.False(enhanceMode.IsAvailable);
             Assert.Equal("Enhance disabled.", enhanceMode.Reason);
         }
 
-        private static GameContext CreateContext(int baseCost, int currentPp, out PlayerState player, out CardInstance card)
+        [Fact]
+        public void Resolve_does_not_add_enhance_mode_when_no_effective_enhance_abilities()
+        {
+            using var context = CreateContext(
+                baseCost: 2,
+                currentPp: 7,
+                effectiveAbilities: Array.Empty<IAbility>(),
+                out var player,
+                out var card);
+
+            var resolution = PlayModeResolver.Resolve(card, player, context);
+
+            Assert.Equal(PlayMode.Base, resolution.SelectedMode);
+            Assert.DoesNotContain(resolution.Modes, mode => mode.Mode == PlayMode.Enhance);
+            Assert.Null(resolution.SelectedAbilityRuntimeId);
+        }
+
+        private static IAbility CreateEnhanceAbility(int enhanceCost)
+        {
+            var mock = new Mock<IAbility>();
+            mock.SetupGet(a => a.RuntimeId).Returns(Guid.NewGuid());
+            mock.SetupGet(a => a.Name).Returns($"Enhance {enhanceCost}");
+            mock.SetupGet(a => a.AbilityKeywords).Returns(new List<AbilityKeywordConfig>
+            {
+                new() { Keyword = AbilityKeyword.Enhance, Value = enhanceCost }
+            });
+            mock.Setup(a => a.HasKeyword(It.IsAny<AbilityKeyword>()))
+                .Returns<AbilityKeyword>(keyword => keyword == AbilityKeyword.Enhance);
+            mock.Setup(a => a.GetKeywordValue(It.IsAny<AbilityKeyword>()))
+                .Returns<AbilityKeyword>(keyword => keyword == AbilityKeyword.Enhance ? enhanceCost : null);
+            return mock.Object;
+        }
+
+        private static GameContext CreateContext(
+            int baseCost,
+            int currentPp,
+            IReadOnlyCollection<IAbility> effectiveAbilities,
+            out PlayerState player,
+            out CardInstance card)
         {
             var services = new ServiceCollection();
             services.AddLogging();
@@ -150,6 +155,13 @@ namespace ShadowverseBeyond.Server.Tests
             mockBuffService
                 .Setup(s => s.GetEffectiveCost(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns(baseCost);
+            mockBuffService
+                .Setup(s => s.GetEffectiveAbilityKeywordValue(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<AbilityKeyword>(),
+                    It.IsAny<int>(),
+                    It.IsAny<GameContext>()))
+                .Returns<CardInstance, AbilityKeyword, int, GameContext>((_, _, value, _) => value);
             services.AddSingleton(mockBuffService.Object);
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
 
@@ -163,10 +175,17 @@ namespace ShadowverseBeyond.Server.Tests
                 CurrentPlayPoints = currentPp
             };
             var opponent = new PlayerState(Guid.NewGuid());
+            card = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
+            var cardInstanceId = card.InstanceId;
+
+            var mockAbilityManager = new Mock<IAbilityManager>();
+            mockAbilityManager
+                .Setup(manager => manager.GetEffectiveAbilitiesForCard(cardInstanceId, It.IsAny<GameContext>()))
+                .Returns(effectiveAbilities.ToList());
 
             var gameState = new GameState("test-game", player, opponent, player.PlayerId)
             {
-                AbilityManager = Mock.Of<IAbilityManager>(),
+                AbilityManager = mockAbilityManager.Object,
                 BuffManager = Mock.Of<IBuffManager>()
             };
 
@@ -177,7 +196,6 @@ namespace ShadowverseBeyond.Server.Tests
                 gameState,
                 player.PlayerId);
 
-            card = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
             return context;
         }
     }

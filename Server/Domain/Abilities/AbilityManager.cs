@@ -916,14 +916,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         private GameEventDto? ConvertEventToDto(IGameEvent gameEvent)
         {
+            var abilityTriggeredEvent = gameEvent as AbilityTriggeredEvent;
+            var triggeredAbility = abilityTriggeredEvent?.TriggeredAbility;
+            var concreteAbility = triggeredAbility as Ability;
+            var sourceCard = triggeredAbility?.SourceCard;
+            var abilityName = concreteAbility?.Name ?? triggeredAbility?.Name ?? string.Empty;
+            var abilityDescription = concreteAbility?.Description ?? string.Empty;
+            var parameters = new Dictionary<string, object>
+            {
+                { "ability_definition_id", triggeredAbility?.DefinitionId ?? 0L },
+                { "ability_runtime_id", triggeredAbility?.RuntimeId ?? Guid.Empty },
+                { "ability_name", abilityName },
+                { "ability_description", abilityDescription },
+                { "source_card_name", sourceCard?.Name ?? string.Empty },
+                { "source_card_art_preview", sourceCard?.CurrentDefinition?.ArtPreview ?? string.Empty }
+            };
+
             return gameEvent.EventType switch
             {
                 EventType.AbilityTriggered => new AbilityTriggeredEventDto(
                     gameEvent.Source?.Player?.PlayerId ?? Guid.Empty,
                     gameEvent.Source?.Card?.InstanceId ?? Guid.Empty,
-                    (gameEvent as AbilityTriggeredEvent)?.TriggerEventType.ToString() ?? string.Empty,
-                    new Dictionary<string, object>(),
-                    (gameEvent as AbilityTriggeredEvent)?.AbilityKeywords.Select(k => k.ToString()).ToArray() ?? Array.Empty<string>()
+                    abilityTriggeredEvent?.TriggerEventType.ToString() ?? string.Empty,
+                    parameters,
+                    abilityTriggeredEvent?.AbilityKeywords.Select(k => k.ToString()).ToArray() ?? Array.Empty<string>()
                 ),
                 _ => null
             };
@@ -1038,9 +1054,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 if (recordTrigger)
                 {
                     ability.RecordTrigger(context);
-                    if (context.TriggeringEvent != null && HasAbilityTriggeredListeners())
+                    if (ShouldEmitAbilityTriggeredEvent(ability, context))
                     {
-                        auraEvents.Add(new AbilityTriggeredEvent(ability, context.TriggeringEvent));
+                        auraEvents.Add(new AbilityTriggeredEvent(ability, context.TriggeringEvent!));
                     }
                 }
             }
@@ -1095,6 +1111,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
 
             return AbilityProcessResult.Success(effects, auraEvents);
+        }
+
+        private static bool ShouldEmitAbilityTriggeredEvent(IAbility ability, GameContext context)
+        {
+            if (context.TriggeringEvent == null)
+            {
+                return false;
+            }
+
+            if (ability is Ability concreteAbility)
+            {
+                return concreteAbility.BroadcastOnTrigger;
+            }
+
+            return true;
         }
 
         public DomainOperationResult RefreshAuraForAbility(IAbility ability, GameContext context)

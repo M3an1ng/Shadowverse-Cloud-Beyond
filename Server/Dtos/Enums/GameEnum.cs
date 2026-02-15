@@ -77,11 +77,13 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         /// <summary>
         /// Play the card at its base cost.
         /// </summary>
+        [Description("基础")]
         Base,
 
         /// <summary>
         /// Play the card using its Enhance cost.
         /// </summary>
+        [Description("爆能")]
         Enhance
     }
 
@@ -159,6 +161,7 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
     /// </summary>
     public enum CardRarity
     {
+        [Description("特殊")]
         Special,
         [Description("青铜")]
         Bronze,

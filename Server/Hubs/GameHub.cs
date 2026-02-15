@@ -32,6 +32,8 @@ using ShadowverseBeyond.Server.Domain.Events.Services;
 using Microsoft.Extensions.Options;
 using ShadowverseBeyond.Server.Options;
 using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
+using ShadowverseBeyond.Server.Infrastructure.Data;
 
 // Corrected Namespace
 namespace ShadowverseBeyond.Server.Hubs
@@ -48,6 +50,7 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly IClientMethodMapper _clientMethodMapper; // ADDED
         private readonly IMapper _mapper; // Added for Entity to DTO mapping
         private readonly IMatchService _matchService; // Added for lobby validation
+        private readonly IGameChatService _gameChatService;
         private readonly ICommittedEventJournal _eventJournal;
         private readonly ISnapshotStore _snapshotStore;
         private readonly ReplayOptions _replayOptions;
@@ -71,6 +74,7 @@ namespace ShadowverseBeyond.Server.Hubs
             IClientMethodMapper clientMethodMapper,
             IMapper mapper,
             IMatchService matchService,
+            IGameChatService gameChatService,
             ICommittedEventJournal eventJournal,
             ISnapshotStore snapshotStore,
             IRecordedEventMapper recordedEventMapper,
@@ -82,6 +86,7 @@ namespace ShadowverseBeyond.Server.Hubs
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // ADDED assignment
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
+            _gameChatService = gameChatService ?? throw new ArgumentNullException(nameof(gameChatService));
             _eventJournal = eventJournal ?? throw new ArgumentNullException(nameof(eventJournal));
             _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
             _recordedEventMapper = recordedEventMapper ?? throw new ArgumentNullException(nameof(recordedEventMapper));
@@ -796,6 +801,59 @@ namespace ShadowverseBeyond.Server.Hubs
         // --- New Method for Playability Check ---
 
         /// <summary>
+        /// Sends a room chat message to all participants in the current game.
+        /// </summary>
+        public async Task SendChatMessage(SendChatMessageActionDto actionDto)
+        {
+            if (!TryResolveChatParticipantContext(out var gameId, out var senderType, out var senderId, out var senderName, out var senderAvatarUrl))
+            {
+                await Clients.Caller.ReceiveError("聊天发送失败：无法识别当前连接上下文。");
+                return;
+            }
+
+            var gameIdStr = gameId.ToString("D");
+            var roomResult = _matchService.Get(gameIdStr);
+            if (!roomResult.Success || roomResult.Room == null || roomResult.Room.Status == MatchStatus.Closed)
+            {
+                _gameChatService.ClearGame(gameIdStr);
+                var reason = roomResult.Room?.ClosedReason ?? roomResult.Message ?? "房间已关闭。";
+                await Clients.Caller.ReceiveError($"ROOM_CLOSED:{reason}");
+                return;
+            }
+
+            if (!_gameChatService.TryNormalizeContent(actionDto?.Content, out var normalizedContent, out var validationError))
+            {
+                await Clients.Caller.ReceiveError($"聊天发送失败：{validationError}");
+                return;
+            }
+
+            var participantKey = $"{gameIdStr}:{senderType}:{senderId}";
+            var nowUtc = DateTime.UtcNow;
+            if (!_gameChatService.TryConsumeRateLimit(participantKey, nowUtc, out var retryAfter))
+            {
+                var waitSeconds = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+                await Clients.Caller.ReceiveError($"发送过于频繁，请在 {waitSeconds} 秒后重试。");
+                return;
+            }
+
+            var message = new ChatMessageEventDto
+            {
+                MessageId = Guid.NewGuid(),
+                GameId = gameIdStr,
+                SenderType = senderType,
+                SenderId = senderId,
+                SenderName = senderName,
+                SenderAvatarUrl = senderAvatarUrl,
+                Content = normalizedContent,
+                SentAtUtc = nowUtc,
+                ClientMessageId = string.IsNullOrWhiteSpace(actionDto?.ClientMessageId) ? null : actionDto.ClientMessageId.Trim()
+            };
+
+            _gameChatService.AppendMessage(message);
+            await Clients.Group(SignalRGroupNames.Game(gameId)).ChatMessage(message);
+        }
+
+        /// <summary>
         /// Client invokes this method to check if a specific card in their hand is currently playable.
         /// Returns the playability status and target information directly to the caller.
         /// </summary>
@@ -872,7 +930,20 @@ namespace ShadowverseBeyond.Server.Hubs
                     return;
                 }
 
+                var spectatorDisplayName = NormalizeChatDisplayName(
+                    httpContext.Request.Query["spectatorName"].ToString(),
+                    BuildSpectatorFallbackDisplayName());
+                var spectatorParticipantId = NormalizeChatParticipantId(
+                    httpContext.Request.Query["spectatorUserId"].ToString(),
+                    Context.ConnectionId);
+                var spectatorAvatarUrl = NormalizeChatAvatarUrl(
+                    httpContext.Request.Query["spectatorAvatar"].ToString());
+
                 Context.Items["GameId"] = gameIdStr;
+                Context.Items["ParticipantType"] = ChatSenderType.Spectator;
+                Context.Items["ParticipantId"] = spectatorParticipantId;
+                Context.Items["DisplayName"] = spectatorDisplayName;
+                Context.Items["AvatarUrl"] = spectatorAvatarUrl;
 
                 var spectatorGroupName = SignalRGroupNames.Game(gameId);
                 await Groups.AddToGroupAsync(Context.ConnectionId, spectatorGroupName);
@@ -908,6 +979,10 @@ namespace ShadowverseBeyond.Server.Hubs
                     }
 
                     await Clients.Caller.ReceiveGameState(currentState);
+                    await SendRecentChatHistoryToCallerAsync(gameIdStr);
+                    await BroadcastSystemChatMessageAsync(
+                        gameId,
+                        $"观战者 {spectatorDisplayName} 加入了观战");
                 }
                 catch (Exception ex)
                 {
@@ -942,6 +1017,10 @@ namespace ShadowverseBeyond.Server.Hubs
             // Set items for filters (GameContextFilter will pick these up)
             Context.Items["GameId"] = gameIdStr;
             Context.Items["PlayerId"] = playerIdStr;
+            Context.Items["ParticipantType"] = ChatSenderType.Player;
+            Context.Items["ParticipantId"] = playerIdStr;
+            var fallbackDisplayName = playerGuid == authResult.Room.HostPlayerId ? "玩家1" : "玩家2";
+            Context.Items["DisplayName"] = await ResolveParticipantDisplayNameAsync(playerGuid, fallbackDisplayName);
 
             var room = authResult.Room;
             if (room.Status == MatchStatus.Ready)
@@ -1006,6 +1085,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
                     _logger.LogInformation("Sending initial game state to caller for Game {GameId}, Player {PlayerId}", gameId, playerIdStr);
                     await Clients.Caller.ReceiveGameState(currentState);
+                    await SendRecentChatHistoryToCallerAsync(gameIdStr);
                 }
                 else
                 {
@@ -1222,12 +1302,18 @@ namespace ShadowverseBeyond.Server.Hubs
             limit = Math.Min(limit, 20000);
 
             var records = await _eventJournal.ReadRangeAsync(gameId, fromSeq, limit, Context.ConnectionAborted);
+            var seenSeq = new HashSet<long>();
+            var seenEventIds = new HashSet<Guid>();
             foreach (var record in records)
             {
-                foreach (var env in record.ClientDtos)
+                if (!seenSeq.Add(record.Seq) || !seenEventIds.Add(record.EventId))
                 {
-                    var dto = _recordedEventMapper.TryDeserializeClientDto(env);
-                    if (dto == null) continue;
+                    continue;
+                }
+
+                var replayDtos = await BuildReplayDtosAsync(gameId, record);
+                foreach (var dto in replayDtos)
+                {
                     await _clientMethodMapper.BroadcastEventToClientAsync(Context.ConnectionId, dto);
                 }
             }
@@ -1258,6 +1344,8 @@ namespace ShadowverseBeyond.Server.Hubs
 
             var fromSeq = snapshot.AtSeq + 1;
             const int PageSize = 5000;
+            var seenSeq = new HashSet<long>();
+            var seenEventIds = new HashSet<Guid>();
             while (fromSeq <= targetSeq)
             {
                 var page = await _eventJournal.ReadRangeAsync(gameId, fromSeq, PageSize, Context.ConnectionAborted);
@@ -1266,16 +1354,396 @@ namespace ShadowverseBeyond.Server.Hubs
                 foreach (var record in page)
                 {
                     if (record.Seq > targetSeq) return;
-
-                    foreach (var env in record.ClientDtos)
+                    if (!seenSeq.Add(record.Seq) || !seenEventIds.Add(record.EventId))
                     {
-                        var dto = _recordedEventMapper.TryDeserializeClientDto(env);
-                        if (dto == null) continue;
+                        continue;
+                    }
+
+                    var replayDtos = await BuildReplayDtosAsync(gameId, record);
+                    foreach (var dto in replayDtos)
+                    {
                         await _clientMethodMapper.BroadcastEventToClientAsync(Context.ConnectionId, dto);
                     }
                 }
 
                 fromSeq = page[^1].Seq + 1;
+            }
+        }
+
+        private async Task<IReadOnlyList<GameEventDto>> BuildReplayDtosAsync(string gameId, RecordedCommittedEventDto record)
+        {
+            var replayDtos = new List<GameEventDto>();
+            foreach (var env in record.ClientDtos)
+            {
+                var dto = _recordedEventMapper.TryDeserializeClientDto(env);
+                if (dto != null)
+                {
+                    replayDtos.Add(dto);
+                }
+            }
+
+            if (replayDtos.Count > 0)
+            {
+                return replayDtos;
+            }
+
+            var projectedDtos = await TryProjectDtosFromRawAsync(gameId, record);
+            if (projectedDtos.Count > 0)
+            {
+                return projectedDtos;
+            }
+
+            var fallbackLog = BuildFallbackReplayLogDto(record);
+            if (fallbackLog != null)
+            {
+                replayDtos.Add(fallbackLog);
+            }
+
+            return replayDtos;
+        }
+
+        private async Task<IReadOnlyList<GameEventDto>> TryProjectDtosFromRawAsync(string gameId, RecordedCommittedEventDto record)
+        {
+            if (string.IsNullOrWhiteSpace(record.RawEventJson))
+            {
+                return Array.Empty<GameEventDto>();
+            }
+
+            RawEventEnvelopeDto? rawEvent;
+            try
+            {
+                rawEvent = JsonSerializer.Deserialize<RawEventEnvelopeDto>(record.RawEventJson);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Replay raw event JSON parse failed for GameId={GameId} Seq={Seq}.", gameId, record.Seq);
+                return Array.Empty<GameEventDto>();
+            }
+
+            if (rawEvent == null)
+            {
+                return Array.Empty<GameEventDto>();
+            }
+
+            var httpContext = Context.GetHttpContext();
+            var requestServices = httpContext?.RequestServices;
+            if (requestServices == null)
+            {
+                return Array.Empty<GameEventDto>();
+            }
+
+            var gameState = _gameService.GetGameState(gameId);
+            if (gameState == null)
+            {
+                return Array.Empty<GameEventDto>();
+            }
+
+            var requestingPlayerId = ResolveReplayRequestingPlayerId(gameState, record);
+            var rawEventRegistry = requestServices.GetRequiredService<IRawEventGameEventRegistry>();
+            if (!rawEventRegistry.TryCreateGameEvent(rawEvent, gameState, requestingPlayerId, out var gameEvent, out var errorMessage) || gameEvent == null)
+            {
+                _logger.LogDebug(
+                    "Replay raw projection skipped for GameId={GameId} Seq={Seq} EventType={EventType}. Reason={Reason}",
+                    gameId,
+                    record.Seq,
+                    record.EventType,
+                    errorMessage ?? "raw event type is not yet supported.");
+                return Array.Empty<GameEventDto>();
+            }
+
+            var eventProcessor = requestServices.GetRequiredService<IEventProcessor>();
+            var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
+
+            try
+            {
+                // Apply-only replay projection: do not execute event Commit here.
+                using var replayContext = new GameContext(
+                    requestServices,
+                    _mapper,
+                    gameContextAccessor,
+                    gameState,
+                    requestingPlayerId,
+                    Context.ConnectionAborted);
+
+                var processorResult = await eventProcessor.ProcessEventAsync(gameEvent, replayContext);
+                return processorResult.ResultingDtos;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Replay raw projection failed for GameId={GameId} Seq={Seq}.", gameId, record.Seq);
+                return Array.Empty<GameEventDto>();
+            }
+        }
+
+        private static Guid ResolveReplayRequestingPlayerId(GameState gameState, RecordedCommittedEventDto record)
+        {
+            if (record.SourceId.HasValue && record.SourceId.Value != Guid.Empty)
+            {
+                var sourceId = record.SourceId.Value;
+                if (sourceId == gameState.Player1.PlayerId || sourceId == gameState.Player2.PlayerId)
+                {
+                    return sourceId;
+                }
+
+                var sourceCard = gameState.FindCardInstance(sourceId);
+                if (sourceCard != null)
+                {
+                    return sourceCard.OwnerPlayerId;
+                }
+            }
+
+            if (gameState.CurrentPlayerId.HasValue && gameState.CurrentPlayerId.Value != Guid.Empty)
+            {
+                return gameState.CurrentPlayerId.Value;
+            }
+
+            return gameState.Player1.PlayerId;
+        }
+
+        private static LogEventDto? BuildFallbackReplayLogDto(RecordedCommittedEventDto record)
+        {
+            if (string.IsNullOrWhiteSpace(record.Announcement))
+            {
+                return null;
+            }
+
+            return new LogEventDto(
+                record.EventId,
+                record.EventType,
+                record.Announcement,
+                record.SourceId ?? Guid.Empty);
+        }
+
+        private async Task SendRecentChatHistoryToCallerAsync(string gameId)
+        {
+            if (string.IsNullOrWhiteSpace(gameId))
+            {
+                return;
+            }
+
+            try
+            {
+                var messages = _gameChatService.GetRecentMessages(gameId, 100);
+                var historyDto = new ChatHistoryEventDto
+                {
+                    GameId = gameId,
+                    Messages = messages.ToList()
+                };
+                await Clients.Caller.ChatHistory(historyDto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send chat history. GameId={GameId}, ConnectionId={ConnectionId}", gameId, Context.ConnectionId);
+            }
+        }
+
+        private async Task BroadcastSystemChatMessageAsync(Guid gameId, string rawContent)
+        {
+            if (gameId == Guid.Empty)
+            {
+                return;
+            }
+
+            if (!_gameChatService.TryNormalizeContent(rawContent, out var normalizedContent, out _))
+            {
+                return;
+            }
+
+            var gameIdStr = gameId.ToString("D");
+            var message = new ChatMessageEventDto
+            {
+                MessageId = Guid.NewGuid(),
+                GameId = gameIdStr,
+                SenderType = ChatSenderType.System,
+                SenderId = "system",
+                SenderName = "系统",
+                SenderAvatarUrl = string.Empty,
+                Content = normalizedContent,
+                SentAtUtc = DateTime.UtcNow
+            };
+
+            _gameChatService.AppendMessage(message);
+
+            try
+            {
+                await Clients.Group(SignalRGroupNames.Game(gameId)).ChatMessage(message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to broadcast system chat message. GameId={GameId}", gameIdStr);
+            }
+        }
+
+        private bool TryResolveChatParticipantContext(
+            out Guid gameId,
+            out ChatSenderType senderType,
+            out string senderId,
+            out string senderName,
+            out string senderAvatarUrl)
+        {
+            gameId = Guid.Empty;
+            senderType = ChatSenderType.System;
+            senderId = Context.ConnectionId;
+            senderName = "系统";
+            senderAvatarUrl = string.Empty;
+
+            string? gameIdStr = null;
+            if (Context.Items.TryGetValue("GameId", out var gameIdItem) && gameIdItem is string gameIdFromItems)
+            {
+                gameIdStr = gameIdFromItems;
+            }
+            else
+            {
+                gameIdStr = Context.GetHttpContext()?.Request.Query["gameId"].ToString();
+            }
+
+            if (!Guid.TryParse(gameIdStr, out gameId))
+            {
+                return false;
+            }
+
+            if (Context.Items.TryGetValue("ParticipantType", out var participantTypeItem))
+            {
+                if (participantTypeItem is ChatSenderType enumValue)
+                {
+                    senderType = enumValue;
+                }
+                else if (participantTypeItem is string strValue && Enum.TryParse<ChatSenderType>(strValue, true, out var parsedType))
+                {
+                    senderType = parsedType;
+                }
+            }
+            else if (Context.Items.ContainsKey("PlayerId"))
+            {
+                senderType = ChatSenderType.Player;
+            }
+            else
+            {
+                senderType = ChatSenderType.Spectator;
+            }
+
+            if (Context.Items.TryGetValue("ParticipantId", out var participantIdItem) &&
+                participantIdItem is string participantId &&
+                !string.IsNullOrWhiteSpace(participantId))
+            {
+                senderId = participantId;
+            }
+            else if (Context.Items.TryGetValue("PlayerId", out var playerIdItem) &&
+                     playerIdItem is string playerId &&
+                     !string.IsNullOrWhiteSpace(playerId))
+            {
+                senderId = playerId;
+            }
+
+            if (Context.Items.TryGetValue("DisplayName", out var displayNameItem) &&
+                displayNameItem is string displayName &&
+                !string.IsNullOrWhiteSpace(displayName))
+            {
+                senderName = displayName;
+            }
+            else
+            {
+                senderName = senderType switch
+                {
+                    ChatSenderType.Player => "玩家",
+                    ChatSenderType.Spectator => "观战者",
+                    _ => "系统"
+                };
+            }
+
+            if (Context.Items.TryGetValue("AvatarUrl", out var avatarItem) &&
+                avatarItem is string avatar &&
+                !string.IsNullOrWhiteSpace(avatar))
+            {
+                senderAvatarUrl = avatar.Trim();
+            }
+
+            return true;
+        }
+
+        private static string NormalizeChatDisplayName(string? rawValue, string fallbackValue)
+        {
+            var value = string.IsNullOrWhiteSpace(rawValue)
+                ? fallbackValue
+                : rawValue.Trim();
+
+            if (value.Length > 24)
+            {
+                value = value.Substring(0, 24);
+            }
+
+            return string.IsNullOrWhiteSpace(value) ? fallbackValue : value;
+        }
+
+        private static string BuildSpectatorFallbackDisplayName()
+        {
+            var code = Guid.NewGuid().ToString("N").Substring(0, 6).ToUpperInvariant();
+            return $"游客{code}";
+        }
+
+        private static string NormalizeChatParticipantId(string? rawValue, string fallbackValue)
+        {
+            var value = string.IsNullOrWhiteSpace(rawValue)
+                ? fallbackValue
+                : rawValue.Trim();
+
+            if (value.Length > 64)
+            {
+                value = value.Substring(0, 64);
+            }
+
+            return string.IsNullOrWhiteSpace(value) ? fallbackValue : value;
+        }
+
+        private static string NormalizeChatAvatarUrl(string? rawValue)
+        {
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return string.Empty;
+            }
+
+            var value = rawValue.Trim();
+            if (value.Length > 512)
+            {
+                return string.Empty;
+            }
+
+            if (value.StartsWith("/", StringComparison.Ordinal)
+                || value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                || value.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            {
+                return value;
+            }
+
+            return string.Empty;
+        }
+
+        private async Task<string> ResolveParticipantDisplayNameAsync(Guid playerId, string fallbackDisplayName)
+        {
+            try
+            {
+                var serviceProvider = Context.GetHttpContext()?.RequestServices;
+                var db = serviceProvider?.GetService(typeof(ApplicationDbContext)) as ApplicationDbContext;
+                if (db == null)
+                {
+                    return fallbackDisplayName;
+                }
+
+                var username = await db.Users
+                    .AsNoTracking()
+                    .Where(user => user.Id == playerId)
+                    .Select(user => user.Username)
+                    .FirstOrDefaultAsync();
+
+                return string.IsNullOrWhiteSpace(username)
+                    ? fallbackDisplayName
+                    : username.Trim();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resolve participant display name. PlayerId={PlayerId}", playerId);
+                return fallbackDisplayName;
             }
         }
 
@@ -1309,6 +1777,14 @@ namespace ShadowverseBeyond.Server.Hubs
                 return Task.FromResult<(Guid, string?)>((gameIdFromItems, playerIdStrItem));
             }
 
+            // Spectator connections may only carry GameId without PlayerId.
+            if (Context.Items.TryGetValue("GameId", out var gameOnlyIdItem) &&
+                gameOnlyIdItem is string gameOnlyIdStr &&
+                Guid.TryParse(gameOnlyIdStr, out var gameIdOnly))
+            {
+                return Task.FromResult<(Guid, string?)>((gameIdOnly, null));
+            }
+
             // Prioritize authenticated user if available
             // var authenticatedPlayerId = Context.UserIdentifier; // Returns null if not authenticated
             // if (!string.IsNullOrEmpty(authenticatedPlayerId)) {
@@ -1334,6 +1810,11 @@ namespace ShadowverseBeyond.Server.Hubs
                 // Consider validating if the PlayerId from query matches authenticated user if both exist
                 _logger.LogDebug("Identified game/player via query string: GameId={GameId}, PlayerId={PlayerId}", gameId, playerIdFromQuery);
                 return Task.FromResult<(Guid, string?)>((gameId, playerIdFromQuery)); // Explicitly match return type signature for nullability
+            }
+
+            if (Guid.TryParse(gameIdStr, out var gameIdWithoutPlayer))
+            {
+                return Task.FromResult<(Guid, string?)>((gameIdWithoutPlayer, null));
             }
 
             _logger.LogWarning("Could not extract valid GameId/PlayerId from QueryString for ConnectionId {ConnectionId}. gameId='{GameIdStr}', playerId='{PlayerIdFromQuery}'",

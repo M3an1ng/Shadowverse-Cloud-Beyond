@@ -8,6 +8,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -223,10 +224,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var sourceCard = context.SourceCard ?? card;
-            var destroyReason = context.CurrentEffect != null
-                ? EventReasonSource.Ability
-                : EventReasonSource.System;
-            result.GeneratedEvents.Add(new DestroyEvent(card, sourceCard, destroyReason));
+            result.GeneratedEvents.Add(new DestroyEvent(card, sourceCard, EventReasonSource.System));
         }
 
         private static Guid? ResolveWinnerIdForLeaderDefeat(CardInstance leaderCard, GameContext context)
@@ -247,6 +245,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             var target = TargetCard;
             if (target == null)
+            {
+                return string.Empty;
+            }
+
+            if (target.CurrentZone != CardZone.Field)
             {
                 return string.Empty;
             }

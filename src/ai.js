@@ -16,6 +16,14 @@ import { playCard, getPlayerState, getCurrentPlayerId, findCardInstanceByUid, se
 // TODO: Move constants like MAX_FIELD_SIZE to a dedicated constants.js file
 const MAX_FIELD_SIZE = 5; // Define locally for now
 
+function hasKeywordIgnoreCase(card, keywordName) {
+    if (!card || !keywordName) return false;
+    const keywords = card.keywords ?? card.Keywords ?? [];
+    if (!Array.isArray(keywords)) return false;
+    const normalizedTarget = String(keywordName).trim().toLowerCase();
+    return keywords.some(keyword => String(keyword ?? '').trim().toLowerCase() === normalizedTarget);
+}
+
 
 // --- 主 AI 逻辑入口 ---
 // 这个函数应该在轮到 AI 时被 turnManager 调用
@@ -196,15 +204,20 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
             console.error(`AI Attack Error: Opponent state vanished mid-loop for ID: ${opponentId}. Skipping attacker ${attacker.name}.`);
             continue; // Skip this attacker
         }
-        const opponentFollowers = currentOpponentPlayer.field.filter(f => f && (f.type === 'Follower' || f.type === 'Follower_Evolved'));
+        const opponentFollowers = currentOpponentPlayer.field.filter(
+            f => f
+                && (f.type === 'Follower' || f.type === 'Follower_Evolved')
+                && !hasKeywordIgnoreCase(f, 'Ambush')
+                && !hasKeywordIgnoreCase(f, 'Pressure')
+        );
         const opponentLeader = currentOpponentPlayer.leaderCard; // Leader instance directly from player state
 
         // 2. Determine valid targets considering Ward
-        const hasWard = opponentFollowers.some(f => f.keywords?.includes('Ward'));
+        const hasWard = opponentFollowers.some(f => hasKeywordIgnoreCase(f, 'Ward'));
         let validTargets = [];
 
         if (hasWard) {
-            validTargets = opponentFollowers.filter(f => f.keywords?.includes('Ward'));
+            validTargets = opponentFollowers.filter(f => hasKeywordIgnoreCase(f, 'Ward'));
         } else {
             validTargets = [...opponentFollowers]; // Add all followers
             if (opponentLeader && opponentLeader.currentHealth > 0) { // Ensure leader isn't already defeated
@@ -218,8 +231,8 @@ function aiDecideAndAttack(aiPlayer, currentGameState) {
 
         // 3. Sort targets by priority: Ward > Lowest HP Follower > Leader
         validTargets.sort((a, b) => {
-            const aIsWard = a.keywords?.includes('Ward');
-            const bIsWard = b.keywords?.includes('Ward');
+            const aIsWard = hasKeywordIgnoreCase(a, 'Ward');
+            const bIsWard = hasKeywordIgnoreCase(b, 'Ward');
             const aIsFollower = (a.type === 'Follower' || a.type === 'Follower_Evolved');
             const bIsFollower = (b.type === 'Follower' || b.type === 'Follower_Evolved');
 

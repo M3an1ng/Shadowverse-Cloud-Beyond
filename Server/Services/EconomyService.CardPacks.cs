@@ -38,6 +38,11 @@ public partial class EconomyService
 
     public async Task<UserCardPackDto?> PurchaseCardPackAsync(Guid userId, int cardPackDefinitionId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(PurchaseCardPackAsync)))
+        {
+            return null;
+        }
+
         try
         {
             return await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -91,6 +96,11 @@ public partial class EconomyService
 
     public async Task<List<UserCardDto>> OpenCardPackAsync(Guid userId, Guid cardPackId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(OpenCardPackAsync)))
+        {
+            return new List<UserCardDto>();
+        }
+
         try
         {
             var result = await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -135,6 +145,11 @@ public partial class EconomyService
 
     public async Task<List<UserCardPackDto>> GetUserCardPacksAsync(Guid userId, bool unopenedOnly = false)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(GetUserCardPacksAsync)))
+        {
+            return new List<UserCardPackDto>();
+        }
+
         var query = _context.UserCardPacks
             .Include(ucp => ucp.CardPackDefinition)
             .ThenInclude(cpd => cpd.CardSetDefinition)

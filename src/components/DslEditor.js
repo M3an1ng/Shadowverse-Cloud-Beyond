@@ -91,7 +91,7 @@ import {
     renderFavoritesSection
 } from "./dsl_editor/ui-favorites.js";
 import { getReadablePreviewText, toReadableText } from "./dsl_editor/ui-preview.js";
-import { resolveEventTypeHintFromSource } from "./dsl_editor/event-translation.js";
+import { resolveScopedSelfContextFromSource } from "./dsl_editor/event-translation.js";
 import {
     mapDslAstDtoToUiAst,
     mapLiteralDtoToNode,
@@ -188,6 +188,7 @@ export class DslEditor extends MetadataDrivenComponent {
         this.pipelineOpenMode = null;
         this.pipelineEditState = createPipelineEditState();
         this.pipelineContextStore = new Map();
+        this.workspaceEditContext = null;
         this.pipelineNodeIds = new WeakMap();
         this.pipelineNodeIdSeed = 1;
         this.pipelineActiveContextKey = null;
@@ -200,6 +201,8 @@ export class DslEditor extends MetadataDrivenComponent {
         this.isPipelineInline = false;
         this.isLightWorkspace = false;
         this.lightWorkspaceFocus = null;
+        this.fixedRootContext = null;
+        this.hideFavoritesToolbar = false;
         this.enumLocalizationCache = new Map();
         this.enumLocalizationRequests = new Map();
     }
@@ -463,15 +466,9 @@ export class DslEditor extends MetadataDrivenComponent {
             }
 
             const setSelfContext = (sourceType, sourceNode) => {
-                const itemType = this.getCollectionInnerType(sourceType)
-                    || (typeof this.canOpenPipelineOnType === "function" && this.canOpenPipelineOnType(sourceType)
-                        ? this.normalizeTypeName(sourceType)
-                        : null);
-                if (itemType) {
-                    const eventType = this.normalizeTypeName(itemType) === "IGameEvent"
-                        ? resolveEventTypeHintFromSource(this, sourceNode)
-                        : null;
-                    this.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
+                const scopedContext = resolveScopedSelfContextFromSource(this, sourceNode, sourceType);
+                if (scopedContext) {
+                    this.contextOverride = scopedContext;
                 }
             };
 
@@ -545,7 +542,6 @@ export class DslEditor extends MetadataDrivenComponent {
         // 3. 统一入口：立即进入对 main 槽位的编辑
         this.handleEnterEditModeForSlot(this.virtualRoot, 'main');
     }
-
 
     // 已迁移到 core.js 模块
 
@@ -1020,6 +1016,8 @@ export class DslEditor extends MetadataDrivenComponent {
             this.onChange = onChange;
             this.expectedType = options.expectedType || null;
             this.triggeringEventContext = options.triggeringEventContext || null;
+            this.fixedRootContext = options.fixedRootContext || null;
+            this.hideFavoritesToolbar = Boolean(options.hideFavoritesToolbar);
             const session = options.userSession || getUserSession();
             this.userId = options.userId || session?.userId || null;
 
@@ -1340,6 +1338,16 @@ export class DslEditor extends MetadataDrivenComponent {
         });
 
         const mainNode = this.virtualRoot?.main || null;
+        const mainContent = mainNode?.metadata?.type === "encapsulated"
+            ? mainNode.metadata?.innerAST
+            : mainNode;
+        const workspaceExpr = this.workspaceAST?.toExpression?.() || "";
+        const mainExpr = mainContent?.toExpression?.() || "";
+        const isWorkspaceSynced = (!mainContent && !this.workspaceAST)
+            || (workspaceExpr && mainExpr && workspaceExpr === mainExpr);
+        this.workspaceEditContext = isWorkspaceSynced
+            ? { parentNode: this.virtualRoot, slot: "main", index: null }
+            : null;
         this.selectedNode = mainNode?.metadata?.type === "encapsulated" ? mainNode : null;
     }
 
@@ -1660,6 +1668,11 @@ export class DslEditor extends MetadataDrivenComponent {
         this.workspaceAST = this.cloneAST(contentToEdit);
         this.astRoot = this.workspaceAST;
         this.isExpressionCompleted = false;
+        this.workspaceEditContext = {
+            parentNode: this.virtualRoot,
+            slot: 'main',
+            index: null
+        };
 
         this.updateExpressionFromAST({ skipRender: true });
         this.renderEditor();
@@ -2299,14 +2312,27 @@ export class DslEditor extends MetadataDrivenComponent {
         // 统一保存逻辑：只存在槽位编辑模式
         if (this.editingPath && this.editingPath.length > 0) {
             this.saveCurrentLayer();
-        } else {
+            return;
+        }
+
+        // 兼容：当尚未建立主表达式且路径为空时，允许直接提交为 main。
+        if (!this.virtualRoot?.main) {
             const mainNode = this.workspaceAST.metadata?.type === 'encapsulated'
                 ? this.cloneAST(this.workspaceAST)
                 : this.createEncapsulatedFrom(this.workspaceAST);
             this.virtualRoot.main = mainNode;
-            this.ascend(this.virtualRoot);
+            this.enterMainEditMode();
             this.updateExpressionFromAST({ skipRender: true });
+            return;
         }
+
+        console.warn("DslEditor: saveWorkspace aborted because editingPath is empty while main exists.");
+        if (typeof this.rebuildWorkspaceFromPath === "function") {
+            this.rebuildWorkspaceFromPath();
+        } else {
+            this.enterMainEditMode();
+        }
+        this.showExpressionError("编辑上下文已丢失，已回到主表达式，请确认后重新提交。");
     }
 
     /**
@@ -3872,11 +3898,14 @@ export class DslEditor extends MetadataDrivenComponent {
     getTextFunctions() {
         const functions = this.metadata?.dsl?.functions || [];
         return functions
-            .filter(f => f.name === 'contains' || f.name === 'isEmpty')
+            .filter(f => {
+                const functionName = String(f?.name ?? f?.Name ?? "").toLowerCase();
+                return functionName === "contains" || functionName === "isempty";
+            })
             .map(f => ({
                 type: "function",
-                value: f.name,
-                label: this.getReadableFunctionName(f.name),
+                value: f.name ?? f.Name,
+                label: this.getReadableFunctionName(f.name ?? f.Name),
                 description: f.description,
                 meta: f
             }));
@@ -3887,15 +3916,15 @@ export class DslEditor extends MetadataDrivenComponent {
      */
     getCollectionFunctions(typeName = null) {
         const functions = this.metadata?.dsl?.functions || [];
-        const collectionFunctionNames = ['count', 'sum', 'min', 'max', 'contains', 'isEmpty', 'byType'];
+        const collectionFunctionNames = new Set(['count', 'sum', 'min', 'max', 'contains', 'isempty', 'bytype', 'frequency', 'find']);
 
         return functions
-            .filter(f => collectionFunctionNames.includes(f.name))
+            .filter(f => collectionFunctionNames.has(String(f?.name ?? f?.Name ?? "").toLowerCase()))
             .filter(f => !typeName || this.isFunctionCompatibleWithType(f, typeName))
             .map(f => ({
                 type: "function",
-                value: f.name,
-                label: this.getReadableFunctionName(f.name),
+                value: f.name ?? f.Name,
+                label: this.getReadableFunctionName(f.name ?? f.Name),
                 description: f.description,
                 meta: f
             }));
@@ -4096,7 +4125,7 @@ export class DslEditor extends MetadataDrivenComponent {
         const isEventBaseType = normalizedType === "IGameEvent" || normalizedType === "GameEventBase";
         const eventTypeHint = this.contextOverride?.name === "self"
             ? this.contextOverride?.eventType
-            : null;
+            : (this.fixedRootContext?.name === "self" ? this.fixedRootContext?.eventType : null);
 
         if (!isEventBaseType || !eventTypeHint) {
             return baseProperties;

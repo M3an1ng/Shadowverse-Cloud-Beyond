@@ -7,7 +7,7 @@ function formatTypeName(typeName) {
     const trimmed = String(typeName).trim();
     if (!trimmed) return '未知类型';
 
-    const match = trimmed.match(/^(List|IEnumerable)<(.+)>$/);
+    const match = trimmed.match(/^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)<(.+)>$/);
     if (match) {
         return `${formatTypeName(match[2])}列表`;
     }

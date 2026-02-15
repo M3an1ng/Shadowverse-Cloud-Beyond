@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities;
+using System.Collections.Generic;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -30,10 +31,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("Buff来源", "应用Buff的来源卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? BuffSource => Source?.Card;
 
-        public BuffAppliedEvent(Buff appliedBuff, CardInstance? source, Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("Buff目标", "被应用Buff的目标卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? BuffTarget => Target.FirstOrDefault()?.Card;
+
+        public BuffAppliedEvent(Buff appliedBuff, CardInstance? target, CardInstance? source, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.BuffApplied, eventId, timestamp)
         {
             AppliedBuff = appliedBuff ?? throw new ArgumentNullException(nameof(appliedBuff));
+            if (target != null)
+            {
+                Target.Add(TargetInfo.ForCard(target));
+            }
             if (source != null)
             {
                 Source = TargetInfo.ForCard(source);
@@ -72,7 +80,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     AppliedBuff.SourceEffectIndex);
             }
 
-            var targetCard = context.CurrentGameState.FindCardInstance(AppliedBuff.TargetCardInstanceId);
+            var targetCard = BuffTarget ?? context.CurrentGameState.FindCardInstance(AppliedBuff.TargetCardInstanceId);
             int? previousCurrentHealth = null;
             if (AppliedBuff.PreserveCurrentHealthOnApply && targetCard != null)
             {

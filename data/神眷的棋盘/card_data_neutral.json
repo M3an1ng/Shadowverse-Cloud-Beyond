@@ -9,9 +9,7 @@
     "cost": 0,
     "health": null,
     "description": "",
-    "keywords": [
-      "Countdown"
-    ],
+    "keywords": ["Countdown"],
     "effects": [],
     "abilities": [
       {
@@ -19,13 +17,9 @@
         "type": "Triggered",
         "abilityKeywords": [],
         "trigger": {
-          "eventTypes": [
-            "TurnEnd"
-          ],
+          "eventTypes": ["TurnEnd"],
           "relationType": "Any",
-          "validZones": [
-            "Emblem"
-          ]
+          "validZones": ["Emblem"]
         },
         "conditions": [
           {
@@ -47,9 +41,7 @@
         "effects": [
           {
             "type": "Destroy",
-            "targetSelector": [
-              "target1"
-            ]
+            "targetSelector": ["target1"]
           },
           {
             "type": "Draw",
@@ -64,9 +56,7 @@
           },
           {
             "type": "Heal",
-            "targetSelector": [
-              "target2"
-            ],
+            "targetSelector": ["target2"],
             "parameters": {
               "healAmount": {
                 "value": 3
@@ -103,13 +93,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "Evolve"
-          ],
+          "eventTypes": ["Evolve"],
           "relationType": "SourceSelf",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [],
         "targets": [
@@ -134,9 +120,7 @@
         "effects": [
           {
             "type": "Damage",
-            "targetSelector": [
-              "target2"
-            ],
+            "targetSelector": ["target2"],
             "parameters": {
               "damageAmount": {
                 "value": 2
@@ -154,13 +138,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "SuperEvolve"
-          ],
+          "eventTypes": ["SuperEvolve"],
           "relationType": "SourceSelf",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [],
         "targets": [
@@ -185,9 +165,7 @@
         "effects": [
           {
             "type": "Damage",
-            "targetSelector": [
-              "target2"
-            ],
+            "targetSelector": ["target2"],
             "parameters": {
               "damageAmount": {
                 "value": 4
@@ -223,9 +201,7 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "PlayCard"
-          ],
+          "eventTypes": ["PlayCard"],
           "relationType": "TargetSelf"
         },
         "conditions": [],
@@ -258,13 +234,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "SuperEvolve"
-          ],
+          "eventTypes": ["SuperEvolve"],
           "relationType": "SourceSelf",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [],
         "targets": [],
@@ -313,9 +285,7 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "PlayCard"
-          ],
+          "eventTypes": ["PlayCard"],
           "relationType": "TargetSelf"
         },
         "conditions": [],
@@ -336,9 +306,7 @@
         "effects": [
           {
             "type": "GrantAbility",
-            "targetSelector": [
-              "target1"
-            ],
+            "targetSelector": ["target1"],
             "parameters": {
               "abilityConfigs": {
                 "value": [
@@ -351,9 +319,7 @@
                       }
                     ],
                     "trigger": {
-                      "eventTypes": [
-                        "PlayCard"
-                      ],
+                      "eventTypes": ["PlayCard"],
                       "relationType": "TargetSelf"
                     },
                     "conditions": [],
@@ -385,9 +351,7 @@
           },
           {
             "type": "Shuffle",
-            "targetSelector": [
-              "target1"
-            ]
+            "targetSelector": ["target1"]
           }
         ]
       }
@@ -409,7 +373,7 @@
     "effects": [],
     "abilities": [
       {
-        "name": "冒险的歧路-启动摧毁",
+        "name": "冒险的歧路-启动破坏",
         "type": "Activated",
         "abilityKeywords": [
           {
@@ -418,13 +382,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "Act"
-          ],
+          "eventTypes": ["Act"],
           "relationType": "SourceSelf",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [],
         "targets": [
@@ -453,13 +413,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "Act"
-          ],
+          "eventTypes": ["Act"],
           "relationType": "SourceSelf",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [],
         "targets": [],
@@ -477,9 +433,7 @@
                     "type": "Triggered",
                     "abilityKeywords": [],
                     "trigger": {
-                      "eventTypes": [
-                        "EffectCompleted"
-                      ],
+                      "eventTypes": ["EffectCompleted"],
                       "relationType": "Any"
                     },
                     "conditions": [],
@@ -516,9 +470,7 @@
                     "type": "Triggered",
                     "abilityKeywords": [],
                     "trigger": {
-                      "eventTypes": [
-                        "EffectCompleted"
-                      ],
+                      "eventTypes": ["EffectCompleted"],
                       "relationType": "Any"
                     },
                     "conditions": [],
@@ -575,9 +527,7 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "PlayCard"
-          ],
+          "eventTypes": ["PlayCard"],
           "relationType": "TargetSelf"
         },
         "conditions": [],
@@ -612,13 +562,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "Destroy"
-          ],
+          "eventTypes": ["Destroy"],
           "relationType": "TargetSelf",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [],
         "targets": [],
@@ -658,9 +604,7 @@
     "attack": 4,
     "health": 4,
     "description": "",
-    "keywords": [
-      "Ward"
-    ],
+    "keywords": ["Ward"],
     "effects": [],
     "abilities": [
       {
@@ -672,9 +616,7 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "PlayCard"
-          ],
+          "eventTypes": ["PlayCard"],
           "relationType": "TargetSelf"
         },
         "conditions": [],
@@ -709,13 +651,9 @@
           }
         ],
         "trigger": {
-          "eventTypes": [
-            "PlayCard"
-          ],
+          "eventTypes": ["PlayCard"],
           "relationType": "TargetSelf",
-          "validZones": [
-            "Hand"
-          ]
+          "validZones": ["Hand"]
         },
         "conditions": [
           {
@@ -768,9 +706,7 @@
     "cost": 2,
     "health": null,
     "description": "",
-    "keywords": [
-      "Countdown"
-    ],
+    "keywords": ["Countdown"],
     "effects": [],
     "abilities": [
       {
@@ -778,13 +714,9 @@
         "type": "Triggered",
         "abilityKeywords": [],
         "trigger": {
-          "eventTypes": [
-            "TurnStart"
-          ],
+          "eventTypes": ["TurnStart"],
           "relationType": "Any",
-          "validZones": [
-            "Field"
-          ]
+          "validZones": ["Field"]
         },
         "conditions": [
           {
@@ -826,9 +758,7 @@
     "attack": 2,
     "health": 3,
     "description": "",
-    "keywords": [
-      "Bane"
-    ],
+    "keywords": ["Bane"],
     "effects": [],
     "abilities": [],
     "art": null,
@@ -845,9 +775,7 @@
     "attack": 1,
     "health": 1,
     "description": "",
-    "keywords": [
-      "Aura"
-    ],
+    "keywords": ["Aura"],
     "effects": [],
     "abilities": [],
     "art": null,

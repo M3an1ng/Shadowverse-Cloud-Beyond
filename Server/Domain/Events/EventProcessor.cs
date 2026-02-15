@@ -73,23 +73,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     _logger.LogTrace("[EventProcessor] Added DTO for initial event {EventType}", initialEvent.EventType);
                 }
 
-                // 2. Store the initial event to history
-                if (processingContext.CurrentGameState != null)
+                // Event history persistence is handled in the transaction phase.
+                // Keep only GameEnd cleanup here to avoid stale history across matches.
+                if (processingContext.CurrentGameState != null && initialEvent.EventType == EventType.GameEnd)
                 {
-                    await _eventHistoryService.StoreEventAsync(processingContext.CurrentGameState.GameId, initialEvent);
-                    _logger.LogDebug("[EventProcessor] Stored event {EventType} (ID: {EventId}) to history for game {GameId}",
-                        initialEvent.EventType, initialEvent.EventId, processingContext.CurrentGameState.GameId);
-
-                    if (initialEvent.EventType == EventType.GameEnd)
-                    {
-                        await _eventHistoryService.ClearHistoryForGameAsync(processingContext.CurrentGameState.GameId);
-                        _logger.LogInformation("[EventProcessor] Cleared event history for ended game {GameId}.", processingContext.CurrentGameState.GameId);
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("[EventProcessor] Could not store event {EventType} (ID: {EventId}) to history: CurrentGameState is null.",
-                        initialEvent.EventType, initialEvent.EventId);
+                    await _eventHistoryService.ClearHistoryForGameAsync(processingContext.CurrentGameState.GameId);
+                    _logger.LogInformation("[EventProcessor] Cleared event history for ended game {GameId}.", processingContext.CurrentGameState.GameId);
                 }
             }
             catch (Exception ex)
@@ -403,13 +392,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             var sourceCard = e.TriggeredAbility.SourceCard;
             var sourcePlayerId = sourceCard?.OwnerPlayerId ?? Guid.Empty;
+            var concreteAbility = e.TriggeredAbility as Ability;
+            var abilityName = concreteAbility?.Name ?? e.TriggeredAbility.Name;
+            var abilityDescription = concreteAbility?.Description ?? string.Empty;
 
             // The DTO requires a parameters dictionary. We reconstruct the essential parts
             // from the strongly-typed event properties for client-side use.
             var parameters = new Dictionary<string, object>
             {
                 { "ability_definition_id", e.TriggeredAbility.DefinitionId },
-                { "ability_runtime_id", e.TriggeredAbility.RuntimeId }
+                { "ability_runtime_id", e.TriggeredAbility.RuntimeId },
+                { "ability_name", abilityName },
+                { "ability_description", abilityDescription },
+                { "source_card_name", sourceCard?.Name ?? string.Empty },
+                { "source_card_art_preview", sourceCard?.CurrentDefinition?.ArtPreview ?? string.Empty }
             };
 
             return new AbilityTriggeredEventDto(
@@ -726,11 +722,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         private GameEventDto? ConvertKeywordRemovedEvent(IGameEvent gameEvent)
         {
             if (gameEvent is not KeywordRemovedEvent e) return null;
-            if (e.Source?.Card == null) return null;
+            if (e.TargetCard == null) return null;
 
             return new Dtos.SignalR.Events.KeywordRemovedEventDto(
-                sourcePlayerId: e.Source.Card.OwnerPlayerId,
-                cardInstanceId: e.Source.Card.InstanceId,
+                sourcePlayerId: e.TargetCard.OwnerPlayerId,
+                cardInstanceId: e.TargetCard.InstanceId,
                 keyword: e.Keyword);
         }
 

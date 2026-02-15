@@ -40,7 +40,7 @@ Ability Editor 当前直接展示事件与效果枚举，ActionRequests（请求
 
 ## Event Category Mapping (Current Metadata)
 - base-action: `攻击时`(AttackEvent), `战斗冲突`(Clash), `造成伤害`(DamageEvent), `治疗`(HealEvent), `进化`(EvolveEvent), `超进化`(SuperEvolveEvent), `出牌`(PlayCardEvent), `Act`(ActInvokedEvent - 若补齐元数据)
-- position-change: `召唤`(SummonEvent), `创建卡牌`(CreateCardEvent), `卡牌移动`(CardMovedEvent), `卡牌公开`(CardRevealedEvent), `添加卡牌到手牌`(AddCardToHandEvent), `抽牌`(DrawEvent), `卡牌弃置`(CardDiscardedEvent), `卡牌返回`(ReturnEvent), `卡牌消失`(CardVanishedEvent), `摧毁卡牌`(DestroyEvent), `卡牌变形`(TransformEvent)
+- position-change: `召唤`(SummonEvent), `创建卡牌`(CreateCardEvent), `卡牌移动`(CardMovedEvent), `卡牌公开`(CardRevealedEvent), `添加卡牌到手牌`(AddCardToHandEvent), `抽牌`(DrawEvent), `卡牌弃置`(CardDiscardedEvent), `卡牌返回`(ReturnEvent), `卡牌消失`(CardVanishedEvent), `破坏卡牌`(DestroyEvent), `卡牌变形`(TransformEvent)
 - temp-state: `Buff应用`(BuffAppliedEvent), `Buff移除`(BuffRemovedEvent), `关键字添加`(KeywordAddedEvent), `关键字移除`(KeywordRemovedEvent), `沉默应用`(SilenceAppliedEvent), `沉默移除`(SilenceRemovedEvent)
 - resource-value: `PP更新`(PpUpdateEvent), `PP最大值更新`(PpMaxUpdateEvent), `EP更新`(EpUpdateEvent), `EP最大值更新`(EpMaxUpdateEvent), `SEP Update`(SepUpdateEvent), `SEP Max Update`(SepMaxUpdateEvent), `属性变化`(StatChangedEvent), `生命值变化`(HealthChangedEvent), `手牌更新`(HandUpdated)
 - turn-flow: `回合开始时`(TurnStartEvent), `回合结束时`(TurnEndEvent), `倒计时减少`(CountdownTickEvent), `倒计时结束`(CountdownFinishedEvent), `换牌完成`(MulliganCompletedEvent), `游戏结束`(GameEndEvent)
@@ -49,7 +49,7 @@ Ability Editor 当前直接展示事件与效果枚举，ActionRequests（请求
 
 ## Effect Category Mapping (Current Metadata)
 - base-action: `攻击`(AttackEffectParams), `造成伤害`(DamageEffectParams), `治疗`(HealEffectParams), `进化`(EvolveEffectParams), `出牌`(PlayCardEffectParams), `融合`(FusionEffectParams)
-- position-change: `召唤`(SummonEffectParams), `添加卡牌到手牌`(GetTokenEffectParams), `抽牌`(DrawCardEffectParams), `弃牌`(DiscardEffectParams), `返回`(ReturnEffectParams), `消失`(VanishEffectParams), `摧毁`(DestroyEffectParams), `变形`(TransformEffectParams), `公开`(RevealEffectParams)
+- position-change: `召唤`(SummonEffectParams), `添加卡牌到手牌`(GetTokenEffectParams), `抽牌`(DrawCardEffectParams), `弃牌`(DiscardEffectParams), `返回`(ReturnEffectParams), `消失`(VanishEffectParams), `破坏`(DestroyEffectParams), `变形`(TransformEffectParams), `公开`(RevealEffectParams)
 - temp-state: `添加Buff`(AddBuffEffectParams), `移除Buff`(RemoveBuffEffectParams), `设置关键字`(SetKeywordEffectParams)
 - resource-value: `修改PP`(ModifyPPEffectParams), `修改PP上限`(ModifyPPMaxEffectParams), `修改EP`(ModifyEPEffectParams), `修改属性`(ModifyStatsEffectParams)
 - turn-flow: `开始回合`(TurnStartEffectParams), `结束回合`(TurnEndEffectParams), `换牌`(MulliganEffectParams)

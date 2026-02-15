@@ -53,7 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (Attacker.HasKeyword(CardKeyword.Ambush))
             {
-                result.GeneratedEvents.Add(new KeywordRemovedEvent(CardKeyword.Ambush, Attacker));
+                result.GeneratedEvents.Add(new KeywordRemovedEvent(CardKeyword.Ambush, Attacker, Attacker));
             }
 
             return result;

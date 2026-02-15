@@ -16,8 +16,8 @@
 
     <!-- defer 确保在 HTML 解析完成后执行脚本 -->
     <!-- type="module" 启用 ES Module 功能 -->
-  <script type="module" crossorigin src="/assets/index-C1eLIQgD.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DExXRLe5.css">
+  <script type="module" crossorigin src="/assets/index-D7YhJMYy.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CiARIn37.css">
 </head>
 
 <body>
@@ -418,6 +418,16 @@
                 <!-- 对手信息区 (Top Right) -->
                 <div id="player2-info" class="player-info opponent-info">
                     <div class="player-stats" id="player2-stats">
+                        <button
+                            id="player2-info-collapse-btn"
+                            class="player-info-collapse-btn"
+                            data-target="player2-info"
+                            type="button"
+                            aria-label="收起对手信息栏"
+                            aria-pressed="false"
+                            title="收起信息栏">
+                            <span class="player-info-collapse-icon">−</span>
+                        </button>
                         <div class="stats-header">
                             <div class="stats-avatar" id="player2-avatar">OPP</div>
                             <div class="stats-info">
@@ -514,6 +524,16 @@
                 <!-- 玩家信息区 (Bottom Left) -->
                 <div id="player1-info" class="player-info player-info-self">
                     <div class="player-stats" id="player1-stats">
+                        <button
+                            id="player1-info-collapse-btn"
+                            class="player-info-collapse-btn"
+                            data-target="player1-info"
+                            type="button"
+                            aria-label="收起玩家信息栏"
+                            aria-pressed="false"
+                            title="收起信息栏">
+                            <span class="player-info-collapse-icon">−</span>
+                        </button>
                         <div class="stats-header">
                             <div class="stats-avatar" id="player1-avatar">YOU</div>
                             <div class="stats-info">

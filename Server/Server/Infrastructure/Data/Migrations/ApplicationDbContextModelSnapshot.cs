@@ -366,6 +366,49 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardStatsAgg", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CardDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DeckGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DeckWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DrawnGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DrawnWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Environment")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PlayedGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PlayedWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedAtUtc");
+
+                    b.HasIndex("Environment", "CardDefinitionId")
+                        .IsUnique();
+
+                    b.ToTable("CardStatsAggs", (string)null);
+                });
+
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CoinTransaction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -403,6 +446,103 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                         .HasFilter("[RelatedEntityId] IS NOT NULL AND [Type] IN (1, 2, 3, 4)");
 
                     b.ToTable("CoinTransactions", (string)null);
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.DeckStatsAgg", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DeckClass")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DeckShapeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Environment")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TotalGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TotalWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedAtUtc");
+
+                    b.HasIndex("Environment", "DeckShapeHash")
+                        .IsUnique();
+
+                    b.ToTable("DeckStatsAggs", (string)null);
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.GameParticipantStatsFact", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DeckClass")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DeckShapeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DrawnCardIdsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("EndedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Environment")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GameId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InitialDeckCardCountsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsOfficial")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsWinner")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PlayedCardIdsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PlayerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("UserDeckId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsOfficial");
+
+                    b.HasIndex("Environment", "EndedAtUtc");
+
+                    b.HasIndex("GameId", "PlayerId")
+                        .IsUnique();
+
+                    b.ToTable("GameParticipantStatsFacts", (string)null);
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.GameSession", b =>

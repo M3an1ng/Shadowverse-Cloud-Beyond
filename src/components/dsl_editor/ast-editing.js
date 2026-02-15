@@ -13,7 +13,7 @@
     findRightmostLeafNode
 } from "./core.js";
 import { finalizeDraftInputs } from "./ast-normalize.js";
-import { resolveEventTypeHintFromSource } from "./event-translation.js";
+import { resolveScopedSelfContextFromSource } from "./event-translation.js";
 
 function createEnumValueNode(editor, option) {
     const enumType = editor.normalizeTypeName(
@@ -37,6 +37,15 @@ function createEnumValueNode(editor, option) {
         enumValue: canonicalValue,
         displayValue
     });
+}
+
+function applySelfContextFromSource(editor, sourceNode) {
+    if (!editor || !sourceNode) return;
+    const sourceType = getCoreSemanticNodeType(sourceNode);
+    const scopedContext = resolveScopedSelfContextFromSource(editor, sourceNode, sourceType);
+    if (scopedContext) {
+        editor.contextOverride = scopedContext;
+    }
 }
 
 function createPropertyInputNode(basePath, option) {
@@ -129,6 +138,28 @@ export function saveCurrentLayer(editor) {
     }
     if (!editor.workspaceAST) {
         console.warn("DslEditor: saveCurrentLayer called with empty workspaceAST.");
+        return;
+    }
+
+    if (typeof editor.isEditingPathEntryValid === "function" && !editor.isEditingPathEntryValid(top)) {
+        console.warn("DslEditor: saveCurrentLayer detected stale top editing path entry.", top);
+        if (typeof editor.rebuildWorkspaceFromPath === "function") {
+            editor.rebuildWorkspaceFromPath();
+        }
+        editor.showExpressionError("编辑上下文已变化，已刷新工作区，请重新提交。");
+        return;
+    }
+
+    const binding = editor.workspaceEditContext || null;
+    if (!binding
+        || binding.parentNode !== top.parentNode
+        || binding.slot !== top.slot
+        || (typeof binding.index === "number" ? binding.index : null) !== (typeof top.index === "number" ? top.index : null)) {
+        console.warn("DslEditor: saveCurrentLayer aborted due workspace/path binding mismatch.", { top, binding });
+        if (typeof editor.rebuildWorkspaceFromPath === "function") {
+            editor.rebuildWorkspaceFromPath();
+        }
+        editor.showExpressionError("工作区上下文已变化，已刷新到当前槽位，请重新提交。");
         return;
     }
 
@@ -1048,60 +1079,20 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
     } else if (parentNode.type === 'listQuery' && slot === 'filterExpression') {
         contentToEdit = parentNode.filterExpression;
         editor.slotExpectedType = 'Boolean';
-        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
-        const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
-                ? editor.normalizeTypeName(sourceReturnType)
-                : null);
-        if (itemType) {
-            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                ? resolveEventTypeHintFromSource(editor, parentNode.source)
-                : null;
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-        }
+        applySelfContextFromSource(editor, parentNode.source);
     } else if (parentNode.type === 'listSort' && slot === 'sortExpression') {
         contentToEdit = parentNode.sortExpression;
-        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
-        const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
-                ? editor.normalizeTypeName(sourceReturnType)
-                : null);
-        if (itemType) {
-            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                ? resolveEventTypeHintFromSource(editor, parentNode.source)
-                : null;
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-        }
+        applySelfContextFromSource(editor, parentNode.source);
     } else if (parentNode.type === 'listTake' && slot === 'countExpression') {
         contentToEdit = parentNode.countExpression;
         editor.slotExpectedType = 'Int32';
         // Take 操作的参数通常是数字，不需要上下文覆盖
     } else if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
         contentToEdit = parentNode.keyExpression;
-        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
-        const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
-                ? editor.normalizeTypeName(sourceReturnType)
-                : null);
-        if (itemType) {
-            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                ? resolveEventTypeHintFromSource(editor, parentNode.source)
-                : null;
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-        }
+        applySelfContextFromSource(editor, parentNode.source);
     } else if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
         contentToEdit = parentNode.selectExpression;
-        const sourceReturnType = getCoreSemanticNodeType(parentNode.source);
-        const itemType = editor.getCollectionInnerType(sourceReturnType)
-            || (typeof editor.canOpenPipelineOnType === "function" && editor.canOpenPipelineOnType(sourceReturnType)
-                ? editor.normalizeTypeName(sourceReturnType)
-                : null);
-        if (itemType) {
-            const eventType = editor.normalizeTypeName(itemType) === "IGameEvent"
-                ? resolveEventTypeHintFromSource(editor, parentNode.source)
-                : null;
-            editor.contextOverride = { name: 'self', displayName: '当前项', typeName: itemType, eventType };
-        }
+        applySelfContextFromSource(editor, parentNode.source);
     }
 
     if (parentNode.type === 'operator' && (slot === 'left' || slot === 'right')) {
@@ -1113,6 +1104,11 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
 
     const isLightSlot = editor.isLightWorkspace && !(parentNode.type === 'virtualRoot' && slot === 'main');
     if (isLightSlot && editor.workspaceAST) {
+        editor.workspaceEditContext = {
+            parentNode,
+            slot,
+            index: typeof index === 'number' ? index : null
+        };
         editor.astRoot = editor.workspaceAST;
         editor.isExpressionCompleted = false;
         editor.renderEditor();
@@ -1128,6 +1124,11 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
 
     editor.astRoot = editor.workspaceAST;
     editor.isExpressionCompleted = false;
+    editor.workspaceEditContext = {
+        parentNode,
+        slot,
+        index: typeof index === 'number' ? index : null
+    };
 
     if (typeof editor.syncPipelineContext === "function") {
         editor.syncPipelineContext();

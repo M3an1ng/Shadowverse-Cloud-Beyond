@@ -57,6 +57,11 @@ namespace ShadowverseBeyond.Server.Services
     public class GameService : IGameService
     {
         private sealed record PlayerIdentitySnapshot(string DisplayName, string AvatarUrl);
+        private sealed record ResolvedDeckSelection(
+            List<int> ExpandedCardIds,
+            CardClass DeckClass,
+            DeckEnvironment Environment,
+            Guid? UserDeckId);
 
         // Dictionary to track the player whose action chain is currently being processed per game - Declaration moved/exists elsewhere
         // Removed duplicate declaration from line 57
@@ -716,7 +721,7 @@ namespace ShadowverseBeyond.Server.Services
         }
         // --- End Added GetGameStateAsync Implementation ---
 
-        private async Task<List<int>?> ResolveDeckCardIdsAsync(
+        private async Task<ResolvedDeckSelection?> ResolveDeckSelectionAsync(
             MatchDeckSelection selection,
             IServiceProvider scopeServiceProvider,
             CancellationToken cancellationToken)
@@ -750,7 +755,15 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 selection.DeckClass ??= deck.Class;
-                return ExpandDeckCardIds(validation.Data);
+                selection.Environment ??= deck.Environment;
+                var userDeckId = selection.UserId.HasValue && selection.UserId.Value != Guid.Empty
+                    ? selection.DeckId
+                    : null;
+                return new ResolvedDeckSelection(
+                    ExpandDeckCardIds(validation.Data),
+                    deck.Class,
+                    deck.Environment,
+                    userDeckId);
             }
 
             if (!string.IsNullOrWhiteSpace(selection.DeckCode))
@@ -767,7 +780,12 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 selection.DeckClass ??= deckClass;
-                return ExpandDeckCardIds(validation.Data);
+                selection.Environment ??= DeckEnvironment.Open;
+                return new ResolvedDeckSelection(
+                    ExpandDeckCardIds(validation.Data),
+                    deckClass,
+                    DeckEnvironment.Open,
+                    UserDeckId: null);
             }
 
             return null;
@@ -803,26 +821,6 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return expanded;
-        }
-
-        private CardClass ResolveSelectionDeckClass(MatchDeckSelection selection, IReadOnlyList<int> expandedDeckIds)
-        {
-            if (selection.DeckClass.HasValue)
-            {
-                return selection.DeckClass.Value;
-            }
-
-            foreach (var cardId in expandedDeckIds)
-            {
-                var definition = _gameDataProvider.GetCardDefinition(cardId);
-                if (definition == null) continue;
-                if (definition.Class != CardClass.Neutral)
-                {
-                    return definition.Class;
-                }
-            }
-
-            return CardClass.Neutral;
         }
 
         private static string BuildFallbackDisplayName(Guid playerId)
@@ -1049,30 +1047,34 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     secondPlayerState.PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
                 }
-                var hostDeckIds = await ResolveDeckCardIdsAsync(room.HostDeckSelection, scopeServiceProvider, CancellationToken.None);
-                if (hostDeckIds == null)
+                var hostDeck = await ResolveDeckSelectionAsync(room.HostDeckSelection, scopeServiceProvider, CancellationToken.None);
+                if (hostDeck == null)
                 {
                     _logger.LogWarning("[GameService] Host deck selection invalid. GameId={GameId}", gameId);
                     return null;
                 }
 
                 var opponentSelection = room.GuestPlayerId.HasValue ? room.GuestDeckSelection : room.AiDeckSelection;
-                var opponentDeckIds = await ResolveDeckCardIdsAsync(opponentSelection, scopeServiceProvider, CancellationToken.None);
-                if (opponentDeckIds == null)
+                var opponentDeck = await ResolveDeckSelectionAsync(opponentSelection, scopeServiceProvider, CancellationToken.None);
+                if (opponentDeck == null)
                 {
                     _logger.LogWarning("[GameService] Opponent deck selection invalid. GameId={GameId}", gameId);
                     return null;
                 }
 
-                player1State.Class = ResolveSelectionDeckClass(room.HostDeckSelection, hostDeckIds);
-                player2State.Class = ResolveSelectionDeckClass(opponentSelection, opponentDeckIds);
+                player1State.Class = hostDeck.DeckClass;
+                player2State.Class = opponentDeck.DeckClass;
+                player1State.Environment = hostDeck.Environment;
+                player2State.Environment = opponentDeck.Environment;
+                player1State.UserDeckId = hostDeck.UserDeckId;
+                player2State.UserDeckId = opponentDeck.UserDeckId;
 
-                foreach (var cardId in hostDeckIds)
+                foreach (var cardId in hostDeck.ExpandedCardIds)
                 {
                     cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck);
                 }
 
-                foreach (var cardId in opponentDeckIds)
+                foreach (var cardId in opponentDeck.ExpandedCardIds)
                 {
                     cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck);
                 }
@@ -1082,6 +1084,8 @@ namespace ShadowverseBeyond.Server.Services
 
                 player1State.InitialDeck = new List<CardInstance>(player1State.Deck);
                 player2State.InitialDeck = new List<CardInstance>(player2State.Deck);
+                player1State.InitialDeckDefinitionIds = player1State.InitialDeck.Select(card => card.BaseDefinitionId).ToList();
+                player2State.InitialDeckDefinitionIds = player2State.InitialDeck.Select(card => card.BaseDefinitionId).ToList();
 
                 // 【最终修复】根据领域规则，初始发牌不属于“抽牌”，不应触发抽牌事件。
                 // 因此，回归到直接操作列表的方式。
@@ -1206,6 +1210,8 @@ namespace ShadowverseBeyond.Server.Services
             var gameId = gameContext.CurrentGameState.GameId;
             var playerId = playerState.PlayerId;
             var cardInstanceId = cardInHand.InstanceId;
+            result.HasValidTargets = false;
+            result.CanPlayWithoutTarget = false;
 
             _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting core logic check for Card {CardName} ({CardInstanceId}).", gameId, cardDefinition.Name, cardInstanceId);
 
@@ -1220,7 +1226,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 // --- Basic Checks ---
                 var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
-                var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, gameContext, abilityConfigs);
+                var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, gameContext);
                 result.PlayModes = modeResolution.Modes.ToList();
                 result.SelectedPlayMode = modeResolution.SelectedMode;
                 result.SelectedAbilityRuntimeId = modeResolution.SelectedAbilityRuntimeId;
@@ -1287,10 +1293,26 @@ namespace ShadowverseBeyond.Server.Services
 
                     // Also, check if any target on this ability requires manual player choice.
                     // This is important for the UI to know whether to enable the 'Play' button or a 'Select Target' button.
-                    if (ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true))
+                    var requiresTargetSelection = ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true);
+                    if (requiresTargetSelection)
                     {
                         result.RequiresTargetSelection = true;
+                        result.HasValidTargets = result.HasValidTargets || availabilityResult.HasValidTargets;
+                        result.CanPlayWithoutTarget = result.CanPlayWithoutTarget || availabilityResult.CanPlayWithoutTarget;
+
+                        if (availabilityResult.ValidTargetIds != null && availabilityResult.ValidTargetIds.Count > 0)
+                        {
+                            result.ValidTargetIds = result.ValidTargetIds
+                                .Concat(availabilityResult.ValidTargetIds)
+                                .Distinct()
+                                .ToList();
+                        }
                     }
+                }
+
+                if (!result.RequiresTargetSelection)
+                {
+                    result.HasValidTargets = true;
                 }
 
                 // --- All Checks Passed ---
@@ -1629,7 +1651,15 @@ namespace ShadowverseBeyond.Server.Services
 
                 var availabilityResult = await targetSelectionService.CheckTargetAvailabilityAsync(ability, gameContext);
                 abilityResult.RequiresTargetSelection = ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true);
-                abilityResult.HasValidTargets = availabilityResult.IsAvailable;
+                abilityResult.HasValidTargets = abilityResult.RequiresTargetSelection
+                    ? availabilityResult.HasValidTargets
+                    : availabilityResult.IsAvailable;
+                if (abilityResult.RequiresTargetSelection && availabilityResult.ValidTargetIds != null && availabilityResult.ValidTargetIds.Count > 0)
+                {
+                    abilityResult.ValidTargetIds = availabilityResult.ValidTargetIds
+                        .Distinct()
+                        .ToList();
+                }
                 if (!availabilityResult.IsAvailable)
                 {
                     abilityResult.IsPlayable = false;
@@ -1646,7 +1676,13 @@ namespace ShadowverseBeyond.Server.Services
             result.ActCost = actCostMax;
             result.IsPlayable = result.Abilities.Any(a => a.IsPlayable);
             result.RequiresTargetSelection = result.Abilities.Any(a => a.RequiresTargetSelection);
-            result.HasValidTargets = result.Abilities.Any(a => a.HasValidTargets);
+            result.HasValidTargets = !result.RequiresTargetSelection
+                || result.Abilities.Any(a => a.RequiresTargetSelection && a.HasValidTargets);
+            result.ValidTargetIds = result.Abilities
+                .Where(a => a.RequiresTargetSelection && a.ValidTargetIds.Count > 0)
+                .SelectMany(a => a.ValidTargetIds)
+                .Distinct()
+                .ToList();
             if (!result.IsPlayable)
             {
                 result.FailureReason = result.Abilities.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.FailureReason))?.FailureReason

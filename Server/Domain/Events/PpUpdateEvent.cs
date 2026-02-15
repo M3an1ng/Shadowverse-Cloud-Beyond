@@ -45,6 +45,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
+            return string.Empty;
             var player = TargetPlayer;
             if (player == null)
             {

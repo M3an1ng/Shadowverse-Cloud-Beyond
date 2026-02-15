@@ -23,8 +23,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("授予的能力", "被授予的能力配置列表。")]
         public List<AbilityConfig> AbilityConfigs { get; }
 
-        [GameEventParameter("目标卡牌", "获得能力的卡牌。", DslDisplayTypeName = "事件源")]
-        public CardInstance? TargetCard => Source?.Card;
+        [GameEventParameter("授予来源", "授予能力的来源卡牌。", DslDisplayTypeName = "事件源")]
+        public CardInstance? GrantSource => Source?.Card;
+
+        [GameEventParameter("目标卡牌", "获得能力的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? TargetCard => Target.FirstOrDefault()?.Card;
 
         [GameEventParameter("持续时间", "能力持续时间类型。")]
         public DurationType DurationType { get; }
@@ -38,6 +41,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public GrantAbilityEvent(
             IEnumerable<AbilityConfig> abilityConfigs,
             CardInstance target,
+            CardInstance? source = null,
             DurationType durationType = DurationType.Permanent,
             int? durationParameter = null,
             string? effectKey = null,
@@ -47,8 +51,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             : base(EventType.AbilityGranted, eventId, timestamp)
         {
             AbilityConfigs = abilityConfigs?.ToList() ?? new List<AbilityConfig>();
-            Source = TargetInfo.ForCard(target);
-            Target.Add(TargetInfo.ForCard(target));
+            if (source != null)
+            {
+                Source = TargetInfo.ForCard(source);
+            }
+            Target.Add(TargetInfo.ForCard(target ?? throw new ArgumentNullException(nameof(target))));
             DurationType = durationType;
             DurationParameter = durationParameter;
             EffectKey = effectKey;
@@ -72,7 +79,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var buffService = context.ServiceProvider.GetRequiredService<IBuffService>();
 
             var sourceAbility = context.GetCurrentAbility();
-            var sourceCard = context.SourceCard;
+            var sourceCard = GrantSource ?? context.SourceCard;
             var ownerPlayer = context.CurrentGameState.GetPlayerState(sourceCard?.OwnerPlayerId ?? context.RequestingPlayerId);
             var turnNumber = ownerPlayer?.TurnNumber ?? 0;
 

@@ -48,6 +48,7 @@ namespace ShadowverseBeyond.Server.Tests
         private readonly Mock<ICommittedEventJournal> _mockEventJournal;
         private readonly Mock<ISnapshotStore> _mockSnapshotStore;
         private readonly Mock<IMetaProgressionService> _mockMetaProgressionService;
+        private readonly Mock<IWinrateStatsService> _mockWinrateStatsService;
         private readonly IOptions<ReplayOptions> _replayOptions;
         private readonly GameActionTransactionService _transactionService;
 
@@ -62,6 +63,7 @@ namespace ShadowverseBeyond.Server.Tests
             _mockEventJournal = new Mock<ICommittedEventJournal>();
             _mockSnapshotStore = new Mock<ISnapshotStore>();
             _mockMetaProgressionService = new Mock<IMetaProgressionService>();
+            _mockWinrateStatsService = new Mock<IWinrateStatsService>();
             _replayOptions = Microsoft.Extensions.Options.Options.Create(new ReplayOptions());
             var recordedMapper = new JsonRecordedEventMapper();
             var rawEventMapper = new JsonGameEventRawEventMapper();
@@ -91,6 +93,7 @@ namespace ShadowverseBeyond.Server.Tests
                 recordedMapper,
                 rawEventMapper,
                 _mockMetaProgressionService.Object,
+                _mockWinrateStatsService.Object,
                 _replayOptions
             );
         }
@@ -264,6 +267,78 @@ namespace ShadowverseBeyond.Server.Tests
             // Assert
             // Ensure pipeline completed without throwing
             Assert.True(true);
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_PersistsCommittedEventHistory_BeforeAfterTriggers()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+
+            var historyServiceMock = new Mock<IEventHistoryService>();
+            var historyStored = false;
+            historyServiceMock
+                .Setup(s => s.StoreEventAsync(It.IsAny<string>(), It.IsAny<IGameEvent>()))
+                .Callback(() => historyStored = true)
+                .Returns(Task.CompletedTask);
+            historyServiceMock
+                .Setup(s => s.GetEvents(It.IsAny<string>()))
+                .Returns(Array.Empty<IGameEvent>());
+            historyServiceMock
+                .Setup(s => s.GetEventByIdAsync(It.IsAny<string>(), It.IsAny<Guid>()))
+                .ReturnsAsync((IGameEvent?)null);
+            historyServiceMock
+                .Setup(s => s.ClearHistoryForGameAsync(It.IsAny<string>()))
+                .Returns(Task.CompletedTask);
+            services.AddSingleton(historyServiceMock.Object);
+
+            services.AddSingleton<IConditionFactory, NullConditionFactory>();
+            services.AddSingleton<ITargetFactory, NullTargetFactory>();
+            services.AddSingleton<IQueryExecutor, NullQueryExecutor>();
+            services.AddSingleton<IPendingActionService>(_mockPendingActionService.Object);
+            services.AddSingleton<TargetSelectionService>();
+            services.AddSingleton<IAbilityFactory, TestAbilityFactory>();
+            var serviceProvider = services.BuildServiceProvider();
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("history-timing", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            var gameContext = new GameContext(serviceProvider, mapper.Object, accessor, gameState, player.PlayerId, default, null, sourceCard);
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.ContextAccessor.GameContext = gameContext;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var initialEvent = new ImmediateTestEvent();
+
+            _mockAbilityManager.Setup(m => m.GetTriggeredAbilitiesAsync(
+                    It.IsAny<IGameEvent>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+
+            _mockAbilityManager.Setup(m => m.GetTriggeredAbilitiesAsync(
+                    It.IsAny<IGameEvent>(),
+                    It.IsAny<GameContext>(),
+                    TriggerTiming.After))
+                .Callback(() => Assert.True(historyStored))
+                .ReturnsAsync(new List<IAbility>());
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
+
+            Assert.True(result.IsSuccess);
+            historyServiceMock.Verify(
+                s => s.StoreEventAsync(gameState.GameId, It.Is<IGameEvent>(e => e.EventId == initialEvent.EventId)),
+                Times.AtLeastOnce);
         }
 
         [Fact]
@@ -742,6 +817,104 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public async Task ProcessTransactionAsync_BeforeInterceptAbilityWithBroadcastDisabled_ShouldNotEmitAbilityTriggeredEvent()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            var buffService = CreateDefaultBuffService();
+            services.AddSingleton(buffService.Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            var serviceProvider = services.BuildServiceProvider();
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("before-intercept-no-broadcast", player, opponent, player.PlayerId);
+            gameState.AbilityManager = _mockAbilityManager.Object;
+            gameState.BuffManager = new Mock<IBuffManager>().Object;
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId) { CurrentZone = CardZone.Field };
+            var targetCard = new CardInstance(Guid.NewGuid(), 2, opponent.PlayerId) { CurrentZone = CardZone.Field };
+            player.Field.Add(sourceCard);
+            opponent.Field.Add(targetCard);
+
+            var damageEvent = new DamageEvent(targetCard, 1, sourceCard, DamageKind.Ability);
+
+            var mapper = new Mock<IMapper>();
+            var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                serviceProvider.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                player.PlayerId,
+                default,
+                damageEvent,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new NullQueryExecutor(),
+                _mockPendingActionService.Object);
+            var conditionFactory = new Mock<IConditionFactory>();
+            var targetFactory = new Mock<ITargetFactory>();
+            var interceptAbility = new Ability(
+                new AbilityConfig
+                {
+                    Id = 990001,
+                    Name = "NoBroadcastIntercept",
+                    BroadcastOnTrigger = false,
+                    Trigger = new TriggerConfig
+                    {
+                        EventTypes = new List<EventType> { EventType.Damage },
+                        Timing = TriggerTiming.Before,
+                        IsEnabled = true
+                    }
+                },
+                conditionFactory.Object,
+                targetFactory.Object,
+                targetSelectionService,
+                sourceCard);
+
+            var interceptEffectConfig = new EffectConfig { Type = EffectType.RewriteEventParams };
+            var interceptEffect = new Effect(
+                interceptEffectConfig,
+                player.PlayerId,
+                null,
+                null,
+                damageEvent.EventId,
+                sourceCard.InstanceId);
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(
+                    It.Is<IGameEvent>(e => e.EventId == damageEvent.EventId && e.EventType == EventType.Damage),
+                    It.IsAny<GameContext>(),
+                    TriggerTiming.Before))
+                .ReturnsAsync(new List<IAbility> { interceptAbility });
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(interceptAbility, It.IsAny<GameContext>(), false, true, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect> { interceptEffect }));
+
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(interceptEffect, It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult
+                {
+                    Success = true,
+                    EventIntercept = EventInterceptResult.RewriteParameter("Damage", 2)
+                });
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { damageEvent });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.DoesNotContain(result.ProcessedEvents, e => e is AbilityTriggeredEvent);
+        }
+
+        [Fact]
         public async Task ProcessTransactionAsync_RewriteChooseEventSelectionCount_AffectsDecision()
         {
             var services = new ServiceCollection();
@@ -1175,6 +1348,259 @@ namespace ShadowverseBeyond.Server.Tests
             _mockPendingActionService.Verify(
                 s => s.WaitForPlayerChoiceAsync(It.IsAny<string>(), It.IsAny<PlayerChoiceRequest>(), It.IsAny<CancellationToken>()),
                 Times.Once);
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_ChainedAbilityGeneratedEvents_AreProcessed()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            services.AddSingleton<IValueSourceResolver, NullValueSourceResolver>();
+            var conditionFactory = new NullConditionFactory();
+            var targetFactory = new NullTargetFactory();
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new NullQueryExecutor(),
+                _mockPendingActionService.Object);
+            services.AddSingleton(targetSelectionService);
+            services.AddSingleton<IAbilityFactory>(new TestAbilityFactory(conditionFactory, targetFactory, targetSelectionService));
+            var serviceProvider = services.BuildServiceProvider();
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("chain-generated-events", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId) { CurrentZone = CardZone.Field };
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var initialEvent = new ImmediatePlayerActionTestEvent(sourceCard);
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                initialEvent,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var chainedAbilityTemplate = new AbilityConfig
+            {
+                Name = "ChainGeneratedOnly",
+                Effects = new List<EffectConfig>(),
+                Trigger = new TriggerConfig()
+            };
+            var primaryEffectConfig = new EffectConfig
+            {
+                Type = EffectType.Shuffle,
+                ChainedAbilities = new List<AbilityConfig> { chainedAbilityTemplate }
+            };
+            var primaryAbilityConfig = new AbilityConfig
+            {
+                Name = "PrimaryWithChain",
+                Effects = new List<EffectConfig> { primaryEffectConfig },
+                Trigger = new TriggerConfig()
+            };
+            var primaryAbility = new Ability(primaryAbilityConfig, conditionFactory, targetFactory, targetSelectionService, sourceCard);
+            var primaryEffect = new Effect(
+                primaryEffectConfig,
+                player.PlayerId,
+                new List<TargetInfo>(),
+                primaryAbility.RuntimeId,
+                initialEvent.EventId,
+                sourceCard.InstanceId)
+            {
+                SourceAbility = primaryAbility,
+                EffectIndex = 0
+            };
+
+            var generatedCommitProcessed = false;
+            var generatedAbilityTriggeredEventId = Guid.Empty;
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(initialEvent, It.IsAny<GameContext>(), TriggerTiming.On))
+                .ReturnsAsync(new List<IAbility> { primaryAbility });
+
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(primaryAbility, It.IsAny<GameContext>(), false, true, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect> { primaryEffect }));
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(
+                    It.Is<IAbility>(ability => ability is Ability && ((Ability)ability).Config.Name == "ChainGeneratedOnly"),
+                    It.IsAny<GameContext>(),
+                    false,
+                    true,
+                    It.IsAny<bool>()))
+                .ReturnsAsync((IAbility ability, GameContext _, bool __, bool ___, bool ____) =>
+                {
+                    var commitEvent = new CommitFlagEvent(() => generatedCommitProcessed = true);
+                    var triggeredEvent = new AbilityTriggeredEvent(ability, initialEvent);
+                    generatedAbilityTriggeredEventId = triggeredEvent.EventId;
+
+                    return AbilityProcessResult.Success(
+                        new List<Effect>(),
+                        new List<IGameEvent> { commitEvent, triggeredEvent });
+                });
+
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(It.IsAny<Effect>(), It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult { Success = true });
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.True(generatedCommitProcessed);
+            Assert.NotEqual(Guid.Empty, generatedAbilityTriggeredEventId);
+            Assert.Contains(result.ProcessedEvents, e => e.EventId == generatedAbilityTriggeredEventId);
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_DecisionAbilityGeneratedEvents_AreProcessed()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            services.AddSingleton<IValueSourceResolver, NullValueSourceResolver>();
+            var conditionFactory = new NullConditionFactory();
+            var targetFactory = new NullTargetFactory();
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new NullQueryExecutor(),
+                _mockPendingActionService.Object);
+            services.AddSingleton(targetSelectionService);
+            services.AddSingleton<IAbilityFactory>(new TestAbilityFactory(conditionFactory, targetFactory, targetSelectionService));
+            var serviceProvider = services.BuildServiceProvider();
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("decision-generated-events", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId) { CurrentZone = CardZone.Field };
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var initialEvent = new ImmediatePlayerActionTestEvent(sourceCard);
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                initialEvent,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var decisionAbilityConfig = new AbilityConfig { Name = "DecisionGeneratedOnly" };
+            var chooseEffectConfig = new EffectConfig
+            {
+                Type = EffectType.Choose,
+                Parameters = new Dictionary<string, ValueConfig>
+                {
+                    ["abilityConfigs"] = new StaticValueConfig
+                    {
+                        Value = new List<AbilityConfig> { decisionAbilityConfig }
+                    },
+                    ["selectionCount"] = new StaticValueConfig { Value = 1 }
+                }
+            };
+            var primaryAbilityConfig = new AbilityConfig
+            {
+                Name = "PrimaryChoose",
+                Effects = new List<EffectConfig> { chooseEffectConfig },
+                Trigger = new TriggerConfig()
+            };
+            var primaryAbility = new Ability(primaryAbilityConfig, conditionFactory, targetFactory, targetSelectionService, sourceCard);
+            var chooseEffect = new Effect(
+                chooseEffectConfig,
+                player.PlayerId,
+                new List<TargetInfo>(),
+                primaryAbility.RuntimeId,
+                initialEvent.EventId,
+                sourceCard.InstanceId)
+            {
+                SourceAbility = primaryAbility,
+                EffectIndex = 0
+            };
+
+            var generatedCommitProcessed = false;
+            var generatedAbilityTriggeredEventId = Guid.Empty;
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(initialEvent, It.IsAny<GameContext>(), TriggerTiming.On))
+                .ReturnsAsync(new List<IAbility> { primaryAbility });
+
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(primaryAbility, It.IsAny<GameContext>(), false, true, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect> { chooseEffect }));
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(
+                    It.Is<IAbility>(ability => ability is Ability && ((Ability)ability).Config.Name == "DecisionGeneratedOnly"),
+                    It.IsAny<GameContext>(),
+                    false,
+                    true,
+                    It.IsAny<bool>()))
+                .ReturnsAsync((IAbility ability, GameContext _, bool __, bool ___, bool ____) =>
+                {
+                    var commitEvent = new CommitFlagEvent(() => generatedCommitProcessed = true);
+                    var triggeredEvent = new AbilityTriggeredEvent(ability, initialEvent);
+                    generatedAbilityTriggeredEventId = triggeredEvent.EventId;
+
+                    return AbilityProcessResult.Success(
+                        new List<Effect>(),
+                        new List<IGameEvent> { commitEvent, triggeredEvent });
+                });
+
+            _mockPendingActionService
+                .Setup(s => s.WaitForPlayerChoiceAsync(It.IsAny<string>(), It.IsAny<PlayerChoiceRequest>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string _, PlayerChoiceRequest request, CancellationToken __) =>
+                {
+                    return new PlayerChoiceResult
+                    {
+                        WasCancelled = false,
+                        ChosenTargetIds = new List<Guid> { request.SelectableTargetIds.First() }
+                    };
+                });
+
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(It.IsAny<Effect>(), It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult { Success = true });
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.True(generatedCommitProcessed);
+            Assert.NotEqual(Guid.Empty, generatedAbilityTriggeredEventId);
+            Assert.Contains(result.ProcessedEvents, e => e.EventId == generatedAbilityTriggeredEventId);
         }
 
         [Fact]
@@ -1742,7 +2168,7 @@ namespace ShadowverseBeyond.Server.Tests
             gameState.RegisterCardInstance(targetCard);
 
             var buff = new Buff(Guid.Empty, targetCard.InstanceId, 1, new List<IBuffEffect>());
-            var buffAppliedEvent = new BuffAppliedEvent(buff, null);
+            var buffAppliedEvent = new BuffAppliedEvent(buff, null, null);
 
             _mockAbilityManager
                 .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))

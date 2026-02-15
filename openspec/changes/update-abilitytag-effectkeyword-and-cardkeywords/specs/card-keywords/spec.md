@@ -112,7 +112,7 @@
 - **THEN** `ResolveTargetsForAbilityAsync` MUST NOT fail due to keyword-based targetability rules
 
 ### Requirement: DestroyResist MUST Block Ability Destruction
-当随从具有 `CardKeyword.DestroyResist` 时，由能力/效果导致的摧毁 MUST 被阻止。
+当随从具有 `CardKeyword.DestroyResist` 时，由能力/效果导致的破坏 MUST 被阻止。
 
 #### Scenario: DestroyResist prevents destroy effect
 - **GIVEN** a follower has `CardKeyword.DestroyResist`

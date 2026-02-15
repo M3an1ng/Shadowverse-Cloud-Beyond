@@ -256,6 +256,16 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task LogEvent(LogEventDto eventDto);
 
         /// <summary>
+        /// Sends recent room chat history to the caller.
+        /// </summary>
+        Task ChatHistory(ChatHistoryEventDto eventDto);
+
+        /// <summary>
+        /// Broadcasts a room chat message to participants.
+        /// </summary>
+        Task ChatMessage(ChatMessageEventDto eventDto);
+
+        /// <summary>
         /// Sends ability condition trace failure details to the in-game dev console.
         /// </summary>
         Task ConditionTraceFailed(ConditionTraceFailedDto eventDto);
@@ -274,5 +284,10 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Notifies clients that Fusion materials have been consumed (UI animation/log).
         /// </summary>
         Task Fusion(FusionEventDto eventDto);
+
+        /// <summary>
+        /// Notifies clients that an ability has been triggered.
+        /// </summary>
+        Task AbilityTriggered(AbilityTriggeredEventDto eventDto);
     }
 }

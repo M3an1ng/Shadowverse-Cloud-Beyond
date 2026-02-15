@@ -1,6 +1,0 @@
-D:\workspace\Shadowverse-beyond\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.csproj.AssemblyReference.cache
-D:\workspace\Shadowverse-beyond\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.GeneratedMSBuildEditorConfig.editorconfig
-D:\workspace\Shadowverse-beyond\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.AssemblyInfoInputs.cache
-D:\workspace\Shadowverse-beyond\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.AssemblyInfo.cs
-D:\workspace\Shadowverse-beyond\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.csproj.CoreCompileInputs.cache
-D:\workspace\Shadowverse-beyond\.tmp_test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.sourcelink.json

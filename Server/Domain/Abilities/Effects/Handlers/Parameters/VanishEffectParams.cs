@@ -4,7 +4,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
     /// <summary>
     /// 消失效果参数
-    /// 与摧毁效果类似，但不触发死亡相关效果（如LastWords）
+    /// 与破坏效果类似，但不触发死亡相关效果（如LastWords）
     /// </summary>
     [EffectMetadata("消失", "使目标单位消失，不触发死亡效果。使用卡牌目标。")]
     public class VanishEffectParams : BaseEffectParams

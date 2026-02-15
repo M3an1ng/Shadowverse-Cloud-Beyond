@@ -79,6 +79,55 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(1001, create.CardDefinitionId);
         }
 
+        [Fact]
+        public void Draw_event_uses_count_payload_even_when_deck_is_empty()
+        {
+            var registry = new RawEventGameEventRegistry();
+            var (gameState, playerId, _) = CreateGameState(withTargetCard: false);
+
+            var playerToken = gameState.InGameIds.Format(InGameIdKind.Player, playerId);
+            var raw = new RawEventEnvelopeDto(
+                2,
+                EventType.Draw.ToString(),
+                null,
+                DateTime.UtcNow,
+                playerToken,
+                Array.Empty<string>(),
+                new JsonObject
+                {
+                    ["Count"] = 1
+                });
+
+            Assert.True(registry.TryCreateGameEvent(raw, gameState, playerId, out var evt, out var err), err);
+            var draw = Assert.IsType<DrawEvent>(evt);
+            Assert.Equal(1, draw.Count);
+        }
+
+        [Fact]
+        public void Draw_event_can_fallback_to_drawn_cards_length_when_count_missing()
+        {
+            var registry = new RawEventGameEventRegistry();
+            var (gameState, playerId, targetCardId) = CreateGameState(withTargetCard: true);
+
+            var playerToken = gameState.InGameIds.Format(InGameIdKind.Player, playerId);
+            var cardToken = gameState.InGameIds.Format(InGameIdKind.Card, targetCardId);
+            var raw = new RawEventEnvelopeDto(
+                2,
+                EventType.Draw.ToString(),
+                null,
+                DateTime.UtcNow,
+                playerToken,
+                Array.Empty<string>(),
+                new JsonObject
+                {
+                    ["DrawnCards"] = new JsonArray(cardToken)
+                });
+
+            Assert.True(registry.TryCreateGameEvent(raw, gameState, playerId, out var evt, out var err), err);
+            var draw = Assert.IsType<DrawEvent>(evt);
+            Assert.Equal(1, draw.Count);
+        }
+
         private static (GameState gameState, Guid player1Id, Guid targetCardId) CreateGameState(bool withTargetCard)
         {
             var player1Id = Guid.NewGuid();

@@ -41,6 +41,7 @@ namespace ShadowverseBeyond.Server.Tests
         private readonly Mock<ICommittedEventJournal> _mockEventJournal = new();
         private readonly Mock<ISnapshotStore> _mockSnapshotStore = new();
         private readonly Mock<IMetaProgressionService> _mockMetaProgressionService = new();
+        private readonly Mock<IWinrateStatsService> _mockWinrateStatsService = new();
         private readonly GameActionTransactionService _transactionService;
 
         public TransactionSameNameTriggerLimitTests()
@@ -85,6 +86,7 @@ namespace ShadowverseBeyond.Server.Tests
                 recordedMapper,
                 rawEventMapper,
                 _mockMetaProgressionService.Object,
+                _mockWinrateStatsService.Object,
                 replayOptions);
         }
 

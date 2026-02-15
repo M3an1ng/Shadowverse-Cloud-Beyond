@@ -14,13 +14,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Player plays a card from hand. This is a player action event and a committable command.
     /// Commit() applies all state changes for playing the card.
     /// </summary>
-    [GameEventMetadata("使用卡牌", "当玩家从手牌中打出一张卡牌时触发的事件。", EventType.PlayCard)]
+    [GameEventMetadata("使用卡牌", "当玩家从手牌中使用一张卡牌时触发的事件。", EventType.PlayCard)]
     public class PlayCardEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("出牌玩家", "打出卡牌的玩家。", DslDisplayTypeName = "事件源")]
+        [GameEventParameter("出牌玩家", "使用卡牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? PlayingPlayer => Source?.Player;
 
-        [GameEventParameter("被打出的卡牌", "被打出的卡牌。", DslDisplayTypeName = "事件目标")]
+        [GameEventParameter("使用卡牌", "被使用的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? PlayedCard => Target.FirstOrDefault()?.Card;
 
         [GameEventParameter("出牌模式", "本次出牌使用的模式。")]

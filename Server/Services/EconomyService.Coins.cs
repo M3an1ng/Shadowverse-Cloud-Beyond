@@ -10,12 +10,22 @@ public partial class EconomyService
 
     public async Task<int> GetUserCoinsAsync(Guid userId)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(GetUserCoinsAsync)))
+        {
+            return 0;
+        }
+
         var userEconomy = await GetOrCreateUserEconomyAsync(userId);
         return userEconomy.Coins;
     }
 
     public async Task<bool> AddCoinsAsync(Guid userId, int amount, CoinTransactionType type, string? description = null, string? relatedEntityId = null)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(AddCoinsAsync)))
+        {
+            return false;
+        }
+
         if (amount <= 0)
         {
             _logger.LogWarning("尝试添加非正数金币: UserId={UserId}, Amount={Amount}", userId, amount);
@@ -57,6 +67,11 @@ public partial class EconomyService
 
     public async Task<bool> SpendCoinsAsync(Guid userId, int amount, CoinTransactionType type, string? description = null, string? relatedEntityId = null)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(SpendCoinsAsync)))
+        {
+            return false;
+        }
+
         if (amount <= 0)
         {
             _logger.LogWarning("尝试扣除非正数金币: UserId={UserId}, Amount={Amount}", userId, amount);
@@ -104,6 +119,11 @@ public partial class EconomyService
 
     public async Task<List<CoinTransactionDto>> GetCoinHistoryAsync(Guid userId, int page = 1, int pageSize = 20)
     {
+        if (!await EnsurePersistedUserAsync(userId, nameof(GetCoinHistoryAsync)))
+        {
+            return new List<CoinTransactionDto>();
+        }
+
         var skip = (page - 1) * pageSize;
 
         var transactions = await _context.CoinTransactions
@@ -118,4 +138,3 @@ public partial class EconomyService
 
     #endregion
 }
-

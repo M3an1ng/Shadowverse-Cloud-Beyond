@@ -53,6 +53,7 @@ export function createCardInstance(cardDto) {
         currentAttack: cardDto.CurrentAttack,
         currentHealth: cardDto.CurrentHealth,
         isEvolved: cardDto.IsEvolved,
+        isSuperEvolved: cardDto.IsSuperEvolved ?? cardDto.isSuperEvolved ?? false,
         canAttack: cardDto.CanAttack,
         fieldTurn: cardDto.FieldTurn ?? cardDto.fieldTurn ?? 0,
         hasActAbility: cardDto.HasActAbility ?? false,

@@ -9,6 +9,7 @@ public class MatchDeckSelection
     public Guid? DeckId { get; set; }
     public string? DeckCode { get; set; }
     public CardClass? DeckClass { get; set; }
+    public DeckEnvironment? Environment { get; set; }
 
     public bool HasSelection => DeckId.HasValue || !string.IsNullOrWhiteSpace(DeckCode);
 }

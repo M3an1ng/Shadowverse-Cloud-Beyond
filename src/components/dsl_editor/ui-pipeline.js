@@ -1,5 +1,39 @@
 import { PIPELINE_STAGE_META, extractListPipeline, isListOperationNode } from "./pipeline.js";
 
+function unmountPipelineStageModal(editor) {
+    const overlay = editor?.pipelineStageModalOverlay;
+    if (overlay?.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+    }
+    if (editor) {
+        editor.pipelineStageModalOverlay = null;
+    }
+}
+
+function mountPipelineStageModal(editor, overlay) {
+    if (!editor || !overlay || typeof document === "undefined" || !document.body) {
+        return;
+    }
+    if (editor.pipelineStageModalOverlay === overlay && overlay.parentNode === document.body) {
+        return;
+    }
+    unmountPipelineStageModal(editor);
+    document.body.appendChild(overlay);
+    editor.pipelineStageModalOverlay = overlay;
+}
+
+function requestCancelPipelineStageModal(editor) {
+    unmountPipelineStageModal(editor);
+    editor.cancelPipelineStageEdit();
+}
+
+function requestApplyPipelineStageModal(editor) {
+    editor.commitPipelineStageEdit();
+    if (!editor?.pipelineEditState?.node) {
+        unmountPipelineStageModal(editor);
+    }
+}
+
 export function renderPipelineBlock(editor, node, container, renderNodeFn, options = {}) {
     const pipeline = extractListPipeline(node);
     if (!pipeline || !pipeline.source) return false;
@@ -115,11 +149,183 @@ export function renderListQueryNodeAST(editor, node, container) {
     }
 }
 
+function renderPipelineStageModal(editor, stage) {
+    if (!stage) return null;
+
+    const overlay = document.createElement("div");
+    overlay.className = "dsl-pipeline-stage-modal-overlay";
+    overlay.tabIndex = -1;
+
+    const modal = document.createElement("div");
+    modal.className = "dsl-pipeline-stage-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.tabIndex = -1;
+
+    const titleBar = document.createElement("div");
+    titleBar.className = "dsl-pipeline-stage-modal-header";
+
+    const title = document.createElement("div");
+    title.className = "dsl-pipeline-stage-modal-title";
+    title.textContent = `编辑阶段 · ${editor.getPipelineStageLabel(stage)}`;
+    titleBar.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.textContent = "关闭";
+    closeBtn.className = "dsl-pipeline-btn dsl-pipeline-btn--neutral";
+    closeBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        requestCancelPipelineStageModal(editor);
+    });
+    titleBar.appendChild(closeBtn);
+    modal.appendChild(titleBar);
+
+    const body = document.createElement("div");
+    body.className = "dsl-pipeline-stage-modal-body";
+
+    if (stage.node?.type === "listTake") {
+        const strategyRow = document.createElement("div");
+        strategyRow.className = "dsl-pipeline-select-row";
+
+        const strategyLabel = document.createElement("span");
+        strategyLabel.textContent = "选择方式";
+        strategyLabel.className = "dsl-pipeline-select-label";
+        strategyRow.appendChild(strategyLabel);
+
+        const options = [
+            { value: "first", label: "首个" },
+            { value: "last", label: "末尾" },
+            { value: "random", label: "随机" },
+            { value: "all", label: "全部" }
+        ];
+
+        const currentStrategy = String(stage.node.strategy || "first").toLowerCase();
+        options.forEach((option) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = option.label;
+            btn.className = "dsl-pipeline-strategy-btn";
+            if (currentStrategy === option.value) {
+                btn.classList.add("is-active");
+            }
+            btn.addEventListener("click", (event) => {
+                event.preventDefault();
+                stage.node.setStrategy?.(option.value);
+                stage.node.strategy = option.value;
+                editor.renderEditor();
+            });
+            strategyRow.appendChild(btn);
+        });
+        body.appendChild(strategyRow);
+    }
+
+    if (stage.node?.type === "listSort") {
+        const directionRow = document.createElement("div");
+        directionRow.className = "dsl-pipeline-select-row";
+
+        const directionLabel = document.createElement("span");
+        directionLabel.textContent = "排序方向";
+        directionLabel.className = "dsl-pipeline-select-label";
+        directionRow.appendChild(directionLabel);
+
+        const options = [
+            { value: "asc", label: "升序" },
+            { value: "desc", label: "降序" }
+        ];
+
+        const currentDirection = String(stage.node.direction || "asc").toLowerCase();
+        options.forEach((option) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = option.label;
+            btn.className = "dsl-pipeline-strategy-btn";
+            if (currentDirection === option.value) {
+                btn.classList.add("is-active");
+            }
+            btn.addEventListener("click", (event) => {
+                event.preventDefault();
+                stage.node.setDirection?.(option.value);
+                stage.node.direction = option.value;
+                editor.renderEditor();
+            });
+            directionRow.appendChild(btn);
+        });
+        body.appendChild(directionRow);
+    }
+
+    const editorHost = document.createElement("div");
+    editorHost.className = "dsl-pipeline-edit-host dsl-pipeline-stage-modal-host";
+    body.appendChild(editorHost);
+    modal.appendChild(body);
+
+    const footer = document.createElement("div");
+    footer.className = "dsl-pipeline-stage-modal-footer";
+
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.textContent = "应用";
+    applyBtn.className = "dsl-pipeline-btn dsl-pipeline-btn--success";
+    applyBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        requestApplyPipelineStageModal(editor);
+    });
+    footer.appendChild(applyBtn);
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "取消";
+    cancelBtn.className = "dsl-pipeline-btn dsl-pipeline-btn--neutral";
+    cancelBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        requestCancelPipelineStageModal(editor);
+    });
+    footer.appendChild(cancelBtn);
+
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+
+    overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) {
+            requestCancelPipelineStageModal(editor);
+        }
+    });
+
+    modal.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        requestCancelPipelineStageModal(editor);
+    });
+
+    if (typeof editor.renderPipelineStageInlineEditor === "function") {
+        editor.renderPipelineStageInlineEditor(stage, editorHost);
+    }
+
+    // 将焦点放入子弹窗，保证 Esc 与键盘导航可用。
+    queueMicrotask(() => {
+        const firstAction = applyBtn || modal;
+        if (typeof firstAction?.focus === "function") {
+            firstAction.focus();
+        } else if (typeof modal.focus === "function") {
+            modal.focus();
+        }
+    });
+
+    return overlay;
+}
+
 export function renderPipelineEditorUI(editor, container) {
     const pipeline = typeof editor.getPipelineContext === "function" ? editor.getPipelineContext() : null;
-    if (!pipeline) return;
+    if (!pipeline) {
+        unmountPipelineStageModal(editor);
+        return;
+    }
     const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
-    if (stages.length === 0 && !pipeline.allowEmpty) return;
+    if (stages.length === 0 && !pipeline.allowEmpty) {
+        unmountPipelineStageModal(editor);
+        return;
+    }
 
     const panel = document.createElement("div");
     panel.className = "dsl-pipeline-editor";
@@ -136,12 +342,16 @@ export function renderPipelineEditorUI(editor, container) {
 
     const stagesContainer = document.createElement("div");
     stagesContainer.className = "dsl-pipeline-stage-list";
+    let editingStage = null;
 
     stages.forEach((stage, index) => {
         const isRawStage = stage.type === "raw";
         const isEditing = typeof editor.isPipelineStageEditing === "function"
             ? editor.isPipelineStageEditing(stage)
             : false;
+        if (isEditing) {
+            editingStage = stage;
+        }
         const stageRow = document.createElement("div");
         const typeIssue = typeof editor.getPipelineStageTypeIssue === "function"
             ? editor.getPipelineStageTypeIssue(stage)
@@ -199,7 +409,7 @@ export function renderPipelineEditorUI(editor, container) {
         stageRow.appendChild(summary);
 
         const editBtn = document.createElement("button");
-        editBtn.textContent = isEditing ? "收起" : "编辑";
+        editBtn.textContent = isEditing ? "编辑中" : "编辑";
         editBtn.className = "dsl-pipeline-btn";
         if (isRawStage) {
             editBtn.classList.add("dsl-pipeline-btn--muted", "is-disabled");
@@ -235,117 +445,6 @@ export function renderPipelineEditorUI(editor, container) {
         stageRow.appendChild(removeBtn);
 
         stagesContainer.appendChild(stageRow);
-
-        if (isEditing) {
-            const editPanel = document.createElement("div");
-            editPanel.className = "dsl-pipeline-edit-panel";
-
-            const actionRow = document.createElement("div");
-            actionRow.className = "dsl-pipeline-edit-actions";
-
-            const applyBtn = document.createElement("button");
-            applyBtn.textContent = "应用";
-            applyBtn.className = "dsl-pipeline-btn dsl-pipeline-btn--success";
-            applyBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                editor.commitPipelineStageEdit();
-            });
-            actionRow.appendChild(applyBtn);
-
-            const cancelBtn = document.createElement("button");
-            cancelBtn.textContent = "取消";
-            cancelBtn.className = "dsl-pipeline-btn dsl-pipeline-btn--neutral";
-            cancelBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                editor.cancelPipelineStageEdit();
-            });
-            actionRow.appendChild(cancelBtn);
-
-            if (stage.node?.type === "listTake") {
-                const strategyRow = document.createElement("div");
-                strategyRow.className = "dsl-pipeline-select-row";
-
-                const strategyLabel = document.createElement("span");
-                strategyLabel.textContent = "选择方式";
-                strategyLabel.className = "dsl-pipeline-select-label";
-                strategyRow.appendChild(strategyLabel);
-
-                const options = [
-                    { value: "first", label: "首个" },
-                    { value: "last", label: "末尾" },
-                    { value: "random", label: "随机" },
-                    { value: "all", label: "全部" }
-                ];
-
-                const currentStrategy = String(stage.node.strategy || "first").toLowerCase();
-
-                options.forEach((option) => {
-                    const btn = document.createElement("button");
-                    btn.type = "button";
-                    btn.textContent = option.label;
-                    btn.className = "dsl-pipeline-strategy-btn";
-                    if (currentStrategy === option.value) {
-                        btn.classList.add("is-active");
-                    }
-                    btn.addEventListener("click", (event) => {
-                        event.preventDefault();
-                        stage.node.setStrategy?.(option.value);
-                        stage.node.strategy = option.value;
-                        editor.renderEditor();
-                    });
-                    strategyRow.appendChild(btn);
-                });
-
-                editPanel.appendChild(strategyRow);
-            }
-
-            if (stage.node?.type === "listSort") {
-                const directionRow = document.createElement("div");
-                directionRow.className = "dsl-pipeline-select-row";
-
-                const directionLabel = document.createElement("span");
-                directionLabel.textContent = "排序方向";
-                directionLabel.className = "dsl-pipeline-select-label";
-                directionRow.appendChild(directionLabel);
-
-                const options = [
-                    { value: "asc", label: "升序" },
-                    { value: "desc", label: "降序" }
-                ];
-
-                const currentDirection = String(stage.node.direction || "asc").toLowerCase();
-
-                options.forEach((option) => {
-                    const btn = document.createElement("button");
-                    btn.type = "button";
-                    btn.textContent = option.label;
-                    btn.className = "dsl-pipeline-strategy-btn";
-                    if (currentDirection === option.value) {
-                        btn.classList.add("is-active");
-                    }
-                    btn.addEventListener("click", (event) => {
-                        event.preventDefault();
-                        stage.node.setDirection?.(option.value);
-                        stage.node.direction = option.value;
-                        editor.renderEditor();
-                    });
-                    directionRow.appendChild(btn);
-                });
-
-                editPanel.appendChild(directionRow);
-            }
-
-            const editorHost = document.createElement("div");
-            editorHost.className = "dsl-pipeline-edit-host";
-
-            editPanel.appendChild(actionRow);
-            editPanel.appendChild(editorHost);
-            stagesContainer.appendChild(editPanel);
-
-            if (typeof editor.renderPipelineStageInlineEditor === "function") {
-                editor.renderPipelineStageInlineEditor(stage, editorHost);
-            }
-        }
     });
 
     if (stages.length === 0) {
@@ -438,4 +537,13 @@ export function renderPipelineEditorUI(editor, container) {
 
     panel.appendChild(addRow);
     container.appendChild(panel);
+
+    if (editingStage) {
+        const modalOverlay = renderPipelineStageModal(editor, editingStage);
+        if (modalOverlay) {
+            mountPipelineStageModal(editor, modalOverlay);
+        }
+    } else {
+        unmountPipelineStageModal(editor);
+    }
 }

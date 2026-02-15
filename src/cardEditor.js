@@ -1240,7 +1240,7 @@ CardEditor.prototype.updateCardPreview = function() {
     bindPreviewDetailHandler(previewContainer);
     void hydrateDescriptionReferences(previewContainer, {
         cards: this.allCardsData,
-        fallbackPreviewUrl: artPreviewUrl || detailUrl
+        fallbackPreviewUrl: artPreviewUrl
     });
 
     // 更新 DEBUG INFO 区域
@@ -3338,6 +3338,7 @@ CardEditor.prototype.showAddAbilityEditorModal = async function(mode) {
         abilityType: 1,
         priority: 0,
         isActive: true,
+        broadcastOnTrigger: true,
         type: mode === 'aura' ? 'Continuous' : 'Triggered',
         trigger: {
             eventTypes: [],
@@ -4056,7 +4057,8 @@ CardEditor.prototype.createNewAbility = async function() {
             },
             conditions: [],
             targets: {},
-            effects: []
+            effects: [],
+            broadcastOnTrigger: true
         })
     };
 
@@ -4286,6 +4288,7 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
         abilityType: ability.abilityType || 1,
         priority: ability.priority || 0,
         isActive: ability.isActive !== false,
+        broadcastOnTrigger: true,
         type: ability.type || ability.Type || 'Triggered',
         trigger: {
             eventTypes: [],
@@ -4339,6 +4342,10 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
             }
             if (jsonConfig.playerCounterRegistrations) {
                 config.playerCounterRegistrations = jsonConfig.playerCounterRegistrations;
+            }
+            const broadcastOnTrigger = jsonConfig.broadcastOnTrigger ?? jsonConfig.BroadcastOnTrigger;
+            if (broadcastOnTrigger !== undefined) {
+                config.broadcastOnTrigger = broadcastOnTrigger !== false;
             }
         } catch (error) {
             console.warn('CardEditor: Failed to parse ability JSON config:', error);

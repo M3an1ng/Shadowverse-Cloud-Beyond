@@ -67,6 +67,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public List<EffectConfig> Effects { get; set; } = new();
         public List<AuraConfig> Auras { get; set; } = new();
         public bool IsEnabled { get; set; } = true;
+        public bool BroadcastOnTrigger { get; set; } = true;
         public string Version { get; set; } = "1.0";
         public List<CounterRegistrationConfig> CounterRegistrations { get; set; } = new();
         public List<PlayerCounterRegistrationConfig> PlayerCounterRegistrations { get; set; } = new();

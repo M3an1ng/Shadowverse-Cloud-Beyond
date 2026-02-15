@@ -90,6 +90,7 @@ namespace ShadowverseBeyond.Server.Services
                     LogEventDto e => clientProxy.LogEvent(e),
                     CardRevealedEventDto e => clientProxy.CardRevealed(e),
                     FusionEventDto e => clientProxy.Fusion(e),
+                    AbilityTriggeredEventDto e => clientProxy.AbilityTriggered(e),
 
                     // --- Default Case for Unmapped Events (Fallback) ---
                     // Includes CardDrawnEventDto, PlayerAttackedEventDto, UnitAttackedEventDto implicitly

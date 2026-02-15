@@ -158,7 +158,7 @@ export function renderWorkspaceHeader(editor, container) {
   }
 
   rightGroup.appendChild(hint);
-  if (!editor.isPipelineInline) {
+  if (!editor.isPipelineInline && !editor.hideFavoritesToolbar) {
     rightGroup.appendChild(renderFavoritesToolbar(editor));
   }
   headerMain.appendChild(rightGroup);

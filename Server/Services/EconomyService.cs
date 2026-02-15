@@ -29,6 +29,29 @@ public partial class EconomyService : IEconomyService
 
     #region 私有辅助方法
 
+    private async Task<bool> UserExistsAsync(Guid userId)
+    {
+        if (userId == Guid.Empty)
+        {
+            return false;
+        }
+
+        return await _context.Users
+            .AsNoTracking()
+            .AnyAsync(u => u.Id == userId);
+    }
+
+    private async Task<bool> EnsurePersistedUserAsync(Guid userId, string operation)
+    {
+        if (await UserExistsAsync(userId))
+        {
+            return true;
+        }
+
+        _logger.LogWarning("[Economy] Skip {Operation}: user does not exist. UserId={UserId}", operation, userId);
+        return false;
+    }
+
     /// <summary>
     /// 获取或创建用户排名记录
     /// 遵循单一职责原则，专门处理排名相关逻辑
@@ -37,6 +60,20 @@ public partial class EconomyService : IEconomyService
     /// <returns>用户排名实体</returns>
     private async Task<UserRanking> GetOrCreateUserRankingAsync(Guid userId)
     {
+        if (!await UserExistsAsync(userId))
+        {
+            return new UserRanking
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                Rank = 0,
+                RankPoints = 0,
+                SeasonStartAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+        }
+
         var userRanking = await _context.UserRankings
             .FirstOrDefaultAsync(ur => ur.UserId == userId);
 
@@ -66,6 +103,19 @@ public partial class EconomyService : IEconomyService
     /// <returns>用户每日奖励实体</returns>
     private async Task<UserDailyReward> GetOrCreateUserDailyRewardAsync(Guid userId)
     {
+        if (!await UserExistsAsync(userId))
+        {
+            return new UserDailyReward
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                LastClaimedAt = DateTime.MinValue,
+                ConsecutiveDays = 0,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+        }
+
         var userDailyReward = await _context.UserDailyRewards
             .FirstOrDefaultAsync(udr => udr.UserId == userId);
 

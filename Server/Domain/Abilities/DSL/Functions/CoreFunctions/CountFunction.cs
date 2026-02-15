@@ -22,7 +22,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
     public class CountFunction : BaseDslFunction
     {
         public override string Name => "count";
-        public override string Description => "计算集合中元素的数量或读取计数器数值。";
+        public override string Description => "计算集合中元素的数量。";
 
         public override IReadOnlyList<DslParameterInfo> Parameters => new List<DslParameterInfo>
         {

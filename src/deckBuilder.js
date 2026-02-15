@@ -51,9 +51,12 @@ const state = {
     availableCards: [], // All cards available for building
     cardIndex: new Map(),
     deckCreation: {
+        mode: 'create',
         environment: null,
         class: null,
-        step: 'environment'
+        step: 'environment',
+        importName: '',
+        importCode: ''
     },
     filters: {
         cost: null,
@@ -192,6 +195,154 @@ function getDeckCardCount(deck) {
         return deck?.cardCount ?? 0;
     }
     return deck.cards.reduce((sum, entry) => sum + (entry.count || 0), 0);
+}
+
+function getDeckId(deck) {
+    return deck?.deckId || deck?.id || null;
+}
+
+function resolveDeckName(deck, fallback = 'New Deck') {
+    const value = deck?.name;
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+    const trimmed = String(value).trim();
+    return trimmed || fallback;
+}
+
+function getDeckPreviewItems(deck) {
+    const entries = Array.isArray(deck?.cards) ? deck.cards : [];
+    return entries
+        .map(entry => {
+            const cardDefinitionId = Number(entry?.cardDefinitionId);
+            const count = Number(entry?.count ?? 0);
+            const card = state.cardIndex.get(cardDefinitionId) ?? null;
+            const costValue = Number(card?.cost);
+            return {
+                cardDefinitionId,
+                count: Number.isFinite(count) ? count : 0,
+                card,
+                cost: Number.isFinite(costValue) ? costValue : 99
+            };
+        })
+        .filter(item => item.count > 0);
+}
+
+function compareDeckPreviewItems(a, b) {
+    if (a.cost !== b.cost) {
+        return a.cost - b.cost;
+    }
+    const nameA = String(a.card?.name ?? a.cardDefinitionId ?? '');
+    const nameB = String(b.card?.name ?? b.cardDefinitionId ?? '');
+    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+}
+
+function buildDeckPreviewSnapshot(deck) {
+    const items = getDeckPreviewItems(deck).sort(compareDeckPreviewItems);
+    const curve = Array(9).fill(0);
+    const typeCounts = { follower: 0, spell: 0, amulet: 0 };
+    let totalCount = 0;
+
+    items.forEach(item => {
+        const bucket = Math.min(Math.max(item.cost, 0), 8);
+        curve[bucket] += item.count;
+        totalCount += item.count;
+
+        const type = normalizeEnumValue(item.card?.type ?? item.card?.Type ?? item.card?.cardType ?? item.card?.card_type);
+        if (type === 'follower' || type === 'spell' || type === 'amulet') {
+            typeCounts[type] += item.count;
+        }
+    });
+
+    return {
+        items,
+        curve,
+        typeCounts,
+        totalCount
+    };
+}
+
+function renderDeckPreviewCurveHtml(curve) {
+    const values = Array.isArray(curve) ? curve : Array(9).fill(0);
+    const max = Math.max(...values, 1);
+    return values.map((count, index) => `
+        <div class="deck-preview-curve-col" title="${index === 8 ? '8+' : index} 费: ${count}">
+            <div class="deck-preview-curve-bar" style="height: ${(count / max) * 100}%"></div>
+            <div class="deck-preview-curve-label">${index === 8 ? '8+' : index}</div>
+        </div>
+    `).join('');
+}
+
+function renderDeckPreviewCardsHtml(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return `
+            <div class="deck-preview-empty">
+                当前卡组没有可预览的卡牌。
+            </div>
+        `;
+    }
+
+    return items.map(item => {
+        const preview = item.card?.artPreview ?? item.card?.ArtPreview ?? '';
+        const previewUrl = preview ? encodeURI(preview).replace(/'/g, '%27') : '';
+        const styleAttr = previewUrl ? ` style="--deck-preview-art: url('${previewUrl}');"` : '';
+        const rarityClass = getCardRarityClass(item.card);
+        const cardClassName = `deck-preview-card${previewUrl ? ' has-art' : ''}${rarityClass ? ` ${rarityClass}` : ''}`;
+        const costLabel = Number.isFinite(item.cost) && item.cost >= 0 && item.cost < 99 ? item.cost : '?';
+        const cardName = item.card?.name ?? `未知卡牌 #${item.cardDefinitionId}`;
+        const typeLabel = getTypeLabel(item.card?.type ?? item.card?.Type ?? '');
+        return `
+            <button class="${cardClassName}" type="button" data-card-id="${item.cardDefinitionId}"${styleAttr}>
+                <span class="deck-preview-card-cost">${costLabel}</span>
+                <span class="deck-preview-card-count">x${item.count}</span>
+                <span class="deck-preview-card-name">${cardName}</span>
+                <span class="deck-preview-card-type">${typeLabel || '未知'}</span>
+            </button>
+        `;
+    }).join('');
+}
+
+async function fetchDeckDetail(deckId) {
+    const query = getDeckOwnerQuery();
+    const deck = await apiGetJson(`/api/decks/${deckId}?${query}`);
+    const deckClass = normalizeEnumValue(deck?.class ?? deck?.Class ?? deck?.cardClass ?? deck?.card_class);
+    return {
+        ...deck,
+        environment: normalizeEnvironment(deck?.environment),
+        class: deckClass,
+        cards: Array.isArray(deck?.cards) ? deck.cards : []
+    };
+}
+
+async function fetchDeckCode(deckId) {
+    const query = getDeckOwnerQuery();
+    const payload = await apiGetJson(`/api/decks/${deckId}/code?${query}`);
+    const code = payload?.code ?? payload?.Code ?? '';
+    if (!code) {
+        throw new Error('未获取到卡组代码');
+    }
+    return String(code);
+}
+
+async function copyTextToClipboard(text) {
+    if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-1000px';
+    textarea.style.left = '-1000px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (!copied) {
+        throw new Error('当前环境不支持自动复制');
+    }
 }
 
 function formatClassName(value) {
@@ -429,7 +580,8 @@ function renderDeckSelection() {
             </div>
             <div class="deck-grid">
                 ${state.decks.map(deck => {
-                    const deckId = deck.deckId || deck.id;
+                    const deckId = getDeckId(deck);
+                    const deckName = resolveDeckName(deck);
                     const cardCount = deck.cardCount ?? getDeckCardCount(deck);
                     const className = formatClassName(deck.class);
                     const isComplete = cardCount === 40;
@@ -440,7 +592,7 @@ function renderDeckSelection() {
                             <div class="deck-info">
                                 <div class="deck-class-name">${className}</div>
                                 <div class="deck-env-name">${getEnvironmentLabel(deck.environment)}</div>
-                                <div class="deck-name">${deck.name}</div>
+                                <div class="deck-name">${deckName}</div>
                                 <div class="deck-status">
                                     <span class="status-indicator ${isComplete ? 'valid' : 'invalid'}">
                                         ${isComplete ? 'Complete' : 'Incomplete'}
@@ -453,8 +605,9 @@ function renderDeckSelection() {
                             </div>
                         </div>
                         <div class="deck-actions-overlay">
-                            <button class="deck-action-btn edit-deck-btn" data-id="${deckId}">Edit Deck</button>
-                            <button class="deck-action-btn delete-deck-btn" data-id="${deckId}">Delete</button>
+                            <button class="deck-action-btn preview-deck-btn" data-id="${deckId}">预览</button>
+                            <button class="deck-action-btn edit-deck-btn" data-id="${deckId}">编辑</button>
+                            <button class="deck-action-btn delete-deck-btn" data-id="${deckId}">删除</button>
                         </div>
                     </div>
                 `;
@@ -475,31 +628,98 @@ function renderDeckSelection() {
                         <div class="deck-create-title">新建卡组</div>
                         <button class="btn-icon deck-create-close" id="deck-create-close" type="button">×</button>
                     </div>
-                    <div class="deck-create-step" data-step="environment">
-                        <div class="deck-create-step-title">选择环境</div>
-                        <div class="deck-create-options">
-                            ${ENVIRONMENT_OPTIONS.map(option => `
-                                <button class="deck-option" data-env="${option.value}" type="button">
-                                    <div class="deck-option-title">${option.label}</div>
-                                    <div class="deck-option-desc">${option.description}</div>
-                                </button>
-                            `).join('')}
+                    <div class="deck-create-mode-switch" role="tablist" aria-label="创建卡组方式">
+                        <button class="deck-mode-btn selected" data-mode="create" type="button">新建卡组</button>
+                        <button class="deck-mode-btn" data-mode="import" type="button">导入代码</button>
+                    </div>
+
+                    <div class="deck-create-panel" data-mode-panel="create">
+                        <div class="deck-create-step" data-step="environment">
+                            <div class="deck-create-step-title">选择环境</div>
+                            <div class="deck-create-options">
+                                ${ENVIRONMENT_OPTIONS.map(option => `
+                                    <button class="deck-option" data-env="${option.value}" type="button">
+                                        <div class="deck-option-title">${option.label}</div>
+                                        <div class="deck-option-desc">${option.description}</div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+                        <div class="deck-create-step hidden" data-step="class">
+                            <div class="deck-create-step-title">选择职业</div>
+                            <div class="deck-create-options grid">
+                                ${CLASS_OPTIONS.map(option => `
+                                    <button class="deck-option" data-class="${option.value}" type="button">
+                                        <div class="deck-option-title">${option.label}</div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div class="deck-create-actions" id="deck-create-create-actions">
+                            <button class="btn-secondary" id="deck-create-back" type="button">上一步</button>
+                            <button class="btn-primary" id="deck-create-next" type="button">下一步</button>
+                            <button class="btn-primary" id="deck-create-confirm" type="button">创建</button>
                         </div>
                     </div>
-                    <div class="deck-create-step hidden" data-step="class">
-                        <div class="deck-create-step-title">选择职业</div>
-                        <div class="deck-create-options grid">
-                            ${CLASS_OPTIONS.map(option => `
-                                <button class="deck-option" data-class="${option.value}" type="button">
-                                    <div class="deck-option-title">${option.label}</div>
-                                </button>
-                            `).join('')}
+
+                    <div class="deck-create-panel hidden" data-mode-panel="import">
+                        <div class="deck-create-step-title">导入卡组代码</div>
+                        <label class="deck-import-field">
+                            <span class="deck-import-label">卡组名称（可选）</span>
+                            <input id="deck-import-name-input" class="deck-import-input" type="text" maxlength="64" placeholder="Imported Deck">
+                        </label>
+                        <label class="deck-import-field">
+                            <span class="deck-import-label">卡组代码</span>
+                            <textarea id="deck-import-code-input" class="deck-import-textarea" rows="5" placeholder="粘贴导出的卡组代码"></textarea>
+                        </label>
+                        <div class="deck-import-hint">使用导出的代码直接创建卡组，创建后将进入卡组编辑。</div>
+
+                        <div class="deck-create-actions" id="deck-create-import-actions">
+                            <button class="btn-primary" id="deck-import-submit-btn" type="button">导入并创建</button>
                         </div>
                     </div>
-                    <div class="deck-create-actions">
-                        <button class="btn-secondary" id="deck-create-back" type="button">上一步</button>
-                        <button class="btn-primary" id="deck-create-next" type="button">下一步</button>
-                        <button class="btn-primary" id="deck-create-confirm" type="button">创建</button>
+                </div>
+            </div>
+
+            <div class="deck-preview-modal" id="deck-preview-modal" aria-hidden="true">
+                <div class="deck-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="deck-preview-title">
+                    <div class="deck-preview-toolbar">
+                        <div class="deck-preview-toolbar-left">
+                            <div class="deck-preview-title-group">
+                                <div class="deck-preview-caption">卡组预览</div>
+                                <h3 class="deck-preview-title" id="deck-preview-title">-</h3>
+                                <div class="deck-preview-meta" id="deck-preview-meta">-</div>
+                            </div>
+                        </div>
+                        <div class="deck-preview-toolbar-actions">
+                            <button class="btn-secondary" id="deck-preview-export-btn" type="button">导出卡组代码</button>
+                            <button class="btn-secondary" id="deck-preview-close-btn" type="button" aria-label="关闭预览">关闭</button>
+                        </div>
+                    </div>
+
+                    <div class="deck-preview-summary">
+                        <div class="deck-preview-curve" id="deck-preview-curve"></div>
+                        <div class="deck-preview-counts" id="deck-preview-counts"></div>
+                    </div>
+
+                    <div class="deck-preview-cards" id="deck-preview-cards"></div>
+                </div>
+            </div>
+
+            <div class="deck-code-modal" id="deck-code-modal" aria-hidden="true">
+                <div class="deck-code-dialog" role="dialog" aria-modal="true" aria-labelledby="deck-code-title">
+                    <div class="deck-code-header">
+                        <div>
+                            <div class="deck-code-caption">卡组代码</div>
+                            <h3 class="deck-code-title" id="deck-code-title">-</h3>
+                        </div>
+                        <button class="btn-secondary small" id="deck-code-close-btn" type="button" aria-label="关闭导出">关闭</button>
+                    </div>
+                    <textarea class="deck-code-output" id="deck-code-output" readonly></textarea>
+                    <div class="deck-code-footer">
+                        <span class="deck-code-status" id="deck-code-status"></span>
+                        <button class="btn-primary" id="deck-code-copy-btn" type="button">复制代码</button>
                     </div>
                 </div>
             </div>
@@ -507,32 +727,80 @@ function renderDeckSelection() {
     `;
 
     // Event Listeners
+    const deckNameLookup = new Map(
+        state.decks.map(deck => [String(getDeckId(deck)), resolveDeckName(deck)])
+    );
     const createModal = document.getElementById('deck-create-modal');
     const createClose = document.getElementById('deck-create-close');
     const createBack = document.getElementById('deck-create-back');
     const createNext = document.getElementById('deck-create-next');
     const createConfirm = document.getElementById('deck-create-confirm');
+    const createModeButtons = createModal?.querySelectorAll('.deck-mode-btn');
+    const createPanel = createModal?.querySelector('[data-mode-panel="create"]');
+    const importPanel = createModal?.querySelector('[data-mode-panel="import"]');
+    const importNameInput = document.getElementById('deck-import-name-input');
+    const importCodeInput = document.getElementById('deck-import-code-input');
+    const importSubmit = document.getElementById('deck-import-submit-btn');
     const envStep = createModal?.querySelector('[data-step="environment"]');
     const classStep = createModal?.querySelector('[data-step="class"]');
+    const previewModal = document.getElementById('deck-preview-modal');
+    const previewTitle = document.getElementById('deck-preview-title');
+    const previewMeta = document.getElementById('deck-preview-meta');
+    const previewCurve = document.getElementById('deck-preview-curve');
+    const previewCounts = document.getElementById('deck-preview-counts');
+    const previewCards = document.getElementById('deck-preview-cards');
+    const previewCloseBtn = document.getElementById('deck-preview-close-btn');
+    const previewBackBtn = document.getElementById('deck-preview-back-btn');
+    const previewExportBtn = document.getElementById('deck-preview-export-btn');
+    const codeModal = document.getElementById('deck-code-modal');
+    const codeCloseBtn = document.getElementById('deck-code-close-btn');
+    const codeCopyBtn = document.getElementById('deck-code-copy-btn');
+    const codeOutput = document.getElementById('deck-code-output');
+    const codeTitle = document.getElementById('deck-code-title');
+    const codeStatus = document.getElementById('deck-code-status');
+
+    let previewDeckId = null;
+    let previewDeckName = '';
+    let activeDeckCode = '';
 
     const resetDeckCreation = () => {
         state.deckCreation = {
+            mode: 'create',
             environment: null,
             class: null,
-            step: 'environment'
+            step: 'environment',
+            importName: '',
+            importCode: ''
         };
     };
 
     const syncDeckCreationUI = () => {
         if (!createModal || !envStep || !classStep || !createBack || !createNext || !createConfirm) return;
+        const isImportMode = state.deckCreation.mode === 'import';
         const isEnvStep = state.deckCreation.step === 'environment';
-        envStep.classList.toggle('hidden', !isEnvStep);
-        classStep.classList.toggle('hidden', isEnvStep);
-        createBack.disabled = isEnvStep;
-        createNext.style.display = isEnvStep ? 'inline-flex' : 'none';
-        createConfirm.style.display = isEnvStep ? 'none' : 'inline-flex';
-        createNext.disabled = !state.deckCreation.environment;
-        createConfirm.disabled = !state.deckCreation.class;
+        createPanel?.classList.toggle('hidden', isImportMode);
+        importPanel?.classList.toggle('hidden', !isImportMode);
+        envStep.classList.toggle('hidden', isImportMode || !isEnvStep);
+        classStep.classList.toggle('hidden', isImportMode || isEnvStep);
+        createBack.disabled = isImportMode || isEnvStep;
+        createNext.style.display = isImportMode ? 'none' : (isEnvStep ? 'inline-flex' : 'none');
+        createConfirm.style.display = isImportMode ? 'none' : (isEnvStep ? 'none' : 'inline-flex');
+        createNext.disabled = isImportMode || !state.deckCreation.environment;
+        createConfirm.disabled = isImportMode || !state.deckCreation.class;
+        if (importSubmit) {
+            importSubmit.disabled = !state.deckCreation.importCode?.trim();
+        }
+        if (importNameInput && importNameInput.value !== state.deckCreation.importName) {
+            importNameInput.value = state.deckCreation.importName;
+        }
+        if (importCodeInput && importCodeInput.value !== state.deckCreation.importCode) {
+            importCodeInput.value = state.deckCreation.importCode;
+        }
+
+        createModeButtons?.forEach(button => {
+            const mode = button.getAttribute('data-mode');
+            button.classList.toggle('selected', mode === state.deckCreation.mode);
+        });
 
         envStep.querySelectorAll('.deck-option').forEach(option => {
             const value = option.getAttribute('data-env');
@@ -552,6 +820,76 @@ function renderDeckSelection() {
         syncDeckCreationUI();
     };
 
+    const closeDeckPreview = () => {
+        if (!previewModal) return;
+        previewModal.classList.remove('open');
+        previewModal.setAttribute('aria-hidden', 'true');
+        previewDeckId = null;
+    };
+
+    const closeDeckCode = () => {
+        if (!codeModal) return;
+        codeModal.classList.remove('open');
+        codeModal.setAttribute('aria-hidden', 'true');
+        activeDeckCode = '';
+        if (codeStatus) codeStatus.textContent = '';
+    };
+
+    const setCodeStatus = (message, isError = false) => {
+        if (!codeStatus) return;
+        codeStatus.textContent = message;
+        codeStatus.classList.toggle('error', Boolean(isError));
+    };
+
+    const openDeckCode = (deckName, code) => {
+        if (!codeModal || !codeOutput || !codeTitle) return;
+        codeTitle.textContent = deckName;
+        codeOutput.value = code;
+        activeDeckCode = code;
+        setCodeStatus('代码已生成，可直接复制。');
+        codeModal.classList.add('open');
+        codeModal.setAttribute('aria-hidden', 'false');
+    };
+
+    const openDeckCodeById = async (deckId, fallbackName = 'New Deck') => {
+        const deckName = deckNameLookup.get(String(deckId)) || fallbackName;
+        const code = await fetchDeckCode(deckId);
+        openDeckCode(deckName, code);
+    };
+
+    const openDeckPreview = async (deckId) => {
+        if (!previewModal || !previewTitle || !previewMeta || !previewCurve || !previewCounts || !previewCards) return;
+
+        const deckDetail = await fetchDeckDetail(deckId);
+        const previewSnapshot = buildDeckPreviewSnapshot(deckDetail);
+        previewDeckId = deckId;
+        previewDeckName = resolveDeckName(deckDetail);
+
+        previewTitle.textContent = previewDeckName;
+        previewMeta.textContent = `${getClassLabel(deckDetail.class)} | ${getEnvironmentLabel(deckDetail.environment)}`;
+        previewCurve.innerHTML = renderDeckPreviewCurveHtml(previewSnapshot.curve);
+        previewCounts.innerHTML = `
+            <div class="deck-preview-total">${previewSnapshot.totalCount} / 40</div>
+            <div class="deck-preview-type-row">
+                <span>随从: ${previewSnapshot.typeCounts.follower}</span>
+                <span>法术: ${previewSnapshot.typeCounts.spell}</span>
+                <span>护符: ${previewSnapshot.typeCounts.amulet}</span>
+            </div>
+        `;
+        previewCards.innerHTML = renderDeckPreviewCardsHtml(previewSnapshot.items);
+        previewCards.querySelectorAll('.deck-preview-card').forEach(cardEl => {
+            cardEl.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const cardId = Number(cardEl.getAttribute('data-card-id'));
+                const card = state.cardIndex.get(cardId);
+                openCardDetailModal(card);
+            });
+        });
+
+        previewModal.classList.add('open');
+        previewModal.setAttribute('aria-hidden', 'false');
+    };
+
     const closeDeckCreation = () => {
         if (!createModal) return;
         createModal.classList.remove('open');
@@ -565,6 +903,46 @@ function renderDeckSelection() {
         if (event.target === createModal) {
             closeDeckCreation();
         }
+    });
+    createModeButtons?.forEach(button => {
+        button.addEventListener('click', () => {
+            const mode = button.getAttribute('data-mode');
+            if (mode !== 'create' && mode !== 'import') return;
+            state.deckCreation.mode = mode;
+            syncDeckCreationUI();
+        });
+    });
+    importNameInput?.addEventListener('input', (event) => {
+        state.deckCreation.importName = event.target.value;
+    });
+    importCodeInput?.addEventListener('input', (event) => {
+        state.deckCreation.importCode = event.target.value;
+        syncDeckCreationUI();
+    });
+    previewModal?.addEventListener('click', (event) => {
+        if (event.target === previewModal) {
+            closeDeckPreview();
+        }
+    });
+    codeModal?.addEventListener('click', (event) => {
+        if (event.target === codeModal) {
+            closeDeckCode();
+        }
+    });
+    previewCloseBtn?.addEventListener('click', closeDeckPreview);
+    previewBackBtn?.addEventListener('click', closeDeckPreview);
+    codeCloseBtn?.addEventListener('click', closeDeckCode);
+    previewExportBtn?.addEventListener('click', () => {
+        if (!previewDeckId) return;
+        openDeckCodeById(previewDeckId, previewDeckName).catch(err => {
+            alert(`导出失败：${err.message}`);
+        });
+    });
+    codeCopyBtn?.addEventListener('click', () => {
+        if (!activeDeckCode) return;
+        copyTextToClipboard(activeDeckCode)
+            .then(() => setCodeStatus('复制成功。'))
+            .catch(err => setCodeStatus(`复制失败：${err.message}`, true));
     });
 
     envStep?.querySelectorAll('.deck-option').forEach(option => {
@@ -600,6 +978,32 @@ function renderDeckSelection() {
         const deckClass = state.deckCreation.class;
         closeDeckCreation();
         createNewDeck(env, deckClass).catch(err => alert(`创建失败：${err.message}`));
+    });
+    importSubmit?.addEventListener('click', async () => {
+        const code = state.deckCreation.importCode?.trim();
+        if (!code) return;
+        const name = state.deckCreation.importName?.trim() || '';
+        importSubmit.disabled = true;
+        try {
+            const importedDeckId = await importDeckByCode(code, name);
+            closeDeckCreation();
+            if (importedDeckId) {
+                await editDeck(importedDeckId);
+                return;
+            }
+            renderDeckSelection();
+        } catch (err) {
+            alert(`导入失败：${err.message}`);
+            importSubmit.disabled = false;
+            syncDeckCreationUI();
+        }
+    });
+
+    document.querySelectorAll('.preview-deck-btn').forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openDeckPreview(btn.dataset.id).catch(err => alert(`预览失败：${err.message}`));
+        });
     });
     
     document.querySelectorAll('.edit-deck-btn').forEach(btn => {
@@ -1056,16 +1460,26 @@ async function createNewDeck(environment, deckClass) {
     }
 }
 
-async function editDeck(deckId) {
+async function importDeckByCode(code, name = '') {
     const query = getDeckOwnerQuery();
-    const deck = await apiGetJson(`/api/decks/${deckId}?${query}`);
-    const deckClass = normalizeEnumValue(deck?.class ?? deck?.Class ?? deck?.cardClass ?? deck?.card_class);
-    const resolvedDeckId = deck?.deckId ?? deck?.id ?? deckId;
+    const payload = { code: String(code).trim() };
+    if (name && String(name).trim()) {
+        payload.name = String(name).trim();
+    }
+    const imported = await apiPostJson(`/api/decks/import?${query}`, payload);
+    const importedDeckId = getDeckId(imported);
+    await loadDecks();
+    return importedDeckId;
+}
+
+async function editDeck(deckId) {
+    const deck = await fetchDeckDetail(deckId);
+    const resolvedDeckId = getDeckId(deck) ?? deckId;
     const isNewDeck = state.newDeckId && resolvedDeckId && String(state.newDeckId) === String(resolvedDeckId);
     state.currentDeck = {
         ...deck,
         environment: normalizeEnvironment(deck.environment),
-        class: deckClass,
+        class: normalizeEnumValue(deck.class),
         cards: Array.isArray(deck.cards) ? deck.cards : []
     };
     state.currentDeck.isNew = Boolean(isNewDeck);

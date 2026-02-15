@@ -377,7 +377,7 @@
     left: 50%;
     transform: translate(-50%, -50%);
     width: 50%; /* Full width */
-    height: 60%; /* Occupy central area */
+    height: 50%; /* Occupy central area */
     min-height: 500px;
     display: flex; /* Changed to flex column to separate fields */
     flex-direction: column;
@@ -427,7 +427,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-3);
     padding: var(--space-2);
     min-height: 160px;
 }
@@ -678,7 +678,7 @@
 #spectator-toggle-view {
     position: absolute;
     bottom: 40px;
-    right: 40px;
+    right: 50px;
     width: 120px;
     height: 50px;
     font-size: var(--text-base);

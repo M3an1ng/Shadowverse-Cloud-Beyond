@@ -18,7 +18,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
     /// <summary>
     /// 消失效果处理器
-    /// 使目标消失，与摧毁效果不同的是不触发死亡相关效果（如LastWords）
+    /// 使目标消失，与破坏效果不同的是不触发死亡相关效果（如LastWords）
     /// </summary>
     [EffectHandler(EffectType.Vanish)]
     public class VanishEffectHandler : EffectHandlerBase<VanishEffectParams>
