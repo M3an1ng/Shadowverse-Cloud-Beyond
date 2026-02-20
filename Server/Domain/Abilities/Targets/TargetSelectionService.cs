@@ -136,7 +136,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 if (!queryResult.Success)
                 {
                     finalResult.Status = ResolutionStatus.Failed;
-                    finalResult.ErrorMessage = $"Failed to execute query for target '{target.Key}': {queryResult.ErrorMessage}";
+                    finalResult.ErrorMessage = $"目标“{target.Key}”查询执行失败：{queryResult.ErrorMessage}";
                     _logger.LogError(finalResult.ErrorMessage);
                     SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
                     return finalResult; // Abort on failure.
@@ -156,36 +156,64 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 // Check if this specific target requires player choice.
                 if (target.Config.PlayerChoiceOptions?.IsRequired == true)
                 {
-                    var selectableTargets = ApplyAbilityTargetKeywordRules(candidateTargets, target.Config, context, applyChoiceRestrictions: true);
+                    var choicePoolTargets = ApplyAbilityTargetKeywordRules(
+                        candidateTargets,
+                        target.Config,
+                        context,
+                        applyChoiceRestrictions: true,
+                        enforceSpellWard: false);
 
-                    var minSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions.MinCount);
+                    var maxConfiguredSelectionCount = Math.Max(1, target.Config.PlayerChoiceOptions.MaxCount);
+                    var enforceSpellWardOnSelectablePool = maxConfiguredSelectionCount <= 1;
+                    var selectableTargets = ApplyAbilityTargetKeywordRules(
+                        choicePoolTargets,
+                        target.Config,
+                        context,
+                        applyChoiceRestrictions: true,
+                        enforceSpellWard: enforceSpellWardOnSelectablePool);
 
-                    if (!selectableTargets.Any() || selectableTargets.Count < minSelectionCount)
+                    var configuredMinSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions.MinCount);
+                    var requiredMinSelectionCount = Math.Max(1, configuredMinSelectionCount);
+                    var isFusionChoice = ability.HasKeyword(AbilityKeyword.Fusion);
+                    var selectableCount = selectableTargets.Count;
+                    var forceFusionChoicePrompt = isFusionChoice
+                        && isCancellable
+                        && selectableCount < requiredMinSelectionCount;
+
+                    if (selectableCount < requiredMinSelectionCount && !forceFusionChoicePrompt)
                     {
-                        if (target.Config.RequireValidTarget)
+                        if (target.Config.ShouldBlockAbilityExecutionOnInsufficientTargets())
                         {
                             finalResult.Status = ResolutionStatus.Failed;
-                            finalResult.ErrorMessage = selectableTargets.Count == 0
-                                ? $"No valid selectable targets for ability '{ability.KeywordSummary}' (target key '{target.Key}')."
-                                : $"Not enough selectable targets for ability '{ability.KeywordSummary}' (target key '{target.Key}'): requires {minSelectionCount}, but only {selectableTargets.Count} available.";
+                            finalResult.ErrorMessage = $"能力“{ability.KeywordSummary}”的目标“{target.Key}”可选目标不足：需要 {requiredMinSelectionCount} 个，实际仅有 {selectableCount} 个。";
                             _logger.LogInformation(finalResult.ErrorMessage);
                             SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
                             return finalResult;
                         }
 
                         _logger.LogInformation(
-                            "Selectable targets ({Available}) below minimum ({Min}) for ability {AbilityKeywords} (target key '{TargetKey}'), RequireValidTarget=false. Skipping target selection.",
-                            selectableTargets.Count,
-                            minSelectionCount,
+                            "Selectable targets ({Available}) below minimum ({Min}) for ability {AbilityKeywords} (target key '{TargetKey}'). Auto-selecting all selectable targets because execution blocking is disabled.",
+                            selectableCount,
+                            requiredMinSelectionCount,
                             ability.KeywordSummary,
                             target.Key);
-                        target.SetResolvedTargets(new List<TargetInfo>(), triggeringEventId);
+                        target.SetResolvedTargets(selectableTargets, triggeringEventId);
                         resolvedTargetsForQuery[target.Key] = target.ResolvedTargets;
                         continue;
                     }
 
-                    var maxSelectionCount = Math.Min(selectableTargets.Count, target.Config.PlayerChoiceOptions.MaxCount);
-                    var message = BuildPlayerChoicePrompt(minSelectionCount, maxSelectionCount);
+                    var requestMinSelectionCount = forceFusionChoicePrompt && selectableCount == 0
+                        ? Math.Max(1, configuredMinSelectionCount)
+                        : configuredMinSelectionCount;
+                    var configuredMaxSelectionCount = Math.Max(
+                        requestMinSelectionCount,
+                        Math.Max(1, target.Config.PlayerChoiceOptions.MaxCount));
+                    // Keep the configured selection upper-bound as-is. The request should describe the
+                    // authoritative choice interval, while actual selectable IDs constrain what can be chosen.
+                    var maxSelectionCount = configuredMaxSelectionCount;
+                    var message = forceFusionChoicePrompt && selectableCount == 0
+                        ? "没有可供选择的目标。"
+                        : BuildPlayerChoicePrompt(requestMinSelectionCount, maxSelectionCount);
 
                     var choiceRequest = new PlayerChoiceRequest
                     {
@@ -198,7 +226,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                             .Where(t => t.Type == TargetType.Card && t.Card != null)
                             .Select(t => context.Mapper.Map<CardInstanceDto>(t.Card!))
                             .ToList(),
-                        MinSelectionCount = minSelectionCount,
+                        MinSelectionCount = requestMinSelectionCount,
                         MaxSelectionCount = maxSelectionCount,
                         Message = message,
                         IsCancellable = isCancellable
@@ -213,7 +241,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     {
                         finalResult.Status = ResolutionStatus.Failed;
                         finalResult.WasCancelled = true;
-                        finalResult.ErrorMessage = $"Player cancelled target selection for ability '{ability.KeywordSummary}'.";
+                        finalResult.ErrorMessage = $"已取消能力“{ability.KeywordSummary}”的目标选择。";
                         _logger.LogInformation(finalResult.ErrorMessage);
                         SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
                         return finalResult;
@@ -221,15 +249,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                     // Filter the potential targets based on the player's selection.
                     var chosenTargetIdSet = new HashSet<Guid>(choiceResult.ChosenTargetIds);
-                    var chosenTargets = selectableTargets
+                    var playerSelectedTargets = selectableTargets
                         .Where(t => chosenTargetIdSet.Contains(t.InstanceId))
                         .ToList();
 
+                    if (!SatisfiesSpellWardSelectionRule(playerSelectedTargets, choicePoolTargets, context))
+                    {
+                        finalResult.Status = ResolutionStatus.Failed;
+                        finalResult.ErrorMessage = $"能力“{ability.KeywordSummary}”的目标选择无效：存在守护时必须优先选择守护目标。";
+                        _logger.LogInformation(finalResult.ErrorMessage);
+                        SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
+                        return finalResult;
+                    }
+
+                    List<TargetInfo> chosenTargets;
                     if (target.Config.PlayerChoiceOptions?.IsInverseSelection == true)
                     {
-                        chosenTargets = candidateTargets
+                        chosenTargets = choicePoolTargets
                             .Where(t => !chosenTargetIdSet.Contains(t.InstanceId))
                             .ToList();
+                    }
+                    else
+                    {
+                        chosenTargets = playerSelectedTargets;
                     }
 
                     target.SetResolvedTargets(chosenTargets, triggeringEventId);
@@ -281,26 +323,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 }
 
                 var requiresPlayerChoice = target.Config.PlayerChoiceOptions?.IsRequired == true;
-
-                // Only check targets that are explicitly configured to require a valid target for the ability to be playable.
-                // Also evaluate player-choice targets so UI can receive target availability metadata.
-                if (!target.Config.RequireValidTarget && !requiresPlayerChoice)
+                var targetHandlingStrategy = target.Config.GetEffectiveTargetHandlingStrategy();
+                if (targetHandlingStrategy == TargetHandlingStrategy.DoNotIntercept && !requiresPlayerChoice)
                 {
                     continue;
                 }
 
-                // Execute the query to find potential targets. We pass an empty dictionary for resolved targets
-                // because this is a pre-check and no targets have been resolved yet.
                 var queryResult = queryExecutor.ExecuteQuery(target.Config.Query, context, new Dictionary<string, List<TargetInfo>>());
 
                 if (!queryResult.Success)
                 {
                     _logger.LogWarning("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': Query execution failed: {Error}",
                         ability.KeywordSummary, target.Key, queryResult.ErrorMessage);
-                    // If the query itself fails, we consider targets unavailable.
                     return new TargetAvailabilityResult(
                         false,
-                        $"目标查询失败: {queryResult.ErrorMessage}",
+                        $"目标查询失败：{queryResult.ErrorMessage}",
                         HasValidTargets: false,
                         ValidTargetIds: new List<Guid>());
                 }
@@ -315,11 +352,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     .ToList();
 
                 var applyChoiceRestrictions = requiresPlayerChoice;
+                var enforceSpellWard = !requiresPlayerChoice
+                    || (target.Config.PlayerChoiceOptions?.MaxCount ?? 1) <= 1;
                 potentialTargets = ApplyAbilityTargetKeywordRules(
                     potentialTargets,
                     target.Config,
                     context,
-                    applyChoiceRestrictions: applyChoiceRestrictions);
+                    applyChoiceRestrictions: applyChoiceRestrictions,
+                    enforceSpellWard: enforceSpellWard);
 
                 if (requiresPlayerChoice)
                 {
@@ -332,46 +372,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                             choiceValidTargetIds.Add(targetId);
                         }
                     }
-
-                    var minSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions!.MinCount);
-                    if (potentialTargets.Count < minSelectionCount)
-                    {
-                        _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': requires {Min} targets but only {Available} available.",
-                            ability.KeywordSummary, target.Key, minSelectionCount, potentialTargets.Count);
-                        if (target.Config.RequireValidTarget)
-                        {
-                            return new TargetAvailabilityResult(
-                                false,
-                                $"目标数量不足，至少需要{minSelectionCount}个目标。",
-                                HasValidTargets: potentialTargets.Any(),
-                                ValidTargetIds: potentialTargets.Select(t => t.InstanceId).ToList());
-                        }
-
-                        canPlayWithoutTarget = true;
-                    }
                 }
 
-                if (!potentialTargets.Any())
+                var requiredMinSelectionCount = requiresPlayerChoice
+                    ? Math.Max(1, Math.Max(0, target.Config.PlayerChoiceOptions!.MinCount))
+                    : 1;
+
+                if (potentialTargets.Count < requiredMinSelectionCount)
                 {
-                    if (requiresPlayerChoice && !target.Config.RequireValidTarget)
+                    _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': requires {Min} targets but only {Available} available.",
+                        ability.KeywordSummary, target.Key, requiredMinSelectionCount, potentialTargets.Count);
+
+                    if (targetHandlingStrategy == TargetHandlingStrategy.BlockPlayerOperation)
                     {
-                        canPlayWithoutTarget = true;
-                        continue;
+                        var failureReason = $"可选目标不足：需要 {requiredMinSelectionCount} 个，实际仅有 {potentialTargets.Count} 个。";
+                        return new TargetAvailabilityResult(
+                            false,
+                            failureReason,
+                            HasValidTargets: potentialTargets.Any(),
+                            ValidTargetIds: potentialTargets.Select(t => t.InstanceId).ToList());
                     }
 
-                    _logger.LogInformation("Target availability check failed for ability {AbilityKeywords}, target '{TargetKey}': No valid targets found.",
-                        ability.KeywordSummary, target.Key);
-                    // If the query returns no results, and a target is required, the ability is not available.
-                    return new TargetAvailabilityResult(
-                        false,
-                        "没有有效的目标。",
-                        HasValidTargets: false,
-                        ValidTargetIds: new List<Guid>());
+                    canPlayWithoutTarget = true;
                 }
             }
 
             await Task.CompletedTask;
-            // If all required targets have at least one potential target, the ability is available to be played.
             if (!anyChoiceTarget)
             {
                 return new TargetAvailabilityResult(true);
@@ -470,10 +496,17 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             List<TargetInfo> potentialTargets,
             TargetConfig config,
             GameContext context,
-            bool applyChoiceRestrictions)
+            bool applyChoiceRestrictions,
+            bool enforceSpellWard = true)
         {
+            // SpellWard only limits explicit player-picked targets.
+            // Auto/random target resolution should not be filtered by SpellWard.
             var abilityOwnerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
             var opponentPlayer = context.CurrentGameState.GetOpponentPlayerState(abilityOwnerId);
+            var potentialTargetIds = new HashSet<Guid>(
+                potentialTargets
+                    .Where(target => target.Type == TargetType.Card)
+                    .Select(target => target.InstanceId));
             var activeSpellWardFollowerIds = new HashSet<Guid>(
                 (opponentPlayer?.Field ?? new List<CardInstance>())
                     .Where(card => card != null
@@ -481,6 +514,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                                    && card.HasKeyword(CardKeyword.SpellWard)
                                    && !card.HasKeyword(CardKeyword.Aura))
                     .Select(card => card.InstanceId));
+            activeSpellWardFollowerIds.IntersectWith(potentialTargetIds);
             var hasActiveSpellWard = activeSpellWardFollowerIds.Any();
 
             // Ability targeted: only enforce for opponent target selection by default.
@@ -493,7 +527,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                 var card = targetInfo.Card;
                 var isOpponentCard = card.OwnerPlayerId != abilityOwnerId;
-                if (isOpponentCard && hasActiveSpellWard && !activeSpellWardFollowerIds.Contains(card.InstanceId))
+                if (enforceSpellWard && applyChoiceRestrictions && isOpponentCard && hasActiveSpellWard && !activeSpellWardFollowerIds.Contains(card.InstanceId))
                 {
                     return false;
                 }
@@ -512,26 +546,67 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             }).ToList();
         }
 
+        private static bool SatisfiesSpellWardSelectionRule(
+            IReadOnlyCollection<TargetInfo> chosenTargets,
+            IReadOnlyCollection<TargetInfo> initialPoolTargets,
+            GameContext context)
+        {
+            var abilityOwnerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
+            var opponentPlayer = context.CurrentGameState.GetOpponentPlayerState(abilityOwnerId);
+            var initialPoolTargetIds = new HashSet<Guid>(
+                initialPoolTargets
+                    .Where(target => target.Type == TargetType.Card)
+                    .Select(target => target.InstanceId));
+            var activeSpellWardFollowerIds = new HashSet<Guid>(
+                (opponentPlayer?.Field ?? new List<CardInstance>())
+                    .Where(card => card != null
+                                   && card.IsFollower
+                                   && card.HasKeyword(CardKeyword.SpellWard)
+                                   && !card.HasKeyword(CardKeyword.Aura))
+                    .Select(card => card.InstanceId));
+            activeSpellWardFollowerIds.IntersectWith(initialPoolTargetIds);
+
+            if (!activeSpellWardFollowerIds.Any())
+            {
+                return true;
+            }
+
+            var selectedOpponentCards = chosenTargets
+                .Where(target => target.Type == TargetType.Card
+                                 && target.Card != null
+                                 && target.Card.OwnerPlayerId != abilityOwnerId)
+                .Select(target => target.Card!)
+                .ToList();
+
+            if (!selectedOpponentCards.Any())
+            {
+                return true;
+            }
+
+            var selectedSpellWardCount = selectedOpponentCards.Count(card => activeSpellWardFollowerIds.Contains(card.InstanceId));
+            var requiredSpellWardCount = Math.Min(selectedOpponentCards.Count, activeSpellWardFollowerIds.Count);
+            return selectedSpellWardCount >= requiredSpellWardCount;
+        }
+
         private static string BuildPlayerChoicePrompt(int minCount, int maxCount)
         {
             if (maxCount <= 0)
             {
-                return "请选择目标";
+                return "没有可供选择的目标。";
             }
 
             if (minCount <= 0)
             {
-                return maxCount == 1 ? "请选择1个目标" : $"请选择最多{maxCount}个目标";
+                return maxCount == 1 ? "请选择 1 个目标。" : $"请选择最多 {maxCount} 个目标。";
             }
 
             if (minCount >= maxCount)
             {
-                return $"请选择{maxCount}个目标";
+                return $"请选择 {maxCount} 个目标。";
             }
 
-            return $"请选择{minCount}-{maxCount}个目标";
+            return $"请选择 {minCount}-{maxCount} 个目标。";
         }
-
         private void HandleSelectionFailure(FailureHandling failureHandling, Exception exception)
         {
             switch (failureHandling)
@@ -571,3 +646,4 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         List<Guid>? ValidTargetIds = null,
         bool CanPlayWithoutTarget = false);
 }
+

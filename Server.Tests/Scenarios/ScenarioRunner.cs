@@ -391,7 +391,10 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
         private static IGameEvent BuildVanishEvent(ScenarioContext context, VanishAction action)
         {
             var card = context.GetCard(action.CardKey);
-            return new CardVanishedEvent(card, card.CurrentZone, action.Reason);
+            var reason = Enum.TryParse<EventReasonSource>(action.Reason, ignoreCase: true, out var parsedReason)
+                ? parsedReason
+                : EventReasonSource.Ability;
+            return new CardVanishedEvent(card, card.CurrentZone, reason);
         }
 
         private static int StableSeedFromString(string? value)

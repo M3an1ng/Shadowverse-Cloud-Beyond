@@ -1,6 +1,7 @@
 import { getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
 
 const USERS_ENDPOINT = "/api/users";
+const MIN_PASSWORD_LENGTH = 6;
 const MANAGED_ROLES = [
     { value: "Player", label: "普通用户", level: 10 },
     { value: "Admin", label: "管理员", level: 100 }
@@ -121,11 +122,18 @@ class DevToolsUserManagement {
         if (this.tableBody) {
             const handler = (event) => {
                 const target = event.target;
-                const button = target instanceof Element ? target.closest("button[data-action='save-role']") : null;
+                const button = target instanceof Element ? target.closest("button[data-action]") : null;
                 if (!button) return;
+                const action = button.getAttribute("data-action");
                 const userId = button.getAttribute("data-user-id");
                 if (!userId) return;
-                void this.updateUserRole(userId, button);
+                if (action === "save-role") {
+                    void this.updateUserRole(userId, button);
+                    return;
+                }
+                if (action === "reset-password") {
+                    void this.resetUserPassword(userId, button);
+                }
             };
             this.tableBody.addEventListener("click", handler);
             this.handlers.push(() => this.tableBody.removeEventListener("click", handler));
@@ -300,10 +308,79 @@ class DevToolsUserManagement {
                         <button class="tool-button admin-user-save-btn" type="button" data-action="save-role" data-user-id="${userId}">
                             保存
                         </button>
+                        <button class="tool-button admin-user-reset-btn" type="button" data-action="reset-password" data-user-id="${userId}">
+                            重置密码
+                        </button>
                     </div>
                 </td>
             `;
             this.tableBody.appendChild(row);
+        }
+    }
+
+    resolveUsername(targetUserId) {
+        const item = this.currentUsers.find(user => String(pickValue(user, "userId", "UserId") || "") === String(targetUserId));
+        return String(pickValue(item, "username", "Username") || targetUserId || "User");
+    }
+
+    collectNewPassword(targetUserId) {
+        const username = this.resolveUsername(targetUserId);
+        const newPassword = window.prompt(`请输入用户 ${username} 的新密码（至少 ${MIN_PASSWORD_LENGTH} 位）`);
+        if (newPassword == null) return null;
+
+        const normalizedPassword = String(newPassword).trim();
+        if (normalizedPassword.length < MIN_PASSWORD_LENGTH) {
+            this.setMessage(`密码长度不能小于 ${MIN_PASSWORD_LENGTH} 位。`, true);
+            return null;
+        }
+
+        const confirmPassword = window.prompt(`请再次输入 ${username} 的新密码`);
+        if (confirmPassword == null) return null;
+
+        if (normalizedPassword !== String(confirmPassword).trim()) {
+            this.setMessage("两次输入的新密码不一致。", true);
+            return null;
+        }
+
+        return normalizedPassword;
+    }
+
+    async resetUserPassword(targetUserId, button) {
+        const session = getUserSession();
+        if (session.mode !== "user" || !session.userId) return;
+
+        const newPassword = this.collectNewPassword(targetUserId);
+        if (!newPassword) return;
+
+        button.setAttribute("disabled", "disabled");
+        this.setMessage(`正在重置 ${targetUserId} 的密码...`);
+        try {
+            const response = await fetch(`/api/users/${encodeURIComponent(targetUserId)}/password`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    actorUserId: session.userId,
+                    newPassword
+                })
+            });
+
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (err) {
+                // ignore parse errors
+            }
+
+            if (!response.ok) {
+                const message = payload?.message || payload?.Message || response.statusText;
+                throw new Error(message || `HTTP ${response.status}`);
+            }
+
+            this.setMessage(`已重置 ${this.resolveUsername(targetUserId)} 的密码。`);
+        } catch (error) {
+            this.setMessage(`重置密码失败：${error?.message || String(error)}`, true);
+        } finally {
+            button.removeAttribute("disabled");
         }
     }
 

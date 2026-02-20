@@ -52,12 +52,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var result = new DomainOperationResult { Success = true };
-            ResolveDefenderDestroy(result);
-
             if (HasCounterAttack)
             {
                 ResolveAttackerDestroy(result);
             }
+
+            ResolveDefenderDestroy(result);
 
             return result;
         }
@@ -78,13 +78,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (defender.CurrentHealth <= 0)
             {
-                result.GeneratedEvents.Add(new DestroyEvent(defender, attacker, EventReasonSource.System));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    defender,
+                    LeaveFieldKind.Destroy,
+                    EventReasonSource.System,
+                    attacker));
                 return;
             }
 
             if (AttackerHadBane)
             {
-                result.GeneratedEvents.Add(new DestroyEvent(defender, attacker, EventReasonSource.Ability));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    defender,
+                    LeaveFieldKind.Destroy,
+                    EventReasonSource.Ability,
+                    attacker));
             }
         }
 
@@ -104,13 +112,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (attacker.CurrentHealth <= 0)
             {
-                result.GeneratedEvents.Add(new DestroyEvent(attacker, defender, EventReasonSource.System));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    attacker,
+                    LeaveFieldKind.Destroy,
+                    EventReasonSource.System,
+                    defender));
                 return;
             }
 
             if (DefenderHadBane)
             {
-                result.GeneratedEvents.Add(new DestroyEvent(attacker, defender, EventReasonSource.Ability));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    attacker,
+                    LeaveFieldKind.Destroy,
+                    EventReasonSource.Ability,
+                    defender));
             }
         }
 

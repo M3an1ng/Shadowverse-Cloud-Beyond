@@ -10,7 +10,7 @@
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, appendInMatchChatMessage, clearInMatchChatUiState } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
 import { getUserSession } from "./userSession.js";
 
 // --- Constants ---
@@ -268,6 +268,7 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     pendingChatClientMessageIds.clear();
     renderGameLog(gameState.gameLog);
     clearInMatchChatUiState();
+    clearInMatchUsedCardUiState();
 
 } // Closing brace for initializeGame
 
@@ -296,6 +297,7 @@ export function initializeSpectator(gameId) {
     pendingChatClientMessageIds.clear();
     renderGameLog(gameState.gameLog);
     clearInMatchChatUiState();
+    clearInMatchUsedCardUiState();
 }
 
 // --- Game Log Helpers ---
@@ -705,7 +707,7 @@ export async function playCard(cardUid, targetUid = null) {
 
         // Clear selection on error too
         gameState.selectedCardUid = null;
-        clearSelectionHighlights(); // Use specific UI update to clear selection highlight on error.
+        renderHighlights(gameState); // Recover stable highlights after transient clear.
     }
     // New body will be inserted here by next step
 }
@@ -799,7 +801,7 @@ export async function selectAttackTarget(targetUid) {
             `GM: SelectTarget failed - Selected attacker instance ${attackerUid} not found!`
         );
         gameState.selectedAttackerUid = null; // Reset selection if attacker is invalid
-        clearSelectionHighlights(); // Use specific UI update
+        renderHighlights(gameState);
         return;
     }
     if (attackerInstance.type !== "Follower") {
@@ -807,7 +809,7 @@ export async function selectAttackTarget(targetUid) {
             `GM: SelectTarget failed - Attacker ${attackerUid} (${attackerInstance.name}) is not a follower (Type: ${attackerInstance.type}).`
         );
         gameState.selectedAttackerUid = null;
-        clearSelectionHighlights();
+        renderHighlights(gameState);
         return;
     }
     if (!targetInstance) {
@@ -951,7 +953,7 @@ export async function selectAttackTarget(targetUid) {
         alert("与服务器连接丢失，无法进行攻击！");
         // Clear selection on connection error before trying to attack
         gameState.selectedAttackerUid = null;
-        clearSelectionHighlights(); // Render to clear selection
+        renderHighlights(gameState);
         return;
     }
 
@@ -1029,8 +1031,8 @@ function handleDestruction(cardInstance) {
 export function cancelSelection() {
     if (gameState.selectedAttackerUid) {
         gameState.selectedAttackerUid = null;
-        // Trigger UI update to remove highlights
-        clearSelectionHighlights(); // <<<< REPLACED with specific UI call
+        // Re-enter unified highlight rendering so playable hints can restore immediately.
+        renderHighlights(gameState);
     } else {
     }
     // TODO: Add cancellation for selectedCardUid if needed later
@@ -1828,6 +1830,7 @@ export function updateFullGameState(serverState) {
         pendingChatClientMessageIds.clear();
         renderGameLog(gameState.gameLog);
         clearInMatchChatUiState();
+        clearInMatchUsedCardUiState();
     }
     // Use PascalCase: GameId
     gameState.gameId = incomingGameId; // PascalCase
@@ -2573,7 +2576,7 @@ export function handleCardMoved(eventData) {
 
     if (gameState.selectedAttackerUid && !findCardInstanceByUid(gameState.selectedAttackerUid)) {
         gameState.selectedAttackerUid = null;
-        clearSelectionHighlights();
+        renderHighlights(gameState);
     }
 }
 
@@ -2825,7 +2828,7 @@ function refreshAttackHighlightsIfNeeded() {
     const attackerInstance = findCardInstanceByUid(attackerUid);
     if (!attackerInstance) {
         gameState.selectedAttackerUid = null;
-        clearSelectionHighlights();
+        renderHighlights(gameState);
         return;
     }
     clearSelectionHighlights();
@@ -2876,15 +2879,61 @@ export function handleKeywordRemoved(eventData) {
 export function handleUnitDestroyed(eventData) {
     // DTO: UnitDestroyedEventDto { UnitUid, PlayerId, Reason }
     // Zone movement is handled by CardMoved.
-    if (!eventData || !eventData.UnitUid) {
+    const unitUid = String(eventData?.UnitUid || '').trim();
+    if (!eventData || !unitUid) {
         console.error("GM Error: Invalid data in handleUnitDestroyed:", eventData);
         return;
     }
-    const unit = findCardInstanceByUid(eventData.UnitUid);
+
+    let unit = findCardInstanceByUid(unitUid);
     if (!unit) {
-        console.warn(`GM: UnitDestroyed event received for invalid unit UID: ${eventData.UnitUid}`);
+        const fallbackZones = ["graveyard", "deck", "extra", "emblem", "hand", "field"];
+        for (const player of gameState.players) {
+            if (!player) continue;
+            for (const zone of fallbackZones) {
+                const zoneArray = player[zone];
+                if (!Array.isArray(zoneArray)) continue;
+                const found = zoneArray.find(card => {
+                    const uid = extractCardUid(card);
+                    return uid && String(uid) === unitUid;
+                });
+                if (found) {
+                    unit = found;
+                    break;
+                }
+            }
+            if (unit) break;
+        }
+    }
+
+    if (!unit) {
+        console.warn(`GM: UnitDestroyed event received for unknown unit UID: ${unitUid}`);
         return;
     }
+
+    const ownerId = String(eventData?.PlayerId ?? unit.ownerId ?? unit.OwnerId ?? '').trim() || 'unknown';
+    const cardName = String(unit.name ?? unit.Name ?? '').trim() || '未知卡牌';
+    const cardIdRaw = unit.cardId ?? unit.CardId ?? unit.id;
+    const cardId = Number.isFinite(Number(cardIdRaw)) ? Number(cardIdRaw) : null;
+    const costRaw = unit.currentCost ?? unit.CurrentCost ?? unit.cost ?? unit.Cost;
+    const cost = Number.isFinite(Number(costRaw)) ? Number(costRaw) : null;
+    const artPreview = unit.artPreview
+        ?? unit.ArtPreview
+        ?? unit.artDetail
+        ?? unit.ArtDetail
+        ?? '';
+
+    appendInMatchDestroyedCard({
+        ownerId,
+        cardUid: unitUid,
+        cardId,
+        cardName,
+        cost,
+        artPreview,
+        destroyReason: String(eventData?.Reason || '').trim(),
+        turnNumber: Number.isFinite(gameState.turnNumber) ? gameState.turnNumber : 0,
+        timestampUtc: eventData?.TimestampUtc ?? eventData?.timestampUtc ?? new Date().toISOString()
+    });
 
     // Placeholder for destroy visual effects.
     refreshBattleCardPreviewIfCurrent(unit);
@@ -3060,10 +3109,36 @@ export function handleHealApplied(eventData) {
 
 export function handleCardPlayed(eventData) {
     // Zone movement is handled by CardMoved.
-    if (!eventData || !eventData.SourcePlayerId || !eventData.PlayedCardInstance?.InstanceId) {
+    const sourcePlayerIdRaw = eventData?.SourcePlayerId ?? eventData?.sourcePlayerId;
+    const playedCard = eventData?.PlayedCardInstance ?? eventData?.playedCardInstance;
+    const playedCardInstanceId = playedCard?.InstanceId ?? playedCard?.instanceId;
+    if (!eventData || !sourcePlayerIdRaw || !playedCardInstanceId) {
         console.error("GM Error: Invalid data in handleCardPlayed:", eventData);
         return;
     }
+
+    const sourcePlayerId = String(sourcePlayerIdRaw || '').trim();
+    const cardName = String(playedCard?.Name || playedCard?.name || '').trim() || '未知卡牌';
+    const cardIdRaw = playedCard?.CardId ?? playedCard?.cardId ?? playedCard?.id;
+    const cardId = Number.isFinite(Number(cardIdRaw)) ? Number(cardIdRaw) : null;
+    const costRaw = playedCard?.CurrentCost ?? playedCard?.currentCost ?? playedCard?.Cost ?? playedCard?.cost;
+    const cost = Number.isFinite(Number(costRaw)) ? Number(costRaw) : null;
+    const artPreview = playedCard?.ArtPreview
+        ?? playedCard?.artPreview
+        ?? playedCard?.ArtDetail
+        ?? playedCard?.artDetail
+        ?? '';
+
+    appendInMatchUsedCard({
+        ownerId: sourcePlayerId,
+        cardUid: String(playedCard?.InstanceId ?? playedCard?.instanceId ?? '').trim(),
+        cardId,
+        cardName,
+        cost,
+        artPreview,
+        turnNumber: Number.isFinite(gameState.turnNumber) ? gameState.turnNumber : 0,
+        timestampUtc: eventData.TimestampUtc ?? eventData.timestampUtc ?? new Date().toISOString()
+    });
 
     // Placeholder for play-card visual effects.
 }
@@ -3495,6 +3570,22 @@ export function handleChatHistory(eventData) {
 
     gameState.chatMessages = normalizedMessages;
     replaceInMatchChatHistory(gameState.chatMessages);
+}
+
+export function handleMatchHistorySync(eventData) {
+    const usedCards = Array.isArray(eventData?.UsedCards)
+        ? eventData.UsedCards
+        : (Array.isArray(eventData?.usedCards) ? eventData.usedCards : []);
+    const destroyedCards = Array.isArray(eventData?.DestroyedCards)
+        ? eventData.DestroyedCards
+        : (Array.isArray(eventData?.destroyedCards) ? eventData.destroyedCards : []);
+    const gameId = String(eventData?.GameId ?? eventData?.gameId ?? gameState.gameId ?? '').trim();
+
+    replaceInMatchCardHistory({
+        gameId,
+        usedCards,
+        destroyedCards
+    });
 }
 
 export function handleChatMessage(eventData) {

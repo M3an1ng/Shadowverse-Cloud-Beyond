@@ -17,6 +17,8 @@ public class GameParticipantStatsFact
 
     public Guid PlayerId { get; set; }
     public bool IsWinner { get; set; }
+    public bool? IsFirstPlayer { get; set; }
+    public int? EndTurnNumber { get; set; }
     public DateTime EndedAtUtc { get; set; } = DateTime.UtcNow;
 
     public CardClass DeckClass { get; set; } = CardClass.Neutral;

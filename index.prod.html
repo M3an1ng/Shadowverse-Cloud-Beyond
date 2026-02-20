@@ -12,12 +12,12 @@
         href="https://fonts.loli.net/css2?family=Cinzel:wght@400;700;900&family=Rajdhani:wght@300;500;700&family=Inter:wght@300;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap"
         rel="stylesheet">
 
-    <!-- Styles --> <!-- Legacy styles, to be refactored -->
+    <!-- Styles --> <!-- Legacy styles, to be refactored -->
 
     <!-- defer 确保在 HTML 解析完成后执行脚本 -->
-    <!-- type="module" 启用 ES Module 功能 -->
-  <script type="module" crossorigin src="/assets/index-D7YhJMYy.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CiARIn37.css">
+    <!-- type="module" 启用 ES Module 功能 -->
+  <script type="module" crossorigin src="/assets/index-Ci9bg7n5.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CdeZJsbk.css">
 </head>
 
 <body>
@@ -741,10 +741,15 @@
                         <button class="tool-button" onclick="openDataViewer()">打开查看器</button>
                     </div>
 
-                    <section id="admin-user-management" class="tool-card admin-user-management" aria-label="当前用户管理">
-                        <h3>当前用户管理</h3>
+                    <section id="admin-user-management" class="tool-card admin-user-management" aria-label="用户管理">
+                        <h3>用户管理</h3>
                         <p>仅管理员可访问，用于查看当前注册用户并调整权限等级。</p>
                         <button id="admin-user-open-btn" class="tool-button" type="button">打开用户管理</button>
+                    </section>
+                    <section id="devtools-winrate-panel" class="tool-card" aria-label="胜率看板">
+                        <h3>胜率看板</h3>
+                        <p>查看卡牌胜率与卡组胜率聚合数据（CardStatsAggs / DeckStatsAggs）。</p>
+                        <button id="devtools-winrate-open-btn" class="tool-button" type="button">打开胜率看板</button>
                     </section>
                 </div>
 
@@ -788,9 +793,9 @@
                 </div>
 
                 <div id="admin-user-modal" class="log-viewer-modal admin-user-modal" aria-hidden="true">
-                    <div class="log-viewer-panel admin-user-panel" role="dialog" aria-label="当前用户管理">
+                    <div class="log-viewer-panel admin-user-panel" role="dialog" aria-label="用户管理">
                         <div class="log-viewer-panel-header">
-                            <div class="log-viewer-panel-title">当前用户管理</div>
+                            <div class="log-viewer-panel-title">用户管理</div>
                             <button id="admin-user-close-btn" class="tool-button" type="button">关闭</button>
                         </div>
                         <div class="admin-user-management-actions">
@@ -823,6 +828,159 @@
                                 </table>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <div id="devtools-winrate-modal" class="log-viewer-modal devtools-winrate-modal" aria-hidden="true">
+                    <div class="log-viewer-panel devtools-winrate-panel" role="dialog" aria-label="胜率看板">
+                        <div class="log-viewer-panel-header">
+                            <div class="log-viewer-panel-title">胜率看板</div>
+                            <button id="devtools-winrate-close-btn" class="tool-button" type="button">关闭</button>
+                        </div>
+                        <div class="devtools-winrate-controls">
+                            <label class="devtools-winrate-field" for="devtools-winrate-environment">
+                                <span>环境</span>
+                                <select id="devtools-winrate-environment" class="form-input">
+                                    <option value="open" selected>Open</option>
+                                </select>
+                            </label>
+                            <label class="devtools-winrate-field" for="devtools-winrate-start-date">
+                                <span>开始时间</span>
+                                <input id="devtools-winrate-start-date" class="form-input" type="datetime-local" step="1">
+                            </label>
+                            <label class="devtools-winrate-field" for="devtools-winrate-end-date">
+                                <span>结束时间</span>
+                                <input id="devtools-winrate-end-date" class="form-input" type="datetime-local" step="1">
+                            </label>
+                            <label class="devtools-winrate-field" for="devtools-winrate-card-name">
+                                <span>卡名筛选</span>
+                                <input id="devtools-winrate-card-name" class="form-input" type="text" placeholder="输入卡牌名称关键词">
+                            </label>
+                            <label class="devtools-winrate-field" for="devtools-winrate-top">
+                                <span>Top</span>
+                                <input id="devtools-winrate-top" class="form-input" type="number" min="1" max="2000" value="50">
+                            </label>
+                            <button id="devtools-winrate-refresh" class="tool-button devtools-winrate-refresh" type="button">刷新</button>
+                        </div>
+                        <div id="devtools-winrate-message" class="devtools-winrate-message" data-tone="neutral">
+                            请登录后加载胜率统计。
+                        </div>
+                        <div class="devtools-winrate-meta">
+                            卡牌：<span id="devtools-winrate-card-count">0</span>
+                            | 卡组：<span id="devtools-winrate-deck-count">0</span>
+                            | 职业：<span id="devtools-winrate-class-count">0</span>
+                            | 生成时间：<span id="devtools-winrate-generated-at">-</span>
+                        </div>
+                        <div class="devtools-winrate-tabs" role="tablist" aria-label="胜率维度切换">
+                            <button id="devtools-winrate-tab-card" class="tool-button devtools-winrate-tab is-active" data-view="card" type="button" role="tab" aria-selected="true">卡牌胜率</button>
+                            <button id="devtools-winrate-tab-deck" class="tool-button devtools-winrate-tab" data-view="deck" type="button" role="tab" aria-selected="false">卡组胜率</button>
+                            <button id="devtools-winrate-tab-class" class="tool-button devtools-winrate-tab" data-view="class" type="button" role="tab" aria-selected="false">职业胜率</button>
+                        </div>
+                        <div class="devtools-winrate-grids">
+                            <section id="devtools-winrate-view-card" class="devtools-winrate-table-card devtools-winrate-view active" data-view="card" aria-label="卡牌胜率">
+                                <h4>卡牌胜率</h4>
+                                <div class="devtools-winrate-table-wrap">
+                                    <table class="devtools-winrate-table">
+                                        <thead>
+                                            <tr>
+                                                <th>排序号</th>
+                                                <th data-view="card" data-sort-key="cardName" data-sort-type="string">名称</th>
+                                                <th data-view="card" data-sort-key="deckGames" data-sort-type="number">构筑对局数</th>
+                                                <th data-view="card" data-sort-key="deckWins" data-sort-type="number">构筑胜利数</th>
+                                                <th data-view="card" data-sort-key="deckWinRate" data-sort-type="number">构筑胜率</th>
+                                                <th data-view="card" data-sort-key="drawnGames" data-sort-type="number">抽到对局数</th>
+                                                <th data-view="card" data-sort-key="drawnWins" data-sort-type="number">抽到胜利数</th>
+                                                <th data-view="card" data-sort-key="drawnWinRate" data-sort-type="number">抽到胜率</th>
+                                                <th data-view="card" data-sort-key="playedGames" data-sort-type="number">使用对局数</th>
+                                                <th data-view="card" data-sort-key="playedWins" data-sort-type="number">使用胜利数</th>
+                                                <th data-view="card" data-sort-key="playedWinRate" data-sort-type="number">使用胜率</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="devtools-winrate-card-body"></tbody>
+                                    </table>
+                                </div>
+                            </section>
+                            <section id="devtools-winrate-view-deck" class="devtools-winrate-table-card devtools-winrate-view" data-view="deck" aria-label="卡组胜率">
+                                <h4>卡组胜率</h4>
+                                <div class="devtools-winrate-table-wrap">
+                                    <table class="devtools-winrate-table">
+                                        <thead>
+                                            <tr>
+                                                <th>排序号</th>
+                                                <th data-view="deck" data-sort-key="deckClass" data-sort-type="string">职业</th>
+                                                <th data-view="deck" data-sort-key="totalGames" data-sort-type="number">对局数</th>
+                                                <th data-view="deck" data-sort-key="totalWins" data-sort-type="number">胜场</th>
+                                                <th data-view="deck" data-sort-key="winRate" data-sort-type="number">胜率</th>
+                                                <th data-view="deck" data-sort-key="goingFirstGames" data-sort-type="number">先手局</th>
+                                                <th data-view="deck" data-sort-key="goingFirstWins" data-sort-type="number">先手胜</th>
+                                                <th data-view="deck" data-sort-key="goingFirstWinRate" data-sort-type="number">先手胜率</th>
+                                                <th data-view="deck" data-sort-key="goingSecondGames" data-sort-type="number">后手局</th>
+                                                <th data-view="deck" data-sort-key="goingSecondWins" data-sort-type="number">后手胜</th>
+                                                <th data-view="deck" data-sort-key="goingSecondWinRate" data-sort-type="number">后手胜率</th>
+                                                <th data-view="deck" data-sort-key="averageEndTurn" data-sort-type="number">平均回合</th>
+                                                <th data-view="deck" data-sort-key="goingFirstAverageEndTurn" data-sort-type="number">先手平均回合</th>
+                                                <th data-view="deck" data-sort-key="goingSecondAverageEndTurn" data-sort-type="number">后手平均回合</th>
+                                                <th data-view="deck" data-sort-key="updatedAtTs" data-sort-type="number">更新时间</th>
+                                                <th>查看卡组</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="devtools-winrate-deck-body"></tbody>
+                                    </table>
+                                </div>
+                            </section>
+                            <section id="devtools-winrate-view-class" class="devtools-winrate-table-card devtools-winrate-view" data-view="class" aria-label="职业胜率">
+                                <h4>职业胜率</h4>
+                                <div class="devtools-winrate-table-wrap">
+                                    <table class="devtools-winrate-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-view="class" data-sort-key="deckClass" data-sort-type="string">职业</th>
+                                                <th data-view="class" data-sort-key="totalGames" data-sort-type="number">对局数</th>
+                                                <th data-view="class" data-sort-key="totalWins" data-sort-type="number">胜场</th>
+                                                <th data-view="class" data-sort-key="winRate" data-sort-type="number">胜率</th>
+                                                <th data-view="class" data-sort-key="goingFirstGames" data-sort-type="number">先手局</th>
+                                                <th data-view="class" data-sort-key="goingFirstWins" data-sort-type="number">先手胜</th>
+                                                <th data-view="class" data-sort-key="goingFirstWinRate" data-sort-type="number">先手胜率</th>
+                                                <th data-view="class" data-sort-key="goingSecondGames" data-sort-type="number">后手局</th>
+                                                <th data-view="class" data-sort-key="goingSecondWins" data-sort-type="number">后手胜</th>
+                                                <th data-view="class" data-sort-key="goingSecondWinRate" data-sort-type="number">后手胜率</th>
+                                                <th data-view="class" data-sort-key="averageEndTurn" data-sort-type="number">平均回合</th>
+                                                <th data-view="class" data-sort-key="goingFirstAverageEndTurn" data-sort-type="number">先手平均回合</th>
+                                                <th data-view="class" data-sort-key="goingSecondAverageEndTurn" data-sort-type="number">后手平均回合</th>
+                                                <th data-view="class" data-sort-key="updatedAtTs" data-sort-type="number">更新时间</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="devtools-winrate-class-body"></tbody>
+                                    </table>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="deck-preview-modal devtools-overlay" id="devtools-winrate-deck-preview-modal" aria-hidden="true">
+                    <div class="deck-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="devtools-winrate-deck-preview-title">
+                        <div class="deck-preview-toolbar">
+                            <div class="deck-preview-toolbar-left">
+                                <div class="deck-preview-title-group">
+                                    <div class="deck-preview-caption">卡组预览</div>
+                                    <h3 class="deck-preview-title" id="devtools-winrate-deck-preview-title">-</h3>
+                                    <div class="deck-preview-meta" id="devtools-winrate-deck-preview-meta">-</div>
+                                </div>
+                            </div>
+                            <div class="deck-preview-toolbar-stats" id="devtools-winrate-deck-preview-toolbar-stats"></div>
+                            <div class="deck-preview-toolbar-actions">
+                                <button class="btn-secondary" id="devtools-winrate-deck-preview-export-btn" type="button">导出卡组代码</button>
+                                <button class="btn-secondary" id="devtools-winrate-deck-preview-close-btn" type="button" aria-label="关闭预览">关闭</button>
+                            </div>
+                        </div>
+
+                        <div class="deck-preview-summary">
+                            <div class="deck-preview-curve" id="devtools-winrate-deck-preview-curve"></div>
+                            <div class="deck-preview-counts" id="devtools-winrate-deck-preview-counts"></div>
+                        </div>
+
+                        <div class="deck-preview-cards" id="devtools-winrate-deck-preview-cards"></div>
                     </div>
                 </div>
             </div>

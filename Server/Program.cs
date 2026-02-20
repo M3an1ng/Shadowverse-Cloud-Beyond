@@ -233,10 +233,14 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IClientMethodMapper."); // Added Log
     builder.Services.AddSingleton<IGameChatService, InMemoryGameChatService>();
     Log.Information("Registered IGameChatService (in-memory).");
+    builder.Services.AddSingleton<IMatchHistoryProjectionService, EventHistoryMatchHistoryProjectionService>();
+    Log.Information("Registered IMatchHistoryProjectionService.");
     builder.Services.AddScoped<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
     Log.Information("Registered IDebugCommandParser."); // Added Log
     builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
     Log.Information("Registered IMatchService (in-memory lobby)."); // Added Log
+    builder.Services.AddSingleton<IFirstPlayerSelector, SecureFirstPlayerSelector>();
+    Log.Information("Registered IFirstPlayerSelector (secure RNG).");
 
     // Register Transaction Service
     builder.Services.AddScoped<ITransactionService, TransactionService>(); // Register the transaction service
@@ -492,6 +496,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         var clientMethodMapper = provider.GetRequiredService<IClientMethodMapper>();
         var gameDataProvider = provider.GetRequiredService<IGameDataProvider>();
         var matchService = provider.GetRequiredService<IMatchService>();
+        var firstPlayerSelector = provider.GetRequiredService<IFirstPlayerSelector>();
         var serviceScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var pendingActionService = provider.GetRequiredService<IPendingActionService>();
 
@@ -502,6 +507,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             clientMethodMapper,
             gameDataProvider,
             matchService,
+            firstPlayerSelector,
             serviceScopeFactory,
             pendingActionService
         );

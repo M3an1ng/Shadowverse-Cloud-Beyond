@@ -370,14 +370,16 @@
 
 /* --- Deck Creation Modal --- */
 .deck-create-modal {
-    position: absolute;
+    position: fixed;
     inset: 0;
     display: none;
     align-items: center;
     justify-content: center;
+    padding: 24px 16px;
+    overflow-y: auto;
     background: rgba(0, 0, 0, 0.72);
     backdrop-filter: blur(6px);
-    z-index: 20;
+    z-index: 120;
 }
 
 .deck-create-modal.open {
@@ -386,6 +388,7 @@
 
 .deck-create-dialog {
     width: min(720px, 92vw);
+    max-height: calc(100vh - 48px);
     background: rgba(10, 10, 10, 0.95);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 10px;
@@ -394,6 +397,11 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+    overflow-y: auto;
+}
+
+.deck-selection-view.deck-selection-modal-open {
+    overflow: hidden;
 }
 
 .deck-create-header {
@@ -566,6 +574,14 @@
 /* --- Deck Preview / Export Modal --- */
 .deck-preview-modal,
 .deck-code-modal {
+    --db-accent-gold: #f59e0b;
+    --db-accent-cyan: #00ffcc;
+    --db-accent-red: #ef4444;
+    --db-font-serif: 'Cinzel', serif;
+    --db-font-tech: 'Rajdhani', sans-serif;
+    --db-font-mono: 'JetBrains Mono', monospace;
+    --transition-fast: 0.2s ease;
+    --transition-normal: 0.3s cubic-bezier(0.23, 1, 0.32, 1);
     position: absolute;
     inset: 0;
     display: none;
@@ -609,6 +625,41 @@
     align-items: center;
     gap: 14px;
     min-width: 0;
+}
+
+.deck-preview-toolbar-stats {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 0 10px;
+    font-family: var(--db-font-mono);
+}
+
+.deck-preview-toolbar-stats-title {
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.52);
+}
+
+.deck-preview-toolbar-stats-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    font-size: 0.76rem;
+    color: rgba(255, 255, 255, 0.74);
+    white-space: nowrap;
+}
+
+.deck-preview-toolbar-stats-line.primary {
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.deck-preview-toolbar-stats-line.secondary {
+    color: rgba(255, 255, 255, 0.66);
 }
 
 .deck-preview-title-group {
@@ -689,13 +740,13 @@
 }
 
 .deck-preview-counts {
-    margin-left: auto;
-    min-width: 220px;
     display: flex;
     flex-direction: column;
     justify-content: center;
     gap: 12px;
     font-family: var(--db-font-mono);
+    margin-left: auto;
+    min-width: 220px;
 }
 
 .deck-preview-total {
@@ -925,10 +976,24 @@
 
     .deck-preview-summary {
         flex-direction: column;
+        gap: 12px;
     }
 
     .deck-preview-curve {
         width: 100%;
+    }
+
+    .deck-preview-toolbar-stats {
+        width: 100%;
+        align-items: flex-start;
+        padding: 0;
+    }
+
+    .deck-preview-toolbar-stats-line {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        white-space: normal;
+        gap: 8px 14px;
     }
 
     .deck-preview-counts {

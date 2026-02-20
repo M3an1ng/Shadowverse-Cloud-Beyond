@@ -72,6 +72,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "TriggerTiming", typeof(TriggerTiming) },
                 { "TriggerRelationType", typeof(TriggerRelationType) },
                 { "EventType", typeof(EventType) },
+                { "LeaveFieldKind", typeof(LeaveFieldKind) },
                 { "CardZone", typeof(CardZone) },
                 { "CardMoveReason", typeof(CardMoveReason) },
                 { "EffectType", typeof(EffectType) },

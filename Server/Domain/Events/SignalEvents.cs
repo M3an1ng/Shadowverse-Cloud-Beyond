@@ -328,11 +328,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public IReadOnlyList<IGameEvent> GeneratedEvents { get; }
 
         /// <summary>
-        /// 从 GeneratedEvents 汇总得到的生成卡牌引用集合（指向同一批运行时卡实例）。
+        /// 从 GeneratedEvents 实时汇总得到的生成卡牌引用集合（指向运行时卡实例）。
+        /// 该值不缓存，确保可反映延迟提交事件在 Commit 阶段回填的目标。
         /// </summary>
         [GameEventParameter("上述卡牌", "效果执行过程中事件的目标卡牌列表。")]
         [DslExposable("上述卡牌", Description = "效果执行过程中事件的目标卡牌集合")]
-        public IReadOnlyList<CardInstance> GeneratedCards { get; }
+        public IReadOnlyList<CardInstance> GeneratedCards => CollectGeneratedCards(GeneratedEvents);
 
         /// <summary>
         /// 与 GeneratedCards 对应的不可变快照集合，用于冻结同一批卡当时状态。
@@ -378,7 +379,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             OriginalEffectInputParams = originalEffectInputParams ?? new Dictionary<string, object>();
             ResolvedTargets = resolvedTargets ?? new List<TargetInfo>();
             GeneratedEvents = generatedEvents ?? new List<IGameEvent>();
-            GeneratedCards = generatedCards ?? new List<CardInstance>();
+            _ = generatedCards;
             GeneratedCardSnapshots = generatedCardSnapshots ?? new List<CardInstanceSnapshot>();
             Outputs = outputs ?? new Dictionary<string, object?>();
             ParentEffectSucceeded = parentEffectSucceeded;
@@ -417,6 +418,39 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 }
             }
             return payload;
+        }
+
+        private static IReadOnlyList<CardInstance> CollectGeneratedCards(IReadOnlyList<IGameEvent> generatedEvents)
+        {
+            if (generatedEvents == null || generatedEvents.Count == 0)
+            {
+                return new List<CardInstance>();
+            }
+
+            var results = new Dictionary<Guid, CardInstance>();
+            foreach (var gameEvent in generatedEvents)
+            {
+                if (gameEvent == null)
+                {
+                    continue;
+                }
+
+                foreach (var targetInfo in gameEvent.Target)
+                {
+                    var card = targetInfo?.Card;
+                    if (card == null)
+                    {
+                        continue;
+                    }
+
+                    if (!results.ContainsKey(card.InstanceId))
+                    {
+                        results[card.InstanceId] = card;
+                    }
+                }
+            }
+
+            return results.Values.ToList();
         }
 
         private static JsonObject BuildCardPoolPayload(IReadOnlyDictionary<string, List<CardInstance>> cardPools)

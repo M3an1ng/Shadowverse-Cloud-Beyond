@@ -246,7 +246,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// <summary>
             /// Default connection timeout in seconds
             /// </summary>
-            public const int DefaultConnectionTimeoutSeconds = 30;
+            public const int DefaultConnectionTimeoutSeconds = 120;
 
             /// <summary>
             /// Maximum reconnection attempts

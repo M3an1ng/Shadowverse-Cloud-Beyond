@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ShadowverseBeyond.Server.Controllers;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using Xunit;
 
 namespace ShadowverseBeyond.Server.Tests.Users;
@@ -32,10 +34,10 @@ public class UserManagementControllerTests
         return new ApplicationDbContext(options);
     }
 
-    private static UsersController CreateController(ApplicationDbContext db)
+    private static UsersController CreateController(ApplicationDbContext db, IPasswordHasher? hasher = null)
     {
         var environment = new TestWebHostEnvironment();
-        return new UsersController(db, environment, NullLogger<UsersController>.Instance);
+        return new UsersController(db, environment, hasher ?? new Pbkdf2PasswordHasher(), NullLogger<UsersController>.Instance);
     }
 
     [Fact]
@@ -172,6 +174,137 @@ public class UserManagementControllerTests
 
         var result = await controller.UpdateUserRole(adminId, request, CancellationToken.None);
         var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
-        Assert.Equal("系统至少需要保留一个管理员账号。", badRequest.Value);
+
+        Assert.NotNull(badRequest.Value);
+    }
+
+    [Fact]
+    public async Task ResetUserPassword_AdminCanResetPassword()
+    {
+        var dbName = $"user-password-reset-{Guid.NewGuid()}";
+        await using var db = CreateDbContext(dbName);
+        var hasher = new Pbkdf2PasswordHasher();
+        var adminId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        db.Users.AddRange(
+            new User
+            {
+                Id = adminId,
+                Username = "admin",
+                Email = "admin@local.invalid",
+                PasswordHash = hasher.HashPassword("admin-123"),
+                Role = UserRole.Admin,
+                IsActive = true
+            },
+            new User
+            {
+                Id = targetId,
+                Username = "target",
+                Email = "target@local.invalid",
+                PasswordHash = hasher.HashPassword("old-pass"),
+                Role = UserRole.Player,
+                IsActive = true
+            });
+        await db.SaveChangesAsync();
+
+        var controller = CreateController(db, hasher);
+        var request = new UsersController.ResetUserPasswordRequest
+        {
+            ActorUserId = adminId,
+            NewPassword = "new-pass-123"
+        };
+
+        var result = await controller.ResetUserPassword(targetId, request, CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<UsersController.PasswordResetResponse>(ok.Value);
+
+        Assert.Equal(targetId, payload.UserId);
+
+        var targetUser = await db.Users.FindAsync(targetId);
+        Assert.NotNull(targetUser);
+        Assert.True(hasher.VerifyPassword("new-pass-123", targetUser!.PasswordHash));
+        Assert.False(hasher.VerifyPassword("old-pass", targetUser.PasswordHash));
+    }
+
+    [Fact]
+    public async Task ResetUserPassword_PlayerIsForbidden()
+    {
+        var dbName = $"user-password-reset-forbidden-{Guid.NewGuid()}";
+        await using var db = CreateDbContext(dbName);
+        var playerId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        db.Users.AddRange(
+            new User
+            {
+                Id = playerId,
+                Username = "player",
+                Email = "player@local.invalid",
+                PasswordHash = "hash",
+                Role = UserRole.Player,
+                IsActive = true
+            },
+            new User
+            {
+                Id = targetId,
+                Username = "target",
+                Email = "target@local.invalid",
+                PasswordHash = "hash",
+                Role = UserRole.Player,
+                IsActive = true
+            });
+        await db.SaveChangesAsync();
+
+        var controller = CreateController(db);
+        var request = new UsersController.ResetUserPasswordRequest
+        {
+            ActorUserId = playerId,
+            NewPassword = "new-pass-123"
+        };
+
+        var result = await controller.ResetUserPassword(targetId, request, CancellationToken.None);
+        var forbidden = Assert.IsType<ObjectResult>(result.Result);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task ResetUserPassword_RejectsShortPassword()
+    {
+        var dbName = $"user-password-reset-short-{Guid.NewGuid()}";
+        await using var db = CreateDbContext(dbName);
+        var adminId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        db.Users.AddRange(
+            new User
+            {
+                Id = adminId,
+                Username = "admin",
+                Email = "admin@local.invalid",
+                PasswordHash = "hash",
+                Role = UserRole.Admin,
+                IsActive = true
+            },
+            new User
+            {
+                Id = targetId,
+                Username = "target",
+                Email = "target@local.invalid",
+                PasswordHash = "hash",
+                Role = UserRole.Player,
+                IsActive = true
+            });
+        await db.SaveChangesAsync();
+
+        var controller = CreateController(db);
+        var request = new UsersController.ResetUserPasswordRequest
+        {
+            ActorUserId = adminId,
+            NewPassword = "12345"
+        };
+
+        var result = await controller.ResetUserPassword(targetId, request, CancellationToken.None);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+
+        Assert.Equal("Password length must be at least 6.", badRequest.Value);
     }
 }

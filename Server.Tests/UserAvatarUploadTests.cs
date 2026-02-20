@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ShadowverseBeyond.Server.Controllers;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Services;
 using Xunit;
 
 namespace ShadowverseBeyond.Server.Tests.Users;
@@ -55,7 +56,7 @@ public class UserAvatarUploadTests
         try
         {
             var environment = new TestWebHostEnvironment { ContentRootPath = contentRoot };
-            var controller = new UsersController(db, environment, NullLogger<UsersController>.Instance);
+            var controller = new UsersController(db, environment, new Pbkdf2PasswordHasher(), NullLogger<UsersController>.Instance);
 
             var bytes = new byte[] { 1, 2, 3, 4 };
             await using var stream = new MemoryStream(bytes);

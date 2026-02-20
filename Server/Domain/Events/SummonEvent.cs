@@ -55,9 +55,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 Position = ResolveSummonPosition(player, cardToSummon);
                 if (cardToSummon.CardType == CardType.Follower && cardToSummon.CurrentHealth <= 0)
-                    result.GeneratedEvents.Add(new DestroyEvent(cardToSummon, cardToSummon, EventReasonSource.System));
+                    result.GeneratedEvents.Add(new LeaveFieldEvent(
+                        cardToSummon,
+                        LeaveFieldKind.Destroy,
+                        EventReasonSource.System,
+                        cardToSummon));
                 else if ((cardToSummon.CardType == CardType.Amulet || cardToSummon.CardType == CardType.Crest) && cardToSummon.Keywords.Contains(Constants.CardKeyword.Countdown) && cardToSummon.Countdown <= 0)
-                    result.GeneratedEvents.Add(new DestroyEvent(cardToSummon, cardToSummon, EventReasonSource.System));
+                    result.GeneratedEvents.Add(new LeaveFieldEvent(
+                        cardToSummon,
+                        LeaveFieldKind.Destroy,
+                        EventReasonSource.System,
+                        cardToSummon));
             }
 
             return result;

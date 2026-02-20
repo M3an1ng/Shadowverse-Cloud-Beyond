@@ -15,6 +15,12 @@ public record DeckSummaryDto
     public CardClass Class { get; init; } = CardClass.Neutral;
     public DeckEnvironment Environment { get; init; } = DeckEnvironment.Open;
     public int CardCount { get; init; }
+    public int TotalGames { get; init; }
+    public int TotalWins { get; init; }
+    public int GoingFirstGames { get; init; }
+    public int GoingFirstWins { get; init; }
+    public int GoingSecondGames { get; init; }
+    public int GoingSecondWins { get; init; }
     public DateTime UpdatedAt { get; init; }
     public bool IsGuest { get; init; }
 }

@@ -464,13 +464,31 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const grid = document.createElement('div');
         grid.className = 'form-grid-layout';
 
-        // 强制有效
-        const validCheck = this.createToggleSwitch(
-            target.requireValidTarget || false,
-            (checked) => this.updateTarget(index, { requireValidTarget: checked }),
-            '必须存在有效目标才能发动'
+        const strategyOptions = [
+            {
+                value: '0',
+                label: '不拦截',
+                description: '目标不足时不阻止玩家操作，也不阻止能力执行。'
+            },
+            {
+                value: '1',
+                label: '仅阻止执行',
+                description: '目标不足时不阻止可玩性检查，但在能力执行阶段失败。'
+            },
+            {
+                value: '2',
+                label: '阻止玩家操作',
+                description: '目标不足时在可玩性检查阶段直接判定不可发动。'
+            }
+        ];
+        const selectedStrategy = String(this.resolveTargetHandlingStrategy(target));
+        const strategyDropdown = this.createDropdown(
+            strategyOptions,
+            selectedStrategy,
+            (value) => this.updateTargetHandlingStrategy(index, value),
+            ''
         );
-        grid.appendChild(this.createFormGroup('发动限制', validCheck));
+        grid.appendChild(this.createFormGroup('目标策略', strategyDropdown));
 
         container.appendChild(grid);
         return container;
@@ -1512,6 +1530,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     addTarget() {
         this.targets.push({
             isEnabled: true,
+            targetHandlingStrategy: 0,
+            requireValidTarget: false,
             query: { sourcePoolExpression: '', operations: [] },
             _uiMode: 'simplified', // 默认使用简化模式
             _simpleMethod: 'All',
@@ -1534,6 +1554,36 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     updateTarget(index, updates) {
         this.targets[index] = { ...this.targets[index], ...updates };
         this.notifyChange();
+    }
+
+    normalizeTargetHandlingStrategy(value) {
+        const parsed = Number.parseInt(String(value), 10);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 2) {
+            return parsed;
+        }
+        return null;
+    }
+
+    resolveTargetHandlingStrategy(target) {
+        const explicit = this.normalizeTargetHandlingStrategy(target?.targetHandlingStrategy);
+        if (explicit !== null) {
+            return explicit;
+        }
+
+        const legacyExplicit = this.normalizeTargetHandlingStrategy(target?.insufficientTargetHandling);
+        if (legacyExplicit !== null) {
+            return legacyExplicit;
+        }
+
+        return target?.requireValidTarget === true ? 2 : 0;
+    }
+
+    updateTargetHandlingStrategy(index, strategyValue) {
+        const normalizedStrategy = this.normalizeTargetHandlingStrategy(strategyValue) ?? 0;
+        this.updateTarget(index, {
+            targetHandlingStrategy: normalizedStrategy,
+            requireValidTarget: normalizedStrategy === 2
+        });
     }
 
     updateTargetQuery(index, updates) {
@@ -1563,6 +1613,13 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
         if (rest._simpleScope !== undefined) {
             rest._simpleScope = this.normalizeSimplifiedScope(rest._simpleScope);
+        }
+
+        const targetHandlingStrategy = this.resolveTargetHandlingStrategy(rest);
+        rest.targetHandlingStrategy = targetHandlingStrategy;
+        rest.requireValidTarget = targetHandlingStrategy === 2;
+        if (rest.insufficientTargetHandling !== undefined) {
+            delete rest.insufficientTargetHandling;
         }
 
         const sourceExpr = rest?.query?.sourcePoolExpression || '';

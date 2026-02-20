@@ -261,6 +261,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task ChatHistory(ChatHistoryEventDto eventDto);
 
         /// <summary>
+        /// Sends in-match used/destroyed card history snapshot to the caller.
+        /// </summary>
+        Task MatchHistorySync(MatchHistorySyncEventDto eventDto);
+
+        /// <summary>
         /// Broadcasts a room chat message to participants.
         /// </summary>
         Task ChatMessage(ChatMessageEventDto eventDto);

@@ -74,6 +74,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IGameDataProvider _gameDataProvider; // Inject GameDataProvider for cached data access
         private readonly IPendingActionService _pendingActionService; // Add PendingActionService
         private readonly IMatchService _matchService;
+        private readonly IFirstPlayerSelector _firstPlayerSelector;
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
@@ -156,6 +157,7 @@ namespace ShadowverseBeyond.Server.Services
             IClientMethodMapper clientMethodMapper,
             IGameDataProvider gameDataProvider,
             IMatchService matchService,
+            IFirstPlayerSelector firstPlayerSelector,
             IServiceScopeFactory serviceScopeFactory,
             IPendingActionService pendingActionService)
         {
@@ -165,6 +167,7 @@ namespace ShadowverseBeyond.Server.Services
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper));
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
+            _firstPlayerSelector = firstPlayerSelector ?? throw new ArgumentNullException(nameof(firstPlayerSelector));
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
         }
@@ -967,7 +970,7 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
-                bool player1IsFirst = new Random().Next(0, 2) == 0;
+                bool player1IsFirst = _firstPlayerSelector.IsPlayer1First();
                 var player1State = new PlayerState(player1Id) { IsFirst = player1IsFirst };
                 var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = createAi };
                 await ApplyPlayerIdentityAsync(scopeServiceProvider, player1State, player2State);

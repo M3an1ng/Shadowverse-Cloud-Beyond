@@ -12,7 +12,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// Implements ICommittableEvent to apply mulligan results and transition readiness.
     /// </summary>
     [GameEventMetadata("调度完成", "当玩家完成调度操作时触发的事件。", EventType.MulliganCompleted)]
-    public class MulliganCompletedEvent : GameEventBase, ICommittableEvent
+    public class MulliganCompletedEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("换牌玩家", "执行换牌操作的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? MulliganPlayer => Source?.Player;
@@ -63,6 +63,23 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             result.Success = true;
             return result;
+        }
+
+        public string GetAnnouncement(GameState gameState)
+        {
+            var player = MulliganPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            var replacedCount = ReplacedCards.Count;
+            if (replacedCount <= 0)
+            {
+                return $"{AnnouncementTokens.Player(player)} 保留所有手牌。";
+            }
+
+            return $"{AnnouncementTokens.Player(player)} 完成调度并更换 {AnnouncementTokens.Number(replacedCount)} 张卡片。";
         }
     }
 }

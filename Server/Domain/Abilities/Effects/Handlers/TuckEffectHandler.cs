@@ -47,7 +47,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 (targetInfo, ctx) =>
                 {
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new TuckEvent(targetInfo.Card!, EventReasonSource.Ability));
+                    result.GeneratedEvents.Add(new LeaveFieldEvent(
+                        targetInfo.Card!,
+                        LeaveFieldKind.Tuck,
+                        EventReasonSource.Ability,
+                        ctx.SourceCard));
                     return result;
                 };
 

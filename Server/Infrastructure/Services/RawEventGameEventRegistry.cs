@@ -452,7 +452,11 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                     return false;
                 }
 
-                gameEvent = new DestroyEvent(target, source, reason);
+                gameEvent = new LeaveFieldEvent(
+                    target,
+                    LeaveFieldKind.Destroy,
+                    reason,
+                    source);
                 return true;
             }
 

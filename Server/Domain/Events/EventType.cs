@@ -337,6 +337,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         Return,
 
         /// <summary>
+        /// 统一离场前置路由事件。
+        /// </summary>
+        [Description("离场")]
+        LeaveField,
+
+        /// <summary>
         /// 将卡牌从战场洗回牌库时触发。
         /// </summary>
         [Description("洗回牌库")]

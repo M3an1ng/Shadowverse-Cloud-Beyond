@@ -55,7 +55,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new ReturnEvent(owner, card, EventReasonSource.Ability));
+                    result.GeneratedEvents.Add(new LeaveFieldEvent(
+                        card,
+                        LeaveFieldKind.Return,
+                        EventReasonSource.Ability,
+                        ctx.SourceCard));
                     return result;
                 };
 

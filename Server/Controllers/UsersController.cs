@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using System.IO;
 
 namespace ShadowverseBeyond.Server.Controllers;
@@ -13,9 +14,11 @@ public class UsersController : ControllerBase
 {
     private const int DefaultListLimit = 50;
     private const int MaxListLimit = 200;
+    private const int MinPasswordLength = 6;
 
     private readonly ApplicationDbContext _db;
     private readonly IWebHostEnvironment _environment;
+    private readonly IPasswordHasher _passwordHasher;
     private readonly ILogger<UsersController> _logger;
     private static readonly HashSet<string> AllowedAvatarExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -28,10 +31,12 @@ public class UsersController : ControllerBase
     public UsersController(
         ApplicationDbContext db,
         IWebHostEnvironment environment,
+        IPasswordHasher passwordHasher,
         ILogger<UsersController> logger)
     {
         _db = db;
         _environment = environment;
+        _passwordHasher = passwordHasher;
         _logger = logger;
     }
 
@@ -137,6 +142,56 @@ public class UsersController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
 
         return Ok(ToUserSummary(target));
+    }
+
+    [HttpPut("{userId:guid}/password")]
+    [ProducesResponseType(typeof(PasswordResetResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PasswordResetResponse>> ResetUserPassword(
+        Guid userId,
+        [FromBody] ResetUserPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request == null)
+        {
+            return BadRequest("Request body is required.");
+        }
+
+        if (request.ActorUserId == Guid.Empty)
+        {
+            return BadRequest("actorUserId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < MinPasswordLength)
+        {
+            return BadRequest($"Password length must be at least {MinPasswordLength}.");
+        }
+
+        var actor = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == request.ActorUserId, cancellationToken);
+        if (!CanManageUsers(actor))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can reset passwords.");
+        }
+
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (target == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        target.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
+        target.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new PasswordResetResponse
+        {
+            UserId = target.Id,
+            UpdatedAt = target.UpdatedAt
+        });
     }
 
     [HttpPost("{userId:guid}/avatar")]
@@ -292,6 +347,18 @@ public class UsersController : ControllerBase
     {
         public Guid ActorUserId { get; set; }
         public string Role { get; set; } = string.Empty;
+    }
+
+    public class ResetUserPasswordRequest
+    {
+        public Guid ActorUserId { get; set; }
+        public string NewPassword { get; set; } = string.Empty;
+    }
+
+    public class PasswordResetResponse
+    {
+        public Guid UserId { get; set; }
+        public DateTime UpdatedAt { get; set; }
     }
 
     public class UserListResponse

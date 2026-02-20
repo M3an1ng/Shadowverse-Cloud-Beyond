@@ -87,7 +87,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             foreach (var fusedCard in fusedCards)
             {
-                result.GeneratedEvents.Add(new CardVanishedEvent(fusedCard, fusedCard.CurrentZone, "Fusion"));
+                result.GeneratedEvents.Add(new CardVanishedEvent(fusedCard, fusedCard.CurrentZone, EventReasonSource.System));
             }
 
             return result;

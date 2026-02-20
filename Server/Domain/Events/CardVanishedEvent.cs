@@ -20,7 +20,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public CardZone OriginalZone { get; }
 
         [GameEventParameter("消失原因", "卡牌消失的原因。")]
-        public string VanishReason { get; }
+        public EventReasonSource VanishReason { get; }
 
         [GameEventParameter("消失来源", "导致消失的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? VanishSource => Source?.Card;
@@ -36,16 +36,24 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public bool VanishApplied { get; private set; }
 
-        public CardVanishedEvent(CardInstance card, CardZone originalZone, string vanishReason = "Effect", CardInstance? sourceCard = null, Guid? eventId = null, DateTime? timestamp = null)
+        public CardVanishedEvent(
+            CardInstance card,
+            CardZone originalZone,
+            EventReasonSource vanishReason = EventReasonSource.Ability,
+            CardInstance? sourceCard = null,
+            Guid? eventId = null,
+            DateTime? timestamp = null,
+            CardInstanceSnapshot? vanishedCardSnapshot = null,
+            CardInstanceSnapshot? vanishSourceSnapshot = null)
             : base(EventType.Vanish, eventId, timestamp)
         {
             if (sourceCard != null)
             {
                 Source = TargetInfo.ForCard(sourceCard);
-                VanishSourceSnapshot = CardInstanceSnapshot.From(sourceCard);
+                VanishSourceSnapshot = vanishSourceSnapshot ?? TryCreateSnapshot(sourceCard);
             }
             Target.Add(TargetInfo.ForCard(card));
-            VanishedCardSnapshot = CardInstanceSnapshot.From(card);
+            VanishedCardSnapshot = vanishedCardSnapshot ?? TryCreateSnapshot(card);
             OriginalZone = originalZone;
             VanishReason = vanishReason;
         }
@@ -86,6 +94,23 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             return $"{AnnouncementTokens.Card(card)}消失了。";
+        }
+
+        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
+        {
+            if (card == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return CardInstanceSnapshot.From(card);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

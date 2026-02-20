@@ -61,4 +61,27 @@ describe("TargetConfigEditor simplified scope", () => {
         expect(parsed._simpleScope).toBe("Both");
         expect(parsed._simpleType).toEqual(["Leader"]);
     });
+
+    test("normalizes legacy requireValidTarget into block-player strategy", () => {
+        const editor = new TargetConfigEditor();
+        const normalized = editor.normalizeTargetConfig({
+            requireValidTarget: true,
+            query: { sourcePoolExpression: "context.owner.field" }
+        });
+
+        expect(normalized.targetHandlingStrategy).toBe(2);
+        expect(normalized.requireValidTarget).toBe(true);
+    });
+
+    test("explicit targetHandlingStrategy syncs requireValidTarget compatibility flag", () => {
+        const editor = new TargetConfigEditor();
+        const normalized = editor.normalizeTargetConfig({
+            targetHandlingStrategy: 1,
+            requireValidTarget: true,
+            query: { sourcePoolExpression: "context.owner.field" }
+        });
+
+        expect(normalized.targetHandlingStrategy).toBe(1);
+        expect(normalized.requireValidTarget).toBe(false);
+    });
 });

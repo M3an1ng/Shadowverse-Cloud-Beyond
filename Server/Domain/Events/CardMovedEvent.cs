@@ -28,8 +28,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("目标区域", "卡牌移动后所在的区域。")]
         public CardZone ToZone { get; }
 
-        [GameEventParameter("移动的卡牌", "被移动的卡牌。", DslDisplayTypeName = "事件源")]
-        public CardInstance? MovedCard => Source?.Card;
+        [GameEventParameter("移动的卡牌", "被移动的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? MovedCard => Target.FirstOrDefault()?.Card;
+
+        [GameEventParameter("移动来源", "导致本次移动的来源卡牌。", DslDisplayTypeName = "事件源")]
+        public CardInstance? MoveSource => Source?.Card;
+
+        [GameEventParameter("移动来源快照", "生成事件时记录的移动来源快照。", Scope = GameEventParameterScope.Input)]
+        public CardInstanceSnapshot? MoveSourceSnapshot { get; }
 
         [GameEventParameter("移动卡牌快照", "生成事件时记录的卡牌快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? MovedCardSnapshot { get; }
@@ -48,7 +54,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             DelayConfig? delayConfig = null,
             Guid? eventId = null,
             DateTime? timestamp = null,
-            int? destinationIndex = null)
+            int? destinationIndex = null,
+            CardInstance? moveSourceCard = null)
             : base(EventType.CardMoved, eventId, timestamp)
         {
             FromZone = fromZone;
@@ -56,7 +63,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             MoveReason = moveReason;
             DestinationIndex = destinationIndex;
             ConfigureDelay(delayConfig ?? DelayConfig.Disabled);
-            Source = TargetInfo.ForCard(card);
+            Target.Add(TargetInfo.ForCard(card));
+            var effectiveMoveSource = moveSourceCard ?? card;
+            Source = TargetInfo.ForCard(effectiveMoveSource);
+            MoveSourceSnapshot = CardInstanceSnapshot.From(effectiveMoveSource);
             MovedCardSnapshot = CardInstanceSnapshot.From(card);
         }
 
@@ -67,7 +77,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (card == null)
             {
                 result.Success = false;
-                result.ErrorMessage = "CardMovedEvent.Commit: Source card is null.";
+                result.ErrorMessage = "CardMovedEvent.Commit: Moved card is null.";
                 return result;
             }
             var owner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
@@ -179,7 +189,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             foreach (var other in earthSigils.Where(card => card.InstanceId != enteringCard.InstanceId))
             {
-                result.GeneratedEvents.Add(new CardVanishedEvent(other, other.CurrentZone, "EarthSigilMerge"));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    other,
+                    LeaveFieldKind.Vanish,
+                    EventReasonSource.System,
+                    enteringCard));
             }
 
             return result;

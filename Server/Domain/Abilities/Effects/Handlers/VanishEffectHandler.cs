@@ -34,7 +34,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, VanishEffectParams parameters)
         {
             const string effectName = "VanishEffect";
-            Logger.LogDebug("{EffectName}: Starting with VanishReason={Reason}.", effectName, "Effect");
+            Logger.LogDebug("{EffectName}: Starting with VanishReason={Reason}.", effectName, EventReasonSource.Ability);
 
             Func<TargetInfo, GameContext, DomainOperationResult> vanishAction =
                 (targetInfo, ctx) =>
@@ -52,16 +52,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found." };
                     }
 
-                    var keywords = ctx.BuffService.GetEffectiveKeywords(card, ctx);
-                    if (keywords.Contains(CardKeyword.VanishResist))
-                    {
-                        Logger.LogDebug("{EffectName}: Target {TargetId} has VanishResist; skipping vanish.", effectName, card.InstanceId);
-                        return new DomainOperationResult { Success = true };
-                    }
-
-                    // 通过事件表达意图，由 CardVanishedEvent / CardMovedEvent.Commit 执行状态变更
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new CardVanishedEvent(card, card.CurrentZone, "Effect", ctx.SourceCard));
+                    result.GeneratedEvents.Add(new LeaveFieldEvent(
+                        card,
+                        LeaveFieldKind.Vanish,
+                        EventReasonSource.Ability,
+                        ctx.SourceCard));
                     return result;
                 };
 

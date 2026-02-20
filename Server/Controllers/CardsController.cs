@@ -518,10 +518,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             Directory.CreateDirectory(cardFolder);
 
             var versionToken = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var normalizedExtension = extension.ToLowerInvariant();
-            var targetExtension = string.Equals(kind, "preview", StringComparison.OrdinalIgnoreCase)
-                ? ".webp"
-                : normalizedExtension;
+            var targetExtension = ".webp";
             var fileName = $"{kind}-{versionToken}{targetExtension}";
             var filePath = Path.Combine(cardFolder, fileName);
             var newPath = $"/assets/cards/{id}/{fileName}";
@@ -529,26 +526,18 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             var existingPath = kind == "preview" ? card.ArtPreview : card.ArtDetail;
             TryDeleteExistingArt(workspaceRoot, existingPath, newPath);
 
-            if (string.Equals(kind, "preview", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                try
-                {
-                    await ConvertPreviewToWebpAsync(file, filePath);
-                }
-                catch (UnknownImageFormatException)
-                {
-                    return BadRequest("Unsupported image content.");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to convert preview art to WebP for card {CardId}.", id);
-                    return StatusCode(StatusCodes.Status500InternalServerError, "Failed to process preview art.");
-                }
+                await ConvertToWebpAsync(file, filePath);
             }
-            else
+            catch (UnknownImageFormatException)
             {
-                await using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await file.CopyToAsync(stream);
+                return BadRequest("Unsupported image content.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to convert {ArtKind} art to WebP for card {CardId}.", kind, id);
+                return StatusCode(StatusCodes.Status500InternalServerError, "Failed to process card art.");
             }
 
             if (kind == "preview")
@@ -566,7 +555,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             return Ok(dto);
         }
 
-        private static async Task ConvertPreviewToWebpAsync(IFormFile file, string outputPath)
+        private static async Task ConvertToWebpAsync(IFormFile file, string outputPath)
         {
             await using var inputStream = file.OpenReadStream();
             using var image = await Image.LoadAsync(inputStream);

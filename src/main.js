@@ -20,7 +20,7 @@ import {
     handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
     handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
-    handleChatHistory, handleChatMessage,
+    handleChatHistory, handleChatMessage, handleMatchHistorySync,
     handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
@@ -1002,6 +1002,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("AbilityTriggered", handleAbilityTriggered);
     wireEvent("ChatHistory", handleChatHistory);
     wireEvent("ChatMessage", handleChatMessage);
+    wireEvent("MatchHistorySync", handleMatchHistorySync);
     // Generic log entries (for events without specific DTO)
     conn.on("LogEvent", (eventData) => {
         appendGameLog("LogEvent", eventData);

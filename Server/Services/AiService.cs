@@ -557,13 +557,23 @@ namespace ShadowverseBeyond.Server.Services
             // In this case, the AI will choose nothing.
             // Otherwise, it will randomly pick the minimum required number of targets.
             var chosenIds = new List<Guid>();
-            if (request.MinSelectionCount > 0 && request.SelectableTargetIds.Any())
+            var minSelectionCount = Math.Max(0, request.MinSelectionCount);
+            var selectableTargetIds = request.SelectableTargetIds ?? new List<Guid>();
+
+            if (minSelectionCount > 0 && selectableTargetIds.Count == 0 && request.IsCancellable)
+            {
+                _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} is cancelling choice {ChoiceId} because no selectable targets are available.",
+                    gameId, aiPlayerId, request.PendingChoiceId);
+                return Task.FromResult(PlayerChoiceResult.Cancelled);
+            }
+
+            if (minSelectionCount > 0 && selectableTargetIds.Any())
             {
                 // Simple random selection
                 var random = new Random();
-                chosenIds = request.SelectableTargetIds
+                chosenIds = selectableTargetIds
                                    .OrderBy(x => random.Next())
-                                   .Take(request.MinSelectionCount)
+                                   .Take(minSelectionCount)
                                    .ToList();
 
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} randomly selected {Count} targets: [{Targets}]",

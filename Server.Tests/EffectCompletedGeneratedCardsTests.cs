@@ -91,6 +91,33 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(false, failed);
         }
 
+        [Fact]
+        public void EffectCompletedEvent_GeneratedCards_TracksGeneratedEventTargetUpdates()
+        {
+            var playerId = Guid.NewGuid();
+            var targetCard = new CardInstance(Guid.NewGuid(), 1, playerId)
+            {
+                CurrentZone = CardZone.Hand
+            };
+            var mutableEvent = new MutableGeneratedEvent();
+            var completedEvent = new EffectCompletedEvent(
+                EffectType.Draw,
+                new Dictionary<string, object>(),
+                new List<TargetInfo>(),
+                new List<IGameEvent> { mutableEvent },
+                new List<CardInstance>(),
+                new List<CardInstanceSnapshot>(),
+                new Dictionary<string, object?>(),
+                true,
+                sourceCard: null);
+
+            Assert.Empty(completedEvent.GeneratedCards);
+            mutableEvent.SetTarget(targetCard);
+
+            var generated = Assert.Single(completedEvent.GeneratedCards);
+            Assert.Equal(targetCard.InstanceId, generated.InstanceId);
+        }
+
         private static IEffectExecutor BuildEffectExecutor(IServiceProvider provider)
         {
             var registry = new EffectHandlerRegistry(NullLogger<EffectHandlerRegistry>.Instance);
@@ -111,6 +138,20 @@ namespace ShadowverseBeyond.Server.Tests
 
             public object? ResolveFormulaValueWithTrace(string formula, GameContext context, IDslTraceCollector traceCollector)
                 => ResolveFormulaValue(formula, context);
+        }
+
+        private sealed class MutableGeneratedEvent : GameEventBase
+        {
+            public MutableGeneratedEvent()
+                : base(EventType.CardInstanceUpdated)
+            {
+            }
+
+            public void SetTarget(CardInstance card)
+            {
+                Target.Clear();
+                Target.Add(TargetInfo.ForCard(card));
+            }
         }
     }
 }

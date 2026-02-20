@@ -51,6 +51,7 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly IMapper _mapper; // Added for Entity to DTO mapping
         private readonly IMatchService _matchService; // Added for lobby validation
         private readonly IGameChatService _gameChatService;
+        private readonly IMatchHistoryProjectionService _matchHistoryProjectionService;
         private readonly ICommittedEventJournal _eventJournal;
         private readonly ISnapshotStore _snapshotStore;
         private readonly ReplayOptions _replayOptions;
@@ -75,6 +76,7 @@ namespace ShadowverseBeyond.Server.Hubs
             IMapper mapper,
             IMatchService matchService,
             IGameChatService gameChatService,
+            IMatchHistoryProjectionService matchHistoryProjectionService,
             ICommittedEventJournal eventJournal,
             ISnapshotStore snapshotStore,
             IRecordedEventMapper recordedEventMapper,
@@ -87,6 +89,7 @@ namespace ShadowverseBeyond.Server.Hubs
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
             _gameChatService = gameChatService ?? throw new ArgumentNullException(nameof(gameChatService));
+            _matchHistoryProjectionService = matchHistoryProjectionService ?? throw new ArgumentNullException(nameof(matchHistoryProjectionService));
             _eventJournal = eventJournal ?? throw new ArgumentNullException(nameof(eventJournal));
             _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
             _recordedEventMapper = recordedEventMapper ?? throw new ArgumentNullException(nameof(recordedEventMapper));
@@ -296,6 +299,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 }
 
                 await Clients.Caller.ReceiveGameState(currentState);
+                await SendMatchHistoryToCallerAsync(gameIdStr);
 
                 if (contextPlayerId != Guid.Empty)
                 {
@@ -980,6 +984,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
                     await Clients.Caller.ReceiveGameState(currentState);
                     await SendRecentChatHistoryToCallerAsync(gameIdStr);
+                    await SendMatchHistoryToCallerAsync(gameIdStr);
                     await BroadcastSystemChatMessageAsync(
                         gameId,
                         $"观战者 {spectatorDisplayName} 加入了观战");
@@ -1086,6 +1091,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     _logger.LogInformation("Sending initial game state to caller for Game {GameId}, Player {PlayerId}", gameId, playerIdStr);
                     await Clients.Caller.ReceiveGameState(currentState);
                     await SendRecentChatHistoryToCallerAsync(gameIdStr);
+                    await SendMatchHistoryToCallerAsync(gameIdStr);
                 }
                 else
                 {
@@ -1534,6 +1540,24 @@ namespace ShadowverseBeyond.Server.Hubs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send chat history. GameId={GameId}, ConnectionId={ConnectionId}", gameId, Context.ConnectionId);
+            }
+        }
+
+        private async Task SendMatchHistoryToCallerAsync(string gameId)
+        {
+            if (string.IsNullOrWhiteSpace(gameId))
+            {
+                return;
+            }
+
+            try
+            {
+                var snapshot = _matchHistoryProjectionService.BuildSnapshot(gameId);
+                await Clients.Caller.MatchHistorySync(snapshot);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send match history snapshot. GameId={GameId}, ConnectionId={ConnectionId}", gameId, Context.ConnectionId);
             }
         }
 

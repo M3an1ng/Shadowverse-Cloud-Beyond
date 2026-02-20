@@ -1,5 +1,24 @@
+function resolveMenuBaseZIndex(button) {
+    const fallbackZIndex = 1000;
+    if (typeof window === "undefined" || !button || typeof button.closest !== "function") {
+        return fallbackZIndex;
+    }
+
+    const pipelineOverlay = button.closest(".dsl-pipeline-stage-modal-overlay");
+    if (!pipelineOverlay) {
+        return fallbackZIndex;
+    }
+
+    const parsed = Number.parseInt(window.getComputedStyle(pipelineOverlay).zIndex || "", 10);
+    if (Number.isFinite(parsed)) {
+        return Math.max(fallbackZIndex, parsed + 10);
+    }
+
+    return 1300;
+}
+
 export function showAddNodeMenu(editor, button) {
-    const existingMenu = document.querySelector(".dsl-add-menu");
+    const existingMenu = document.querySelector(".dsl-options-dropdown");
     if (existingMenu) {
         existingMenu.remove();
     }
@@ -30,6 +49,7 @@ export function showAddNodeMenu(editor, button) {
     };
 
     const options = editor.getCurrentEditingOptions() || [];
+    const menuBaseZIndex = resolveMenuBaseZIndex(button);
 
 
     if (options.length === 0) {
@@ -157,7 +177,7 @@ export function showAddNodeMenu(editor, button) {
                         currentSubmenu.remove();
                     }
 
-                    currentSubmenu = createSubmenu(editor, groupOptions, groupItem, menu);
+                    currentSubmenu = createSubmenu(editor, groupOptions, groupItem, menu, menuBaseZIndex);
                     document.body.appendChild(currentSubmenu);
 
                     currentSubmenu.addEventListener("mouseenter", () => {
@@ -222,7 +242,7 @@ export function showAddNodeMenu(editor, button) {
         position: fixed;
         left: ${menuLeft}px;
         top: ${menuTop}px;
-        z-index: 1000;
+        z-index: ${menuBaseZIndex};
         max-height: ${maxMenuHeight}px;
         overflow-y: auto;
         overflow-x: hidden;
@@ -233,6 +253,8 @@ export function showAddNodeMenu(editor, button) {
         min-width: 200px;
         max-width: 300px;
     `;
+    menu.style.setProperty("position", "fixed", "important");
+    menu.style.setProperty("z-index", String(menuBaseZIndex), "important");
 
     addScrollbarStyles(editor, menu);
 
@@ -241,7 +263,7 @@ export function showAddNodeMenu(editor, button) {
     setTimeout(() => document.addEventListener("click", closeMenu), 0);
 }
 
-export function createSubmenu(editor, options, parentItem, mainMenu) {
+export function createSubmenu(editor, options, parentItem, mainMenu, baseZIndex = 1000) {
     const submenu = document.createElement("div");
     submenu.className = "dsl-submenu";
 
@@ -275,6 +297,9 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         }
     }
 
+    const parsedMenuZIndex = Number.parseInt(mainMenu?.style?.zIndex || "", 10);
+    const submenuZIndex = Number.isFinite(parsedMenuZIndex) ? parsedMenuZIndex + 2 : baseZIndex + 2;
+
     submenu.style.cssText = `
         position: fixed;
         left: ${submenuLeft}px;
@@ -289,7 +314,7 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         border: 1px solid #2c3e52;
         border-radius: 6px;
         box-shadow: 0 8px 20px rgba(0,0,0,0.35);
-        z-index: 1002;
+        z-index: ${submenuZIndex};
         padding: 6px;
         font-size: 14px;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -299,6 +324,8 @@ export function createSubmenu(editor, options, parentItem, mainMenu) {
         gap: 4px 8px;
         align-content: start;
     `;
+    submenu.style.setProperty("position", "fixed", "important");
+    submenu.style.setProperty("z-index", String(submenuZIndex), "important");
 
     options.forEach((option) => {
         const item = document.createElement("div");

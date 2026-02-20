@@ -224,7 +224,26 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var sourceCard = context.SourceCard ?? card;
-            result.GeneratedEvents.Add(new DestroyEvent(card, sourceCard, EventReasonSource.System));
+            var leaveFieldEvent = new LeaveFieldEvent(
+                card,
+                LeaveFieldKind.Destroy,
+                EventReasonSource.System,
+                sourceCard);
+            TryApplyEffectScopedLeaveFieldDelay(context, leaveFieldEvent);
+            result.GeneratedEvents.Add(leaveFieldEvent);
+        }
+
+        private static void TryApplyEffectScopedLeaveFieldDelay(GameContext context, LeaveFieldEvent leaveFieldEvent)
+        {
+            var parentEventId = context.TriggeringEvent?.EventId
+                ?? context.CurrentEffect?.TriggeredEventId
+                ?? Guid.Empty;
+            if (parentEventId == Guid.Empty)
+            {
+                return;
+            }
+
+            leaveFieldEvent.ConfigureDelay(DelayConfig.Parent(parentEventId));
         }
 
         private static Guid? ResolveWinnerIdForLeaderDefeat(CardInstance leaderCard, GameContext context)

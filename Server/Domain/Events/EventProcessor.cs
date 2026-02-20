@@ -274,7 +274,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 sourcePlayerId,
                 card.InstanceId,
                 card.OwnerPlayerId,
-                e.VanishReason ?? "Unknown"
+                e.VanishReason.ToString()
             );
         }
 

@@ -68,7 +68,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     if (newValue == 0)
                     {
-                        result.GeneratedEvents.Add(new DestroyEvent(earthSigil, earthSigil, EventReasonSource.System));
+                        result.GeneratedEvents.Add(new LeaveFieldEvent(
+                            earthSigil,
+                            LeaveFieldKind.Destroy,
+                            EventReasonSource.System,
+                            earthSigil));
                     }
                     return result;
                 };

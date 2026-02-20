@@ -7,6 +7,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
@@ -62,6 +63,8 @@ namespace ShadowverseBeyond.Server.Tests
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
 
             var sp = services.BuildServiceProvider();
+            GameServiceProvider.ContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+            GameServiceProvider.Logger = NullLogger.Instance;
 
             using var ctx = new GameContext(
                 sp,
@@ -185,10 +188,14 @@ namespace ShadowverseBeyond.Server.Tests
             var player2Id = Guid.NewGuid();
             var player1 = new PlayerState(player1Id);
             var player2 = new PlayerState(player2Id);
+            var abilityManager = new Mock<IAbilityManager>();
+            abilityManager
+                .Setup(manager => manager.GetEffectiveAbilitiesForCard(It.IsAny<Guid>(), It.IsAny<GameContext>()))
+                .Returns(new List<IAbility>());
 
             var gameState = new GameState("stat-lethal-system-reason-test", player1, player2, player1Id)
             {
-                AbilityManager = Mock.Of<IAbilityManager>(),
+                AbilityManager = abilityManager.Object,
                 BuffManager = Mock.Of<IBuffManager>()
             };
 
@@ -245,6 +252,90 @@ namespace ShadowverseBeyond.Server.Tests
             var destroy = Assert.Single(result.GeneratedEvents, e => e is DestroyEvent) as DestroyEvent;
             Assert.NotNull(destroy);
             Assert.Equal(EventReasonSource.System, destroy!.Reason);
+        }
+
+        [Fact]
+        public void StatChanged_LethalFollowerWithMultiTargetEffect_DelaysDestroyByEffectId()
+        {
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+            var player1 = new PlayerState(player1Id);
+            var player2 = new PlayerState(player2Id);
+            var abilityManager = new Mock<IAbilityManager>();
+            abilityManager
+                .Setup(manager => manager.GetEffectiveAbilitiesForCard(It.IsAny<Guid>(), It.IsAny<GameContext>()))
+                .Returns(new List<IAbility>());
+
+            var gameState = new GameState("stat-delay-by-effect-test", player1, player2, player1Id)
+            {
+                AbilityManager = abilityManager.Object,
+                BuffManager = Mock.Of<IBuffManager>()
+            };
+
+            var source = new CardInstance(Guid.NewGuid(), 1002, player1Id) { CurrentZone = CardZone.Field };
+            var target = new CardInstance(Guid.NewGuid(), 1001, player2Id) { CurrentZone = CardZone.Field };
+            var extraTarget = new CardInstance(Guid.NewGuid(), 1001, player2Id) { CurrentZone = CardZone.Field };
+            player1.Field.Add(source);
+            player2.Field.Add(target);
+            player2.Field.Add(extraTarget);
+            gameState.RegisterCardInstance(source);
+            gameState.RegisterCardInstance(target);
+            gameState.RegisterCardInstance(extraTarget);
+
+            var buffManager = new Mock<IBuffManager>();
+            buffManager.Setup(m => m.GetBuffsForCard(It.IsAny<Guid>())).Returns(new List<Buff>());
+            gameState.BuffManager = buffManager.Object;
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffFactory>(new BuffFactory(NullLogger<BuffFactory>.Instance));
+            services.AddSingleton(Mock.Of<IConditionEvaluator>());
+            services.AddSingleton<IBuffEvaluator>(sp =>
+                new BuffEvaluator(sp.GetRequiredService<IConditionEvaluator>(), NullLogger<BuffEvaluator>.Instance));
+            services.AddSingleton(new BuffStackingEngine(NullLogger<BuffStackingEngine>.Instance));
+            services.AddSingleton<IBuffService>(sp =>
+                new BuffService(
+                    buffManager.Object,
+                    sp.GetRequiredService<IBuffEvaluator>(),
+                    sp.GetRequiredService<IBuffFactory>(),
+                    NullLogger<BuffService>.Instance,
+                    sp.GetRequiredService<BuffStackingEngine>()));
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+
+            var sp = services.BuildServiceProvider();
+            GameServiceProvider.ContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var effect = new Effect(player1Id);
+            effect.SelectedTargets.Add(TargetInfo.ForCard(target));
+            effect.SelectedTargets.Add(TargetInfo.ForCard(extraTarget));
+
+            using var ctx = new GameContext(
+                sp,
+                Mock.Of<IMapper>(),
+                sp.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                requestingPlayerId: player1Id,
+                triggeringEvent: null,
+                sourceCard: source,
+                currentEffect: effect);
+
+            var ev = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: null,
+                healthModifier: 0,
+                costModifier: null,
+                modifierLayer: ModifierLayer.Set);
+
+            var result = ev.Commit(ctx);
+            Assert.True(result.Success);
+
+            var destroy = Assert.Single(result.GeneratedEvents, e => e is DestroyEvent) as DestroyEvent;
+            Assert.NotNull(destroy);
+            Assert.True(destroy!.DelayConfig.Enabled);
+            Assert.Equal(DelayMode.ParentEffectsComplete, destroy.DelayConfig.Mode);
+            Assert.Equal(effect.Id, destroy.DelayConfig.ParentEventId);
         }
     }
 }

@@ -1061,6 +1061,42 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return false;
         }
 
+        /// <summary>
+        /// 检查当前卡牌在给定破坏原因下是否可以被破坏。
+        /// 仅能力破坏会受“无法破坏/土之印/己方回合超进化随从”规则影响。
+        /// </summary>
+        public bool CanBeDestroyed(GameContext context, EventReasonSource reason)
+        {
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            if (reason != EventReasonSource.Ability)
+            {
+                return true;
+            }
+
+            var effectiveKeywords = context.BuffService.GetEffectiveKeywords(this, context);
+            if (effectiveKeywords.Contains(CardKeyword.DestroyResist))
+            {
+                return false;
+            }
+
+            if (effectiveKeywords.Contains(CardKeyword.EarthSigil))
+            {
+                return false;
+            }
+
+            if (!IsSuperEvolved || !IsFollower)
+            {
+                return true;
+            }
+
+            var activePlayerId = context.CurrentGameState.CurrentPlayerId;
+            return !activePlayerId.HasValue || OwnerPlayerId != activePlayerId.Value;
+        }
+
         internal void SetLastMoveReason(CardMoveReason reason)
         {
             LastMoveReason = reason;

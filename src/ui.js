@@ -8,7 +8,7 @@
 
 // 导入依赖 (稍后根据需要添加)
 // import { gameState } from './gameManager.js'; // 获取状态
-// import { playCard, initiateAttack, selectAttackTarget, evolveCard } from './gameManager.js'; // 调用动作
+// import { playCard, initiateAttack, selectAttackTarget, evolveCard } from './gameManager.js'; // 璋冪敤鍔ㄤ綔
 
 // Import necessary functions and the gameState object
 import {
@@ -29,14 +29,24 @@ import {
     submitMulligan, // Added import for SignalR mulligan submission
     endTurnRequest,  // Added import for SignalR end turn request
     submitPlayerChoice,
-    cancelPlayerChoice,
-    sendChatMessage
+    cancelPlayerChoice
 } from './gameManager.js';
 import { buildPreviewSlateHtml } from './previewSlate.js';
 import { showPreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
+import {
+    renderGameLog,
+    replaceInMatchChatHistory,
+    replaceInMatchCardHistory,
+    appendInMatchChatMessage,
+    clearInMatchChatUiState,
+    appendInMatchUsedCard,
+    appendInMatchDestroyedCard,
+    clearInMatchUsedCardUiState,
+    findLogCardInstanceByUid
+} from './ui/logPanel.js';
 import { getUserSession } from './userSession.js';
 import badgeWardUrl from './badge/Ward.png';
 import badgeBaneUrl from './badge/Bane.png';
@@ -50,7 +60,7 @@ import badgeShackleUrl from './badge/Shackle.png';
 // getCardDefinition is obsolete. Card instances now contain all necessary data.
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 
-export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi };
+export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi, renderGameLog, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState };
 
 let mulliganSelectedUids = new Set();
 const EMBLEM_SLOT_COUNT = 5;
@@ -63,6 +73,29 @@ const CARD_MOVE_EPSILON = 0.5;
 const CARD_MOVE_OPACITY = '0.82';
 const CARD_MOVE_TRANSITION_MS = 220;
 const CARD_EXIT_TRANSITION_MS = 190;
+const ATTACK_DRAG_MIN_DISTANCE_PX = 10;
+const ATTACK_DRAG_CLICK_SUPPRESS_MS = 260;
+const ATTACK_DRAG_LINE_ID = 'attack-drag-line';
+const TRANSIENT_VISUAL_ROOT_ID = 'game-transient-visual-root';
+const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-exit-overlay, .fusion-float-card, .damage-number, .heal-number, #fusion-burst-root, #reveal-overlay-root';
+const transientVisualTimeoutIds = new Set();
+let suppressGameClickUntil = 0;
+const attackDragState = {
+    pointerId: null,
+    isPending: false,
+    isActive: false,
+    attackerUid: null,
+    sourceElement: null,
+    sourceCenterX: 0,
+    sourceCenterY: 0,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+    hoverTargetUid: null,
+    hoverElement: null,
+    lineElement: null
+};
 const PRESERVED_CARD_STATE_CLASSES = Object.freeze([
     'selected-attacker',
     'targetable',
@@ -80,6 +113,193 @@ const PRESERVED_CARD_STATE_CLASSES = Object.freeze([
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function runTrackedVisualTimeout(callback, delayMs) {
+    const timeoutId = window.setTimeout(() => {
+        transientVisualTimeoutIds.delete(timeoutId);
+        callback();
+    }, delayMs);
+    transientVisualTimeoutIds.add(timeoutId);
+    return timeoutId;
+}
+
+function clearTrackedVisualTimeouts() {
+    transientVisualTimeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
+    transientVisualTimeoutIds.clear();
+}
+
+function ensureTransientVisualRoot() {
+    const container = gameContainerEl ?? document.getElementById('game-container');
+    if (!container || !isGamePageActive()) return null;
+
+    let root = container.querySelector(`#${TRANSIENT_VISUAL_ROOT_ID}`);
+    if (root) {
+        return root;
+    }
+
+    root = document.createElement('div');
+    root.id = TRANSIENT_VISUAL_ROOT_ID;
+    root.style.position = 'absolute';
+    root.style.inset = '0';
+    root.style.pointerEvents = 'none';
+    root.style.overflow = 'visible';
+    root.style.zIndex = '9600';
+    container.appendChild(root);
+    return root;
+}
+
+function removeTransientVisualArtifacts() {
+    document.querySelectorAll(TRANSIENT_VISUAL_CLEANUP_SELECTOR).forEach(node => node.remove());
+    document.getElementById(TRANSIENT_VISUAL_ROOT_ID)?.remove();
+}
+
+function clearAttackDragHover() {
+    if (attackDragState.hoverElement) {
+        attackDragState.hoverElement.classList.remove('attack-drag-hover');
+    }
+    attackDragState.hoverElement = null;
+    attackDragState.hoverTargetUid = null;
+}
+
+function ensureAttackDragLineElement() {
+    let lineEl = document.getElementById(ATTACK_DRAG_LINE_ID);
+    if (lineEl) return lineEl;
+    lineEl = document.createElement('div');
+    lineEl.id = ATTACK_DRAG_LINE_ID;
+    lineEl.className = 'attack-drag-line';
+    document.body.appendChild(lineEl);
+    return lineEl;
+}
+
+function removeAttackDragLineElement() {
+    const lineEl = attackDragState.lineElement ?? document.getElementById(ATTACK_DRAG_LINE_ID);
+    lineEl?.remove();
+    attackDragState.lineElement = null;
+}
+
+function resetAttackDragState() {
+    clearAttackDragHover();
+    removeAttackDragLineElement();
+    document.body.classList.remove('attack-dragging');
+    attackDragState.pointerId = null;
+    attackDragState.isPending = false;
+    attackDragState.isActive = false;
+    attackDragState.attackerUid = null;
+    attackDragState.sourceElement = null;
+    attackDragState.sourceCenterX = 0;
+    attackDragState.sourceCenterY = 0;
+    attackDragState.startX = 0;
+    attackDragState.startY = 0;
+    attackDragState.currentX = 0;
+    attackDragState.currentY = 0;
+}
+
+function resolveAvatarLeaderUid(avatarElement) {
+    if (!avatarElement?.id) return null;
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    const opponentPlayerId = gameState.players?.find(p => p?.id !== localPlayerId)?.id ?? null;
+    const ownerPlayerId = avatarElement.id === 'player2-avatar' ? opponentPlayerId : localPlayerId;
+    const ownerPlayer = ownerPlayerId ? getPlayerState(ownerPlayerId) : null;
+    return ownerPlayer?.leaderCard?.uid ?? ownerPlayer?.leaderCard?.InstanceId ?? null;
+}
+
+function resolveAttackDragDropTarget(clientX, clientY) {
+    const hit = document.elementFromPoint(clientX, clientY);
+    if (!hit) {
+        return { uid: null, element: null, isValid: false };
+    }
+
+    const targetCard = hit.closest?.('.card[data-uid]');
+    if (targetCard?.dataset?.uid) {
+        const uid = String(targetCard.dataset.uid);
+        const isValid = targetCard.classList.contains('targetable');
+        return { uid, element: targetCard, isValid };
+    }
+
+    const avatarEl = hit.closest?.('#player1-avatar, #player2-avatar');
+    if (avatarEl) {
+        const uid = resolveAvatarLeaderUid(avatarEl);
+        const isValid = avatarEl.classList.contains('targetable');
+        return { uid: uid ? String(uid) : null, element: avatarEl, isValid };
+    }
+
+    return { uid: null, element: null, isValid: false };
+}
+
+function isAttackDragStartAllowed(cardInstance) {
+    if (!cardInstance) return false;
+    if (isAwaitingPlayerChoice || isConnectionLocked || gameState.isSpectator) return false;
+
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    if (!localPlayerId || gameState.currentPlayerId !== localPlayerId) return false;
+    if (gameState.phase !== 'Main') return false;
+
+    if (cardInstance.ownerId !== localPlayerId) return false;
+    if (!equalsIgnoreCase(cardInstance.zone, 'Field')) return false;
+    if (!equalsIgnoreCase(cardInstance.type, 'Follower')) return false;
+    if ((cardInstance.canAttack ?? cardInstance.CanAttack) !== true) return false;
+
+    return true;
+}
+
+function updateAttackDragLine() {
+    if (!attackDragState.isActive || !attackDragState.lineElement) return;
+    const dx = attackDragState.currentX - attackDragState.sourceCenterX;
+    const dy = attackDragState.currentY - attackDragState.sourceCenterY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+    attackDragState.lineElement.style.left = `${attackDragState.sourceCenterX}px`;
+    attackDragState.lineElement.style.top = `${attackDragState.sourceCenterY}px`;
+    attackDragState.lineElement.style.width = `${length}px`;
+    attackDragState.lineElement.style.transform = `translateY(-50%) rotate(${angle}deg)`;
+}
+
+function updateAttackDragHover(targetInfo) {
+    const nextUid = targetInfo?.isValid && targetInfo.uid ? String(targetInfo.uid) : null;
+    const nextElement = nextUid ? targetInfo.element : null;
+
+    if (attackDragState.hoverTargetUid === nextUid && attackDragState.hoverElement === nextElement) {
+        return;
+    }
+
+    clearAttackDragHover();
+    if (nextUid && nextElement) {
+        nextElement.classList.add('attack-drag-hover');
+        attackDragState.hoverTargetUid = nextUid;
+        attackDragState.hoverElement = nextElement;
+    }
+}
+
+function activateAttackDragIfNeeded() {
+    if (!attackDragState.isPending || attackDragState.isActive) return;
+    const attackerUid = attackDragState.attackerUid;
+    if (!attackerUid) {
+        resetAttackDragState();
+        return;
+    }
+
+    initiateAttack(attackerUid);
+    if (String(gameState.selectedAttackerUid ?? '') !== String(attackerUid)) {
+        resetAttackDragState();
+        return;
+    }
+
+    const sourceElement = gameContainerEl?.querySelector(`.field-card[data-uid="${attackerUid}"]`) ?? attackDragState.sourceElement;
+    if (!sourceElement) {
+        resetAttackDragState();
+        return;
+    }
+
+    const sourceRect = sourceElement.getBoundingClientRect();
+    attackDragState.sourceCenterX = sourceRect.left + sourceRect.width / 2;
+    attackDragState.sourceCenterY = sourceRect.top + sourceRect.height / 2;
+    attackDragState.lineElement = ensureAttackDragLineElement();
+    attackDragState.isPending = false;
+    attackDragState.isActive = true;
+    document.body.classList.add('attack-dragging');
+    updateAttackDragLine();
 }
 
 function normalizeArtPath(rawPath) {
@@ -256,7 +476,10 @@ function animateCardMoveFromRect(element, previousRect) {
 }
 
 function animateCardLeaveOverlay(sourceElement, sourceRect) {
-    if (!sourceElement || !sourceRect || !document.body) return;
+    if (!sourceElement || !sourceRect || !isGamePageActive()) return;
+    const transientRoot = ensureTransientVisualRoot();
+    if (!transientRoot) return;
+
     const clone = sourceElement.cloneNode(true);
     clone.classList.remove('card-fade-enter', 'card-fade-move');
     clone.classList.add('card-fade-exit', 'card-fade-exit-overlay');
@@ -268,11 +491,11 @@ function animateCardLeaveOverlay(sourceElement, sourceRect) {
     clone.style.margin = '0';
     clone.style.pointerEvents = 'none';
     clone.style.zIndex = '9800';
-    document.body.appendChild(clone);
+    transientRoot.appendChild(clone);
 
     const cleanup = () => clone.remove();
     clone.addEventListener('animationend', cleanup, { once: true });
-    window.setTimeout(cleanup, CARD_EXIT_TRANSITION_MS + 120);
+    runTrackedVisualTimeout(cleanup, CARD_EXIT_TRANSITION_MS + 120);
 }
 
 function resolveRenderedCardKey(element, index) {
@@ -1105,6 +1328,9 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
         // Only enable if it's the local player's turn and the game is in a phase where ending the turn is possible.
         endTurnButtonEl.disabled = !isLocalPlayerTurn || (gameState.phase !== 'Main' && gameState.phase !== 'TurnStart');
     }
+
+    // Re-apply normal highlights after exiting choice mode.
+    renderHighlights(gameState);
 }
 // --- End UI State Management Functions ---
 
@@ -1115,19 +1341,94 @@ function removeChoiceOverlayUI() {
 }
 
 function getChoiceMinMax(choiceRequest) {
-    const min = Number.isFinite(choiceRequest?.MinSelectionCount) ? choiceRequest.MinSelectionCount : 1;
-    const max = Number.isFinite(choiceRequest?.MaxSelectionCount) ? choiceRequest.MaxSelectionCount : 1;
+    const minRaw = choiceRequest?.MinSelectionCount ?? choiceRequest?.minSelectionCount;
+    const maxRaw = choiceRequest?.MaxSelectionCount ?? choiceRequest?.maxSelectionCount;
+    const minNumeric = Number(minRaw);
+    const maxNumeric = Number(maxRaw);
+    const min = Number.isFinite(minNumeric) ? Math.max(0, Math.trunc(minNumeric)) : 1;
+    const maxCandidate = Number.isFinite(maxNumeric) ? Math.max(0, Math.trunc(maxNumeric)) : 1;
+    const max = Math.max(min, maxCandidate);
     return { min, max };
-}
-
-function isSingleMandatoryChoice(choiceRequest) {
-    const { min, max } = getChoiceMinMax(choiceRequest);
-    return min === 1 && max === 1;
 }
 
 function isChoiceSelectionValid(choiceRequest, selectedCount) {
     const { min, max } = getChoiceMinMax(choiceRequest);
     return selectedCount >= min && selectedCount <= max;
+}
+
+function isFixedChoiceCount(choiceRequest) {
+    const { min, max } = getChoiceMinMax(choiceRequest);
+    return min === max;
+}
+
+function getChoiceCardOwnerId(cardInstance) {
+    return cardInstance?.ownerId ?? cardInstance?.OwnerPlayerId ?? null;
+}
+
+function getChoiceCardKeywords(cardInstance) {
+    const keywords = cardInstance?.keywords ?? cardInstance?.Keywords ?? [];
+    return Array.isArray(keywords) ? keywords : [];
+}
+
+function hasChoiceCardKeyword(cardInstance, keyword) {
+    return getChoiceCardKeywords(cardInstance).some(k => equalsIgnoreCase(k, keyword));
+}
+
+function getActiveSpellWardChoiceTargetIds() {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return new Set();
+
+    const localPlayerId = gameState.localPlayerId;
+    const activeIds = new Set();
+    const selectableIds = currentChoiceRequest.SelectableTargetIds || [];
+
+    selectableIds.forEach(id => {
+        const card = findCardInstanceByUid(id);
+        if (!card) return;
+        const ownerId = getChoiceCardOwnerId(card);
+        const isOpponentCard = ownerId && String(ownerId) !== String(localPlayerId);
+        if (!isOpponentCard) return;
+        if (hasChoiceCardKeyword(card, 'SpellWard') && !hasChoiceCardKeyword(card, 'Aura')) {
+            activeIds.add(String(id));
+        }
+    });
+
+    return activeIds;
+}
+
+function canSelectChoiceTarget(targetUid) {
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return false;
+
+    const targetKey = String(targetUid);
+    const validTargetUids = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
+    if (!validTargetUids.has(targetKey)) return false;
+
+    // Always allow toggling already selected target.
+    if (currentChoiceSelectedTargetIds.has(targetKey)) return true;
+
+    const card = findCardInstanceByUid(targetUid);
+    if (!card) return true;
+
+    const localPlayerId = gameState.localPlayerId;
+    const ownerId = getChoiceCardOwnerId(card);
+    const isOpponentCard = ownerId && String(ownerId) !== String(localPlayerId);
+    if (!isOpponentCard) return true;
+
+    // SpellWard itself is always selectable.
+    if (hasChoiceCardKeyword(card, 'SpellWard') && !hasChoiceCardKeyword(card, 'Aura')) {
+        return true;
+    }
+
+    const activeSpellWardIds = getActiveSpellWardChoiceTargetIds();
+    if (activeSpellWardIds.size === 0) return true;
+
+    // Opponent non-SpellWard targets stay blocked until all active SpellWard targets are selected.
+    for (const spellWardId of activeSpellWardIds) {
+        if (!currentChoiceSelectedTargetIds.has(spellWardId)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function updateChoiceOverlayUI() {
@@ -1156,7 +1457,15 @@ function updateChoiceOverlayUI() {
     document.querySelectorAll('.choice-card[data-uid]').forEach(el => {
         const uid = el.dataset.uid;
         if (!uid) return;
-        el.classList.toggle('choice-card-selected', currentChoiceSelectedTargetIds.has(uid));
+        const selected = currentChoiceSelectedTargetIds.has(uid);
+        const selectableNow = canSelectChoiceTarget(uid);
+        el.classList.toggle('choice-card-selected', selected);
+        el.classList.toggle('choice-card-restricted', !selected && !selectableNow);
+        if (!selected && !selectableNow) {
+            el.setAttribute('disabled', 'disabled');
+        } else {
+            el.removeAttribute('disabled');
+        }
     });
 }
 
@@ -1186,20 +1495,12 @@ async function handleChoiceTargetClick(targetUid) {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
 
     const validTargetUids = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
-    if (!validTargetUids.has(String(targetUid))) return;
-
-    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
-
-    if (isSingleMandatoryChoice(currentChoiceRequest)) {
-        const ok = await submitPlayerChoice(PendingChoiceId, [targetUid], SourceAbilityRuntimeId, false);
-        if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
-            endPlayerChoice(false);
-        }
-        return;
-    }
+    const key = String(targetUid);
+    if (!validTargetUids.has(key)) return;
+    if (!currentChoiceSelectedTargetIds.has(key) && !canSelectChoiceTarget(targetUid)) return;
 
     const { max } = getChoiceMinMax(currentChoiceRequest);
-    const key = String(targetUid);
+    const fixedChoiceCount = isFixedChoiceCount(currentChoiceRequest);
     if (currentChoiceSelectedTargetIds.has(key)) {
         currentChoiceSelectedTargetIds.delete(key);
     } else {
@@ -1210,6 +1511,17 @@ async function handleChoiceTargetClick(targetUid) {
     // Refresh highlights so selected targets remain visually consistent across zones.
     renderHighlights(gameState);
     updateChoiceOverlayUI();
+
+    if (!fixedChoiceCount || currentChoiceSelectedTargetIds.size !== max) {
+        return;
+    }
+
+    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
+    const chosenIds = Array.from(currentChoiceSelectedTargetIds);
+    const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
+    if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
+        endPlayerChoice(false);
+    }
 }
 
 // --- Module-level variable to store the latest known current player ID ---
@@ -1327,7 +1639,7 @@ function renderGame(currentGameState) { // Remove second parameter
         if (gameState.isSpectator) {
             spectatorToggleViewButtonEl.style.display = 'inline-block';
             spectatorToggleViewButtonEl.textContent = '切换视角';
-            spectatorToggleViewButtonEl.title = `切换视角（当前底部玩家：${gameState.localPlayerId || 'unknown'}）`;
+            spectatorToggleViewButtonEl.title = `Toggle perspective (bottom player: ${gameState.localPlayerId || 'unknown'})`;
         } else {
             spectatorToggleViewButtonEl.style.display = 'none';
         }
@@ -1368,7 +1680,7 @@ function renderGame(currentGameState) { // Remove second parameter
             localPlayer = nonAiPlayers[0];
             opponentPlayerState = aiPlayers[0];
         } else {
-            console.error(`[PVP] localPlayerId 未设置或不匹配，无法安全推断座位。`, {
+            console.error(`[PVP] localPlayerId missing or mismatch; cannot safely infer seat.`, {
                 localPlayerId: gameState.localPlayerId,
                 players: currentGameState.players.map(p => ({ id: p?.id, isAI: p?.isAI }))
             });
@@ -1517,15 +1829,7 @@ const CARD_CLASS_ALIAS_MAP = Object.freeze({
     haven: 'Havencraft',
     havencraft: 'Havencraft',
     portal: 'Portalcraft',
-    portalcraft: 'Portalcraft',
-    中立: 'Neutral',
-    精灵: 'Forestcraft',
-    皇家护卫: 'Swordcraft',
-    巫师: 'Runecraft',
-    龙族: 'Dragoncraft',
-    梦魇: 'Abysscraft',
-    主教: 'Havencraft',
-    复仇者: 'Portalcraft'
+    portalcraft: 'Portalcraft'
 });
 
 function normalizeCardClassKey(rawValue) {
@@ -1799,7 +2103,7 @@ function renderPlayerHand(handCards = [], handElement) {
     // else { handElement.classList.remove('full-hand'); }
 }
 
-// --- 渲染对方手牌（只显示牌背） ---
+// --- 渲染对方手牌（只显示牌背）---
 function renderOpponentHand(handCards = [], handElement) {
     if (!handElement) {
         // console.error("UI Error: Opponent hand element (player2HandEl) not provided.");
@@ -2163,7 +2467,7 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     const keywordBadgesHtml = buildKeywordBadgesHtml(cardInstance, context);
 
     cardDiv.innerHTML = `
-          <div class="card-art"></div> <!-- 卡面美术图占位 -->
+          <div class="card-art"></div> <!-- 鍗￠潰缇庢湳鍥惧崰浣?-->
           <div class="cost"><span>${costInfo.displayCost ?? '?'}</span></div>
           <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
           ${
@@ -2525,13 +2829,17 @@ function getAttackReadinessClass(cardInstance, context) {
         const actionState = getCardActionState(cardInstance, context);
         if (!actionState.showAct || actionState.usedThisTurn) return null;
 
-        const actAbilityEntries = Array.isArray(actionState.actAbilities) && actionState.actAbilities.length > 0
-            ? actionState.actAbilities
-            : [null];
-        const hasPlayableAct = actAbilityEntries.some(actAbility => {
-            const isPlayable = actAbility ? actAbility.isPlayable !== false : actionState.actPlayable !== false;
-            return isPlayable;
-        });
+        const cardUid = getCardUid(cardInstance);
+        const actCache = cardUid ? gameState.actPlayabilityCache?.[cardUid] : null;
+        if (!actCache) {
+            // Avoid optimistic glow before act playability data is available.
+            return null;
+        }
+
+        const actAbilityEntries = Array.isArray(actCache.abilities) ? actCache.abilities : [];
+        const hasPlayableAct = actAbilityEntries.length > 0
+            ? actAbilityEntries.some(actAbility => actAbility?.isPlayable !== false)
+            : (actCache.isPlayable !== false);
 
         return hasPlayableAct ? 'act-ready' : null;
     }
@@ -2774,7 +3082,7 @@ function buildBattlePreviewHtml(cardInstance) {
     const tribeText = tribeList
         .map(item => (item ?? '').toString().trim())
         .filter(Boolean)
-        .join('·');
+        .join('路');
     const rawCountdown = cardInstance.countdown
         ?? cardInstance.CurrentCountdown
         ?? cardInstance.currentCountdown
@@ -3009,1155 +3317,8 @@ export function showTurnStartBanner(currentPlayerId) {
 }
 
 // --- 渲染游戏日志的辅助函数 ---
-let isLogExpanded = true; // Default to expanded
-const LOG_RENDER_LIMIT = 200; // Keep in sync with GAME_LOG_LIMIT in gameManager.js
-const LOG_AUTO_SCROLL_THRESHOLD_PX = 12;
-const LOG_PANEL_VIEW_LOG = 'log';
-const LOG_PANEL_VIEW_CHAT = 'chat';
-const LOG_PANEL_CHAT_HISTORY_LIMIT = 200;
-const CHAT_BARRAGE_MAX_QUEUE = 30;
-const CHAT_BARRAGE_LANE_TOPS = [7, 35, 63, 91, 119];
-let logPanelActiveView = LOG_PANEL_VIEW_LOG;
-let logPanelChatDraft = '';
-let roomChatMessages = [];
-const roomChatMessageIdSet = new Set();
-const spectatorAliasBySenderKey = new Map();
-let chatSendStatus = '';
-let chatSendStatusTone = 'neutral';
-let isChatSending = false;
-const chatBarrageQueue = [];
-const chatBarrageActiveLanes = new Set();
+// log panel state and rendering moved to src/ui/logPanel.js
 
-function getLatestGameLogs(fallbackLogs) {
-    if (Array.isArray(gameState.gameLog)) {
-        return gameState.gameLog;
-    }
-    return Array.isArray(fallbackLogs) ? fallbackLogs : [];
-}
-
-function isActiveChatTab() {
-    return logPanelActiveView === LOG_PANEL_VIEW_CHAT;
-}
-
-function saveCurrentChatDraft() {
-    if (!isActiveChatTab()) return;
-    const input = document.getElementById('game-chat-input');
-    if (!input) return;
-    logPanelChatDraft = input.value || '';
-}
-
-function normalizeChatText(rawValue) {
-    return String(rawValue || '').replace(/\s+/g, ' ').trim();
-}
-
-function formatChatTimestamp(timestamp) {
-    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-    if (Number.isNaN(date.getTime())) {
-        return '--:--';
-    }
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${hours}:${minutes}`;
-}
-
-function setChatSendStatus(text, tone = 'neutral') {
-    chatSendStatus = String(text || '').trim();
-    chatSendStatusTone = tone === 'error' ? 'error' : (tone === 'success' ? 'success' : 'neutral');
-}
-
-function clearChatSendStatus() {
-    chatSendStatus = '';
-    chatSendStatusTone = 'neutral';
-}
-
-function getChatMessageClasses(message) {
-    const classes = ['chat-message-entry'];
-    if (message?.senderType === 'system') {
-        classes.push('is-system');
-    } else if (message?.senderType === 'spectator') {
-        classes.push('is-spectator');
-    } else if (message?.isSelf) {
-        classes.push('is-self');
-    } else {
-        classes.push('is-opponent');
-    }
-    return classes.join(' ');
-}
-
-function isGenericChatPlayerName(name) {
-    const value = String(name || '').trim();
-    if (!value) return true;
-    return /^玩家\s*\d*$/i.test(value)
-        || /^player\s*\d*$/i.test(value)
-        || /^opponent$/i.test(value)
-        || /^you$/i.test(value);
-}
-
-function resolveChatPlayerDisplayName(message) {
-    const senderId = String(message?.senderId || '').trim().toLowerCase();
-    if (senderId) {
-        const players = Array.isArray(gameState.players) ? gameState.players : [];
-        const matchedPlayer = players.find(player => String(player?.id || '').trim().toLowerCase() === senderId);
-        if (matchedPlayer) {
-            const localId = String(gameState.localPlayerId || '').trim().toLowerCase();
-            const isLocal = localId.length > 0 && senderId === localId;
-            const candidates = [
-                matchedPlayer?.displayName,
-                matchedPlayer?.DisplayName,
-                matchedPlayer?.name,
-                matchedPlayer?.Name,
-                matchedPlayer?.username,
-                matchedPlayer?.Username
-            ];
-            const explicit = candidates
-                .map(value => String(value || '').trim())
-                .find(value => value && !isGenericChatPlayerName(value));
-            if (explicit) return explicit;
-
-            if (isLocal) {
-                const session = getUserSession();
-                const sessionName = String(session?.displayName || '').trim();
-                if (sessionName) return sessionName;
-            }
-
-            const fallback = candidates
-                .map(value => String(value || '').trim())
-                .find(value => value);
-            if (fallback) return fallback;
-        }
-
-        const localId = String(gameState.localPlayerId || '').trim().toLowerCase();
-        if (localId.length > 0 && senderId === localId) {
-            const session = getUserSession();
-            const sessionName = String(session?.displayName || '').trim();
-            if (sessionName) return sessionName;
-        }
-    }
-    return '';
-}
-
-function resolveChatAuthorLabel(message) {
-    if (message?.senderType === 'system') return '系统';
-    if (message?.senderType === 'spectator') {
-        const explicitName = String(message?.senderName || '').trim();
-        if (explicitName && !/^观战者$/i.test(explicitName) && !/^spectator$/i.test(explicitName)) {
-            return explicitName;
-        }
-        if (message?.isSelf) {
-            const session = getUserSession();
-            const selfName = String(session?.displayName || '').trim();
-            if (selfName) return selfName;
-        }
-
-        const rawKey = String(message?.senderId || message?.senderName || message?.messageId || '').trim();
-        const key = rawKey || `spectator:${Math.random().toString(36).slice(2, 10)}`;
-        const existing = spectatorAliasBySenderKey.get(key);
-        if (existing) return existing;
-
-        const code = Math.random().toString(36).slice(2, 8).toUpperCase();
-        const alias = `游客${code}`;
-        spectatorAliasBySenderKey.set(key, alias);
-        return alias;
-    }
-
-    const rawName = String(message?.senderName || '').trim();
-    if (!isGenericChatPlayerName(rawName)) {
-        return rawName;
-    }
-
-    const resolvedName = resolveChatPlayerDisplayName(message);
-    if (resolvedName) {
-        return resolvedName;
-    }
-
-    return rawName || '玩家';
-}
-
-function resolveChatAvatarInfo(message, authorLabel) {
-    const fallbackText = String(authorLabel || '聊').trim().slice(0, 1).toUpperCase() || '聊';
-
-    if (message?.senderType === 'spectator') {
-        const spectatorAvatar = resolveAvatarImageSource(
-            message?.senderAvatarUrl
-            ?? message?.SenderAvatarUrl
-            ?? ''
-        );
-        if (spectatorAvatar) {
-            return { imageSrc: spectatorAvatar, fallbackText };
-        }
-        if (message?.isSelf) {
-            const session = getUserSession();
-            const sessionAvatar = resolveAvatarImageSource(session?.avatar);
-            if (sessionAvatar) {
-                return { imageSrc: sessionAvatar, fallbackText };
-            }
-        }
-        return { imageSrc: '', fallbackText };
-    }
-
-    if (message?.senderType !== 'player') {
-        return { imageSrc: '', fallbackText };
-    }
-
-    const senderId = String(message?.senderId || '').trim().toLowerCase();
-    if (!senderId) {
-        return { imageSrc: '', fallbackText };
-    }
-
-    const players = Array.isArray(gameState.players) ? gameState.players : [];
-    const matchedPlayer = players.find(player => String(player?.id || '').trim().toLowerCase() === senderId);
-    if (!matchedPlayer) {
-        const localId = String(gameState.localPlayerId || '').trim().toLowerCase();
-        if (senderId === localId) {
-            const session = getUserSession();
-            const localImage = resolveAvatarImageSource(session?.avatar);
-            if (localImage) {
-                return { imageSrc: localImage, fallbackText };
-            }
-        }
-        return { imageSrc: '', fallbackText };
-    }
-
-    const imageSrc = resolveAvatarImageSource(
-        matchedPlayer?.avatarUrl
-        ?? matchedPlayer?.AvatarUrl
-        ?? matchedPlayer?.avatar
-        ?? matchedPlayer?.Avatar
-    );
-    return { imageSrc, fallbackText };
-}
-
-function resolveChatPlayerOrderBadge(message) {
-    if (message?.senderType !== 'player') {
-        return null;
-    }
-
-    const senderId = String(message?.senderId || '').trim().toLowerCase();
-    const players = Array.isArray(gameState.players) ? gameState.players : [];
-    let matchedPlayer = null;
-
-    if (senderId) {
-        matchedPlayer = players.find(player => String(player?.id || '').trim().toLowerCase() === senderId) || null;
-    }
-
-    if (!matchedPlayer && message?.isSelf) {
-        const localId = String(gameState.localPlayerId || '').trim().toLowerCase();
-        if (localId) {
-            matchedPlayer = players.find(player => String(player?.id || '').trim().toLowerCase() === localId) || null;
-        }
-    }
-
-    if (!matchedPlayer) {
-        return null;
-    }
-
-    return resolvePlayerOrderBadge(matchedPlayer);
-}
-
-function syncLogPanelChatToggleState(logContainer) {
-    if (!logContainer) return;
-    const logToggleBtn = logContainer.querySelector('#game-log-toggle');
-    const chatToggleBtn = logContainer.querySelector('#game-chat-toggle');
-    if (logToggleBtn) {
-        logToggleBtn.classList.toggle('is-active', logPanelActiveView === LOG_PANEL_VIEW_LOG);
-    }
-    if (chatToggleBtn) {
-        chatToggleBtn.classList.toggle('is-active', logPanelActiveView === LOG_PANEL_VIEW_CHAT);
-    }
-}
-
-function bindLogPanelToggleHandlers(logContainer, fallbackLogs) {
-    if (!logContainer) return;
-    const logToggleBtn = logContainer.querySelector('#game-log-toggle');
-    const chatToggleBtn = logContainer.querySelector('#game-chat-toggle');
-
-    if (logToggleBtn) {
-        logToggleBtn.onclick = () => {
-            saveCurrentChatDraft();
-            if (logPanelActiveView === LOG_PANEL_VIEW_LOG) {
-                isLogExpanded = !isLogExpanded;
-            } else {
-                logPanelActiveView = LOG_PANEL_VIEW_LOG;
-                isLogExpanded = true;
-            }
-            renderGameLog(getLatestGameLogs(fallbackLogs));
-        };
-    }
-
-    if (chatToggleBtn) {
-        chatToggleBtn.onclick = () => {
-            saveCurrentChatDraft();
-            if (logPanelActiveView === LOG_PANEL_VIEW_CHAT && isLogExpanded) {
-                isLogExpanded = false;
-            } else {
-                logPanelActiveView = LOG_PANEL_VIEW_CHAT;
-                isLogExpanded = true;
-            }
-            renderGameLog(getLatestGameLogs(fallbackLogs));
-        };
-    }
-}
-
-function ensureChatPanelStructure(chatContent) {
-    if (!chatContent) {
-        return null;
-    }
-
-    let messageList = chatContent.querySelector('.chat-message-list');
-    if (!messageList) {
-        messageList = document.createElement('div');
-        messageList.className = 'chat-message-list';
-        chatContent.appendChild(messageList);
-    }
-
-    let status = chatContent.querySelector('.chat-send-status');
-    if (!status) {
-        status = document.createElement('div');
-        status.className = 'chat-send-status';
-        chatContent.appendChild(status);
-    }
-
-    let form = chatContent.querySelector('.chat-input-form');
-    let input = chatContent.querySelector('#game-chat-input');
-    let sendButton = chatContent.querySelector('.chat-send-btn');
-    if (!form || !input) {
-        form = document.createElement('form');
-        form.className = 'chat-input-form';
-
-        input = document.createElement('input');
-        input.id = 'game-chat-input';
-        input.className = 'chat-input';
-        input.type = 'text';
-        input.maxLength = 200;
-        input.placeholder = '输入聊天消息';
-        input.autocomplete = 'off';
-        input.addEventListener('input', () => {
-            if (!isActiveChatTab()) return;
-            logPanelChatDraft = input.value || '';
-            if (chatSendStatusTone === 'error') {
-                clearChatSendStatus();
-                renderGameLog(getLatestGameLogs());
-            }
-        });
-
-        sendButton = document.createElement('button');
-        sendButton.type = 'submit';
-        sendButton.className = 'chat-send-btn';
-        sendButton.textContent = '发送';
-
-        form.addEventListener('submit', async event => {
-            event.preventDefault();
-            if (!isActiveChatTab()) return;
-            const normalized = normalizeChatText(input.value);
-            if (!normalized) {
-                setChatSendStatus('消息不能为空。', 'error');
-                renderGameLog(getLatestGameLogs());
-                return;
-            }
-
-            logPanelChatDraft = normalized;
-            setChatSendStatus('发送中...', 'neutral');
-            isChatSending = true;
-            sendButton.disabled = true;
-            renderGameLog(getLatestGameLogs());
-
-            const result = await sendChatMessage(normalized);
-            if (!result?.ok) {
-                setChatSendStatus(result?.error || '发送失败，请稍后重试。', 'error');
-                isChatSending = false;
-                sendButton.disabled = false;
-                renderGameLog(getLatestGameLogs());
-                return;
-            }
-
-            logPanelChatDraft = '';
-            setChatSendStatus('已发送', 'success');
-            isChatSending = false;
-            sendButton.disabled = false;
-            renderGameLog(getLatestGameLogs());
-            window.setTimeout(() => {
-                if (chatSendStatusTone === 'success') {
-                    clearChatSendStatus();
-                    renderGameLog(getLatestGameLogs());
-                }
-            }, 1400);
-        });
-
-        form.appendChild(input);
-        form.appendChild(sendButton);
-        chatContent.appendChild(form);
-    }
-
-    return { messageList, status, input, sendButton };
-}
-
-function renderActiveChatPanel(chatContent) {
-    const structure = ensureChatPanelStructure(chatContent);
-    if (!structure) return;
-    bindTopShadowMask(structure.messageList, chatContent);
-
-    if (!isActiveChatTab()) {
-        structure.messageList.innerHTML = '';
-        structure.messageList.scrollTop = 0;
-        structure.status.textContent = '';
-        structure.input.value = '';
-        syncTopShadowMask(structure.messageList, chatContent);
-        return;
-    }
-
-    structure.input.value = logPanelChatDraft;
-    structure.status.textContent = chatSendStatus || '';
-    structure.status.dataset.tone = chatSendStatusTone;
-    if (structure.sendButton) {
-        structure.sendButton.disabled = isChatSending;
-    }
-
-    const previousScrollTop = structure.messageList.scrollTop;
-    const wasNearBottom = isLogNearBottom(structure.messageList);
-    const history = roomChatMessages;
-
-    structure.messageList.innerHTML = '';
-    if (history.length > 0) {
-        history.forEach(message => {
-            const row = document.createElement('div');
-            row.className = getChatMessageClasses(message);
-
-            const authorLabel = resolveChatAuthorLabel(message);
-            const avatarInfo = resolveChatAvatarInfo(message, authorLabel);
-
-            const meta = document.createElement('div');
-            meta.className = 'chat-message-meta';
-
-            const avatar = document.createElement('span');
-            avatar.className = 'chat-message-avatar';
-            if (avatarInfo.imageSrc) {
-                const image = document.createElement('img');
-                image.className = 'chat-message-avatar-img';
-                image.src = avatarInfo.imageSrc;
-                image.alt = `${authorLabel} avatar`;
-                image.onerror = () => {
-                    avatar.classList.remove('has-image');
-                    avatar.textContent = avatarInfo.fallbackText;
-                };
-                avatar.appendChild(image);
-                avatar.classList.add('has-image');
-            } else {
-                avatar.textContent = avatarInfo.fallbackText;
-            }
-
-            const author = document.createElement('span');
-            author.className = 'chat-message-author';
-            author.textContent = authorLabel;
-
-            const orderBadge = resolveChatPlayerOrderBadge(message);
-            let orderBadgeEl = null;
-            if (orderBadge) {
-                orderBadgeEl = document.createElement('span');
-                orderBadgeEl.className = `player-order-badge chat-message-order-badge ${orderBadge.className}`;
-                orderBadgeEl.textContent = orderBadge.text;
-            }
-
-            const time = document.createElement('span');
-            time.className = 'chat-message-time';
-            time.textContent = formatChatTimestamp(message.sentAtUtc || Date.now());
-
-            const text = document.createElement('div');
-            text.className = 'chat-message-text';
-            text.textContent = message.content || '';
-
-            meta.appendChild(avatar);
-            meta.appendChild(author);
-            if (orderBadgeEl) {
-                meta.appendChild(orderBadgeEl);
-            }
-            meta.appendChild(time);
-            row.appendChild(meta);
-            row.appendChild(text);
-            structure.messageList.appendChild(row);
-        });
-    }
-
-    if (wasNearBottom) {
-        structure.messageList.scrollTop = structure.messageList.scrollHeight;
-    } else {
-        const maxScrollTop = Math.max(0, structure.messageList.scrollHeight - structure.messageList.clientHeight);
-        structure.messageList.scrollTop = Math.min(previousScrollTop, maxScrollTop);
-    }
-    syncTopShadowMask(structure.messageList, chatContent);
-}
-
-function syncLogPanelView(logContent, chatContent) {
-    if (!logContent || !chatContent) return;
-    const showChat = isActiveChatTab();
-    logContent.classList.toggle('is-active', !showChat);
-    chatContent.classList.toggle('is-active', showChat);
-}
-
-function normalizeInMatchChatMessage(message) {
-    if (!message || typeof message !== 'object') return null;
-    const content = String(message.content || '').trim();
-    if (!content) return null;
-
-    const senderTypeRaw = String(message.senderType || '').trim().toLowerCase();
-    const senderType = senderTypeRaw === 'spectator'
-        ? 'spectator'
-        : senderTypeRaw === 'system'
-            ? 'system'
-            : 'player';
-
-    return {
-        messageId: String(message.messageId || '').trim(),
-        senderType,
-        senderId: String(message.senderId || '').trim(),
-        senderName: String(message.senderName || '').trim(),
-        senderAvatarUrl: String(message.senderAvatarUrl || message.SenderAvatarUrl || '').trim(),
-        content,
-        sentAtUtc: String(message.sentAtUtc || '').trim(),
-        clientMessageId: String(message.clientMessageId || '').trim(),
-        isSelf: Boolean(message.isSelf)
-    };
-}
-
-function pushRoomChatMessage(message) {
-    const normalized = normalizeInMatchChatMessage(message);
-    if (!normalized) return false;
-
-    if (normalized.messageId && roomChatMessageIdSet.has(normalized.messageId)) {
-        return false;
-    }
-
-    roomChatMessages.push(normalized);
-    if (normalized.messageId) {
-        roomChatMessageIdSet.add(normalized.messageId);
-    }
-    if (roomChatMessages.length > LOG_PANEL_CHAT_HISTORY_LIMIT) {
-        const overflow = roomChatMessages.length - LOG_PANEL_CHAT_HISTORY_LIMIT;
-        const removed = roomChatMessages.splice(0, overflow);
-        removed.forEach(item => {
-            if (item?.messageId) {
-                roomChatMessageIdSet.delete(item.messageId);
-            }
-        });
-    }
-
-    return true;
-}
-
-function ensureChatBarrageRoot() {
-    let root = document.getElementById('chat-barrage-root');
-    if (root) return root;
-
-    root = document.createElement('div');
-    root.id = 'chat-barrage-root';
-    root.className = 'chat-barrage-root';
-    const host = gameContainerEl || document.getElementById('game-container') || document.body;
-    host.appendChild(root);
-    return root;
-}
-
-function clearChatBarrageUi() {
-    chatBarrageQueue.splice(0, chatBarrageQueue.length);
-    chatBarrageActiveLanes.clear();
-    const root = document.getElementById('chat-barrage-root');
-    if (root) {
-        root.remove();
-    }
-}
-
-function enqueueChatBarrage(message) {
-    if (!message || !isGamePageActive()) return;
-    if (chatBarrageQueue.length >= CHAT_BARRAGE_MAX_QUEUE) {
-        chatBarrageQueue.shift();
-    }
-    chatBarrageQueue.push(message);
-    dispatchChatBarrages();
-}
-
-function pickChatBarrageLane() {
-    const freeLanes = CHAT_BARRAGE_LANE_TOPS
-        .map((_, index) => index)
-        .filter(index => !chatBarrageActiveLanes.has(index));
-    const lanePool = freeLanes.length > 0
-        ? freeLanes
-        : CHAT_BARRAGE_LANE_TOPS.map((_, index) => index);
-    return lanePool[Math.floor(Math.random() * lanePool.length)];
-}
-
-function dispatchChatBarrages() {
-    if (!isGamePageActive()) {
-        clearChatBarrageUi();
-        return;
-    }
-
-    while (
-        chatBarrageQueue.length > 0
-        && chatBarrageActiveLanes.size < CHAT_BARRAGE_LANE_TOPS.length
-    ) {
-        const message = chatBarrageQueue.shift();
-        const laneIndex = pickChatBarrageLane();
-        chatBarrageActiveLanes.add(laneIndex);
-        void playSingleChatBarrage(message, laneIndex).finally(() => {
-            chatBarrageActiveLanes.delete(laneIndex);
-            if (!isGamePageActive()) {
-                clearChatBarrageUi();
-                return;
-            }
-            dispatchChatBarrages();
-        });
-    }
-}
-
-function playSingleChatBarrage(message, laneIndex = 0) {
-    return new Promise(resolve => {
-        if (!message || !isGamePageActive()) {
-            resolve();
-            return;
-        }
-
-        const root = ensureChatBarrageRoot();
-        const item = document.createElement('div');
-        item.className = 'chat-barrage-item';
-        const author = resolveChatAuthorLabel(message);
-        const avatarInfo = resolveChatAvatarInfo(message, author);
-
-        const avatar = document.createElement('span');
-        avatar.className = 'chat-barrage-avatar';
-        if (avatarInfo.imageSrc) {
-            const image = document.createElement('img');
-            image.className = 'chat-barrage-avatar-img';
-            image.src = avatarInfo.imageSrc;
-            image.alt = `${author} avatar`;
-            image.onerror = () => {
-                avatar.classList.remove('has-image');
-                avatar.textContent = avatarInfo.fallbackText;
-            };
-            avatar.appendChild(image);
-            avatar.classList.add('has-image');
-        } else {
-            avatar.textContent = avatarInfo.fallbackText;
-        }
-
-        const text = document.createElement('span');
-        text.className = 'chat-barrage-text';
-        text.textContent = message.content || '';
-
-        item.appendChild(avatar);
-        item.appendChild(text);
-        const laneTop = CHAT_BARRAGE_LANE_TOPS[Math.max(0, Math.min(laneIndex, CHAT_BARRAGE_LANE_TOPS.length - 1))] ?? 0;
-        item.style.top = `${laneTop}px`;
-        root.appendChild(item);
-
-        const rootWidth = Math.max(root.clientWidth, window.innerWidth - 32);
-        const itemWidth = Math.max(item.offsetWidth, 120);
-        const startX = rootWidth + 16;
-        const endX = -(itemWidth + 16);
-        const distance = Math.max(1, Math.abs(endX - startX));
-        const durationMs = Math.min(7000, Math.max(2800, Math.round((distance / 180) * 1000)));
-
-        item.style.transform = `translateX(${startX}px)`;
-        item.style.opacity = '0.96';
-
-        const cleanup = () => {
-            if (item.isConnected) {
-                item.remove();
-            }
-            if (root.childElementCount === 0) {
-                root.remove();
-            }
-            resolve();
-        };
-
-        const timeoutId = window.setTimeout(cleanup, durationMs + 420);
-        item.addEventListener('transitionend', event => {
-            if (event.propertyName !== 'transform') return;
-            window.clearTimeout(timeoutId);
-            cleanup();
-        }, { once: true });
-
-        requestAnimationFrame(() => {
-            item.style.transition = `transform ${durationMs}ms linear, opacity 180ms ease`;
-            item.style.transform = `translateX(${endX}px)`;
-        });
-    });
-}
-
-export function replaceInMatchChatHistory(messages) {
-    roomChatMessages = [];
-    roomChatMessageIdSet.clear();
-    const list = Array.isArray(messages) ? messages : [];
-    list.forEach(message => {
-        pushRoomChatMessage(message);
-    });
-
-    if (isActiveChatTab()) {
-        renderGameLog(getLatestGameLogs());
-    }
-}
-
-export function appendInMatchChatMessage(message, playBarrage = false) {
-    const appended = pushRoomChatMessage(message);
-    if (!appended) return;
-
-    if (isActiveChatTab()) {
-        renderGameLog(getLatestGameLogs());
-    }
-
-    if (playBarrage) {
-        enqueueChatBarrage(message);
-    }
-}
-
-export function clearInMatchChatUiState() {
-    roomChatMessages = [];
-    roomChatMessageIdSet.clear();
-    spectatorAliasBySenderKey.clear();
-    logPanelActiveView = LOG_PANEL_VIEW_LOG;
-    logPanelChatDraft = '';
-    clearChatSendStatus();
-    isChatSending = false;
-    clearChatBarrageUi();
-    const chatContainer = document.getElementById('game-chat-content');
-    if (chatContainer) {
-        chatContainer.innerHTML = '';
-    }
-}
-
-function syncTopShadowMask(scrollContainer, maskTarget = scrollContainer) {
-    if (!scrollContainer || !maskTarget) return;
-    const hasOverflow = (scrollContainer.scrollHeight - scrollContainer.clientHeight) > 1;
-    const canScrollUp = hasOverflow && scrollContainer.scrollTop > 0;
-    maskTarget.classList.toggle('has-scroll-up', canScrollUp);
-}
-
-function bindTopShadowMask(scrollContainer, maskTarget = scrollContainer) {
-    if (!scrollContainer || !maskTarget) return;
-    if (scrollContainer.dataset.topMaskBound === '1') {
-        syncTopShadowMask(scrollContainer, maskTarget);
-        return;
-    }
-
-    scrollContainer.dataset.topMaskBound = '1';
-    scrollContainer.addEventListener('scroll', () => {
-        syncTopShadowMask(scrollContainer, maskTarget);
-    }, { passive: true });
-    syncTopShadowMask(scrollContainer, maskTarget);
-}
-
-function isLogNearBottom(container) {
-    if (!container) return true;
-    const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
-    return remaining < LOG_AUTO_SCROLL_THRESHOLD_PX;
-}
-
-function parseLogTokens(text) {
-    const segments = [];
-    const pattern = /\[\[(.+?)\]\]/g;
-    let lastIndex = 0;
-    let match = pattern.exec(text);
-
-    while (match) {
-        if (match.index > lastIndex) {
-            segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
-        }
-        segments.push({ type: 'token', value: match[1] });
-        lastIndex = pattern.lastIndex;
-        match = pattern.exec(text);
-    }
-
-    if (lastIndex < text.length) {
-        segments.push({ type: 'text', value: text.slice(lastIndex) });
-    }
-
-    return segments;
-}
-
-function getPlayerLabel(playerId) {
-    if (!playerId || playerId === 'unknown') return '玩家';
-    if (gameState.localPlayerId) {
-        return playerId === gameState.localPlayerId ? '我方' : '敌方';
-    }
-
-    const players = Array.isArray(gameState.players) ? gameState.players : [];
-    const index = players.findIndex(p => p && p.id === playerId);
-    if (index === 0) return '玩家1';
-    if (index === 1) return '玩家2';
-    return '玩家';
-}
-
-function getSideClass(ownerId) {
-    if (!gameState.localPlayerId || !ownerId || ownerId === 'unknown') return '';
-    return ownerId === gameState.localPlayerId ? 'log-token-friendly' : 'log-token-enemy';
-}
-
-function findCardInstanceForLog(uid) {
-    if (!uid) return null;
-    const primary = findCardInstanceByUid(uid);
-    if (primary) return primary;
-
-    const players = Array.isArray(gameState.players) ? gameState.players : [];
-    const zones = ['graveyard', 'deck', 'extra', 'emblem'];
-    for (const player of players) {
-        if (!player) continue;
-        for (const zone of zones) {
-            const list = player[zone];
-            if (!Array.isArray(list)) continue;
-            const match = list.find(card => card && (card.uid === uid || card.InstanceId === uid || card.instanceId === uid));
-            if (match) return match;
-        }
-    }
-    return null;
-}
-
-function getCardUidForLog(card) {
-    if (!card || typeof card !== 'object') return '';
-    return String(card.uid || card.InstanceId || card.instanceId || '').trim();
-}
-
-function normalizeLogName(value) {
-    return String(value || '')
-        .replace(/\[\[|\]\]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function formatCardTokenText(value) {
-    return normalizeLogName(value);
-}
-
-function isWhitespaceChar(value) {
-    return /\s/.test(value);
-}
-
-function isPunctuationChar(value) {
-    return /[，。！？、：；…）)]/.test(value);
-}
-
-function shouldInsertLeadingSpace(prevChar) {
-    if (!prevChar) return false;
-    if (isWhitespaceChar(prevChar)) return false;
-    return true;
-}
-
-function shouldInsertTrailingSpace(nextChar, nextIsToken) {
-    if (nextIsToken) return true;
-    if (!nextChar) return false;
-    if (isWhitespaceChar(nextChar)) return false;
-    if (isPunctuationChar(nextChar)) return false;
-    return true;
-}
-
-function parseCardToken(rawToken) {
-    const text = String(rawToken || '').trim();
-    if (!text) return { id: '', name: '', ownerId: '' };
-
-    const parts = text.split('|').map(part => part.trim()).filter(Boolean);
-    const id = parts.shift() || '';
-    let name = '';
-    let ownerId = '';
-
-    for (const part of parts) {
-        const idx = part.indexOf(':');
-        if (idx > 0) {
-            const key = part.slice(0, idx).trim().toLowerCase();
-            const value = part.slice(idx + 1).trim();
-            if (key === 'name') {
-                name = value;
-                continue;
-            }
-            if (key === 'owner') {
-                ownerId = value;
-                continue;
-            }
-        }
-        if (!name) {
-            name = part;
-        }
-    }
-
-    return { id, name, ownerId };
-}
-
-function shouldRevealLogCard(fallbackName) {
-    return Boolean(fallbackName);
-}
-
-function resolveCardToken(rawToken) {
-    const { id, name, ownerId } = parseCardToken(rawToken);
-    const card = findCardInstanceForLog(id);
-    if (!card) {
-        const fallbackName = normalizeLogName(name);
-        if (shouldRevealLogCard(fallbackName)) {
-            const sideClass = getSideClass(ownerId);
-            return {
-                text: formatCardTokenText(fallbackName),
-                className: `log-token log-token-card ${sideClass}`.trim(),
-                tokenType: 'card',
-                cardUid: id,
-                isClickable: Boolean(id)
-            };
-        }
-        return {
-            text: formatCardTokenText('未知卡牌'),
-            className: 'log-token log-token-card is-unknown',
-            tokenType: 'card',
-            cardUid: id,
-            isClickable: Boolean(id)
-        };
-    }
-
-    const sideClass = getSideClass(card.ownerId);
-    const cardUid = getCardUidForLog(card) || id;
-    if (card.type === 'Leader') {
-        const side = getPlayerLabel(card.ownerId);
-        return {
-            text: formatCardTokenText(`${side}主战者`),
-            className: `log-token log-token-card log-token-leader ${sideClass}`.trim(),
-            tokenType: 'card',
-            cardUid,
-            isClickable: Boolean(cardUid)
-        };
-    }
-
-    const resolvedName = normalizeLogName(card.name || card.Name || '未知卡牌');
-    return {
-        text: formatCardTokenText(resolvedName),
-        className: `log-token log-token-card ${sideClass}`.trim(),
-        tokenType: 'card',
-        cardUid,
-        isClickable: Boolean(cardUid)
-    };
-}
-
-function resolveLogToken(rawToken) {
-    const token = String(rawToken || '').trim();
-    if (token.startsWith('card:')) {
-        return resolveCardToken(token.slice(5));
-    }
-    if (token.startsWith('cardname:')) {
-        const name = normalizeLogName(token.slice(9)) || '未知卡牌';
-        return { text: formatCardTokenText(name), className: 'log-token log-token-card' };
-    }
-    if (token.startsWith('player:')) {
-        const playerId = token.slice(7).trim();
-        const label = getPlayerLabel(playerId);
-        return { text: label, className: `log-token log-token-player ${getSideClass(playerId)}`.trim() };
-    }
-    if (token.startsWith('num:')) {
-        const value = token.slice(4).trim();
-        return { text: value, className: 'log-token log-token-number' };
-    }
-    if (token.startsWith('text:')) {
-        const value = token.slice(5).trim();
-        return { text: value, className: 'log-token' };
-    }
-
-    return { text: token, className: 'log-token' };
-}
-
-export function renderGameLog(logs) {
-    let logContainer = document.getElementById('game-log-container');
-    let logContent = document.getElementById('game-log-content');
-    let chatContent = document.getElementById('game-chat-content');
-
-    // Create container structure if it doesn't exist
-    if (!logContainer) {
-        logContainer = document.createElement('div');
-        logContainer.id = 'game-log-container';
-        logContainer.className = isLogExpanded ? 'expanded' : 'collapsed'; // Set initial state
-
-        // Create Header Container
-        const header = document.createElement('div');
-        header.className = 'log-header';
-
-        // Create Log Toggle Button (keep existing style/behavior semantics)
-        const toggleBtn = document.createElement('button');
-        toggleBtn.id = 'game-log-toggle';
-        toggleBtn.className = 'log-toggle-btn';
-        toggleBtn.title = 'Toggle Log';
-        toggleBtn.setAttribute('aria-label', '战斗日志');
-        toggleBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
-                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-            </svg>
-        `;
-
-        // Create left title group
-        const headerMarker = document.createElement('span');
-        headerMarker.className = 'log-header-marker';
-        headerMarker.setAttribute('aria-hidden', 'true');
-
-        const titleGroup = document.createElement('div');
-        titleGroup.className = 'log-title-group';
-
-        const titleMain = document.createElement('span');
-        titleMain.className = 'log-title-main';
-        titleMain.textContent = '战斗记录';
-
-        const titleSub = document.createElement('span');
-        titleSub.className = 'log-title-sub';
-        titleSub.textContent = 'BATTLE TIMELINE';
-
-        titleGroup.appendChild(titleMain);
-        titleGroup.appendChild(titleSub);
-
-        header.appendChild(headerMarker);
-        header.appendChild(titleGroup);
-
-        // Create Chat Toggle Button (new, below original game-log-toggle)
-        const chatToggleBtn = document.createElement('button');
-        chatToggleBtn.id = 'game-chat-toggle';
-        chatToggleBtn.className = 'log-chat-toggle-btn';
-        chatToggleBtn.title = '聊天日志';
-        chatToggleBtn.setAttribute('aria-label', '聊天日志');
-        chatToggleBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
-                <path d="M4 4h16v11H7l-3 3V4zm2 2v7.17L6.17 13H18V6H6z"/>
-            </svg>
-        `;
-
-        header.appendChild(chatToggleBtn);
-        header.appendChild(toggleBtn);
-
-        const panelContent = document.createElement('div');
-        panelContent.id = 'game-log-panel-content';
-        panelContent.className = 'log-panel-content';
-
-        logContent = document.createElement('div');
-        logContent.id = 'game-log-content';
-        logContent.className = 'log-panel-view is-active';
-
-        chatContent = document.createElement('div');
-        chatContent.id = 'game-chat-content';
-        chatContent.className = 'log-panel-view';
-
-        logContainer.appendChild(header);
-        panelContent.appendChild(logContent);
-        panelContent.appendChild(chatContent);
-        logContainer.appendChild(panelContent);
-
-        // Append to game-container
-        const gameContainer = document.getElementById('game-container');
-        if (gameContainer) {
-            gameContainer.appendChild(logContainer);
-        } else {
-            document.body.appendChild(logContainer); // Fallback
-        }
-    } else {
-        // Ensure content element exists if container was found but might be malformed (legacy support)
-        const header = document.querySelector('#game-log-container .log-header');
-        const logToggle = document.getElementById('game-log-toggle');
-        const chatToggle = document.getElementById('game-chat-toggle');
-        logContent = document.getElementById('game-log-content');
-        chatContent = document.getElementById('game-chat-content');
-        if (!header || !logToggle || !chatToggle || !logContent || !chatContent) {
-            logContainer.remove(); // Reset malformed legacy structure
-            renderGameLog(logs);
-            return;
-        }
-        const legacyToggleStack = document.getElementById('game-log-toggle-stack');
-        if (legacyToggleStack) {
-            logContainer.remove(); // Reset legacy stacked toggle structure
-            renderGameLog(logs);
-            return;
-        }
-        // Sync class with state
-        logContainer.className = isLogExpanded ? 'expanded' : 'collapsed';
-    }
-
-    bindLogPanelToggleHandlers(logContainer, logs);
-    syncLogPanelChatToggleState(logContainer);
-    syncLogPanelView(logContent, chatContent);
-    bindTopShadowMask(logContent, logContent);
-    const titleMain = logContainer.querySelector('.log-title-main');
-    const titleSub = logContainer.querySelector('.log-title-sub');
-    if (titleMain) {
-        titleMain.textContent = isActiveChatTab() ? '聊天记录' : '战斗记录';
-    }
-    if (titleSub) {
-        titleSub.textContent = isActiveChatTab() ? 'MATCH CHAT' : 'BATTLE TIMELINE';
-    }
-    if (isActiveChatTab()) {
-        renderActiveChatPanel(chatContent);
-    }
-
-    const previousScrollTop = logContent?.scrollTop ?? 0;
-    const wasNearBottom = isLogExpanded ? isLogNearBottom(logContent) : true;
-
-    // Update Logs Content
-    if (!logs || !Array.isArray(logs)) {
-        syncTopShadowMask(logContent, logContent);
-        return;
-    }
-
-    // Clear existing logs in content wrapper
-    logContent.innerHTML = '';
-
-    // Render recent logs with a safe cap
-    const recentLogs = logs.slice(-LOG_RENDER_LIMIT);
-
-    recentLogs.forEach(log => {
-        const logEntry = document.createElement('div');
-        logEntry.className = 'log-entry';
-        const rawText = String(log ?? '');
-        const segments = parseLogTokens(rawText);
-        let lastChar = '';
-        segments.forEach((segment, index) => {
-            if (segment.type === 'text') {
-                if (segment.value) {
-                    logEntry.appendChild(document.createTextNode(segment.value));
-                    lastChar = segment.value.slice(-1);
-                }
-                return;
-            }
-
-            const resolved = resolveLogToken(segment.value);
-            const isSpacedToken = resolved.className.includes('log-token-card')
-                || resolved.className.includes('log-token-player')
-                || resolved.className.includes('log-token-number');
-            const nextSegment = segments[index + 1] || null;
-            const nextIsToken = nextSegment?.type === 'token';
-            const nextChar = nextSegment?.type === 'text' && nextSegment.value
-                ? nextSegment.value[0]
-                : '';
-            if (isSpacedToken && shouldInsertLeadingSpace(lastChar)) {
-                logEntry.appendChild(document.createTextNode(' '));
-                lastChar = ' ';
-            }
-            const span = document.createElement('span');
-            span.className = resolved.className;
-            span.textContent = resolved.text;
-            if (resolved.tokenType === 'card' && resolved.isClickable && resolved.cardUid) {
-                span.dataset.logCardUid = resolved.cardUid;
-                span.classList.add('log-token-clickable');
-                span.title = '点击查看卡牌详情';
-            }
-            logEntry.appendChild(span);
-            if (resolved.text) {
-                lastChar = resolved.text.slice(-1);
-            }
-            if (isSpacedToken && shouldInsertTrailingSpace(nextChar, nextIsToken)) {
-                logEntry.appendChild(document.createTextNode(' '));
-                lastChar = ' ';
-            }
-        });
-        logContent.appendChild(logEntry);
-    });
-
-    // Auto-scroll only if user is already near bottom
-    if (isLogExpanded && !isActiveChatTab()) {
-        if (wasNearBottom) {
-            logContent.scrollTop = logContent.scrollHeight;
-        } else {
-            const maxScrollTop = Math.max(0, logContent.scrollHeight - logContent.clientHeight);
-            logContent.scrollTop = Math.min(previousScrollTop, maxScrollTop);
-        }
-    }
-    syncTopShadowMask(logContent, logContent);
-}
-
-
-// --- 处理高亮 (可交互状态) 的辅助函数 ---
-// --- 处理高亮 (可交互状态) 的辅助函数 --- // Keeping the comment from original line 411
 function renderHighlights(currentGameState) {
     clearSelectionHighlights();
     syncHandUseButtons();
@@ -4166,18 +3327,108 @@ function renderHighlights(currentGameState) {
         renderAbilityTargetHighlights(currentGameState);
     } else {
         renderPlayableCardHighlights(currentGameState);
+        renderFieldReadinessHighlights(currentGameState);
         renderAttackHighlights(currentGameState);
     }
+}
+
+function renderFieldReadinessHighlights(currentGameState) {
+    const players = Array.isArray(currentGameState?.players) ? currentGameState.players : [];
+    players.forEach(player => {
+        const fieldCards = Array.isArray(player?.field) ? player.field : [];
+        fieldCards.forEach(cardInstance => {
+            const cardUid = getCardUid(cardInstance);
+            if (!cardUid) return;
+            const cardElement = document.querySelector(`.field-card[data-uid="${cardUid}"]`);
+            if (!cardElement) return;
+            applyAttackReadinessClasses(cardElement, cardInstance, 'field');
+        });
+    });
 }
 
 // --- Highlight Helper Functions ---
 
 // Helper 1: Clear All Highlight Classes
 function clearSelectionHighlights() {
-    const highlightClasses = ['playable', 'selected-attacker', 'targetable', 'targetable-restricted', 'targeting-active', 'targeting-spell', 'targetable-spell', 'choice-selected'];
+    const highlightClasses = [
+        'playable',
+        'requires-target',
+        'no-valid-targets',
+        'can-play-without-target',
+        'attack-ready-follower',
+        'attack-ready-all',
+        'act-ready',
+        'selected-attacker',
+        'targetable',
+        'targetable-restricted',
+        'targeting-active',
+        'targeting-spell',
+        'targetable-spell',
+        'choice-selected',
+        'choice-hand-hover',
+        'attack-drag-hover'
+    ];
     gameContainerEl?.classList.remove('targeting-active'); // Remove global targeting class
     document.querySelectorAll('.' + highlightClasses.join(', .'))
         .forEach(el => el.classList.remove(...highlightClasses));
+}
+
+function applyChoiceHandHoverEffect(validTargetIds) {
+    if (!Array.isArray(validTargetIds) || validTargetIds.length === 0) {
+        return;
+    }
+
+    const targetIdSet = new Set(validTargetIds.map(id => String(id)));
+    const handOwnerIds = new Set();
+
+    validTargetIds.forEach(targetUid => {
+        const card = findCardInstanceByUid(targetUid);
+        if (!card) return;
+        if (resolveCardContext(card) !== 'hand') return;
+
+        const ownerId = getChoiceCardOwnerId(card);
+        if (ownerId) {
+            handOwnerIds.add(String(ownerId));
+        }
+    });
+
+    const selectableCardInstances = Array.isArray(currentChoiceRequest?.SelectableCardInstances)
+        ? currentChoiceRequest.SelectableCardInstances
+        : [];
+    selectableCardInstances.forEach(dto => {
+        const uid = dto?.InstanceId ?? dto?.instanceId;
+        if (!uid || !targetIdSet.has(String(uid))) return;
+        const zone = String(dto?.Zone ?? dto?.zone ?? '').toLowerCase();
+        if (zone !== 'hand') return;
+        const ownerId = dto?.OwnerPlayerId ?? dto?.ownerId;
+        if (ownerId) {
+            handOwnerIds.add(String(ownerId));
+        }
+    });
+
+    if (handOwnerIds.size === 0) {
+        return;
+    }
+
+    const localPlayerId = String(gameState.localPlayerId ?? '');
+    const applyHoverClass = handRoot => {
+        handRoot?.querySelectorAll?.('.card')?.forEach?.(cardEl => cardEl.classList.add('choice-hand-hover'));
+    };
+
+    if (!localPlayerId) {
+        applyHoverClass(player1HandEl);
+        applyHoverClass(player2HandEl);
+        return;
+    }
+
+    if (handOwnerIds.has(localPlayerId)) {
+        applyHoverClass(player1HandEl);
+    }
+
+    const hasOpponentHandTarget = Array.from(handOwnerIds).some(ownerId => ownerId !== localPlayerId);
+    if (hasOpponentHandTarget) {
+        applyHoverClass(player2HandEl);
+    }
 }
 
 // Helper 2: Render Ability Target Highlights (Replaces renderSpellTargetHighlights)
@@ -4206,6 +3457,7 @@ function renderAbilityTargetHighlights(currentGameState) {
         return;
     }
 
+    applyChoiceHandHoverEffect(validTargetIds);
 
     validTargetIds.forEach(targetUid => {
         let targetElement = null;
@@ -4225,7 +3477,11 @@ function renderAbilityTargetHighlights(currentGameState) {
         }
 
         if (targetElement) {
-            targetElement.classList.add('targetable-spell'); // Reuse same class as spell target
+            if (canSelectChoiceTarget(targetUid)) {
+                targetElement.classList.add('targetable-spell'); // Reuse same class as spell target
+            } else {
+                targetElement.classList.add('targetable-restricted');
+            }
             if (currentChoiceSelectedTargetIds?.has?.(String(targetUid))) {
                 targetElement.classList.add('choice-selected');
             }
@@ -4545,7 +3801,7 @@ function setOpponentConnectionStatus(isConnected) {
 }
 // --- 显示伤害数字的函数 ---
 function showDamageNumber(targetUid, damageAmount) {
-    if (!targetUid || damageAmount === undefined || damageAmount === null || damageAmount < 0) { // Allow zero damage
+    if (!targetUid || damageAmount === undefined || damageAmount === null || damageAmount < 0 || !isGamePageActive()) { // Allow zero damage
         // console.warn("UI: showDamageNumber called with invalid arguments (UID missing, damage invalid, or damage <= 0).");
         return;
     }
@@ -4574,6 +3830,11 @@ function showDamageNumber(targetUid, damageAmount) {
     }
 
     // 使用 document.body 作为参照物，简化定位计算
+    const transientRoot = ensureTransientVisualRoot();
+    if (!transientRoot) {
+        return;
+    }
+
     const targetRect = targetElement.getBoundingClientRect();
 
     const damageElement = document.createElement('div');
@@ -4581,14 +3842,14 @@ function showDamageNumber(targetUid, damageAmount) {
     damageElement.textContent = damageAmount === 0 ? '0' : `-${damageAmount}`; // Display damage as negative number
 
     // 设置初始位置 (定位在目标元素的顶部中心)
-    damageElement.style.position = 'absolute'; // Position relative to viewport initially
+    damageElement.style.position = 'fixed';
     // Initial position calculation needs refinement AFTER element is added to DOM to get offsetWidth
     // Set temporary position first
     damageElement.style.left = `${targetRect.left + targetRect.width / 2}px`;
     damageElement.style.top = `${targetRect.top - 30}px`; // Approx. 30px above target
 
     // Add to body for global positioning and to avoid parent overflow issues
-    document.body.appendChild(damageElement);
+    transientRoot.appendChild(damageElement);
 
     // Refine position calculation AFTER appending to get actual width/height
     // Center horizontally based on its own width
@@ -4603,7 +3864,7 @@ function showDamageNumber(targetUid, damageAmount) {
 }
 
 function showHealNumber(targetUid, healAmount) {
-    if (!targetUid || healAmount === undefined || healAmount === null || healAmount < 0) {
+    if (!targetUid || healAmount === undefined || healAmount === null || healAmount < 0 || !isGamePageActive()) {
         return;
     }
 
@@ -4625,16 +3886,21 @@ function showHealNumber(targetUid, healAmount) {
         return;
     }
 
+    const transientRoot = ensureTransientVisualRoot();
+    if (!transientRoot) {
+        return;
+    }
+
     const targetRect = targetElement.getBoundingClientRect();
     const healElement = document.createElement('div');
     healElement.classList.add('heal-number');
     healElement.textContent = `+${healAmount}`;
 
-    healElement.style.position = 'absolute';
+    healElement.style.position = 'fixed';
     healElement.style.left = `${targetRect.left + targetRect.width / 2}px`;
     healElement.style.top = `${targetRect.top - 30}px`;
 
-    document.body.appendChild(healElement);
+    transientRoot.appendChild(healElement);
 
     healElement.style.left = `${targetRect.left + (targetRect.width / 2) - (healElement.offsetWidth / 2)}px`;
 
@@ -4644,15 +3910,102 @@ function showHealNumber(targetUid, healAmount) {
         }
     }, { once: true });
 }
-// --- 事件处理 ---
+// --- 浜嬩欢澶勭悊 ---
 
-// 更新 initializeUI 以确保调用事件设置 (确保 DOM 加载后执行)
+// 更新 initializeUI 以确保调用事件设置（确保 DOM 加载后执行）
 function initializeUI() {
     cacheDOMElements();
     renderBattleCardPreview(null);
     setupGlobalEventListeners(); // 确保调用
 }
 // (确保 initializeUI 在 DOMContentLoaded 后调用)
+
+function handleAttackDragPointerDown(event) {
+    if (!gameContainerEl) return;
+    if (isConnectionLocked || isAwaitingPlayerChoice) return;
+    if ((event.button ?? 0) !== 0) return;
+    if (event.target?.closest?.('button, .preview-actions, #choice-overlay-root, #card-detail-modal, #card-detail-image-modal')) return;
+
+    const sourceCardElement = event.target?.closest?.('.field-card[data-uid]');
+    const attackerUid = sourceCardElement?.dataset?.uid;
+    if (!attackerUid) return;
+
+    const attackerCard = findCardInstanceByUid(attackerUid);
+    if (!isAttackDragStartAllowed(attackerCard)) return;
+
+    attackDragState.pointerId = event.pointerId;
+    attackDragState.isPending = true;
+    attackDragState.isActive = false;
+    attackDragState.attackerUid = String(attackerUid);
+    attackDragState.sourceElement = sourceCardElement;
+    attackDragState.startX = event.clientX;
+    attackDragState.startY = event.clientY;
+    attackDragState.currentX = event.clientX;
+    attackDragState.currentY = event.clientY;
+}
+
+function handleAttackDragPointerMove(event) {
+    if ((!attackDragState.isPending && !attackDragState.isActive) || attackDragState.pointerId !== event.pointerId) {
+        return;
+    }
+
+    attackDragState.currentX = event.clientX;
+    attackDragState.currentY = event.clientY;
+
+    if (attackDragState.isPending) {
+        const dx = attackDragState.currentX - attackDragState.startX;
+        const dy = attackDragState.currentY - attackDragState.startY;
+        const movedDistance = Math.hypot(dx, dy);
+        if (movedDistance >= ATTACK_DRAG_MIN_DISTANCE_PX) {
+            activateAttackDragIfNeeded();
+        }
+    }
+
+    if (!attackDragState.isActive) {
+        return;
+    }
+
+    const targetInfo = resolveAttackDragDropTarget(attackDragState.currentX, attackDragState.currentY);
+    updateAttackDragHover(targetInfo);
+    updateAttackDragLine();
+    event.preventDefault();
+}
+
+function finalizeAttackDrag(event, { wasCancelled = false } = {}) {
+    if ((!attackDragState.isPending && !attackDragState.isActive) || attackDragState.pointerId !== event.pointerId) {
+        return;
+    }
+
+    const wasActiveDrag = attackDragState.isActive;
+    let dropTargetUid = null;
+
+    if (attackDragState.isActive && !wasCancelled) {
+        const clientX = Number.isFinite(event.clientX) ? event.clientX : attackDragState.currentX;
+        const clientY = Number.isFinite(event.clientY) ? event.clientY : attackDragState.currentY;
+        const targetInfo = resolveAttackDragDropTarget(clientX, clientY);
+        if (targetInfo.isValid && targetInfo.uid) {
+            dropTargetUid = String(targetInfo.uid);
+        }
+    }
+
+    resetAttackDragState();
+
+    if (wasActiveDrag) {
+        suppressGameClickUntil = Date.now() + ATTACK_DRAG_CLICK_SUPPRESS_MS;
+        event.preventDefault();
+        if (dropTargetUid && gameState.selectedAttackerUid) {
+            void selectAttackTarget(dropTargetUid);
+        }
+    }
+}
+
+function handleAttackDragPointerUp(event) {
+    finalizeAttackDrag(event, { wasCancelled: false });
+}
+
+function handleAttackDragPointerCancel(event) {
+    finalizeAttackDrag(event, { wasCancelled: true });
+}
 
 // 设置全局事件监听器 (事件委托模式)
 function setupGlobalEventListeners() {
@@ -4662,7 +4015,15 @@ function setupGlobalEventListeners() {
     }
     // 先移除旧监听器，防止重复添加 (如果 initializeUI 可能被多次调用)
     gameContainerEl.removeEventListener('click', handleGameClick);
+    gameContainerEl.removeEventListener('pointerdown', handleAttackDragPointerDown);
+    window.removeEventListener('pointermove', handleAttackDragPointerMove);
+    window.removeEventListener('pointerup', handleAttackDragPointerUp);
+    window.removeEventListener('pointercancel', handleAttackDragPointerCancel);
     gameContainerEl.addEventListener('click', handleGameClick);
+    gameContainerEl.addEventListener('pointerdown', handleAttackDragPointerDown);
+    window.addEventListener('pointermove', handleAttackDragPointerMove);
+    window.addEventListener('pointerup', handleAttackDragPointerUp);
+    window.addEventListener('pointercancel', handleAttackDragPointerCancel);
 }
 
 function togglePlayerInfoCollapse(targetId) {
@@ -4677,7 +4038,7 @@ function togglePlayerInfoCollapse(targetId) {
     button.setAttribute('title', collapsed ? '展开信息栏' : '收起信息栏');
     const icon = button.querySelector('.player-info-collapse-icon');
     if (icon) {
-        icon.textContent = collapsed ? '+' : '−';
+        icon.textContent = collapsed ? '+' : '-';
     }
 }
 
@@ -4731,6 +4092,12 @@ function handleGameDoubleClick(event) {
 
 // 全局点击事件处理器 (事件委托)
 function handleGameClick(event) {
+    if (Date.now() < suppressGameClickUntil) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+    }
+
     const clickedReconnectButton = event.target.closest('#reconnect-button');
     if (clickedReconnectButton) {
         if (reconnectButtonEl?.disabled) {
@@ -4794,7 +4161,7 @@ function handleGameClick(event) {
 
         event.preventDefault();
         event.stopPropagation();
-        const card = findCardInstanceForLog(logCardUid);
+        const card = findLogCardInstanceByUid(logCardUid);
         if (card) {
             showCardDetailModal(card);
         }
@@ -4825,7 +4192,7 @@ function handleGameClick(event) {
                 submitMulligan(selectedUids); // Call new SignalR wrapper
             } else {
                 // console.error("UI Error: submitMulligan function is not available/imported!"); // Log the correct function name in error
-                alert("错误：调度功能未加载！(submitMulligan)"); // Clarify alert slightly for debugging
+                alert("错误：调度功能未加载（submitMulligan）"); // Clarify alert slightly for debugging
             }
             // Note: No need to manually remove 'selected-for-mulligan' class here,
             // as the next renderGame call after handleMulligan will redraw the hand.
@@ -4862,8 +4229,9 @@ function handleGameClick(event) {
     // --- End Mulligan Phase Logic ---
 
     // Custom double-click detection for hand cards (avoid native dblclick delay).
+    // During choice mode, disable double-click use to prevent bypassing explicit confirm flow.
     const clickedCardElementForDouble = event.target.closest('.card');
-    if (clickedCardElementForDouble) {
+    if (clickedCardElementForDouble && !isAwaitingPlayerChoice) {
         const uid = clickedCardElementForDouble.dataset.uid;
         if (uid) {
             const now = Date.now();
@@ -4896,13 +4264,14 @@ function handleGameClick(event) {
         } else {
             // This error should ideally not happen if imports are correct, but keep for safety
             console.error(`UI Error: endTurnRequest function is not available/imported!`);
-            alert("错误：结束回合功能未加载！(endTurnRequest)"); // Update alert message
+            alert("错误：结束回合功能未加载（endTurnRequest）"); // Update alert message
         }
         return; // Stop processing this click further
     }
 
     const clickedPpBoostButton = event.target.closest('.pp-boost-button');
     if (clickedPpBoostButton) {
+        if (isAwaitingPlayerChoice) return;
         if (clickedPpBoostButton.disabled) return;
         if (typeof requestPpBoost === 'function') {
             requestPpBoost();
@@ -4914,6 +4283,7 @@ function handleGameClick(event) {
 
     const clickedUseButton = event.target.closest('.use-button');
     if (clickedUseButton) {
+        if (isAwaitingPlayerChoice) return;
         if (gameState.isSpectator) return;
         const useUid = clickedUseButton.dataset.useUid;
         if (!useUid) return;
@@ -4930,8 +4300,12 @@ function handleGameClick(event) {
     // --- Check for Super Evolve Button Click FIRST ---
     const clickedSuperEvolveButton = event.target.closest('.super-evolve-button');
     if (clickedSuperEvolveButton) {
+        if (isAwaitingPlayerChoice) return;
         const superEvolveUid = clickedSuperEvolveButton.dataset.superEvolveUid;
         if (superEvolveUid) {
+            if (!confirmEvolutionAction(superEvolveUid, 'super')) {
+                return;
+            }
             if (typeof superEvolveCard === 'function') {
                 superEvolveCard(superEvolveUid);
             } else {
@@ -4944,13 +4318,17 @@ function handleGameClick(event) {
     // --- Check for Evolve Button Click FIRST ---
     const clickedEvolveButton = event.target.closest('.evolve-button');
     if (clickedEvolveButton) {
+        if (isAwaitingPlayerChoice) return;
         const evolveUid = clickedEvolveButton.dataset.evolveUid; // Get UID from button's data attribute
         if (evolveUid) {
+            if (!confirmEvolutionAction(evolveUid, 'evolve')) {
+                return;
+            }
             if (typeof evolveCard === 'function') { // Check if function is imported
                 evolveCard(evolveUid); // Call the imported function from gameManager
             } else {
                 // console.error("UI Error: evolveCard function is not available/imported!");
-                alert("错误：进化功能未加载！");
+                alert("错误：进化功能未加载。");
             }
         } else {
             // console.warn("UI: Evolve button clicked but missing data-evolve-uid attribute.");
@@ -4962,6 +4340,7 @@ function handleGameClick(event) {
     // --- Check for Fusion Button Click ---
     const clickedFusionButton = event.target.closest('.fusion-button');
     if (clickedFusionButton) {
+        if (isAwaitingPlayerChoice) return;
         if (gameState.isSpectator) return;
         const fusionUid = clickedFusionButton.dataset.fusionUid;
         const fusionAbilityId = clickedFusionButton.dataset.fusionAbilityId || null;
@@ -4974,6 +4353,7 @@ function handleGameClick(event) {
     // --- Check for Act Button Click ---
     const clickedActButton = event.target.closest('.act-button');
     if (clickedActButton) {
+        if (isAwaitingPlayerChoice) return;
         if (gameState.isSpectator) return;
         const actUid = clickedActButton.dataset.actUid;
         const actAbilityId = clickedActButton.dataset.actAbilityId || null;
@@ -4981,7 +4361,7 @@ function handleGameClick(event) {
             if (typeof requestAct === 'function') {
                 requestAct(actUid, actAbilityId);
             } else {
-                alert("错误：启动功能未加载！");
+                alert("错误：启用功能未加载。");
             }
         }
         return;
@@ -5188,7 +4568,7 @@ function tryUseHandCard(cardInstance, source = 'button') {
     }
 
     if (useActionState.usePlayable === false) {
-        const reason = useActionState.useFailureReason || "该卡牌现在无法使用。";
+        const reason = useActionState.useFailureReason || "该卡牌当前无法使用。";
         console.warn(`UI: ${source} use rejected for card ${cardInstance?.name ?? ''} (${useActionState.useUid}). Reason: ${reason}`);
         alert(reason);
         return true;
@@ -5196,6 +4576,19 @@ function tryUseHandCard(cardInstance, source = 'button') {
 
     playCard(useActionState.useUid);
     return true;
+}
+
+function confirmEvolutionAction(cardUid, mode = 'evolve') {
+    const normalizedMode = mode === 'super' ? 'super' : 'evolve';
+    const card = findCardInstanceByUid(cardUid);
+    const cardName = String(card?.name || card?.Name || '').trim() || '该卡牌';
+    const actionLabel = normalizedMode === 'super' ? '超进化' : '进化';
+    const message = `确认要对【${cardName}】执行${actionLabel}吗？`;
+
+    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+        return true;
+    }
+    return window.confirm(message);
 }
 
 function handleCardDoubleClick(cardInstance) {
@@ -5218,26 +4611,16 @@ export function showPlayerChoiceUI(choiceRequest) {
     }
 
     const selectableTargetIds = Array.isArray(choiceRequest?.SelectableTargetIds) ? choiceRequest.SelectableTargetIds : [];
-    const { min } = getChoiceMinMax(choiceRequest);
 
     if (selectableTargetIds.length === 0) {
-        // If there are no candidates and min==0, the only valid submission is an empty selection.
-        if (min === 0 && choiceRequest?.PendingChoiceId && choiceRequest?.SourceAbilityRuntimeId) {
-            void (async () => {
-                const pendingChoiceId = choiceRequest.PendingChoiceId;
-                const sourceAbilityRuntimeId = choiceRequest.SourceAbilityRuntimeId;
-                startPlayerChoice(choiceRequest);
-                const ok = await submitPlayerChoice(pendingChoiceId, [], sourceAbilityRuntimeId, false);
-                if (ok && isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId)) {
-                    endPlayerChoice(false);
-                }
-            })();
+        const canSubmitEmpty = isChoiceSelectionValid(choiceRequest, 0);
+        if (choiceRequest?.IsCancellable !== true && !canSubmitEmpty) {
+            console.warn("UI: No selectable targets provided for a non-cancellable choice. Ending choice UI.");
+            endPlayerChoice(false);
             return;
         }
 
-        console.warn("UI: No selectable targets provided for player choice. Ending choice UI.");
-        endPlayerChoice(false);
-        return;
+        console.info("UI: No selectable targets provided. Rendering choice overlay for explicit confirmation.");
     }
 
     // Enter player choice mode and render.
@@ -5419,8 +4802,14 @@ function renderAbilityTriggerToast(root, payload) {
 
 // Route switch lifecycle: remove combat toasts immediately when leaving game page.
 document.addEventListener('cleanupGame', () => {
+    resetAttackDragState();
     clearAbilityTriggerToasts();
     clearInMatchChatUiState();
+    clearInMatchUsedCardUiState();
+    clearTrackedVisualTimeouts();
+    removeTransientVisualArtifacts();
+    revealQueue.length = 0;
+    revealIsShowing = false;
 });
 
 // --- Reveal UI ---
@@ -5428,7 +4817,7 @@ const revealQueue = [];
 let revealIsShowing = false;
 
 export function showRevealOverlay(cardDto, options = {}) {
-    if (!cardDto) return;
+    if (!cardDto || !isGamePageActive()) return;
     const durationMs = Number.isFinite(options.durationMs) ? options.durationMs : 1600;
     revealQueue.push({ cardDto, durationMs });
     void processRevealQueue();
@@ -5440,6 +4829,10 @@ async function processRevealQueue() {
 
     try {
         while (revealQueue.length > 0) {
+            if (!isGamePageActive()) {
+                revealQueue.length = 0;
+                break;
+            }
             const { cardDto, durationMs } = revealQueue.shift();
             renderRevealOverlay(cardDto);
             await new Promise(r => setTimeout(r, durationMs));
@@ -5452,6 +4845,10 @@ async function processRevealQueue() {
 }
 
 function renderRevealOverlay(cardDto) {
+    if (!isGamePageActive()) {
+        return;
+    }
+
     document.getElementById('reveal-overlay-root')?.remove();
 
     const overlayRoot = document.createElement('div');
@@ -5480,17 +4877,18 @@ function renderRevealOverlay(cardDto) {
         revealIsShowing = false;
     }, { once: true });
 
-    if (gameContainerEl) {
-        gameContainerEl.appendChild(overlayRoot);
-    } else {
-        document.body.appendChild(overlayRoot);
-    }
+    const container = gameContainerEl ?? document.getElementById('game-container');
+    if (!container) return;
+    container.appendChild(overlayRoot);
 }
 
 // --- Fusion UI ---
 export function showFusionAnimation(fusingPlayerId, fusedCardInstanceIds = []) {
     const ids = Array.isArray(fusedCardInstanceIds) ? fusedCardInstanceIds : [];
-    if (!fusingPlayerId || ids.length === 0) return;
+    if (!fusingPlayerId || ids.length === 0 || !isGamePageActive()) return;
+
+    const transientRoot = ensureTransientVisualRoot();
+    if (!transientRoot) return;
 
     const isLocal = fusingPlayerId === gameState.localPlayerId;
     if (!isLocal) {
@@ -5516,7 +4914,7 @@ export function showFusionAnimation(fusingPlayerId, fusedCardInstanceIds = []) {
         clone.style.width = `${rect.width}px`;
         clone.style.height = `${rect.height}px`;
 
-        document.body.appendChild(clone);
+        transientRoot.appendChild(clone);
 
         const fromX = rect.left + rect.width / 2;
         const fromY = rect.top + rect.height / 2;
@@ -5529,7 +4927,7 @@ export function showFusionAnimation(fusingPlayerId, fusedCardInstanceIds = []) {
             clone.style.opacity = '0';
         });
 
-        window.setTimeout(() => clone.remove(), 700);
+        runTrackedVisualTimeout(() => clone.remove(), 700);
     });
 }
 
@@ -5542,7 +4940,11 @@ function getFusionTargetPoint() {
 }
 
 function showFusionBurst(count) {
-    document.getElementById('fusion-burst-root')?.remove();
+    if (!isGamePageActive()) return;
+    const transientRoot = ensureTransientVisualRoot();
+    if (!transientRoot) return;
+
+    transientRoot.querySelector('#fusion-burst-root')?.remove();
 
     const root = document.createElement('div');
     root.id = 'fusion-burst-root';
@@ -5554,8 +4956,8 @@ function showFusionBurst(count) {
         </div>
     `;
 
-    (gameContainerEl ?? document.body).appendChild(root);
-    window.setTimeout(() => root.remove(), 700);
+    transientRoot.appendChild(root);
+    runTrackedVisualTimeout(() => root.remove(), 700);
 }
 
 /**
@@ -5573,16 +4975,17 @@ function renderChoiceOverlayUI() {
     container.appendChild(overlayRoot);
 
     const { min, max } = getChoiceMinMax(currentChoiceRequest);
-    const singleMandatory = isSingleMandatoryChoice(currentChoiceRequest);
+    const hasSelectableTargets = Array.isArray(currentChoiceRequest.SelectableTargetIds)
+        && currentChoiceRequest.SelectableTargetIds.length > 0;
 
     const controls = document.createElement('div');
     controls.className = 'choice-controls-overlay choice-overlay';
     controls.addEventListener('click', e => e.stopPropagation());
 
     const message = currentChoiceRequest.Message || '请选择目标';
-    const hint = singleMandatory
-        ? (currentChoiceRequest.IsCancellable === true ? '点击目标选择；点击空白处或取消可中止' : '点击目标选择')
-        : (currentChoiceRequest.IsCancellable === true ? '点击目标可多选；点击确定提交，取消可中止' : '点击目标可多选；点击确定提交');
+    const hint = hasSelectableTargets
+        ? (currentChoiceRequest.IsCancellable === true ? '点击目标进行选择；点击确定提交，取消可中止' : '点击目标进行选择；点击确定提交')
+        : (currentChoiceRequest.IsCancellable === true ? '当前无可选目标；点击确定提交空选择，或取消中止' : '当前无可选目标；点击确定继续');
 
     controls.innerHTML = `
         <div class="choice-prompt-text">${message}</div>
@@ -5602,7 +5005,6 @@ function renderChoiceOverlayUI() {
     const cancelBtn = controls.querySelector('#choice-cancel-btn');
 
     if (confirmBtn) {
-        confirmBtn.style.display = singleMandatory ? 'none' : '';
         confirmBtn.addEventListener('click', e => {
             e.stopPropagation();
             void confirmPlayerChoice();
@@ -5662,3 +5064,5 @@ function renderChoiceOverlayUI() {
         overlayRoot.appendChild(panel);
     }
 }
+
+

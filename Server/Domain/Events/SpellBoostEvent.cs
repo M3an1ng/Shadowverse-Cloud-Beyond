@@ -48,11 +48,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     continue;
                 }
 
-                var oldValue = boostedCard.GetCounter(CardInstance.SpellboostCounterKey);
-                var newValue = boostedCard.AddCounter(CardInstance.SpellboostCounterKey, 1);
-                if (newValue != oldValue)
-                {
-                    result.GeneratedEvents.Add(new CounterChangedEvent(boostedCard, CardInstance.SpellboostCounterKey, oldValue, newValue));
+                if(boostedCard.AbilityKeywords.Contains(Constants.AbilityKeyword.SpellBoost)){
+                    var oldValue = boostedCard.GetCounter(CardInstance.SpellboostCounterKey);
+                    var newValue = boostedCard.AddCounter(CardInstance.SpellboostCounterKey, 1);
+                    if (newValue != oldValue)
+                    {
+                        result.GeneratedEvents.Add(new CounterChangedEvent(boostedCard, CardInstance.SpellboostCounterKey, oldValue, newValue));
+                    }
                 }
             }
 

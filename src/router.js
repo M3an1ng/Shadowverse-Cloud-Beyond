@@ -3,6 +3,7 @@
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
 //
+import { BATTLE_EXIT_CONFIRM_MESSAGE, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
 
 /**
  * 简单的单页应用路由管理器
@@ -101,6 +102,12 @@ class Router {
             if (routeButton) {
                 event.preventDefault();
                 const route = routeButton.dataset.route;
+                if (shouldConfirmBattleExit(this.currentRoute, route, routeButton)) {
+                    const confirmed = window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE);
+                    if (!confirmed) {
+                        return;
+                    }
+                }
                 this.navigateTo(route);
             }
         });
@@ -317,13 +324,15 @@ class Router {
     async initDevToolsPage() {
 
         try {
-            const [logModule, userModule] = await Promise.all([
+            const [logModule, userModule, winrateModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
-                import('./devToolsUserManagement.js')
+                import('./devToolsUserManagement.js'),
+                import('./devToolsWinrateStats.js')
             ]);
             await Promise.all([
                 logModule.initializeDevToolsLogViewer(),
-                userModule.initializeDevToolsUserManagement()
+                userModule.initializeDevToolsUserManagement(),
+                winrateModule.initializeDevToolsWinrateStats()
             ]);
         } catch (error) {
             console.error('Router: Failed to initialize dev tools:', error);
@@ -332,13 +341,15 @@ class Router {
 
     async cleanupDevToolsPage() {
         try {
-            const [logModule, userModule] = await Promise.all([
+            const [logModule, userModule, winrateModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
-                import('./devToolsUserManagement.js')
+                import('./devToolsUserManagement.js'),
+                import('./devToolsWinrateStats.js')
             ]);
             await Promise.all([
                 logModule.cleanupDevToolsLogViewer(),
-                userModule.cleanupDevToolsUserManagement()
+                userModule.cleanupDevToolsUserManagement(),
+                winrateModule.cleanupDevToolsWinrateStats()
             ]);
         } catch (error) {
             console.error('Router: Failed to cleanup dev tools:', error);

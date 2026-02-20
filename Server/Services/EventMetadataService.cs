@@ -39,6 +39,7 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.DeckEmptyOnDraw, AbilityEditorCategories.PositionChangeId },
             { EventType.Discard, AbilityEditorCategories.PositionChangeId },
             { EventType.Return, AbilityEditorCategories.PositionChangeId },
+            { EventType.LeaveField, AbilityEditorCategories.PositionChangeId },
             { EventType.Vanish, AbilityEditorCategories.PositionChangeId },
             { EventType.Destroy, AbilityEditorCategories.PositionChangeId },
             { EventType.Transform, AbilityEditorCategories.PositionChangeId },

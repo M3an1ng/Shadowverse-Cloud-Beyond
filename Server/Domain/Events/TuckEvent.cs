@@ -31,12 +31,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public bool TuckApplied { get; private set; }
 
-        public TuckEvent(CardInstance card, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
+        public TuckEvent(
+            CardInstance card,
+            EventReasonSource reason = EventReasonSource.Ability,
+            Guid? eventId = null,
+            DateTime? timestamp = null,
+            CardInstanceSnapshot? tuckedCardSnapshot = null,
+            CardInstanceSnapshot? tuckSourceSnapshot = null)
             : base(EventType.Tuck, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
-            TuckedCardSnapshot = CardInstanceSnapshot.From(card);
+            TuckedCardSnapshot = tuckedCardSnapshot ?? TryCreateSnapshot(card);
+            TuckSourceSnapshot = tuckSourceSnapshot;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -74,6 +81,23 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             return $"{AnnouncementTokens.Card(card)}被置入牌库。";
+        }
+
+        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
+        {
+            if (card == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return CardInstanceSnapshot.From(card);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

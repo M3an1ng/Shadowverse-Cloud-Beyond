@@ -63,9 +63,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found for target card." };
                     }
 
-                    // Create the DestroyEvent command.
-                    var destroyEvent = new DestroyEvent(targetCard, sourceCard, EventReasonSource.Ability);
-                    result.GeneratedEvents.Add(destroyEvent);
+                    result.GeneratedEvents.Add(new LeaveFieldEvent(
+                        targetCard,
+                        LeaveFieldKind.Destroy,
+                        EventReasonSource.Ability,
+                        sourceCard));
                     result.Success = true;
 
                     return result;

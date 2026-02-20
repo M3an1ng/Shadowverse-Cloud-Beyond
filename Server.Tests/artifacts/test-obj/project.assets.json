@@ -9026,19 +9026,19 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\Administrator\\.nuget\\packages\\": {}
+    "C:\\Users\\q9q9q\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\workspace\\Shadowverse-beyond\\Server.Tests\\ShadowverseBeyond.Server.Tests.csproj",
+      "projectUniqueName": "D:\\workspace\\Shadowverse-Cloud-Beyond\\Server.Tests\\ShadowverseBeyond.Server.Tests.csproj",
       "projectName": "ShadowverseBeyond.Server.Tests",
-      "projectPath": "D:\\workspace\\Shadowverse-beyond\\Server.Tests\\ShadowverseBeyond.Server.Tests.csproj",
-      "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
-      "outputPath": "D:\\workspace\\Shadowverse-beyond\\Server.Tests\\artifacts/test-obj/",
+      "projectPath": "D:\\workspace\\Shadowverse-Cloud-Beyond\\Server.Tests\\ShadowverseBeyond.Server.Tests.csproj",
+      "packagesPath": "C:\\Users\\q9q9q\\.nuget\\packages\\",
+      "outputPath": "D:\\workspace\\Shadowverse-Cloud-Beyond\\Server.Tests\\artifacts/test-obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\Administrator\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\q9q9q\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -9050,8 +9050,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "D:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj": {
-              "projectPath": "D:\\workspace\\Shadowverse-beyond\\Server\\ShadowverseBeyond.Server.csproj"
+            "D:\\workspace\\Shadowverse-Cloud-Beyond\\Server\\ShadowverseBeyond.Server.csproj": {
+              "projectPath": "D:\\workspace\\Shadowverse-Cloud-Beyond\\Server\\ShadowverseBeyond.Server.csproj"
             }
           }
         }

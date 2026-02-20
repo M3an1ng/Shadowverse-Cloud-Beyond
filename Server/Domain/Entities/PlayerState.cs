@@ -1068,10 +1068,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     var spellboostTargets = Hand
                         .Where(c => c.InstanceId != cardInHand.InstanceId && c.HasAbility(AbilityKeyword.SpellBoost))
                         .ToList();
-                    if (spellboostTargets.Count > 0)
-                    {
-                        result.GeneratedEvents.Add(new SpellBoostEvent(this, cardInHand, spellboostTargets));
-                    }
+                    result.GeneratedEvents.Add(new SpellBoostEvent(this, cardInHand, spellboostTargets));
                     result.GeneratedEvents.Add(new CardMovedEvent(
                         cardInHand,
                         CardZone.Playing,
@@ -1117,7 +1114,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var result = MoveCard(cardToReturn, CardZone.Hand, null, CardMoveReason.ReturnedToHand);
             if (result.Success && HasMoveToZone(result, CardZone.Hand))
             {
-                result.GeneratedEvents.Add(new ReturnEvent(this, cardToReturn));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    cardToReturn,
+                    LeaveFieldKind.Return,
+                    EventReasonSource.Ability,
+                    null,
+                    CardZone.Hand));
             }
             return result;
         }
@@ -1143,10 +1145,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        public DomainOperationResult VanishCard(CardInstance cardToVanish, string vanishReason = "Effect")
+        public DomainOperationResult VanishCard(CardInstance cardToVanish, EventReasonSource vanishReason = EventReasonSource.Ability)
         {
             var result = new DomainOperationResult { Success = true };
-            result.GeneratedEvents.Add(new CardVanishedEvent(cardToVanish, cardToVanish.CurrentZone, vanishReason));
+            result.GeneratedEvents.Add(new LeaveFieldEvent(
+                cardToVanish,
+                LeaveFieldKind.Vanish,
+                vanishReason));
             return result;
         }
 

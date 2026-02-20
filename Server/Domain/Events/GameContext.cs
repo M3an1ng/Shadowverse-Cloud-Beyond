@@ -80,6 +80,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("当前效果", Description = "当前执行中的效果")]
         public Effect? CurrentEffect { get; init; }
 
+        /// <summary>
+        /// Runtime-only context used to scope a single attack flow.
+        /// </summary>
+        public AttackFlowContext? AttackFlow { get; init; }
+
         [DslExposable("事件历史", Description = "当前对局的事件历史读取器")]
         public EventHistoryReader EventHistory { get; }
 
@@ -106,6 +111,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             IGameEvent? triggeringEvent = null,
             CardInstance? sourceCard = null,
             Effect? currentEffect = null,
+            AttackFlowContext? attackFlow = null,
             IBuffService? buffService = null,
             bool isCancellable = false,
             bool isAuraRefresh = false,
@@ -119,6 +125,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             TriggeringEvent = triggeringEvent;
             SourceCard = sourceCard;
             CurrentEffect = currentEffect;
+            AttackFlow = attackFlow;
             IsCancellable = isCancellable;
             IsAuraRefresh = isAuraRefresh;
             ResolvedTargets = resolvedTargets ?? new Dictionary<string, List<TargetInfo>>();

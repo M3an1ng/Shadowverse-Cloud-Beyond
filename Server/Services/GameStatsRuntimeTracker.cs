@@ -60,6 +60,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
                 pair => pair.Key,
                 pair => new ParticipantRuntimeStatsSnapshot(
                     pair.Value.PlayerId,
+                    pair.Value.IsFirstPlayer,
                     pair.Value.DeckClass,
                     pair.Value.Environment,
                     pair.Value.UserDeckId,
@@ -131,6 +132,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
 
         participants[player.PlayerId] = new ParticipantRuntimeState(
             player.PlayerId,
+            player.IsFirst,
             player.Class,
             player.Environment,
             player.UserDeckId,
@@ -210,6 +212,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
     {
         public ParticipantRuntimeState(
             Guid playerId,
+            bool isFirstPlayer,
             CardClass deckClass,
             DeckEnvironment environment,
             Guid? userDeckId,
@@ -220,6 +223,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
             HashSet<int> playedCardDefinitionIds)
         {
             PlayerId = playerId;
+            IsFirstPlayer = isFirstPlayer;
             DeckClass = deckClass;
             Environment = environment;
             UserDeckId = userDeckId;
@@ -231,6 +235,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
         }
 
         public Guid PlayerId { get; }
+        public bool IsFirstPlayer { get; }
         public CardClass DeckClass { get; }
         public DeckEnvironment Environment { get; }
         public Guid? UserDeckId { get; }

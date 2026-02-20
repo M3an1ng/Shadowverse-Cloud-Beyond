@@ -104,17 +104,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (Kind == DamageKind.Combat && DamageSource != null)
             {
                 var sourceKeywords = context.BuffService.GetEffectiveKeywords(DamageSource, context);
-                var activePlayerId = context.CurrentGameState.CurrentPlayerId;
-                if (DamageSource.IsSuperEvolved && activePlayerId.HasValue && DamageSource.OwnerPlayerId == activePlayerId.Value && card.IsFollower && newHealth <= 0)
-                {
-                    var defenderOwner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId);
-                    if (defenderOwner?.Leader != null)
-                    {
-                        result.GeneratedEvents.Add(new DamageEvent(defenderOwner.Leader, 1, DamageSource, DamageKind.Ability));
-                    }
-                }
-
-
                 if (sourceKeywords.Contains(CardKeyword.Drain) && !IsCounterAttack)
                 {
                     var owner = context.CurrentGameState.GetPlayerState(DamageSource.OwnerPlayerId);
@@ -145,10 +134,29 @@ namespace ShadowverseBeyond.Server.Domain.Events
             else if (newHealth <= 0 && Kind != DamageKind.Combat)
             {
                 var sourceCard = DamageSource ?? card; // fallback to self if missing
-                result.GeneratedEvents.Add(new DestroyEvent(card, sourceCard, EventReasonSource.System));
+                var leaveFieldEvent = new LeaveFieldEvent(
+                    card,
+                    LeaveFieldKind.Destroy,
+                    EventReasonSource.System,
+                    sourceCard);
+                TryApplyEffectScopedLeaveFieldDelay(context, leaveFieldEvent);
+                result.GeneratedEvents.Add(leaveFieldEvent);
             }
 
             return result;
+        }
+
+        private static void TryApplyEffectScopedLeaveFieldDelay(GameContext context, LeaveFieldEvent leaveFieldEvent)
+        {
+            var parentEventId = context.TriggeringEvent?.EventId
+                ?? context.CurrentEffect?.TriggeredEventId
+                ?? Guid.Empty;
+            if (parentEventId == Guid.Empty)
+            {
+                return;
+            }
+
+            leaveFieldEvent.ConfigureDelay(DelayConfig.Parent(parentEventId));
         }
 
         private static bool IsSuperEvolveDamageImmune(CardInstance target, GameContext context)

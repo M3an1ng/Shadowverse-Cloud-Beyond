@@ -6,7 +6,6 @@ using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 using System;
-using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
@@ -15,7 +14,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// A committable event representing the intent to destroy a card.
     /// </summary>
     [GameEventMetadata("破坏", "当一张卡牌被破坏时触发的事件。", EventType.Destroy)]
-    public class DestroyEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
+    public class DestroyEvent : DelayedEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("破坏原因", "卡牌被破坏的原因。")]
         public EventReasonSource Reason { get; }
@@ -34,14 +33,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public bool DestroyApplied { get; private set; }
 
-        public DestroyEvent(CardInstance target, CardInstance source, EventReasonSource reason, Guid? eventId = null, DateTime? timestamp = null)
+        public DestroyEvent(
+            CardInstance target,
+            CardInstance source,
+            EventReasonSource reason,
+            Guid? eventId = null,
+            DateTime? timestamp = null,
+            CardInstanceSnapshot? destroyTargetSnapshot = null,
+            CardInstanceSnapshot? destroySourceSnapshot = null)
             : base(EventType.Destroy, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(target));
             Source = TargetInfo.ForCard(source);
             Reason = reason;
-            DestroyTargetSnapshot = CardInstanceSnapshot.From(target);
-            DestroySourceSnapshot = CardInstanceSnapshot.From(source);
+            DestroyTargetSnapshot = destroyTargetSnapshot ?? TryCreateSnapshot(target);
+            DestroySourceSnapshot = destroySourceSnapshot ?? TryCreateSnapshot(source);
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -55,22 +61,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target or source card is null in DestroyEvent." };
             }
 
-            var targetKeywords = context.BuffService.GetEffectiveKeywords(targetCard, context);
-            if (targetKeywords.Contains(CardKeyword.DestroyResist) && Reason == EventReasonSource.Ability)
-            {
-                return new DomainOperationResult { Success = true };
-            }
-
-            if (targetKeywords.Contains(CardKeyword.EarthSigil)
-                && Reason == EventReasonSource.Ability)
-            {
-                return new DomainOperationResult { Success = true };
-            }
-
-            if (targetCard.IsSuperEvolved &&
-                targetCard.IsFollower &&
-                targetCard.OwnerPlayerId == context.CurrentGameState.CurrentPlayerId &&
-                Reason == EventReasonSource.Ability)
+            if (!targetCard.CanBeDestroyed(context, Reason))
             {
                 return new DomainOperationResult { Success = true };
             }
@@ -84,6 +75,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             DestroyApplied = true;
             var moveReason = ResolveMoveReason(Reason);
             var destroyResult = ownerPlayer.DestroyCard(targetCard, sourceCard, Reason, moveReason);
+            if (destroyResult.Success)
+            {
+                TryApplyAttackFlowLeaderPing(context, destroyResult, targetCard, sourceCard);
+            }
             return destroyResult;
         }
 
@@ -109,6 +104,65 @@ namespace ShadowverseBeyond.Server.Domain.Events
         private static CardMoveReason ResolveMoveReason(EventReasonSource reason)
         {
             return CardMoveReason.Destroyed;
+        }
+
+        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
+        {
+            if (card == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return CardInstanceSnapshot.From(card);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void TryApplyAttackFlowLeaderPing(
+            GameContext context,
+            DomainOperationResult destroyResult,
+            CardInstance targetCard,
+            CardInstance sourceCard)
+        {
+            var attackFlow = context.AttackFlow;
+            if (attackFlow == null)
+            {
+                return;
+            }
+
+            if (targetCard.CardType != CardType.Follower)
+            {
+                return;
+            }
+
+            if (targetCard.InstanceId != attackFlow.DefenderId || sourceCard.InstanceId != attackFlow.AttackerId)
+            {
+                return;
+            }
+
+            var attackerIsSuperEvolved = DestroySourceSnapshot?.IsSuperEvolved == true || sourceCard.IsSuperEvolved;
+            if (!attackerIsSuperEvolved)
+            {
+                return;
+            }
+
+            if (!attackFlow.TryMarkScoredDestroyedTarget(targetCard.InstanceId))
+            {
+                return;
+            }
+
+            var defenderOwner = context.CurrentGameState.GetPlayerState(targetCard.OwnerPlayerId);
+            if (defenderOwner?.Leader == null)
+            {
+                return;
+            }
+
+            destroyResult.GeneratedEvents.Add(new DamageEvent(defenderOwner.Leader, 1, sourceCard, DamageKind.Ability));
         }
     }
 }

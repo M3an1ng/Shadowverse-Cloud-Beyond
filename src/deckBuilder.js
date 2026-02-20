@@ -6,6 +6,7 @@
 import { router } from './router.js';
 import { getDeckOwnerQuery } from './userSession.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
+import { createDeckPreviewModal } from './components/deckPreviewModal.js';
 import { compareCardsForEditorAndDeck } from './cardListSort.js';
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 
@@ -197,6 +198,26 @@ function getDeckCardCount(deck) {
     return deck.cards.reduce((sum, entry) => sum + (entry.count || 0), 0);
 }
 
+function toSafeInt(value, fallback = 0) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getDeckMatchStats(deck) {
+    return {
+        totalGames: Math.max(0, toSafeInt(deck?.totalGames ?? deck?.TotalGames, 0)),
+        totalWins: Math.max(0, toSafeInt(deck?.totalWins ?? deck?.TotalWins, 0)),
+        goingFirstGames: Math.max(0, toSafeInt(deck?.goingFirstGames ?? deck?.GoingFirstGames, 0)),
+        goingFirstWins: Math.max(0, toSafeInt(deck?.goingFirstWins ?? deck?.GoingFirstWins, 0)),
+        goingSecondGames: Math.max(0, toSafeInt(deck?.goingSecondGames ?? deck?.GoingSecondGames, 0)),
+        goingSecondWins: Math.max(0, toSafeInt(deck?.goingSecondWins ?? deck?.GoingSecondWins, 0))
+    };
+}
+
+function getDeckSummaryById(deckId) {
+    return state.decks.find(deck => String(getDeckId(deck)) === String(deckId)) ?? null;
+}
+
 function getDeckId(deck) {
     return deck?.deckId || deck?.id || null;
 }
@@ -260,46 +281,6 @@ function buildDeckPreviewSnapshot(deck) {
         typeCounts,
         totalCount
     };
-}
-
-function renderDeckPreviewCurveHtml(curve) {
-    const values = Array.isArray(curve) ? curve : Array(9).fill(0);
-    const max = Math.max(...values, 1);
-    return values.map((count, index) => `
-        <div class="deck-preview-curve-col" title="${index === 8 ? '8+' : index} 费: ${count}">
-            <div class="deck-preview-curve-bar" style="height: ${(count / max) * 100}%"></div>
-            <div class="deck-preview-curve-label">${index === 8 ? '8+' : index}</div>
-        </div>
-    `).join('');
-}
-
-function renderDeckPreviewCardsHtml(items) {
-    if (!Array.isArray(items) || items.length === 0) {
-        return `
-            <div class="deck-preview-empty">
-                当前卡组没有可预览的卡牌。
-            </div>
-        `;
-    }
-
-    return items.map(item => {
-        const preview = item.card?.artPreview ?? item.card?.ArtPreview ?? '';
-        const previewUrl = preview ? encodeURI(preview).replace(/'/g, '%27') : '';
-        const styleAttr = previewUrl ? ` style="--deck-preview-art: url('${previewUrl}');"` : '';
-        const rarityClass = getCardRarityClass(item.card);
-        const cardClassName = `deck-preview-card${previewUrl ? ' has-art' : ''}${rarityClass ? ` ${rarityClass}` : ''}`;
-        const costLabel = Number.isFinite(item.cost) && item.cost >= 0 && item.cost < 99 ? item.cost : '?';
-        const cardName = item.card?.name ?? `未知卡牌 #${item.cardDefinitionId}`;
-        const typeLabel = getTypeLabel(item.card?.type ?? item.card?.Type ?? '');
-        return `
-            <button class="${cardClassName}" type="button" data-card-id="${item.cardDefinitionId}"${styleAttr}>
-                <span class="deck-preview-card-cost">${costLabel}</span>
-                <span class="deck-preview-card-count">x${item.count}</span>
-                <span class="deck-preview-card-name">${cardName}</span>
-                <span class="deck-preview-card-type">${typeLabel || '未知'}</span>
-            </button>
-        `;
-    }).join('');
 }
 
 async function fetchDeckDetail(deckId) {
@@ -692,6 +673,7 @@ function renderDeckSelection() {
                                 <div class="deck-preview-meta" id="deck-preview-meta">-</div>
                             </div>
                         </div>
+                        <div class="deck-preview-toolbar-stats" id="deck-preview-toolbar-stats"></div>
                         <div class="deck-preview-toolbar-actions">
                             <button class="btn-secondary" id="deck-preview-export-btn" type="button">导出卡组代码</button>
                             <button class="btn-secondary" id="deck-preview-close-btn" type="button" aria-label="关闭预览">关闭</button>
@@ -743,15 +725,7 @@ function renderDeckSelection() {
     const importSubmit = document.getElementById('deck-import-submit-btn');
     const envStep = createModal?.querySelector('[data-step="environment"]');
     const classStep = createModal?.querySelector('[data-step="class"]');
-    const previewModal = document.getElementById('deck-preview-modal');
-    const previewTitle = document.getElementById('deck-preview-title');
-    const previewMeta = document.getElementById('deck-preview-meta');
-    const previewCurve = document.getElementById('deck-preview-curve');
-    const previewCounts = document.getElementById('deck-preview-counts');
-    const previewCards = document.getElementById('deck-preview-cards');
-    const previewCloseBtn = document.getElementById('deck-preview-close-btn');
-    const previewBackBtn = document.getElementById('deck-preview-back-btn');
-    const previewExportBtn = document.getElementById('deck-preview-export-btn');
+    const deckSelectionView = createModal?.closest('.deck-selection-view') ?? null;
     const codeModal = document.getElementById('deck-code-modal');
     const codeCloseBtn = document.getElementById('deck-code-close-btn');
     const codeCopyBtn = document.getElementById('deck-code-copy-btn');
@@ -772,6 +746,11 @@ function renderDeckSelection() {
             importName: '',
             importCode: ''
         };
+    };
+
+    const setDeckSelectionScrollLock = (locked) => {
+        if (!deckSelectionView) return;
+        deckSelectionView.classList.toggle('deck-selection-modal-open', Boolean(locked));
     };
 
     const syncDeckCreationUI = () => {
@@ -815,16 +794,10 @@ function renderDeckSelection() {
     const openDeckCreation = () => {
         if (!createModal) return;
         resetDeckCreation();
+        setDeckSelectionScrollLock(true);
         createModal.classList.add('open');
         createModal.setAttribute('aria-hidden', 'false');
         syncDeckCreationUI();
-    };
-
-    const closeDeckPreview = () => {
-        if (!previewModal) return;
-        previewModal.classList.remove('open');
-        previewModal.setAttribute('aria-hidden', 'true');
-        previewDeckId = null;
     };
 
     const closeDeckCode = () => {
@@ -857,43 +830,47 @@ function renderDeckSelection() {
         openDeckCode(deckName, code);
     };
 
+    const deckPreview = createDeckPreviewModal({
+        idPrefix: 'deck-preview',
+        onClose: () => {
+            previewDeckId = null;
+        },
+        onExport: () => {
+            if (!previewDeckId) return;
+            openDeckCodeById(previewDeckId, previewDeckName).catch(err => {
+                alert(`导出失败：${err.message}`);
+            });
+        },
+        onCardClick: (cardId) => {
+            const card = state.cardIndex.get(Number(cardId));
+            openCardDetailModal(card);
+        }
+    });
+
     const openDeckPreview = async (deckId) => {
-        if (!previewModal || !previewTitle || !previewMeta || !previewCurve || !previewCounts || !previewCards) return;
+        if (!deckPreview.isAvailable()) return;
 
         const deckDetail = await fetchDeckDetail(deckId);
         const previewSnapshot = buildDeckPreviewSnapshot(deckDetail);
+        const deckSummary = getDeckSummaryById(deckId) ?? deckDetail;
         previewDeckId = deckId;
         previewDeckName = resolveDeckName(deckDetail);
 
-        previewTitle.textContent = previewDeckName;
-        previewMeta.textContent = `${getClassLabel(deckDetail.class)} | ${getEnvironmentLabel(deckDetail.environment)}`;
-        previewCurve.innerHTML = renderDeckPreviewCurveHtml(previewSnapshot.curve);
-        previewCounts.innerHTML = `
-            <div class="deck-preview-total">${previewSnapshot.totalCount} / 40</div>
-            <div class="deck-preview-type-row">
-                <span>随从: ${previewSnapshot.typeCounts.follower}</span>
-                <span>法术: ${previewSnapshot.typeCounts.spell}</span>
-                <span>护符: ${previewSnapshot.typeCounts.amulet}</span>
-            </div>
-        `;
-        previewCards.innerHTML = renderDeckPreviewCardsHtml(previewSnapshot.items);
-        previewCards.querySelectorAll('.deck-preview-card').forEach(cardEl => {
-            cardEl.addEventListener('click', (event) => {
-                event.stopPropagation();
-                const cardId = Number(cardEl.getAttribute('data-card-id'));
-                const card = state.cardIndex.get(cardId);
-                openCardDetailModal(card);
-            });
+        deckPreview.open({
+            titleText: previewDeckName,
+            metaText: `${getClassLabel(deckDetail.class)} | ${getEnvironmentLabel(deckDetail.environment)}`,
+            cards: previewSnapshot.items,
+            stats: getDeckMatchStats(deckSummary),
+            exportEnabled: true,
+            exportVisible: true
         });
-
-        previewModal.classList.add('open');
-        previewModal.setAttribute('aria-hidden', 'false');
     };
 
     const closeDeckCreation = () => {
         if (!createModal) return;
         createModal.classList.remove('open');
         createModal.setAttribute('aria-hidden', 'true');
+        setDeckSelectionScrollLock(false);
         resetDeckCreation();
     };
 
@@ -919,25 +896,12 @@ function renderDeckSelection() {
         state.deckCreation.importCode = event.target.value;
         syncDeckCreationUI();
     });
-    previewModal?.addEventListener('click', (event) => {
-        if (event.target === previewModal) {
-            closeDeckPreview();
-        }
-    });
     codeModal?.addEventListener('click', (event) => {
         if (event.target === codeModal) {
             closeDeckCode();
         }
     });
-    previewCloseBtn?.addEventListener('click', closeDeckPreview);
-    previewBackBtn?.addEventListener('click', closeDeckPreview);
     codeCloseBtn?.addEventListener('click', closeDeckCode);
-    previewExportBtn?.addEventListener('click', () => {
-        if (!previewDeckId) return;
-        openDeckCodeById(previewDeckId, previewDeckName).catch(err => {
-            alert(`导出失败：${err.message}`);
-        });
-    });
     codeCopyBtn?.addEventListener('click', () => {
         if (!activeDeckCode) return;
         copyTextToClipboard(activeDeckCode)
@@ -1538,13 +1502,32 @@ async function saveDeck() {
     if (!state.currentDeck) return;
     const query = getDeckOwnerQuery();
     const deckId = state.currentDeck.deckId || state.currentDeck.id;
+    const allowCreateFallback = state.currentDeck.isNew === true || !deckId;
     const payload = {
         name: state.currentDeck.name,
         class: state.currentDeck.class || 'Neutral',
         environment: normalizeEnvironment(state.currentDeck.environment),
         cards: state.currentDeck.cards ?? []
     };
-    await apiPutJson(`/api/decks/${deckId}?${query}`, payload);
+
+    const isNotFoundError = (error) => {
+        const message = String(error?.message || '').toLowerCase();
+        return message.includes('deck not found') || message.includes('target deck not found') || message.includes('not found');
+    };
+
+    if (deckId) {
+        try {
+            await apiPutJson(`/api/decks/${deckId}?${query}`, payload);
+        } catch (error) {
+            if (!isNotFoundError(error) || !allowCreateFallback) {
+                throw error;
+            }
+            await apiPostJson(`/api/decks?${query}`, payload);
+        }
+    } else {
+        await apiPostJson(`/api/decks?${query}`, payload);
+    }
+
     await loadDecks();
     document.dispatchEvent(new CustomEvent('deckListUpdated'));
     state.currentDeck = null;

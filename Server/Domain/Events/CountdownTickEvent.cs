@@ -63,7 +63,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (OldCountdown.HasValue && OldCountdown.Value > 0 && NewCountdown == 0)
             {
-                result.GeneratedEvents.Add(new DestroyEvent(card, card, EventReasonSource.System));
+                result.GeneratedEvents.Add(new LeaveFieldEvent(
+                    card,
+                    LeaveFieldKind.Destroy,
+                    EventReasonSource.System,
+                    card));
             }
 
             return result;

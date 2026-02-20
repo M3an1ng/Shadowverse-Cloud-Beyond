@@ -19,6 +19,10 @@ public class DeckStatsAgg
 
     public int TotalGames { get; set; }
     public int TotalWins { get; set; }
+    public int GoingFirstGames { get; set; }
+    public int GoingFirstWins { get; set; }
+    public int GoingSecondGames { get; set; }
+    public int GoingSecondWins { get; set; }
 
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }

@@ -20,6 +20,7 @@ public sealed record GameRuntimeStatsSnapshot(
 
 public sealed record ParticipantRuntimeStatsSnapshot(
     Guid PlayerId,
+    bool IsFirstPlayer,
     CardClass DeckClass,
     DeckEnvironment Environment,
     Guid? UserDeckId,

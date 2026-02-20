@@ -47,6 +47,9 @@ public sealed class WinrateStatsServiceTests
 
         Assert.Equal(2, facts.Count);
         Assert.All(facts, fact => Assert.False(fact.IsOfficial));
+        Assert.Contains(facts, fact => fact.PlayerId == user1 && fact.IsFirstPlayer == true);
+        Assert.Contains(facts, fact => fact.PlayerId == aiPlayerId && fact.IsFirstPlayer == false);
+        Assert.All(facts, fact => Assert.Equal(6, fact.EndTurnNumber));
         Assert.Empty(await harness.Db.CardStatsAggs.ToListAsync());
         Assert.Empty(await harness.Db.DeckStatsAggs.ToListAsync());
         Assert.Empty(await harness.Db.UserClassStatsAggs.ToListAsync());
@@ -76,6 +79,9 @@ public sealed class WinrateStatsServiceTests
             .ToListAsync();
         Assert.Equal(2, facts.Count);
         Assert.All(facts, fact => Assert.True(fact.IsOfficial));
+        Assert.Contains(facts, fact => fact.PlayerId == user1 && fact.IsFirstPlayer == true);
+        Assert.Contains(facts, fact => fact.PlayerId == user2 && fact.IsFirstPlayer == false);
+        Assert.All(facts, fact => Assert.Equal(6, fact.EndTurnNumber));
 
         var cardAgg = await harness.Db.CardStatsAggs.SingleAsync();
         Assert.Equal(2, cardAgg.DeckGames);
@@ -88,6 +94,10 @@ public sealed class WinrateStatsServiceTests
         var deckAgg = await harness.Db.DeckStatsAggs.SingleAsync();
         Assert.Equal(2, deckAgg.TotalGames);
         Assert.Equal(1, deckAgg.TotalWins);
+        Assert.Equal(1, deckAgg.GoingFirstGames);
+        Assert.Equal(1, deckAgg.GoingFirstWins);
+        Assert.Equal(1, deckAgg.GoingSecondGames);
+        Assert.Equal(0, deckAgg.GoingSecondWins);
 
         var userClassAggs = await harness.Db.UserClassStatsAggs
             .AsNoTracking()
@@ -128,6 +138,10 @@ public sealed class WinrateStatsServiceTests
         var deckAgg = await harness.Db.DeckStatsAggs.SingleAsync();
         Assert.Equal(2, deckAgg.TotalGames);
         Assert.Equal(1, deckAgg.TotalWins);
+        Assert.Equal(1, deckAgg.GoingFirstGames);
+        Assert.Equal(1, deckAgg.GoingFirstWins);
+        Assert.Equal(1, deckAgg.GoingSecondGames);
+        Assert.Equal(0, deckAgg.GoingSecondWins);
 
         var userClassAggs = await harness.Db.UserClassStatsAggs
             .AsNoTracking()
@@ -217,14 +231,16 @@ public sealed class WinrateStatsServiceTests
             {
                 IsFirst = true,
                 Class = CardClass.Forestcraft,
-                Environment = DeckEnvironment.Open
+                Environment = DeckEnvironment.Open,
+                TurnNumber = 6
             };
             var player2 = new PlayerState(player2Id)
             {
                 IsFirst = false,
                 IsAI = player2IsAi,
                 Class = CardClass.Forestcraft,
-                Environment = DeckEnvironment.Open
+                Environment = DeckEnvironment.Open,
+                TurnNumber = 6
             };
 
             player1.InitialDeck = BuildDeck(player1Id, initialDeckCount, definitionId: 10001);

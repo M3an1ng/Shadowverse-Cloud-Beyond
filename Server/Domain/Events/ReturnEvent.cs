@@ -32,21 +32,36 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public bool ReturnApplied { get; private set; }
 
-        public ReturnEvent(PlayerState player, CardInstance card, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
+        public ReturnEvent(
+            PlayerState player,
+            CardInstance card,
+            EventReasonSource reason = EventReasonSource.Ability,
+            Guid? eventId = null,
+            DateTime? timestamp = null,
+            CardInstanceSnapshot? returnedCardSnapshot = null,
+            CardInstanceSnapshot? returnSourceSnapshot = null)
             : base(EventType.Return, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
-            ReturnedCardSnapshot = CardInstanceSnapshot.From(card);
+            ReturnedCardSnapshot = returnedCardSnapshot ?? TryCreateSnapshot(card);
+            ReturnSourceSnapshot = returnSourceSnapshot;
         }
 
-        public ReturnEvent(CardInstance card, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
+        public ReturnEvent(
+            CardInstance card,
+            EventReasonSource reason = EventReasonSource.Ability,
+            Guid? eventId = null,
+            DateTime? timestamp = null,
+            CardInstanceSnapshot? returnedCardSnapshot = null,
+            CardInstanceSnapshot? returnSourceSnapshot = null)
             : base(EventType.Return, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
-            ReturnedCardSnapshot = CardInstanceSnapshot.From(card);
+            ReturnedCardSnapshot = returnedCardSnapshot ?? TryCreateSnapshot(card);
+            ReturnSourceSnapshot = returnSourceSnapshot;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -84,6 +99,23 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             return $"{AnnouncementTokens.Card(card)}返回手牌。";
+        }
+
+        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
+        {
+            if (card == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return CardInstanceSnapshot.From(card);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

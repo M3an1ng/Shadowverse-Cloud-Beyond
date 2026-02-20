@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -145,7 +147,51 @@ public class DeckService : IDeckService
             })
             .ToListAsync(cancellationToken);
 
-        return decks;
+        if (decks.Count == 0)
+        {
+            return decks;
+        }
+
+        var deckIds = decks.Select(deck => deck.DeckId).ToList();
+        var statsByDeckId = await _db.GameParticipantStatsFacts
+            .AsNoTracking()
+            .Where(fact =>
+                fact.IsOfficial &&
+                fact.UserDeckId.HasValue &&
+                deckIds.Contains(fact.UserDeckId.Value))
+            .GroupBy(fact => fact.UserDeckId!.Value)
+            .Select(group => new
+            {
+                DeckId = group.Key,
+                TotalGames = group.Count(),
+                TotalWins = group.Count(fact => fact.IsWinner),
+                GoingFirstGames = group.Count(fact => fact.IsFirstPlayer == true),
+                GoingFirstWins = group.Count(fact => fact.IsFirstPlayer == true && fact.IsWinner),
+                GoingSecondGames = group.Count(fact => fact.IsFirstPlayer == false),
+                GoingSecondWins = group.Count(fact => fact.IsFirstPlayer == false && fact.IsWinner)
+            })
+            .ToDictionaryAsync(item => item.DeckId, cancellationToken);
+
+        var enriched = decks.Select(deck =>
+        {
+            if (!statsByDeckId.TryGetValue(deck.DeckId, out var stats))
+            {
+                return deck;
+            }
+
+            return deck with
+            {
+                TotalGames = stats.TotalGames,
+                TotalWins = stats.TotalWins,
+                GoingFirstGames = stats.GoingFirstGames,
+                GoingFirstWins = stats.GoingFirstWins,
+                GoingSecondGames = stats.GoingSecondGames,
+                GoingSecondWins = stats.GoingSecondWins
+            };
+        }).ToList();
+
+        return enriched;
+
     }
 
     public async Task<DeckDetailDto?> GetAsync(DeckOwner owner, Guid deckId, CancellationToken cancellationToken)
@@ -334,6 +380,9 @@ public class DeckService : IDeckService
             deckEntity.Name = request.Name.Trim();
         }
 
+        var previousDeckShapeHash = BuildDeckShapeHash(deckEntity.Class, deckEntity.Cards);
+        var nextDeckShapeHash = previousDeckShapeHash;
+
         var ownerId = owner.IsGuest ? owner.GetGuestIdOrNull() : owner.GetUserIdOrNull();
         var incomingEntries = request.Cards?.Count ?? 0;
         var incomingTotal = request.Cards?.Sum(card => card.Count);
@@ -356,6 +405,7 @@ public class DeckService : IDeckService
                 return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
             }
 
+            nextDeckShapeHash = BuildDeckShapeHash(targetDeckClass, validation.Data!);
             ReplaceCards(deckEntity, validation.Data!);
         }
         else if (request.Class.HasValue && request.Class.Value != deckEntity.Class && deckEntity.Cards.Count > 0)
@@ -371,10 +421,50 @@ public class DeckService : IDeckService
             {
                 return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
             }
+
+            nextDeckShapeHash = BuildDeckShapeHash(targetDeckClass, deckEntity.Cards);
+        }
+        else if (request.Class.HasValue && request.Class.Value != deckEntity.Class && deckEntity.Cards.Count == 0)
+        {
+            nextDeckShapeHash = BuildDeckShapeHash(targetDeckClass, Array.Empty<DeckCardEntryDto>());
         }
 
         deckEntity.Class = targetDeckClass;
         deckEntity.Environment = targetEnvironment;
+        if (!string.Equals(previousDeckShapeHash, nextDeckShapeHash, StringComparison.Ordinal))
+        {
+            var linkedFacts = await _db.GameParticipantStatsFacts
+                .Where(item => item.UserDeckId == deckEntity.Id)
+                .ToListAsync(cancellationToken);
+
+            if (linkedFacts.Count > 0)
+            {
+                var linkedHashes = linkedFacts
+                    .Select(item => item.DeckShapeHash)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                // Guard against false positives: if historical linked hash already equals current shape,
+                // do not reset this deck's winrate history.
+                var shouldResetLinkedFacts = linkedHashes.Count == 0 ||
+                    linkedHashes.Any(item => !string.Equals(item, nextDeckShapeHash, StringComparison.Ordinal));
+                if (shouldResetLinkedFacts)
+                {
+                    foreach (var fact in linkedFacts)
+                    {
+                        fact.UserDeckId = null;
+                    }
+
+                    _logger.LogInformation(
+                        "Deck shape changed and detached historical facts from UserDeckId. DeckId={DeckId} UserId={UserId} DetachedFacts={DetachedFacts}",
+                        deckEntity.Id,
+                        userId.Value,
+                        linkedFacts.Count);
+                }
+            }
+        }
+
         deckEntity.Touch();
         try
         {
@@ -793,6 +883,34 @@ public class DeckService : IDeckService
         }
 
         return remaining == 0 ? entries : null;
+    }
+
+    private static string BuildDeckShapeHash(CardClass deckClass, IEnumerable<UserDeckCard> cards)
+    {
+        var payload = string.Join(",",
+            cards
+                .Where(card => card.Count > 0)
+                .GroupBy(card => card.CardDefinitionId)
+                .OrderBy(group => group.Key)
+                .Select(group => $"{group.Key}:{group.Sum(item => item.Count)}"));
+
+        var raw = $"{deckClass}|{payload}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+        return Convert.ToHexString(hash);
+    }
+
+    private static string BuildDeckShapeHash(CardClass deckClass, IEnumerable<DeckCardEntryDto> cards)
+    {
+        var payload = string.Join(",",
+            cards
+                .Where(card => card.Count > 0)
+                .GroupBy(card => card.CardDefinitionId)
+                .OrderBy(group => group.Key)
+                .Select(group => $"{group.Key}:{group.Sum(item => item.Count)}"));
+
+        var raw = $"{deckClass}|{payload}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+        return Convert.ToHexString(hash);
     }
 
     private sealed record DefaultDeckPlan(CardClass DeckClass, List<DeckCardEntryDto> Cards);

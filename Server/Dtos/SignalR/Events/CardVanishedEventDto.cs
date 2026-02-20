@@ -26,7 +26,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public Guid PlayerId { get; set; } = Guid.Empty;
 
         /// <summary>
-        /// Optional: Indicates the reason for vanishing (e.g., "Effect", "Fusion", "EarthSigilMerge").
+        /// Optional: Indicates the reason source for vanishing (e.g., "Ability", "System").
         /// </summary>
         public string Reason { get; set; } = "Unknown";
     }

@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "q7JsiMvdmP+M9l+hx928aKnYZOiWa9/eGiMpwqerZiY=",
+  "Source": "ShadowverseBeyond.Server",
+  "BasePath": "_content/ShadowverseBeyond.Server",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}

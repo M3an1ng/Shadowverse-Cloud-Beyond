@@ -1694,18 +1694,14 @@ CardEditor.prototype.openArtCropModal = function(kind) {
             );
 
             const blob = await new Promise((resolve) => {
-                if (isPreview) {
-                    canvas.toBlob(resolve, 'image/webp', 0.9);
-                    return;
-                }
-                canvas.toBlob(resolve, 'image/png');
+                canvas.toBlob(resolve, 'image/webp', 0.9);
             });
 
             if (!blob) {
                 throw new Error('Failed to generate output.');
             }
 
-            const filename = isPreview ? 'preview.webp' : 'detail.png';
+            const filename = isPreview ? 'preview.webp' : 'detail.webp';
             await this.uploadCardArt(kind, blob, filename, { silent: true });
             setModalStatus('Upload complete.');
             setTimeout(closeModal, 400);

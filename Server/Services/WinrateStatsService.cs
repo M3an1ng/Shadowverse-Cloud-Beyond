@@ -79,12 +79,15 @@ public sealed class WinrateStatsService : IWinrateStatsService
                     }
 
                     var isWinner = participant.PlayerId == gameEndEvent.WinnerId;
+                    var endTurnNumber = gameState.GetPlayerState(participant.PlayerId)?.TurnNumber;
                     _db.GameParticipantStatsFacts.Add(new GameParticipantStatsFact
                     {
                         Id = Guid.NewGuid(),
                         GameId = snapshot.GameId,
                         PlayerId = participant.PlayerId,
                         IsWinner = isWinner,
+                        IsFirstPlayer = participant.IsFirstPlayer,
+                        EndTurnNumber = endTurnNumber,
                         EndedAtUtc = gameEndEvent.Timestamp,
                         DeckClass = participant.DeckClass,
                         Environment = participant.Environment,
@@ -200,6 +203,23 @@ public sealed class WinrateStatsService : IWinrateStatsService
         if (isWinner)
         {
             deckAgg.TotalWins++;
+        }
+
+        if (participant.IsFirstPlayer)
+        {
+            deckAgg.GoingFirstGames++;
+            if (isWinner)
+            {
+                deckAgg.GoingFirstWins++;
+            }
+        }
+        else
+        {
+            deckAgg.GoingSecondGames++;
+            if (isWinner)
+            {
+                deckAgg.GoingSecondWins++;
+            }
         }
 
         deckAgg.UpdatedAtUtc = DateTime.UtcNow;
