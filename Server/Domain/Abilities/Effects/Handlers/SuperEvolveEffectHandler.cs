@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -37,6 +38,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     if (targetInfo.Card == null)
                     {
                         return new DomainOperationResult { Success = false, ErrorMessage = "SuperEvolve target is not a valid card." };
+                    }
+
+                    if (targetInfo.Card.CurrentZone != CardZone.Field)
+                    {
+                        Logger.LogWarning("{EffectName}: Target card zone is not Field.", effectName);
+                        return new DomainOperationResult { Success = true };
                     }
 
                     var cardToEvolve = targetInfo.Card;

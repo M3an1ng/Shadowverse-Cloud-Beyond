@@ -66,3 +66,4 @@ public class CardSetDefinition
     /// </summary>
     public CardPackDefinition? CardPackDefinition { get; set; }
 }
+

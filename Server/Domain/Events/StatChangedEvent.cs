@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Buffs;
@@ -38,6 +39,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("持续参数", "持续时间的附加参数。")]
         public int? DurationParameter { get; }
 
+        public ConditionConfig? RemoveCondition { get; }
+
         [GameEventParameter("修正层级", "属性变化的修正层级。")]
         public ModifierLayer ModifierLayer { get; }
 
@@ -58,6 +61,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             ModifierLayer modifierLayer = ModifierLayer.Additive,
             string? effectKey = null,
             bool canStack = true,
+            ConditionConfig? removeCondition = null,
             bool preserveCurrentHealthOnMaxHealthChange = false,
             Guid? eventId = null,
             DateTime? timestamp = null)
@@ -73,6 +77,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             ModifierLayer = modifierLayer;
             EffectKey = effectKey;
             CanStack = canStack;
+            RemoveCondition = removeCondition;
             PreserveCurrentHealthOnMaxHealthChange = preserveCurrentHealthOnMaxHealthChange;
         }
 
@@ -98,7 +103,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 durationType: DurationType,
                 durationParameter: DurationParameter,
                 effectKey: EffectKey,
-                canStack: CanStack);
+                canStack: CanStack,
+                removeCondition: RemoveCondition);
 
             if (!result.Success)
             {
@@ -235,8 +241,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private static void TryApplyEffectScopedLeaveFieldDelay(GameContext context, LeaveFieldEvent leaveFieldEvent)
         {
-            var parentEventId = context.TriggeringEvent?.EventId
+            // Keep delayed leave-field within the currently executing effect scope first.
+            // This prevents unrelated abilities sharing the same trigger event from delaying each other.
+            var parentEventId = context.CurrentEffect?.Id
                 ?? context.CurrentEffect?.TriggeredEventId
+                ?? context.TriggeringEvent?.EventId
                 ?? Guid.Empty;
             if (parentEventId == Guid.Empty)
             {

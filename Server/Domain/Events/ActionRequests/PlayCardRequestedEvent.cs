@@ -155,10 +155,11 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                     return result;
                 }
 
-                if (activePlayerState.CurrentPlayPoints < enhanceCost)
+                var spendablePp = activePlayerState.GetSpendablePlayPoints();
+                if (enhanceCost > spendablePp)
                 {
                     result.Success = false;
-                    result.ErrorMessage = $"Not enough PP for Enhance (need {enhanceCost}, have {activePlayerState.CurrentPlayPoints}).";
+                    result.ErrorMessage = $"Not enough PP for Enhance (need {enhanceCost}, have {spendablePp}).";
                     return result;
                 }
 
@@ -177,12 +178,11 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             // =================================================================
             // 2. Event Creation Logic from PlayCardEffectHandler.Apply
             // =================================================================
-            var playResult = activePlayerState.PreparePlayCard(cardToPlay, selectedMode.Value, paidCost);
-            if (playResult.Success && selectedMode.Value == PlayMode.Enhance && selectedAbility != null)
-            {
-                playResult.GeneratedEvents.Insert(0, new EnhanceEvent(activePlayerState, cardToPlay, paidCost, selectedAbility.RuntimeId));
-            }
-            return playResult;
+            return activePlayerState.PreparePlayCard(
+                cardToPlay,
+                selectedMode.Value,
+                paidCost,
+                selectedMode.Value == PlayMode.Enhance ? selectedAbility?.RuntimeId : null);
         }
     }
 }

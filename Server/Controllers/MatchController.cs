@@ -1,4 +1,4 @@
-// File: Server/Controllers/MatchController.cs
+﻿// File: Server/Controllers/MatchController.cs
 //
 // 相关文档:
 // - 多人联机方案A: 内存房间 + JoinCode/Token
@@ -59,7 +59,7 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             var response = ToResponse(result.Room, includeTokens: true);
-            return CreatedAtAction(nameof(Get), new { id = response.GameId }, response);
+            return CreatedAtAction(nameof(Get), new { id = response.RoomId }, response);
         }
 
         [HttpPost("{id}/join")]
@@ -147,7 +147,10 @@ namespace ShadowverseBeyond.Server.Controllers
                 UserId = owner.UserId,
                 GuestId = owner.GuestId,
                 DeckId = playerDeckId,
-                DeckClass = playerDeck.Class
+                DeckClass = playerDeck.Class,
+                SecondaryClass = playerDeck.SecondaryClass,
+                Environment = playerDeck.Environment,
+                Rule = playerDeck.Rule
             };
 
             MatchDeckSelection? aiSelection = null;
@@ -177,17 +180,36 @@ namespace ShadowverseBeyond.Server.Controllers
                         UserId = aiOwner.UserId,
                         GuestId = aiOwner.GuestId,
                         DeckId = aiDeckId,
-                        DeckClass = aiDeck.Class
+                        DeckClass = aiDeck.Class,
+                        SecondaryClass = aiDeck.SecondaryClass,
+                        Environment = aiDeck.Environment,
+                        Rule = aiDeck.Rule
                     };
                 }
                 else if (!string.IsNullOrWhiteSpace(request.AiDeckCode))
                 {
-                    if (!_deckCodeService.TryDecode(request.AiDeckCode, out var aiDeckClass, out var aiCards, out var decodeError))
+                    if (!_deckCodeService.TryDecode(
+                        request.AiDeckCode,
+                        out var aiDeckClass,
+                        out var aiSecondaryClass,
+                        out var aiEnvironment,
+                        out var aiMode,
+                        out var aiCards,
+                        out var decodeError))
                     {
                         return BadRequest(decodeError ?? "AI deck code is invalid.");
                     }
 
-                    var aiValidation = await _deckValidation.ValidateAsync(aiDeckClass, aiCards, DeckEnvironment.Open, requireComplete: true, cancellationToken);
+                    var effectiveAiEnvironment = aiEnvironment ?? DeckEnvironment.Rotation;
+                    var effectiveAiMode = aiMode ?? DeckRule.Standard;
+                    var aiValidation = await _deckValidation.ValidateAsync(
+                        aiDeckClass,
+                        aiSecondaryClass,
+                        aiCards,
+                        effectiveAiEnvironment,
+                        effectiveAiMode,
+                        requireComplete: true,
+                        cancellationToken);
                     if (!aiValidation.Success)
                     {
                         return BadRequest(aiValidation.Error ?? "AI deck validation failed.");
@@ -196,8 +218,28 @@ namespace ShadowverseBeyond.Server.Controllers
                     aiSelection = new MatchDeckSelection
                     {
                         DeckCode = request.AiDeckCode,
-                        DeckClass = aiDeckClass
+                        DeckClass = aiDeckClass,
+                        SecondaryClass = aiSecondaryClass,
+                        Environment = effectiveAiEnvironment,
+                        Rule = effectiveAiMode
                     };
+                }
+            }
+
+            if (aiSelection != null)
+            {
+                if (aiSelection.Environment.HasValue &&
+                    selection.Environment.HasValue &&
+                    aiSelection.Environment.Value != selection.Environment.Value)
+                {
+                    return BadRequest("AI deck environment must match player deck environment.");
+                }
+
+                if (aiSelection.Rule.HasValue &&
+                    selection.Rule.HasValue &&
+                    aiSelection.Rule.Value != selection.Rule.Value)
+                {
+                    return BadRequest("AI deck rule must match player deck rule.");
                 }
             }
 
@@ -224,14 +266,13 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             var room = auth.Room;
-            var leaverRole = request.PlayerId == room.HostPlayerId ? "Host" : "Guest";
-            var reason = leaverRole == "Host"
-                ? "房主已退出，房间已解散。"
-                : "访客已退出，房间已解散。";
+            var isHost = request.PlayerId == room.HostPlayerId;
+            var hostLeaveReason = "房主已退出，房间已解散。";
 
             // Best-effort: explicitly end the running game now instead of waiting for disconnect timeout.
-            var gameState = _gameService.GetGameState(id);
-            if (gameState != null && !gameState.IsGameOver)
+            var activeGameId = room.ActiveGameId;
+            var gameState = string.IsNullOrWhiteSpace(activeGameId) ? null : _gameService.GetGameState(activeGameId);
+            if (!string.IsNullOrWhiteSpace(activeGameId) && gameState != null && !gameState.IsGameOver)
             {
                 var disconnectAction = new PlayerActionWrapper
                 {
@@ -240,16 +281,26 @@ namespace ShadowverseBeyond.Server.Controllers
                     ActionData = new { Reason = "LeaveRoom" }
                 };
 
-                await _gameService.EnqueuePlayerActionAsync(id, disconnectAction);
+                await _gameService.EnqueuePlayerActionAsync(activeGameId, disconnectAction);
             }
 
-            _matchService.Close(id, reason);
+            var leaveResult = _matchService.Leave(id, request.PlayerId, hostLeaveReason);
+            if (!leaveResult.Success)
+            {
+                return MapResult(leaveResult, includeTokens: false);
+            }
 
-            // Notify any connected gameplay clients immediately; lobby clients rely on polling.
-            await _hubContext.Clients.Group(SignalRGroupNames.Game(id)).ReceiveError($"ROOM_CLOSED:{reason}");
+            if (isHost)
+            {
+                // Notify any connected gameplay clients immediately; lobby clients rely on polling.
+                await _hubContext.Clients.Group(SignalRGroupNames.Game(id)).ReceiveError($"ROOM_CLOSED:{hostLeaveReason}");
+            }
+            else
+            {
+                await _hubContext.Clients.Group(SignalRGroupNames.Game(id)).ReceiveError("ROOM_GUEST_LEFT:访客已退出房间。");
+            }
 
-            var closed = _matchService.Get(id);
-            return MapResult(closed, includeTokens: false);
+            return MapResult(leaveResult, includeTokens: false);
         }
 
         [HttpGet("{id}")]
@@ -352,9 +403,10 @@ namespace ShadowverseBeyond.Server.Controllers
 
         private static MatchResponse ToResponse(MatchRoom room, bool includeTokens)
         {
-            return new MatchResponse
+            var response = new MatchResponse
             {
-                GameId = room.GameId,
+                RoomId = room.RoomId,
+                ActiveGameId = room.ActiveGameId,
                 HostPlayerId = room.HostPlayerId,
                 GuestPlayerId = room.GuestPlayerId,
                 JoinCode = room.JoinCode,
@@ -366,6 +418,17 @@ namespace ShadowverseBeyond.Server.Controllers
                 UseAiFallback = room.UseAiFallback,
                 ClosedReason = room.ClosedReason
             };
+
+            if (room.HostDeckSelection?.HasSelection == true)
+            {
+                response.RequiredEnvironment = room.HostDeckSelection.Environment ?? DeckEnvironment.Rotation;
+                response.RequiredRule = room.HostDeckSelection.Rule ?? DeckRule.Standard;
+            }
+
+#pragma warning disable CS0618
+            response.GameId = room.RoomId;
+#pragma warning restore CS0618
+            return response;
         }
 
         // --- Request/Response DTOs ---
@@ -403,6 +466,9 @@ namespace ShadowverseBeyond.Server.Controllers
 
         public class MatchResponse
         {
+            public string RoomId { get; set; } = string.Empty;
+            public string? ActiveGameId { get; set; }
+            [Obsolete("Use RoomId instead.")]
             public string GameId { get; set; } = string.Empty;
             public Guid HostPlayerId { get; set; }
             public Guid? GuestPlayerId { get; set; }
@@ -414,6 +480,10 @@ namespace ShadowverseBeyond.Server.Controllers
             public bool GuestReady { get; set; }
             public bool UseAiFallback { get; set; }
             public string? ClosedReason { get; set; }
+            public DeckEnvironment? RequiredEnvironment { get; set; }
+            public DeckRule? RequiredRule { get; set; }
         }
     }
 }
+
+

@@ -11,6 +11,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities; // For Ability class
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Constants;
@@ -36,7 +37,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<StatModification> statModifications,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn)
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -51,7 +53,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created stat buff {BuffId} with {Count} modifications on target {TargetId}",
@@ -66,7 +69,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<StatModification> statModifications,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn)
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (statModifications == null || !statModifications.Any()) throw new ArgumentException("Stat modifications cannot be null or empty", nameof(statModifications));
@@ -80,11 +84,77 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created system stat buff {BuffId} with {Count} modifications on target {TargetId}",
                 buff.Id, statModifications.Count, target.InstanceId);
+
+            return buff;
+        }
+
+        /// <inheritdoc />
+        public Buff CreateActionUsageLimitBuff(
+            CardInstance target,
+            CardInstance? sourceCard,
+            IAbility sourceAbility,
+            List<ActionUsageLimitModification> modifications,
+            DurationType durationType,
+            int? durationParameter,
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
+            if (modifications == null || !modifications.Any()) throw new ArgumentException("Action usage limit modifications cannot be null or empty", nameof(modifications));
+
+            var effect = new ActionUsageLimitBuffEffect(new List<ActionUsageLimitModification>(modifications));
+            var effects = new List<IBuffEffect> { effect };
+
+            var buff = new Buff(
+                sourceAbilityId: sourceAbility.RuntimeId,
+                targetCardInstanceId: target.InstanceId,
+                currentTurn: currentTurn,
+                effects: effects,
+                durationType: durationType,
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
+            );
+
+            _logger.LogDebug("Created action usage limit buff {BuffId} with {Count} modifications on target {TargetId}",
+                buff.Id, modifications.Count, target.InstanceId);
+
+            return buff;
+        }
+
+        /// <inheritdoc />
+        public Buff CreateSystemActionUsageLimitBuff(
+            CardInstance target,
+            List<ActionUsageLimitModification> modifications,
+            DurationType durationType,
+            int? durationParameter,
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (modifications == null || !modifications.Any()) throw new ArgumentException("Action usage limit modifications cannot be null or empty", nameof(modifications));
+
+            var effect = new ActionUsageLimitBuffEffect(new List<ActionUsageLimitModification>(modifications));
+            var effects = new List<IBuffEffect> { effect };
+
+            var buff = new Buff(
+                sourceAbilityId: Guid.Empty,
+                targetCardInstanceId: target.InstanceId,
+                currentTurn: currentTurn,
+                effects: effects,
+                durationType: durationType,
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
+            );
+
+            _logger.LogDebug("Created system action usage limit buff {BuffId} with {Count} modifications on target {TargetId}",
+                buff.Id, modifications.Count, target.InstanceId);
 
             return buff;
         }
@@ -97,7 +167,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywords,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn)
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -113,7 +184,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created keyword buff {BuffId} adding keywords [{Keywords}] to target {TargetId}",
@@ -128,7 +200,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywords,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn)
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (keywords == null || !keywords.Any()) throw new ArgumentException("Keywords cannot be null or empty", nameof(keywords));
@@ -143,7 +216,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created system keyword buff {BuffId} adding keywords [{Keywords}] to target {TargetId}",
@@ -161,7 +235,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             DurationType durationType,
             int? durationParameter,
             int currentTurn,
-            string? definitionId = null)
+            string? definitionId = null,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -174,7 +249,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 effects: effects,
                 definitionId: definitionId,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created composite buff {BuffId} with {EffectCount} effects on target {TargetId}",
@@ -244,7 +320,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 effects: effectsCopy,
                 definitionId: originalBuff.DefinitionId,
                 durationType: originalBuff.DurationType,
-                durationParameter: originalBuff.DurationParameter,
+                durationParameter: NormalizeDurationParameter(originalBuff.DurationType, originalBuff.DurationParameter),
                 removalTrigger: originalBuff.RemovalTrigger,
                 removalCondition: originalBuff.RemovalCondition,
                 applicabilityCondition: originalBuff.ApplicabilityCondition
@@ -280,7 +356,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<Constants.CardKeyword> keywordsToRemove,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn)
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (sourceAbility == null) throw new ArgumentNullException(nameof(sourceAbility));
@@ -295,7 +372,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created remove keyword buff {BuffId} removing keywords [{Keywords}] from target {TargetId}",
@@ -310,7 +388,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywordsToRemove,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn)
+            int currentTurn,
+            ConditionConfig? removeCondition = null)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (keywordsToRemove == null || !keywordsToRemove.Any()) throw new ArgumentException("Keywords to remove cannot be null or empty", nameof(keywordsToRemove));
@@ -324,7 +403,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 currentTurn: currentTurn,
                 effects: effects,
                 durationType: durationType,
-                durationParameter: durationParameter
+                durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                removalCondition: removeCondition
             );
 
             _logger.LogDebug("Created system remove keyword buff {BuffId} removing keywords [{Keywords}] from target {TargetId}",
@@ -342,6 +422,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 {
                     case StatBuffEffect stat:
                         cloned.Add(new StatBuffEffect(new List<StatModification>(stat.Modifications)));
+                        break;
+                    case ActionUsageLimitBuffEffect actionUsage:
+                        cloned.Add(new ActionUsageLimitBuffEffect(new List<ActionUsageLimitModification>(actionUsage.Modifications)));
                         break;
                     case KeywordBuffEffect keyword:
                         cloned.Add(new KeywordBuffEffect(new List<CardKeyword>(keyword.GrantedKeywords)));
@@ -362,7 +445,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                         cloned.Add(new AbilitySuppressionBuffEffect(
                             suppression.RemoveMode,
                             suppression.AbilityDefinitionIds,
-                            suppression.AbilityKeyword));
+                            suppression.AbilityKeyword,
+                            suppression.SourceAbilityRuntimeId));
                         break;
                     default:
                         _logger.LogWarning("Unknown buff effect type {EffectType}; reusing effect instance in copy.", effect.GetType().Name);
@@ -372,6 +456,13 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             }
 
             return cloned;
+        }
+
+        private static int? NormalizeDurationParameter(DurationType durationType, int? durationParameter)
+        {
+            return durationType == DurationType.ConditionalRemoval
+                ? null
+                : durationParameter;
         }
 
         /// <summary>
@@ -430,7 +521,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     currentTurn: currentTurn,
                     effects: effects,
                     durationType: durationType,
-                    durationParameter: durationParameter
+                    durationParameter: NormalizeDurationParameter(durationType, durationParameter),
+                    removalCondition: config.Duration?.RemoveCondition
                 );
 
                 _logger.LogDebug("Successfully created buff: {BuffId} from definition: {BuffDefinitionId}",
@@ -726,5 +818,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     {
         public string Type { get; set; } = "Permanent";
         public int? Parameter { get; set; }
+        public ConditionConfig? RemoveCondition { get; set; }
     }
 }

@@ -1,3 +1,6 @@
+import { loadCardDefinitions } from './cardDefinitionsLoader.js';
+import { CARD_CATALOG_INVALIDATED_EVENT } from './dataChangeEvents.js';
+
 const cardKeywordGlossary = {
     Storm: {
         name: '疾驰',
@@ -185,7 +188,11 @@ const abilityKeywordGlossary = {
     SuperEvolveEffect: {
         name: '超进化时',
         description: '消耗SEP使卡片超进化时，将发动能力。'
-    }
+    },
+    UnlimitedDeck: {
+        name: '无垠界域牌组',
+        description: '由11张不同类型的卡片所组成的牌组。\n包含1张『裁丝银偶』、1张『哈比』、1张『断界人』、1张『静默甲胄』、1张『星之鲸』、1张『虚境的俯瞰』、1张『往生者』、1张『珀伽索斯』、1张『八元冢』、1张『比蒙』与1张『口袋银河』。'
+    },
 };
 
 const keywordNormalizationMap = new Map([
@@ -213,6 +220,10 @@ let keywordLabelPromise = null;
 
 let cardIndex = null;
 let cardIndexPromise = null;
+document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
+    cardIndex = null;
+    cardIndexPromise = null;
+});
 let localCardSource = null;
 let localCardIndex = null;
 
@@ -342,11 +353,10 @@ async function loadCardIndex() {
     if (!cardIndexPromise) {
         cardIndexPromise = (async () => {
             try {
-                const response = await fetch('/api/cards');
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                const cards = await response.json();
+                const cards = await loadCardDefinitions({
+                    useCache: false,
+                    force: true
+                });
                 cardIndex = buildCardIndex(cards);
             } catch (error) {
                 console.warn('PreviewDescriptionLookup: Failed to load card definitions.', error);

@@ -9,8 +9,6 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -82,31 +80,17 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
 
         private static IReadOnlyList<ParameterAccessor> BuildAccessors(Type type)
         {
-            var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                .Select(p => (Property: p, Attr: p.GetCustomAttribute<GameEventParameterAttribute>()))
-                .Where(x => x.Attr != null && x.Property.GetIndexParameters().Length == 0)
-                .ToList();
-
-            var result = new List<ParameterAccessor>(props.Count);
-            foreach (var item in props)
+            var descriptor = EventParameterCache.GetDescriptor(type);
+            var result = new List<ParameterAccessor>(descriptor.Parameters.Count);
+            foreach (var parameter in descriptor.Parameters)
             {
-                var getter = CompileGetter(type, item.Property);
                 result.Add(new ParameterAccessor(
-                    PropertyName: item.Property.Name,
-                    Scope: item.Attr!.Scope,
-                    Getter: getter));
+                    PropertyName: parameter.PropertyName,
+                    Scope: parameter.Scope,
+                    Getter: parameter.Getter));
             }
 
             return result;
-        }
-
-        private static Func<IGameEvent, object?> CompileGetter(Type declaringType, PropertyInfo property)
-        {
-            var param = Expression.Parameter(typeof(IGameEvent), "e");
-            var casted = Expression.Convert(param, declaringType);
-            var access = Expression.Property(casted, property);
-            var boxed = Expression.Convert(access, typeof(object));
-            return Expression.Lambda<Func<IGameEvent, object?>>(boxed, param).Compile();
         }
 
         private static bool TryConvertToStableJson(GameState gameState, string propertyName, object? value, out JsonNode? node)
@@ -222,7 +206,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                         ["IsSilenced"] = JsonValue.Create(snapshot.IsSilenced),
                         ["Countdown"] = JsonValue.Create(snapshot.Countdown),
                         ["ZoneIndex"] = JsonValue.Create(snapshot.ZoneIndex),
-                        ["FieldTurn"] = JsonValue.Create(snapshot.FieldTurn),
+                        ["ZoneStayTurn"] = JsonValue.Create(snapshot.ZoneStayTurn),
                         ["CanAttack"] = JsonValue.Create(snapshot.CanAttack),
                         ["AttacksThisTurn"] = JsonValue.Create(snapshot.AttacksThisTurn),
                         ["MaxAttacksPerTurn"] = JsonValue.Create(snapshot.MaxAttacksPerTurn),
@@ -328,6 +312,12 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
             if (propertyName.Contains("Buff", StringComparison.OrdinalIgnoreCase))
             {
                 stableId = gameState.InGameIds.Format(InGameIdKind.Buff, guid);
+                return true;
+            }
+
+            if (propertyName.Contains("Ability", StringComparison.OrdinalIgnoreCase))
+            {
+                stableId = gameState.InGameIds.Format(InGameIdKind.Ability, guid);
                 return true;
             }
 

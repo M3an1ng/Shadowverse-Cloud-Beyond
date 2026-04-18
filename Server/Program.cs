@@ -167,6 +167,9 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register GameDataProvider for data caching and preloading
     builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IGameDataProvider, ShadowverseBeyond.Server.Services.GameDataProvider>();
     Log.Information("Registered IGameDataProvider as Singleton.");
+    builder.Services.AddSingleton<ITribeRegistry, TribeRegistry>();
+    builder.Services.AddSingleton<ITribeSemantics, TribeSemantics>();
+    Log.Information("Registered tribe registry and semantics services.");
 
     // Register GameDataPreloadService for startup data initialization
     builder.Services.AddHostedService<ShadowverseBeyond.Server.Services.GameDataPreloadService>();
@@ -249,6 +252,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register Economy Service
     builder.Services.AddScoped<IEconomyService, EconomyService>(); // Register the economy service
     Log.Information("Registered IEconomyService."); // Added Log
+    builder.Services.AddScoped<ICardCommunityService, CardCommunityService>();
+    Log.Information("Registered ICardCommunityService.");
     builder.Services.AddScoped<IOfficialMatchEvaluator, OfficialMatchEvaluator>();
     Log.Information("Registered IOfficialMatchEvaluator.");
     builder.Services.AddScoped<IMetaProgressionService, MetaProgressionService>();
@@ -474,9 +479,6 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     builder.Services.AddSingleton<IRawEventGameEventRegistry, RawEventGameEventRegistry>();
     Log.Information("Registered IRawEventGameEventRegistry as Singleton (RawEventGameEventRegistry).");
-
-    builder.Services.AddSingleton<IGameEventRehydrator, BestEffortGameEventRehydrator>();
-    Log.Information("Registered IGameEventRehydrator as Singleton (BestEffortGameEventRehydrator).");
 
     builder.Services.AddHostedService<ReplayCleanupHostedService>();
     Log.Information("Registered ReplayCleanupHostedService.");

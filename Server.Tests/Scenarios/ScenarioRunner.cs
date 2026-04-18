@@ -197,9 +197,9 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
                     card.AttacksThisTurn = spec.AttacksThisTurn.Value;
                 }
 
-                if (spec.FieldTurn.HasValue)
+                if (spec.ZoneStayTurn.HasValue)
                 {
-                    card.FieldTurn = spec.FieldTurn.Value;
+                    card.ZoneStayTurn = spec.ZoneStayTurn.Value;
                 }
 
                 if (spec.IsSuperEvolved == true)

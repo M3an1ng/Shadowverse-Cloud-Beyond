@@ -10,11 +10,11 @@ using System.Linq;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
-    [GameEventMetadata("添加纹章", "当纹章被添加到玩家纹章区时触发的事件。", EventType.AddEmblem, AbilityEditorCategories.PositionChangeId,
+    [GameEventMetadata("添加纹章", "当纹章或信仰被添加到玩家纹章区时触发的事件。", EventType.AddEmblem, AbilityEditorCategories.PositionChangeId,
         AbilityEditorCategories.PositionChangeLabel)]
     public class AddEmblemEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
-        [GameEventParameter("添加的纹章", "被添加到纹章区的卡牌列表。", DslDisplayTypeName = "事件目标")]
+        [GameEventParameter("添加的纹章或信仰", "被添加到纹章区的卡牌列表。", DslDisplayTypeName = "事件目标")]
         public List<CardInstance> CardsToAdd => Target
             .Where(t => t.Card != null)
             .Select(t => t.Card!)
@@ -56,7 +56,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return string.Empty;
             }
 
-            return $"{AnnouncementTokens.Player(player)}获得 {AnnouncementTokens.Number(count)} 个纹章。";
+            return $"{AnnouncementTokens.Player(player)}获得 {AnnouncementTokens.Number(count)} 个纹章/信仰。";
         }
     }
 }

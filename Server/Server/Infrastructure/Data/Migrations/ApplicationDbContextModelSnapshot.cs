@@ -7,7 +7,7 @@ using ShadowverseBeyond.Server.Infrastructure.Data;
 
 #nullable disable
 
-namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
+namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
     partial class ApplicationDbContextModelSnapshot : ModelSnapshot
@@ -187,6 +187,38 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.HasIndex("IsActive");
 
                     b.ToTable("BuffDefinitions", (string)null);
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CardDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("CardDefinitionId", "CreatedAt");
+
+                    b.ToTable("CardComments", (string)null);
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", b =>
@@ -396,6 +428,11 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.Property<int>("PlayedWins")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("Rule")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("TEXT");
 
@@ -403,10 +440,46 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
 
                     b.HasIndex("UpdatedAtUtc");
 
-                    b.HasIndex("Environment", "CardDefinitionId")
+                    b.HasIndex("Environment", "Rule", "CardDefinitionId")
                         .IsUnique();
 
                     b.ToTable("CardStatsAggs", (string)null);
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardVote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CardDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VoteType")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("CardDefinitionId", "UserId")
+                        .IsUnique();
+
+                    b.HasIndex("CardDefinitionId", "VoteType");
+
+                    b.ToTable("CardVotes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CardVotes_VoteType", "VoteType IN (1, -1)");
+                        });
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CoinTransaction", b =>
@@ -443,9 +516,47 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
 
                     b.HasIndex("UserId", "Type", "RelatedEntityId")
                         .IsUnique()
-                        .HasFilter("[RelatedEntityId] IS NOT NULL AND [Type] IN (1, 2, 3, 4)");
+                        .HasFilter("[RelatedEntityId] IS NOT NULL AND [Type] IN (1, 2, 3, 4, 8, 9)");
 
                     b.ToTable("CoinTransactions", (string)null);
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.DeckCardCopyLimitPolicy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CardDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Environment")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("MaxCopies")
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(3);
+
+                    b.Property<int>("Rule")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CardDefinitionId");
+
+                    b.HasIndex("UpdatedAtUtc");
+
+                    b.HasIndex("Environment", "Rule", "CardDefinitionId")
+                        .IsUnique();
+
+                    b.ToTable("DeckCardCopyLimitPolicies", (string)null);
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.DeckStatsAgg", b =>
@@ -465,6 +576,23 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.Property<int>("Environment")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("GoingFirstGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GoingFirstWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GoingSecondGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GoingSecondWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rule")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
                     b.Property<int>("TotalGames")
                         .HasColumnType("INTEGER");
 
@@ -478,7 +606,7 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
 
                     b.HasIndex("UpdatedAtUtc");
 
-                    b.HasIndex("Environment", "DeckShapeHash")
+                    b.HasIndex("Environment", "Rule", "DeckShapeHash")
                         .IsUnique();
 
                     b.ToTable("DeckStatsAggs", (string)null);
@@ -502,6 +630,9 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("EndTurnNumber")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("EndedAtUtc")
                         .HasColumnType("TEXT");
 
@@ -517,6 +648,9 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("IsFirstPlayer")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsOfficial")
                         .HasColumnType("INTEGER");
 
@@ -530,6 +664,11 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.Property<Guid>("PlayerId")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Rule")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
                     b.Property<Guid?>("UserDeckId")
                         .HasColumnType("TEXT");
 
@@ -537,10 +676,10 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
 
                     b.HasIndex("IsOfficial");
 
-                    b.HasIndex("Environment", "EndedAtUtc");
-
                     b.HasIndex("GameId", "PlayerId")
                         .IsUnique();
+
+                    b.HasIndex("Environment", "Rule", "EndedAtUtc");
 
                     b.ToTable("GameParticipantStatsFacts", (string)null);
                 });
@@ -666,6 +805,34 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.ToTable("QuestDefinitions", (string)null);
                 });
 
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TribeDefinition", b =>
+                {
+                    b.Property<string>("Name")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Aliases")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Behavior")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsReserved")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Name");
+
+                    b.HasIndex("IsEnabled");
+
+                    b.HasIndex("IsReserved", "IsEnabled");
+
+                    b.ToTable("TribeDefinitions", (string)null);
+                });
+
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -786,6 +953,39 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.ToTable("UserCardPacks", (string)null);
                 });
 
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.UserClassStatsAgg", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DeckClass")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TotalGames")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TotalWins")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedAtUtc");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "DeckClass")
+                        .IsUnique();
+
+                    b.ToTable("UserClassStatsAggs", (string)null);
+                });
+
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.UserDailyReward", b =>
                 {
                     b.Property<Guid>("Id")
@@ -852,6 +1052,14 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("Rule")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
+                    b.Property<int?>("SecondaryClass")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
@@ -1272,6 +1480,25 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardComment", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", "CardDefinition")
+                        .WithMany()
+                        .HasForeignKey("CardDefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CardDefinition");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", b =>
                 {
                     b.HasOne("ShadowverseBeyond.Server.Domain.Entities.CardSetDefinition", "CardSetDefinition")
@@ -1293,6 +1520,25 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                     b.Navigation("CardSetDefinition");
                 });
 
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CardVote", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", "CardDefinition")
+                        .WithMany()
+                        .HasForeignKey("CardDefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CardDefinition");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.CoinTransaction", b =>
                 {
                     b.HasOne("ShadowverseBeyond.Server.Domain.Entities.User", "User")
@@ -1302,6 +1548,17 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.DeckCardCopyLimitPolicy", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.CardDefinition", "CardDefinition")
+                        .WithMany()
+                        .HasForeignKey("CardDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CardDefinition");
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.GameSession", b =>

@@ -161,6 +161,7 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                 newCardCopy.CopyRuntimeStateFrom(originalCardToCopy);
                 newCardCopy.ResetAttackState();
                 newCardCopy.ResetActState();
+                newCardCopy.ResetFusionState();
 
                 if (gameState.FindCardInstance(newCardCopy.InstanceId) == null)
                 {

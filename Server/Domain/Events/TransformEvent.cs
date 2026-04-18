@@ -1,12 +1,14 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // DomainOperationResult
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Entities;
-using ShadowverseBeyond.Server.Services.Abstractions; // IGameDataProvider
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
-using System.Linq;
 using ShadowverseBeyond.Server.Domain.Identifiers;
+using ShadowverseBeyond.Server.Services.Abstractions; // IGameDataProvider
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -34,6 +36,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         [GameEventParameter("变形目标快照", "生成事件时记录的变形目标快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? TransformingCardSnapshot { get; }
+
+        internal bool CopySourceState { get; }
+        internal CardInstance.CardRuntimeStateSnapshot? CopySourceStateSnapshot { get; }
+        internal IReadOnlyList<Buff> CopySourceBuffs { get; } = Array.Empty<Buff>();
 
         /// <summary>
         /// 通知用构造：在卡面已变更后，用当前卡面的定义ID作为 NewCardDefinitionId。
@@ -71,6 +77,25 @@ namespace ShadowverseBeyond.Server.Domain.Events
         }
 
         /// <summary>
+        /// 提交用构造：将目标卡牌变形为复制来源卡牌的精确复制，保留目标实例本身。
+        /// </summary>
+        public TransformEvent(CardInstance targetCard, CardInstance copySourceCard, IReadOnlyList<Buff>? copySourceBuffs = null, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Transform, eventId, timestamp)
+        {
+            Source = TargetInfo.ForCard(copySourceCard);
+            TransformSourceSnapshot = CardInstanceSnapshot.From(copySourceCard);
+
+            Target.Add(TargetInfo.ForCard(targetCard));
+            TransformingCardSnapshot = CardInstanceSnapshot.From(targetCard);
+            NewCardDefinitionId = copySourceCard.CurrentDefinitionId;
+            CopySourceState = true;
+            CopySourceStateSnapshot = copySourceCard.CaptureRuntimeStateSnapshot();
+            CopySourceBuffs = copySourceBuffs != null
+                ? copySourceBuffs.ToList()
+                : Array.Empty<Buff>();
+        }
+
+        /// <summary>
         /// 执行变形：解析目标定义并调用 CardInstance.Transform。
         /// CardInstance.Transform 将负责注销/重建能力，并派发通知型 TransformEvent。
         /// </summary>
@@ -93,6 +118,28 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (!transformResult.Success)
             {
                 return transformResult;
+            }
+
+            if (CopySourceState)
+            {
+                if (CopySourceStateSnapshot == null)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "TransformEvent.Commit: copy source snapshot is missing." };
+                }
+
+                card.CopyRuntimeStateFrom(CopySourceStateSnapshot);
+
+                if (CopySourceBuffs.Count > 0)
+                {
+                    var buffFactory = context.ServiceProvider.GetRequiredService<IBuffFactory>();
+                    foreach (var buff in CopySourceBuffs)
+                    {
+                        var buffCopy = buffFactory.CreateBuffCopy(buff, card);
+                        context.BuffManager.RegisterBuffInstance(buffCopy, context.CurrentGameState);
+                    }
+                }
+
+                context.BuffService.InvalidateDerivedState(context.CurrentGameState, card.InstanceId);
             }
 
             return transformResult;

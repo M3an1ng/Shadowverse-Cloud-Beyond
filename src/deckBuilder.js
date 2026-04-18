@@ -8,19 +8,60 @@ import { getDeckOwnerQuery } from './userSession.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { createDeckPreviewModal } from './components/deckPreviewModal.js';
 import { compareCardsForEditorAndDeck } from './cardListSort.js';
+import {
+    CARD_SET_UNSPECIFIED_ENVIRONMENT,
+    buildGroupedCardSetOptions
+} from './cardSetFilterOptions.js';
+import { matchesCardLibrarySearch } from './cardLibrarySearch.js';
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
+import classNeutralIconUrl from './icon/svg/class_neutral.svg';
+import classForestcraftIconUrl from './icon/svg/class_elf.svg';
+import classSwordcraftIconUrl from './icon/svg/class_royal.svg';
+import classRunecraftIconUrl from './icon/svg/class_witch.svg';
+import classDragoncraftIconUrl from './icon/svg/class_dragon.svg';
+import classAbysscraftIconUrl from './icon/svg/class_nightmare.svg';
+import classHavencraftIconUrl from './icon/svg/class_bishop.svg';
+import classPortalcraftIconUrl from './icon/svg/class_nemesis.svg';
+import {
+    ensureDeckEnvironmentOptions,
+    getDeckEnvironmentOptions,
+    getDefaultDeckEnvironment,
+    normalizeDeckEnvironment as normalizeDeckEnvironmentShared
+} from './deckEnvironmentOptions.js';
+import {
+    getDeckClassDisplay as getDeckClassDisplayShared,
+    getDeckEnvironmentLabel as getDeckEnvironmentLabelShared,
+    getDeckRuleLabel as getDeckRuleLabelShared
+} from './deckPresentation.js';
+import {
+    filterUiVisibleDecks,
+    getDefaultVisibleDeckRule,
+    getUiVisibleDeckRuleOptions,
+    isDeckRuleUiVisible
+} from './deckRuleAvailability.js';
+import {
+    attachPendingDeckId,
+    createPendingDeckCreationRecord,
+    markPendingDeckCreationAbandoned,
+    shouldCleanupPendingDeckCreation
+} from './deckBuilderPendingCreationPolicy.js';
+import {
+    CARD_CATALOG_INVALIDATED_EVENT,
+    DECK_VALIDATION_RULES_UPDATED_EVENT
+} from './dataChangeEvents.js';
+import { buildDeckCardRootClassName } from './deckCardTypeStyling.js';
+import {
+    createDefaultDeckBuilderFilters,
+    resetDeckBuilderFilters
+} from './deckBuilderFilters.js';
+import { applyDeckBuilderFilterUiState } from './deckBuilderFilterUiState.js';
 
-const DEFAULT_ENVIRONMENT = 'open';
-const ENVIRONMENT_OPTIONS = [
-    {
-        value: 'open',
-        label: '开放环境',
-        description: '所有卡牌集合可用'
-    }
-];
+const DEFAULT_DECK_RULE = 'standard';
+const DEFAULT_MAX_COPIES_PER_CARD = 3;
 
 const CLASS_OPTIONS = [
-    { value: 'forestcraft', label: '妖精' },
+    { value: 'neutral', label: '中立' },
+    { value: 'forestcraft', label: '精灵' },
     { value: 'swordcraft', label: '皇家护卫' },
     { value: 'runecraft', label: '巫师' },
     { value: 'dragoncraft', label: '龙族' },
@@ -28,12 +69,33 @@ const CLASS_OPTIONS = [
     { value: 'havencraft', label: '主教' },
     { value: 'portalcraft', label: '复仇者' }
 ];
+const DECK_CLASS_OPTIONS = CLASS_OPTIONS.filter(option => option.value !== 'neutral');
+const DECK_RULE_OPTIONS = [
+    { value: 'standard', label: '标准' },
+    { value: 'dualClass', label: '混合职业' }
+];
+const CLASS_ICON_URL_MAP = {
+    neutral: classNeutralIconUrl,
+    forestcraft: classForestcraftIconUrl,
+    swordcraft: classSwordcraftIconUrl,
+    runecraft: classRunecraftIconUrl,
+    dragoncraft: classDragoncraftIconUrl,
+    abysscraft: classAbysscraftIconUrl,
+    havencraft: classHavencraftIconUrl,
+    portalcraft: classPortalcraftIconUrl
+};
+const DECK_ENV_DESC = {
+  open: "可使用全部可构筑卡牌",
+  rotation: "按星云指定系列可用卡牌构筑",
+  unlimited: "按星云历史系列卡牌构筑"
+};
 
 const TYPE_OPTIONS = [
     { value: 'follower', label: '从者' },
     { value: 'spell', label: '法术' },
     { value: 'amulet', label: '护符' },
     { value: 'crest', label: '纹章' },
+    { value: 'faith', label: '信仰' },
     { value: 'leader', label: '主战者' }
 ];
 
@@ -48,31 +110,47 @@ const RARITY_OPTIONS = [
 const state = {
     decks: [], // List of all decks
     currentDeck: null, // The deck currently being edited
+    currentDeckOriginalSnapshot: null,
     rawCardsCache: null, // Raw card definitions from /api/cards
+    rawCardIndex: new Map(),
     availableCards: [], // All cards available for building
     cardIndex: new Map(),
+    environmentOptions: [],
     deckCreation: {
         mode: 'create',
         environment: null,
         class: null,
+        deckRule: DEFAULT_DECK_RULE,
+        secondaryClass: null,
         step: 'environment',
         importName: '',
         importCode: ''
     },
-    filters: {
-        cost: null,
-        class: '',
-        type: '',
-        rarity: '',
-        set: '',
-        search: ''
-    },
+    filters: createDefaultDeckBuilderFilters(),
     pagination: {
         currentPage: 1,
         itemsPerPage: 10 // Fixed limit to prevent scrolling
     },
-    newDeckId: null
+    newDeckId: null,
+    pendingNewDeckCreation: null,
+    saveErrorMessages: [],
+    copyLimitPolicyCache: new Map(),
+    copyLimitPolicyInFlight: new Map()
 };
+const deckBattleReadyCache = new Map();
+const deckBattleReadyInFlight = new Map();
+let deckBuilderRouteGuardInstalled = false;
+let previousDeckBuilderRouteGuard = null;
+let nextPendingDeckCreationRequestId = 1;
+
+function notifyDeckListUpdated(reason) {
+    document.dispatchEvent(new CustomEvent('deckListUpdated', {
+        detail: {
+            reason: String(reason || 'unknown'),
+            at: Date.now()
+        }
+    }));
+}
 
 async function apiGetJson(url) {
     const response = await fetch(url, { method: "GET" });
@@ -128,6 +206,8 @@ async function apiDelete(url) {
 
 // --- DOM Elements ---
 let container = null;
+let deckValidationRulesListenerBound = false;
+let cardCatalogInvalidationListenerBound = false;
 
 // --- Initialization ---
 
@@ -138,11 +218,59 @@ export async function initializeDeckBuilder() {
         return;
     }
 
+    if (!deckValidationRulesListenerBound) {
+        document.addEventListener(DECK_VALIDATION_RULES_UPDATED_EVENT, () => {
+            void handleDeckValidationRulesUpdated();
+        });
+        deckValidationRulesListenerBound = true;
+    }
+
+    if (!cardCatalogInvalidationListenerBound) {
+        document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
+            void handleCardCatalogInvalidated();
+        });
+        cardCatalogInvalidationListenerBound = true;
+    }
+
+    ensureDeckBuilderRouteGuard();
+
     try {
+        await loadEnvironmentOptions();
         await bootstrapDecks();
         await Promise.all([loadDecks(), loadCards()]);
     } catch (error) {
         console.error("DeckBuilder: Failed to load data:", error);
+    }
+
+    renderDeckSelection();
+}
+
+async function loadEnvironmentOptions() {
+    await ensureDeckEnvironmentOptions();
+    const options = getDeckEnvironmentOptions();
+    state.environmentOptions = options.map((item) => ({
+        value: item.value,
+        label: item.label,
+        description: DECK_ENV_DESC[item.value] ?? `按${item.label}卡池构筑`
+    }));
+}
+
+async function handleDeckValidationRulesUpdated() {
+    state.copyLimitPolicyCache.clear();
+    state.copyLimitPolicyInFlight.clear();
+    deckBattleReadyCache.clear();
+    deckBattleReadyInFlight.clear();
+
+    try {
+        await loadDecks();
+    } catch (error) {
+        console.warn("DeckBuilder: Failed to refresh decks after validation-rule update.", error);
+    }
+
+    if (state.currentDeck) {
+        await ensureCopyLimitPolicyLoaded(state.currentDeck.environment, state.currentDeck.rule).catch(() => {});
+        updateDeckStatusUI();
+        return;
     }
 
     renderDeckSelection();
@@ -160,18 +288,106 @@ async function bootstrapDecks() {
 async function loadDecks() {
     const query = getDeckOwnerQuery();
     const decks = await apiGetJson(`/api/decks?${query}`);
-    state.decks = Array.isArray(decks)
-        ? decks.map(deck => ({
-            ...deck,
-            environment: normalizeEnvironment(deck.environment)
-        }))
+    const normalizedDecks = Array.isArray(decks)
+        ? decks.map(deck => {
+            const deckClass = deck.class ?? deck.Class;
+            const deckRule = deck.rule ?? deck.Rule;
+            const deckSecondaryClass = deck.secondaryClass ?? deck.SecondaryClass;
+            return {
+                ...deck,
+                class: normalizeEnumValue(deckClass),
+                environment: normalizeEnvironment(deck.environment ?? deck.Environment),
+                rule: normalizeDeckRule(deckRule),
+                secondaryClass: resolveSecondaryClass(deckRule, deckClass, deckSecondaryClass)
+            };
+        })
         : [];
+    const visibleDecks = filterUiVisibleDecks(normalizedDecks);
+    pruneDeckBattleReadyCache(visibleDecks);
+    state.decks = await attachBattleReadyState(visibleDecks);
 }
 
-async function loadCards() {
+function pruneDeckBattleReadyCache(decks) {
+    const activeKeys = new Set(
+        (Array.isArray(decks) ? decks : [])
+            .map(deck => getDeckValidationCacheKey(deck))
+            .filter(Boolean)
+    );
+    for (const key of deckBattleReadyCache.keys()) {
+        if (!activeKeys.has(key)) {
+            deckBattleReadyCache.delete(key);
+        }
+    }
+}
+
+function getDeckValidationCacheKey(deck) {
+    const deckId = getDeckId(deck);
+    if (!deckId) return null;
+    const updatedAt = String(deck?.updatedAt ?? deck?.UpdatedAt ?? "");
+    return `${deckId}|${updatedAt}`;
+}
+
+async function validateDeckBattleReady(deck) {
+    const deckId = getDeckId(deck);
+    if (!deckId) return false;
+    const cacheKey = getDeckValidationCacheKey(deck);
+    if (cacheKey && deckBattleReadyCache.has(cacheKey)) {
+        return deckBattleReadyCache.get(cacheKey) === true;
+    }
+    if (cacheKey && deckBattleReadyInFlight.has(cacheKey)) {
+        return await deckBattleReadyInFlight.get(cacheKey);
+    }
+
+    const validatePromise = (async () => {
+        const query = getDeckOwnerQuery();
+        try {
+            const response = await fetch(`/api/decks/${encodeURIComponent(deckId)}/code?${query}`, { method: "GET" });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    })();
+
+    if (cacheKey) {
+        deckBattleReadyInFlight.set(cacheKey, validatePromise);
+    }
+
+    try {
+        const valid = await validatePromise;
+        if (cacheKey) {
+            deckBattleReadyCache.set(cacheKey, valid);
+        }
+        return valid;
+    } finally {
+        if (cacheKey) {
+            deckBattleReadyInFlight.delete(cacheKey);
+        }
+    }
+}
+
+async function attachBattleReadyState(decks) {
+    if (!Array.isArray(decks) || decks.length === 0) {
+        return [];
+    }
+
+    const results = await Promise.all(decks.map(async (deck) => ({
+        deck,
+        isBattleReady: await validateDeckBattleReady(deck)
+    })));
+
+    return results.map(item => ({
+        ...item.deck,
+        isBattleReady: item.isBattleReady
+    }));
+}
+
+async function loadCards(options = {}) {
+    if (options.force === true) {
+        state.rawCardsCache = null;
+    }
     const cards = await loadCardDefinitions({
-        useCache: true,
-        force: false,
+        useCache: options.force !== true,
+        force: options.force === true,
         getCached: () => state.rawCardsCache,
         setCached: cardsFromApi => {
             state.rawCardsCache = cardsFromApi;
@@ -183,12 +399,37 @@ async function loadCards() {
             if (collectible !== true) return false;
             const rarity = normalizeEnumValue(card?.rarity ?? card?.Rarity ?? '');
             if (rarity === 'special') return false;
-            return Number(card?.id) > 0 && String(card?.type || '').toLowerCase() !== 'leader';
+            return Number(card?.id ?? card?.Id) > 0 && String(card?.type ?? card?.Type ?? '').toLowerCase() !== 'leader';
         })
         : [];
 
+    state.rawCardIndex = new Map((Array.isArray(cards) ? cards : []).map(card => [Number(card?.id ?? card?.Id), card]));
     state.availableCards = filtered;
-    state.cardIndex = new Map(filtered.map(card => [Number(card.id), card]));
+    state.cardIndex = new Map(filtered.map(card => [Number(card?.id ?? card?.Id), card]));
+}
+
+function getKnownCardDefinition(cardDefinitionId) {
+    const id = Number(cardDefinitionId);
+    if (!Number.isFinite(id) || id <= 0) {
+        return null;
+    }
+    return state.cardIndex.get(id) ?? state.rawCardIndex.get(id) ?? null;
+}
+
+async function handleCardCatalogInvalidated() {
+    try {
+        await loadCards({ force: true });
+    } catch (error) {
+        console.warn('DeckBuilder: Failed to reload cards after card catalog invalidation.', error);
+        return;
+    }
+
+    if (state.currentDeck) {
+        renderDeckBuilder();
+        return;
+    }
+
+    renderDeckSelection();
 }
 
 function getDeckCardCount(deck) {
@@ -196,6 +437,28 @@ function getDeckCardCount(deck) {
         return deck?.cardCount ?? 0;
     }
     return deck.cards.reduce((sum, entry) => sum + (entry.count || 0), 0);
+}
+
+function getDeckTypeCounts(deck) {
+    const counts = { follower: 0, spell: 0, amulet: 0 };
+    const entries = Array.isArray(deck?.cards) ? deck.cards : [];
+
+    entries.forEach(entry => {
+        const count = Number(entry?.count ?? 0);
+        if (!Number.isFinite(count) || count <= 0) {
+            return;
+        }
+        const definition = getKnownCardDefinition(entry?.cardDefinitionId);
+        if (!definition) {
+            return;
+        }
+        const type = normalizeEnumValue(definition?.type ?? definition?.Type ?? definition?.cardType ?? definition?.card_type);
+        if (type === 'follower' || type === 'spell' || type === 'amulet') {
+            counts[type] += count;
+        }
+    });
+
+    return counts;
 }
 
 function toSafeInt(value, fallback = 0) {
@@ -219,7 +482,7 @@ function getDeckSummaryById(deckId) {
 }
 
 function getDeckId(deck) {
-    return deck?.deckId || deck?.id || null;
+    return deck?.deckId || deck?.id || deck?.DeckId || null;
 }
 
 function resolveDeckName(deck, fallback = 'New Deck') {
@@ -231,13 +494,265 @@ function resolveDeckName(deck, fallback = 'New Deck') {
     return trimmed || fallback;
 }
 
+function getVisibleDeckRuleOptions() {
+    return getUiVisibleDeckRuleOptions(DECK_RULE_OPTIONS);
+}
+
+function hasMultipleVisibleDeckRules() {
+    return getVisibleDeckRuleOptions().length > 1;
+}
+
+function decodeDeckRuleFromCode(code) {
+    const trimmed = String(code ?? '').trim();
+    if (!trimmed.startsWith('SVB2')) {
+        return null;
+    }
+
+    try {
+        const payloadToken = trimmed.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+        const padded = payloadToken + '='.repeat((4 - (payloadToken.length % 4)) % 4);
+        const json = atob(padded);
+        const payload = JSON.parse(json);
+        return normalizeDeckRule(payload?.rule ?? payload?.Rule ?? '');
+    } catch {
+        return null;
+    }
+}
+
+function buildDeckEditorSnapshot(deck) {
+    if (!deck) return '';
+
+    const cards = Array.isArray(deck.cards)
+        ? deck.cards
+            .map(entry => ({
+                cardDefinitionId: Number(entry?.cardDefinitionId ?? 0),
+                count: Number(entry?.count ?? 0)
+            }))
+            .filter(entry => entry.cardDefinitionId > 0 && entry.count > 0)
+            .sort((left, right) => left.cardDefinitionId - right.cardDefinitionId)
+        : [];
+
+    return JSON.stringify({
+        name: String(deck?.name ?? '').trim(),
+        class: normalizeEnumValue(deck?.class),
+        environment: normalizeEnvironment(deck?.environment),
+        rule: normalizeDeckRule(deck?.rule),
+        secondaryClass: resolveSecondaryClass(deck?.rule, deck?.class, deck?.secondaryClass),
+        cards
+    });
+}
+
+function setCurrentDeckSnapshot(deck) {
+    state.currentDeckOriginalSnapshot = buildDeckEditorSnapshot(deck);
+}
+
+function hasCurrentDeckChanges() {
+    if (!state.currentDeck) {
+        return false;
+    }
+    return buildDeckEditorSnapshot(state.currentDeck) !== (state.currentDeckOriginalSnapshot ?? '');
+}
+
+function clearCurrentDeckState() {
+    state.currentDeck = null;
+    state.currentDeckOriginalSnapshot = null;
+    resetDeckBuilderFilters(state.filters);
+    state.pagination.currentPage = 1;
+    clearDeckSaveErrors();
+}
+
+function getCurrentRouteName() {
+    return typeof router?.getCurrentRoute === 'function' ? router.getCurrentRoute() : '';
+}
+
+function beginPendingNewDeckCreation() {
+    const pending = createPendingDeckCreationRecord(nextPendingDeckCreationRequestId++);
+    pending.deletePromise = null;
+    state.pendingNewDeckCreation = pending;
+    return pending;
+}
+
+function findPendingNewDeckCreation(requestId) {
+    const pending = state.pendingNewDeckCreation;
+    return pending?.requestId === requestId ? pending : null;
+}
+
+function clearPendingNewDeckCreation(requestId) {
+    const pending = findPendingNewDeckCreation(requestId);
+    if (!pending) {
+        return;
+    }
+
+    if (state.newDeckId && pending.deckId && String(state.newDeckId) === String(pending.deckId)) {
+        state.newDeckId = null;
+    }
+
+    state.pendingNewDeckCreation = null;
+}
+
+function setPendingNewDeckCreationDeckId(requestId, deckId) {
+    const pending = findPendingNewDeckCreation(requestId);
+    if (!pending) {
+        return null;
+    }
+
+    const updated = attachPendingDeckId(pending, deckId);
+    updated.deletePromise = pending.deletePromise ?? null;
+    state.pendingNewDeckCreation = updated;
+    return updated;
+}
+
+function abandonPendingNewDeckCreation() {
+    const pending = state.pendingNewDeckCreation;
+    if (!pending) {
+        return null;
+    }
+
+    const updated = markPendingDeckCreationAbandoned(pending);
+    updated.deletePromise = pending.deletePromise ?? null;
+    state.pendingNewDeckCreation = updated;
+    return updated;
+}
+
+async function cleanupPendingNewDeckCreation(pending, reason = 'discard') {
+    if (!pending?.deckId) {
+        if (pending?.requestId) {
+            clearPendingNewDeckCreation(pending.requestId);
+        }
+        return false;
+    }
+
+    if (pending.deletePromise) {
+        return await pending.deletePromise;
+    }
+
+    const query = getDeckOwnerQuery();
+    pending.deletePromise = (async () => {
+        await apiDelete(`/api/decks/${pending.deckId}?${query}`);
+        await loadDecks();
+        notifyDeckListUpdated(reason);
+        clearPendingNewDeckCreation(pending.requestId);
+        return true;
+    })().catch((error) => {
+        pending.deletePromise = null;
+        throw error;
+    });
+
+    return await pending.deletePromise;
+}
+
+async function cleanupAbandonedPendingNewDeckCreation(pending, reason = 'discard') {
+    if (!pending) {
+        return false;
+    }
+
+    try {
+        return await cleanupPendingNewDeckCreation(pending, reason);
+    } catch (error) {
+        console.warn('DeckBuilder: Failed to cleanup abandoned pending deck creation.', error);
+        clearPendingNewDeckCreation(pending.requestId);
+        return false;
+    }
+}
+
+function promptDeckEditorExitAction() {
+    const shouldSave = window.confirm('当前卡组已修改。点击“确定”保存并返回，点击“取消”选择是否放弃修改。');
+    if (shouldSave) {
+        return 'save';
+    }
+
+    const shouldDiscard = window.confirm('是否放弃当前修改并返回？点击“确定”放弃，点击“取消”继续编辑。');
+    if (shouldDiscard) {
+        return 'discard';
+    }
+
+    return 'cancel';
+}
+
+async function discardCurrentDeckChanges({ renderSelectionOnComplete = true } = {}) {
+    if (!state.currentDeck) {
+        if (renderSelectionOnComplete) {
+            renderDeckSelection();
+        }
+        return true;
+    }
+
+    const deckId = state.currentDeck.deckId || state.currentDeck.id;
+    const isNewDeck = state.currentDeck.isNew === true;
+    clearCurrentDeckState();
+
+    if (deckId && isNewDeck) {
+        const query = getDeckOwnerQuery();
+        await apiDelete(`/api/decks/${deckId}?${query}`);
+        await loadDecks();
+        notifyDeckListUpdated('discard');
+    }
+
+    if (renderSelectionOnComplete) {
+        renderDeckSelection();
+    }
+
+    return true;
+}
+
+async function handleDeckEditorExit({ renderSelectionOnComplete = true } = {}) {
+    if (!state.currentDeck) {
+        const pendingCreation = abandonPendingNewDeckCreation();
+        if (pendingCreation?.deckId) {
+            await cleanupAbandonedPendingNewDeckCreation(pendingCreation, 'discard');
+        }
+        if (renderSelectionOnComplete) {
+            renderDeckSelection();
+        }
+        return true;
+    }
+
+    if (!hasCurrentDeckChanges()) {
+        return await discardCurrentDeckChanges({ renderSelectionOnComplete });
+    }
+
+    const action = promptDeckEditorExitAction();
+    if (action === 'save') {
+        return await saveDeck({ closeEditorOnSuccess: renderSelectionOnComplete });
+    }
+
+    if (action === 'discard') {
+        return await discardCurrentDeckChanges({ renderSelectionOnComplete });
+    }
+
+    return false;
+}
+
+function ensureDeckBuilderRouteGuard() {
+    if (deckBuilderRouteGuardInstalled || !router || typeof router.setBeforeRouteChange !== 'function') {
+        return;
+    }
+
+    previousDeckBuilderRouteGuard = router.beforeRouteChange;
+    router.setBeforeRouteChange(async (oldRoute, newRoute) => {
+        if (typeof previousDeckBuilderRouteGuard === 'function') {
+            const shouldContinue = await previousDeckBuilderRouteGuard(oldRoute, newRoute);
+            if (!shouldContinue) {
+                return false;
+            }
+        }
+
+        if (oldRoute !== 'deck-builder' || newRoute === 'deck-builder') {
+            return true;
+        }
+
+        return await handleDeckEditorExit({ renderSelectionOnComplete: false });
+    });
+    deckBuilderRouteGuardInstalled = true;
+}
+
 function getDeckPreviewItems(deck) {
     const entries = Array.isArray(deck?.cards) ? deck.cards : [];
     return entries
         .map(entry => {
             const cardDefinitionId = Number(entry?.cardDefinitionId);
             const count = Number(entry?.count ?? 0);
-            const card = state.cardIndex.get(cardDefinitionId) ?? null;
+            const card = getKnownCardDefinition(cardDefinitionId);
             const costValue = Number(card?.cost);
             return {
                 cardDefinitionId,
@@ -345,15 +860,161 @@ function getCardRarityClass(card) {
 }
 
 function normalizeEnvironmentValue(value, fallback = '') {
-    if (value === null || value === undefined || value === '') return fallback;
-    if (typeof value === 'number') {
-        return value === 0 ? DEFAULT_ENVIRONMENT : String(value);
-    }
-    return normalizeEnumValue(value);
+    const normalizedFallback = fallback === ''
+        ? ''
+        : (normalizeEnumValue(fallback) || getDefaultDeckEnvironment());
+    return normalizeDeckEnvironmentShared(value, normalizedFallback);
 }
 
 function normalizeEnvironment(value) {
-    return normalizeEnvironmentValue(value, DEFAULT_ENVIRONMENT);
+    return normalizeEnvironmentValue(value, getDefaultDeckEnvironment());
+}
+
+function normalizeDeckRuleValue(value, fallback = '') {
+    if (value === null || value === undefined || value === '') return fallback;
+    if (typeof value === 'number') {
+        return value === 1 ? 'dualClass' : DEFAULT_DECK_RULE;
+    }
+    return String(value).trim();
+}
+
+function normalizeDeckRule(value) {
+    const normalized = normalizeDeckRuleValue(value, DEFAULT_DECK_RULE).toLowerCase();
+    return normalized === 'dualclass' || normalized === 'dual_class'
+        ? 'dualClass'
+        : DEFAULT_DECK_RULE;
+}
+
+function getCopyLimitPolicyCacheKey(environment, rule) {
+    return `${normalizeEnvironment(environment)}|${normalizeDeckRule(rule)}`;
+}
+
+function normalizeCopyLimitValue(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return DEFAULT_MAX_COPIES_PER_CARD;
+    }
+    return Math.max(0, Math.min(DEFAULT_MAX_COPIES_PER_CARD, Math.trunc(parsed)));
+}
+
+function buildCopyLimitPolicySnapshot(payload) {
+    const defaultMaxRaw = payload?.defaultMaxCopies ?? payload?.DefaultMaxCopies;
+    const defaultMaxCopies = normalizeCopyLimitValue(defaultMaxRaw);
+    const limits = new Map();
+    const source = Array.isArray(payload?.items)
+        ? payload.items
+        : (Array.isArray(payload?.Items) ? payload.Items : []);
+
+    source.forEach(item => {
+        const cardDefinitionId = Number(item?.cardDefinitionId ?? item?.CardDefinitionId);
+        if (!Number.isFinite(cardDefinitionId) || cardDefinitionId <= 0) {
+            return;
+        }
+        const maxCopies = normalizeCopyLimitValue(item?.maxCopies ?? item?.MaxCopies);
+        limits.set(cardDefinitionId, maxCopies);
+    });
+
+    return { defaultMaxCopies, limits };
+}
+
+async function ensureCopyLimitPolicyLoaded(environment, rule) {
+    const cacheKey = getCopyLimitPolicyCacheKey(environment, rule);
+    if (state.copyLimitPolicyCache.has(cacheKey)) {
+        return state.copyLimitPolicyCache.get(cacheKey);
+    }
+    if (state.copyLimitPolicyInFlight.has(cacheKey)) {
+        return await state.copyLimitPolicyInFlight.get(cacheKey);
+    }
+
+    const fetchPromise = (async () => {
+        try {
+            const params = new URLSearchParams({
+                environment: normalizeEnvironment(environment),
+                rule: normalizeDeckRule(rule)
+            });
+            const payload = await apiGetJson(`/api/deck-copy-limit-policies?${params.toString()}`);
+            const snapshot = buildCopyLimitPolicySnapshot(payload);
+            state.copyLimitPolicyCache.set(cacheKey, snapshot);
+            return snapshot;
+        } catch (error) {
+            console.warn('DeckBuilder: Failed to load copy-limit policy. Falling back to default.', error);
+            const fallback = {
+                defaultMaxCopies: DEFAULT_MAX_COPIES_PER_CARD,
+                limits: new Map()
+            };
+            state.copyLimitPolicyCache.set(cacheKey, fallback);
+            return fallback;
+        } finally {
+            state.copyLimitPolicyInFlight.delete(cacheKey);
+        }
+    })();
+
+    state.copyLimitPolicyInFlight.set(cacheKey, fetchPromise);
+    return await fetchPromise;
+}
+
+function getCopyLimitPolicySnapshot(deck) {
+    const cacheKey = getCopyLimitPolicyCacheKey(deck?.environment, deck?.rule);
+    return state.copyLimitPolicyCache.get(cacheKey) || {
+        defaultMaxCopies: DEFAULT_MAX_COPIES_PER_CARD,
+        limits: new Map()
+    };
+}
+
+function resolveEffectiveCopyLimit(policySnapshot, cardDefinitionId) {
+    const cardId = Number(cardDefinitionId);
+    if (policySnapshot?.limits instanceof Map && policySnapshot.limits.has(cardId)) {
+        return normalizeCopyLimitValue(policySnapshot.limits.get(cardId));
+    }
+    return normalizeCopyLimitValue(policySnapshot?.defaultMaxCopies);
+}
+
+function ensureCurrentDeckCopyLimitPolicyLoaded() {
+    if (!state.currentDeck) {
+        return;
+    }
+
+    const targetEnvironment = normalizeEnvironment(state.currentDeck.environment);
+    const targetRule = normalizeDeckRule(state.currentDeck.rule);
+    const cacheKey = getCopyLimitPolicyCacheKey(targetEnvironment, targetRule);
+    const hadCache = state.copyLimitPolicyCache.has(cacheKey);
+    if (hadCache || state.copyLimitPolicyInFlight.has(cacheKey)) {
+        return;
+    }
+
+    ensureCopyLimitPolicyLoaded(targetEnvironment, targetRule)
+        .then(() => {
+            if (!state.currentDeck) return;
+            const currentKey = getCopyLimitPolicyCacheKey(state.currentDeck.environment, state.currentDeck.rule);
+            if (currentKey === cacheKey) {
+                updateDeckStatusUI();
+            }
+        })
+        .catch(() => {
+            // Fallback policy is already applied in ensureCopyLimitPolicyLoaded.
+        });
+}
+
+function getDeckRuleLabel(value) {
+    return getDeckRuleLabelShared(value);
+}
+
+function resolveSecondaryClass(mode, primaryClass, secondaryClass) {
+    if (normalizeDeckRule(mode) !== 'dualClass') {
+        return null;
+    }
+
+    const normalizedPrimary = normalizeEnumValue(primaryClass);
+    const normalizedSecondary = normalizeEnumValue(secondaryClass);
+    if (!normalizedSecondary || normalizedSecondary === normalizedPrimary || normalizedSecondary === 'neutral') {
+        return null;
+    }
+
+    return normalizedSecondary;
+}
+
+function getDeckClassDisplay(primaryClass, mode, secondaryClass) {
+    return getDeckClassDisplayShared(primaryClass, mode, secondaryClass);
 }
 
 function normalizeEnvironmentList(value) {
@@ -367,15 +1028,22 @@ function normalizeEnvironmentList(value) {
 }
 
 function getEnvironmentLabel(value) {
-    const normalized = normalizeEnvironment(value);
-    const match = ENVIRONMENT_OPTIONS.find(option => option.value === normalized);
-    return match?.label || '未知环境';
+    if (value === CARD_SET_UNSPECIFIED_ENVIRONMENT) {
+        return '未指定环境';
+    }
+
+    return getDeckEnvironmentLabelShared(value);
 }
 
 function getClassLabel(value) {
     const normalized = normalizeEnumValue(value);
     const match = CLASS_OPTIONS.find(option => option.value === normalized);
     return match?.label || formatClassName(value);
+}
+
+function getClassIconPath(value) {
+    const normalized = normalizeEnumValue(value) || 'neutral';
+    return CLASS_ICON_URL_MAP[normalized] || CLASS_ICON_URL_MAP.neutral;
 }
 
 function getTypeLabel(value) {
@@ -422,7 +1090,7 @@ function getLibraryFilterSourceCards() {
     if (!state.currentDeck) return source;
     return source.filter(card => {
         if (!isCardAllowedByEnvironment(card, state.currentDeck.environment)) return false;
-        if (!isCardAllowedByClass(card, state.currentDeck.class)) return false;
+        if (!isCardAllowedByClass(card, state.currentDeck.class, state.currentDeck.rule, state.currentDeck.secondaryClass)) return false;
         return true;
     });
 }
@@ -455,23 +1123,18 @@ function buildEnumFilterOptions(cards, getter, baseOptions, labelResolver) {
 }
 
 function buildSetFilterOptions(cards) {
-    const setMap = new Map();
-    cards.forEach(card => {
-        const info = getCardSetInfo(card);
-        const value = info.name;
-        if (!value) return;
-        const key = value.toLowerCase();
-        if (!setMap.has(key)) {
-            setMap.set(key, {
-                value,
-                label: getCardSetLabel(info)
-            });
-        }
-    });
-
-    return Array.from(setMap.values())
-        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }))
-        .map(option => ({ value: option.value.toLowerCase(), label: option.label }));
+    return buildGroupedCardSetOptions(cards, {
+        getCardSetInfo,
+        normalizeEnvironment,
+        getEnvironmentLabel,
+        knownEnvironmentOptions: getDeckEnvironmentOptions()
+    }).map(group => ({
+        ...group,
+        options: group.options.map(option => ({
+            value: option.value.toLowerCase(),
+            label: option.label
+        }))
+    }));
 }
 
 function buildSelectOptions(options, selectedValue) {
@@ -510,12 +1173,12 @@ function populateLibraryFilters() {
         RARITY_OPTIONS,
         getRarityLabel
     );
-    const setOptions = buildSetFilterOptions(source);
+    const setGroups = buildSetFilterOptions(source);
 
     const classValues = new Set(classOptions.map(option => option.value));
     const typeValues = new Set(typeOptions.map(option => option.value));
     const rarityValues = new Set(rarityOptions.map(option => option.value));
-    const setValues = new Set(setOptions.map(option => option.value));
+    const setValues = new Set(setGroups.flatMap(group => group.options.map(option => option.value)));
 
     if (state.filters.class && !classValues.has(state.filters.class)) state.filters.class = '';
     if (state.filters.type && !typeValues.has(state.filters.type)) state.filters.type = '';
@@ -525,30 +1188,77 @@ function populateLibraryFilters() {
     classFilter.innerHTML = '<option value="">ALL CLASSES</option>' + buildSelectOptions(classOptions, state.filters.class);
     typeFilter.innerHTML = '<option value="">ALL TYPES</option>' + buildSelectOptions(typeOptions, state.filters.type);
     rarityFilter.innerHTML = '<option value="">ALL RARITIES</option>' + buildSelectOptions(rarityOptions, state.filters.rarity);
-    setFilter.innerHTML = '<option value="">ALL SETS</option>' + buildSelectOptions(setOptions, state.filters.set);
+    setFilter.disabled = setGroups.length === 0;
+    setFilter.innerHTML = buildGroupedSetFilterOptionsHtml(setGroups, state.filters.set);
+}
+
+function buildGroupedSetFilterOptionsHtml(groups, selectedValue) {
+    let hasSelected = false;
+    const groupHtml = (Array.isArray(groups) ? groups : [])
+        .map(group => {
+            const optionsHtml = (Array.isArray(group.options) ? group.options : [])
+                .map(option => {
+                    const shouldSelect = !hasSelected && option.value === selectedValue;
+                    if (shouldSelect) {
+                        hasSelected = true;
+                    }
+
+                    return `<option value="${option.value}"${shouldSelect ? ' selected' : ''}>${option.label}</option>`;
+                })
+                .join('');
+
+            if (!optionsHtml) {
+                return '';
+            }
+
+            return `<optgroup label="${group.label}">${optionsHtml}</optgroup>`;
+        })
+        .join('');
+
+    return '<option value="">ALL SETS</option>' + groupHtml;
 }
 
 function isCardAllowedByEnvironment(card, environment) {
     const normalized = normalizeEnvironment(environment);
-    if (normalized === DEFAULT_ENVIRONMENT) {
+    const setDefinitionId = Number(card?.card_set_definition_id ?? card?.cardSetDefinitionId ?? 0);
+    const hasSetDefinition = Number.isFinite(setDefinitionId) && setDefinitionId > 0;
+    if (!hasSetDefinition) {
         return true;
     }
+
     const setEnvironments = getCardSetInfo(card).environments;
-    if (!setEnvironments || setEnvironments.length === 0) return true;
+    if (!setEnvironments || setEnvironments.length === 0) return false;
     return setEnvironments.includes(normalized);
 }
 
-function isCardAllowedByClass(card, deckClass) {
+function isCardAllowedByClass(card, deckClass, mode = DEFAULT_DECK_RULE, secondaryClass = null) {
     const cardClass = normalizeEnumValue(card?.class ?? card?.Class ?? card?.cardClass ?? card?.card_class);
     const targetClass = normalizeEnumValue(deckClass);
     if (!cardClass || !targetClass) return true;
     if (cardClass === 'neutral') return true;
-    return cardClass === targetClass;
+    if (cardClass === targetClass) return true;
+
+    if (normalizeDeckRule(mode) !== 'dualClass') {
+        return false;
+    }
+
+    const normalizedSecondary = resolveSecondaryClass(mode, deckClass, secondaryClass);
+    return Boolean(normalizedSecondary) && cardClass === normalizedSecondary;
 }
 
 // --- Rendering: Deck Selection View ---
 
 function renderDeckSelection() {
+    const environmentOptions = Array.isArray(state.environmentOptions) && state.environmentOptions.length > 0
+        ? state.environmentOptions
+        : getDeckEnvironmentOptions().map((item) => ({
+            value: item.value,
+            label: item.label,
+            description: `按${item.label}卡池构筑`
+        }));
+    const visibleDeckRuleOptions = getVisibleDeckRuleOptions();
+    const showDeckRuleStep = visibleDeckRuleOptions.length > 1;
+
     container.innerHTML = `
         <div class="deck-selection-view">
             <div class="view-header">
@@ -564,19 +1274,20 @@ function renderDeckSelection() {
                     const deckId = getDeckId(deck);
                     const deckName = resolveDeckName(deck);
                     const cardCount = deck.cardCount ?? getDeckCardCount(deck);
-                    const className = formatClassName(deck.class);
-                    const isComplete = cardCount === 40;
+                    const rule = normalizeDeckRule(deck.rule);
+                    const className = getDeckClassDisplay(deck.class, rule, deck.secondaryClass);
+                    const isComplete = deck?.isBattleReady === true;
                     return `
                     <div class="deck-card wide-banner" data-id="${deckId}">
                         <div class="deck-art-bg"></div> <!-- Placeholder for Character Art -->
                         <div class="deck-content">
                             <div class="deck-info">
                                 <div class="deck-class-name">${className}</div>
-                                <div class="deck-env-name">${getEnvironmentLabel(deck.environment)}</div>
+                                <div class="deck-env-name">${getEnvironmentLabel(deck.environment)} | ${getDeckRuleLabel(rule)}</div>
                                 <div class="deck-name">${deckName}</div>
                                 <div class="deck-status">
                                     <span class="status-indicator ${isComplete ? 'valid' : 'invalid'}">
-                                        ${isComplete ? 'Complete' : 'Incomplete'}
+                                        ${isComplete ? '可用' : '禁用'}
                                     </span>
                                     <span class="deck-count">${cardCount} / 40</span>
                                 </div>
@@ -618,7 +1329,7 @@ function renderDeckSelection() {
                         <div class="deck-create-step" data-step="environment">
                             <div class="deck-create-step-title">选择环境</div>
                             <div class="deck-create-options">
-                                ${ENVIRONMENT_OPTIONS.map(option => `
+                                ${environmentOptions.map(option => `
                                     <button class="deck-option" data-env="${option.value}" type="button">
                                         <div class="deck-option-title">${option.label}</div>
                                         <div class="deck-option-desc">${option.description}</div>
@@ -626,11 +1337,29 @@ function renderDeckSelection() {
                                 `).join('')}
                             </div>
                         </div>
+                        <div class="deck-create-step hidden" data-step="mode">
+                            <div class="deck-create-step-title">选择规则</div>
+                            <div class="deck-create-options" data-deck-mode-options>
+                                ${visibleDeckRuleOptions.map(option => `
+                                    <button class="deck-option" data-deck-mode="${option.value}" type="button">
+                                        <div class="deck-option-title">${option.label}</div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
                         <div class="deck-create-step hidden" data-step="class">
                             <div class="deck-create-step-title">选择职业</div>
                             <div class="deck-create-options grid">
-                                ${CLASS_OPTIONS.map(option => `
+                                ${DECK_CLASS_OPTIONS.map(option => `
                                     <button class="deck-option" data-class="${option.value}" type="button">
+                                        <div class="deck-option-title">${option.label}</div>
+                                    </button>
+                                `).join('')}
+                            </div>
+                            <div class="deck-create-step-title" id="deck-secondary-class-title" style="display:none;">选择副职业</div>
+                            <div class="deck-create-options grid" id="deck-secondary-class-options" style="display:none;">
+                                ${DECK_CLASS_OPTIONS.map(option => `
+                                    <button class="deck-option" data-secondary-class="${option.value}" type="button">
                                         <div class="deck-option-title">${option.label}</div>
                                     </button>
                                 `).join('')}
@@ -724,7 +1453,12 @@ function renderDeckSelection() {
     const importCodeInput = document.getElementById('deck-import-code-input');
     const importSubmit = document.getElementById('deck-import-submit-btn');
     const envStep = createModal?.querySelector('[data-step="environment"]');
+    const modeStep = createModal?.querySelector('[data-step="mode"]');
     const classStep = createModal?.querySelector('[data-step="class"]');
+    const modeOptions = modeStep?.querySelectorAll('[data-deck-mode]');
+    const createSecondaryClassTitle = document.getElementById('deck-secondary-class-title');
+    const createSecondaryClassOptionsContainer = document.getElementById('deck-secondary-class-options');
+    const createSecondaryClassOptions = classStep?.querySelectorAll('[data-secondary-class]');
     const deckSelectionView = createModal?.closest('.deck-selection-view') ?? null;
     const codeModal = document.getElementById('deck-code-modal');
     const codeCloseBtn = document.getElementById('deck-code-close-btn');
@@ -736,12 +1470,15 @@ function renderDeckSelection() {
     let previewDeckId = null;
     let previewDeckName = '';
     let activeDeckCode = '';
+    let deckPreview = null;
 
     const resetDeckCreation = () => {
         state.deckCreation = {
             mode: 'create',
             environment: null,
             class: null,
+            deckRule: getDefaultVisibleDeckRule(),
+            secondaryClass: null,
             step: 'environment',
             importName: '',
             importCode: ''
@@ -753,19 +1490,53 @@ function renderDeckSelection() {
         deckSelectionView.classList.toggle('deck-selection-modal-open', Boolean(locked));
     };
 
+    const syncDeckSelectionModalLock = () => {
+        const shouldLock = Boolean(
+            createModal?.classList.contains('open')
+            || codeModal?.classList.contains('open')
+            || deckPreview?.isOpen?.()
+        );
+        setDeckSelectionScrollLock(shouldLock);
+    };
+
     const syncDeckCreationUI = () => {
-        if (!createModal || !envStep || !classStep || !createBack || !createNext || !createConfirm) return;
+        if (!createModal || !envStep || !modeStep || !classStep || !createBack || !createNext || !createConfirm) return;
+        state.deckCreation.deckRule = normalizeDeckRule(state.deckCreation.deckRule);
+        if (!isDeckRuleUiVisible(state.deckCreation.deckRule)) {
+            state.deckCreation.deckRule = getDefaultVisibleDeckRule();
+        }
+        if (!showDeckRuleStep && state.deckCreation.step === 'mode') {
+            state.deckCreation.step = 'class';
+        }
+        if (state.deckCreation.deckRule !== 'dualClass') {
+            state.deckCreation.secondaryClass = null;
+        } else {
+            state.deckCreation.secondaryClass = resolveSecondaryClass(
+                state.deckCreation.deckRule,
+                state.deckCreation.class,
+                state.deckCreation.secondaryClass);
+        }
+
         const isImportMode = state.deckCreation.mode === 'import';
         const isEnvStep = state.deckCreation.step === 'environment';
+        const isModeStep = state.deckCreation.step === 'mode';
+        const isClassStep = state.deckCreation.step === 'class';
         createPanel?.classList.toggle('hidden', isImportMode);
         importPanel?.classList.toggle('hidden', !isImportMode);
         envStep.classList.toggle('hidden', isImportMode || !isEnvStep);
-        classStep.classList.toggle('hidden', isImportMode || isEnvStep);
+        modeStep.classList.toggle('hidden', isImportMode || !showDeckRuleStep || !isModeStep);
+        classStep.classList.toggle('hidden', isImportMode || !isClassStep);
         createBack.disabled = isImportMode || isEnvStep;
-        createNext.style.display = isImportMode ? 'none' : (isEnvStep ? 'inline-flex' : 'none');
-        createConfirm.style.display = isImportMode ? 'none' : (isEnvStep ? 'none' : 'inline-flex');
-        createNext.disabled = isImportMode || !state.deckCreation.environment;
-        createConfirm.disabled = isImportMode || !state.deckCreation.class;
+        createNext.style.display = isImportMode ? 'none' : (isClassStep ? 'none' : 'inline-flex');
+        createConfirm.style.display = isImportMode ? 'none' : (isClassStep ? 'inline-flex' : 'none');
+        const canNext = isEnvStep
+            ? Boolean(state.deckCreation.environment)
+            : isModeStep
+                ? Boolean(state.deckCreation.deckRule)
+                : false;
+        createNext.disabled = isImportMode || !canNext;
+        const dualClassMissingSecondary = state.deckCreation.deckRule === 'dualClass' && !state.deckCreation.secondaryClass;
+        createConfirm.disabled = isImportMode || !state.deckCreation.class || dualClassMissingSecondary;
         if (importSubmit) {
             importSubmit.disabled = !state.deckCreation.importCode?.trim();
         }
@@ -785,18 +1556,38 @@ function renderDeckSelection() {
             const value = option.getAttribute('data-env');
             option.classList.toggle('selected', value === state.deckCreation.environment);
         });
-        classStep.querySelectorAll('.deck-option').forEach(option => {
+        classStep.querySelectorAll('[data-class]').forEach(option => {
             const value = option.getAttribute('data-class');
             option.classList.toggle('selected', value === state.deckCreation.class);
+        });
+
+        modeOptions?.forEach(option => {
+            const value = option.getAttribute('data-deck-mode');
+            option.classList.toggle('selected', value === state.deckCreation.deckRule);
+        });
+
+        const isDualClassMode = state.deckCreation.deckRule === 'dualClass';
+        if (createSecondaryClassTitle) {
+            createSecondaryClassTitle.style.display = isDualClassMode ? '' : 'none';
+        }
+        if (createSecondaryClassOptionsContainer) {
+            createSecondaryClassOptionsContainer.style.display = isDualClassMode ? 'grid' : 'none';
+        }
+        createSecondaryClassOptions?.forEach(option => {
+            const value = option.getAttribute('data-secondary-class');
+            const isPrimaryClass = value === state.deckCreation.class;
+            option.style.display = isPrimaryClass ? 'none' : '';
+            option.disabled = !isDualClassMode || isPrimaryClass;
+            option.classList.toggle('selected', isDualClassMode && value === state.deckCreation.secondaryClass);
         });
     };
 
     const openDeckCreation = () => {
         if (!createModal) return;
         resetDeckCreation();
-        setDeckSelectionScrollLock(true);
         createModal.classList.add('open');
         createModal.setAttribute('aria-hidden', 'false');
+        syncDeckSelectionModalLock();
         syncDeckCreationUI();
     };
 
@@ -806,6 +1597,7 @@ function renderDeckSelection() {
         codeModal.setAttribute('aria-hidden', 'true');
         activeDeckCode = '';
         if (codeStatus) codeStatus.textContent = '';
+        syncDeckSelectionModalLock();
     };
 
     const setCodeStatus = (message, isError = false) => {
@@ -822,6 +1614,7 @@ function renderDeckSelection() {
         setCodeStatus('代码已生成，可直接复制。');
         codeModal.classList.add('open');
         codeModal.setAttribute('aria-hidden', 'false');
+        syncDeckSelectionModalLock();
     };
 
     const openDeckCodeById = async (deckId, fallbackName = 'New Deck') => {
@@ -830,10 +1623,11 @@ function renderDeckSelection() {
         openDeckCode(deckName, code);
     };
 
-    const deckPreview = createDeckPreviewModal({
+    deckPreview = createDeckPreviewModal({
         idPrefix: 'deck-preview',
         onClose: () => {
             previewDeckId = null;
+            syncDeckSelectionModalLock();
         },
         onExport: () => {
             if (!previewDeckId) return;
@@ -856,21 +1650,24 @@ function renderDeckSelection() {
         previewDeckId = deckId;
         previewDeckName = resolveDeckName(deckDetail);
 
-        deckPreview.open({
+        const opened = deckPreview.open({
             titleText: previewDeckName,
-            metaText: `${getClassLabel(deckDetail.class)} | ${getEnvironmentLabel(deckDetail.environment)}`,
+            metaText: `${getDeckClassDisplay(deckDetail.class, deckDetail.rule, deckDetail.secondaryClass)} | ${getDeckRuleLabel(deckDetail.rule)} | ${getEnvironmentLabel(deckDetail.environment)}`,
             cards: previewSnapshot.items,
             stats: getDeckMatchStats(deckSummary),
             exportEnabled: true,
             exportVisible: true
         });
+        if (opened) {
+            syncDeckSelectionModalLock();
+        }
     };
 
     const closeDeckCreation = () => {
         if (!createModal) return;
         createModal.classList.remove('open');
         createModal.setAttribute('aria-hidden', 'true');
-        setDeckSelectionScrollLock(false);
+        syncDeckSelectionModalLock();
         resetDeckCreation();
     };
 
@@ -917,7 +1714,7 @@ function renderDeckSelection() {
         });
     });
 
-    classStep?.querySelectorAll('.deck-option').forEach(option => {
+    classStep?.querySelectorAll('[data-class]').forEach(option => {
         option.addEventListener('click', () => {
             const value = option.getAttribute('data-class');
             state.deckCreation.class = value;
@@ -925,14 +1722,46 @@ function renderDeckSelection() {
         });
     });
 
+    modeOptions?.forEach(option => {
+        option.addEventListener('click', () => {
+            const value = option.getAttribute('data-deck-mode');
+            if (!value) return;
+            state.deckCreation.deckRule = value;
+            syncDeckCreationUI();
+        });
+    });
+
+    createSecondaryClassOptions?.forEach(option => {
+        option.addEventListener('click', () => {
+            if (state.deckCreation.deckRule !== 'dualClass') return;
+            const value = option.getAttribute('data-secondary-class');
+            if (!value || value === state.deckCreation.class) return;
+            state.deckCreation.secondaryClass = value;
+            syncDeckCreationUI();
+        });
+    });
+
     createNext?.addEventListener('click', () => {
-        if (!state.deckCreation.environment) return;
-        state.deckCreation.step = 'class';
+        if (state.deckCreation.step === 'environment') {
+            if (!state.deckCreation.environment) return;
+            state.deckCreation.step = showDeckRuleStep ? 'mode' : 'class';
+            syncDeckCreationUI();
+            return;
+        }
+        if (state.deckCreation.step === 'mode') {
+            state.deckCreation.step = 'class';
+            syncDeckCreationUI();
+            return;
+        }
         syncDeckCreationUI();
     });
 
     createBack?.addEventListener('click', () => {
-        state.deckCreation.step = 'environment';
+        if (state.deckCreation.step === 'class') {
+            state.deckCreation.step = showDeckRuleStep ? 'mode' : 'environment';
+        } else {
+            state.deckCreation.step = 'environment';
+        }
         syncDeckCreationUI();
     });
 
@@ -940,12 +1769,20 @@ function renderDeckSelection() {
         if (!state.deckCreation.environment || !state.deckCreation.class) return;
         const env = state.deckCreation.environment;
         const deckClass = state.deckCreation.class;
+        const deckRule = normalizeDeckRule(state.deckCreation.deckRule);
+        const secondaryClass = resolveSecondaryClass(deckRule, deckClass, state.deckCreation.secondaryClass);
+        if (deckRule === 'dualClass' && !secondaryClass) return;
         closeDeckCreation();
-        createNewDeck(env, deckClass).catch(err => alert(`创建失败：${err.message}`));
+        createNewDeck(env, deckClass, deckRule, secondaryClass).catch(err => alert(`创建失败：${err.message}`));
     });
     importSubmit?.addEventListener('click', async () => {
         const code = state.deckCreation.importCode?.trim();
         if (!code) return;
+        const importedRule = decodeDeckRuleFromCode(code);
+        if (importedRule && !isDeckRuleUiVisible(importedRule)) {
+            alert('混合职业规则当前未开放，无法导入该卡组。');
+            return;
+        }
         const name = state.deckCreation.importName?.trim() || '';
         importSubmit.disabled = true;
         try {
@@ -996,6 +1833,18 @@ function renderDeckSelection() {
 
 function renderDeckBuilder() {
     if (!state.currentDeck) return;
+    state.currentDeck.rule = normalizeDeckRule(state.currentDeck.rule);
+    state.currentDeck.secondaryClass = resolveSecondaryClass(
+        state.currentDeck.rule,
+        state.currentDeck.class,
+        state.currentDeck.secondaryClass);
+    const deckValidation = getDeckSaveValidation(state.currentDeck);
+    const isDualClassMode = deckValidation.stats.rule === 'dualClass';
+    const totalCount = getDeckCardCount(state.currentDeck);
+    const typeCounts = getDeckTypeCounts(state.currentDeck);
+    const primaryClassIcon = getClassIconPath(state.currentDeck.class);
+    const secondaryClassIcon = getClassIconPath(state.currentDeck.secondaryClass || 'neutral');
+    const neutralIcon = getClassIconPath('neutral');
 
     container.innerHTML = `
         <div class="deck-builder-view vertical-layout">
@@ -1007,6 +1856,7 @@ function renderDeckBuilder() {
                         <input type="text" class="deck-name-input" value="${state.currentDeck.name}" id="deck-name-input">
                         <button class="btn-icon edit-name-btn">✎</button>
                         <div class="deck-env-tag">${getEnvironmentLabel(state.currentDeck.environment)}</div>
+                        <div class="deck-env-tag">${getDeckRuleLabel(state.currentDeck.rule)}</div>
                     </div>
                     
                     <div class="mana-curve-mini" id="mana-curve">
@@ -1015,11 +1865,26 @@ function renderDeckBuilder() {
 
                     <div class="deck-meta-controls">
                         <div class="deck-counts">
-                            <span class="total-count"><span id="deck-count-display">${getDeckCardCount(state.currentDeck)}</span> / 40</span>
+                            <div class="deck-quota-summary">
+                                <span class="total-count deck-quota-item">
+                                    <img class="deck-quota-icon" src="${neutralIcon}" alt="总数">
+                                    <span id="deck-count-display">${totalCount}</span> / 40
+                                </span>
+                                ${isDualClassMode ? `
+                                    <span class="total-count deck-quota-item deck-quota-dual">
+                                        <img class="deck-quota-icon" src="${primaryClassIcon}" alt="主职业">
+                                        <span id="deck-primary-count-display">${deckValidation.stats.primary}</span> / 24↑
+                                    </span>
+                                    <span class="total-count deck-quota-item deck-quota-dual">
+                                        <img class="deck-quota-icon" src="${secondaryClassIcon}" alt="副职业">
+                                        <span id="deck-secondary-count-display">${deckValidation.stats.secondary}</span> / 9↑
+                                    </span>
+                                ` : ''}
+                            </div>
                             <div class="type-counts">
-                                <span class="type-count follower">Follower: 0</span>
-                                <span class="type-count spell">Spell: 0</span>
-                                <span class="type-count amulet">Amulet: 0</span>
+                                <span class="type-count follower" id="deck-follower-count">从者 ${typeCounts.follower}</span>
+                                <span class="type-count spell" id="deck-spell-count">法术 ${typeCounts.spell}</span>
+                                <span class="type-count amulet" id="deck-amulet-count">护符 ${typeCounts.amulet}</span>
                             </div>
                         </div>
                         <div class="header-actions">
@@ -1040,6 +1905,7 @@ function renderDeckBuilder() {
                             <button class="filter-btn cost-btn" data-cost="${cost}">${cost}</button>
                         `).join('')}
                     </div>
+                    <div class="deck-save-warning ${deckValidation.message ? '' : 'hidden'}" id="deck-save-warning">${deckValidation.message}</div>
                 </div>
 
                 <!-- Horizontal Deck List -->
@@ -1086,6 +1952,8 @@ function renderDeckBuilder() {
             </div>
         </div>
     `;
+
+    applyDeckBuilderFilterUiState(container, state.filters);
 
     populateLibraryFilters();
     renderLibrary();
@@ -1138,37 +2006,29 @@ function renderDeckBuilder() {
     });
 
     document.getElementById('back-to-selection-btn').addEventListener('click', () => {
-        if (!state.currentDeck) {
-            renderDeckSelection();
-            return;
-        }
-        if (getDeckCardCount(state.currentDeck) > 0) {
-            saveDeck().catch(err => alert(`保存失败：${err.message}`));
-            return;
-        }
-        const deckId = state.currentDeck.deckId || state.currentDeck.id;
-        const isNewDeck = state.currentDeck.isNew === true;
-        state.currentDeck = null;
-        if (deckId && isNewDeck) {
-            deleteDeck(deckId, true).catch(err => alert(`删除失败：${err.message}`));
-            return;
-        }
-        renderDeckSelection();
+        void handleDeckEditorExit({ renderSelectionOnComplete: true }).catch(err => {
+            alert(`返回失败：${err.message}`);
+        });
     });
 
     document.getElementById('save-deck-btn').addEventListener('click', () => {
-        saveDeck().catch(err => alert(`保存失败：${err.message}`));
+        void saveDeck();
     });
+
     document.getElementById('deck-name-input').addEventListener('change', (e) => {
         state.currentDeck.name = e.target.value;
+        clearDeckSaveErrors();
+        updateDeckStatusUI();
     });
+
+    updateDeckStatusUI();
 }
 
 function getFilteredCards() {
     const filtered = state.availableCards.filter(card => {
         if (state.currentDeck) {
             if (!isCardAllowedByEnvironment(card, state.currentDeck.environment)) return false;
-            if (!isCardAllowedByClass(card, state.currentDeck.class)) return false;
+            if (!isCardAllowedByClass(card, state.currentDeck.class, state.currentDeck.rule, state.currentDeck.secondaryClass)) return false;
         }
         if (state.filters.cost && card.cost !== state.filters.cost) return false;
         if (state.filters.class) {
@@ -1188,8 +2048,7 @@ function getFilteredCards() {
             const setValue = normalizeEnumValue(info.name);
             if (!setValue || setValue !== state.filters.set) return false;
         }
-        const name = String(card.name || '').toLowerCase();
-        if (state.filters.search && !name.includes(state.filters.search.toLowerCase())) return false;
+        if (!matchesCardLibrarySearch(card, state.filters.search)) return false;
         return true;
     });
 
@@ -1227,7 +2086,11 @@ function renderLibrary(skipCapacitySync = false) {
         const preview = card.artPreview ?? card.ArtPreview ?? '';
         const previewUrl = preview ? encodeURI(preview) : '';
         const rarityClass = getCardRarityClass(card);
-        const cardClassName = `library-card${previewUrl ? ' has-art' : ''}${rarityClass ? ` ${rarityClass}` : ''}`;
+        const cardClassName = buildDeckCardRootClassName('library-card', {
+            hasArt: Boolean(previewUrl),
+            rarityClass,
+            type: card?.type ?? card?.Type ?? card?.cardType ?? card?.card_type
+        });
         const styleAttr = previewUrl ? ` style="--library-card-art: url('${previewUrl}');"` : '';
         return `
         <div class="${cardClassName}" data-card-id="${card.id}"${styleAttr}>
@@ -1289,7 +2152,7 @@ function renderLibrary(skipCapacitySync = false) {
         btn.addEventListener('click', (event) => {
             event.stopPropagation();
             const cardId = Number(btn.dataset.cardId);
-            const card = state.cardIndex.get(cardId);
+            const card = getKnownCardDefinition(cardId);
             openCardDetailModal(card);
         });
     });
@@ -1303,7 +2166,7 @@ function renderDeckList() {
     const deckCards = entries
         .map(entry => ({
             entry,
-            card: state.cardIndex.get(Number(entry.cardDefinitionId))
+            card: getKnownCardDefinition(entry.cardDefinitionId)
         }))
         .filter(item => item.card)
         .sort((a, b) => compareCardsForEditorAndDeck(a.card, b.card));
@@ -1315,8 +2178,13 @@ function renderDeckList() {
         const visualClass = `mini-visual${previewUrl ? ' has-art' : ''}`;
         const visualStyle = previewUrl ? ` style="background-image: url('${previewUrl}');"` : '';
         const rarityClass = getCardRarityClass(item.card);
+        const cardClassName = buildDeckCardRootClassName('deck-card-mini', {
+            hasArt: false,
+            rarityClass,
+            type: item.card?.type ?? item.card?.Type ?? item.card?.cardType ?? item.card?.card_type
+        });
         return `
-        <div class="deck-card-mini${rarityClass ? ` ${rarityClass}` : ''}" data-card-id="${item.entry.cardDefinitionId}">
+        <div class="${cardClassName}" data-card-id="${item.entry.cardDefinitionId}">
             <button class="mini-detail-btn" data-card-id="${item.entry.cardDefinitionId}" type="button">DETAIL</button>
             <div class="mini-cost">${item.card.cost ?? '-'}</div>
             <div class="${visualClass}"${visualStyle}></div>
@@ -1344,7 +2212,7 @@ function renderDeckList() {
         btn.addEventListener('click', (event) => {
             event.stopPropagation();
             const cardId = Number(btn.dataset.cardId);
-            const card = state.cardIndex.get(cardId);
+            const card = getKnownCardDefinition(cardId);
             openCardDetailModal(card);
         });
     });
@@ -1357,7 +2225,7 @@ function renderManaCurve() {
     const curve = Array(9).fill(0); // 0-8+
     const entries = Array.isArray(state.currentDeck.cards) ? state.currentDeck.cards : [];
     entries.forEach(entry => {
-        const card = state.cardIndex.get(Number(entry.cardDefinitionId));
+        const card = getKnownCardDefinition(entry.cardDefinitionId);
         if (!card) return;
         const cost = Number(card.cost ?? 0);
         const index = Math.min(cost, 8);
@@ -1368,7 +2236,9 @@ function renderManaCurve() {
 
     container.innerHTML = curve.map((count, i) => `
         <div class="curve-bar-container" title="Cost ${i}: ${count}">
-            <div class="curve-bar" style="height: ${(count / max) * 100}%"></div>
+            <div class="curve-bar-area">
+                <div class="curve-bar" style="height: ${(count / max) * 100}%"></div>
+            </div>
             <div class="curve-label">${i === 8 ? '8+' : i}</div>
         </div>
     `).join('');
@@ -1389,11 +2259,236 @@ function openCardDetailModal(card) {
 
 // --- Logic ---
 
-function updateDeckCountDisplay() {
-    const el = document.getElementById('deck-count-display');
-    if (el && state.currentDeck) {
-        el.textContent = `${getDeckCardCount(state.currentDeck)}`;
+function getDeckQuotaStats(deck) {
+    const rule = normalizeDeckRule(deck?.rule ?? deck?.Rule);
+    const primaryClass = normalizeEnumValue(deck?.class);
+    const secondaryClass = resolveSecondaryClass(rule, primaryClass, deck?.secondaryClass);
+    const copyLimitPolicy = getCopyLimitPolicySnapshot(deck);
+    const entries = Array.isArray(deck?.cards) ? deck.cards : [];
+
+    let total = 0;
+    let primary = 0;
+    let secondary = 0;
+    let neutral = 0;
+    let offClass = 0;
+    let unknown = 0;
+    let nonCollectible = 0;
+    let invalidCopies = 0;
+    const copyLimitViolations = [];
+    const nonCollectibleCards = [];
+
+    entries.forEach(entry => {
+        const count = Number(entry?.count ?? 0);
+        if (!Number.isFinite(count) || count <= 0) {
+            return;
+        }
+
+        total += count;
+        const cardDefinitionId = Number(entry?.cardDefinitionId);
+        const effectiveCopyLimit = resolveEffectiveCopyLimit(copyLimitPolicy, cardDefinitionId);
+        if (count > effectiveCopyLimit) {
+            invalidCopies += (count - effectiveCopyLimit);
+            const definition = getKnownCardDefinition(cardDefinitionId);
+            const cardName = definition?.name ?? definition?.Name ?? `卡牌#${cardDefinitionId}`;
+            copyLimitViolations.push({
+                cardDefinitionId,
+                cardName,
+                count,
+                limit: effectiveCopyLimit
+            });
+        }
+
+        const definition = getKnownCardDefinition(cardDefinitionId);
+        if (!definition) {
+            unknown += count;
+            return;
+        }
+
+        const collectible = definition?.isCollectible ?? definition?.IsCollectible;
+        if (collectible !== true) {
+            nonCollectible += count;
+            nonCollectibleCards.push(definition?.name ?? definition?.Name ?? `卡牌#${cardDefinitionId}`);
+            return;
+        }
+
+        const cardClass = normalizeEnumValue(definition?.class ?? definition?.Class ?? definition?.cardClass ?? definition?.card_class);
+        if (!cardClass) {
+            unknown += count;
+            return;
+        }
+
+        if (cardClass === 'neutral') {
+            neutral += count;
+            return;
+        }
+
+        if (cardClass === primaryClass) {
+            primary += count;
+            return;
+        }
+
+        if (rule === 'dualClass' && secondaryClass && cardClass === secondaryClass) {
+            secondary += count;
+            return;
+        }
+
+        offClass += count;
+    });
+
+    return {
+        rule,
+        mode: rule,
+        primaryClass,
+        secondaryClass,
+        total,
+        primary,
+        secondary,
+        neutral,
+        offClass,
+        unknown,
+        nonCollectible,
+        nonCollectibleCards: Array.from(new Set(nonCollectibleCards)),
+        invalidCopies,
+        copyLimitViolations
+    };
+}
+
+function getDeckSaveValidation(deck) {
+    const stats = getDeckQuotaStats(deck);
+    const issues = [];
+
+    if (stats.total !== 40) {
+        issues.push(`总数必须为 40（当前 ${stats.total}）`);
     }
+
+    if (Array.isArray(stats.copyLimitViolations) && stats.copyLimitViolations.length > 0) {
+        stats.copyLimitViolations.forEach(violation => {
+            if (violation.limit === 0) {
+                issues.push(`${violation.cardName} 在当前环境/规则已禁用（当前 ${violation.count} 张）`);
+                return;
+            }
+            issues.push(`${violation.cardName} 最多可携带 ${violation.limit} 张（当前 ${violation.count} 张）`);
+        });
+    }
+
+    if (stats.unknown > 0) {
+        issues.push('包含未知卡牌，请刷新卡池后重试');
+    }
+
+    if (stats.nonCollectible > 0) {
+        const names = Array.isArray(stats.nonCollectibleCards) ? stats.nonCollectibleCards.filter(Boolean) : [];
+        issues.push(
+            names.length > 0
+                ? `包含不可收集卡牌：${names.join('、')}`
+                : `包含不可收集卡牌 ${stats.nonCollectible} 张`
+        );
+    }
+
+    if (stats.offClass > 0) {
+        issues.push(`包含不合法职业卡 ${stats.offClass} 张`);
+    }
+
+    if (stats.rule === 'dualClass') {
+        if (!stats.secondaryClass) {
+            issues.push('混合职业模式必须选择副职业');
+        }
+        if (stats.primary < 24) {
+            issues.push(`主职业卡片必须为24张以上（当前${stats.primary}张）`);
+        }
+        if (stats.secondary < 9) {
+            issues.push(`副职业卡片必须为9张以上（当前${stats.secondary}张）`);
+        }
+    }
+
+    return {
+        stats,
+        canSave: issues.length === 0,
+        messages: issues,
+        message: issues[0] ?? ''
+    };
+}
+
+function normalizeSaveErrorMessages(value) {
+    if (value === null || value === undefined) {
+        return [];
+    }
+    const source = Array.isArray(value) ? value.join('\n') : String(value);
+    return source
+        .split(/\r?\n|[；;]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function getDeckValidationDisplayMessages(validation) {
+    const baseMessages = Array.isArray(validation?.messages) && validation.messages.length > 0
+        ? validation.messages
+        : normalizeSaveErrorMessages(validation?.message || '当前卡组未通过构筑校验');
+
+    return Array.from(new Set(baseMessages));
+}
+
+function getDeckSaveFeedbackMessages(validation) {
+    const messages = validation.canSave ? [] : getDeckValidationDisplayMessages(validation);
+    if (Array.isArray(state.saveErrorMessages) && state.saveErrorMessages.length > 0) {
+        messages.push(...state.saveErrorMessages);
+    }
+    return Array.from(new Set(messages));
+}
+
+function clearDeckSaveErrors() {
+    state.saveErrorMessages = [];
+}
+
+function updateDeckStatusUI() {
+    if (!state.currentDeck) {
+        return;
+    }
+
+    ensureCurrentDeckCopyLimitPolicyLoaded();
+
+    const validation = getDeckSaveValidation(state.currentDeck);
+    const feedbackMessages = getDeckSaveFeedbackMessages(validation);
+    const displayMessage = feedbackMessages.join('\n');
+    const countEl = document.getElementById('deck-count-display');
+    if (countEl) {
+        countEl.textContent = `${validation.stats.total}`;
+    }
+    const primaryCountEl = document.getElementById('deck-primary-count-display');
+    if (primaryCountEl) {
+        primaryCountEl.textContent = `${validation.stats.primary}`;
+    }
+    const secondaryCountEl = document.getElementById('deck-secondary-count-display');
+    if (secondaryCountEl) {
+        secondaryCountEl.textContent = `${validation.stats.secondary}`;
+    }
+    const typeCounts = getDeckTypeCounts(state.currentDeck);
+    const followerCountEl = document.getElementById('deck-follower-count');
+    if (followerCountEl) {
+        followerCountEl.textContent = `从者 ${typeCounts.follower}`;
+    }
+    const spellCountEl = document.getElementById('deck-spell-count');
+    if (spellCountEl) {
+        spellCountEl.textContent = `法术 ${typeCounts.spell}`;
+    }
+    const amuletCountEl = document.getElementById('deck-amulet-count');
+    if (amuletCountEl) {
+        amuletCountEl.textContent = `护符 ${typeCounts.amulet}`;
+    }
+
+    const warningEl = document.getElementById('deck-save-warning');
+    if (warningEl) {
+        warningEl.textContent = displayMessage;
+        warningEl.classList.toggle('hidden', feedbackMessages.length === 0);
+    }
+
+    const saveBtn = document.getElementById('save-deck-btn');
+    if (saveBtn) {
+        saveBtn.title = displayMessage;
+    }
+}
+
+function updateDeckCountDisplay() {
+    updateDeckStatusUI();
 }
 
 async function deleteDeck(deckId, skipConfirm = false) {
@@ -1405,22 +2500,50 @@ async function deleteDeck(deckId, skipConfirm = false) {
     const query = getDeckOwnerQuery();
     await apiDelete(`/api/decks/${deckId}?${query}`);
     await loadDecks();
+    notifyDeckListUpdated('delete');
     renderDeckSelection();
 }
 
-async function createNewDeck(environment, deckClass) {
+async function createNewDeck(environment, deckClass, rule = DEFAULT_DECK_RULE, secondaryClass = null) {
+    const pendingCreation = beginPendingNewDeckCreation();
+    const normalizedRule = normalizeDeckRule(rule);
+    const normalizedSecondaryClass = resolveSecondaryClass(normalizedRule, deckClass, secondaryClass);
     const query = getDeckOwnerQuery();
     const payload = {
         name: 'New Deck',
         class: normalizeEnumValue(deckClass) || 'neutral',
-        environment: normalizeEnvironment(environment)
+        environment: normalizeEnvironment(environment),
+        rule: normalizedRule
     };
-    const created = await apiPostJson(`/api/decks?${query}`, payload);
-    const createdId = created?.deckId ?? created?.id ?? null;
-    state.newDeckId = createdId;
-    await loadDecks();
-    if (createdId) {
-        await editDeck(createdId);
+    if (normalizedRule === 'dualClass' && normalizedSecondaryClass) {
+        payload.secondaryClass = normalizedSecondaryClass;
+    }
+    try {
+        const created = await apiPostJson(`/api/decks?${query}`, payload);
+        const createdId = created?.deckId ?? created?.id ?? null;
+        const createdPending = setPendingNewDeckCreationDeckId(pendingCreation.requestId, createdId);
+        if (shouldCleanupPendingDeckCreation(createdPending, getCurrentRouteName())) {
+            await cleanupAbandonedPendingNewDeckCreation(createdPending, 'discard');
+            return;
+        }
+
+        state.newDeckId = createdId;
+        await loadDecks();
+
+        const latestPending = findPendingNewDeckCreation(pendingCreation.requestId);
+        if (shouldCleanupPendingDeckCreation(latestPending, getCurrentRouteName())) {
+            await cleanupAbandonedPendingNewDeckCreation(latestPending, 'discard');
+            return;
+        }
+
+        notifyDeckListUpdated('create');
+        if (createdId) {
+            await editDeck(createdId);
+        }
+        clearPendingNewDeckCreation(pendingCreation.requestId);
+    } catch (error) {
+        clearPendingNewDeckCreation(pendingCreation.requestId);
+        throw error;
     }
 }
 
@@ -1433,6 +2556,7 @@ async function importDeckByCode(code, name = '') {
     const imported = await apiPostJson(`/api/decks/import?${query}`, payload);
     const importedDeckId = getDeckId(imported);
     await loadDecks();
+    notifyDeckListUpdated('import');
     return importedDeckId;
 }
 
@@ -1440,13 +2564,27 @@ async function editDeck(deckId) {
     const deck = await fetchDeckDetail(deckId);
     const resolvedDeckId = getDeckId(deck) ?? deckId;
     const isNewDeck = state.newDeckId && resolvedDeckId && String(state.newDeckId) === String(resolvedDeckId);
+    const deckClass = deck.class ?? deck.Class;
+    const deckRule = deck.rule ?? deck.Rule;
+    if (!isDeckRuleUiVisible(deckRule)) {
+        alert('混合职业卡组当前已临时下线。');
+        await loadDecks();
+        renderDeckSelection();
+        return;
+    }
+    const deckSecondaryClass = deck.secondaryClass ?? deck.SecondaryClass;
     state.currentDeck = {
         ...deck,
-        environment: normalizeEnvironment(deck.environment),
-        class: normalizeEnumValue(deck.class),
+        environment: normalizeEnvironment(deck.environment ?? deck.Environment),
+        class: normalizeEnumValue(deckClass),
+        rule: normalizeDeckRule(deckRule),
+        secondaryClass: resolveSecondaryClass(deckRule, deckClass, deckSecondaryClass),
         cards: Array.isArray(deck.cards) ? deck.cards : []
     };
     state.currentDeck.isNew = Boolean(isNewDeck);
+    setCurrentDeckSnapshot(state.currentDeck);
+    await ensureCopyLimitPolicyLoaded(state.currentDeck.environment, state.currentDeck.rule);
+    clearDeckSaveErrors();
     if (isNewDeck) {
         state.newDeckId = null;
     }
@@ -1463,8 +2601,8 @@ function addCardToDeck(cardId) {
 
     const entries = state.currentDeck.cards ?? [];
     const entry = entries.find(item => Number(item.cardDefinitionId) === cardId);
-    if (entry && entry.count >= 3) {
-        alert("同名卡最多 3 张");
+    if (entry && entry.count >= DEFAULT_MAX_COPIES_PER_CARD) {
+        alert(`同名卡最多 ${DEFAULT_MAX_COPIES_PER_CARD} 张`);
         return;
     }
 
@@ -1474,6 +2612,7 @@ function addCardToDeck(cardId) {
         entries.push({ cardDefinitionId: cardId, count: 1 });
     }
     state.currentDeck.cards = entries;
+    clearDeckSaveErrors();
     renderDeckList();
     renderManaCurve();
     updateDeckCountDisplay();
@@ -1493,13 +2632,31 @@ function removeCardFromDeck(cardId) {
         entries.splice(entryIndex, 1);
     }
     state.currentDeck.cards = entries;
+    clearDeckSaveErrors();
     renderDeckList();
     renderManaCurve();
     updateDeckCountDisplay();
 }
 
-async function saveDeck() {
-    if (!state.currentDeck) return;
+async function saveDeck({ closeEditorOnSuccess = true } = {}) {
+    if (!state.currentDeck) return false;
+    updateDeckStatusUI();
+    const validation = getDeckSaveValidation(state.currentDeck);
+    const feedbackMessages = getDeckSaveFeedbackMessages(validation);
+    if (feedbackMessages.length > 0) {
+        const shouldContinue = window.confirm(
+            `${feedbackMessages.join('\n')}\n是否继续保存？`
+        );
+        if (!shouldContinue) {
+            return false;
+        }
+    }
+
+    clearDeckSaveErrors();
+    updateDeckStatusUI();
+
+    const normalizedRule = normalizeDeckRule(state.currentDeck.rule);
+    const normalizedSecondaryClass = resolveSecondaryClass(normalizedRule, state.currentDeck.class, state.currentDeck.secondaryClass);
     const query = getDeckOwnerQuery();
     const deckId = state.currentDeck.deckId || state.currentDeck.id;
     const allowCreateFallback = state.currentDeck.isNew === true || !deckId;
@@ -1507,6 +2664,8 @@ async function saveDeck() {
         name: state.currentDeck.name,
         class: state.currentDeck.class || 'Neutral',
         environment: normalizeEnvironment(state.currentDeck.environment),
+        rule: normalizedRule,
+        secondaryClass: normalizedSecondaryClass,
         cards: state.currentDeck.cards ?? []
     };
 
@@ -1520,16 +2679,34 @@ async function saveDeck() {
             await apiPutJson(`/api/decks/${deckId}?${query}`, payload);
         } catch (error) {
             if (!isNotFoundError(error) || !allowCreateFallback) {
-                throw error;
+                state.saveErrorMessages = normalizeSaveErrorMessages(error?.message || '保存失败，请稍后重试');
+                updateDeckStatusUI();
+                return false;
             }
-            await apiPostJson(`/api/decks?${query}`, payload);
+            try {
+                await apiPostJson(`/api/decks?${query}`, payload);
+            } catch (createError) {
+                state.saveErrorMessages = normalizeSaveErrorMessages(createError?.message || '保存失败，请稍后重试');
+                updateDeckStatusUI();
+                return false;
+            }
         }
     } else {
-        await apiPostJson(`/api/decks?${query}`, payload);
+        try {
+            await apiPostJson(`/api/decks?${query}`, payload);
+        } catch (error) {
+            state.saveErrorMessages = normalizeSaveErrorMessages(error?.message || '保存失败，请稍后重试');
+            updateDeckStatusUI();
+            return false;
+        }
     }
 
+    clearDeckSaveErrors();
     await loadDecks();
-    document.dispatchEvent(new CustomEvent('deckListUpdated'));
-    state.currentDeck = null;
-    renderDeckSelection();
+    notifyDeckListUpdated('save');
+    clearCurrentDeckState();
+    if (closeEditorOnSuccess) {
+        renderDeckSelection();
+    }
+    return true;
 }

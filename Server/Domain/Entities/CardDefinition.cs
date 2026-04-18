@@ -123,6 +123,7 @@ public class CardDefinition
     /// <summary>
     /// 
     /// </summary>
+    [DslExposable("原始卡牌种类", Description = "卡牌所属的种类")]
     public List<string>? Tribe { get; set; }
 
     /// <summary>

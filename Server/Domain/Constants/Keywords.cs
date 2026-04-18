@@ -44,6 +44,8 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         SpellWard = 14,
         [Description("无法使用")]
         CannotUse = 15,
+        [Description("无视守护")]
+        IgnoreWard = 16,
         [Description("无法被破坏")]
         DestroyResist = 20,
         [Description("无法被消失")]

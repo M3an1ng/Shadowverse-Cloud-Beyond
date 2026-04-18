@@ -63,6 +63,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "FusionEvent.Commit: no fusion materials provided." };
             }
 
+            if (sourceCard.HasUsedFusionThisTurn())
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "FusionEvent.Commit: card has already used Fusion this turn." };
+            }
+
             var result = new DomainOperationResult { Success = true };
             var seen = new HashSet<Guid>();
             foreach (var fusedCard in fusedCards)
@@ -83,6 +88,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 }
             }
 
+            sourceCard.MarkFusionUsed();
+            result.GeneratedEvents.Add(new FusionStateUpdatedEvent(sourceCard, sourceCard.FusionsThisTurn, sourceCard.MaxFusionsPerTurn));
             sourceCard.AddFusedCards(fusedCards);
 
             foreach (var fusedCard in fusedCards)

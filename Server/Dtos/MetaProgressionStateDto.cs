@@ -8,5 +8,5 @@ public sealed class MetaProgressionStateDto
     public Guid UserId { get; init; }
     public UserRankDto? Rank { get; init; }
     public List<UserQuestDto> Quests { get; init; } = new();
+    public List<UserClassWinStatsDto> ClassStats { get; init; } = new();
 }
-

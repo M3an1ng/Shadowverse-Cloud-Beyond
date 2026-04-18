@@ -55,7 +55,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var modes = new List<PlayModeAvailabilityDto>();
-            var currentPp = player.CurrentPlayPoints;
+            var currentPp = player.GetSpendablePlayPoints();
 
             var baseCost = Math.Max(0, card.CurrentCost);
             modes.Add(BuildAvailability(PlayMode.Base, baseCost, currentPp));

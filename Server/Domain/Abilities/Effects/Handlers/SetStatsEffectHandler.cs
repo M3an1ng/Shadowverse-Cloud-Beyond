@@ -58,7 +58,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         durationParameter: parameters.DurationParameter,
                         modifierLayer: ModifierLayer.Set,
                         effectKey: effectKey,
-                        canStack: parameters.CanStack
+                        canStack: parameters.CanStack,
+                        removeCondition: parameters.RemoveCondition
                     );
 
                     var result = new DomainOperationResult { Success = true };

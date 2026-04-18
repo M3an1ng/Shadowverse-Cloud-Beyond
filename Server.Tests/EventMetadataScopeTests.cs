@@ -53,5 +53,18 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(AbilityEditorCategories.SystemRequestId, mulligan.CategoryId);
             Assert.Equal(EventMetadataVisibility.System, mulligan.Visibility);
         }
+
+        [Fact]
+        public void DamageEvent_includes_base_current_player_snapshot_parameters()
+        {
+            var svc = new EventMetadataService(NullLogger<EventMetadataService>.Instance);
+            var damage = svc.GetAllEventMetadata().First(m => m.EventType == EventType.Damage);
+
+            var currentPlayerId = Assert.Single(damage.Parameters.Where(p => p.PropertyName == nameof(GameEventBase.CurrentPlayerId)));
+            var currentPlayerTurnNumber = Assert.Single(damage.Parameters.Where(p => p.PropertyName == nameof(GameEventBase.CurrentPlayerTurnNumber)));
+
+            Assert.Equal(GameEventParameterScope.Input, currentPlayerId.Scope);
+            Assert.Equal(GameEventParameterScope.Input, currentPlayerTurnNumber.Scope);
+        }
     }
 }

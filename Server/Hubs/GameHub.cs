@@ -273,7 +273,7 @@ namespace ShadowverseBeyond.Server.Hubs
             }
             else
             {
-                var roomResult = _matchService.Get(gameIdStr);
+                var roomResult = _matchService.GetByGameId(gameIdStr);
                 if (roomResult.Success && roomResult.Room != null)
                 {
                     contextPlayerId = roomResult.Room.HostPlayerId;
@@ -318,6 +318,39 @@ namespace ShadowverseBeyond.Server.Hubs
             {
                 _logger.LogError(ex, "Error sending requested game state to ConnectionId={ConnectionId}, GameId={GameId}", Context.ConnectionId, gameIdStr);
                 await Clients.Caller.ReceiveError("服务器错误：同步对局状态失败。");
+            }
+        }
+
+        /// <summary>
+        /// Client invokes this method to request a lightweight playability refresh
+        /// without requesting a full GameState snapshot.
+        /// </summary>
+        public async Task RequestPlayabilityUpdate()
+        {
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrWhiteSpace(playerId) || !Guid.TryParse(playerId, out var parsedPlayerId))
+            {
+                _logger.LogWarning("RequestPlayabilityUpdate called by unidentified connection: {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            var gameIdStr = gameId.ToString();
+            var gameState = _gameService.GetGameState(gameIdStr);
+            if (gameState == null)
+            {
+                _logger.LogWarning("RequestPlayabilityUpdate ignored: no active GameState. GameId={GameId}", gameIdStr);
+                return;
+            }
+
+            try
+            {
+                await _gameService.RefreshHandPlayabilityAsync(gameIdStr, parsedPlayerId, Context.ConnectionAborted);
+                await _gameService.RefreshActPlayabilityAsync(gameIdStr, parsedPlayerId, Context.ConnectionAborted);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "RequestPlayabilityUpdate failed. ConnectionId={ConnectionId}, GameId={GameId}, PlayerId={PlayerId}",
+                    Context.ConnectionId, gameIdStr, parsedPlayerId);
             }
         }
 
@@ -809,14 +842,14 @@ namespace ShadowverseBeyond.Server.Hubs
         /// </summary>
         public async Task SendChatMessage(SendChatMessageActionDto actionDto)
         {
-            if (!TryResolveChatParticipantContext(out var gameId, out var senderType, out var senderId, out var senderName, out var senderAvatarUrl))
+            if (!TryResolveChatParticipantContext(out var roomId, out var gameId, out var senderType, out var senderId, out var senderName, out var senderAvatarUrl))
             {
                 await Clients.Caller.ReceiveError("聊天发送失败：无法识别当前连接上下文。");
                 return;
             }
 
             var gameIdStr = gameId.ToString("D");
-            var roomResult = _matchService.Get(gameIdStr);
+            var roomResult = _matchService.Get(roomId);
             if (!roomResult.Success || roomResult.Room == null || roomResult.Room.Status == MatchStatus.Closed)
             {
                 _gameChatService.ClearGame(gameIdStr);
@@ -854,7 +887,7 @@ namespace ShadowverseBeyond.Server.Hubs
             };
 
             _gameChatService.AppendMessage(message);
-            await Clients.Group(SignalRGroupNames.Game(gameId)).ChatMessage(message);
+            await Clients.Group(SignalRGroupNames.Game(roomId)).ChatMessage(message);
         }
 
         /// <summary>
@@ -882,14 +915,25 @@ namespace ShadowverseBeyond.Server.Hubs
                 return;
             }
 
+            var roomIdStr = httpContext.Request.Query["roomId"].ToString();
             var gameIdStr = httpContext.Request.Query["gameId"].ToString();
             var playerIdStr = httpContext.Request.Query["playerId"].ToString();
             var token = httpContext.Request.Query["token"].ToString();
             var spectate = httpContext.Request.Query["spectate"].ToString();
 
-            if (!Guid.TryParse(gameIdStr, out var gameId))
+            if (string.IsNullOrWhiteSpace(roomIdStr) && !string.IsNullOrWhiteSpace(gameIdStr))
             {
-                _logger.LogWarning("Invalid connection parameters. ConnectionId={ConnectionId}, gameId={GameId}, playerId={PlayerId}", Context.ConnectionId, gameIdStr, playerIdStr);
+                if (!_matchService.TryGetRoomIdByGameId(gameIdStr, out roomIdStr))
+                {
+                    // 兼容旧协议：gameId 仍可承载 roomId。
+                    roomIdStr = gameIdStr;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(roomIdStr))
+            {
+                _logger.LogWarning("Missing room identifier. ConnectionId={ConnectionId}, roomId={RoomId}, gameId={GameId}, playerId={PlayerId}",
+                    Context.ConnectionId, roomIdStr, gameIdStr, playerIdStr);
                 await Clients.Caller.ReceiveError("连接参数无效，无法加入房间。");
                 Context.Abort();
                 return;
@@ -901,11 +945,11 @@ namespace ShadowverseBeyond.Server.Hubs
 
             if (isSpectator)
             {
-                var roomResult = _matchService.Get(gameIdStr);
+                var roomResult = _matchService.Get(roomIdStr);
                 if (!roomResult.Success || roomResult.Room == null)
                 {
-                    _logger.LogWarning("Spectator attempted to join non-existent room. ConnectionId={ConnectionId}, GameId={GameId}",
-                        Context.ConnectionId, gameIdStr);
+                    _logger.LogWarning("Spectator attempted to join non-existent room. ConnectionId={ConnectionId}, RoomId={RoomId}",
+                        Context.ConnectionId, roomIdStr);
                     await Clients.Caller.ReceiveError("房间不存在，无法观战。");
                     Context.Abort();
                     return;
@@ -917,19 +961,29 @@ namespace ShadowverseBeyond.Server.Hubs
                     if (string.IsNullOrWhiteSpace(joinCode) ||
                         !string.Equals(roomResult.Room.JoinCode, joinCode, StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.LogWarning("Spectator join denied (invalid joinCode). ConnectionId={ConnectionId}, GameId={GameId}",
-                            Context.ConnectionId, gameIdStr);
+                        _logger.LogWarning("Spectator join denied (invalid joinCode). ConnectionId={ConnectionId}, RoomId={RoomId}",
+                            Context.ConnectionId, roomIdStr);
                         await Clients.Caller.ReceiveError("邀请码不正确，无法观战。");
                         Context.Abort();
                         return;
                     }
                 }
 
-                if (roomResult.Room.Status != MatchStatus.Started)
+                if (roomResult.Room.Status != MatchStatus.Started || string.IsNullOrWhiteSpace(roomResult.Room.ActiveGameId))
                 {
-                    _logger.LogInformation("Spectator attempted to join room not started yet. ConnectionId={ConnectionId}, GameId={GameId}, Status={Status}",
-                        Context.ConnectionId, gameIdStr, roomResult.Room.Status);
+                    _logger.LogInformation("Spectator attempted to join room not started yet. ConnectionId={ConnectionId}, RoomId={RoomId}, Status={Status}",
+                        Context.ConnectionId, roomIdStr, roomResult.Room.Status);
                     await Clients.Caller.ReceiveError("房间未开始，暂不可观战。");
+                    Context.Abort();
+                    return;
+                }
+
+                var activeGameIdStr = roomResult.Room.ActiveGameId!;
+                if (!Guid.TryParse(activeGameIdStr, out var activeGameId))
+                {
+                    _logger.LogWarning("Spectator join denied due to invalid activeGameId. ConnectionId={ConnectionId}, RoomId={RoomId}, ActiveGameId={ActiveGameId}",
+                        Context.ConnectionId, roomIdStr, activeGameIdStr);
+                    await Clients.Caller.ReceiveError("对局标识无效，无法观战。");
                     Context.Abort();
                     return;
                 }
@@ -939,28 +993,30 @@ namespace ShadowverseBeyond.Server.Hubs
                     BuildSpectatorFallbackDisplayName());
                 var spectatorParticipantId = NormalizeChatParticipantId(
                     httpContext.Request.Query["spectatorUserId"].ToString(),
-                    Context.ConnectionId);
+                Context.ConnectionId);
                 var spectatorAvatarUrl = NormalizeChatAvatarUrl(
                     httpContext.Request.Query["spectatorAvatar"].ToString());
 
-                Context.Items["GameId"] = gameIdStr;
+                Context.Items["RoomId"] = roomIdStr;
+                Context.Items["GameId"] = activeGameIdStr;
                 Context.Items["ParticipantType"] = ChatSenderType.Spectator;
                 Context.Items["ParticipantId"] = spectatorParticipantId;
                 Context.Items["DisplayName"] = spectatorDisplayName;
                 Context.Items["AvatarUrl"] = spectatorAvatarUrl;
 
-                var spectatorGroupName = SignalRGroupNames.Game(gameId);
+                var spectatorGroupName = SignalRGroupNames.Game(roomIdStr);
                 await Groups.AddToGroupAsync(Context.ConnectionId, spectatorGroupName);
 
-                _logger.LogInformation("Spectator connected: ConnectionId={ConnectionId}, GameId={GameId}, Added to Group={GroupName}",
-                    Context.ConnectionId, gameId, spectatorGroupName);
+                _logger.LogInformation("Spectator connected: ConnectionId={ConnectionId}, RoomId={RoomId}, GameId={GameId}, Added to Group={GroupName}",
+                    Context.ConnectionId, roomIdStr, activeGameId, spectatorGroupName);
 
                 try
                 {
-                    var currentStateEntity = _gameService.GetGameState(gameIdStr);
+                    var currentStateEntity = _gameService.GetGameState(activeGameIdStr);
                     if (currentStateEntity == null)
                     {
-                        _logger.LogWarning("Spectator requested state but server has no active GameState. GameId={GameId}", gameIdStr);
+                        _logger.LogWarning("Spectator requested state but server has no active GameState. RoomId={RoomId}, GameId={GameId}",
+                            roomIdStr, activeGameIdStr);
                         await Clients.Caller.ReceiveError("当前对局状态不可用，无法观战。");
                         Context.Abort();
                         return;
@@ -983,15 +1039,16 @@ namespace ShadowverseBeyond.Server.Hubs
                     }
 
                     await Clients.Caller.ReceiveGameState(currentState);
-                    await SendRecentChatHistoryToCallerAsync(gameIdStr);
-                    await SendMatchHistoryToCallerAsync(gameIdStr);
+                    await SendRecentChatHistoryToCallerAsync(activeGameIdStr);
+                    await SendMatchHistoryToCallerAsync(activeGameIdStr);
                     await BroadcastSystemChatMessageAsync(
-                        gameId,
+                        roomIdStr,
+                        activeGameId,
                         $"观战者 {spectatorDisplayName} 加入了观战");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error sending initial state to spectator in Game {GameId}", gameIdStr);
+                    _logger.LogError(ex, "Error sending initial state to spectator. RoomId={RoomId}, GameId={GameId}", roomIdStr, activeGameIdStr);
                     await Clients.Caller.ReceiveError("服务器错误：加载观战初始状态失败。");
                     Context.Abort();
                     return;
@@ -1003,24 +1060,25 @@ namespace ShadowverseBeyond.Server.Hubs
 
             if (!Guid.TryParse(playerIdStr, out var playerGuid) || string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogWarning("Invalid connection parameters. ConnectionId={ConnectionId}, gameId={GameId}, playerId={PlayerId}", Context.ConnectionId, gameIdStr, playerIdStr);
+                _logger.LogWarning("Invalid connection parameters. ConnectionId={ConnectionId}, roomId={RoomId}, playerId={PlayerId}",
+                    Context.ConnectionId, roomIdStr, playerIdStr);
                 await Clients.Caller.ReceiveError("连接参数无效，无法加入房间。");
                 Context.Abort();
                 return;
             }
 
-            var authResult = _matchService.ValidateConnection(gameIdStr, playerGuid, token);
+            var authResult = _matchService.ValidateConnection(roomIdStr, playerGuid, token);
             if (!authResult.Success || authResult.Room == null)
             {
-                _logger.LogWarning("Match validation failed for ConnectionId={ConnectionId}, GameId={GameId}, PlayerId={PlayerId}. Error={Error}",
-                    Context.ConnectionId, gameIdStr, playerIdStr, authResult.Error);
+                _logger.LogWarning("Match validation failed for ConnectionId={ConnectionId}, RoomId={RoomId}, PlayerId={PlayerId}. Error={Error}",
+                    Context.ConnectionId, roomIdStr, playerIdStr, authResult.Error);
                 await Clients.Caller.ReceiveError(authResult.Message ?? "房间验证失败，无法加入。");
                 Context.Abort();
                 return;
             }
 
             // Set items for filters (GameContextFilter will pick these up)
-            Context.Items["GameId"] = gameIdStr;
+            Context.Items["RoomId"] = roomIdStr;
             Context.Items["PlayerId"] = playerIdStr;
             Context.Items["ParticipantType"] = ChatSenderType.Player;
             Context.Items["ParticipantId"] = playerIdStr;
@@ -1030,32 +1088,51 @@ namespace ShadowverseBeyond.Server.Hubs
             var room = authResult.Room;
             if (room.Status == MatchStatus.Ready)
             {
-                _matchService.Start(gameIdStr, playerGuid); // Best-effort attempt to mark started
-                var refreshed = _matchService.Get(gameIdStr);
+                _matchService.Start(roomIdStr, playerGuid); // Best-effort attempt to mark started
+                var refreshed = _matchService.Get(roomIdStr);
                 if (refreshed.Success && refreshed.Room != null)
                 {
                     room = refreshed.Room;
                 }
             }
 
-            string groupName = SignalRGroupNames.Game(gameId); // Consistent group naming convention
+            var activeGameIdStrForPlayer = room.ActiveGameId;
+            var hasActiveGameId = Guid.TryParse(activeGameIdStrForPlayer, out var activeGameIdForPlayer);
+            if (hasActiveGameId)
+            {
+                Context.Items["GameId"] = activeGameIdStrForPlayer!;
+            }
+
+            string groupName = SignalRGroupNames.Game(roomIdStr); // Room-scoped group
             await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
 
-            string playerGroupName = SignalRGroupNames.Player(gameIdStr, playerGuid);
+            string playerGroupName = SignalRGroupNames.Player(roomIdStr, playerGuid);
             await Groups.AddToGroupAsync(Context.ConnectionId, playerGroupName);
 
-            _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}, Added to Group={GroupName}",
-                Context.ConnectionId, playerIdStr, gameId, groupName);
+            _logger.LogInformation("Client connected: ConnectionId={ConnectionId}, PlayerId={PlayerId}, RoomId={RoomId}, ActiveGameId={GameId}, Added to Group={GroupName}",
+                Context.ConnectionId, playerIdStr, roomIdStr, activeGameIdStrForPlayer ?? "N/A", groupName);
 
-            var hadPendingDisconnect = CancelDisconnectTimeout(gameId, playerGuid);
-            await NotifyPlayerConnectionStatusAsync(gameId, playerGuid, true, hadPendingDisconnect ? "Reconnect" : "Connected");
-            _gameService.MarkPlayerReconnected(gameId.ToString(), playerGuid);
+            if (hasActiveGameId)
+            {
+                var hadPendingDisconnect = CancelDisconnectTimeout(activeGameIdForPlayer, playerGuid);
+                await NotifyPlayerConnectionStatusAsync(roomIdStr, playerGuid, true, hadPendingDisconnect ? "Reconnect" : "Connected");
+                _gameService.MarkPlayerReconnected(activeGameIdForPlayer.ToString("D"), playerGuid);
+            }
 
             // Only create game state when match is started, to avoid "ghost seats" or hanging initialization.
             if (!room.UseAiFallback && room.Status != MatchStatus.Started)
             {
-                _logger.LogInformation("Room {GameId} not started yet (Status={Status}). Skipping GameState creation.", gameId, room.Status);
+                _logger.LogInformation("Room {RoomId} not started yet (Status={Status}). Skipping GameState creation.", roomIdStr, room.Status);
                 await Clients.Caller.ReceiveError("房间未开始，请等待双方准备完成后再进入对战。");
+                await base.OnConnectedAsync();
+                return;
+            }
+
+            if (!hasActiveGameId)
+            {
+                _logger.LogWarning("Match room has no valid ActiveGameId when player connected. RoomId={RoomId}, Status={Status}, ActiveGameId={ActiveGameId}",
+                    roomIdStr, room.Status, activeGameIdStrForPlayer ?? "null");
+                await Clients.Caller.ReceiveError("对局尚未创建，暂时无法进入战斗。");
                 await base.OnConnectedAsync();
                 return;
             }
@@ -1065,7 +1142,7 @@ namespace ShadowverseBeyond.Server.Hubs
             {
                 var requestServices = httpContext.RequestServices;
                 var currentStateEntity = await _gameService.GetOrCreateGameStateAsync(
-                    gameIdStr,
+                    activeGameIdStrForPlayer!,
                     room.HostPlayerId,
                     room.GuestPlayerId,
                     room.UseAiFallback,
@@ -1088,20 +1165,23 @@ namespace ShadowverseBeyond.Server.Hubs
                         currentState = _mapper.Map<GameStateDto>(currentStateEntity);
                     }
 
-                    _logger.LogInformation("Sending initial game state to caller for Game {GameId}, Player {PlayerId}", gameId, playerIdStr);
+                    _logger.LogInformation("Sending initial game state to caller for Room {RoomId}, Game {GameId}, Player {PlayerId}",
+                        roomIdStr, activeGameIdForPlayer, playerIdStr);
                     await Clients.Caller.ReceiveGameState(currentState);
-                    await SendRecentChatHistoryToCallerAsync(gameIdStr);
-                    await SendMatchHistoryToCallerAsync(gameIdStr);
+                    await SendRecentChatHistoryToCallerAsync(activeGameIdStrForPlayer!);
+                    await SendMatchHistoryToCallerAsync(activeGameIdStrForPlayer!);
                 }
                 else
                 {
-                    _logger.LogWarning("Could not retrieve initial game state for Game {GameId}. Service returned null.", gameId);
+                    _logger.LogWarning("Could not retrieve initial game state for Room {RoomId}, Game {GameId}. Service returned null.",
+                        roomIdStr, activeGameIdForPlayer);
                     await Clients.Caller.ReceiveError("Failed to load initial game state.");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving or sending initial game state for Player {PlayerId} in Game {GameId}", playerIdStr, gameId);
+                _logger.LogError(ex, "Error retrieving or sending initial game state for Player {PlayerId} in Room {RoomId}, Game {GameId}",
+                    playerIdStr, roomIdStr, activeGameIdForPlayer);
                 await Clients.Caller.ReceiveError("Server error loading initial game state.");
             }
 
@@ -1117,22 +1197,27 @@ namespace ShadowverseBeyond.Server.Hubs
         {
             // Attempt to identify the game/player again for logging/cleanup purposes
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync(); // Use helper
+            var roomId = GetRoomIdFromContext();
+            if (string.IsNullOrWhiteSpace(roomId) && gameId != Guid.Empty)
+            {
+                _matchService.TryGetRoomIdByGameId(gameId.ToString("D"), out roomId);
+            }
 
             if (exception != null)
             {
-                _logger.LogWarning(exception, "Client disconnected abnormally: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}",
-                    Context.ConnectionId, playerId ?? "N/A", gameId != Guid.Empty ? gameId.ToString() : "N/A");
+                _logger.LogWarning(exception, "Client disconnected abnormally: ConnectionId={ConnectionId}, PlayerId={PlayerId}, RoomId={RoomId}, GameId={GameId}",
+                    Context.ConnectionId, playerId ?? "N/A", roomId ?? "N/A", gameId != Guid.Empty ? gameId.ToString() : "N/A");
             }
             else
             {
-                _logger.LogInformation("Client disconnected gracefully: ConnectionId={ConnectionId}, PlayerId={PlayerId}, GameId={GameId}",
-                    Context.ConnectionId, playerId ?? "N/A", gameId != Guid.Empty ? gameId.ToString() : "N/A");
+                _logger.LogInformation("Client disconnected gracefully: ConnectionId={ConnectionId}, PlayerId={PlayerId}, RoomId={RoomId}, GameId={GameId}",
+                    Context.ConnectionId, playerId ?? "N/A", roomId ?? "N/A", gameId != Guid.Empty ? gameId.ToString() : "N/A");
             }
 
             // Remove from group (SignalR might handle this, but explicit is safer)
-            if (gameId != Guid.Empty)
+            if (!string.IsNullOrWhiteSpace(roomId))
             {
-                string groupName = SignalRGroupNames.Game(gameId);
+                string groupName = SignalRGroupNames.Game(roomId);
                 try
                 {
                     await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
@@ -1140,11 +1225,14 @@ namespace ShadowverseBeyond.Server.Hubs
 
                     if (!string.IsNullOrEmpty(playerId) && Guid.TryParse(playerId, out var playerGuid))
                     {
-                        var playerGroupName = SignalRGroupNames.Player(gameId.ToString("D"), playerGuid);
+                        var playerGroupName = SignalRGroupNames.Player(roomId, playerGuid);
                         await Groups.RemoveFromGroupAsync(Context.ConnectionId, playerGroupName);
-                        await NotifyPlayerConnectionStatusAsync(gameId, playerGuid, false, "Disconnect");
-                        _gameService.MarkPlayerDisconnected(gameId.ToString(), playerGuid);
-                        ScheduleDisconnectTimeout(gameId, playerGuid);
+                        await NotifyPlayerConnectionStatusAsync(roomId, playerGuid, false, "Disconnect");
+                        if (gameId != Guid.Empty)
+                        {
+                            _gameService.MarkPlayerDisconnected(gameId.ToString("D"), playerGuid);
+                            ScheduleDisconnectTimeout(gameId, playerGuid);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1155,7 +1243,7 @@ namespace ShadowverseBeyond.Server.Hubs
             }
             else
             {
-                _logger.LogWarning("Could not determine group for disconnected client: ConnectionId={ConnectionId}", Context.ConnectionId);
+                _logger.LogWarning("Could not determine room group for disconnected client: ConnectionId={ConnectionId}", Context.ConnectionId);
             }
 
             await base.OnDisconnectedAsync(exception);
@@ -1166,9 +1254,14 @@ namespace ShadowverseBeyond.Server.Hubs
             return $"{DisconnectCachePrefix}_{gameId}_{playerId}";
         }
 
-        private async Task NotifyPlayerConnectionStatusAsync(Guid gameId, Guid playerId, bool isConnected, string reason)
+        private async Task NotifyPlayerConnectionStatusAsync(string roomId, Guid playerId, bool isConnected, string reason)
         {
-            var groupName = SignalRGroupNames.Game(gameId);
+            if (string.IsNullOrWhiteSpace(roomId))
+            {
+                return;
+            }
+
+            var groupName = SignalRGroupNames.Game(roomId);
             var dto = new PlayerConnectionStatusEventDto
             {
                 PlayerId = playerId,
@@ -1561,9 +1654,9 @@ namespace ShadowverseBeyond.Server.Hubs
             }
         }
 
-        private async Task BroadcastSystemChatMessageAsync(Guid gameId, string rawContent)
+        private async Task BroadcastSystemChatMessageAsync(string roomId, Guid gameId, string rawContent)
         {
-            if (gameId == Guid.Empty)
+            if (string.IsNullOrWhiteSpace(roomId) || gameId == Guid.Empty)
             {
                 return;
             }
@@ -1590,7 +1683,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
             try
             {
-                await Clients.Group(SignalRGroupNames.Game(gameId)).ChatMessage(message);
+                await Clients.Group(SignalRGroupNames.Game(roomId)).ChatMessage(message);
             }
             catch (Exception ex)
             {
@@ -1599,17 +1692,24 @@ namespace ShadowverseBeyond.Server.Hubs
         }
 
         private bool TryResolveChatParticipantContext(
+            out string roomId,
             out Guid gameId,
             out ChatSenderType senderType,
             out string senderId,
             out string senderName,
             out string senderAvatarUrl)
         {
+            roomId = GetRoomIdFromContext() ?? string.Empty;
             gameId = Guid.Empty;
             senderType = ChatSenderType.System;
             senderId = Context.ConnectionId;
             senderName = "系统";
             senderAvatarUrl = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(roomId))
+            {
+                return false;
+            }
 
             string? gameIdStr = null;
             if (Context.Items.TryGetValue("GameId", out var gameIdItem) && gameIdItem is string gameIdFromItems)
@@ -1619,6 +1719,15 @@ namespace ShadowverseBeyond.Server.Hubs
             else
             {
                 gameIdStr = Context.GetHttpContext()?.Request.Query["gameId"].ToString();
+            }
+
+            if (string.IsNullOrWhiteSpace(gameIdStr))
+            {
+                var roomResult = _matchService.Get(roomId);
+                if (roomResult.Success && roomResult.Room != null)
+                {
+                    gameIdStr = roomResult.Room.ActiveGameId;
+                }
             }
 
             if (!Guid.TryParse(gameIdStr, out gameId))
@@ -1771,6 +1880,37 @@ namespace ShadowverseBeyond.Server.Hubs
             }
         }
 
+        private string? GetRoomIdFromContext()
+        {
+            if (Context.Items.TryGetValue("RoomId", out var roomIdItem) &&
+                roomIdItem is string roomIdFromItems &&
+                !string.IsNullOrWhiteSpace(roomIdFromItems))
+            {
+                return roomIdFromItems;
+            }
+
+            var httpContext = Context.GetHttpContext();
+            var roomIdFromQuery = httpContext?.Request.Query["roomId"].ToString();
+            if (!string.IsNullOrWhiteSpace(roomIdFromQuery))
+            {
+                return roomIdFromQuery;
+            }
+
+            var gameIdFromQuery = httpContext?.Request.Query["gameId"].ToString();
+            if (string.IsNullOrWhiteSpace(gameIdFromQuery))
+            {
+                return null;
+            }
+
+            if (_matchService.TryGetRoomIdByGameId(gameIdFromQuery, out var roomId))
+            {
+                return roomId;
+            }
+
+            // 兼容旧协议：gameId 承载 roomId。
+            return gameIdFromQuery;
+        }
+
         private string? GetGameIdForReplay()
         {
             if (Context.Items.TryGetValue("GameId", out var gameIdItem) &&
@@ -1781,7 +1921,38 @@ namespace ShadowverseBeyond.Server.Hubs
             }
 
             var httpContext = Context.GetHttpContext();
-            return httpContext?.Request.Query["gameId"].ToString();
+            var gameIdFromQuery = httpContext?.Request.Query["gameId"].ToString();
+            if (!string.IsNullOrWhiteSpace(gameIdFromQuery))
+            {
+                if (_matchService.TryGetRoomIdByGameId(gameIdFromQuery, out _))
+                {
+                    return gameIdFromQuery;
+                }
+
+                var legacyRoomResult = _matchService.Get(gameIdFromQuery);
+                if (legacyRoomResult.Success &&
+                    legacyRoomResult.Room != null &&
+                    !string.IsNullOrWhiteSpace(legacyRoomResult.Room.ActiveGameId))
+                {
+                    return legacyRoomResult.Room.ActiveGameId;
+                }
+
+                if (Guid.TryParse(gameIdFromQuery, out _))
+                {
+                    return gameIdFromQuery;
+                }
+            }
+
+            var roomId = GetRoomIdFromContext();
+            if (string.IsNullOrWhiteSpace(roomId))
+            {
+                return null;
+            }
+
+            var roomResult = _matchService.Get(roomId);
+            return roomResult.Success && roomResult.Room != null
+                ? roomResult.Room.ActiveGameId
+                : null;
         }
 
         /// <summary>
@@ -1827,22 +1998,52 @@ namespace ShadowverseBeyond.Server.Hubs
             }
 
             var gameIdStr = httpContext.Request.Query["gameId"].ToString();
+            var roomIdStr = httpContext.Request.Query["roomId"].ToString();
             var playerIdFromQuery = httpContext.Request.Query["playerId"].ToString();
+            string? resolvedGameIdStr = null;
+            var resolvedRoomId = roomIdStr;
 
-            if (Guid.TryParse(gameIdStr, out Guid gameId) && !string.IsNullOrEmpty(playerIdFromQuery))
+            if (string.IsNullOrWhiteSpace(resolvedRoomId) && !string.IsNullOrWhiteSpace(gameIdStr))
+            {
+                if (_matchService.TryGetRoomIdByGameId(gameIdStr, out var mappedRoomId))
+                {
+                    resolvedRoomId = mappedRoomId;
+                    resolvedGameIdStr = gameIdStr;
+                }
+                else
+                {
+                    resolvedRoomId = gameIdStr;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(resolvedGameIdStr) && !string.IsNullOrWhiteSpace(resolvedRoomId))
+            {
+                var roomResult = _matchService.Get(resolvedRoomId);
+                if (roomResult.Success && roomResult.Room != null && !string.IsNullOrWhiteSpace(roomResult.Room.ActiveGameId))
+                {
+                    resolvedGameIdStr = roomResult.Room.ActiveGameId;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(resolvedGameIdStr) && !string.IsNullOrWhiteSpace(gameIdStr) && Guid.TryParse(gameIdStr, out _))
+            {
+                resolvedGameIdStr = gameIdStr;
+            }
+
+            if (Guid.TryParse(resolvedGameIdStr, out Guid gameId) && !string.IsNullOrEmpty(playerIdFromQuery))
             {
                 // Consider validating if the PlayerId from query matches authenticated user if both exist
                 _logger.LogDebug("Identified game/player via query string: GameId={GameId}, PlayerId={PlayerId}", gameId, playerIdFromQuery);
                 return Task.FromResult<(Guid, string?)>((gameId, playerIdFromQuery)); // Explicitly match return type signature for nullability
             }
 
-            if (Guid.TryParse(gameIdStr, out var gameIdWithoutPlayer))
+            if (Guid.TryParse(resolvedGameIdStr, out var gameIdWithoutPlayer))
             {
                 return Task.FromResult<(Guid, string?)>((gameIdWithoutPlayer, null));
             }
 
-            _logger.LogWarning("Could not extract valid GameId/PlayerId from QueryString for ConnectionId {ConnectionId}. gameId='{GameIdStr}', playerId='{PlayerIdFromQuery}'",
-                Context.ConnectionId, gameIdStr, playerIdFromQuery);
+            _logger.LogWarning("Could not extract valid GameId/PlayerId from QueryString for ConnectionId {ConnectionId}. roomId='{RoomIdStr}', gameId='{GameIdStr}', playerId='{PlayerIdFromQuery}'",
+                Context.ConnectionId, roomIdStr, gameIdStr, playerIdFromQuery);
             return Task.FromResult((Guid.Empty, (string?)null));
         }
     }

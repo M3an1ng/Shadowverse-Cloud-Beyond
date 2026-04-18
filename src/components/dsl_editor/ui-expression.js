@@ -50,7 +50,13 @@ export function renderASTNodeRecursive(editor, node, container) {
     if (!node) return;
 
 
-    if (node.type === 'value' && (node.metadata?.type === 'property' || (node.metadata?.type === 'context' && node.value.includes('.')))) {
+    const isPropertyChain = node.type === 'value'
+        && (
+            (node.metadata?.type === 'property' && !node.metadata?.isDynamicMemberAccess)
+            || (node.metadata?.type === 'context' && node.value.includes('.'))
+        );
+
+    if (isPropertyChain) {
         editor.renderPropertyChainUI(node, container);
         return;
     }

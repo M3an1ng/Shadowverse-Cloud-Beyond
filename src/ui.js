@@ -25,14 +25,22 @@ import {
     requestAct,
     requestFusion,
     requestPpBoost,
+    getActPlayabilityForCard,
+    getPlayabilityForCard,
     // handleMulligan, // Removed import - Now uses submitMulligan
     submitMulligan, // Added import for SignalR mulligan submission
     endTurnRequest,  // Added import for SignalR end turn request
     submitPlayerChoice,
     cancelPlayerChoice
 } from './gameManager.js';
+import {
+    buildDebugLogLine,
+    createHandDragPerfSession,
+    recordHandDragPerfFrame,
+    summarizeHandDragPerfSession
+} from './debugDiagnostics.js';
 import { buildPreviewSlateHtml } from './previewSlate.js';
-import { showPreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
+import { showPreviewDescriptionTooltip, hidePreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
@@ -45,8 +53,11 @@ import {
     appendInMatchUsedCard,
     appendInMatchDestroyedCard,
     clearInMatchUsedCardUiState,
-    findLogCardInstanceByUid
+    findLogCardInstanceByUid,
+    buildMatchHistoryPreviewCard
 } from './ui/logPanel.js';
+import { createCardAnimationSystem } from './ui/cardAnimationSystem.js';
+import { buildCounterSummaryEntries, PLAYER_SYSTEM_COUNTER_KEYS } from './counterSummary.js';
 import { getUserSession } from './userSession.js';
 import badgeWardUrl from './badge/Ward.png';
 import badgeBaneUrl from './badge/Bane.png';
@@ -60,26 +71,50 @@ import badgeShackleUrl from './badge/Shackle.png';
 // getCardDefinition is obsolete. Card instances now contain all necessary data.
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 
-export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, updateHandDisplay, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi, renderGameLog, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState };
+export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, updateHandDisplay, refreshHandPlayabilityVisuals, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi, refreshCardActionControls, renderGameLog, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, getActionButtonsHtml, resolveRenderableTargetElement };
 
 let mulliganSelectedUids = new Set();
 const EMBLEM_SLOT_COUNT = 5;
-const DOUBLE_CLICK_WINDOW_MS = 260;
-let lastCardClick = { uid: null, time: 0 };
 const cardArtLoadPromises = new Map();
+const queuedCardArtTasks = new Map();
+const pendingCardArtTasks = [];
 const CARD_ART_RETRY_COUNT = 2;
 const CARD_ART_RETRY_DELAY_MS = 120;
+const CARD_ART_PRELOAD_CONCURRENCY = 2;
+const CARD_ART_PRELOAD_IDLE_TIMEOUT_MS = 180;
+const CARD_ART_PRELOAD_DRAG_DEFER_MS = 220;
 const CARD_MOVE_EPSILON = 0.5;
 const CARD_MOVE_OPACITY = '0.82';
+const CARD_ENTER_TRANSITION_MS = 220;
 const CARD_MOVE_TRANSITION_MS = 220;
 const CARD_EXIT_TRANSITION_MS = 190;
+const CARD_ENTER_STAGGER_MS = 0;
+const CARD_MOVE_STAGGER_MS = 0;
+const CARD_EXIT_STAGGER_MS = 0;
+const CARD_STAGGER_MAX_MS = 420;
+const CARD_ENTER_AFTER_EXIT_DELAY_MS = 0;
 const ATTACK_DRAG_MIN_DISTANCE_PX = 10;
 const ATTACK_DRAG_CLICK_SUPPRESS_MS = 260;
 const ATTACK_DRAG_LINE_ID = 'attack-drag-line';
+const ATTACK_DRAG_LEADER_ZONE_ID = 'attack-drag-leader-zone';
+const ATTACK_DRAG_LEADER_ZONE_CONFIRM_MS = 140;
+const HAND_DRAG_MIN_DISTANCE_PX = 10;
+const HAND_DRAG_CLICK_SUPPRESS_MS = 260;
+const HAND_DRAG_DROP_LANE_ID = 'hand-play-drop-lane';
+const HAND_DRAG_SNAP_BACK_MS = 190;
 const TRANSIENT_VISUAL_ROOT_ID = 'game-transient-visual-root';
-const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-exit-overlay, .fusion-float-card, .damage-number, .heal-number, #fusion-burst-root, #reveal-overlay-root';
+const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-enter-overlay, .card-fade-exit-overlay, .fusion-float-card, .damage-number, .heal-number, .hand-drag-ghost, .hand-play-drop-lane, .attack-drag-leader-zone, #fusion-burst-root, #reveal-overlay-root';
 const transientVisualTimeoutIds = new Set();
+const CARD_ART_PRIORITY_RANK = Object.freeze({
+    high: 0,
+    normal: 1,
+    low: 2
+});
 let suppressGameClickUntil = 0;
+let activeCardArtLoadCount = 0;
+let cardArtQueueDeferredUntilMs = 0;
+let cardArtQueueIdleHandle = null;
+let cardArtQueueTimerId = null;
 const attackDragState = {
     pointerId: null,
     isPending: false,
@@ -94,7 +129,36 @@ const attackDragState = {
     currentY: 0,
     hoverTargetUid: null,
     hoverElement: null,
-    lineElement: null
+    hoverKind: null,
+    lineElement: null,
+    leaderZoneElement: null
+};
+const handDragState = {
+    pointerId: null,
+    isPending: false,
+    isActive: false,
+    cardUid: null,
+    sourceElement: null,
+    ghostElement: null,
+    dropLaneElement: null,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+    pointerOffsetX: 0,
+    pointerOffsetY: 0,
+    ghostWidth: 0,
+    ghostHeight: 0,
+    hoverTargetUid: null,
+    hoverElement: null,
+    hoverKind: null,
+    dragFramePending: false,
+    renderedGhostX: 0,
+    renderedGhostY: 0
+};
+const handPlayCommitState = {
+    cardUid: null,
+    ghostElement: null
 };
 const PRESERVED_CARD_STATE_CLASSES = Object.freeze([
     'selected-attacker',
@@ -111,8 +175,162 @@ const PRESERVED_CARD_STATE_CLASSES = Object.freeze([
     'selected-for-mulligan'
 ]);
 
+function normalizePlayerId(value) {
+    return String(value ?? '').trim().toLowerCase();
+}
+
+function isSamePlayerId(left, right) {
+    const normalizedLeft = normalizePlayerId(left);
+    const normalizedRight = normalizePlayerId(right);
+    if (!normalizedLeft || !normalizedRight) return false;
+    return normalizedLeft === normalizedRight;
+}
+
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getUiNowMs() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return performance.now();
+    }
+    return Date.now();
+}
+
+function getUiPerfDebugState() {
+    if (typeof window === 'undefined') {
+        return {
+            enabled: false,
+            menuStarrySky: null,
+            handDrag: null
+        };
+    }
+
+    if (!window.__svPerfDebug) {
+        window.__svPerfDebug = {
+            enabled: true,
+            menuStarrySky: {
+                isAnimating: false,
+                route: '',
+                lastFrameAt: 0,
+                frameCount: 0,
+                slowFrameCount: 0
+            },
+            handDrag: {
+                sessionId: 0,
+                pendingRafAt: 0,
+                sampleCount: 0,
+                lastPointerMoveAt: 0,
+                pointerMoveCount: 0,
+                metrics: null
+            }
+        };
+    }
+
+    return window.__svPerfDebug;
+}
+
+function logUiPerfDebug(scope, message, details = null) {
+    const debugState = getUiPerfDebugState();
+    if (!debugState.enabled) return;
+    console.info(buildDebugLogLine(scope, message, details));
+}
+
+function getCardArtPriorityRank(priority = 'normal') {
+    return CARD_ART_PRIORITY_RANK[priority] ?? CARD_ART_PRIORITY_RANK.normal;
+}
+
+function clearScheduledCardArtQueueDrain() {
+    if (cardArtQueueIdleHandle !== null && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(cardArtQueueIdleHandle);
+    }
+    if (cardArtQueueTimerId !== null && typeof window !== 'undefined') {
+        window.clearTimeout(cardArtQueueTimerId);
+    }
+    cardArtQueueIdleHandle = null;
+    cardArtQueueTimerId = null;
+}
+
+function deferCardArtQueue(durationMs = CARD_ART_PRELOAD_DRAG_DEFER_MS) {
+    const safeDuration = Math.max(0, Number(durationMs) || 0);
+    if (safeDuration <= 0) return;
+    cardArtQueueDeferredUntilMs = Math.max(cardArtQueueDeferredUntilMs, getUiNowMs() + safeDuration);
+    scheduleCardArtQueueDrain({ preferIdle: false, delayMs: safeDuration });
+}
+
+function queueCardArtTask(task) {
+    const nextRank = getCardArtPriorityRank(task?.priority);
+    const existingIndex = pendingCardArtTasks.findIndex(candidate => candidate?.url === task?.url);
+    if (existingIndex >= 0) {
+        const [existingTask] = pendingCardArtTasks.splice(existingIndex, 1);
+        task = existingTask;
+    }
+
+    let insertIndex = pendingCardArtTasks.length;
+    for (let index = 0; index < pendingCardArtTasks.length; index += 1) {
+        const candidateRank = getCardArtPriorityRank(pendingCardArtTasks[index]?.priority);
+        if (nextRank < candidateRank) {
+            insertIndex = index;
+            break;
+        }
+    }
+    pendingCardArtTasks.splice(insertIndex, 0, task);
+}
+
+function drainCardArtQueue() {
+    clearScheduledCardArtQueueDrain();
+
+    if (typeof document !== 'undefined' && document.body?.classList?.contains('hand-card-dragging')) {
+        scheduleCardArtQueueDrain({ preferIdle: false, delayMs: CARD_ART_PRELOAD_DRAG_DEFER_MS });
+        return;
+    }
+
+    const deferredRemainingMs = cardArtQueueDeferredUntilMs - getUiNowMs();
+    if (deferredRemainingMs > 0) {
+        scheduleCardArtQueueDrain({ preferIdle: false, delayMs: deferredRemainingMs });
+        return;
+    }
+
+    while (activeCardArtLoadCount < CARD_ART_PRELOAD_CONCURRENCY && pendingCardArtTasks.length > 0) {
+        const task = pendingCardArtTasks.shift();
+        if (!task) continue;
+
+        activeCardArtLoadCount += 1;
+        const completeTask = () => {
+            activeCardArtLoadCount = Math.max(0, activeCardArtLoadCount - 1);
+            if (pendingCardArtTasks.length > 0) {
+                scheduleCardArtQueueDrain();
+            }
+        };
+
+        loadCardArtUrl(task.url)
+            .then(task.resolve)
+            .catch(task.reject)
+            .finally(completeTask);
+    }
+}
+
+function scheduleCardArtQueueDrain({ preferIdle = true, delayMs = 0 } = {}) {
+    clearScheduledCardArtQueueDrain();
+
+    const safeDelayMs = Math.max(0, Math.ceil(Number(delayMs) || 0));
+    const runDrain = () => drainCardArtQueue();
+
+    if (safeDelayMs > 0) {
+        cardArtQueueTimerId = window.setTimeout(runDrain, safeDelayMs);
+        return;
+    }
+
+    if (
+        preferIdle
+        && typeof window !== 'undefined'
+        && typeof window.requestIdleCallback === 'function'
+    ) {
+        cardArtQueueIdleHandle = window.requestIdleCallback(runDrain, { timeout: CARD_ART_PRELOAD_IDLE_TIMEOUT_MS });
+        return;
+    }
+
+    cardArtQueueTimerId = window.setTimeout(runDrain, 0);
 }
 
 function runTrackedVisualTimeout(callback, delayMs) {
@@ -150,16 +368,33 @@ function ensureTransientVisualRoot() {
 }
 
 function removeTransientVisualArtifacts() {
+    clearCommittedHandPlayVisual();
     document.querySelectorAll(TRANSIENT_VISUAL_CLEANUP_SELECTOR).forEach(node => node.remove());
     document.getElementById(TRANSIENT_VISUAL_ROOT_ID)?.remove();
 }
 
+function removeStrayBattleCardArtifacts() {
+    const container = gameContainerEl ?? document.getElementById('game-container');
+    if (container) {
+        // Safety net: transient card clones should never be direct children of game container.
+        container.querySelectorAll(':scope > .card, :scope > .card-back').forEach(node => node.remove());
+    }
+
+    // Legacy/edge-case cleanup: defensive removal for any detached card overlays.
+    document.querySelectorAll('body > .card-fade-exit-overlay, body > .fusion-float-card').forEach(node => node.remove());
+}
+
 function clearAttackDragHover() {
     if (attackDragState.hoverElement) {
-        attackDragState.hoverElement.classList.remove('attack-drag-hover');
+        if (attackDragState.hoverKind === 'leader-zone') {
+            attackDragState.hoverElement.classList.remove('is-active');
+        } else {
+            attackDragState.hoverElement.classList.remove('attack-drag-hover');
+        }
     }
     attackDragState.hoverElement = null;
     attackDragState.hoverTargetUid = null;
+    attackDragState.hoverKind = null;
 }
 
 function ensureAttackDragLineElement() {
@@ -178,9 +413,107 @@ function removeAttackDragLineElement() {
     attackDragState.lineElement = null;
 }
 
-function resetAttackDragState() {
+function removeAttackDragLeaderZoneElement() {
+    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
+    zoneEl?.remove();
+    attackDragState.leaderZoneElement = null;
+}
+
+function ensureAttackDragLeaderZoneElement() {
+    const container = gameContainerEl ?? document.getElementById('game-container');
+    if (!container || !isGamePageActive()) return null;
+
+    let zoneEl = attackDragState.leaderZoneElement ?? container.querySelector(`#${ATTACK_DRAG_LEADER_ZONE_ID}`);
+    if (!zoneEl) {
+        zoneEl = document.createElement('div');
+        zoneEl.id = ATTACK_DRAG_LEADER_ZONE_ID;
+        zoneEl.className = 'attack-drag-leader-zone is-invalid';
+        zoneEl.innerHTML = `
+            <div class="attack-drag-leader-zone-marker">
+                <div class="attack-drag-leader-zone-avatar"></div>
+            </div>
+        `;
+        container.appendChild(zoneEl);
+    }
+
+    zoneEl.style.position = 'fixed';
+    zoneEl.style.pointerEvents = 'none';
+    zoneEl.classList.remove('is-confirmed', 'is-active');
+
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    const opponentPlayer = gameState.players?.find(player => player?.id !== localPlayerId) ?? null;
+    const displayName = resolvePlayerDisplayName(opponentPlayer, false);
+    const avatarData = resolvePlayerAvatar(opponentPlayer, false, displayName);
+    const avatarContainer = zoneEl.querySelector('.attack-drag-leader-zone-avatar');
+    if (avatarContainer) {
+        avatarContainer.textContent = '';
+        avatarContainer.classList.toggle('has-image', Boolean(avatarData.imageSrc));
+        if (avatarData.imageSrc) {
+            const imageEl = document.createElement('img');
+            imageEl.className = 'attack-drag-leader-zone-avatar-img';
+            imageEl.src = avatarData.imageSrc;
+            imageEl.alt = `${displayName} avatar`;
+            imageEl.onerror = () => {
+                avatarContainer.classList.remove('has-image');
+                avatarContainer.textContent = avatarData.fallbackText;
+            };
+            avatarContainer.appendChild(imageEl);
+        } else {
+            avatarContainer.textContent = avatarData.fallbackText;
+        }
+    }
+
+    attackDragState.leaderZoneElement = zoneEl;
+    return zoneEl;
+}
+
+function updateAttackDragLeaderZoneLayout() {
+    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
+    if (!zoneEl) return;
+
+    const battlefieldElement = document.getElementById('battlefield');
+    const opponentHandElement = player2HandEl ?? document.getElementById('player2-hand');
+    const avatarEl = resolveOpponentLeaderAvatarElement();
+    const battlefieldRect = battlefieldElement?.getBoundingClientRect?.() ?? null;
+    const handRect = opponentHandElement?.getBoundingClientRect?.() ?? null;
+    if (!handRect && !battlefieldRect) {
+        zoneEl.style.display = 'none';
+        return;
+    }
+
+    if (!isAttackDragLeaderTargetable(avatarEl)) {
+        zoneEl.style.display = 'none';
+        return;
+    }
+
+    const left = battlefieldRect?.left ?? handRect?.left ?? 0;
+    const width = battlefieldRect?.width ?? handRect?.width ?? 0;
+    const top = handRect?.top ?? battlefieldRect?.top ?? 0;
+    const height = handRect?.height ?? 0;
+
+    zoneEl.style.display = '';
+    zoneEl.style.left = `${left}px`;
+    zoneEl.style.top = `${top}px`;
+    zoneEl.style.width = `${width}px`;
+    zoneEl.style.height = `${height}px`;
+}
+
+function updateAttackDragLeaderZoneState() {
+    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
+    if (!zoneEl) return;
+
+    const avatarEl = resolveOpponentLeaderAvatarElement();
+    const isValid = isAttackDragLeaderTargetable(avatarEl);
+    zoneEl.classList.toggle('is-valid', isValid);
+    zoneEl.classList.toggle('is-invalid', !isValid);
+}
+
+function resetAttackDragState({ keepLeaderZone = false } = {}) {
     clearAttackDragHover();
     removeAttackDragLineElement();
+    if (!keepLeaderZone) {
+        removeAttackDragLeaderZoneElement();
+    }
     document.body.classList.remove('attack-dragging');
     attackDragState.pointerId = null;
     attackDragState.isPending = false;
@@ -195,6 +528,156 @@ function resetAttackDragState() {
     attackDragState.currentY = 0;
 }
 
+function clearHandDragHover() {
+    if (handDragState.hoverElement) {
+        handDragState.hoverElement.classList.remove('hand-drag-target-valid', 'hand-drag-target-invalid', 'targetable-spell', 'targetable-restricted');
+    }
+    handDragState.hoverElement = null;
+    handDragState.hoverTargetUid = null;
+    handDragState.hoverKind = null;
+
+    if (handDragState.dropLaneElement) {
+        handDragState.dropLaneElement.classList.remove('is-valid', 'is-invalid');
+    }
+}
+
+function removeHandDragGhostElement() {
+    handDragState.ghostElement?.remove();
+    handDragState.ghostElement = null;
+}
+
+function ensureHandDragDropLaneElement() {
+    const container = gameContainerEl ?? document.getElementById('game-container');
+    if (!container || !isGamePageActive()) return null;
+
+    let laneEl = handDragState.dropLaneElement ?? container.querySelector(`#${HAND_DRAG_DROP_LANE_ID}`);
+    if (laneEl) {
+        handDragState.dropLaneElement = laneEl;
+        return laneEl;
+    }
+
+    laneEl = document.createElement('div');
+    laneEl.id = HAND_DRAG_DROP_LANE_ID;
+    laneEl.className = 'hand-play-drop-lane';
+    container.appendChild(laneEl);
+    handDragState.dropLaneElement = laneEl;
+    return laneEl;
+}
+
+function removeHandDragDropLaneElement() {
+    handDragState.dropLaneElement?.remove();
+    handDragState.dropLaneElement = null;
+}
+
+function getCommittedHandSourceElement(cardUid = handPlayCommitState.cardUid) {
+    if (!cardUid || !player1HandEl) return null;
+    return player1HandEl.querySelector(`.hand-card[data-uid="${String(cardUid)}"]`);
+}
+
+function clearCommittedHandSourceClass(cardUid = handPlayCommitState.cardUid) {
+    getCommittedHandSourceElement(cardUid)?.classList.remove('hand-play-committed-source');
+}
+
+function clearCommittedHandPlayVisual({ removeGhost = true, clearSource = true } = {}) {
+    if (clearSource) {
+        clearCommittedHandSourceClass();
+    }
+    if (removeGhost) {
+        handPlayCommitState.ghostElement?.remove();
+    }
+    handPlayCommitState.cardUid = null;
+    handPlayCommitState.ghostElement = null;
+}
+
+function startCommittedHandPlayVisual(cardUid, ghostElement) {
+    if (!cardUid || !ghostElement) return;
+
+    clearCommittedHandPlayVisual();
+    handPlayCommitState.cardUid = String(cardUid);
+    handPlayCommitState.ghostElement = ghostElement;
+    ghostElement.classList.remove('is-invalid', 'is-snapping-back');
+    ghostElement.classList.add('is-committed');
+    getCommittedHandSourceElement(cardUid)?.classList.add('hand-play-committed-source');
+}
+
+function animateCommittedHandPlayBackToSource(cardUid = handPlayCommitState.cardUid) {
+    const committedUid = String(cardUid ?? handPlayCommitState.cardUid ?? '');
+    if (!committedUid || committedUid !== String(handPlayCommitState.cardUid ?? '')) {
+        return false;
+    }
+
+    const ghostElement = handPlayCommitState.ghostElement;
+    const sourceElement = getCommittedHandSourceElement(committedUid);
+    if (!ghostElement || !sourceElement) {
+        return false;
+    }
+
+    ghostElement.classList.remove('is-committed', 'is-invalid');
+    animateHandDragGhostToSource(ghostElement, sourceElement);
+    handPlayCommitState.cardUid = null;
+    handPlayCommitState.ghostElement = null;
+    runTrackedVisualTimeout(() => {
+        clearCommittedHandSourceClass(committedUid);
+    }, HAND_DRAG_SNAP_BACK_MS + 40);
+    return true;
+}
+
+export function cancelCommittedHandPlayVisual(cardUid = null, { animateBack = true } = {}) {
+    const targetCardUid = cardUid ?? handPlayCommitState.cardUid ?? null;
+    if (targetCardUid && String(targetCardUid) !== String(handPlayCommitState.cardUid ?? '')) {
+        return;
+    }
+
+    if (animateBack && animateCommittedHandPlayBackToSource(targetCardUid)) {
+        return;
+    }
+
+    clearCommittedHandPlayVisual();
+}
+
+function syncCommittedHandPlayVisual(handCards = []) {
+    if (!handPlayCommitState.cardUid) return;
+
+    const committedUid = String(handPlayCommitState.cardUid);
+    const stillInHand = Array.isArray(handCards)
+        && handCards.some(card => String(getCardUid(card) ?? '') === committedUid);
+
+    if (!stillInHand) {
+        clearCommittedHandPlayVisual();
+        return;
+    }
+
+    getCommittedHandSourceElement(committedUid)?.classList.add('hand-play-committed-source');
+}
+
+function resetHandDragState({ keepGhost = false, preserveSourceClass = false } = {}) {
+    clearHandDragHover();
+    document.body.classList.remove('hand-card-dragging');
+    if (!preserveSourceClass) {
+        handDragState.sourceElement?.classList.remove('hand-drag-origin');
+    }
+    if (!keepGhost) {
+        removeHandDragGhostElement();
+    }
+    removeHandDragDropLaneElement();
+    handDragState.pointerId = null;
+    handDragState.isPending = false;
+    handDragState.isActive = false;
+    handDragState.cardUid = null;
+    handDragState.sourceElement = null;
+    handDragState.startX = 0;
+    handDragState.startY = 0;
+    handDragState.currentX = 0;
+    handDragState.currentY = 0;
+    handDragState.pointerOffsetX = 0;
+    handDragState.pointerOffsetY = 0;
+    handDragState.ghostWidth = 0;
+    handDragState.ghostHeight = 0;
+    handDragState.dragFramePending = false;
+    handDragState.renderedGhostX = 0;
+    handDragState.renderedGhostY = 0;
+}
+
 function resolveAvatarLeaderUid(avatarElement) {
     if (!avatarElement?.id) return null;
     const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
@@ -204,27 +687,449 @@ function resolveAvatarLeaderUid(avatarElement) {
     return ownerPlayer?.leaderCard?.uid ?? ownerPlayer?.leaderCard?.InstanceId ?? null;
 }
 
+function resolveOpponentLeaderUid() {
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    const opponentPlayer = gameState.players?.find(player => !isSamePlayerId(player?.id, localPlayerId)) ?? null;
+    return opponentPlayer?.leaderCard?.uid ?? opponentPlayer?.leaderCard?.InstanceId ?? null;
+}
+
+function resolveOpponentLeaderAvatarElement() {
+    const opponentLeaderUid = resolveOpponentLeaderUid();
+    if (opponentLeaderUid) {
+        const avatarByUid = resolveLeaderAvatarElementByUid(opponentLeaderUid);
+        if (avatarByUid) return avatarByUid;
+    }
+    return document.getElementById('player2-avatar');
+}
+
+function isAttackDragLeaderTargetable(avatarElement) {
+    return avatarElement?.classList?.contains('targetable') === true;
+}
+
+function resolveLeaderAvatarElementByUid(targetUid) {
+    if (!targetUid) return null;
+
+    const targetKey = String(targetUid);
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    const localPlayer = localPlayerId ? getPlayerState(localPlayerId) : null;
+    const opponentPlayer = gameState.players?.find(p => p?.id !== localPlayerId) ?? null;
+
+    const player1LeaderUid = localPlayer?.leaderCard?.uid ?? localPlayer?.leaderCard?.InstanceId ?? null;
+    if (player1LeaderUid && String(player1LeaderUid) === targetKey) {
+        return document.getElementById('player1-avatar');
+    }
+
+    const player2LeaderUid = opponentPlayer?.leaderCard?.uid ?? opponentPlayer?.leaderCard?.InstanceId ?? null;
+    if (player2LeaderUid && String(player2LeaderUid) === targetKey) {
+        return document.getElementById('player2-avatar');
+    }
+
+    return null;
+}
+
+function resolveRenderableTargetElement(targetUid) {
+    if (!targetUid) return null;
+
+    const targetKey = String(targetUid);
+    const renderedCard = document.querySelector(`.card[data-uid="${targetKey}"], .emblem-slot[data-uid="${targetKey}"]`);
+    if (renderedCard) {
+        return renderedCard;
+    }
+
+    return resolveLeaderAvatarElementByUid(targetUid);
+}
+
+function getElementsFromPointSafe(clientX, clientY) {
+    if (typeof document.elementsFromPoint === 'function') {
+        const elements = document.elementsFromPoint(clientX, clientY);
+        if (Array.isArray(elements) && elements.length > 0) {
+            return elements;
+        }
+    }
+
+    const single = typeof document.elementFromPoint === 'function'
+        ? document.elementFromPoint(clientX, clientY)
+        : null;
+    return single ? [single] : [];
+}
+
+function getHandDragCastAreaElement(cardInstance) {
+    if (equalsIgnoreCase(cardInstance?.type, 'Follower') || equalsIgnoreCase(cardInstance?.type, 'Amulet')) {
+        return player1FieldEl ?? document.getElementById('player1-field') ?? document.getElementById('battlefield');
+    }
+    return document.getElementById('battlefield') ?? player1FieldEl ?? document.getElementById('player1-field');
+}
+
+function isPointInsideRect(clientX, clientY, rect) {
+    if (!rect) return false;
+    return clientX >= rect.left
+        && clientX <= rect.right
+        && clientY >= rect.top
+        && clientY <= rect.bottom;
+}
+
+function isHandDragStartAllowed(cardInstance) {
+    if (!cardInstance) return false;
+    if (isAwaitingPlayerChoice || isConnectionLocked || gameState.isSpectator) return false;
+
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    if (!localPlayerId || gameState.currentPlayerId !== localPlayerId) return false;
+    if (gameState.phase !== 'Main') return false;
+
+    const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+    if (ownerId !== localPlayerId) return false;
+    if (!equalsIgnoreCase(cardInstance.zone, 'Hand')) return false;
+
+    const useActionState = getUseActionState(cardInstance, 'hand');
+    if (!useActionState.showUse) return false;
+    if (useActionState.usePlayable === false) return false;
+    return true;
+}
+
+function buildHandDragGhost(sourceElement, sourceRect = null) {
+    if (!sourceElement) return null;
+    const transientRoot = ensureTransientVisualRoot();
+    if (!transientRoot) return null;
+
+    const ghostEl = sourceElement.cloneNode(true);
+    const rect = sourceRect ?? sourceElement.getBoundingClientRect();
+    ghostEl.querySelectorAll?.('[id]')?.forEach?.(node => node.removeAttribute('id'));
+    ghostEl.classList.remove(
+        'hand-card-floated',
+        'hand-drag-origin',
+        'playable',
+        'requires-target',
+        'no-valid-targets',
+        'can-play-without-target',
+        'targetable-spell',
+        'targetable-restricted',
+        'choice-hand-hover'
+    );
+    ghostEl.classList.add('hand-drag-ghost');
+    if (prefersReducedMotion()) {
+        ghostEl.classList.add('is-reduced-motion');
+    }
+    ghostEl.style.position = 'fixed';
+    ghostEl.style.left = '0';
+    ghostEl.style.top = '0';
+    ghostEl.style.margin = '0';
+    ghostEl.style.pointerEvents = 'none';
+    ghostEl.style.width = `${rect.width}px`;
+    ghostEl.style.height = `${rect.height}px`;
+    ghostEl.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) rotate(-2deg) scale(1.04)`;
+    transientRoot.appendChild(ghostEl);
+    handDragState.renderedGhostX = rect.left;
+    handDragState.renderedGhostY = rect.top;
+    return ghostEl;
+}
+
+function updateHandDragDropLaneLayout(cardInstance) {
+    const laneEl = ensureHandDragDropLaneElement();
+    const castAreaEl = getHandDragCastAreaElement(cardInstance);
+    if (!laneEl || !castAreaEl) return;
+
+    const rect = castAreaEl.getBoundingClientRect();
+    laneEl.style.left = `${rect.left}px`;
+    laneEl.style.top = `${rect.top}px`;
+    laneEl.style.width = `${rect.width}px`;
+    laneEl.style.height = `${rect.height}px`;
+}
+
+function flushHandDragGhostPosition() {
+    handDragState.dragFramePending = false;
+    if (!handDragState.isActive || !handDragState.ghostElement) return;
+
+    const translateX = handDragState.currentX - handDragState.pointerOffsetX;
+    const translateY = handDragState.currentY - handDragState.pointerOffsetY;
+    handDragState.ghostElement.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) rotate(-2deg) scale(1.04)`;
+    handDragState.renderedGhostX = translateX;
+    handDragState.renderedGhostY = translateY;
+}
+
+function scheduleHandDragGhostUpdate() {
+    if (handDragState.dragFramePending) return;
+    handDragState.dragFramePending = true;
+    const perfDebug = getUiPerfDebugState();
+    if (perfDebug.handDrag) {
+        perfDebug.handDrag.pendingRafAt = getUiNowMs();
+    }
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        flushHandDragGhostPosition();
+        return;
+    }
+
+    window.requestAnimationFrame(() => {
+        const sampleState = perfDebug.handDrag;
+        if (sampleState) {
+            const nowMs = getUiNowMs();
+            const rafDelayMs = nowMs - Number(sampleState.pendingRafAt || 0);
+            const targetX = handDragState.currentX - handDragState.pointerOffsetX;
+            const targetY = handDragState.currentY - handDragState.pointerOffsetY;
+            const lagPx = Math.hypot(
+                targetX - Number(handDragState.renderedGhostX || 0),
+                targetY - Number(handDragState.renderedGhostY || 0)
+            );
+            const pointerMoveAgeMs = sampleState.lastPointerMoveAt > 0
+                ? nowMs - Number(sampleState.lastPointerMoveAt)
+                : 0;
+            sampleState.metrics = recordHandDragPerfFrame(sampleState.metrics, {
+                rafDelayMs,
+                lagPx,
+                pointerMoveAgeMs
+            });
+            const frameCount = sampleState.metrics?.frameCount ?? 0;
+            const shouldLogSample = rafDelayMs >= 20
+                || lagPx >= 24
+                || frameCount <= 5
+                || frameCount % 12 === 0;
+            if (shouldLogSample) {
+                logUiPerfDebug('hand-drag', 'ghost update frame', {
+                    sessionId: sampleState.sessionId,
+                    rafDelayMs: Number(rafDelayMs.toFixed(1)),
+                    lagPx: Number(lagPx.toFixed(1)),
+                    pointerMoveAgeMs: Number(pointerMoveAgeMs.toFixed(1)),
+                    frameCount,
+                    menuStarrySkyAnimating: perfDebug.menuStarrySky?.isAnimating === true,
+                    menuRoute: perfDebug.menuStarrySky?.route || '',
+                    bodyDragging: document.body?.classList?.contains('hand-card-dragging') === true
+                });
+            }
+        }
+        flushHandDragGhostPosition();
+    });
+}
+
+function resolveHandDragDropTarget(clientX, clientY) {
+    const cardUid = handDragState.cardUid;
+    if (!cardUid) {
+        return { kind: 'invalid', uid: null, element: null, isValid: false };
+    }
+
+    const cardInstance = findCardInstanceByUid(cardUid);
+    if (!cardInstance) {
+        return { kind: 'invalid', uid: null, element: null, isValid: false };
+    }
+
+    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
+    const playabilityInfo = getPlayabilityForCard(cardUid, localPlayerId) ?? null;
+    if (playabilityInfo?.isPlayable === false) {
+        return { kind: 'invalid', uid: null, element: null, isValid: false };
+    }
+
+    const validTargetIds = new Set((playabilityInfo?.validTargetIds || []).map(value => String(value)));
+    const requiresTargetSelection = playabilityInfo?.requiresTargetSelection === true;
+    const hitElements = getElementsFromPointSafe(clientX, clientY);
+
+    let hoveredTargetElement = null;
+    let hoveredTargetUid = null;
+    for (const element of hitElements) {
+        const targetCard = element?.closest?.('.field-card[data-uid], .emblem-slot[data-uid]');
+        if (targetCard?.dataset?.uid) {
+            hoveredTargetElement = targetCard;
+            hoveredTargetUid = String(targetCard.dataset.uid);
+            break;
+        }
+
+        const avatarEl = element?.closest?.('#player1-avatar, #player2-avatar');
+        if (avatarEl) {
+            const avatarUid = resolveAvatarLeaderUid(avatarEl);
+            if (avatarUid) {
+                hoveredTargetElement = avatarEl;
+                hoveredTargetUid = String(avatarUid);
+                break;
+            }
+        }
+    }
+
+    if (requiresTargetSelection && hoveredTargetUid) {
+        if (validTargetIds.has(hoveredTargetUid)) {
+            return { kind: 'target', uid: hoveredTargetUid, element: hoveredTargetElement, isValid: true };
+        }
+        return { kind: 'target-invalid', uid: hoveredTargetUid, element: hoveredTargetElement, isValid: false };
+    }
+
+    const castAreaEl = getHandDragCastAreaElement(cardInstance);
+    const castAreaRect = castAreaEl?.getBoundingClientRect?.() ?? null;
+    if (castAreaRect && isPointInsideRect(clientX, clientY, castAreaRect)) {
+        return { kind: 'play-area', uid: null, element: castAreaEl, isValid: true };
+    }
+
+    return { kind: 'invalid', uid: hoveredTargetUid, element: hoveredTargetElement, isValid: false };
+}
+
+function updateHandDragHover(targetInfo) {
+    const nextKind = targetInfo?.kind ?? null;
+    const nextUid = targetInfo?.uid ? String(targetInfo.uid) : null;
+    const nextElement = targetInfo?.element ?? null;
+
+    if (
+        handDragState.hoverKind === nextKind
+        && handDragState.hoverTargetUid === nextUid
+        && handDragState.hoverElement === nextElement
+    ) {
+        return;
+    }
+
+    clearHandDragHover();
+    if (handDragState.ghostElement) {
+        handDragState.ghostElement.classList.toggle('is-invalid', targetInfo?.isValid === false);
+    }
+
+    if (targetInfo?.kind === 'play-area' && handDragState.dropLaneElement) {
+        handDragState.dropLaneElement.classList.add('is-valid');
+    } else if (handDragState.dropLaneElement) {
+        handDragState.dropLaneElement.classList.add('is-invalid');
+    }
+
+    if (nextElement && nextKind === 'target') {
+        nextElement.classList.add('hand-drag-target-valid', 'targetable-spell');
+        handDragState.hoverElement = nextElement;
+        handDragState.hoverTargetUid = nextUid;
+        handDragState.hoverKind = nextKind;
+        return;
+    }
+
+    if (nextElement && nextKind === 'target-invalid') {
+        nextElement.classList.add('hand-drag-target-invalid', 'targetable-restricted');
+        handDragState.hoverElement = nextElement;
+        handDragState.hoverTargetUid = nextUid;
+        handDragState.hoverKind = nextKind;
+        return;
+    }
+
+    handDragState.hoverKind = nextKind;
+    handDragState.hoverTargetUid = nextUid;
+}
+
+function activateHandDragIfNeeded() {
+    if (!handDragState.isPending || handDragState.isActive) return;
+
+    const cardUid = handDragState.cardUid;
+    if (!cardUid) return;
+
+    const sourceElement = handDragState.sourceElement ?? gameContainerEl?.querySelector(`.hand-card[data-uid="${cardUid}"]`);
+    if (!sourceElement) {
+        resetHandDragState();
+        return;
+    }
+
+    const sourceRect = sourceElement.getBoundingClientRect();
+    const ghostEl = buildHandDragGhost(sourceElement, sourceRect);
+    if (!ghostEl) {
+        resetHandDragState();
+        return;
+    }
+
+    handDragState.sourceElement = sourceElement;
+    handDragState.ghostElement = ghostEl;
+    handDragState.pointerOffsetX = handDragState.startX - sourceRect.left;
+    handDragState.pointerOffsetY = handDragState.startY - sourceRect.top;
+    handDragState.ghostWidth = sourceRect.width;
+    handDragState.ghostHeight = sourceRect.height;
+    handDragState.isPending = false;
+    handDragState.isActive = true;
+    sourceElement.classList.add('hand-drag-origin');
+    document.body.classList.add('hand-card-dragging');
+    deferCardArtQueue();
+    logUiPerfDebug('hand-drag', 'activated', {
+        sessionId: getUiPerfDebugState().handDrag?.sessionId ?? 0,
+        cardUid,
+        menuStarrySkyAnimating: getUiPerfDebugState().menuStarrySky?.isAnimating === true,
+        menuRoute: getUiPerfDebugState().menuStarrySky?.route || ''
+    });
+
+    updateHandDragDropLaneLayout(findCardInstanceByUid(cardUid));
+    scheduleHandDragGhostUpdate();
+}
+
+function animateHandDragGhostToSource(ghostEl, sourceElement) {
+    if (!ghostEl || !sourceElement) {
+        ghostEl?.remove();
+        return;
+    }
+
+    const sourceRect = sourceElement.getBoundingClientRect();
+    ghostEl.classList.add('is-snapping-back');
+    ghostEl.style.transform = `translate3d(${sourceRect.left}px, ${sourceRect.top}px, 0) scale(1)`;
+    runTrackedVisualTimeout(() => {
+        ghostEl.remove();
+    }, HAND_DRAG_SNAP_BACK_MS + 40);
+}
+
+function resolveAttackDragLeaderZoneRect(zoneEl) {
+    if (!zoneEl) return null;
+    const rect = zoneEl.getBoundingClientRect?.() ?? null;
+    const hasUsableRect = rect && (rect.width > 0 || rect.height > 0 || rect.left !== 0 || rect.top !== 0);
+    if (hasUsableRect) {
+        return rect;
+    }
+
+    const left = Number.parseFloat(zoneEl.style.left);
+    const top = Number.parseFloat(zoneEl.style.top);
+    const width = Number.parseFloat(zoneEl.style.width);
+    const height = Number.parseFloat(zoneEl.style.height);
+    if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(width) || !Number.isFinite(height)) {
+        return null;
+    }
+
+    return {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height
+    };
+}
+
+function resolveAttackDragLeaderZoneTarget(clientX, clientY) {
+    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
+    if (!zoneEl || zoneEl.style.display === 'none') {
+        return null;
+    }
+    const zoneRect = resolveAttackDragLeaderZoneRect(zoneEl);
+    if (!zoneRect || !isPointInsideRect(clientX, clientY, zoneRect)) {
+        return null;
+    }
+
+    const avatarEl = resolveOpponentLeaderAvatarElement();
+    const leaderUid = resolveAvatarLeaderUid(avatarEl) ?? resolveOpponentLeaderUid();
+    const isValid = Boolean(leaderUid) && isAttackDragLeaderTargetable(avatarEl);
+    return {
+        kind: 'leader-zone',
+        uid: leaderUid ? String(leaderUid) : null,
+        element: zoneEl,
+        isValid
+    };
+}
+
 function resolveAttackDragDropTarget(clientX, clientY) {
     const hit = document.elementFromPoint(clientX, clientY);
+    const leaderZoneTarget = resolveAttackDragLeaderZoneTarget(clientX, clientY);
+    if (leaderZoneTarget) {
+        return leaderZoneTarget;
+    }
+
     if (!hit) {
-        return { uid: null, element: null, isValid: false };
+        return { kind: 'none', uid: null, element: null, isValid: false };
     }
 
     const targetCard = hit.closest?.('.card[data-uid]');
     if (targetCard?.dataset?.uid) {
         const uid = String(targetCard.dataset.uid);
         const isValid = targetCard.classList.contains('targetable');
-        return { uid, element: targetCard, isValid };
+        return { kind: 'card', uid, element: targetCard, isValid };
     }
 
     const avatarEl = hit.closest?.('#player1-avatar, #player2-avatar');
     if (avatarEl) {
         const uid = resolveAvatarLeaderUid(avatarEl);
         const isValid = avatarEl.classList.contains('targetable');
-        return { uid: uid ? String(uid) : null, element: avatarEl, isValid };
+        return { kind: 'avatar', uid: uid ? String(uid) : null, element: avatarEl, isValid };
     }
 
-    return { uid: null, element: null, isValid: false };
+    return { kind: 'none', uid: null, element: null, isValid: false };
 }
 
 function isAttackDragStartAllowed(cardInstance) {
@@ -257,16 +1162,35 @@ function updateAttackDragLine() {
 }
 
 function updateAttackDragHover(targetInfo) {
-    const nextUid = targetInfo?.isValid && targetInfo.uid ? String(targetInfo.uid) : null;
-    const nextElement = nextUid ? targetInfo.element : null;
+    const nextKind = String(targetInfo?.kind ?? 'none');
+    const isLeaderZone = nextKind === 'leader-zone';
+    const nextUid = targetInfo?.uid ? String(targetInfo.uid) : null;
+    const nextElement = targetInfo?.element ?? null;
 
-    if (attackDragState.hoverTargetUid === nextUid && attackDragState.hoverElement === nextElement) {
+    if (
+        attackDragState.hoverKind === nextKind
+        && attackDragState.hoverTargetUid === nextUid
+        && attackDragState.hoverElement === nextElement
+    ) {
         return;
     }
 
     clearAttackDragHover();
-    if (nextUid && nextElement) {
+
+    if (isLeaderZone && nextElement) {
+        const isValid = targetInfo?.isValid === true;
+        nextElement.classList.add('is-active');
+        nextElement.classList.toggle('is-valid', isValid);
+        nextElement.classList.toggle('is-invalid', !isValid);
+        attackDragState.hoverKind = nextKind;
+        attackDragState.hoverTargetUid = nextUid;
+        attackDragState.hoverElement = nextElement;
+        return;
+    }
+
+    if (targetInfo?.isValid && nextUid && nextElement) {
         nextElement.classList.add('attack-drag-hover');
+        attackDragState.hoverKind = nextKind;
         attackDragState.hoverTargetUid = nextUid;
         attackDragState.hoverElement = nextElement;
     }
@@ -296,9 +1220,12 @@ function activateAttackDragIfNeeded() {
     attackDragState.sourceCenterX = sourceRect.left + sourceRect.width / 2;
     attackDragState.sourceCenterY = sourceRect.top + sourceRect.height / 2;
     attackDragState.lineElement = ensureAttackDragLineElement();
+    attackDragState.leaderZoneElement = ensureAttackDragLeaderZoneElement();
     attackDragState.isPending = false;
     attackDragState.isActive = true;
     document.body.classList.add('attack-dragging');
+    updateAttackDragLeaderZoneLayout();
+    updateAttackDragLeaderZoneState();
     updateAttackDragLine();
 }
 
@@ -345,7 +1272,23 @@ async function probeImage(url) {
     });
 }
 
-function preloadArt(rawPath) {
+async function loadCardArtUrl(url) {
+    for (let attempt = 0; attempt <= CARD_ART_RETRY_COUNT; attempt++) {
+        const targetUrl = attempt === 0 ? url : withRetryQuery(url, attempt);
+        try {
+            await probeImage(targetUrl);
+            return url;
+        } catch (error) {
+            if (attempt >= CARD_ART_RETRY_COUNT) {
+                throw error;
+            }
+            await delay(CARD_ART_RETRY_DELAY_MS * (attempt + 1));
+        }
+    }
+    return url;
+}
+
+function preloadArt(rawPath, options = {}) {
     const url = resolveArtUrl(rawPath);
     if (!url) {
         return Promise.resolve('');
@@ -353,35 +1296,47 @@ function preloadArt(rawPath) {
 
     const existing = cardArtLoadPromises.get(url);
     if (existing) {
+        const queuedTask = queuedCardArtTasks.get(url);
+        if (queuedTask && getCardArtPriorityRank(options?.priority) < getCardArtPriorityRank(queuedTask.priority)) {
+            queuedTask.priority = options.priority;
+            queueCardArtTask(queuedTask);
+            scheduleCardArtQueueDrain({ preferIdle: options?.priority !== 'high' });
+        }
         return existing;
     }
 
-    const loadPromise = (async () => {
-        for (let attempt = 0; attempt <= CARD_ART_RETRY_COUNT; attempt++) {
-            const targetUrl = attempt === 0 ? url : withRetryQuery(url, attempt);
-            try {
-                await probeImage(targetUrl);
-                return url;
-            } catch (error) {
-                if (attempt >= CARD_ART_RETRY_COUNT) {
-                    throw error;
-                }
-                await delay(CARD_ART_RETRY_DELAY_MS * (attempt + 1));
-            }
-        }
-        return url;
-    })();
+    let resolveLoad;
+    let rejectLoad;
+    const loadPromise = new Promise((resolve, reject) => {
+        resolveLoad = resolve;
+        rejectLoad = reject;
+    });
 
     const guardedPromise = loadPromise.catch(error => {
         cardArtLoadPromises.delete(url);
+        queuedCardArtTasks.delete(url);
         throw error;
     });
 
     cardArtLoadPromises.set(url, guardedPromise);
+    queuedCardArtTasks.set(url, {
+        url,
+        priority: options?.priority ?? 'normal',
+        resolve: loadedUrl => {
+            queuedCardArtTasks.delete(url);
+            resolveLoad(loadedUrl);
+        },
+        reject: error => {
+            queuedCardArtTasks.delete(url);
+            rejectLoad(error);
+        }
+    });
+    queueCardArtTask(queuedCardArtTasks.get(url));
+    scheduleCardArtQueueDrain({ preferIdle: options?.priority !== 'high' });
     return guardedPromise;
 }
 
-function applyArtBackground(artEl, rawPath) {
+function applyArtBackground(artEl, rawPath, options = {}) {
     if (!artEl) return;
     const resolvedUrl = resolveArtUrl(rawPath);
     artEl.dataset.artUrl = resolvedUrl;
@@ -392,7 +1347,7 @@ function applyArtBackground(artEl, rawPath) {
         return;
     }
 
-    void preloadArt(rawPath)
+    void preloadArt(rawPath, options)
         .then(loadedUrl => {
             if (artEl.dataset.artUrl !== loadedUrl) return;
             artEl.style.backgroundImage = `url('${loadedUrl}')`;
@@ -407,11 +1362,45 @@ function applyArtBackground(artEl, rawPath) {
 
 function resetMulliganSelection() {
     mulliganSelectedUids = new Set();
+    gameState.selectedCardUid = null;
     try {
         player1HandEl?.querySelectorAll?.('.card.selected-for-mulligan')?.forEach?.(el => el.classList.remove('selected-for-mulligan'));
+        document.querySelectorAll('.hand-card.hand-card-floated')
+            .forEach(el => el.classList.remove('hand-card-floated'));
     } catch (_) {
         // ignore
     }
+}
+
+function clearMulliganVisualState() {
+    mulliganSelectedUids = new Set();
+    gameContainerEl?.classList.remove('mulligan-active');
+    try {
+        document.querySelectorAll('.card.mulligan-selectable, .card.selected-for-mulligan')
+            .forEach(el => el.classList.remove('mulligan-selectable', 'selected-for-mulligan'));
+    } catch (_) {
+        // ignore
+    }
+}
+
+function setFloatingHandCard(cardUid) {
+    const normalizedUid = String(cardUid ?? '').trim();
+    const nextUid = normalizedUid || null;
+    gameState.selectedCardUid = nextUid;
+
+    document.querySelectorAll('.hand-card.hand-card-floated')
+        .forEach(el => el.classList.remove('hand-card-floated'));
+
+    if (!nextUid) {
+        return;
+    }
+
+    document.querySelectorAll('.hand-card[data-uid]')
+        .forEach(el => {
+            if (String(el.dataset.uid ?? '') === nextUid) {
+                el.classList.add('hand-card-floated');
+            }
+        });
 }
 
 function preserveCardStateClasses(sourceEl, targetEl) {
@@ -423,79 +1412,42 @@ function preserveCardStateClasses(sourceEl, targetEl) {
     });
 }
 
-function animateCardEnter(element) {
+function clearTransientCardAnimationClasses(element) {
+    if (!element?.classList) return;
+    element.classList.remove(
+        'card-fade-enter',
+        'hand-card-fade-enter-down',
+        'card-fade-exit',
+        'hand-card-fade-exit-up',
+        'card-fade-move',
+        'card-enter-hidden',
+        'hand-card-enter-hidden'
+    );
+}
+
+function prefersReducedMotion() {
+    return typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function toSafeInteger(value, fallback = 0) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.trunc(parsed);
+}
+
+function toSafeCounterValue(value, fallback = 0) {
+    return Math.max(0, toSafeInteger(value, fallback));
+}
+
+function tweenIntegerText(element, targetValue, options = {}) {
     if (!element) return;
-    element.classList.remove('card-fade-enter');
-    // Force restart in case the same node is re-used rapidly.
-    void element.offsetWidth;
-    element.classList.add('card-fade-enter');
-    const cleanup = () => element.classList.remove('card-fade-enter');
-    element.addEventListener('animationend', cleanup, { once: true });
-    window.setTimeout(cleanup, CARD_MOVE_TRANSITION_MS + 80);
-}
 
-function animateCardMoveFromRect(element, previousRect) {
-    if (!element || !previousRect) return;
-    const nextRect = element.getBoundingClientRect();
-    const deltaX = previousRect.left - nextRect.left;
-    const deltaY = previousRect.top - nextRect.top;
-
-    if (Math.abs(deltaX) <= CARD_MOVE_EPSILON && Math.abs(deltaY) <= CARD_MOVE_EPSILON) {
-        return;
-    }
-
-    element.classList.add('card-fade-move');
-    element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-    element.style.opacity = CARD_MOVE_OPACITY;
-    // Apply initial offset before transitioning back to natural position.
-    void element.offsetWidth;
-    requestAnimationFrame(() => {
-        element.style.transform = '';
-        element.style.opacity = '';
-    });
-
-    const cleanup = () => {
-        element.classList.remove('card-fade-move');
-        if (!element.matches(':hover')) {
-            element.style.transform = '';
-        }
-        element.style.opacity = '';
-    };
-
-    const onTransitionEnd = event => {
-        if (event.propertyName !== 'transform') return;
-        cleanup();
-        element.removeEventListener('transitionend', onTransitionEnd);
-    };
-
-    element.addEventListener('transitionend', onTransitionEnd);
-    window.setTimeout(() => {
-        cleanup();
-        element.removeEventListener('transitionend', onTransitionEnd);
-    }, CARD_MOVE_TRANSITION_MS + 90);
-}
-
-function animateCardLeaveOverlay(sourceElement, sourceRect) {
-    if (!sourceElement || !sourceRect || !isGamePageActive()) return;
-    const transientRoot = ensureTransientVisualRoot();
-    if (!transientRoot) return;
-
-    const clone = sourceElement.cloneNode(true);
-    clone.classList.remove('card-fade-enter', 'card-fade-move');
-    clone.classList.add('card-fade-exit', 'card-fade-exit-overlay');
-    clone.style.position = 'fixed';
-    clone.style.left = `${sourceRect.left}px`;
-    clone.style.top = `${sourceRect.top}px`;
-    clone.style.width = `${sourceRect.width}px`;
-    clone.style.height = `${sourceRect.height}px`;
-    clone.style.margin = '0';
-    clone.style.pointerEvents = 'none';
-    clone.style.zIndex = '9800';
-    transientRoot.appendChild(clone);
-
-    const cleanup = () => clone.remove();
-    clone.addEventListener('animationend', cleanup, { once: true });
-    runTrackedVisualTimeout(cleanup, CARD_EXIT_TRANSITION_MS + 120);
+    const safeTarget = options?.nonNegative === true
+        ? toSafeCounterValue(targetValue, 0)
+        : toSafeInteger(targetValue, 0);
+    element.textContent = `${safeTarget}`;
 }
 
 function resolveRenderedCardKey(element, index) {
@@ -512,66 +1464,61 @@ function resolveRenderedCardKey(element, index) {
     return `legacy-${index}`;
 }
 
+let cardAnimationSystem = null;
+
+function getCardAnimationSystem() {
+    if (cardAnimationSystem) {
+        return cardAnimationSystem;
+    }
+    cardAnimationSystem = createCardAnimationSystem({
+        durations: {
+            enterMs: CARD_ENTER_TRANSITION_MS,
+            moveMs: CARD_MOVE_TRANSITION_MS,
+            exitMs: CARD_EXIT_TRANSITION_MS
+        },
+        move: {
+            epsilon: CARD_MOVE_EPSILON,
+            opacity: CARD_MOVE_OPACITY
+        },
+        stagger: {
+            enterMs: CARD_ENTER_STAGGER_MS,
+            moveMs: CARD_MOVE_STAGGER_MS,
+            exitMs: CARD_EXIT_STAGGER_MS,
+            maxMs: CARD_STAGGER_MAX_MS
+        },
+        sequencing: {
+            enterAfterExitMs: CARD_ENTER_AFTER_EXIT_DELAY_MS
+        },
+        isPageActive: isGamePageActive,
+        ensureTransientRoot: ensureTransientVisualRoot,
+        scheduleTimeout: runTrackedVisualTimeout,
+        preserveStateClasses: preserveCardStateClasses,
+        clearTransientClasses: clearTransientCardAnimationClasses,
+        resolveRenderedCardKey,
+        prefersReducedMotion
+    });
+    return cardAnimationSystem;
+}
+
+function animateCardEnter(element) {
+    if (!element) return;
+    const key = String(element.dataset.renderKey || element.dataset.uid || 'enter-unknown');
+    getCardAnimationSystem().animateEnter(element, key, element.parentElement);
+}
+
+function animateCardLeaveOverlay(sourceElement, sourceRect) {
+    if (!sourceElement || !sourceRect) return;
+    const key = String(sourceElement.dataset.renderKey || sourceElement.dataset.uid || 'exit-unknown');
+    getCardAnimationSystem().animateLeaveOverlay(sourceElement, sourceRect, key, sourceElement.parentElement);
+}
+
 function renderAnimatedCardCollection(container, entries = [], options = {}) {
-    if (!container) return;
-    const suppressMoveOnStructuralChange = options?.suppressMoveOnStructuralChange !== false;
-    const animateEnter = options?.animateEnter !== false;
-    const animateExit = options?.animateExit !== false;
-    const animateMove = options?.animateMove !== false;
-
-    const oldElements = Array.from(container.children)
-        .filter(child => child?.classList?.contains('card') || child?.classList?.contains('card-back'));
-    const oldByKey = new Map();
-    const oldRects = new Map();
-
-    oldElements.forEach((element, index) => {
-        const key = resolveRenderedCardKey(element, index);
-        oldByKey.set(key, element);
-        oldRects.set(key, element.getBoundingClientRect());
-    });
-
-    const nextItems = [];
-    const nextKeySet = new Set();
-
-    entries.forEach((entry, index) => {
-        if (!entry || !entry.element) return;
-        const key = String(entry.key ?? `next-${index}`);
-        const oldElement = oldByKey.get(key);
-        if (oldElement) {
-            preserveCardStateClasses(oldElement, entry.element);
-        }
-        entry.element.dataset.renderKey = key;
-        nextKeySet.add(key);
-        nextItems.push({ key, element: entry.element });
-    });
-
-    oldByKey.forEach((oldElement, key) => {
-        if (nextKeySet.has(key)) return;
-        const oldRect = oldRects.get(key);
-        if (oldRect && animateExit) {
-            animateCardLeaveOverlay(oldElement, oldRect);
-        }
-    });
-
-    const removedCount = Array.from(oldByKey.keys()).filter(key => !nextKeySet.has(key)).length;
-    const addedCount = nextItems.filter(item => !oldByKey.has(item.key)).length;
-    const hasStructuralChange = removedCount > 0 || addedCount > 0;
-    const shouldAnimateMove = !(suppressMoveOnStructuralChange && hasStructuralChange);
-
-    container.replaceChildren(...nextItems.map(item => item.element));
-
-    nextItems.forEach(item => {
-        const previousRect = oldRects.get(item.key);
-        if (previousRect && shouldAnimateMove && animateMove) {
-            animateCardMoveFromRect(item.element, previousRect);
-        } else if (!previousRect && animateEnter) {
-            animateCardEnter(item.element);
-        }
-    });
+    getCardAnimationSystem().renderCollection(container, entries, options);
 }
 
 function buildFaceUpHandEntries(handCards = [], isLocalHand = false) {
     const cards = Array.isArray(handCards) ? handCards : [];
+    const selectedHandUid = String(gameState.selectedCardUid ?? '').trim();
     const entries = [];
 
     cards.forEach((cardInstance, index) => {
@@ -580,7 +1527,7 @@ function buildFaceUpHandEntries(handCards = [], isLocalHand = false) {
         if (!cardElement) return;
 
         if (isLocalHand && gameState.phase === 'Mulligan') {
-            const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+            const localPlayer = getPlayerState(gameState.localPlayerId);
             const localCompleted = localPlayer?.hasCompletedMulligan === true;
             if (!localCompleted) {
                 cardElement.classList.add('mulligan-selectable');
@@ -592,6 +1539,9 @@ function buildFaceUpHandEntries(handCards = [], isLocalHand = false) {
         }
 
         const cardUid = getCardUid(cardInstance);
+        if (isLocalHand && selectedHandUid && String(cardUid ?? '') === selectedHandUid) {
+            cardElement.classList.add('hand-card-floated');
+        }
         const key = cardUid ? `hand-${cardUid}` : `hand-index-${index}`;
         entries.push({ key, element: cardElement });
     });
@@ -632,36 +1582,43 @@ function buildFieldEntries(fieldCards = []) {
  * @param {string} playerId - The GUID of the player.
  * @param {number} currentPp - The current PP value.
  * @param {number} maxPp - The maximum PP value.
+ * @param {boolean} isPpBoostArmed - Whether PP+1 is currently armed.
  */
-function updatePpDisplay(playerId, currentPp, maxPp) {
+function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
     const ppBarContainer = document.getElementById(`${prefix}-pp-bar`);
+    const rawCurrentPp = Math.max(0, Number(currentPp ?? 0) || 0);
+    const rawMaxPp = Math.max(0, Number(maxPp ?? 0) || 0);
+    const baseFilledCount = Math.min(rawCurrentPp, rawMaxPp);
+    const naturalOverflowCount = Math.max(0, rawCurrentPp - rawMaxPp);
+    const armedOverflowCount = isPpBoostArmed ? 1 : 0;
+    const overflowCount = naturalOverflowCount + armedOverflowCount;
+    const displayCurrentPp = rawCurrentPp + armedOverflowCount;
 
     // Update text if container exists (handled in renderPlayerStats, but good for standalone updates)
     const statsContainer = document.getElementById(`${prefix}-stats`);
     if (statsContainer) {
         const ppTextEl = statsContainer.querySelector('.pp-text');
-        if (ppTextEl) ppTextEl.textContent = `${currentPp ?? 0} / ${maxPp ?? 0}`;
+        if (ppTextEl) ppTextEl.textContent = `${displayCurrentPp} / ${maxPp ?? 0}`;
     }
 
     // Render PP Bar Segments
     if (ppBarContainer) {
         ppBarContainer.innerHTML = '';
         const displayMax = 10; // Always show 10 slots for consistency
-        const safeMax = Math.max(0, Math.min(maxPp ?? 0, displayMax));
-        const safeCurrent = Math.max(0, Math.min(currentPp ?? 0, displayMax));
-        const overflowCount = Math.max(0, safeCurrent - safeMax);
+        const safeMax = Math.max(0, Math.min(rawMaxPp, displayMax));
+        const safeBaseFilled = Math.max(0, Math.min(baseFilledCount, safeMax));
+        const safeOverflowStart = Math.max(0, Math.min(safeBaseFilled, displayMax));
+        const safeOverflowCount = Math.max(0, Math.min(overflowCount, Math.max(0, displayMax - safeOverflowStart)));
 
         for (let i = 0; i < displayMax; i++) {
             const segment = document.createElement('div');
             segment.classList.add('pp-segment');
 
-            if (i < safeMax) {
-                if (i < safeCurrent) {
-                    segment.classList.add('active'); // Filled PP
-                }
-            } else if (i < safeMax + overflowCount) {
+            if (i < safeBaseFilled) {
+                segment.classList.add('active'); // Filled PP
+            } else if (i >= safeOverflowStart && i < safeOverflowStart + safeOverflowCount) {
                 segment.classList.add('overflow'); // PP+1 overflow
             } else {
                 segment.classList.add('empty'); // Locked/Max capacity limit
@@ -740,12 +1697,31 @@ function updateSepDisplay(playerId, currentSep, maxSep) {
 * @param {number} count - The current deck count.
 */
 function updateDeckCountDisplay(playerId, count) {
-    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
     const deckCountEl = document.getElementById(`${prefix}-deck-count`);
 
     if (deckCountEl) {
-        deckCountEl.textContent = count ?? '0';
+        tweenIntegerText(deckCountEl, count, {
+            nonNegative: true
+        });
+    }
+}
+
+/**
+* Updates the hand count display for a specific player.
+* @param {string} playerId - The GUID of the player.
+* @param {number} count - The current hand count.
+*/
+function updateHandCountDisplay(playerId, count) {
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const handCountEl = document.getElementById(`${prefix}-hand-count`);
+
+    if (handCountEl) {
+        tweenIntegerText(handCountEl, count, {
+            nonNegative: true
+        });
     }
 }
 
@@ -757,12 +1733,14 @@ function updateDeckCountDisplay(playerId, count) {
 function updateGraveyardCountDisplay(playerId, count) {
     if (!gameState.localPlayerId) return;
 
-    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
     const graveyardCountEl = document.getElementById(`${prefix}-grave-count`);
 
     if (graveyardCountEl) {
-        graveyardCountEl.textContent = count ?? '0';
+        tweenIntegerText(graveyardCountEl, count, {
+            nonNegative: true
+        });
     }
 }
 
@@ -774,12 +1752,14 @@ function updateGraveyardCountDisplay(playerId, count) {
 function updateBloodPoolDisplay(playerId, count) {
     if (!gameState.localPlayerId) return;
 
-    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
     const bloodCountEl = document.getElementById(`${prefix}-blood-count`);
 
     if (bloodCountEl) {
-        bloodCountEl.textContent = count ?? '0';
+        tweenIntegerText(bloodCountEl, count, {
+            nonNegative: true
+        });
     }
 }
 
@@ -791,12 +1771,33 @@ function updateBloodPoolDisplay(playerId, count) {
 function updateComboDisplay(playerId, count) {
     if (!gameState.localPlayerId) return;
 
-    const isLocalPlayer = (playerId === gameState.localPlayerId);
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
     const comboCountEl = document.getElementById(`${prefix}-combo-count`);
 
     if (comboCountEl) {
-        comboCountEl.textContent = count ?? '0';
+        tweenIntegerText(comboCountEl, count, {
+            nonNegative: true
+        });
+    }
+}
+
+/**
+* Updates the rally display for a specific player.
+* @param {string} playerId - The GUID of the player.
+* @param {number} count - The current rally count.
+*/
+function updateRallyDisplay(playerId, count) {
+    if (!gameState.localPlayerId) return;
+
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
+    const prefix = isLocalPlayer ? 'player1' : 'player2';
+    const rallyCountEl = document.getElementById(`${prefix}-rally-count`);
+
+    if (rallyCountEl) {
+        tweenIntegerText(rallyCountEl, count, {
+            nonNegative: true
+        });
     }
 }
 
@@ -812,7 +1813,10 @@ function updateHealthDisplay(unitInstance) {
     }
 
     let healthElement;
-    const newHealth = unitInstance.currentHealth ?? '??';
+    const rawHealth = Number(unitInstance.currentHealth);
+    const hasNumericHealth = Number.isFinite(rawHealth);
+    const nextHealthValue = hasNumericHealth ? Math.trunc(rawHealth) : null;
+    const healthText = hasNumericHealth ? `${nextHealthValue}` : `${unitInstance.currentHealth ?? '??'}`;
 
     // 【重构】统一的生命值更新函数
     if (unitInstance.type === 'Leader') {
@@ -821,14 +1825,22 @@ function updateHealthDisplay(unitInstance) {
         const hpContainer = document.getElementById(`${uiPlayerPrefix}-hp`);
 
         if (hpContainer) {
-            const maxHp = unitInstance.maxHealth ?? 20;
-            const hpPercent = Math.max(0, Math.min(100, (newHealth / maxHp) * 100));
+            const maxHpRaw = Number(unitInstance.maxHealth);
+            const maxHp = Number.isFinite(maxHpRaw) && maxHpRaw > 0 ? maxHpRaw : 20;
+            const hpForBar = hasNumericHealth ? nextHealthValue : 0;
+            const hpPercent = Math.max(0, Math.min(100, (hpForBar / maxHp) * 100));
 
             const valueEl = hpContainer.querySelector('.hp-value');
             const fillEl = hpContainer.querySelector('.hp-bar-fill');
             const ghostEl = hpContainer.querySelector('.hp-bar-ghost');
 
-            if (valueEl) valueEl.textContent = `${newHealth}`;
+            if (valueEl) {
+                if (hasNumericHealth) {
+                    tweenIntegerText(valueEl, nextHealthValue);
+                } else {
+                    valueEl.textContent = healthText;
+                }
+            }
 
             if (fillEl) {
                 fillEl.style.width = `${hpPercent}%`;
@@ -850,10 +1862,57 @@ function updateHealthDisplay(unitInstance) {
     }
 
     if (healthElement) {
-        healthElement.textContent = newHealth;
+        if (hasNumericHealth) {
+            tweenIntegerText(healthElement, nextHealthValue);
+        } else {
+            healthElement.textContent = healthText;
+        }
     } else {
         // console.warn(`UI Update Error: Could not find health element for unit UID: ${unitInstance.uid} (Type: ${unitInstance.type})`);
     }
+}
+
+function updateUnitCombatStats(unitInstance) {
+    if (!unitInstance || !unitInstance.uid) {
+        console.warn("UI Update Error: updateUnitCombatStats called with invalid unitInstance.");
+        return;
+    }
+
+    const normalizedType = String(unitInstance.type ?? unitInstance.Type ?? '').trim().toLowerCase();
+    if (normalizedType === 'leader') {
+        updateHealthDisplay(unitInstance);
+        return;
+    }
+
+    const unitElement = document.querySelector(`.field-card[data-uid="${unitInstance.uid}"]`);
+    if (!unitElement) {
+        console.warn(`UI Update Error: Could not find field element for combat stat update UID: ${unitInstance.uid}`);
+        return;
+    }
+
+    const costInfo = resolveCardCostDisplay(unitInstance, 'field');
+    const costEl = unitElement.querySelector('.cost span');
+    if (costEl) {
+        const costNumber = Number(costInfo.displayCost);
+        if (Number.isFinite(costNumber)) {
+            tweenIntegerText(costEl, Math.max(0, Math.trunc(costNumber)), {
+                nonNegative: true
+            });
+        } else {
+            costEl.textContent = `${costInfo.displayCost ?? '?'}`;
+        }
+    }
+    unitElement.classList.toggle('enhance-active', costInfo.enhanceActive === true);
+
+    const attackValueRaw = Number(unitInstance.currentAttack ?? unitInstance.CurrentAttack ?? unitInstance.attack ?? unitInstance.Attack);
+    if (Number.isFinite(attackValueRaw)) {
+        const attackEl = unitElement.querySelector('.attack');
+        if (attackEl) {
+            tweenIntegerText(attackEl, Math.trunc(attackValueRaw));
+        }
+    }
+
+    updateHealthDisplay(unitInstance);
 }
 
 // --- Specific UI Update Functions (Continued) ---
@@ -869,6 +1928,14 @@ function updateHandDisplay(playerId, handCards = []) {
     const revealOpponentHand = gameState.dualControl === true || gameState.isSpectator === true;
     const handElement = isLocalPlayer ? player1HandEl : player2HandEl;
 
+    if (isLocalPlayer && gameState.phase !== 'Mulligan') {
+        clearMulliganVisualState();
+    }
+
+    if (Array.isArray(handCards)) {
+        updateHandCountDisplay(playerId, handCards.length);
+    }
+
     if (!handElement) {
         const elName = isLocalPlayer ? 'player1HandEl' : 'player2HandEl';
         console.warn(`UI Update Error: ${elName} missing, cannot update hand display for player ${playerId}.`);
@@ -880,13 +1947,63 @@ function updateHandDisplay(playerId, handCards = []) {
         return;
     }
 
+    if (isLocalPlayer && gameState.selectedCardUid) {
+        const selectedUid = String(gameState.selectedCardUid);
+        const selectedCardStillInHand = handCards.some(card => String(getCardUid(card) ?? '') === selectedUid);
+        if (!selectedCardStillInHand) {
+            setFloatingHandCard(null);
+        }
+    }
+
+    const isFaceUpHand = isLocalPlayer || revealOpponentHand;
     const entries = (!isLocalPlayer && !revealOpponentHand)
         ? buildFaceDownHandEntries(handCards)
         : buildFaceUpHandEntries(handCards, isLocalPlayer);
     renderAnimatedCardCollection(handElement, entries, {
-        animateEnter: false,
-        animateExit: false,
+        animateEnter: isFaceUpHand,
+        animateExit: isFaceUpHand,
+        animateInitialEnter: false,
         animateMove: false
+    });
+
+    if (isLocalPlayer) {
+        syncCommittedHandPlayVisual(handCards);
+    }
+}
+
+function refreshHandPlayabilityVisuals(playerId, handCards = null) {
+    const isLocalPlayer = isSamePlayerId(playerId, gameState.localPlayerId);
+    const revealOpponentHand = gameState.dualControl === true || gameState.isSpectator === true;
+    const handElement = isLocalPlayer ? player1HandEl : player2HandEl;
+
+    // Opponent hand is hidden in normal mode; there is no face-up card DOM to update.
+    if (!isLocalPlayer && !revealOpponentHand) {
+        return;
+    }
+    if (!handElement) {
+        return;
+    }
+
+    const sourceCards = Array.isArray(handCards)
+        ? handCards
+        : (Array.isArray(getPlayerState(playerId)?.hand) ? getPlayerState(playerId).hand : []);
+    if (!Array.isArray(sourceCards) || sourceCards.length === 0) {
+        return;
+    }
+
+    sourceCards.forEach(cardInstance => {
+        const cardUid = getCardUid(cardInstance);
+        if (!cardUid) return;
+
+        const cardElement = handElement.querySelector(`.card[data-uid="${cardUid}"]`);
+        if (!cardElement) return;
+
+        const costInfo = resolveCardCostDisplay(cardInstance, 'hand');
+        const costEl = cardElement.querySelector('.cost span');
+        if (costEl) {
+            costEl.textContent = `${costInfo.displayCost ?? '?'}`;
+        }
+        cardElement.classList.toggle('enhance-active', costInfo.enhanceActive === true);
     });
 }
 
@@ -943,7 +2060,7 @@ function showMulliganInterface(localPlayerId, handArray) {
 function updateMulliganStatus(playerId, isComplete) {
 
     // Focus on local player's UI changes when they complete
-    if (playerId === gameState.localPlayerId && isComplete) {
+    if (isSamePlayerId(playerId, gameState.localPlayerId) && isComplete) {
         if (confirmMulliganButtonEl) {
             confirmMulliganButtonEl.disabled = true;
             confirmMulliganButtonEl.textContent = '等待对方...'; // Change button text to indicate waiting
@@ -952,7 +2069,7 @@ function updateMulliganStatus(playerId, isComplete) {
         }
         // Optionally, add a class to indicate local completion if needed for styling
         // gameContainerEl?.classList.add('local-mulligan-complete');
-    } else if (playerId !== gameState.localPlayerId && isComplete) {
+    } else if (!isSamePlayerId(playerId, gameState.localPlayerId) && isComplete) {
         // Handle opponent completion if needed (e.g., hide a general "Waiting..." message if one exists)
         // Example: const waitingIndicator = document.getElementById('waiting-opponent-mulligan');
         // if (waitingIndicator) waitingIndicator.style.display = 'none';
@@ -1034,6 +2151,8 @@ function updateUnitDisplay(unitInstance) {
             replacement.classList.add(className);
         }
     }
+    clearTransientCardAnimationClasses(replacement);
+    preserveCardStateClasses(unitElement, replacement);
 
     const unitUid = getCardUid(unitInstance);
     replacement.dataset.renderKey = unitElement.dataset.renderKey
@@ -1158,6 +2277,7 @@ function highlightTargets(attackerInstance) {
     const attackerKeywords = Array.isArray(attackerInstance.keywords) ? attackerInstance.keywords : [];
     const attackerCannotAttackFollowers = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'CannotAttackFollower'));
     const attackerCannotAttackLeader = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'CannotAttackLeader'));
+    const attackerIgnoresWard = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'IgnoreWard'));
     const hasAmbushOrPressure = follower => {
         const keywords = Array.isArray(follower?.keywords) ? follower.keywords : [];
         const hasAmbush = keywords.some(keyword => equalsIgnoreCase(keyword, 'Ambush'));
@@ -1173,12 +2293,12 @@ function highlightTargets(attackerInstance) {
     };
     const attackableFollowers = opponentBoard.filter(f => !hasAmbushOrPressure(f));
     // 【BUG修复】在函数作用域内正确定义 hasWard 变量
-    const hasWard = opponentBoard.some(follower => hasEffectiveWard(follower));
+    const hasWard = !attackerIgnoresWard && opponentBoard.some(follower => hasEffectiveWard(follower));
     const wardFollowers = opponentBoard.filter(f => hasEffectiveWard(f));
 
     let validTargets = [];
 
-    if (wardFollowers.length > 0) {
+    if (!attackerIgnoresWard && wardFollowers.length > 0) {
         // If Ward is present, only Ward followers are valid targets
         validTargets = attackerCannotAttackFollowers ? [] : wardFollowers;
     } else {
@@ -1187,8 +2307,8 @@ function highlightTargets(attackerInstance) {
 
         // Check if the leader is a valid target
         const hasStorm = attackerKeywords.some(keyword => equalsIgnoreCase(keyword, 'Storm'));
-        const attackerFieldTurn = attackerInstance.fieldTurn ?? attackerInstance.FieldTurn ?? 0;
-        const isSummoningSick = attackerFieldTurn === 0;
+        const attackerZoneStayTurn = attackerInstance.zoneStayTurn ?? attackerInstance.ZoneStayTurn ?? 0;
+        const isSummoningSick = attackerZoneStayTurn === 0;
 
         if (!attackerCannotAttackLeader && (hasStorm || !isSummoningSick)) {
             if (opponentLeader) {
@@ -1320,6 +2440,10 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
         cancelPlayerChoice(choiceToCancel.PendingChoiceId, choiceToCancel.SourceAbilityRuntimeId);
     } else if (notifyBackendOfCancellation) {
         console.warn("UI: endPlayerChoice was called to notify backend, but there was no active choice request to cancel.");
+    }
+
+    if (notifyBackendOfCancellation) {
+        cancelCommittedHandPlayVisual(choiceToCancel?.SourceCardUid ?? null);
     }
 
     // BUG-FIX: Restore the state of the end turn button.
@@ -1635,6 +2759,10 @@ function renderGame(currentGameState) { // Remove second parameter
         return;
     }
 
+    if (currentGameState.phase !== 'Mulligan') {
+        clearMulliganVisualState();
+    }
+
     if (spectatorToggleViewButtonEl) {
         if (gameState.isSpectator) {
             spectatorToggleViewButtonEl.style.display = 'inline-block';
@@ -1770,7 +2898,7 @@ function updateEmblemDisplay(playerState, statsContainer) {
                 img.src = previewUrl;
                 img.alt = emblem.name ?? emblem.Name ?? 'Emblem';
                 artWrapper.appendChild(img);
-                void preloadArt(previewPath).catch(() => {
+                void preloadArt(previewPath, { priority: 'low' }).catch(() => {
                     // ignore preload errors for emblem icons
                 });
             }
@@ -1938,7 +3066,8 @@ function resolvePlayerOrderBadge(playerState) {
 const playerCounterLabelMap = new Map([
     ['combo', '连击数'],
     ['graveyard', '墓场数'],
-    ['bloodpool', '血池']
+    ['bloodpool', '血池'],
+    ['rally', '连携数']
 ]);
 
 function getPlayerCounterValue(playerState, key, fallbackValue = 0) {
@@ -1987,7 +3116,7 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
         const maxPp = playerState.maxPP ?? 0;
         const ppTextEl = statsContainer.querySelector('.pp-text');
         if (ppTextEl) ppTextEl.textContent = `${currentPp} / ${maxPp}`;
-        updatePpDisplay(playerState.id, currentPp, maxPp);
+        updatePpDisplay(playerState.id, currentPp, maxPp, playerState.ppBoostArmed === true);
 
         const maxEp = (playerState.maxEP && playerState.maxEP > 0) ? playerState.maxEP : 2;
         updateEpDisplay(playerState.id, playerState.ep, maxEp);
@@ -1995,44 +3124,48 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
         const maxSep = (playerState.maxSEP && playerState.maxSEP > 0) ? playerState.maxSEP : 2;
         updateSepDisplay(playerState.id, playerState.sep, maxSep);
 
-        updatePpBoostDisplay(playerState.id, playerState.ppBoostUsesAvailable ?? 0);
+        updatePpBoostDisplay(playerState.id, playerState.ppBoostUsesAvailable ?? 0, playerState.ppBoostArmed === true);
 
-        const deckCountEl = statsContainer.querySelector(`#${prefix}-deck-count`);
-        if (deckCountEl) deckCountEl.textContent = playerState.deckCount ?? 0;
+        const nextDeckCount = playerState.deckCount ?? playerState.DeckCount ?? 0;
+        const nextHandCount = Array.isArray(playerState.hand)
+            ? playerState.hand.length
+            : (Array.isArray(playerState.Hand) ? playerState.Hand.length : 0);
+        const nextGraveyardCount = getPlayerCounterValue(
+            playerState,
+            'graveyard',
+            playerState.graveyardCount
+            ?? playerState.GraveyardCount
+            ?? playerState.graveyard?.length
+            ?? 0
+        );
+        const nextBloodPoolCount = getPlayerCounterValue(
+            playerState,
+            'bloodpool',
+            playerState.bloodPool
+            ?? playerState.BloodPool
+            ?? 0
+        );
+        const nextComboCount = getPlayerCounterValue(
+            playerState,
+            'combo',
+            playerState.combo
+            ?? playerState.Combo
+            ?? 0
+        );
+        const nextRallyCount = getPlayerCounterValue(
+            playerState,
+            'rally',
+            playerState.rally
+            ?? playerState.Rally
+            ?? 0
+        );
 
-        const graveCountEl = statsContainer.querySelector(`#${prefix}-grave-count`);
-        if (graveCountEl) {
-            graveCountEl.textContent = getPlayerCounterValue(
-                playerState,
-                'graveyard',
-                playerState.graveyardCount
-                ?? playerState.GraveyardCount
-                ?? playerState.graveyard?.length
-                ?? 0
-            );
-        }
-
-        const bloodCountEl = statsContainer.querySelector(`#${prefix}-blood-count`);
-        if (bloodCountEl) {
-            bloodCountEl.textContent = getPlayerCounterValue(
-                playerState,
-                'bloodpool',
-                playerState.bloodPool
-                ?? playerState.BloodPool
-                ?? 0
-            );
-        }
-
-        const comboCountEl = statsContainer.querySelector(`#${prefix}-combo-count`);
-        if (comboCountEl) {
-            comboCountEl.textContent = getPlayerCounterValue(
-                playerState,
-                'combo',
-                playerState.combo
-                ?? playerState.Combo
-                ?? 0
-            );
-        }
+        updateDeckCountDisplay(playerState.id, nextDeckCount);
+        updateHandCountDisplay(playerState.id, nextHandCount);
+        updateGraveyardCountDisplay(playerState.id, nextGraveyardCount);
+        updateBloodPoolDisplay(playerState.id, nextBloodPoolCount);
+        updateComboDisplay(playerState.id, nextComboCount);
+        updateRallyDisplay(playerState.id, nextRallyCount);
 
         const isLocal = prefix === 'player1';
         const displayName = resolvePlayerDisplayName(playerState, isLocal);
@@ -2093,10 +3226,14 @@ function renderPlayerHand(handCards = [], handElement) {
     }
     const entries = buildFaceUpHandEntries(handCards, handElement === player1HandEl);
     renderAnimatedCardCollection(handElement, entries, {
-        animateEnter: false,
-        animateExit: false,
+        animateEnter: true,
+        animateExit: true,
+        animateInitialEnter: false,
         animateMove: false
     });
+    if (handElement === player1HandEl) {
+        syncCommittedHandPlayVisual(handCards);
+    }
     // Optional: Add visual feedback if hand reaches max size
     // const maxHandSize = 9; // Or get from playerState if available
     // if (handCards.length >= maxHandSize) { handElement.classList.add('full-hand'); }
@@ -2148,7 +3285,8 @@ function resolveCardCostDisplay(cardInstance, context) {
 
     if (context === 'hand') {
         const cardUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
-        const playabilityInfo = cardUid ? gameState.playabilityCache[cardUid] : null;
+        const ownerPlayerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId ?? gameState.localPlayerId;
+        const playabilityInfo = cardUid ? getPlayabilityForCard(cardUid, ownerPlayerId) : null;
         const selectedCost = playabilityInfo?.selectedPlayCost;
         if (
             playabilityInfo
@@ -2156,7 +3294,9 @@ function resolveCardCostDisplay(cardInstance, context) {
             && Number.isFinite(selectedCost)
         ) {
             displayCost = selectedCost;
-            enhanceActive = Number.isFinite(baseCostRaw) ? selectedCost !== baseCostRaw : true;
+            // Show Enhance visuals whenever Enhance mode is selected, even when
+            // base cost equals enhance cost.
+            enhanceActive = true;
         }
     }
 
@@ -2181,7 +3321,10 @@ function getUseActionState(cardInstance, context) {
         showUse: false,
         usePlayable: true,
         useFailureReason: '',
-        useUid: null
+        useUid: null,
+        usePlayabilityKnown: false,
+        useSyncPending: false,
+        useHint: ''
     };
 
     if (!cardInstance || isAwaitingPlayerChoice || gameState.isSpectator) {
@@ -2214,33 +3357,26 @@ function getUseActionState(cardInstance, context) {
         return empty;
     }
 
-    const playabilityInfo = gameState.playabilityCache?.[useUid];
-    const usePlayable = playabilityInfo ? playabilityInfo.isPlayable !== false : true;
-    const useFailureReason = playabilityInfo?.failureReason ?? '';
+    const playabilityInfo = getPlayabilityForCard(useUid, ownerId);
+    const usePlayabilityKnown = Boolean(playabilityInfo);
+    const usePlayable = usePlayabilityKnown ? playabilityInfo.isPlayable !== false : true;
+    const useFailureReason = usePlayabilityKnown ? (playabilityInfo?.failureReason ?? '') : '';
+    const useSyncPending = !usePlayabilityKnown;
+    const useHint = useSyncPending ? USE_PLAYABILITY_SYNC_PENDING_REASON : '';
 
     return {
         showUse: true,
         usePlayable,
         useFailureReason,
-        useUid
+        useUid,
+        usePlayabilityKnown,
+        useSyncPending,
+        useHint
     };
 }
 
-function hasFusionAbility(cardInstance) {
-    if (!cardInstance) return false;
-    const fusionAbilities = cardInstance.fusionAbilities ?? cardInstance.FusionAbilities ?? [];
-    if (Array.isArray(fusionAbilities) && fusionAbilities.length > 0) {
-        return true;
-    }
-    const directFlag = cardInstance.hasFusionAbility ?? cardInstance.HasFusionAbility;
-    if (directFlag === true) return true;
-
-    const description = cardInstance.description ?? cardInstance.Description ?? '';
-    const effectDescriptions = cardInstance.effectDescriptions ?? cardInstance.EffectDescriptions ?? [];
-    const effectText = Array.isArray(effectDescriptions) ? effectDescriptions.join(' ') : '';
-    const combined = `${description} ${effectText}`;
-    return /fusion|融合/i.test(combined);
-}
+const ACT_PLAYABILITY_SYNC_PENDING_REASON = '启动状态同步中，请稍候。';
+const USE_PLAYABILITY_SYNC_PENDING_REASON = '可用性同步中，请稍候。';
 
 function getCardActionState(cardInstance, context) {
     const empty = {
@@ -2249,9 +3385,18 @@ function getCardActionState(cardInstance, context) {
         showAct: false,
         showFusion: false,
         showUse: false,
-        usedThisTurn: false,
+        actUsedThisTurn: false,
+        fusionUsedThisTurn: false,
+        actPlayabilityKnown: false,
+        actPlayable: false,
+        actFailureReason: '',
+        actCost: null,
+        actAbilities: [],
+        fusionAbilities: [],
         usePlayable: true,
-        useFailureReason: ''
+        useFailureReason: '',
+        useSyncPending: false,
+        useHint: ''
     };
     if (!cardInstance) return empty;
 
@@ -2281,24 +3426,31 @@ function getCardActionState(cardInstance, context) {
     const currentEp = Number(playerState.ep ?? 0);
     const canPayEvolveCost = Number.isFinite(currentEp) && currentEp > 0;
     const canUseEvolutionPointOrFreeEvolve = hasFreeEvolve || canPayEvolveCost;
-    const hasActAbility = (cardInstance.hasActAbility === true) || (cardInstance.HasActAbility === true);
     const actAbilityList = Array.isArray(cardInstance.actAbilities)
         ? cardInstance.actAbilities
         : (Array.isArray(cardInstance.ActAbilities) ? cardInstance.ActAbilities : []);
     const fusionAbilityList = Array.isArray(cardInstance.fusionAbilities)
         ? cardInstance.fusionAbilities
         : (Array.isArray(cardInstance.FusionAbilities) ? cardInstance.FusionAbilities : []);
-    const lastActTurn = cardInstance.actLastUsedTurnNumber ?? cardInstance.ActLastUsedTurnNumber ?? null;
-    const currentTurnNumber = playerState?.turnNumber ?? playerState?.TurnNumber ?? 0;
-    const usedThisTurn = lastActTurn !== null && lastActTurn === currentTurnNumber;
+    const actsThisTurn = Number(cardInstance.actsThisTurn ?? cardInstance.ActsThisTurn ?? 0);
+    const maxActsPerTurn = Number(cardInstance.maxActsPerTurn ?? cardInstance.MaxActsPerTurn ?? 1);
+    const fusionsThisTurn = Number(cardInstance.fusionsThisTurn ?? cardInstance.FusionsThisTurn ?? 0);
+    const maxFusionsPerTurn = Number(cardInstance.maxFusionsPerTurn ?? cardInstance.MaxFusionsPerTurn ?? 1);
+    const actUsedThisTurn = Number.isFinite(actsThisTurn) && Number.isFinite(maxActsPerTurn) && actsThisTurn >= maxActsPerTurn;
+    const fusionUsedThisTurn = Number.isFinite(fusionsThisTurn) && Number.isFinite(maxFusionsPerTurn) && fusionsThisTurn >= maxFusionsPerTurn;
     const cardUid = getCardUid(cardInstance);
-    const actInfo = cardUid ? gameState.actPlayabilityCache?.[cardUid] : null;
-    const actPlayable = actInfo ? actInfo.isPlayable !== false : true;
-    const actFailureReason = actInfo?.failureReason ?? '';
+    const actInfo = cardUid ? getActPlayabilityForCard(cardUid, cardOwnerId) : null;
+    const actPlayabilityKnown = Boolean(actInfo);
+    const actPlayable = actPlayabilityKnown ? actInfo?.isPlayable === true : true;
+    const actFailureReason = actPlayabilityKnown
+        ? (actInfo?.failureReason ?? '')
+        : '';
     const actCost = Number.isFinite(actInfo?.actCost) ? actInfo.actCost : null;
-    const actAbilities = (Array.isArray(actInfo?.abilities) && actInfo.abilities.length > 0)
-        ? actInfo.abilities
+    const actAbilities = actPlayabilityKnown
+        ? (Array.isArray(actInfo?.abilities) ? actInfo.abilities : [])
         : actAbilityList;
+    const hasActCapability = actAbilityList.length > 0
+        || (Array.isArray(actInfo?.abilities) && actInfo.abilities.length > 0);
 
     return {
         showSuperEvolve: (
@@ -2317,14 +3469,18 @@ function getCardActionState(cardInstance, context) {
             isEvolved === false &&
             canEvolve === true
         ),
-        showAct: isFieldContext && (hasActAbility || actAbilities.length > 0),
-        showFusion: isHandContext && (fusionAbilityList.length > 0 || hasFusionAbility(cardInstance)),
+        showAct: isFieldContext && hasActCapability,
+        showFusion: isHandContext && fusionAbilityList.length > 0,
         showUse: useActionState.showUse,
-        usedThisTurn,
+        actUsedThisTurn,
+        fusionUsedThisTurn,
+        actPlayabilityKnown,
         actPlayable,
         actFailureReason,
         usePlayable: useActionState.usePlayable,
         useFailureReason: useActionState.useFailureReason,
+        useSyncPending: useActionState.useSyncPending,
+        useHint: useActionState.useHint,
         actCost,
         actAbilities,
         fusionAbilities: fusionAbilityList
@@ -2334,11 +3490,31 @@ function getCardActionState(cardInstance, context) {
 const CARD_ACTION_BUTTON_SELECTOR = '.super-evolve-button, .evolve-button, .fusion-button, .act-button, .use-button';
 const CARD_ACTION_BUTTON_TOP_START = 28;
 const CARD_ACTION_BUTTON_VERTICAL_GAP = 28;
+const CARD_ACTION_BUTTON_PRIORITY = Object.freeze({
+    'super-evolve-button': 10,
+    'evolve-button': 20,
+    'use-button': 30,
+    'fusion-button': 40,
+    'act-button': 50
+});
+
+function getActionButtonPriority(button) {
+    if (!button?.classList) return Number.MAX_SAFE_INTEGER;
+    if (button.classList.contains('super-evolve-button')) return CARD_ACTION_BUTTON_PRIORITY['super-evolve-button'];
+    if (button.classList.contains('evolve-button')) return CARD_ACTION_BUTTON_PRIORITY['evolve-button'];
+    if (button.classList.contains('use-button')) return CARD_ACTION_BUTTON_PRIORITY['use-button'];
+    if (button.classList.contains('fusion-button')) return CARD_ACTION_BUTTON_PRIORITY['fusion-button'];
+    if (button.classList.contains('act-button')) return CARD_ACTION_BUTTON_PRIORITY['act-button'];
+    return Number.MAX_SAFE_INTEGER;
+}
 
 function applyCardActionButtonStack(cardElement) {
     if (!cardElement) return;
-    const buttons = cardElement.querySelectorAll(CARD_ACTION_BUTTON_SELECTOR);
-    buttons.forEach((button, index) => {
+    const orderedButtons = Array.from(cardElement.querySelectorAll(CARD_ACTION_BUTTON_SELECTOR))
+        .map((button, index) => ({ button, index, priority: getActionButtonPriority(button) }))
+        .sort((a, b) => (a.priority - b.priority) || (a.index - b.index))
+        .map(item => item.button);
+    orderedButtons.forEach((button, index) => {
         const top = CARD_ACTION_BUTTON_TOP_START + (index * CARD_ACTION_BUTTON_VERTICAL_GAP);
         button.style.setProperty('--action-button-top', `${top}px`);
     });
@@ -2467,7 +3643,7 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     const keywordBadgesHtml = buildKeywordBadgesHtml(cardInstance, context);
 
     cardDiv.innerHTML = `
-          <div class="card-art"></div> <!-- 鍗￠潰缇庢湳鍥惧崰浣?-->
+          <div class="card-art"></div>
           <div class="cost"><span>${costInfo.displayCost ?? '?'}</span></div>
           <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
           ${
@@ -2492,7 +3668,7 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     const previewPath = cardInstance.artPreview ?? cardInstance.ArtPreview ?? '';
     const artEl = cardDiv.querySelector('.card-art');
     if (artEl) {
-        applyArtBackground(artEl, previewPath);
+        applyArtBackground(artEl, previewPath, { priority: 'normal' });
     }
 
     // 注意: 'playable', 'selected-attacker', 'targetable' 等交互状态相关的 class
@@ -2524,6 +3700,10 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         useBtn.disabled = actionState.usePlayable === false;
         if (actionState.usePlayable === false && actionState.useFailureReason) {
             useBtn.title = actionState.useFailureReason;
+        } else if (actionState.useHint) {
+            useBtn.title = actionState.useHint;
+        } else {
+            useBtn.removeAttribute('title');
         }
         cardDiv.appendChild(useBtn);
     }
@@ -2538,6 +3718,10 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
             const fusionLabel = getBattleActionLabel('fusion', index, fusionAbilityEntries.length);
             fusionBtn.textContent = fusionLabel;
             fusionBtn.dataset.fusionUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
+            fusionBtn.disabled = actionState.fusionUsedThisTurn === true;
+            if (fusionBtn.disabled) {
+                fusionBtn.title = '该卡牌本回合已融合过。';
+            }
             const abilityRuntimeId = fusionAbility?.runtimeId ?? fusionAbility?.RuntimeId ?? '';
             if (abilityRuntimeId) {
                 fusionBtn.dataset.fusionAbilityId = abilityRuntimeId;
@@ -2547,19 +3731,18 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     }
 
     if (actionState.showAct) {
-        const actAbilityEntries = Array.isArray(actionState.actAbilities) && actionState.actAbilities.length > 0
-            ? actionState.actAbilities
-            : [null];
+        const actAbilityEntries = getActAbilityEntries(actionState);
         actAbilityEntries.forEach((actAbility, index) => {
             const actBtn = document.createElement('button');
             actBtn.className = 'act-button';
-            const isPlayable = actAbility ? actAbility.isPlayable !== false : actionState.actPlayable !== false;
-            const failureReason = actAbility?.failureReason ?? actionState.actFailureReason;
+            const actButtonState = resolveActButtonState(actionState, actAbility);
             const actLabel = getBattleActionLabel('act', index, actAbilityEntries.length);
             actBtn.textContent = actLabel;
-            actBtn.disabled = actionState.usedThisTurn || isPlayable === false;
-            if (!actionState.usedThisTurn && isPlayable === false && failureReason) {
-                actBtn.title = failureReason;
+            actBtn.disabled = actButtonState.disabled;
+            if (actButtonState.title) {
+                actBtn.title = actButtonState.title;
+            } else {
+                actBtn.removeAttribute('title');
             }
             actBtn.dataset.actUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
             const abilityRuntimeId = actAbility?.abilityRuntimeId ?? actAbility?.AbilityRuntimeId ?? '';
@@ -2699,6 +3882,42 @@ function getBattleActionLabel(actionKey, index = 0, total = 1) {
     return total > 1 ? `${baseLabel} ${index + 1}` : baseLabel;
 }
 
+function getActAbilityEntries(actionState) {
+    if (Array.isArray(actionState?.actAbilities) && actionState.actAbilities.length > 0) {
+        return actionState.actAbilities;
+    }
+    return [null];
+}
+
+function resolveActButtonState(actionState, actAbility) {
+    if (!actionState || actionState.actUsedThisTurn) {
+        return { disabled: true, title: '该卡牌本回合已启动过。' };
+    }
+    if (actionState.actPlayabilityKnown !== true) {
+        return { disabled: false, title: ACT_PLAYABILITY_SYNC_PENDING_REASON };
+    }
+
+    const abilityHasPlayability = actAbility && (
+        Object.prototype.hasOwnProperty.call(actAbility, 'isPlayable')
+        || Object.prototype.hasOwnProperty.call(actAbility, 'IsPlayable')
+    );
+    const rawAbilityPlayable = abilityHasPlayability
+        ? (actAbility.isPlayable ?? actAbility.IsPlayable)
+        : null;
+    const abilityPlayable = rawAbilityPlayable === true;
+    const fallbackPlayable = actionState.actPlayable === true;
+    const isPlayable = abilityHasPlayability ? abilityPlayable : fallbackPlayable;
+    const failureReason = actAbility?.failureReason
+        ?? actAbility?.FailureReason
+        ?? actionState.actFailureReason
+        ?? '';
+
+    return {
+        disabled: isPlayable !== true,
+        title: isPlayable !== true ? failureReason : ''
+    };
+}
+
 function syncUseButtonForHandCard(cardInstance, cardElement) {
     if (!cardInstance || !cardElement) return;
 
@@ -2725,6 +3944,8 @@ function syncUseButtonForHandCard(cardInstance, cardElement) {
 
     if (useActionState.usePlayable === false && useActionState.useFailureReason) {
         useBtn.title = useActionState.useFailureReason;
+    } else if (useActionState.useHint) {
+        useBtn.title = useActionState.useHint;
     } else {
         useBtn.removeAttribute('title');
     }
@@ -2769,8 +3990,11 @@ function getActionButtonsHtml(cardInstance) {
     let buttonsHtml = '';
     if (actionState.showUse) {
         const useDisabled = actionState.usePlayable === false;
-        const useTitle = (useDisabled && actionState.useFailureReason)
-            ? ` title="${escapeAttributeValue(actionState.useFailureReason)}"`
+        const useTitleText = useDisabled
+            ? (actionState.useFailureReason || '')
+            : (actionState.useHint || '');
+        const useTitle = useTitleText
+            ? ` title="${escapeAttributeValue(useTitleText)}"`
             : '';
         buttonsHtml += `<button class="use-button" ${useDisabled ? 'disabled' : ''}${useTitle} data-use-uid="${cardUid}">${getBattleActionLabel('use')}</button>`;
     }
@@ -2789,23 +4013,24 @@ function getActionButtonsHtml(cardInstance) {
             : [null];
         fusionAbilityEntries.forEach((fusionAbility, index) => {
             const label = getBattleActionLabel('fusion', index, fusionAbilityEntries.length);
+            const fusionDisabled = actionState.fusionUsedThisTurn === true;
+            const fusionTitle = fusionDisabled
+                ? ` title="${escapeAttributeValue('该卡牌本回合已融合过。')}"`
+                : '';
             const abilityRuntimeId = fusionAbility?.runtimeId ?? fusionAbility?.RuntimeId ?? '';
             const abilityAttr = abilityRuntimeId ? ` data-fusion-ability-id="${abilityRuntimeId}"` : '';
-            buttonsHtml += `<button class="fusion-button" data-fusion-uid="${cardUid}"${abilityAttr}>${label}</button>`;
+            buttonsHtml += `<button class="fusion-button" ${fusionDisabled ? 'disabled' : ''}${fusionTitle} data-fusion-uid="${cardUid}"${abilityAttr}>${label}</button>`;
         });
     }
 
     if (actionState.showAct) {
-        const actAbilityEntries = Array.isArray(actionState.actAbilities) && actionState.actAbilities.length > 0
-            ? actionState.actAbilities
-            : [null];
+        const actAbilityEntries = getActAbilityEntries(actionState);
         actAbilityEntries.forEach((actAbility, index) => {
-            const isPlayable = actAbility ? actAbility.isPlayable !== false : actionState.actPlayable !== false;
-            const failureReason = actAbility?.failureReason ?? actionState.actFailureReason;
+            const actButtonState = resolveActButtonState(actionState, actAbility);
             const actLabel = getBattleActionLabel('act', index, actAbilityEntries.length);
-            const actDisabled = actionState.usedThisTurn || isPlayable === false;
-            const actTitle = (!actionState.usedThisTurn && isPlayable === false && failureReason)
-                ? ` title="${escapeAttributeValue(failureReason)}"`
+            const actDisabled = actButtonState.disabled;
+            const actTitle = actButtonState.title
+                ? ` title="${escapeAttributeValue(actButtonState.title)}"`
                 : '';
             const abilityRuntimeId = actAbility?.abilityRuntimeId ?? actAbility?.AbilityRuntimeId ?? '';
             const abilityAttr = abilityRuntimeId ? ` data-act-ability-id="${abilityRuntimeId}"` : '';
@@ -2827,10 +4052,11 @@ function getAttackReadinessClass(cardInstance, context) {
 
     if (isAmuletType) {
         const actionState = getCardActionState(cardInstance, context);
-        if (!actionState.showAct || actionState.usedThisTurn) return null;
+        if (!actionState.showAct || actionState.actUsedThisTurn) return null;
 
         const cardUid = getCardUid(cardInstance);
-        const actCache = cardUid ? gameState.actPlayabilityCache?.[cardUid] : null;
+        const cardOwnerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+        const actCache = cardUid ? getActPlayabilityForCard(cardUid, cardOwnerId) : null;
         if (!actCache) {
             // Avoid optimistic glow before act playability data is available.
             return null;
@@ -2838,8 +4064,8 @@ function getAttackReadinessClass(cardInstance, context) {
 
         const actAbilityEntries = Array.isArray(actCache.abilities) ? actCache.abilities : [];
         const hasPlayableAct = actAbilityEntries.length > 0
-            ? actAbilityEntries.some(actAbility => actAbility?.isPlayable !== false)
-            : (actCache.isPlayable !== false);
+            ? actAbilityEntries.some(actAbility => (actAbility?.isPlayable ?? actAbility?.IsPlayable) === true)
+            : (actCache.isPlayable === true);
 
         return hasPlayableAct ? 'act-ready' : null;
     }
@@ -2851,9 +4077,9 @@ function getAttackReadinessClass(cardInstance, context) {
     const hasStorm = Array.isArray(keywords) && keywords.some(keyword => equalsIgnoreCase(keyword, 'Storm'));
     const hasRush = Array.isArray(keywords) && keywords.some(keyword => equalsIgnoreCase(keyword, 'Rush'));
     const isEvolved = (cardInstance.isEvolved ?? cardInstance.IsEvolved) === true;
-    const fieldTurn = cardInstance.fieldTurn ?? cardInstance.FieldTurn ?? 0;
+    const zoneStayTurn = cardInstance.zoneStayTurn ?? cardInstance.ZoneStayTurn ?? 0;
 
-    if (hasStorm || fieldTurn > 0) {
+    if (hasStorm || zoneStayTurn > 0) {
         return 'attack-ready-all';
     }
 
@@ -2878,9 +4104,9 @@ const previewCounterLabelMap = new Map([
     ['earthsigil', '土之印数'],
     ['combo', '连击数'],
     ['graveyard', '墓场数'],
-    ['bloodpool', '血池']
+    ['bloodpool', '血池'],
+    ['rally', '连携数']
 ]);
-const playerSystemCounterKeys = new Set(['combo', 'graveyard', 'bloodpool']);
 
 function getCounterLabel(labelMap, key) {
     const rawKey = String(key ?? '').trim();
@@ -2905,58 +4131,63 @@ function getCounterLabel(labelMap, key) {
 
 function resolveCounterSummarySource(cardInstance) {
     if (!cardInstance) {
-        return { counterMap: null, labelMap: null, isPlayerCounterSource: false };
+        return null;
     }
 
+    const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId ?? null;
+    const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
     const isLeader = equalsIgnoreCase(cardInstance.type ?? cardInstance.Type, 'Leader');
-    if (isLeader) {
-        const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId ?? null;
-        const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
-        if (ownerPlayer) {
-            return {
-                counterMap: ownerPlayer.counters ?? ownerPlayer.Counters ?? {},
-                labelMap: ownerPlayer.counterDisplayNames ?? ownerPlayer.CounterDisplayNames ?? {},
-                isPlayerCounterSource: true
-            };
-        }
+
+    if (isLeader && ownerPlayer) {
+        const ownerLabelMap = ownerPlayer.counterDisplayNames ?? ownerPlayer.CounterDisplayNames ?? {};
+        const ownerCounterMap = ownerPlayer.counters ?? ownerPlayer.Counters ?? {};
+        return {
+            localCounterMap: null,
+            localLabelMap: null,
+            ownerCounterMap,
+            ownerLabelMap,
+            ownerReferenceKeys: Object.keys(ownerLabelMap),
+            includeOwnerCounters: true,
+            hideOwnerSystemKeys: true,
+            showZeroOwnerEntries: true
+        };
     }
 
+    const localLabelMap = cardInstance.counterDisplayNames ?? cardInstance.CounterDisplayNames ?? {};
     return {
-        counterMap: cardInstance.counters ?? cardInstance.Counters ?? cardInstance.counterMap ?? cardInstance.CounterMap,
-        labelMap: cardInstance.counterDisplayNames ?? cardInstance.CounterDisplayNames ?? {},
-        isPlayerCounterSource: false
+        localCounterMap: cardInstance.counters ?? cardInstance.Counters ?? cardInstance.counterMap ?? cardInstance.CounterMap,
+        localLabelMap,
+        ownerCounterMap: ownerPlayer?.counters ?? ownerPlayer?.Counters ?? null,
+        ownerLabelMap: ownerPlayer?.counterDisplayNames ?? ownerPlayer?.CounterDisplayNames ?? null,
+        ownerReferenceKeys: Object.keys(localLabelMap),
+        includeOwnerCounters: !!ownerPlayer,
+        hideOwnerSystemKeys: false,
+        showZeroOwnerEntries: true
     };
 }
 
 function getCounterSummaryHtml(cardInstance) {
     if (!cardInstance) return '';
-    const { counterMap, labelMap, isPlayerCounterSource } = resolveCounterSummarySource(cardInstance);
-    if (!counterMap || typeof counterMap !== 'object') {
+    const summarySource = resolveCounterSummarySource(cardInstance);
+    if (!summarySource) {
         return '';
     }
 
-    const entries = Object.entries(counterMap)
-        .map(([key, value]) => {
-            const normalizedKey = String(key ?? '').trim();
-            if (!normalizedKey) return null;
-            if (isPlayerCounterSource && playerSystemCounterKeys.has(normalizedKey.toLowerCase())) return null;
-            const label = getCounterLabel(labelMap, normalizedKey);
-            if (!label) return null;
-            const numericValue = Number(value);
-            if (!Number.isFinite(numericValue)) return null;
-            const displayValue = Math.max(0, Math.trunc(numericValue));
-            if (displayValue == 0) return null;
-            return {
-                key: normalizedKey,
-                label,
-                value: displayValue
-            };
-        })
-        .filter(Boolean);
-
+    const entries = buildCounterSummaryEntries({
+        ...summarySource,
+        hideOwnerSystemKeys: summarySource.hideOwnerSystemKeys,
+        resolveLabel: getCounterLabel
+    }).filter(entry => {
+        const normalizedKey = String(entry?.key ?? '').trim().toLowerCase();
+        if (!normalizedKey) {
+            return false;
+        }
+        if (!summarySource.hideOwnerSystemKeys) {
+            return true;
+        }
+        return !PLAYER_SYSTEM_COUNTER_KEYS.has(normalizedKey);
+    });
     if (!entries.length) return '';
-
-    entries.sort((a, b) => a.key.localeCompare(b.key, 'zh-CN', { sensitivity: 'base' }));
 
     const lines = entries
         .map(entry => `
@@ -3068,12 +4299,12 @@ function buildBattlePreviewHtml(cardInstance) {
     const detailPath = cardInstance.artDetail ?? cardInstance.ArtDetail ?? '';
     const detailUrl = resolveArtUrl(detailPath);
     if (previewPath) {
-        void preloadArt(previewPath).catch(() => {
+        void preloadArt(previewPath, { priority: 'high' }).catch(() => {
             // Ignore preload errors in preview panel.
         });
     }
     if (detailPath && detailPath !== previewPath) {
-        void preloadArt(detailPath).catch(() => {
+        void preloadArt(detailPath, { priority: 'high' }).catch(() => {
             // Ignore preload errors in preview panel.
         });
     }
@@ -3156,12 +4387,32 @@ function renderBattleCardPreview(cardInstance) {
     } else {
         delete battleCardPreviewEl.dataset.previewUid;
     }
+    const previewCardId = cardInstance.cardId
+        ?? cardInstance.CardId
+        ?? cardInstance.cardDefinitionId
+        ?? cardInstance.CardDefinitionId
+        ?? '';
+    if (previewCardId !== '') {
+        battleCardPreviewEl.dataset.previewCardId = String(previewCardId);
+    } else {
+        delete battleCardPreviewEl.dataset.previewCardId;
+    }
+    const previewCardName = cardInstance.name ?? cardInstance.Name ?? '';
+    if (previewCardName) {
+        battleCardPreviewEl.dataset.previewCardName = String(previewCardName);
+    } else {
+        delete battleCardPreviewEl.dataset.previewCardName;
+    }
     battleCardPreviewEl.innerHTML = buildBattlePreviewHtml(cardInstance);
     const fallbackPreviewPath = cardInstance.artPreview
         ?? cardInstance.ArtPreview
         ?? '';
     const fallbackPreviewUrl = resolveArtUrl(fallbackPreviewPath);
-    void hydrateDescriptionReferences(battleCardPreviewEl, { fallbackPreviewUrl });
+    void hydrateDescriptionReferences(battleCardPreviewEl, {
+        fallbackPreviewUrl,
+        currentCardId: previewCardId || null,
+        currentCardName: previewCardName
+    });
 }
 
 function refreshBattleCardPreviewIfCurrent(cardInstance) {
@@ -3319,7 +4570,10 @@ export function showTurnStartBanner(currentPlayerId) {
 // --- 渲染游戏日志的辅助函数 ---
 // log panel state and rendering moved to src/ui/logPanel.js
 
-function renderHighlights(currentGameState) {
+let pendingHighlightRenderRafId = null;
+let pendingHighlightRenderState = null;
+
+function renderHighlightsNow(currentGameState) {
     clearSelectionHighlights();
     syncHandUseButtons();
 
@@ -3330,6 +4584,28 @@ function renderHighlights(currentGameState) {
         renderFieldReadinessHighlights(currentGameState);
         renderAttackHighlights(currentGameState);
     }
+}
+
+function renderHighlights(currentGameState) {
+    pendingHighlightRenderState = currentGameState || gameState;
+
+    if (pendingHighlightRenderRafId !== null) {
+        return;
+    }
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        const stateToRender = pendingHighlightRenderState || gameState;
+        pendingHighlightRenderState = null;
+        renderHighlightsNow(stateToRender);
+        return;
+    }
+
+    pendingHighlightRenderRafId = window.requestAnimationFrame(() => {
+        pendingHighlightRenderRafId = null;
+        const stateToRender = pendingHighlightRenderState || gameState;
+        pendingHighlightRenderState = null;
+        renderHighlightsNow(stateToRender);
+    });
 }
 
 function renderFieldReadinessHighlights(currentGameState) {
@@ -3460,21 +4736,7 @@ function renderAbilityTargetHighlights(currentGameState) {
     applyChoiceHandHoverEffect(validTargetIds);
 
     validTargetIds.forEach(targetUid => {
-        let targetElement = null;
-        targetElement = document.querySelector(`.card[data-uid="${targetUid}"]`);
-
-        if (!targetElement) {
-            const localPlayer = getPlayerState(gameState.localPlayerId);
-            const opponentPlayer = currentGameState.players.find(p => p.id !== gameState.localPlayerId);
-            const player1LeaderUid = localPlayer?.leaderCard?.uid;
-            const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
-
-            if (targetUid === player1LeaderUid) {
-                targetElement = document.getElementById('player1-avatar');
-            } else if (targetUid === player2LeaderUid) {
-                targetElement = document.getElementById('player2-avatar');
-            }
-        }
+        const targetElement = resolveRenderableTargetElement(targetUid);
 
         if (targetElement) {
             if (canSelectChoiceTarget(targetUid)) {
@@ -3510,10 +4772,12 @@ function renderPlayableCardHighlights(currentGameState) {
     playerState.hand.forEach(cardInstance => {
         if (!cardInstance) return;
 
-        const cardElement = player1HandEl.querySelector(`.card[data-uid="${cardInstance.uid}"]`);
+        const handCardUid = getCardUid(cardInstance);
+        if (!handCardUid) return;
+        const cardElement = player1HandEl.querySelector(`.card[data-uid="${handCardUid}"]`);
         if (!cardElement) return; // Skip if element not found
 
-        const playabilityInfo = gameState.playabilityCache[cardInstance.uid];
+        const playabilityInfo = handCardUid ? getPlayabilityForCard(handCardUid, currentPlayerId) : null;
 
         // Remove previous highlights first
         cardElement.classList.remove('playable', 'requires-target', 'no-valid-targets', 'can-play-without-target');
@@ -3635,19 +4899,18 @@ export function updateCardActionButtons(cardInstance) {
     }
 
     if (actionState.showAct) {
-        const actAbilityEntries = Array.isArray(actionState.actAbilities) && actionState.actAbilities.length > 0
-            ? actionState.actAbilities
-            : [null];
+        const actAbilityEntries = getActAbilityEntries(actionState);
         actAbilityEntries.forEach((actAbility, index) => {
             const actBtn = document.createElement('button');
             actBtn.className = 'act-button';
-            const isPlayable = actAbility ? actAbility.isPlayable !== false : actionState.actPlayable !== false;
-            const failureReason = actAbility?.failureReason ?? actionState.actFailureReason;
+            const actButtonState = resolveActButtonState(actionState, actAbility);
             const actLabel = getBattleActionLabel('act', index, actAbilityEntries.length);
             actBtn.textContent = actLabel;
-            actBtn.disabled = actionState.usedThisTurn || isPlayable === false;
-            if (!actionState.usedThisTurn && isPlayable === false && failureReason) {
-                actBtn.title = failureReason;
+            actBtn.disabled = actButtonState.disabled;
+            if (actButtonState.title) {
+                actBtn.title = actButtonState.title;
+            } else {
+                actBtn.removeAttribute('title');
             }
             actBtn.dataset.actUid = cardUid;
             const abilityRuntimeId = actAbility?.abilityRuntimeId ?? actAbility?.AbilityRuntimeId ?? '';
@@ -3667,6 +4930,26 @@ export function updateActButtonState(cardInstance) {
     const cardElement = document.querySelector(`.field-card[data-uid="${cardUid}"]`);
     if (cardElement) {
         applyAttackReadinessClasses(cardElement, cardInstance, 'field');
+    }
+}
+
+function refreshCardActionControls(cardInstance) {
+    if (!cardInstance) return;
+
+    const zone = String(cardInstance.zone ?? cardInstance.Zone ?? '').trim().toLowerCase();
+    if (zone === 'hand') {
+        const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+        if (!ownerId) return;
+
+        const player = getPlayerState(ownerId);
+        if (!player || !Array.isArray(player.hand)) return;
+
+        updateHandDisplay(player.id, player.hand);
+        return;
+    }
+
+    if (zone === 'field') {
+        updateActButtonState(cardInstance);
     }
 }
 
@@ -3711,7 +4994,7 @@ function renderActionButtons(currentGameState) {
     const isLocalPlayerTurn = currentGameState.localPlayerId === currentGameState.currentPlayerId;
 
     if (currentGameState.phase === 'Mulligan') {
-        const localPlayer = currentGameState.players?.find(p => p?.id === currentGameState.localPlayerId) || null;
+        const localPlayer = getPlayerState(currentGameState.localPlayerId);
         const localCompleted = localPlayer?.hasCompletedMulligan === true;
 
         // Mulligan Phase:
@@ -3751,7 +5034,7 @@ function updateReconnectButton() {
             reconnectButtonEl.disabled = true;
         } else {
             const baseText = connectionStatusMessage || '连接已断开';
-            reconnectButtonEl.textContent = `${baseText}，点击重连`;
+            reconnectButtonEl.textContent = `${baseText}`;
             reconnectButtonEl.disabled = false;
         }
         confirmMulliganButtonEl && (confirmMulliganButtonEl.style.display = 'none');
@@ -3806,23 +5089,7 @@ function showDamageNumber(targetUid, damageAmount) {
         return;
     }
 
-    let targetElement = null;
-    // --- REVISED: Find target element, handling actual Leader Instance IDs ---
-    const localPlayer = gameState.players.find(p => p.id === gameState.localPlayerId);
-    const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
-    const player1LeaderUid = localPlayer?.leaderCard?.uid;
-    const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
-
-
-    if (player1LeaderUid && targetUid === player1LeaderUid) {
-        targetElement = document.getElementById('player1-avatar');
-    } else if (player2LeaderUid && targetUid === player2LeaderUid) {
-        targetElement = document.getElementById('player2-avatar');
-    } else {
-        // Fallback for non-leader units (followers, amulets if they get UIDs later)
-        targetElement = gameContainerEl?.querySelector(`[data-uid='${targetUid}']`);
-    }
-    // --- END REVISED ---
+    const targetElement = resolveRenderableTargetElement(targetUid);
 
     if (!targetElement) {
         // console.warn(`UI: Could not find target element for UID: ${targetUid}`);
@@ -3868,19 +5135,7 @@ function showHealNumber(targetUid, healAmount) {
         return;
     }
 
-    let targetElement = null;
-    const localPlayer = gameState.players.find(p => p.id === gameState.localPlayerId);
-    const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
-    const player1LeaderUid = localPlayer?.leaderCard?.uid;
-    const player2LeaderUid = opponentPlayer?.leaderCard?.uid;
-
-    if (player1LeaderUid && targetUid === player1LeaderUid) {
-        targetElement = document.getElementById('player1-avatar');
-    } else if (player2LeaderUid && targetUid === player2LeaderUid) {
-        targetElement = document.getElementById('player2-avatar');
-    } else {
-        targetElement = gameContainerEl?.querySelector(`[data-uid='${targetUid}']`);
-    }
+    const targetElement = resolveRenderableTargetElement(targetUid);
 
     if (!targetElement) {
         return;
@@ -3915,10 +5170,161 @@ function showHealNumber(targetUid, healAmount) {
 // 更新 initializeUI 以确保调用事件设置（确保 DOM 加载后执行）
 function initializeUI() {
     cacheDOMElements();
+    removeTransientVisualArtifacts();
+    removeStrayBattleCardArtifacts();
+    hidePreviewDescriptionTooltip();
+    removeChoiceOverlayUI();
     renderBattleCardPreview(null);
     setupGlobalEventListeners(); // 确保调用
 }
 // (确保 initializeUI 在 DOMContentLoaded 后调用)
+
+function handleHandDragPointerDown(event) {
+    if (!gameContainerEl) return;
+    if (isConnectionLocked || isAwaitingPlayerChoice) return;
+    if ((event.button ?? 0) !== 0) return;
+    if (event.target?.closest?.('button, .preview-actions, #choice-overlay-root, #card-detail-modal, #card-detail-image-modal')) return;
+
+    const sourceCardElement = event.target?.closest?.('#player1-hand .hand-card[data-uid]');
+    const cardUid = sourceCardElement?.dataset?.uid;
+    if (!cardUid) return;
+
+    const cardInstance = findCardInstanceByUid(cardUid);
+    if (!isHandDragStartAllowed(cardInstance)) return;
+
+    handDragState.pointerId = event.pointerId;
+    handDragState.isPending = true;
+    handDragState.isActive = false;
+    handDragState.cardUid = String(cardUid);
+    handDragState.sourceElement = sourceCardElement;
+    handDragState.startX = event.clientX;
+    handDragState.startY = event.clientY;
+    handDragState.currentX = event.clientX;
+    handDragState.currentY = event.clientY;
+
+    const perfDebug = getUiPerfDebugState();
+    if (perfDebug.handDrag) {
+        perfDebug.handDrag.sessionId += 1;
+        perfDebug.handDrag.sampleCount = 0;
+        perfDebug.handDrag.pendingRafAt = 0;
+        perfDebug.handDrag.lastPointerMoveAt = getUiNowMs();
+        perfDebug.handDrag.pointerMoveCount = 0;
+        perfDebug.handDrag.metrics = createHandDragPerfSession(
+            perfDebug.handDrag.sessionId,
+            getUiNowMs()
+        );
+    }
+    logUiPerfDebug('hand-drag', 'pointer down', {
+        sessionId: perfDebug.handDrag?.sessionId ?? 0,
+        cardUid: String(cardUid),
+        routeHash: typeof window !== 'undefined' ? window.location.hash : '',
+        menuStarrySkyAnimating: perfDebug.menuStarrySky?.isAnimating === true,
+        menuRoute: perfDebug.menuStarrySky?.route || ''
+    });
+}
+
+function handleHandDragPointerMove(event) {
+    if ((!handDragState.isPending && !handDragState.isActive) || handDragState.pointerId !== event.pointerId) {
+        return;
+    }
+
+    handDragState.currentX = event.clientX;
+    handDragState.currentY = event.clientY;
+    const perfDebug = getUiPerfDebugState();
+    if (perfDebug.handDrag) {
+        perfDebug.handDrag.lastPointerMoveAt = getUiNowMs();
+        perfDebug.handDrag.pointerMoveCount = Number(perfDebug.handDrag.pointerMoveCount || 0) + 1;
+    }
+
+    if (handDragState.isPending) {
+        const dx = handDragState.currentX - handDragState.startX;
+        const dy = handDragState.currentY - handDragState.startY;
+        if (Math.hypot(dx, dy) >= HAND_DRAG_MIN_DISTANCE_PX) {
+            activateHandDragIfNeeded();
+        }
+    }
+
+    if (!handDragState.isActive) {
+        return;
+    }
+
+    const dragTarget = resolveHandDragDropTarget(handDragState.currentX, handDragState.currentY);
+    updateHandDragHover(dragTarget);
+    deferCardArtQueue();
+    scheduleHandDragGhostUpdate();
+    event.preventDefault();
+}
+
+function finalizeHandDrag(event, { wasCancelled = false } = {}) {
+    if ((!handDragState.isPending && !handDragState.isActive) || handDragState.pointerId !== event.pointerId) {
+        return;
+    }
+
+    const wasActiveDrag = handDragState.isActive;
+    const playedCardUid = handDragState.cardUid;
+    const sourceElement = handDragState.sourceElement;
+    const ghostElement = handDragState.ghostElement;
+    const perfDebug = getUiPerfDebugState();
+    const dragMetrics = perfDebug.handDrag?.metrics || null;
+    const pointerMoveCount = Number(perfDebug.handDrag?.pointerMoveCount || 0);
+    let dropTarget = { kind: 'invalid', uid: null, isValid: false };
+
+    if (handDragState.isActive && !wasCancelled) {
+        const clientX = Number.isFinite(event.clientX) ? event.clientX : handDragState.currentX;
+        const clientY = Number.isFinite(event.clientY) ? event.clientY : handDragState.currentY;
+        dropTarget = resolveHandDragDropTarget(clientX, clientY);
+    }
+
+    resetHandDragState({
+        keepGhost: true,
+        preserveSourceClass: dropTarget.isValid && Boolean(playedCardUid)
+    });
+
+    if (!ghostElement) {
+        return;
+    }
+
+    if (!wasActiveDrag) {
+        ghostElement.remove();
+        return;
+    }
+
+    if (dragMetrics) {
+        dragMetrics.pointerMoveCount = pointerMoveCount;
+        dragMetrics.lastPointerMoveAt = Number(perfDebug.handDrag?.lastPointerMoveAt || 0);
+        logUiPerfDebug('hand-drag', 'session summary', {
+            ...summarizeHandDragPerfSession(dragMetrics, getUiNowMs()),
+            dropKind: dropTarget.kind,
+            dropValid: dropTarget.isValid === true,
+            wasCancelled
+        });
+    }
+
+    suppressGameClickUntil = Date.now() + HAND_DRAG_CLICK_SUPPRESS_MS;
+    event.preventDefault();
+
+    if (dropTarget.isValid && playedCardUid) {
+        sourceElement?.classList.remove('hand-drag-origin');
+        sourceElement?.classList.add('hand-play-committed-source');
+        startCommittedHandPlayVisual(playedCardUid, ghostElement);
+        if (dropTarget.kind === 'target' && dropTarget.uid) {
+            void playCard(playedCardUid, dropTarget.uid);
+            return;
+        }
+        void playCard(playedCardUid);
+        return;
+    }
+
+    animateHandDragGhostToSource(ghostElement, sourceElement);
+}
+
+function handleHandDragPointerUp(event) {
+    finalizeHandDrag(event, { wasCancelled: false });
+}
+
+function handleHandDragPointerCancel(event) {
+    finalizeHandDrag(event, { wasCancelled: true });
+}
 
 function handleAttackDragPointerDown(event) {
     if (!gameContainerEl) return;
@@ -3967,8 +5373,29 @@ function handleAttackDragPointerMove(event) {
 
     const targetInfo = resolveAttackDragDropTarget(attackDragState.currentX, attackDragState.currentY);
     updateAttackDragHover(targetInfo);
+    updateAttackDragLeaderZoneLayout();
+    updateAttackDragLeaderZoneState();
     updateAttackDragLine();
     event.preventDefault();
+}
+
+function markAttackDragLeaderZoneConfirmed(zoneEl) {
+    if (!zoneEl) return;
+    zoneEl.classList.remove('is-active', 'is-invalid');
+    zoneEl.classList.add('is-valid', 'is-confirmed');
+}
+
+function scheduleAttackDragLeaderZoneConfirmationCleanup(zoneEl) {
+    if (!zoneEl) return;
+    runTrackedVisualTimeout(() => {
+        if (!zoneEl.isConnected) return;
+        if (!zoneEl.classList.contains('is-confirmed')) return;
+        if (attackDragState.leaderZoneElement === zoneEl) {
+            removeAttackDragLeaderZoneElement();
+            return;
+        }
+        zoneEl.remove();
+    }, ATTACK_DRAG_LEADER_ZONE_CONFIRM_MS);
 }
 
 function finalizeAttackDrag(event, { wasCancelled = false } = {}) {
@@ -3977,18 +5404,27 @@ function finalizeAttackDrag(event, { wasCancelled = false } = {}) {
     }
 
     const wasActiveDrag = attackDragState.isActive;
+    let dropTargetInfo = { kind: 'none', uid: null, element: null, isValid: false };
     let dropTargetUid = null;
 
     if (attackDragState.isActive && !wasCancelled) {
         const clientX = Number.isFinite(event.clientX) ? event.clientX : attackDragState.currentX;
         const clientY = Number.isFinite(event.clientY) ? event.clientY : attackDragState.currentY;
-        const targetInfo = resolveAttackDragDropTarget(clientX, clientY);
-        if (targetInfo.isValid && targetInfo.uid) {
-            dropTargetUid = String(targetInfo.uid);
+        dropTargetInfo = resolveAttackDragDropTarget(clientX, clientY);
+        if (dropTargetInfo.isValid && dropTargetInfo.uid) {
+            dropTargetUid = String(dropTargetInfo.uid);
         }
     }
 
-    resetAttackDragState();
+    const committedToLeaderZone = dropTargetInfo.kind === 'leader-zone' && Boolean(dropTargetUid);
+    if (committedToLeaderZone) {
+        markAttackDragLeaderZoneConfirmed(dropTargetInfo.element);
+    }
+
+    resetAttackDragState({ keepLeaderZone: committedToLeaderZone });
+    if (committedToLeaderZone) {
+        scheduleAttackDragLeaderZoneConfirmationCleanup(dropTargetInfo.element);
+    }
 
     if (wasActiveDrag) {
         suppressGameClickUntil = Date.now() + ATTACK_DRAG_CLICK_SUPPRESS_MS;
@@ -4015,12 +5451,20 @@ function setupGlobalEventListeners() {
     }
     // 先移除旧监听器，防止重复添加 (如果 initializeUI 可能被多次调用)
     gameContainerEl.removeEventListener('click', handleGameClick);
+    gameContainerEl.removeEventListener('pointerdown', handleHandDragPointerDown);
     gameContainerEl.removeEventListener('pointerdown', handleAttackDragPointerDown);
+    window.removeEventListener('pointermove', handleHandDragPointerMove);
+    window.removeEventListener('pointerup', handleHandDragPointerUp);
+    window.removeEventListener('pointercancel', handleHandDragPointerCancel);
     window.removeEventListener('pointermove', handleAttackDragPointerMove);
     window.removeEventListener('pointerup', handleAttackDragPointerUp);
     window.removeEventListener('pointercancel', handleAttackDragPointerCancel);
     gameContainerEl.addEventListener('click', handleGameClick);
+    gameContainerEl.addEventListener('pointerdown', handleHandDragPointerDown);
     gameContainerEl.addEventListener('pointerdown', handleAttackDragPointerDown);
+    window.addEventListener('pointermove', handleHandDragPointerMove);
+    window.addEventListener('pointerup', handleHandDragPointerUp);
+    window.addEventListener('pointercancel', handleHandDragPointerCancel);
     window.addEventListener('pointermove', handleAttackDragPointerMove);
     window.addEventListener('pointerup', handleAttackDragPointerUp);
     window.addEventListener('pointercancel', handleAttackDragPointerCancel);
@@ -4047,7 +5491,7 @@ function togglePlayerInfoCollapse(targetId) {
  * @param {string} playerId - The GUID of the player.
  * @param {number} usesAvailable - Remaining PP+1 uses.
  */
-function updatePpBoostDisplay(playerId, usesAvailable) {
+function updatePpBoostDisplay(playerId, usesAvailable, isArmed = false) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
     const countEl = document.getElementById(`${prefix}-pp-boost-count`);
@@ -4061,36 +5505,46 @@ function updatePpBoostDisplay(playerId, usesAvailable) {
     if (buttonEl) {
         const isLocalTurn = gameState.currentPlayerId === gameState.localPlayerId;
         const isTurnPhase = gameState.phase === 'Main' || gameState.phase === 'TurnStart';
-        const canUse = !isConnectionLocked && isLocalPlayer && isLocalTurn && isTurnPhase && (usesAvailable ?? 0) > 0 && !gameState.isSpectator;
+        const canUse = !isConnectionLocked
+            && isLocalPlayer
+            && isLocalTurn
+            && isTurnPhase
+            && (((usesAvailable ?? 0) > 0) || isArmed)
+            && !gameState.isSpectator;
 
         buttonEl.disabled = !canUse;
         buttonEl.classList.toggle('available', canUse);
+        buttonEl.classList.toggle('armed', isArmed);
 
-        // 确保按钮文本为 PP+1
         const textEl = buttonEl.querySelector('.pp-boost-action-text');
         if (textEl) {
-            textEl.textContent = 'PP+1';
+            textEl.textContent = isArmed ? '取消PP+1' : 'PP+1';
         }
 
-        // 移除复杂的 title，保持简洁
         buttonEl.title = '';
     }
 }
 
-function handleGameDoubleClick(event) {
-    const clickedCardElement = event.target.closest('.card');
-    if (!clickedCardElement) return;
+// 全局点击事件处理器 (事件委托)
+async function showMatchHistoryCardPreview(historyRow) {
+    if (!historyRow?.dataset) return false;
 
-    const uid = clickedCardElement.dataset.uid;
-    if (!uid) return;
-
-    const cardInstance = findCardInstanceByUid(uid);
-    if (cardInstance) {
-        handleCardDoubleClick(cardInstance);
+    const previewCard = await buildMatchHistoryPreviewCard({
+        cardId: historyRow.dataset.historyCardId,
+        cardName: historyRow.dataset.historyCardName,
+        cost: historyRow.dataset.historyCardCost,
+        artPreview: historyRow.dataset.historyCardArtPreview,
+        ownerId: historyRow.dataset.historyOwnerId
+    });
+    if (!previewCard) {
+        return false;
     }
+
+    renderBattleCardPreview(previewCard);
+    setFloatingHandCard(null);
+    return true;
 }
 
-// 全局点击事件处理器 (事件委托)
 function handleGameClick(event) {
     if (Date.now() < suppressGameClickUntil) {
         event.preventDefault();
@@ -4122,9 +5576,11 @@ function handleGameClick(event) {
     const clickedPreviewRoot = event.target.closest('#battle-card-preview');
     const clickedPreviewTooltip = event.target.closest('.preview-description-tooltip');
     const clickedDetailModal = event.target.closest('#card-detail-modal, #card-detail-image-modal');
+    const clickedMatchHistoryRow = event.target.closest('.match-history-card-row');
     const clickedCardOrAvatar = event.target.closest('.card, #player1-avatar, #player2-avatar, .emblem-slot[data-uid]');
-    if (!clickedPreviewRoot && !clickedPreviewTooltip && !clickedDetailModal && !clickedCardOrAvatar) {
+    if (!clickedPreviewRoot && !clickedPreviewTooltip && !clickedDetailModal && !clickedMatchHistoryRow && !clickedCardOrAvatar) {
         renderBattleCardPreview(null);
+        setFloatingHandCard(null);
     }
 
     const clickedSpectatorToggle = event.target.closest('#spectator-toggle-view');
@@ -4147,8 +5603,21 @@ function handleGameClick(event) {
         if (tokenType && tokenValue) {
             event.preventDefault();
             event.stopPropagation();
-            void showPreviewDescriptionTooltip(clickedPreviewToken, tokenType, tokenValue);
+            const previewRoot = clickedPreviewToken.closest('.battle-card-preview');
+            const currentCardId = previewRoot?.dataset?.previewCardId || null;
+            const currentCardName = previewRoot?.dataset?.previewCardName || '';
+            void showPreviewDescriptionTooltip(clickedPreviewToken, tokenType, tokenValue, {
+                currentCardId,
+                currentCardName
+            });
         }
+        return;
+    }
+
+    if (clickedMatchHistoryRow) {
+        event.preventDefault();
+        event.stopPropagation();
+        void showMatchHistoryCardPreview(clickedMatchHistoryRow);
         return;
     }
 
@@ -4174,7 +5643,7 @@ function handleGameClick(event) {
         const clickedHandCard = event.target.closest('#player1-hand .card'); // Only care about player 1 hand
 
         if (clickedMulliganConfirm) {
-            const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+            const localPlayer = getPlayerState(gameState.localPlayerId);
             const handUids = (localPlayer?.hand || []).map(c => c?.uid ?? c?.InstanceId).filter(Boolean);
             const selectedUids = Array.from(mulliganSelectedUids).filter(uid => handUids.includes(uid));
 
@@ -4199,7 +5668,7 @@ function handleGameClick(event) {
             return; // Stop processing click after handling mulligan confirm
 
         } else if (clickedHandCard) {
-            const localPlayer = gameState.players?.find(p => p?.id === gameState.localPlayerId) || null;
+            const localPlayer = getPlayerState(gameState.localPlayerId);
             const localCompleted = localPlayer?.hasCompletedMulligan === true;
             if (localCompleted) return;
 
@@ -4210,6 +5679,7 @@ function handleGameClick(event) {
             if (previewCard) {
                 renderBattleCardPreview(previewCard);
             }
+            setFloatingHandCard(uid);
 
             if (mulliganSelectedUids.has(uid)) {
                 mulliganSelectedUids.delete(uid);
@@ -4228,35 +5698,13 @@ function handleGameClick(event) {
     }
     // --- End Mulligan Phase Logic ---
 
-    // Custom double-click detection for hand cards (avoid native dblclick delay).
-    // During choice mode, disable double-click use to prevent bypassing explicit confirm flow.
-    const clickedCardElementForDouble = event.target.closest('.card');
-    if (clickedCardElementForDouble && !isAwaitingPlayerChoice) {
-        const uid = clickedCardElementForDouble.dataset.uid;
-        if (uid) {
-            const now = Date.now();
-            const isDoubleClick = lastCardClick.uid === uid && (now - lastCardClick.time) <= DOUBLE_CLICK_WINDOW_MS;
-            lastCardClick = { uid, time: now };
-
-            if (isDoubleClick) {
-                lastCardClick = { uid: null, time: 0 };
-                const cardInstance = findCardInstanceByUid(uid);
-                if (cardInstance) {
-                    handleCardDoubleClick(cardInstance);
-                    return;
-                }
-            }
-        }
-    } else {
-        lastCardClick = { uid: null, time: 0 };
-    }
-
     // If not in Mulligan phase, continue with normal game interactions:
 
     // Check if the click was on the End Turn button
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
         if (gameState.isSpectator) return;
+        if (!confirmEndTurnAction()) return;
         // Correctly check for the imported endTurnRequest function
         if (typeof endTurnRequest === 'function') {
             endTurnButtonEl.disabled = true; // Disable button immediately on click
@@ -4500,6 +5948,15 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
     }
 
     renderBattleCardPreview(cardInstance);
+    const clickedCardUid = getCardUid(cardInstance);
+    const cardContext = resolveCardContext(cardInstance);
+    const cardOwnerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+    const isLocalHandCard = cardContext === 'hand' && cardOwnerId === localPlayerId;
+    if (isLocalHandCard && clickedCardUid) {
+        setFloatingHandCard(clickedCardUid);
+    } else {
+        setFloatingHandCard(null);
+    }
 
     // Only allow interactive actions on the local player's turn (preview still allowed).
     if (!isLocalTurn || gameState.isSpectator) {
@@ -4591,8 +6048,12 @@ function confirmEvolutionAction(cardUid, mode = 'evolve') {
     return window.confirm(message);
 }
 
-function handleCardDoubleClick(cardInstance) {
-    void tryUseHandCard(cardInstance, 'double-click');
+function confirmEndTurnAction() {
+    const message = '确认结束当前回合吗？';
+    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+        return true;
+    }
+    return window.confirm(message);
 }
 
 /**
@@ -4802,12 +6263,27 @@ function renderAbilityTriggerToast(root, payload) {
 
 // Route switch lifecycle: remove combat toasts immediately when leaving game page.
 document.addEventListener('cleanupGame', () => {
+    cardAnimationSystem?.dispose();
+    cardAnimationSystem = null;
     resetAttackDragState();
+    hidePreviewDescriptionTooltip();
+    removeChoiceOverlayUI();
+    isAwaitingPlayerChoice = false;
+    currentChoiceRequest = null;
+    currentChoiceSelectedTargetIds = new Set();
+    gameContainerEl?.classList.remove('player-choice-active');
+    setFloatingHandCard(null);
+    renderBattleCardPreview(null);
+    player1FieldEl?.replaceChildren();
+    player2FieldEl?.replaceChildren();
+    player1HandEl?.replaceChildren();
+    player2HandEl?.replaceChildren();
     clearAbilityTriggerToasts();
     clearInMatchChatUiState();
     clearInMatchUsedCardUiState();
     clearTrackedVisualTimeouts();
     removeTransientVisualArtifacts();
+    removeStrayBattleCardArtifacts();
     revealQueue.length = 0;
     revealIsShowing = false;
 });
@@ -5030,7 +6506,7 @@ function renderChoiceOverlayUI() {
             const uid = dto?.InstanceId ?? null;
             if (!uid) return false;
             if (!selectableIdSet.has(String(uid))) return false;
-            return !document.querySelector(`.card[data-uid="${uid}"]`);
+            return !resolveRenderableTargetElement(uid);
         });
 
     if (missingCardInstances.length > 0) {
@@ -5064,5 +6540,3 @@ function renderChoiceOverlayUI() {
         overlayRoot.appendChild(panel);
     }
 }
-
-

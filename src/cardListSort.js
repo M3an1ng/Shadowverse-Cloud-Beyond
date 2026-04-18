@@ -23,11 +23,13 @@ const CARD_TYPE_ORDER = Object.freeze({
     spell: 2,
     amulet: 3,
     crest: 4,
+    faith: 5,
     主战者: 0,
     从者: 1,
     法术: 2,
     护符: 3,
-    纹章: 4
+    纹章: 4,
+    信仰: 5
 });
 
 const CARD_RARITY_ORDER = Object.freeze({

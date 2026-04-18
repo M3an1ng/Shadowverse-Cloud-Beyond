@@ -81,8 +81,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("卡牌位置", Description = "卡牌在所在区域的位置排序")]
         public int? ZoneIndex { get; init; }
 
-        [DslExposable("战场生存时间", Description = "卡牌在战场上存活了多少轮")]
-        public int FieldTurn { get; init; }
+        [DslExposable("区域停留时间", Description = "卡牌在当前区域中停留了多少轮")]
+        public int ZoneStayTurn { get; init; }
 
         [DslExposable("可以攻击", Description = "该卡牌本回合是否可以攻击")]
         public bool CanAttack { get; init; }
@@ -92,6 +92,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         [DslExposable("最大攻击次数", Description = "该卡牌每回合可攻击次数上限")]
         public int MaxAttacksPerTurn { get; init; }
+
+        [DslExposable("当前启动次数", Description = "该卡牌在回合中启动的次数")]
+        public int ActsThisTurn { get; init; }
+
+        [DslExposable("最大启动次数", Description = "该卡牌每回合可启动次数上限")]
+        public int MaxActsPerTurn { get; init; }
+
+        [DslExposable("当前融合次数", Description = "该卡牌在回合中融合的次数")]
+        public int FusionsThisTurn { get; init; }
+
+        [DslExposable("最大融合次数", Description = "该卡牌每回合可融合次数上限")]
+        public int MaxFusionsPerTurn { get; init; }
 
         [DslExposable("变量", Description = "卡牌上的系统与临时计数器")]
         public IReadOnlyDictionary<string, int> CounterMap { get; init; } = new Dictionary<string, int>();
@@ -136,10 +148,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 AbilityKeywords = card.AbilityKeywords?.ToList() ?? new List<AbilityKeyword>(),
                 Countdown = card.Countdown,
                 ZoneIndex = card.ZoneIndex,
-                FieldTurn = card.FieldTurn,
+                ZoneStayTurn = card.ZoneStayTurn,
                 CanAttack = card.CanAttack,
                 AttacksThisTurn = card.AttacksThisTurn,
                 MaxAttacksPerTurn = card.MaxAttacksPerTurn,
+                ActsThisTurn = card.ActsThisTurn,
+                MaxActsPerTurn = card.MaxActsPerTurn,
+                FusionsThisTurn = card.FusionsThisTurn,
+                MaxFusionsPerTurn = card.MaxFusionsPerTurn,
                 CounterMap = new Dictionary<string, int>(card.CounterMap ?? new Dictionary<string, int>()),
                 Spellboost = card.Spellboost,
                 Earthsigil = card.Earthsigil,

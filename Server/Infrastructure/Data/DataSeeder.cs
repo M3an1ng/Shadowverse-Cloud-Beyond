@@ -12,6 +12,8 @@ using System;                   // Needed for Exception
 using Microsoft.Extensions.Hosting;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyond prefix
 {
@@ -260,28 +262,18 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
             var existingDefinitions = await context.CardSetDefinitions.ToListAsync();
             if (existingDefinitions.Count == 0)
             {
-                var seedsToAdd = packSeeds.Count > 0
-                    ? packSeeds
-                    : new List<CardPackSeedDto>
-                    {
-                        new CardPackSeedDto
-                        {
-                            Name = "Legacy",
-                            Abbreviation = "LEG",
-                            Region = 9,
-                            Sequence = 99,
-                            Environment = "Open"
-                        }
-                    };
-
-                var newDefinitions = seedsToAdd
+                var newDefinitions = packSeeds
                     .Where(seed => !string.IsNullOrWhiteSpace(seed.Name))
                     .Select(BuildCardSetEntity)
                     .ToList();
-                context.CardSetDefinitions.AddRange(newDefinitions);
-                await context.SaveChangesAsync();
-                existingDefinitions.AddRange(newDefinitions);
-                logger.LogInformation("Seeded {Count} card set definitions.", newDefinitions.Count);
+
+                if (newDefinitions.Count > 0)
+                {
+                    context.CardSetDefinitions.AddRange(newDefinitions);
+                    await context.SaveChangesAsync();
+                    existingDefinitions.AddRange(newDefinitions);
+                    logger.LogInformation("Seeded {Count} card set definitions.", newDefinitions.Count);
+                }
             }
             else if (packSeeds.Count > 0)
             {
@@ -300,23 +292,6 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     existingDefinitions.AddRange(newDefinitions);
                     logger.LogInformation("Added {Count} missing card set definitions.", newDefinitions.Count);
                 }
-            }
-
-            if (!existingDefinitions.Any(def => def.Name.Equals("Legacy", StringComparison.OrdinalIgnoreCase)))
-            {
-                var legacy = new CardSetDefinition
-                {
-                    Name = "Legacy",
-                    Abbreviation = "LEG",
-                    Region = 9,
-                    Sequence = 99,
-                    Environments = new List<DeckEnvironment> { DeckEnvironment.Open },
-                    CreatedAt = DateTime.UtcNow
-                };
-                context.CardSetDefinitions.Add(legacy);
-                await context.SaveChangesAsync();
-                existingDefinitions.Add(legacy);
-                logger.LogInformation("Added fallback Legacy card set definition.");
             }
 
             return existingDefinitions;
@@ -347,32 +322,18 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
             }
             if (existingDefinitions.Count == 0)
             {
-                var seedsToAdd = packSeeds.Count > 0
-                    ? packSeeds
-                    : new List<CardPackSeedDto>
-                    {
-                        new CardPackSeedDto
-                        {
-                            Name = "Legacy",
-                            Abbreviation = "LEG",
-                            Region = 9,
-                            Sequence = 99,
-                            Environment = "Open",
-                            Description = "Legacy or unmapped packs",
-                            Price = 0,
-                            CardCount = 0,
-                            IsActive = false
-                        }
-                    };
-
-                var newDefinitions = seedsToAdd
+                var newDefinitions = packSeeds
                     .Where(seed => !string.IsNullOrWhiteSpace(seed.Name))
                     .Select(seed => BuildCardPackEntity(seed, ResolveOrCreateSet(seed)))
                     .ToList();
-                context.CardPackDefinitions.AddRange(newDefinitions);
-                await context.SaveChangesAsync();
-                existingDefinitions.AddRange(newDefinitions);
-                logger.LogInformation("Seeded {Count} card pack definitions.", newDefinitions.Count);
+
+                if (newDefinitions.Count > 0)
+                {
+                    context.CardPackDefinitions.AddRange(newDefinitions);
+                    await context.SaveChangesAsync();
+                    existingDefinitions.AddRange(newDefinitions);
+                    logger.LogInformation("Seeded {Count} card pack definitions.", newDefinitions.Count);
+                }
             }
             else if (packSeeds.Count > 0)
             {
@@ -465,6 +426,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 var logger = services.GetRequiredService<ILogger<Program>>(); // Use Program logger context
                 var context = services.GetRequiredService<ApplicationDbContext>();
                 var environment = services.GetRequiredService<IHostEnvironment>(); // Get environment for path resolving
+                var tribeRegistry = services.GetRequiredService<ITribeRegistry>();
 
                 // Construct the path relative to the application's content root
                 var dataDirectory = Path.Combine(environment.ContentRootPath, "..", "data");
@@ -560,15 +522,17 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                         }
                         logger.LogInformation("Mapping {ValidCount} valid DTOs to CardDefinition entities...", validCount);
 
-                        var cardEntities = validCardDtos.Select(dto =>
+                        var cardEntities = new List<CardDefinition>();
+                        foreach (var dto in validCardDtos)
                         {
+                            var normalizedTribes = await tribeRegistry.NormalizeAndRegisterAsync(dto.Tribe);
                             var setDefinition = ResolveSetDefinition(dto.CardSet, setLookup) ?? legacySet;
                             var normalizedCardSet = setDefinition?.Name ?? dto.CardSet;
                             var packDefinition = setDefinition != null && packBySetId.TryGetValue(setDefinition.Id, out var pack)
                                 ? pack
                                 : null;
 
-                            return new CardDefinition
+                            cardEntities.Add(new CardDefinition
                             {
                                 Id = dto.CardId,
                                 Name = dto.Name,
@@ -583,11 +547,11 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                                 Description = dto.Description ?? string.Empty,
                                 IsCollectible = dto.IsCollectible,
                                 Keywords = dto.Keywords,
-                                Tribe = dto.Tribe,
+                                Tribe = normalizedTribes.Count == 0 ? null : normalizedTribes.ToList(),
                                 Class = Enum.TryParse<CardClass>(dto.Class, true, out var cardClass) ? cardClass : CardClass.Neutral,
                                 AbilityIds = new List<long>()
-                            };
-                        }).ToList();
+                            });
+                        }
                         // Note: Removed filtering logic that discarded entities with ID 0,
                         // as 0 is now a valid ID for the Leader card.
                         // int originalEntityCount = cardEntities.Count;
@@ -690,6 +654,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                         // --- END UPDATE CARD ABILITY ASSOCIATIONS ---
                     }
 
+                    await EnsureTribeDefinitionsAsync(context, tribeRegistry, logger);
                     await NormalizeCardArtPathsAsync(context, workspaceRoot, logger);
                 }
                 catch (JsonException jsonEx)
@@ -769,6 +734,26 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 totalUpdates,
                 previewUpdates,
                 detailUpdates);
+        }
+
+        private static async Task EnsureTribeDefinitionsAsync(
+            ApplicationDbContext context,
+            ITribeRegistry tribeRegistry,
+            ILogger logger)
+        {
+            var allTribes = await context.CardDefinitions
+                .AsNoTracking()
+                .Select(card => card.Tribe)
+                .ToListAsync();
+
+            var flattened = allTribes
+                .Where(tribes => tribes != null)
+                .SelectMany(tribes => tribes!)
+                .ToList();
+            flattened.Add(GameConstants.Tribes.MatchAll);
+
+            await tribeRegistry.NormalizeAndRegisterAsync(flattened);
+            logger.LogInformation("Ensured tribe definition bootstrap for {Count} raw tribe entries.", flattened.Count);
         }
 
         private static string? ResolveNormalizedArtPath(string cardFolder, int cardId, string kind, string? currentPath)
@@ -904,3 +889,4 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
         }
     }
 }
+

@@ -36,7 +36,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             TriggeredAbility = triggeredAbility;
             TriggerEventType = triggeringEvent.EventType;
-            AbilityKeywords = triggeredAbility.AbilityKeywords?.Select(k => k.Keyword).ToList() ?? new List<AbilityKeyword>();
+            AbilityKeywords = triggeredAbility.Keywords?.ToList() ?? new List<AbilityKeyword>();
 
             // Set the source as the ability owner if available
             if (triggeredAbility.SourceCard != null)

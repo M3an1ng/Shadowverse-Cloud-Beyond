@@ -26,13 +26,15 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ILogger<PendingActionService> _logger;
         private readonly IServiceProvider _serviceProvider;
         private readonly IMapper _mapper;
+        private readonly IMatchService? _matchService;
 
-        public PendingActionService(IHubContext<GameHub, IGameClient> hubContext, ILogger<PendingActionService> logger, IServiceProvider serviceProvider, IMapper mapper)
+        public PendingActionService(IHubContext<GameHub, IGameClient> hubContext, ILogger<PendingActionService> logger, IServiceProvider serviceProvider, IMapper mapper, IMatchService? matchService = null)
         {
             _hubContext = hubContext;
             _logger = logger;
             _serviceProvider = serviceProvider;
             _mapper = mapper;
+            _matchService = matchService;
         }
 
         public Task<PlayerChoiceResult> WaitForPlayerChoiceAsync(string gameId, PlayerChoiceRequest request, CancellationToken cancellationToken)
@@ -121,7 +123,8 @@ namespace ShadowverseBeyond.Server.Services
 
                 // Create the DTO to send to the client, matching the frontend handler's expectation.
                 var choiceEventDto = new PlayerChoiceRequestedEventDto(request.RequestingPlayerId, request);
-                string groupName = SignalRGroupNames.Player(request.GameId, request.RequestingPlayerId);
+                var roomScopedId = ResolveRoomScopedId(request.GameId);
+                string groupName = SignalRGroupNames.Player(roomScopedId, request.RequestingPlayerId);
 
                 // Asynchronously send the request to all clients in the game group.
                 // The client-side will be responsible for checking if the request is for them.
@@ -191,6 +194,19 @@ namespace ShadowverseBeyond.Server.Services
             {
                 _logger.LogWarning("Could not find pending choice with ID {ChoiceId} to complete.", choiceId);
             }
+        }
+
+        private string ResolveRoomScopedId(string gameOrRoomId)
+        {
+            if (!string.IsNullOrWhiteSpace(gameOrRoomId)
+                && _matchService != null
+                && _matchService.TryGetRoomIdByGameId(gameOrRoomId, out var roomId)
+                && !string.IsNullOrWhiteSpace(roomId))
+            {
+                return roomId;
+            }
+
+            return gameOrRoomId;
         }
 
         public PendingChoiceContext? GetPendingChoiceForPlayer(string gameId, Guid playerId)

@@ -31,6 +31,7 @@ using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 using System.Threading;
+using ShadowverseBeyond.Server.Services;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
 {
@@ -258,13 +259,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// 注销能力
         /// </summary>
         /// <param name="ability">要注销的能力</param>
-        public void UnregisterAbility(IAbility ability)
+        public void UnregisterAbility(IAbility ability, string removalReason = "unregistered")
         {
             if (ability == null) return;
             // Allow system abilities without SourceCard to be unregistered from _allAbilities
             // but SourceCard specific logic should only run if SourceCard exists.
 
-            RegisterAbilityTombstone(ability);
+            RegisterAbilityTombstone(ability, removalReason);
 
             _allAbilities.Remove(ability);
             _abilityTriggeredListenerRuntimeIds.TryRemove(ability.RuntimeId, out _);
@@ -333,7 +334,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// 注销卡片的所有能力
         /// </summary>
         /// <param name="cardInstanceId">卡片实例ID</param>
-        public void UnregisterCardAbilities(Guid cardInstanceId)
+        public void UnregisterCardAbilities(Guid cardInstanceId, string removalReason = "card_unregistered")
         {
             if (_abilitiesByCardId.TryGetValue(cardInstanceId, out var abilities))
             {
@@ -345,7 +346,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     if (cardInstance == null)
                         cardInstance = ability.SourceCard; // 获取CardInstance引用
 
-                    UnregisterAbility(ability);
+                    UnregisterAbility(ability, removalReason);
                 }
 
                 // 注意：UnregisterAbility已经会调用UpdateCardInstanceAbilities，
@@ -373,7 +374,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// 注销由特定Buff赋予的所有能力。
         /// </summary>
         /// <param name="buffId">源Buff的ID。</param>
-        public void UnregisterAbilitiesFromBuff(Guid buffId)
+        public void UnregisterAbilitiesFromBuff(Guid buffId, string removalReason = "buff_removed")
         {
             _logger?.LogDebug("Attempting to unregister abilities for BuffId: {BuffId}", buffId);
             if (_abilityRuntimeIdsByBuffId.TryRemove(buffId, out var abilityRuntimeIds))
@@ -388,7 +389,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 {
                     if (_abilitiesByRuntimeId.TryGetValue(runtimeId, out var abilityToUnregister))
                     {
-                        UnregisterAbility(abilityToUnregister);
+                        UnregisterAbility(abilityToUnregister, removalReason);
                     }
                     else
                     {
@@ -694,8 +695,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return abilities;
             }
 
+            var buffs = context.BuffManager.GetBuffsForCard(cardInstanceId);
+            if (buffs.Count == 0)
+            {
+                return abilities;
+            }
+
+            var buffOrderById = BuildBuffOrderLookup(buffs);
             return abilities
-                .Where(ability => !IsAbilitySuppressed(ability, context))
+                .Where(ability => !IsAbilitySuppressedByBuffs(ability, buffs, buffOrderById))
                 .ToList();
         }
 
@@ -720,9 +728,31 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return false;
             }
 
-            foreach (var buff in buffs)
+            var buffOrderById = BuildBuffOrderLookup(buffs);
+            return IsAbilitySuppressedByBuffs(ability, buffs, buffOrderById);
+        }
+
+        private static bool IsAbilitySuppressedByBuffs(
+            IAbility ability,
+            IReadOnlyList<Buff> orderedBuffs,
+            IReadOnlyDictionary<Guid, int> buffOrderById)
+        {
+            var abilityOriginOrder = ResolveAbilityOriginOrder(ability, buffOrderById);
+
+            foreach (var buff in orderedBuffs)
             {
                 if (!buff.IsActive)
+                {
+                    continue;
+                }
+
+                if (!buffOrderById.TryGetValue(buff.Id, out var suppressionOrder))
+                {
+                    continue;
+                }
+
+                // Suppression only affects abilities that already existed when this suppression buff was applied.
+                if (suppressionOrder <= abilityOriginOrder)
                 {
                     continue;
                 }
@@ -738,6 +768,34 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
 
             return false;
+        }
+
+        private static Dictionary<Guid, int> BuildBuffOrderLookup(IReadOnlyList<Buff> orderedBuffs)
+        {
+            var lookup = new Dictionary<Guid, int>(orderedBuffs.Count);
+            for (var index = 0; index < orderedBuffs.Count; index++)
+            {
+                lookup[orderedBuffs[index].Id] = index + 1;
+            }
+
+            return lookup;
+        }
+
+        private static int ResolveAbilityOriginOrder(IAbility ability, IReadOnlyDictionary<Guid, int> buffOrderById)
+        {
+            if (!ability.SourceBuffId.HasValue)
+            {
+                // Base/system ability: exists before all buffs.
+                return 0;
+            }
+
+            if (buffOrderById.TryGetValue(ability.SourceBuffId.Value, out var originOrder))
+            {
+                return originOrder;
+            }
+
+            // Unknown origin buff: treat as latest to avoid suppressing by older snapshots.
+            return int.MaxValue;
         }
 
         /// <summary>
@@ -842,19 +900,33 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 cardSpecificAbilities.Count, cardInstance.Name, string.Join(", ", cardSpecificAbilities.Select(a => a.Name)));
         }
 
-        private void RegisterAbilityTombstone(IAbility ability)
+        private void RegisterAbilityTombstone(IAbility ability, string removalReason)
         {
             if (ability.RuntimeId == Guid.Empty)
             {
                 return;
             }
 
+            var concreteAbility = ability as Ability;
+            var invalidationVersion = concreteAbility?.QueuedEffectStateVersion ?? 0;
+            var invalidationReason = concreteAbility?.LastQueuedEffectInvalidationReason;
+            var wasSuppressedWhenUnregistered = invalidationVersion > 0;
             var sourceCard = ability.SourceCard;
             var snapshot = new AbilitySnapshot(
                 ability.RuntimeId,
                 ability.SourceCardId,
                 sourceCard?.Name,
-                ability.Name);
+                ability.Name,
+                ability.DefinitionId,
+                ability.SourceBuffId,
+                ability.Keywords.ToList(),
+                ability.KeywordSummary,
+                string.IsNullOrWhiteSpace(removalReason) ? "unregistered" : removalReason,
+                wasSuppressedWhenUnregistered,
+                wasSuppressedWhenUnregistered,
+                concreteAbility?.BuffDisplay ?? true,
+                invalidationVersion,
+                invalidationReason);
 
             _abilityTombstones[ability.RuntimeId] = snapshot;
         }
@@ -1025,6 +1097,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                         return AbilityProcessResult.Cancelled(targetResult.ErrorMessage ?? "Target resolution cancelled.");
                     }
                     return AbilityProcessResult.Failure(targetResult.ErrorMessage ?? "Target resolution failed.");
+                }
+
+                if (targetResult.Status == ResolutionStatus.Skipped)
+                {
+                    _logger?.LogDebug(
+                        "[AbilityManager] Target resolution skipped ability execution for {AbilityKeywords} (RuntimeId: {RuntimeId}): {Reason}",
+                        ability.KeywordSummary,
+                        ability.RuntimeId,
+                        targetResult.ErrorMessage);
+                    return AbilityProcessResult.Success(new List<Effect>(), auraEvents);
                 }
             }
 

@@ -10,7 +10,7 @@
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateHealthDisplay, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
 import { getUserSession } from "./userSession.js";
 
 // --- Constants ---
@@ -22,6 +22,10 @@ const CHAT_HISTORY_LIMIT = 200;
 let signalRConnection = null; // Holds the connection object passed from main.js
 let signalRGuestConnection = null;
 const pendingChatClientMessageIds = new Set();
+
+function normalizePlayerId(value) {
+    return String(value ?? '').trim().toLowerCase();
+}
 
 // 核心游戏状态 (可导出或通过函数访问)
 export let gameState = {
@@ -42,8 +46,12 @@ export let gameState = {
     player2MulliganComplete: false, // Player 2 mulligan status
     // 稍后可能添加: eventLog, effectQueue 等
     lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
-    playabilityCache: {}, // NEW: Cache for card playability check results { cardUid: PlayabilityResultDto }
-    actPlayabilityCache: {}, // Cache for Act playability results { cardUid: ActPlayabilityResultDto }
+    playabilityCache: {}, // Cache for hand playability { [playerId]: { [cardUid]: PlayabilityResultDto } }
+    actPlayabilityCache: {}, // Cache for Act playability results { [playerId]: { [cardUid]: ActPlayabilityResultDto } }
+    playabilityUpdateClock: {
+        hand: {},
+        act: {}
+    },
     gameLog: [], // Local rolling log for UI display
     chatMessages: [], // Room chat history shown in chat panel
     isSpectator: false, // Spectator mode disables actions
@@ -61,6 +69,369 @@ let turnTimerIntervalId = null;
 let turnTimerEndsAtMs = null;
 let turnTimerTotalMs = 0;
 let lastHandledChoiceRequestKey = null;
+const playabilityResyncTimers = new Map();
+const playabilityResyncInflight = new Set();
+const playabilityResyncLastRequestAt = new Map();
+const PLAYABILITY_RESYNC_DEBOUNCE_MS = 120;
+const PLAYABILITY_RESYNC_THROTTLE_MS = 800;
+const playCardRequestLocks = new Map();
+const PLAY_CARD_REQUEST_LOCK_MS = 900;
+
+function normalizeCardUid(value) {
+    return String(value ?? '').trim().toLowerCase();
+}
+
+function isActPlayabilityEntry(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return Object.prototype.hasOwnProperty.call(value, 'isPlayable')
+        || Object.prototype.hasOwnProperty.call(value, 'IsPlayable')
+        || Object.prototype.hasOwnProperty.call(value, 'failureReason')
+        || Object.prototype.hasOwnProperty.call(value, 'FailureReason')
+        || Object.prototype.hasOwnProperty.call(value, 'abilities')
+        || Object.prototype.hasOwnProperty.call(value, 'Abilities');
+}
+
+function isHandPlayabilityEntry(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return Object.prototype.hasOwnProperty.call(value, 'isPlayable')
+        || Object.prototype.hasOwnProperty.call(value, 'IsPlayable')
+        || Object.prototype.hasOwnProperty.call(value, 'failureReason')
+        || Object.prototype.hasOwnProperty.call(value, 'FailureReason')
+        || Object.prototype.hasOwnProperty.call(value, 'selectedPlayMode')
+        || Object.prototype.hasOwnProperty.call(value, 'SelectedPlayMode')
+        || Object.prototype.hasOwnProperty.call(value, 'playModes')
+        || Object.prototype.hasOwnProperty.call(value, 'PlayModes');
+}
+
+function dtoHasAnyProperty(dto, propertyNames) {
+    if (!dto || typeof dto !== 'object') {
+        return false;
+    }
+
+    return propertyNames.some(name => Object.prototype.hasOwnProperty.call(dto, name));
+}
+
+function restoreFieldIfDtoMissing(existingInstance, preservedValue, cardDto, dtoPropertyNames, instancePropertyName) {
+    if (!dtoHasAnyProperty(cardDto, dtoPropertyNames) && preservedValue !== undefined) {
+        existingInstance[instancePropertyName] = preservedValue;
+    }
+}
+
+function getPlayabilityBucketForPlayer(playerId, createIfMissing = false) {
+    const playerKey = normalizePlayerId(playerId);
+    if (!playerKey) return null;
+
+    if (!gameState.playabilityCache || typeof gameState.playabilityCache !== 'object') {
+        gameState.playabilityCache = {};
+    }
+
+    const existing = gameState.playabilityCache[playerKey];
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+        return existing;
+    }
+
+    if (!createIfMissing) {
+        return null;
+    }
+
+    const bucket = {};
+    gameState.playabilityCache[playerKey] = bucket;
+    return bucket;
+}
+
+export function getPlayabilityForCard(cardUid, playerId = gameState.localPlayerId) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return null;
+
+    const playerBucket = getPlayabilityBucketForPlayer(playerId, false);
+    if (playerBucket) {
+        const match = playerBucket[cardKey];
+        if (match && typeof match === 'object') {
+            return match;
+        }
+    }
+
+    // Backward compatibility: support legacy flat cache during hot-reload/mid-session transitions.
+    const legacyDirect = gameState.playabilityCache?.[cardUid];
+    if (isHandPlayabilityEntry(legacyDirect)) {
+        return legacyDirect;
+    }
+    const legacyNormalized = gameState.playabilityCache?.[cardKey];
+    if (isHandPlayabilityEntry(legacyNormalized)) {
+        return legacyNormalized;
+    }
+
+    return null;
+}
+
+function setPlayabilityForCard(cardUid, playerId, playabilityInfo) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return;
+    const playerBucket = getPlayabilityBucketForPlayer(playerId, true);
+    if (!playerBucket) return;
+    playerBucket[cardKey] = playabilityInfo;
+}
+
+function clearPlayabilityForPlayer(playerId) {
+    const playerKey = normalizePlayerId(playerId);
+    if (!playerKey) return;
+
+    if (gameState.playabilityCache && typeof gameState.playabilityCache === 'object') {
+        delete gameState.playabilityCache[playerKey];
+    }
+
+    if (gameState.actPlayabilityCache && typeof gameState.actPlayabilityCache === 'object') {
+        delete gameState.actPlayabilityCache[playerKey];
+    }
+}
+
+function ensurePlayabilityUpdateClock() {
+    if (!gameState.playabilityUpdateClock || typeof gameState.playabilityUpdateClock !== 'object') {
+        gameState.playabilityUpdateClock = { hand: {}, act: {} };
+        return;
+    }
+    if (!gameState.playabilityUpdateClock.hand || typeof gameState.playabilityUpdateClock.hand !== 'object') {
+        gameState.playabilityUpdateClock.hand = {};
+    }
+    if (!gameState.playabilityUpdateClock.act || typeof gameState.playabilityUpdateClock.act !== 'object') {
+        gameState.playabilityUpdateClock.act = {};
+    }
+}
+
+function parseEventTimestampMs(value) {
+    if (!value) return null;
+    if (value instanceof Date) {
+        const ms = value.getTime();
+        return Number.isFinite(ms) ? ms : null;
+    }
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shouldAcceptPlayabilityUpdate(cacheType, playerId, timestampUtc) {
+    const playerKey = normalizePlayerId(playerId);
+    if (!playerKey) return false;
+
+    ensurePlayabilityUpdateClock();
+    const bucket = cacheType === 'act'
+        ? gameState.playabilityUpdateClock.act
+        : gameState.playabilityUpdateClock.hand;
+    if (!bucket || typeof bucket !== 'object') return true;
+
+    const incomingTimestampMs = parseEventTimestampMs(timestampUtc);
+    if (incomingTimestampMs === null) {
+        return true;
+    }
+
+    const previousTimestampMs = Number(bucket[playerKey]);
+    if (Number.isFinite(previousTimestampMs) && incomingTimestampMs < previousTimestampMs) {
+        return false;
+    }
+
+    bucket[playerKey] = incomingTimestampMs;
+    return true;
+}
+
+function collectZoneCardKeys(cards) {
+    const keys = new Set();
+    if (!Array.isArray(cards)) return keys;
+
+    cards.forEach(card => {
+        const uid = normalizeCardUid(card?.uid ?? card?.Uid);
+        const instanceId = normalizeCardUid(card?.InstanceId ?? card?.instanceId);
+        if (uid) keys.add(uid);
+        if (instanceId) keys.add(instanceId);
+    });
+
+    return keys;
+}
+
+function prunePlayerPlayabilityCache(playerId) {
+    const player = getPlayerState(playerId);
+    if (!player) return;
+
+    const handKeys = collectZoneCardKeys(player.hand);
+    const handBucket = getPlayabilityBucketForPlayer(player.id, false);
+    if (handBucket && typeof handBucket === 'object') {
+        Object.keys(handBucket).forEach(cacheKey => {
+            if (!handKeys.has(normalizeCardUid(cacheKey))) {
+                delete handBucket[cacheKey];
+            }
+        });
+    }
+
+    const fieldKeys = collectZoneCardKeys(player.field);
+    const actBucket = getActPlayabilityBucketForPlayer(player.id, false);
+    if (actBucket && typeof actBucket === 'object') {
+        Object.keys(actBucket).forEach(cacheKey => {
+            if (!fieldKeys.has(normalizeCardUid(cacheKey))) {
+                delete actBucket[cacheKey];
+            }
+        });
+    }
+}
+
+function pruneAllPlayabilityCachesToCurrentState() {
+    const players = Array.isArray(gameState.players) ? gameState.players : [];
+    const validPlayerKeys = new Set(players
+        .map(player => normalizePlayerId(player?.id))
+        .filter(Boolean));
+
+    const pruneBuckets = bucketRoot => {
+        if (!bucketRoot || typeof bucketRoot !== 'object') return;
+        Object.keys(bucketRoot).forEach(playerKey => {
+            if (!validPlayerKeys.has(normalizePlayerId(playerKey))) {
+                delete bucketRoot[playerKey];
+            }
+        });
+    };
+
+    pruneBuckets(gameState.playabilityCache);
+    pruneBuckets(gameState.actPlayabilityCache);
+
+    ensurePlayabilityUpdateClock();
+    pruneBuckets(gameState.playabilityUpdateClock?.hand);
+    pruneBuckets(gameState.playabilityUpdateClock?.act);
+
+    players.forEach(player => {
+        if (!player?.id) return;
+        prunePlayerPlayabilityCache(player.id);
+    });
+}
+
+function arePrimitiveArraysEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+function arePlayModesEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+        const left = a[i] || {};
+        const right = b[i] || {};
+        if (left.mode !== right.mode) return false;
+        if (left.effectiveCost !== right.effectiveCost) return false;
+        if (Boolean(left.isAvailable) !== Boolean(right.isAvailable)) return false;
+    }
+    return true;
+}
+
+function isEquivalentHandPlayability(previousInfo, nextInfo) {
+    if (!previousInfo || !nextInfo) return false;
+    if (Boolean(previousInfo.isPlayable) !== Boolean(nextInfo.isPlayable)) return false;
+    if (Boolean(previousInfo.requiresTargetSelection) !== Boolean(nextInfo.requiresTargetSelection)) return false;
+    if (Boolean(previousInfo.hasValidTargets) !== Boolean(nextInfo.hasValidTargets)) return false;
+    if (Boolean(previousInfo.canPlayWithoutTarget) !== Boolean(nextInfo.canPlayWithoutTarget)) return false;
+    if ((previousInfo.failureReason ?? '') !== (nextInfo.failureReason ?? '')) return false;
+    if ((previousInfo.selectedPlayMode ?? null) !== (nextInfo.selectedPlayMode ?? null)) return false;
+    if ((previousInfo.selectedPlayCost ?? null) !== (nextInfo.selectedPlayCost ?? null)) return false;
+    if ((previousInfo.selectedAbilityRuntimeId ?? null) !== (nextInfo.selectedAbilityRuntimeId ?? null)) return false;
+    if (!arePrimitiveArraysEqual(previousInfo.validTargetIds ?? [], nextInfo.validTargetIds ?? [])) return false;
+    return arePlayModesEqual(previousInfo.playModes ?? [], nextInfo.playModes ?? []);
+}
+
+function isEquivalentActPlayability(previousInfo, nextInfo) {
+    if (!previousInfo || !nextInfo) return false;
+    if (Boolean(previousInfo.isPlayable) !== Boolean(nextInfo.isPlayable)) return false;
+    if (Boolean(previousInfo.requiresTargetSelection) !== Boolean(nextInfo.requiresTargetSelection)) return false;
+    if (Boolean(previousInfo.hasValidTargets) !== Boolean(nextInfo.hasValidTargets)) return false;
+    if ((previousInfo.failureReason ?? '') !== (nextInfo.failureReason ?? '')) return false;
+    if ((previousInfo.actCost ?? null) !== (nextInfo.actCost ?? null)) return false;
+    if (!arePrimitiveArraysEqual(previousInfo.validTargetIds ?? [], nextInfo.validTargetIds ?? [])) return false;
+
+    const prevAbilities = Array.isArray(previousInfo.abilities) ? previousInfo.abilities : [];
+    const nextAbilities = Array.isArray(nextInfo.abilities) ? nextInfo.abilities : [];
+    if (prevAbilities.length !== nextAbilities.length) return false;
+    for (let i = 0; i < prevAbilities.length; i += 1) {
+        const prevAbility = prevAbilities[i] || {};
+        const nextAbility = nextAbilities[i] || {};
+        if ((prevAbility.abilityRuntimeId ?? null) !== (nextAbility.abilityRuntimeId ?? null)) return false;
+        if ((prevAbility.abilityName ?? '') !== (nextAbility.abilityName ?? '')) return false;
+        if ((prevAbility.actCost ?? null) !== (nextAbility.actCost ?? null)) return false;
+        if (Boolean(prevAbility.isPlayable) !== Boolean(nextAbility.isPlayable)) return false;
+        if (Boolean(prevAbility.requiresTargetSelection) !== Boolean(nextAbility.requiresTargetSelection)) return false;
+        if (Boolean(prevAbility.hasValidTargets) !== Boolean(nextAbility.hasValidTargets)) return false;
+        if ((prevAbility.failureReason ?? '') !== (nextAbility.failureReason ?? '')) return false;
+        if (!arePrimitiveArraysEqual(prevAbility.validTargetIds ?? [], nextAbility.validTargetIds ?? [])) return false;
+    }
+
+    return true;
+}
+
+function getActPlayabilityBucketForPlayer(playerId, createIfMissing = false) {
+    const playerKey = normalizePlayerId(playerId);
+    if (!playerKey) return null;
+
+    if (!gameState.actPlayabilityCache || typeof gameState.actPlayabilityCache !== 'object') {
+        gameState.actPlayabilityCache = {};
+    }
+
+    const existing = gameState.actPlayabilityCache[playerKey];
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+        return existing;
+    }
+
+    if (!createIfMissing) {
+        return null;
+    }
+
+    const bucket = {};
+    gameState.actPlayabilityCache[playerKey] = bucket;
+    return bucket;
+}
+
+export function getActPlayabilityForCard(cardUid, playerId = gameState.localPlayerId) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return null;
+
+    const playerBucket = getActPlayabilityBucketForPlayer(playerId, false);
+    if (playerBucket) {
+        const match = playerBucket[cardKey];
+        if (match && typeof match === 'object') {
+            return match;
+        }
+    }
+
+    // Backward compatibility: support legacy flat cache during hot-reload/mid-session transitions.
+    const legacyDirect = gameState.actPlayabilityCache?.[cardUid];
+    if (isActPlayabilityEntry(legacyDirect)) {
+        return legacyDirect;
+    }
+    const legacyNormalized = gameState.actPlayabilityCache?.[cardKey];
+    if (isActPlayabilityEntry(legacyNormalized)) {
+        return legacyNormalized;
+    }
+
+    return null;
+}
+
+function setActPlayabilityForCard(cardUid, playerId, actInfo) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return;
+    const playerBucket = getActPlayabilityBucketForPlayer(playerId, true);
+    if (!playerBucket) return;
+    playerBucket[cardKey] = actInfo;
+}
+
+function removeActPlayabilityForCard(cardUid, playerId) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return;
+    const playerBucket = getActPlayabilityBucketForPlayer(playerId, false);
+    if (playerBucket) {
+        delete playerBucket[cardKey];
+    }
+
+    // Backward compatibility for legacy flat cache key.
+    if (gameState.actPlayabilityCache && typeof gameState.actPlayabilityCache === 'object') {
+        delete gameState.actPlayabilityCache[cardUid];
+        delete gameState.actPlayabilityCache[cardKey];
+    }
+}
 
 function stopTurnTimer() {
     if (turnTimerIntervalId) {
@@ -202,8 +573,9 @@ function getConnectionForPlayer(playerId) {
         return signalRConnection;
     }
 
-    const guestId = gameState.dualControlSeatIds?.guestPlayerId;
-    if (playerId && guestId && playerId === guestId) {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const normalizedGuestId = normalizePlayerId(gameState.dualControlSeatIds?.guestPlayerId);
+    if (normalizedPlayerId && normalizedGuestId && normalizedPlayerId === normalizedGuestId) {
         return signalRGuestConnection || null;
     }
 
@@ -212,6 +584,134 @@ function getConnectionForPlayer(playerId) {
 
 function getActiveConnection() {
     return getConnectionForPlayer(gameState.localPlayerId);
+}
+
+async function requestPlayabilityResyncNow(playerId, reason = '') {
+    const playerKey = normalizePlayerId(playerId);
+    if (!playerKey || gameState.isSpectator) return;
+    if (gameState.phase === 'Mulligan' || gameState.phase === 'GameOver') return;
+
+    const connection = getConnectionForPlayer(playerId);
+    if (!connection || connection.state !== "Connected") {
+        return;
+    }
+    if (playabilityResyncInflight.has(playerKey)) {
+        return;
+    }
+
+    const now = Date.now();
+    const lastAt = Number(playabilityResyncLastRequestAt.get(playerKey) ?? 0);
+    if (Number.isFinite(lastAt) && now - lastAt < PLAYABILITY_RESYNC_THROTTLE_MS) {
+        return;
+    }
+
+    playabilityResyncInflight.add(playerKey);
+    playabilityResyncLastRequestAt.set(playerKey, now);
+
+    try {
+        await connection.invoke("RequestPlayabilityUpdate");
+    } catch (err) {
+        console.warn(`GM: RequestPlayabilityUpdate failed for ${playerId} (${reason || 'unknown'}):`, err);
+    } finally {
+        playabilityResyncInflight.delete(playerKey);
+    }
+}
+
+function schedulePlayabilityResync(playerId, reason = '') {
+    const playerKey = normalizePlayerId(playerId);
+    if (!playerKey || gameState.isSpectator) return;
+
+    const existingTimer = playabilityResyncTimers.get(playerKey);
+    if (existingTimer) {
+        clearTimeout(existingTimer);
+    }
+
+    const timerId = setTimeout(() => {
+        playabilityResyncTimers.delete(playerKey);
+        void requestPlayabilityResyncNow(playerId, reason);
+    }, PLAYABILITY_RESYNC_DEBOUNCE_MS);
+    playabilityResyncTimers.set(playerKey, timerId);
+}
+
+function hasMissingHandPlayability(playerId) {
+    const player = getPlayerState(playerId);
+    if (!player || !Array.isArray(player.hand)) return false;
+    return player.hand.some(card => {
+        const cardUid = card?.uid ?? card?.InstanceId ?? card?.instanceId;
+        if (!cardUid) return false;
+        return !getPlayabilityForCard(cardUid, playerId);
+    });
+}
+
+function hasCardActCapability(card) {
+    if (!card || typeof card !== 'object') {
+        return false;
+    }
+
+    const actAbilities = Array.isArray(card.actAbilities)
+        ? card.actAbilities
+        : (Array.isArray(card.ActAbilities) ? card.ActAbilities : []);
+    return actAbilities.length > 0;
+}
+
+function hasMissingActPlayability(playerId) {
+    const player = getPlayerState(playerId);
+    if (!player || !Array.isArray(player.field)) return false;
+    return player.field.some(card => {
+        if (!hasCardActCapability(card)) {
+            return false;
+        }
+
+        const cardUid = card?.uid ?? card?.InstanceId ?? card?.instanceId;
+        if (!cardUid) return false;
+        return !getActPlayabilityForCard(cardUid, playerId);
+    });
+}
+
+function getPlayabilityResyncCandidatePlayerIds() {
+    if (gameState.dualControl === true) {
+        return [
+            gameState.dualControlSeatIds?.hostPlayerId,
+            gameState.dualControlSeatIds?.guestPlayerId
+        ].filter(Boolean);
+    }
+
+    return [gameState.localPlayerId].filter(Boolean);
+}
+
+function resetPlayabilityResyncState() {
+    playabilityResyncTimers.forEach(timerId => clearTimeout(timerId));
+    playabilityResyncTimers.clear();
+    playabilityResyncInflight.clear();
+    playabilityResyncLastRequestAt.clear();
+}
+
+function isPlayCardRequestLocked(cardUid) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return false;
+    const lockUntil = Number(playCardRequestLocks.get(cardKey) ?? 0);
+    if (!Number.isFinite(lockUntil) || lockUntil <= Date.now()) {
+        playCardRequestLocks.delete(cardKey);
+        return false;
+    }
+    return true;
+}
+
+function lockPlayCardRequest(cardUid, durationMs = PLAY_CARD_REQUEST_LOCK_MS) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return;
+    const safeDuration = Math.max(0, Number(durationMs) || 0);
+    playCardRequestLocks.set(cardKey, Date.now() + safeDuration);
+}
+
+function unlockPlayCardRequest(cardUid) {
+    const cardKey = normalizeCardUid(cardUid);
+    if (!cardKey) return;
+    playCardRequestLocks.delete(cardKey);
+}
+
+function resetPlayCardRequestLocks() {
+    playCardRequestLocks.clear();
 }
 
 function selectDualControlMulliganSeat() {
@@ -225,12 +725,12 @@ function selectDualControlMulliganSeat() {
     const pending = players.filter(p => p && p.hasCompletedMulligan !== true);
     if (!pending.length) return;
 
-    const currentId = gameState.localPlayerId;
-    const currentStillPending = pending.some(p => p.id === currentId);
+    const currentId = normalizePlayerId(gameState.localPlayerId);
+    const currentStillPending = pending.some(p => normalizePlayerId(p?.id) === currentId);
     if (currentStillPending) return;
 
-    const hostId = gameState.dualControlSeatIds?.hostPlayerId;
-    const nextSeat = pending.find(p => p.id === hostId) || pending[0];
+    const hostId = normalizePlayerId(gameState.dualControlSeatIds?.hostPlayerId);
+    const nextSeat = pending.find(p => normalizePlayerId(p?.id) === hostId) || pending[0];
     if (!nextSeat || !nextSeat.id) return;
 
     gameState.localPlayerId = nextSeat.id;
@@ -263,6 +763,11 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     gameState.winner = null;
     gameState.selectedCardUid = null;
     gameState.selectedAttackerUid = null;
+    gameState.playabilityCache = {};
+    gameState.actPlayabilityCache = {};
+    gameState.playabilityUpdateClock = { hand: {}, act: {} };
+    resetPlayabilityResyncState();
+    resetPlayCardRequestLocks();
     gameState.gameLog = []; // Reset log on new session
     gameState.chatMessages = [];
     pendingChatClientMessageIds.clear();
@@ -292,6 +797,11 @@ export function initializeSpectator(gameId) {
     gameState.winner = null;
     gameState.selectedCardUid = null;
     gameState.selectedAttackerUid = null;
+    gameState.playabilityCache = {};
+    gameState.actPlayabilityCache = {};
+    gameState.playabilityUpdateClock = { hand: {}, act: {} };
+    resetPlayabilityResyncState();
+    resetPlayCardRequestLocks();
     gameState.gameLog = [];
     gameState.chatMessages = [];
     pendingChatClientMessageIds.clear();
@@ -381,8 +891,8 @@ export function getCurrentPlayerId() {
 // 新增：根据玩家ID获取玩家状态对象
 export function getPlayerState(playerId) {
     if (!playerId) return null;
-    // FIX: Use p.id which is set during createPlayer from the DTO's playerId
-    return gameState.players.find((p) => p && p.id === playerId);
+    const normalizedTargetId = normalizePlayerId(playerId);
+    return gameState.players.find((p) => p && normalizePlayerId(p.id) === normalizedTargetId) || null;
 }
 
 function normalizeZoneName(zoneValue) {
@@ -488,11 +998,18 @@ function refreshPlayerZoneUi(player, zoneName) {
 
     if (zoneName === "hand") {
         updateHandDisplay(player.id, player.hand);
+        if (normalizePlayerId(player.id) === normalizePlayerId(gameState.localPlayerId)) {
+            renderHighlights(gameState);
+            if (hasMissingHandPlayability(player.id)) {
+                schedulePlayabilityResync(player.id, 'zone-hand-missing-cache');
+            }
+        }
         return;
     }
 
     if (zoneName === "field") {
         updateFieldDisplay(player.id, player.field);
+        renderHighlights(gameState);
         return;
     }
 
@@ -532,13 +1049,17 @@ function adjustZoneCount(player, zoneName, delta) {
 // Removed resolveEffects - Server now handles effect resolution.
 
 export async function playCard(cardUid, targetUid = null) {
+    const cancelCommittedVisual = () => cancelCommittedHandPlayVisual(cardUid);
+
     if (gameState.isSpectator) {
         alert("观战模式：不能进行操作。");
+        cancelCommittedVisual();
         return;
     }
     if (gameState.gameOver) {
         console.warn("GM: Cannot play card - Game is over.");
         alert("游戏已经结束，无法出牌！"); // User feedback
+        cancelCommittedVisual();
         return;
     }
 
@@ -546,6 +1067,7 @@ export async function playCard(cardUid, targetUid = null) {
     if (!cardInstance) {
         console.error(`GM: PlayCard failed - Card instance ${cardUid} not found.`);
         alert("内部错误：无法找到卡牌实例。");
+        cancelCommittedVisual();
         return;
     }
 
@@ -554,6 +1076,13 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard failed - Card ${cardUid} (${cardInstance.name}) is not in hand (Location: ${cardInstance.zone}).`
         );
         // No error display needed, UI should prevent this.
+        cancelCommittedVisual();
+        return;
+    }
+
+    if (isPlayCardRequestLocked(cardUid)) {
+        console.warn(`GM: PlayCard throttled for ${cardUid} to avoid duplicate submission.`);
+        cancelCommittedVisual();
         return;
     }
 
@@ -562,6 +1091,7 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard rejected - Card ${cardUid} (${cardInstance.name}) has CannotUse.`
         );
         alert("该卡牌处于【无法使用】状态。");
+        cancelCommittedVisual();
         return;
     }
 
@@ -573,16 +1103,18 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard failed - Player state not found for owner ${cardInstance.ownerId}.`
         );
         alert("内部错误：无法找到玩家状态。");
+        cancelCommittedVisual();
         return;
     }
 
-    const playabilityInfo = gameState.playabilityCache[cardUid];
+    const playabilityInfo = getPlayabilityForCard(cardUid, playerState.id);
     if (playabilityInfo?.isPlayable === false) {
         const failureReason = playabilityInfo.failureReason || "该卡牌当前无法使用。";
         console.warn(
             `GM: PlayCard rejected - Card ${cardUid} (${cardInstance.name}) is marked unplayable. Reason: ${failureReason}`
         );
         alert(failureReason);
+        cancelCommittedVisual();
         return;
     }
     const selection = resolvePlayModeSelection(playabilityInfo?.playModes, playabilityInfo?.selectedPlayMode);
@@ -609,6 +1141,7 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard rejected - Not local player's turn or local player ID mismatch (Local: ${gameState.localPlayerId}, Current: ${gameState.currentPlayerId}, CardOwner: ${playerState.id}).`
         );
         alert("现在不是你的回合！");
+        cancelCommittedVisual();
         return;
     }
     if (gameState.phase !== "Main") {
@@ -616,13 +1149,16 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.phase}).`
         );
         alert("只能在你的回合主阶段出牌！");
+        cancelCommittedVisual();
         return;
     }
-    if (playerState.pp < effectiveCost) {
+    const spendablePp = (playerState.pp ?? 0) + (playerState.ppBoostArmed ? 1 : 0);
+    if (spendablePp < effectiveCost) {
         console.warn(
-            `GM: PlayCard rejected - Not enough PP for ${cardInstance.name} (Cost: ${effectiveCost}, Have: ${playerState.pp}).`
+            `GM: PlayCard rejected - Not enough PP for ${cardInstance.name} (Cost: ${effectiveCost}, Have: ${spendablePp}).`
         );
         alert("PP不足！"); // UI should prevent this, but double check.
+        cancelCommittedVisual();
         return;
     }
 
@@ -634,6 +1170,7 @@ export async function playCard(cardUid, targetUid = null) {
                 `GM: PlayCard rejected - Field is full (${playerState.field.length}/${MAX_FIELD_SIZE}).`
             );
             alert("战场已满！");
+            cancelCommittedVisual();
             return;
         }
     }
@@ -649,6 +1186,7 @@ export async function playCard(cardUid, targetUid = null) {
             `GM: PlayCard rejected - Spell ${cardInstance.name} requires a target, but none provided.`
         );
         alert("该法术需要指定一个目标！");
+        cancelCommittedVisual();
         return;
     }
 
@@ -661,10 +1199,12 @@ export async function playCard(cardUid, targetUid = null) {
         );
         alert("与服务器连接丢失，无法出牌！");
         // Optionally try to reconnect or inform the user more drastically
+        cancelCommittedVisual();
         return;
     }
 
     try {
+        lockPlayCardRequest(cardUid);
         // Invoke the server method. The server will validate everything again (cost, turn, phase, target, etc.)
         // and handle the actual game logic.
         // Construct the DTO object expected by the server Hub method (PascalCase)
@@ -695,6 +1235,7 @@ export async function playCard(cardUid, targetUid = null) {
         // Rely on event processing for rendering for now.
         // renderGame(gameState); // Consider removing or making conditional
     } catch (err) {
+        unlockPlayCardRequest(cardUid);
         console.error("GM: SignalR 'PlayCard' invocation failed:", err);
         // Attempt to parse a more specific error message if available
         let errorMessage = "服务器通信错误";
@@ -707,6 +1248,7 @@ export async function playCard(cardUid, targetUid = null) {
 
         // Clear selection on error too
         gameState.selectedCardUid = null;
+        cancelCommittedVisual();
         renderHighlights(gameState); // Recover stable highlights after transient clear.
     }
     // New body will be inserted here by next step
@@ -895,8 +1437,8 @@ export async function selectAttackTarget(targetUid) {
     else if (targetIsLeader) {
         // If target is the leader and there's no Ward, check Rush/Storm rules
         const hasStorm = cardHasKeyword(attackerInstance, "Storm");
-        const attackerFieldTurn = attackerInstance.fieldTurn ?? attackerInstance.FieldTurn ?? 0;
-        const isSummoningSick = attackerFieldTurn === 0;
+        const attackerZoneStayTurn = attackerInstance.zoneStayTurn ?? attackerInstance.ZoneStayTurn ?? 0;
+        const isSummoningSick = attackerZoneStayTurn === 0;
 
         // Can attack leader if: has Storm OR is not summoning sick.
         // Rush alone is not enough on the first turn.
@@ -1281,20 +1823,44 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
         return;
     }
 
-    if (cardInstance.hasActAbility !== true) {
+    const hasActCapability = (Array.isArray(cardInstance.actAbilities) && cardInstance.actAbilities.length > 0)
+        || (Array.isArray(cardInstance.ActAbilities) && cardInstance.ActAbilities.length > 0)
+        || Boolean(getActPlayabilityForCard(cardUid, playerState.id));
+    if (!hasActCapability) {
         alert("该卡牌没有启动能力。");
         return;
     }
 
-    const actCache = gameState.actPlayabilityCache[cardUid];
-    if (actCache && actCache.isPlayable === false) {
+    const actCache = getActPlayabilityForCard(cardUid, playerState.id);
+    const isActKnown = Boolean(actCache);
+    if (isActKnown && actCache.isPlayable !== true) {
         const reason = actCache.failureReason || "启动条件不满足。";
         alert(reason);
         return;
     }
 
-    const lastUsed = cardInstance.actLastUsedTurnNumber ?? null;
-    if (lastUsed !== null && lastUsed === (playerState.turnNumber ?? 0)) {
+    if (abilityRuntimeId && isActKnown) {
+        const normalizeRuntimeId = value => String(value ?? '').trim().toLowerCase();
+        const expectedRuntimeId = normalizeRuntimeId(abilityRuntimeId);
+        const abilityEntries = Array.isArray(actCache.abilities) ? actCache.abilities : [];
+        if (abilityEntries.length > 0) {
+            const matchedAbility = abilityEntries.find(entry => {
+                const runtimeId = entry?.abilityRuntimeId ?? entry?.AbilityRuntimeId;
+                return normalizeRuntimeId(runtimeId) === expectedRuntimeId;
+            });
+            if (!matchedAbility) {
+                // UNKNOWN/过渡态下采用 fail-open：让服务器做最终权威校验。
+            } else if (matchedAbility.isPlayable !== true) {
+                const reason = matchedAbility.failureReason || "启动条件不满足。";
+                alert(reason);
+                return;
+            }
+        }
+    }
+
+    const actsThisTurn = Number(cardInstance.actsThisTurn ?? cardInstance.ActsThisTurn ?? 0);
+    const maxActsPerTurn = Number(cardInstance.maxActsPerTurn ?? cardInstance.MaxActsPerTurn ?? 1);
+    if (Number.isFinite(actsThisTurn) && Number.isFinite(maxActsPerTurn) && actsThisTurn >= maxActsPerTurn) {
         alert("该卡牌本回合已启动过。");
         return;
     }
@@ -1348,6 +1914,13 @@ export async function requestFusion(cardUid, abilityRuntimeId = null) {
 
     if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Hand") {
         alert("只能融合自己手牌中的卡牌！");
+        return;
+    }
+
+    const fusionsThisTurn = Number(cardInstance.fusionsThisTurn ?? cardInstance.FusionsThisTurn ?? 0);
+    const maxFusionsPerTurn = Number(cardInstance.maxFusionsPerTurn ?? cardInstance.MaxFusionsPerTurn ?? 1);
+    if (Number.isFinite(fusionsThisTurn) && Number.isFinite(maxFusionsPerTurn) && fusionsThisTurn >= maxFusionsPerTurn) {
+        alert("该卡牌本回合已融合过。");
         return;
     }
 
@@ -1572,88 +2145,81 @@ export function handleHandPlayabilityUpdate(updateDto) {
         return;
     }
 
-    // 【临时调试日志】打印收到的原始DTO和当前敌方单位状态
-    const opponentPlayer = gameState.players.find(p => p.id !== gameState.localPlayerId);
-    if (opponentPlayer) {
-        if(opponentPlayer.leaderCard) {
-        }
-    }
-    // --- 结束临时调试日志 ---
-
-    // 只处理本地玩家的可玩性更新
-    if (updateDto.PlayerId !== gameState.localPlayerId) {
+    const updatePlayerId = updateDto.PlayerId;
+    const updateTimestampUtc = updateDto.TimestampUtc ?? updateDto.timestampUtc ?? null;
+    if (!shouldAcceptPlayabilityUpdate('hand', updatePlayerId, updateTimestampUtc)) {
         return;
     }
 
-
-    const localPlayer = getPlayerState(gameState.localPlayerId);
-    if (!localPlayer || !Array.isArray(localPlayer.hand)) {
+    const targetPlayer = getPlayerState(updatePlayerId);
+    if (!targetPlayer || !Array.isArray(targetPlayer.hand)) {
         return;
     }
 
     const normalizeInstanceId = value => String(value ?? '').trim().toLowerCase();
+    const handLookup = new Map();
+    targetPlayer.hand.forEach(card => {
+        if (!card) return;
+        const uidKey = normalizeInstanceId(card.uid);
+        const instanceKey = normalizeInstanceId(card.InstanceId);
+        if (uidKey) handLookup.set(uidKey, card);
+        if (instanceKey) handLookup.set(instanceKey, card);
+    });
     let hasHandCacheUpdate = false;
-    let hasHandDisplayImpact = false;
 
     // 【修复】更新缓存：将服务器端的 InstanceId (Guid) 映射到客户端的 uid (string)
     const rawResults = updateDto.PlayabilityResults;
     Object.entries(rawResults).forEach(([instanceId, playabilityResult]) => {
         const normalizedInstanceId = normalizeInstanceId(instanceId);
-        const cardInstance = localPlayer.hand.find(card => {
-            if (!card) return false;
-            return normalizeInstanceId(card.uid) === normalizedInstanceId
-                || normalizeInstanceId(card.InstanceId) === normalizedInstanceId;
-        });
+        const cardInstance = handLookup.get(normalizedInstanceId) ?? null;
+        const cardUid = cardInstance?.uid ?? cardInstance?.InstanceId ?? instanceId;
+        const previousInfo = getPlayabilityForCard(cardUid, updatePlayerId) ?? null;
+        const playModes = (playabilityResult.PlayModes || []).map(mode => ({
+            mode: mode.Mode,
+            effectiveCost: mode.EffectiveCost,
+            isAvailable: mode.IsAvailable
+        }));
+        const selection = resolvePlayModeSelection(playModes, playabilityResult.SelectedPlayMode);
+
+        const playabilityInfo = {
+            cardUid: cardUid,
+            isPlayable: playabilityResult.IsPlayable,
+            requiresTargetSelection: playabilityResult.RequiresTargetSelection,
+            hasValidTargets: playabilityResult.HasValidTargets,
+            canPlayWithoutTarget: playabilityResult.CanPlayWithoutTarget,
+            failureReason: playabilityResult.FailureReason,
+            validTargetIds: playabilityResult.ValidTargetIds || [],
+            playModes: playModes,
+            selectedPlayMode: selection.mode,
+            selectedPlayCost: selection.cost,
+            selectedAbilityRuntimeId: playabilityResult.SelectedAbilityRuntimeId ?? null
+        };
+
+        if (!isEquivalentHandPlayability(previousInfo, playabilityInfo)) {
+            setPlayabilityForCard(cardUid, updatePlayerId, playabilityInfo);
+            hasHandCacheUpdate = true;
+        }
 
         if (cardInstance) {
-            // 使用统一的UID作为缓存键
-            const cardUid = cardInstance.uid ?? cardInstance.InstanceId;
-            const previousInfo = gameState.playabilityCache[cardUid] ?? null;
-            const playModes = (playabilityResult.PlayModes || []).map(mode => ({
-                mode: mode.Mode,
-                effectiveCost: mode.EffectiveCost,
-                isAvailable: mode.IsAvailable
-            }));
-            const selection = resolvePlayModeSelection(playModes, playabilityResult.SelectedPlayMode);
-
-            const playabilityInfo = {
-                cardUid: cardUid,
-                isPlayable: playabilityResult.IsPlayable,
-                requiresTargetSelection: playabilityResult.RequiresTargetSelection,
-                hasValidTargets: playabilityResult.HasValidTargets,
-                canPlayWithoutTarget: playabilityResult.CanPlayWithoutTarget,
-                failureReason: playabilityResult.FailureReason,
-                validTargetIds: playabilityResult.ValidTargetIds || [],
-                playModes: playModes,
-                selectedPlayMode: selection.mode,
-                selectedPlayCost: selection.cost,
-                selectedAbilityRuntimeId: playabilityResult.SelectedAbilityRuntimeId ?? null
-            };
-            gameState.playabilityCache[cardUid] = playabilityInfo;
-            hasHandCacheUpdate = true;
-            const previousMode = normalizePlayModeValue(previousInfo?.selectedPlayMode);
-            const nextMode = normalizePlayModeValue(playabilityInfo.selectedPlayMode);
-            const previousCost = previousInfo?.selectedPlayCost ?? null;
-            const nextCost = playabilityInfo.selectedPlayCost ?? null;
-            if (!previousInfo || previousMode !== nextMode || previousCost !== nextCost) {
-                hasHandDisplayImpact = true;
-            }
             refreshBattleCardPreviewIfCurrent(cardInstance);
-        } else {
-            console.warn(`GM: Could not find card instance with UID ${instanceId} in local player's hand`);
         }
     });
 
-    if (hasHandCacheUpdate && hasHandDisplayImpact && gameState.phase !== 'Mulligan' && gameState.phase !== 'GameOver') {
-        updateHandDisplay(localPlayer.id, localPlayer.hand);
-    }
+    const isCurrentSeatUpdate = normalizePlayerId(updatePlayerId) === normalizePlayerId(gameState.localPlayerId);
 
     // 可玩性高亮只在主流程阶段需要；Mulligan 阶段频繁重渲染会打断本地交互（如调度选牌）。
     if (gameState.phase === 'Mulligan' || gameState.phase === 'GameOver') {
         return;
     }
 
-    renderHighlights(gameState);
+    // HandPlayabilityUpdate 负责可用性相关视觉重绘（按钮/高亮/爆能费用），避免整手牌重建导致动画抖动。
+    if (isCurrentSeatUpdate && hasHandCacheUpdate) {
+        refreshHandPlayabilityVisuals(updatePlayerId, targetPlayer.hand);
+        renderHighlights(gameState);
+    }
+    if (isCurrentSeatUpdate && hasMissingHandPlayability(updatePlayerId)) {
+        schedulePlayabilityResync(updatePlayerId, 'hand-playability-partial');
+    }
 }
 
 
@@ -1679,6 +2245,7 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
     playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
     playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
+    playerInstance.ppBoostArmed = playerDto.IsPpBoostArmed ?? playerDto.isPpBoostArmed ?? false;
     playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
     playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
     playerInstance.sep = playerDto.CurrentSEP ?? 0;
@@ -1706,6 +2273,7 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
 
     playerInstance.bloodPool = readCounter('bloodpool', playerDto.BloodPool ?? playerDto.bloodPool ?? 0);
     playerInstance.combo = readCounter('combo', playerDto.Combo ?? playerDto.combo ?? 0);
+    playerInstance.rally = readCounter('rally', playerDto.Rally ?? playerDto.rally ?? 0);
     // FIXED: Backend sends CanEvolve, not CanEvolveThisTurn
       playerInstance.canEvolve = playerDto.CanEvolve ?? false; // PascalCase - Fixed property name
       playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? false;
@@ -1770,19 +2338,26 @@ function _hydrateCardZone(zoneDtoArray, ownerId, zoneName) {
             // Add specific hydration for field units' dynamic state
             if (zoneName === 'Field') {
                 // Use PascalCase: CanAttack, CurrentAttack, CurrentHealth, IsEvolved, Keywords
-                cardInstance.canAttack = cardDto.CanAttack ?? false; // PascalCase
-                cardInstance.currentAttack = cardDto.CurrentAttack ?? cardInstance.attack; // PascalCase
-                cardInstance.currentHealth = cardDto.CurrentHealth ?? cardInstance.health; // PascalCase
-                cardInstance.isEvolved = cardDto.IsEvolved ?? false; // PascalCase
+                cardInstance.canAttack = cardDto.CanAttack ?? cardDto.canAttack ?? false;
+                cardInstance.currentAttack = cardDto.CurrentAttack ?? cardDto.currentAttack ?? cardInstance.attack;
+                cardInstance.currentHealth = cardDto.CurrentHealth ?? cardDto.currentHealth ?? cardInstance.health;
+                cardInstance.isEvolved = cardDto.IsEvolved ?? cardDto.isEvolved ?? false;
                 cardInstance.isSuperEvolved = cardDto.IsSuperEvolved ?? cardDto.isSuperEvolved ?? false;
-                cardInstance.fieldTurn = cardDto.FieldTurn ?? 0; // Hydrate FieldTurn
+                cardInstance.zoneStayTurn = cardDto.ZoneStayTurn ?? cardDto.zoneStayTurn ?? cardInstance.zoneStayTurn ?? 0;
                 // ADDED: Hydrate keywords (Ensure DTO has 'Keywords' property as an array)
-                cardInstance.keywords = Array.isArray(cardDto.Keywords) ? [...cardDto.Keywords] : []; // PascalCase
+                cardInstance.keywords = Array.isArray(cardDto.Keywords)
+                    ? [...cardDto.Keywords]
+                    : Array.isArray(cardDto.keywords)
+                        ? [...cardDto.keywords]
+                        : [];
             }
             // ADDED: Hydrate keywords for hand cards too (needed for UI checks like Ward indicator)
             else if (zoneName === 'Hand') {
-                 // Use PascalCase: Keywords
-                 cardInstance.keywords = Array.isArray(cardDto.Keywords) ? [...cardDto.Keywords] : []; // PascalCase
+                 cardInstance.keywords = Array.isArray(cardDto.Keywords)
+                    ? [...cardDto.Keywords]
+                    : Array.isArray(cardDto.keywords)
+                        ? [...cardDto.keywords]
+                        : [];
             }
             // Graveyard keywords might not be needed client-side unless effects depend on them
 
@@ -1827,6 +2402,11 @@ export function updateFullGameState(serverState) {
     if (isNewGameSession) {
         gameState.gameLog = [];
         gameState.chatMessages = [];
+        gameState.playabilityCache = {};
+        gameState.actPlayabilityCache = {};
+        gameState.playabilityUpdateClock = { hand: {}, act: {} };
+        resetPlayabilityResyncState();
+        resetPlayCardRequestLocks();
         pendingChatClientMessageIds.clear();
         renderGameLog(gameState.gameLog);
         clearInMatchChatUiState();
@@ -2046,6 +2626,7 @@ export function updateFullGameState(serverState) {
 
     // 【架构重构】从当前玩家的PlayerState获取回合数
     gameState.turnNumber = gameState.activePlayer?.turnNumber ?? 0;
+    pruneAllPlayabilityCachesToCurrentState();
 
     // Additional sanity checks/logging:
     // Corrected log to show the actual phase after update
@@ -2062,6 +2643,12 @@ export function updateFullGameState(serverState) {
         );
     }
 
+    getPlayabilityResyncCandidatePlayerIds().forEach(playerId => {
+        if (hasMissingHandPlayability(playerId) || hasMissingActPlayability(playerId)) {
+            schedulePlayabilityResync(playerId, 'full-state-missing-playability');
+        }
+    });
+
     return true;
 }
 
@@ -2073,22 +2660,9 @@ export function handleTurnStarted(eventData) {
 
     // --- ROO DEBUG: Log raw event data received by handleTurnStarted ---
     // --- END ROO DEBUG ---
-
-    // --- 【修复】改进缓存清理策略 ---
-    // 只在回合真正开始且游戏状态发生重大变化时清理缓存
-    // 避免频繁清理导致的缓存未命中问题
-    if (eventData?.GameState?.CurrentPlayerId && eventData.GameState.CurrentPlayerId === gameState.localPlayerId) {
-        // 检查是否是新的回合（回合数增加）或游戏状态发生重大变化
-        const currentTurnNumber = eventData.GameState.Players?.find(p => p.Id === gameState.localPlayerId)?.TurnNumber || 0;
-        const previousTurnNumber = gameState.turnNumber || 0;
-
-        if (currentTurnNumber > previousTurnNumber) {
-            gameState.playabilityCache = {}; // Clear the cache object only for new turns
-            gameState.actPlayabilityCache = {}; // Clear Act cache for new turns
-        } else {
-        }
-    }
-    // --- End Cache Clearing ---
+    // 不在 TurnStarted 里抢先清空可用性缓存。
+    // 在网络抖动下，先清空会放大“无缓存窗口”，导致高亮/按钮状态闪烁。
+    // 改为在 updateFullGameState 后按当前手牌/战场进行裁剪。
 
 
     // The "TurnStarted" event now carries the full GameStateDto nested within GameState property.
@@ -2099,6 +2673,9 @@ export function handleTurnStarted(eventData) {
         if (hydrationSucceeded === false) {
             console.error("GM: TurnStarted state hydration failed; skipping turn-start banner.");
             return;
+        }
+        if (gameState.currentPlayerId && hasMissingHandPlayability(gameState.currentPlayerId)) {
+            schedulePlayabilityResync(gameState.currentPlayerId, 'turn-start-missing-cache');
         }
         if (typeof showTurnStartBanner === 'function') {
             showTurnStartBanner(gameState.currentPlayerId);
@@ -2166,7 +2743,7 @@ export function handlePpUpdate(eventData) {
         }
 
         // Render only if PP changed OR hand changed
-        updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP); // Use specific UI update
+        updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true); // Use specific UI update
         // BUG-022 FIX: Update hand display if it was changed
         // Hand update is now handled by handleCardPlayed
     } else {
@@ -2206,9 +2783,14 @@ export function handleSepUpdate(eventData) {
     if (playerToUpdate) {
         playerToUpdate.sep = eventData.CurrentSep;
         playerToUpdate.maxSEP = eventData.MaxSep;
-        playerToUpdate.canSuperEvolve = playerToUpdate.maxSEP > 0 && playerToUpdate.sep > 0;
 
         updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
+        if (Array.isArray(playerToUpdate.field)) {
+            playerToUpdate.field.forEach(card => {
+                updateCardActionButtons(card);
+                refreshBattleCardPreviewIfCurrent(card);
+            });
+        }
     } else {
         console.warn(`GM: SepUpdate event received for invalid player: ${eventData.SourcePlayerId}`);
     }
@@ -2235,7 +2817,7 @@ export function handlePpMaxUpdate(eventData) {
         playerToUpdate.pp = playerToUpdate.maxPP;
     }
 
-    updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP);
+    updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true);
 }
 
 // 新增：仅处理 EP 最大值更新事件
@@ -2283,9 +2865,13 @@ export function handleSepMaxUpdate(eventData) {
         playerToUpdate.sep = playerToUpdate.maxSEP;
     }
 
-    playerToUpdate.canSuperEvolve = playerToUpdate.maxSEP > 0 && playerToUpdate.sep > 0;
-
     updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
+    if (Array.isArray(playerToUpdate.field)) {
+        playerToUpdate.field.forEach(card => {
+            updateCardActionButtons(card);
+            refreshBattleCardPreviewIfCurrent(card);
+        });
+    }
 }
 
 /**
@@ -2297,48 +2883,85 @@ export function handleActPlayabilityUpdate(updateDto) {
         console.warn("GM: Received invalid Act playability update:", updateDto);
         return;
     }
-
-    if (updateDto.PlayerId !== gameState.localPlayerId) {
+    const updatePlayerId = updateDto.PlayerId;
+    const updateTimestampUtc = updateDto.TimestampUtc ?? updateDto.timestampUtc ?? null;
+    if (!shouldAcceptPlayabilityUpdate('act', updatePlayerId, updateTimestampUtc)) {
         return;
     }
 
+    const targetPlayer = getPlayerState(updatePlayerId);
+    if (!targetPlayer || !Array.isArray(targetPlayer.field)) {
+        return;
+    }
+    const normalizeInstanceId = value => String(value ?? '').trim().toLowerCase();
+    const fieldLookup = new Map();
+    targetPlayer.field.forEach(card => {
+        if (!card) return;
+        const uidKey = normalizeInstanceId(card.uid);
+        const instanceKey = normalizeInstanceId(card.InstanceId);
+        if (uidKey) fieldLookup.set(uidKey, card);
+        if (instanceKey) fieldLookup.set(instanceKey, card);
+    });
+
+    let hasActCacheUpdate = false;
     Object.entries(updateDto.PlayabilityResults).forEach(([instanceId, playabilityResult]) => {
-        const localPlayer = getPlayerState(gameState.localPlayerId);
-        if (localPlayer && localPlayer.field) {
-            const cardInstance = localPlayer.field.find(card => card && (card.uid === instanceId || card.InstanceId === instanceId));
+        const normalizedInstanceId = normalizeInstanceId(instanceId);
+        const cardInstance = fieldLookup.get(normalizedInstanceId) ?? null;
+        const cardUid = cardInstance?.uid ?? cardInstance?.InstanceId ?? instanceId;
+        const abilityEntries = Array.isArray(playabilityResult.Abilities)
+            ? playabilityResult.Abilities
+            : (Array.isArray(playabilityResult.abilities) ? playabilityResult.abilities : []);
+        const normalizedAbilities = abilityEntries.map(entry => ({
+            abilityRuntimeId: entry.AbilityRuntimeId ?? entry.abilityRuntimeId ?? null,
+            abilityName: entry.AbilityName ?? entry.abilityName ?? '',
+            actCost: entry.ActCost ?? entry.actCost ?? 0,
+            isPlayable: (entry.IsPlayable ?? entry.isPlayable) === true,
+            requiresTargetSelection: entry.RequiresTargetSelection ?? entry.requiresTargetSelection ?? false,
+            hasValidTargets: entry.HasValidTargets ?? entry.hasValidTargets ?? true,
+            failureReason: entry.FailureReason ?? entry.failureReason ?? '',
+            validTargetIds: entry.ValidTargetIds ?? entry.validTargetIds ?? []
+        }));
+        const existingActInfo = getActPlayabilityForCard(cardUid, updatePlayerId);
+        const hasActCapability = normalizedAbilities.length > 0
+            || Boolean(existingActInfo);
+
+        if (!hasActCapability) {
+            removeActPlayabilityForCard(cardUid, updatePlayerId);
+            hasActCacheUpdate = true;
             if (cardInstance) {
-                const cardUid = cardInstance.uid ?? cardInstance.InstanceId;
-                const abilityEntries = Array.isArray(playabilityResult.Abilities)
-                    ? playabilityResult.Abilities
-                    : (Array.isArray(playabilityResult.abilities) ? playabilityResult.abilities : []);
-                const normalizedAbilities = abilityEntries.map(entry => ({
-                    abilityRuntimeId: entry.AbilityRuntimeId ?? entry.abilityRuntimeId ?? null,
-                    abilityName: entry.AbilityName ?? entry.abilityName ?? '',
-                    actCost: entry.ActCost ?? entry.actCost ?? 0,
-                    isPlayable: entry.IsPlayable ?? entry.isPlayable ?? true,
-                    requiresTargetSelection: entry.RequiresTargetSelection ?? entry.requiresTargetSelection ?? false,
-                    hasValidTargets: entry.HasValidTargets ?? entry.hasValidTargets ?? true,
-                    failureReason: entry.FailureReason ?? entry.failureReason ?? '',
-                    validTargetIds: entry.ValidTargetIds ?? entry.validTargetIds ?? []
-                }));
-                const actInfo = {
-                    cardUid,
-                    isPlayable: playabilityResult.IsPlayable,
-                    actCost: playabilityResult.ActCost,
-                    requiresTargetSelection: playabilityResult.RequiresTargetSelection,
-                    hasValidTargets: playabilityResult.HasValidTargets,
-                    failureReason: playabilityResult.FailureReason,
-                    validTargetIds: playabilityResult.ValidTargetIds || [],
-                    abilities: normalizedAbilities
-                };
-                gameState.actPlayabilityCache[cardUid] = actInfo;
                 updateActButtonState(cardInstance);
                 refreshBattleCardPreviewIfCurrent(cardInstance);
             }
+            return;
+        }
+
+        const actInfo = {
+            cardUid,
+            isPlayable: (playabilityResult.IsPlayable ?? playabilityResult.isPlayable) === true,
+            actCost: playabilityResult.ActCost,
+            requiresTargetSelection: playabilityResult.RequiresTargetSelection,
+            hasValidTargets: playabilityResult.HasValidTargets,
+            failureReason: playabilityResult.FailureReason,
+            validTargetIds: playabilityResult.ValidTargetIds || [],
+            abilities: normalizedAbilities
+        };
+        const previousInfo = getActPlayabilityForCard(cardUid, updatePlayerId) ?? null;
+        if (!isEquivalentActPlayability(previousInfo, actInfo)) {
+            setActPlayabilityForCard(cardUid, updatePlayerId, actInfo);
+            hasActCacheUpdate = true;
+        }
+        if (cardInstance) {
+            updateActButtonState(cardInstance);
+            refreshBattleCardPreviewIfCurrent(cardInstance);
         }
     });
 
-    // Act updates are handled per-card; avoid full re-render to prevent UI jumps.
+    if (gameState.phase !== 'Mulligan' && gameState.phase !== 'GameOver') {
+        const isCurrentSeatUpdate = normalizePlayerId(updatePlayerId) === normalizePlayerId(gameState.localPlayerId);
+        if (isCurrentSeatUpdate && hasActCacheUpdate) {
+            renderHighlights(gameState);
+        }
+    }
 }
 
 /**
@@ -2372,7 +2995,8 @@ export async function requestPpBoost() {
         return;
     }
 
-    if ((playerState.ppBoostUsesAvailable ?? 0) <= 0) {
+    const isArmed = Boolean(playerState.ppBoostArmed);
+    if (!isArmed && (playerState.ppBoostUsesAvailable ?? 0) <= 0) {
         alert("没有可用的PP+1次数。");
         return;
     }
@@ -2386,8 +3010,8 @@ export async function requestPpBoost() {
 }
 
 export function handlePpBoostStateUpdated(eventData) {
-    if (!eventData || !eventData.SourcePlayerId || eventData.PpBoostUsesAvailable === undefined) {
-        console.error("GM Error: Invalid data in handlePpBoostStateUpdated (expected SourcePlayerId, PpBoostUsesAvailable):", eventData);
+    if (!eventData || !eventData.SourcePlayerId || eventData.PpBoostUsesAvailable === undefined || eventData.IsArmed === undefined) {
+        console.error("GM Error: Invalid data in handlePpBoostStateUpdated (expected SourcePlayerId, PpBoostUsesAvailable, IsArmed):", eventData);
         return;
     }
     const playerToUpdate = getPlayerState(eventData.SourcePlayerId);
@@ -2397,7 +3021,17 @@ export function handlePpBoostStateUpdated(eventData) {
     }
 
     playerToUpdate.ppBoostUsesAvailable = eventData.PpBoostUsesAvailable;
-    updatePpBoostDisplay(playerToUpdate.id, playerToUpdate.ppBoostUsesAvailable);
+    playerToUpdate.ppBoostArmed = eventData.IsArmed === true;
+    updatePpDisplay(playerToUpdate.id, playerToUpdate.pp ?? 0, playerToUpdate.maxPP ?? 0, playerToUpdate.ppBoostArmed);
+    updatePpBoostDisplay(playerToUpdate.id, playerToUpdate.ppBoostUsesAvailable, playerToUpdate.ppBoostArmed);
+    clearPlayabilityForPlayer(playerToUpdate.id);
+    if (Array.isArray(playerToUpdate.hand)) {
+        refreshHandPlayabilityVisuals(playerToUpdate.id, playerToUpdate.hand);
+    }
+    if (Array.isArray(playerToUpdate.field)) {
+        playerToUpdate.field.forEach(card => updateCardActionButtons(card));
+    }
+    schedulePlayabilityResync(playerToUpdate.id, 'pp-boost-state');
 }
 
 
@@ -2433,6 +3067,13 @@ export function handleHandUpdated(eventData) {
 
     // Update the hand display
     updateHandDisplay(playerToUpdate.id, playerToUpdate.hand);
+    prunePlayerPlayabilityCache(playerToUpdate.id);
+    if (normalizePlayerId(playerToUpdate.id) === normalizePlayerId(gameState.localPlayerId)) {
+        renderHighlights(gameState);
+        if (hasMissingHandPlayability(playerToUpdate.id)) {
+            schedulePlayabilityResync(playerToUpdate.id, 'hand-updated-missing-cache');
+        }
+    }
 
     // Clear any mulligan selection state since hand was updated
     if (typeof resetMulliganSelection === 'function' && playerToUpdate.id === gameState.localPlayerId) {
@@ -2466,6 +3107,22 @@ export function handleCardInstanceUpdated(eventData) {
         const preservedOwnerId = existingInstance.ownerId;
         const preservedTurnPlayed = existingInstance.turnPlayed;
         const preservedAttackCount = existingInstance.attackCount;
+        const preservedCanAttack = existingInstance.canAttack;
+        const preservedCurrentAttack = existingInstance.currentAttack;
+        const preservedCurrentHealth = existingInstance.currentHealth;
+        const preservedIsEvolved = existingInstance.isEvolved;
+        const preservedIsSuperEvolved = existingInstance.isSuperEvolved;
+        const preservedZoneStayTurn = existingInstance.zoneStayTurn;
+        const preservedKeywords = Array.isArray(existingInstance.keywords)
+            ? [...existingInstance.keywords]
+            : existingInstance.keywords;
+        const preservedActAbilities = Array.isArray(existingInstance.actAbilities)
+            ? [...existingInstance.actAbilities]
+            : existingInstance.actAbilities;
+        const preservedActsThisTurn = existingInstance.actsThisTurn;
+        const preservedMaxActsPerTurn = existingInstance.maxActsPerTurn;
+        const preservedFusionsThisTurn = existingInstance.fusionsThisTurn;
+        const preservedMaxFusionsPerTurn = existingInstance.maxFusionsPerTurn;
 
         Object.assign(existingInstance, updatedInstance);
 
@@ -2477,6 +3134,48 @@ export function handleCardInstanceUpdated(eventData) {
         }
         existingInstance.turnPlayed = preservedTurnPlayed ?? existingInstance.turnPlayed;
         existingInstance.attackCount = preservedAttackCount ?? existingInstance.attackCount;
+
+        restoreFieldIfDtoMissing(existingInstance, preservedCanAttack, cardDto, ['CanAttack', 'canAttack'], 'canAttack');
+        restoreFieldIfDtoMissing(existingInstance, preservedCurrentAttack, cardDto, ['CurrentAttack', 'currentAttack'], 'currentAttack');
+        restoreFieldIfDtoMissing(existingInstance, preservedCurrentHealth, cardDto, ['CurrentHealth', 'currentHealth'], 'currentHealth');
+        restoreFieldIfDtoMissing(existingInstance, preservedIsEvolved, cardDto, ['IsEvolved', 'isEvolved'], 'isEvolved');
+        restoreFieldIfDtoMissing(existingInstance, preservedIsSuperEvolved, cardDto, ['IsSuperEvolved', 'isSuperEvolved'], 'isSuperEvolved');
+        restoreFieldIfDtoMissing(existingInstance, preservedZoneStayTurn, cardDto, ['ZoneStayTurn', 'zoneStayTurn'], 'zoneStayTurn');
+        restoreFieldIfDtoMissing(existingInstance, preservedKeywords, cardDto, ['Keywords', 'keywords'], 'keywords');
+
+        // CardInstanceUpdated 可能只更新部分字段；当 DTO 未携带 Act 字段时保留已有值，
+        // 避免战场更新把前端已同步的启动状态覆盖成默认值。
+        const hasActAbilitiesInDto = Object.prototype.hasOwnProperty.call(cardDto, 'ActAbilities')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'actAbilities');
+        if (!hasActAbilitiesInDto && preservedActAbilities !== undefined) {
+            existingInstance.actAbilities = preservedActAbilities;
+        }
+
+        const hasActStateInDto = Object.prototype.hasOwnProperty.call(cardDto, 'ActsThisTurn')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'actsThisTurn')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'MaxActsPerTurn')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'maxActsPerTurn');
+        if (!hasActStateInDto) {
+            if (preservedActsThisTurn !== undefined) {
+                existingInstance.actsThisTurn = preservedActsThisTurn;
+            }
+            if (preservedMaxActsPerTurn !== undefined) {
+                existingInstance.maxActsPerTurn = preservedMaxActsPerTurn;
+            }
+        }
+
+        const hasFusionStateInDto = Object.prototype.hasOwnProperty.call(cardDto, 'FusionsThisTurn')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'fusionsThisTurn')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'MaxFusionsPerTurn')
+            || Object.prototype.hasOwnProperty.call(cardDto, 'maxFusionsPerTurn');
+        if (!hasFusionStateInDto) {
+            if (preservedFusionsThisTurn !== undefined) {
+                existingInstance.fusionsThisTurn = preservedFusionsThisTurn;
+            }
+            if (preservedMaxFusionsPerTurn !== undefined) {
+                existingInstance.maxFusionsPerTurn = preservedMaxFusionsPerTurn;
+            }
+        }
 
         updatedInstances.push(existingInstance);
 
@@ -2570,6 +3269,13 @@ export function handleCardMoved(eventData) {
         }
     }
 
+    const touchedPlayerIds = new Set(
+        Array.from(touchedZones)
+            .map(key => String(key).split(":")[0])
+            .filter(Boolean)
+    );
+    touchedPlayerIds.forEach(playerId => prunePlayerPlayabilityCache(playerId));
+
     if (movedInstance) {
         refreshBattleCardPreviewIfCurrent(movedInstance);
     }
@@ -2645,6 +3351,9 @@ export function handleCounterChanged(eventData) {
         } else if (normalizedCounter === 'combo') {
             player.combo = newValue;
             updateComboDisplay(player.id, player.combo);
+        } else if (normalizedCounter === 'rally') {
+            player.rally = newValue;
+            updateRallyDisplay(player.id, player.rally);
         } else if (normalizedCounter === 'graveyard') {
             player.graveyardCount = newValue;
             updateGraveyardCountDisplay(player.id, player.graveyardCount);
@@ -2653,6 +3362,16 @@ export function handleCounterChanged(eventData) {
         if (player.leaderCard) {
             refreshBattleCardPreviewIfCurrent(player.leaderCard);
         }
+
+        const relatedCards = [
+            ...(Array.isArray(player.hand) ? player.hand : []),
+            ...(Array.isArray(player.deck) ? player.deck : []),
+            ...(Array.isArray(player.field) ? player.field : []),
+            ...(Array.isArray(player.graveyard) ? player.graveyard : []),
+            ...(Array.isArray(player.extra) ? player.extra : []),
+            ...(Array.isArray(player.emblem) ? player.emblem : [])
+        ];
+        relatedCards.forEach(card => refreshBattleCardPreviewIfCurrent(card));
     }
 }
 
@@ -2769,11 +3488,12 @@ export function handleUnitEvolved(eventData) {
 }
 
 export function handleStatChange(eventData) {
-    // DTO: StatChangeEventDto { TargetEntityUid, NewAttack, NewCurrentHealth, NewMaxHealth }
+    // DTO: StatChangeEventDto { TargetEntityUid, NewAttack, NewCurrentHealth, NewMaxHealth, NewCost }
     const targetUid = eventData?.UnitId ?? eventData?.TargetEntityUid;
     const newAttack = eventData?.NewAttack;
     const newCurrentHealth = eventData?.NewHealth ?? eventData?.NewCurrentHealth;
     const newMaxHealth = eventData?.NewMaxHealth;
+    const newCost = eventData?.NewCost ?? eventData?.newCost;
 
     if (!targetUid) {
         console.error("GM Error: Invalid data in handleStatChange (missing TargetEntityUid/UnitId):", eventData);
@@ -2794,8 +3514,13 @@ export function handleStatChange(eventData) {
         if (newMaxHealth !== undefined && newMaxHealth !== null) {
             unit.maxHealth = newMaxHealth; // PascalCase
         }
-        updateUnitDisplay(unit); // Use specific UI update instead of full render
-        updateHealthDisplay(unit);
+        if (newCost !== undefined && newCost !== null) {
+            unit.currentCost = newCost;
+            unit.CurrentCost = newCost;
+            unit.cost = newCost;
+            unit.Cost = newCost;
+        }
+        updateUnitCombatStats(unit);
     } else {
         console.warn(`GM: StatChange event received for invalid unit ID: ${targetUid}`); // PascalCase
     }
@@ -2915,7 +3640,7 @@ export function handleUnitDestroyed(eventData) {
     const cardName = String(unit.name ?? unit.Name ?? '').trim() || '未知卡牌';
     const cardIdRaw = unit.cardId ?? unit.CardId ?? unit.id;
     const cardId = Number.isFinite(Number(cardIdRaw)) ? Number(cardIdRaw) : null;
-    const costRaw = unit.currentCost ?? unit.CurrentCost ?? unit.cost ?? unit.Cost;
+    const costRaw = unit.cost ?? unit.Cost ?? unit.currentCost ?? unit.CurrentCost;
     const cost = Number.isFinite(Number(costRaw)) ? Number(costRaw) : null;
     const artPreview = unit.artPreview
         ?? unit.ArtPreview
@@ -3065,13 +3790,11 @@ export function handleMulliganStarted(eventData) {
 
 export function handlePlayerMulliganCompleted(eventData) {
     // DTO: PlayerMulliganCompletedEventDto { SourcePlayerId: string } // Assuming PascalCase DTO
-    // Use PascalCase: SourcePlayerId
-    if (!eventData || !eventData.SourcePlayerId) { // PascalCase
+    const completedPlayerId = eventData?.SourcePlayerId ?? eventData?.sourcePlayerId ?? null;
+    if (!eventData || !completedPlayerId) {
         console.error("GM Error: Invalid data in handlePlayerMulliganCompleted:", eventData);
         return;
     }
-    // Use PascalCase: SourcePlayerId
-    const completedPlayerId = eventData.SourcePlayerId;
     const player = getPlayerState(completedPlayerId);
 
     if (player) {
@@ -3121,7 +3844,7 @@ export function handleCardPlayed(eventData) {
     const cardName = String(playedCard?.Name || playedCard?.name || '').trim() || '未知卡牌';
     const cardIdRaw = playedCard?.CardId ?? playedCard?.cardId ?? playedCard?.id;
     const cardId = Number.isFinite(Number(cardIdRaw)) ? Number(cardIdRaw) : null;
-    const costRaw = playedCard?.CurrentCost ?? playedCard?.currentCost ?? playedCard?.Cost ?? playedCard?.cost;
+    const costRaw = playedCard?.Cost ?? playedCard?.cost ?? playedCard?.CurrentCost ?? playedCard?.currentCost;
     const cost = Number.isFinite(Number(costRaw)) ? Number(costRaw) : null;
     const artPreview = playedCard?.ArtPreview
         ?? playedCard?.artPreview
@@ -3259,7 +3982,7 @@ export function handleAttackStateUpdated(eventData) {
 }
 
 export function handleActStateUpdated(eventData) {
-    // DTO: ActStateUpdatedEventDto { TargetCardInstanceId: string, ActLastUsedTurnNumber: number }
+    // DTO: ActStateUpdatedEventDto { TargetCardInstanceId: string, ActsThisTurn: number, MaxActsPerTurn: number }
 
     if (!eventData || !eventData.TargetCardInstanceId) {
         console.error("GM Error: Invalid data in handleActStateUpdated:", eventData);
@@ -3272,8 +3995,29 @@ export function handleActStateUpdated(eventData) {
         return;
     }
 
-    unit.actLastUsedTurnNumber = eventData.ActLastUsedTurnNumber ?? unit.actLastUsedTurnNumber ?? null;
-    updateCardActionButtons(unit);
+    unit.actsThisTurn = eventData.ActsThisTurn ?? unit.actsThisTurn ?? 0;
+    unit.maxActsPerTurn = eventData.MaxActsPerTurn ?? unit.maxActsPerTurn ?? 1;
+    refreshCardActionControls(unit);
+    refreshBattleCardPreviewIfCurrent(unit);
+}
+
+export function handleFusionStateUpdated(eventData) {
+    // DTO: FusionStateUpdatedEventDto { TargetCardInstanceId: string, FusionsThisTurn: number, MaxFusionsPerTurn: number }
+
+    if (!eventData || !eventData.TargetCardInstanceId) {
+        console.error("GM Error: Invalid data in handleFusionStateUpdated:", eventData);
+        return;
+    }
+
+    const unit = findCardInstanceByUid(eventData.TargetCardInstanceId);
+    if (!unit) {
+        console.warn(`GM: FusionStateUpdated event received for invalid card UID: ${eventData.TargetCardInstanceId}`);
+        return;
+    }
+
+    unit.fusionsThisTurn = eventData.FusionsThisTurn ?? unit.fusionsThisTurn ?? 0;
+    unit.maxFusionsPerTurn = eventData.MaxFusionsPerTurn ?? unit.maxFusionsPerTurn ?? 1;
+    refreshCardActionControls(unit);
     refreshBattleCardPreviewIfCurrent(unit);
 }
 

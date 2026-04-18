@@ -21,7 +21,7 @@
 
     /* --- Typography --- */
     --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+    --font-mono: 'JetBrains Mono',  monospace;
     
     --text-xs: 0.75rem;   /* 12px */
     --text-sm: 0.875rem;  /* 14px */

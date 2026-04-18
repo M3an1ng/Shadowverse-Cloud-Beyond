@@ -48,11 +48,14 @@ export function showFavoritesMenu(editor, anchor) {
         menuLeft = viewportWidth - menuWidth - 10;
     }
 
+    const menuZIndex = resolveFavoritesMenuZIndex(anchor);
+
     menu.style.cssText = `
         left: ${menuLeft}px;
         top: ${menuTop}px;
         width: ${menuWidth}px;
         max-height: ${maxMenuHeight}px;
+        z-index: ${menuZIndex};
     `;
 
     document.body.appendChild(menu);
@@ -67,6 +70,25 @@ export function showFavoritesMenu(editor, anchor) {
     editor.favoriteMenuAnchor = anchor;
 
     setTimeout(() => document.addEventListener("click", outsideHandler), 0);
+}
+
+function resolveFavoritesMenuZIndex(anchor) {
+    const fallbackZIndex = 1100;
+    if (typeof window === "undefined" || !anchor || typeof anchor.closest !== "function") {
+        return fallbackZIndex;
+    }
+
+    const pipelineOverlay = anchor.closest(".dsl-pipeline-stage-modal-overlay");
+    if (!pipelineOverlay) {
+        return fallbackZIndex;
+    }
+
+    const parsed = Number.parseInt(window.getComputedStyle(pipelineOverlay).zIndex || "", 10);
+    if (Number.isFinite(parsed)) {
+        return Math.max(fallbackZIndex, parsed + 10);
+    }
+
+    return 1260;
 }
 
 export function toggleFavoritesMenu(editor, anchor) {
@@ -234,10 +256,13 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
         desc.textContent = favorite.expression || favorite.Expression || "";
         desc.className = "dsl-favorites-item__desc";
         item.appendChild(desc);
-        item.addEventListener("click", () => {
+        item.addEventListener("click", async () => {
             const expr = favorite.expression || favorite.Expression || "";
             if (expr) {
-                editor.insertFavoriteExpression(expr);
+                const loaded = await editor.insertFavoriteExpression(expr);
+                if (!loaded) {
+                    return;
+                }
                 editor.markFavoriteUsed(favoriteId);
                 closeMenu();
             }

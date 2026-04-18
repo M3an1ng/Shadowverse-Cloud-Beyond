@@ -62,10 +62,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
             var bindings = new List<EventParameterBinding>();
             var lookup = new Dictionary<string, EventParameterBinding>(StringComparer.OrdinalIgnoreCase);
 
-            var properties = eventType.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                .Where(p => p.GetIndexParameters().Length == 0);
-
-            foreach (var property in properties)
+            foreach (var property in EnumerateParameterProperties(eventType))
             {
                 var attribute = property.GetCustomAttribute<GameEventParameterAttribute>();
                 if (attribute == null)
@@ -74,7 +71,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
                 }
 
                 var getter = CreateGetter(property);
-                var setter = CreateSetter(eventType, property);
+                var setter = CreateSetter(property);
                 var binding = new EventParameterBinding(
                     property.Name,
                     attribute.DisplayName,
@@ -96,6 +93,27 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
             return new EventParameterDescriptor(bindings, lookup);
         }
 
+        private static IEnumerable<PropertyInfo> EnumerateParameterProperties(Type eventType)
+        {
+            var hierarchy = new Stack<Type>();
+            for (var current = eventType;
+                current != null && current != typeof(object) && typeof(IGameEvent).IsAssignableFrom(current);
+                current = current.BaseType)
+            {
+                hierarchy.Push(current);
+            }
+
+            while (hierarchy.Count > 0)
+            {
+                var current = hierarchy.Pop();
+                foreach (var property in current.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                    .Where(p => p.GetIndexParameters().Length == 0))
+                {
+                    yield return property;
+                }
+            }
+        }
+
         private static Func<IGameEvent, object?> CreateGetter(PropertyInfo property)
         {
             var instance = Expression.Parameter(typeof(IGameEvent), "instance");
@@ -105,14 +123,15 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
             return Expression.Lambda<Func<IGameEvent, object?>>(castResult, instance).Compile();
         }
 
-        private static Action<IGameEvent, object?>? CreateSetter(Type declaringType, PropertyInfo property)
+        private static Action<IGameEvent, object?>? CreateSetter(PropertyInfo property)
         {
             var setMethod = property.GetSetMethod(true);
             if (setMethod != null)
             {
-                return BuildSetter(declaringType, property);
+                return BuildSetter(property.DeclaringType!, property);
             }
 
+            var declaringType = property.DeclaringType!;
             var backingField = declaringType.GetField($"<{property.Name}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
             if (backingField != null)
             {

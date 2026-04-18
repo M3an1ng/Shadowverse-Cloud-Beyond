@@ -29,8 +29,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("置入目标快照", "生成事件时记录的置入目标快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? TuckedCardSnapshot { get; }
 
-        public bool TuckApplied { get; private set; }
-
         public TuckEvent(
             CardInstance card,
             EventReasonSource reason = EventReasonSource.Ability,
@@ -48,7 +46,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
-            TuckApplied = false;
             var card = TuckedCard;
             if (card == null)
             {
@@ -62,17 +59,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var result = new DomainOperationResult { Success = true };
-            TuckApplied = card.CurrentZone != CardZone.Deck;
             result.GeneratedEvents.Add(new AddCardToDeckEvent(owner, new List<CardInstance> { card }));
             return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
-            if (!TuckApplied)
-            {
-                return string.Empty;
-            }
 
             var card = TuckedCard;
             if (card == null)

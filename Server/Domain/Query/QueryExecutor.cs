@@ -426,6 +426,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
             }
 
             Func<object, object?> keySelector;
+            var keySemantics = DistinctKeySemantics.Auto;
             if (distinctOp.KeySelector is FormulaValueConfig formulaConfig)
             {
                 var dsl = formulaConfig.Formula;
@@ -438,6 +439,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 TryAddTraceEntry(traceEntries, dsl, tsc, pool.FirstOrDefault());
                 var getter = CompileGetterWithInference(dsl, tsc, pool);
                 keySelector = item => getter(item);
+                keySemantics = InferDistinctKeySemantics(dsl);
             }
             else if (distinctOp.KeySelector is StaticValueConfig staticConfig)
             {
@@ -450,25 +452,10 @@ namespace ShadowverseBeyond.Server.Domain.Query
                 return pool;
             }
 
-            var seen = new HashSet<object?>();
-            var results = new List<object>();
-
-            foreach (var item in pool)
-            {
-                var key = keySelector(item);
-                if (!DslQueryOperations.IsAllowedDistinctKey(key))
-                {
-                    var keyType = key?.GetType().Name ?? "null";
-                    throw new InvalidOperationException($"Distinct key type '{keyType}' is not supported.");
-                }
-
-                if (seen.Add(key))
-                {
-                    results.Add(item);
-                }
-            }
-
-            return results;
+            return DslQueryOperations
+                .DistinctBy(pool, keySelector, keySemantics, tsc.GameContext)
+                .Cast<object>()
+                .ToList();
         }
 
         private List<object> ApplySelectOperation(List<object> pool, SelectOperation selectOp, Abilities.Targets.TargetSelectionContext tsc, List<ConditionTraceEntryDto>? traceEntries)
@@ -558,18 +545,15 @@ namespace ShadowverseBeyond.Server.Domain.Query
             {
                 case SelectionStrategy.First:
                     _logger.LogTrace("Applying Take/First strategy with count: {Count}", count);
-                    return pool.Take(count).ToList();
+                    return DslQueryOperations.TakeFirst(pool, count).Cast<object>().ToList();
 
                 case SelectionStrategy.Last:
                     _logger.LogTrace("Applying Last strategy with count: {Count}", count);
-                    return pool.Skip(Math.Max(0, pool.Count - count)).ToList();
+                    return DslQueryOperations.TakeLast(pool, count).Cast<object>().ToList();
 
                 case SelectionStrategy.Random:
                     _logger.LogTrace("Applying Random strategy with count: {Count}", count);
-                    if (count >= pool.Count) return pool;
-                    if (count == 0) return new List<object>();
-                    var random = new Random(); // Consider seeding for determinism if needed
-                    return pool.OrderBy(x => random.Next()).Take(count).ToList();
+                    return DslQueryOperations.TakeRandom(pool, count).Cast<object>().ToList();
 
                 default:
                     _logger.LogWarning("Unsupported SelectionStrategy: {Strategy}. Returning pool as is.", selectionOp.Strategy);
@@ -733,6 +717,28 @@ namespace ShadowverseBeyond.Server.Domain.Query
             }
 
             return inferredType;
+        }
+
+        private static DistinctKeySemantics InferDistinctKeySemantics(string dsl)
+        {
+            if (string.IsNullOrWhiteSpace(dsl))
+            {
+                return DistinctKeySemantics.Auto;
+            }
+
+            try
+            {
+                var lexer = new Lexer(dsl);
+                var parser = new Parser(lexer.Tokenize());
+                var expression = parser.ParseSingleExpression();
+                return expression == null
+                    ? DistinctKeySemantics.Auto
+                    : DistinctKeySemanticsClassifier.Classify(expression);
+            }
+            catch
+            {
+                return DistinctKeySemantics.Auto;
+            }
         }
 
         // --- Common Helper Methods ---

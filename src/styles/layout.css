@@ -103,7 +103,30 @@
     margin: 0;
     padding: 0;
     position: relative;
+    z-index: 1;
+    isolation: isolate;
     overflow: hidden;
+}
+
+#game-container.has-battle-custom-background::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 244, 220, 0.12);
+    background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.06),
+        rgba(255, 255, 255, 0.015) 24%,
+        rgba(255, 208, 138, 0.04) 72%,
+        rgba(255, 255, 255, 0.02)
+    );
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+        inset 0 0 28px rgba(7, 13, 24, 0.16),
+        0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
 /* HUD Elements (Absolute Positioning within Game Container) */
@@ -116,31 +139,35 @@
     width: 300px;
     pointer-events: none; /* Let clicks pass through */
     transition: all 0.3s ease;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .opponent-info {
-    top: 0;
-    right: 0;
+    top: 1px;
+    right: 1px;
     align-items: flex-end;
+    border-radius: 20px;
     /* HUD Background Plate */
     /* background: linear-gradient(135deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 100%); */
     /* border-left: 2px solid var(--color-error); */ /* Removed to fix edge glitch */
     /* border-bottom: 1px solid rgba(255, 255, 255, 0.1); Removed white border */
-    border-bottom-left-radius: var(--radius-lg);
+    /* border-bottom-left-radius: var(--radius-lg); */
     backdrop-filter: blur(8px);
     padding-top: var(--space-4);
     padding-right: var(--space-4);
 }
 
 .player-info-self {
-    bottom: 0;
-    left: 0;
+    bottom: 1px;
+    left: 1px;
     align-items: flex-start;
+    border-radius: 20px;
     /* HUD Background Plate */
     /* background: linear-gradient(315deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 100%); */
     /* border-right: 2px solid var(--color-primary); */ /* Removed to fix edge glitch */
     /* border-top: 1px solid rgba(255, 255, 255, 0.1); Removed white border */
-    border-top-right-radius: var(--radius-lg);
+    /* border-top-right-radius: var(--radius-lg); */
     backdrop-filter: blur(8px);
     padding-bottom: var(--space-4);
     padding-left: var(--space-4);
@@ -397,7 +424,7 @@
         linear-gradient(180deg, rgba(239, 68, 68, 0.15) 0%, rgba(0,0,0,0.4) 100%);
     display: flex;
     align-items: flex-end; /* Align cards to the bottom of their zone */
-    padding-bottom: var(--space-4);
+    padding-bottom: var(--space-8);
     position: relative;
     flex: 1;
     width: 100%;
@@ -412,7 +439,7 @@
         linear-gradient(0deg, rgba(6, 182, 212, 0.15) 0%, rgba(0,0,0,0.4) 100%);
     display: flex;
     align-items: flex-start; /* Align cards to the top of their zone */
-    padding-top: var(--space-4);
+    padding-top: var(--space-8);
     position: relative;
     flex: 1;
     width: 100%;
@@ -765,6 +792,9 @@
     white-space: nowrap;
     text-shadow: 0 0 20px rgba(0,0,0,0.5);
     transition: all 0.5s ease;
+    user-select: none;
+    -webkit-user-select: none;
+
 }
 
 /* When active/changing, pop out */

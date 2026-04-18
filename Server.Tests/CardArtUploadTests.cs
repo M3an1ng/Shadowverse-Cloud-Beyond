@@ -85,6 +85,7 @@ public class CardArtUploadTests
                 .Returns(() => Task.CompletedTask);
 
             var gameDataProviderMock = new Mock<IGameDataProvider>(MockBehavior.Loose);
+            var tribeRegistryMock = new Mock<ITribeRegistry>(MockBehavior.Loose);
 
             var controller = new CardsController(
                 repository,
@@ -93,7 +94,8 @@ public class CardArtUploadTests
                 db,
                 environment,
                 gameServiceMock.Object,
-                gameDataProviderMock.Object);
+                gameDataProviderMock.Object,
+                tribeRegistryMock.Object);
 
             var pngBytes = CreatePngBytes();
             await using var stream = new MemoryStream(pngBytes);

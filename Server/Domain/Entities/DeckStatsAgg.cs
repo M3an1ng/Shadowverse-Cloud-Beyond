@@ -1,16 +1,17 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
 
 /// <summary>
-/// Aggregated per-deck-shape winrate counters by environment.
+/// Aggregated per-deck-shape winrate counters by environment and deck rule.
 /// </summary>
 public class DeckStatsAgg
 {
     public Guid Id { get; set; }
 
-    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Open;
+    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Rotation;
+    public DeckRule Rule { get; set; } = DeckRule.Standard;
 
     [StringLength(128)]
     public string DeckShapeHash { get; set; } = string.Empty;
@@ -26,3 +27,5 @@ public class DeckStatsAgg
 
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }
+
+

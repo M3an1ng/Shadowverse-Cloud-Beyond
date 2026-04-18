@@ -53,22 +53,27 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "PP+1 can only be used during your turn." };
             }
 
+            if (requestingPlayer.IsPpBoostArmed)
+            {
+                requestingPlayer.ApplyPpBoostArmedChange(false);
+                result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(
+                    requestingPlayer,
+                    requestingPlayer.PpBoostUsesAvailable,
+                    requestingPlayer.IsPpBoostArmed));
+                result.Success = true;
+                return result;
+            }
+
             if (requestingPlayer.PpBoostUsesAvailable <= 0)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "No PP+1 uses available." };
             }
 
-            var allowedMax = requestingPlayer.MaxPlayPoints + GameConstants.PlayPoints.PpBoostOverflowAmount;
-            if (requestingPlayer.CurrentPlayPoints >= allowedMax)
-            {
-                return new DomainOperationResult { Success = false, ErrorMessage = "PP is already at the maximum allowed value." };
-            }
-
-            var targetCurrent = Math.Min(requestingPlayer.CurrentPlayPoints + GameConstants.PlayPoints.PpBoostAmount, allowedMax);
-            result.GeneratedEvents.Add(new PpUpdateEvent(requestingPlayer, targetCurrent, allowOverflow: true));
-
-            requestingPlayer.ApplyPpBoostUsesChange(requestingPlayer.PpBoostUsesAvailable - 1);
-            result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(requestingPlayer, requestingPlayer.PpBoostUsesAvailable));
+            requestingPlayer.ApplyPpBoostArmedChange(true);
+            result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(
+                requestingPlayer,
+                requestingPlayer.PpBoostUsesAvailable,
+                requestingPlayer.IsPpBoostArmed));
 
             result.Success = true;
             return result;

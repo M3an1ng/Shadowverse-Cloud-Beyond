@@ -62,6 +62,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public IAbility? SourceAbility { get; init; }
 
+        /// <summary>
+        /// Invocation-scoped execution overrides applied when an effect explicitly
+        /// triggers another runtime ability.
+        /// </summary>
+        public AbilityInvocationOptions InvocationOptions { get; init; } = AbilityInvocationOptions.None;
+
         [DslExposable("本能力", Description = "当前处理的能力实例")]
         public Ability? Ability => SourceAbility as Ability;
 

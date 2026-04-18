@@ -61,6 +61,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         this.onChange = onChange;
         this.options = options || {};
         this.applyLockedTrigger();
+        this.ability = this.synchronizeDecisionBranchTriggersWithParent(this.ability);
         this.editorMode = this.resolveEditorMode();
         this.configureStepsForMode();
 
@@ -86,6 +87,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
     normalizeAbility(ability) {
         const auraConfig = this.normalizeAuraConfig(ability);
         const rawTrigger = ability.trigger || ability.Trigger || {};
+        const broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
         const trigger = {
             ...rawTrigger,
             eventTypes: rawTrigger.eventTypes || rawTrigger.EventTypes || [],
@@ -105,7 +107,8 @@ export class AbilityEditor extends MetadataDrivenComponent {
             abilityType: ability.abilityType || 1,
             priority: ability.priority || 0,
             isActive: ability.isActive !== false,
-            broadcastOnTrigger: ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true,
+            broadcastOnTrigger,
+            buffDisplay: ability.buffDisplay ?? ability.BuffDisplay ?? broadcastOnTrigger,
             cardName: ability.cardName || ability.CardName || ability.card?.name || '',
             abilitySequence: ability.abilitySequence ?? ability.sequence ?? null,
             type: normalizedType,
@@ -769,6 +772,16 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const broadcastGroup = this.createFormGroup('前台播报', broadcastSwitch);
         formGrid.appendChild(broadcastGroup);
 
+        if (this.isAuraMode()) {
+            const buffDisplaySwitch = this.createToggleSwitch(
+                this.ability.buffDisplay !== false,
+                (checked) => this.updateAbility({ buffDisplay: checked }),
+                '此能力产生的 Buff 显示在前端摘要中'
+            );
+            const buffDisplayGroup = this.createFormGroup('Buff 显示', buffDisplaySwitch);
+            formGrid.appendChild(buffDisplayGroup);
+        }
+
         // 4. 能力关键字 (全宽，横向排列)
         const abilityTagOptions = await this.loadAbilityTagOptions();
         const keywordOptions = abilityTagOptions.filter(opt => opt.value && String(opt.value).toLowerCase() !== 'none');
@@ -1024,7 +1037,30 @@ export class AbilityEditor extends MetadataDrivenComponent {
     // ... (保留原有的辅助方法: updateAbility, loadAbilityTagOptions, buildFinalConfig, cleanup) ...
     
     updateAbility(updates) {
-        this.ability = { ...this.ability, ...updates };
+        const nextAbility = { ...this.ability, ...updates };
+        if (Object.prototype.hasOwnProperty.call(updates || {}, 'trigger')
+            || Object.prototype.hasOwnProperty.call(updates || {}, 'effects')) {
+            this.ability = this.synchronizeDecisionBranchTriggersWithParent(nextAbility);
+            return;
+        }
+
+        this.ability = nextAbility;
+    }
+
+    synchronizeDecisionBranchTriggersWithParent(ability) {
+        if (!ability || typeof ability !== 'object') {
+            return ability;
+        }
+
+        const effects = Array.isArray(ability.effects) ? ability.effects : [];
+        if (!this.effectEditor?.synchronizeDecisionBranchTriggers) {
+            return { ...ability, effects };
+        }
+
+        return {
+            ...ability,
+            effects: this.effectEditor.synchronizeDecisionBranchTriggers(effects, ability.trigger)
+        };
     }
 
     resolveEditorMode() {
@@ -1237,6 +1273,10 @@ export class AbilityEditor extends MetadataDrivenComponent {
             playerCounterRegistrations
         };
         const cleanedAbility = this.stripUiFields(finalAbility);
+        const normalizedEffects = this.effectEditor?.synchronizeDecisionBranchTriggers
+            ? this.effectEditor.synchronizeDecisionBranchTriggers(cleanedAbility.effects, cleanedAbility.trigger)
+            : cleanedAbility.effects;
+        cleanedAbility.effects = normalizedEffects;
         const finalizedEffects = this.effectEditor?.buildEffectsForSave
             ? this.effectEditor.buildEffectsForSave(cleanedAbility.effects, this.metadata)
             : cleanedAbility.effects;
@@ -1269,6 +1309,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 counterRegistrations: cleanedAbility.counterRegistrations,
                 playerCounterRegistrations: cleanedAbility.playerCounterRegistrations,
                 broadcastOnTrigger: cleanedAbility.broadcastOnTrigger !== false,
+                buffDisplay: cleanedAbility.buffDisplay !== false,
                 isActive: cleanedAbility.isActive,
                 version: "1.0"
             })

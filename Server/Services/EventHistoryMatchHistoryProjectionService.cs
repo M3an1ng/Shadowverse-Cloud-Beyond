@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
+using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using System;
@@ -113,7 +114,7 @@ namespace ShadowverseBeyond.Server.Services
                 CardUid = card.InstanceId,
                 CardId = cardId,
                 CardName = cardName,
-                Cost = playCardEvent.PaidCost >= 0 ? playCardEvent.PaidCost : null,
+                Cost = ResolveOriginalCost(card, cardId),
                 ArtPreview = ResolveCardArtPreview(cardId, artCache),
                 DestroyReason = string.Empty,
                 TurnNumber = turnNumber,
@@ -126,10 +127,6 @@ namespace ShadowverseBeyond.Server.Services
             int turnNumber,
             IDictionary<int, string> artCache)
         {
-            if (!destroyEvent.DestroyApplied)
-            {
-                return null;
-            }
 
             var targetSnapshot = destroyEvent.DestroyTargetSnapshot;
             if (targetSnapshot == null)
@@ -148,12 +145,48 @@ namespace ShadowverseBeyond.Server.Services
                 CardUid = targetSnapshot.InstanceId,
                 CardId = cardId,
                 CardName = cardName,
-                Cost = targetSnapshot.CurrentCost >= 0 ? targetSnapshot.CurrentCost : null,
+                Cost = ResolveOriginalCost(targetSnapshot, cardId),
                 ArtPreview = ResolveCardArtPreview(cardId, artCache),
                 DestroyReason = destroyEvent.Reason.ToString(),
                 TurnNumber = turnNumber,
                 TimestampUtc = NormalizeTimestamp(destroyEvent.Timestamp)
             };
+        }
+
+        private int? ResolveOriginalCost(CardInstance? card, int? cardId)
+        {
+            if (card?.CurrentDefinition != null)
+            {
+                return Math.Max(0, card.CurrentDefinition.Cost);
+            }
+
+            return ResolveOriginalCostFromDefinition(cardId);
+        }
+
+        private int? ResolveOriginalCost(CardInstanceSnapshot? snapshot, int? cardId)
+        {
+            if (snapshot?.CurrentDefinition != null)
+            {
+                return Math.Max(0, snapshot.CurrentDefinition.Cost);
+            }
+
+            return ResolveOriginalCostFromDefinition(cardId);
+        }
+
+        private int? ResolveOriginalCostFromDefinition(int? cardId)
+        {
+            if (!cardId.HasValue || cardId.Value <= 0)
+            {
+                return null;
+            }
+
+            var definition = _gameDataProvider.GetCardDefinition(cardId.Value);
+            if (definition == null)
+            {
+                return null;
+            }
+
+            return Math.Max(0, definition.Cost);
         }
 
         private string ResolveCardArtPreview(int? cardId, IDictionary<int, string> artCache)

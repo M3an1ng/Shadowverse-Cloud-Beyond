@@ -1,3 +1,4 @@
+import { renderDescriptionHtml } from './descriptionParser.js';
 import { resolveKeywordInfo, resolveDerivedCardMatch } from './previewDescriptionLookup.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 
@@ -34,16 +35,23 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-function formatTooltipText(value) {
-    return escapeHtml(value).replace(/\n/g, '<br>');
-}
-
 function ensureTooltip() {
     if (activeTooltip) return activeTooltip;
     const tooltip = document.createElement('div');
     tooltip.className = 'preview-description-tooltip';
     tooltip.setAttribute('role', 'dialog');
     tooltip.setAttribute('aria-live', 'polite');
+    tooltip._previewOptions = {};
+    tooltip.addEventListener('click', (event) => {
+        const tokenEl = event.target.closest('[data-preview-token]');
+        if (!tokenEl || !tooltip.contains(tokenEl)) return;
+        const tokenType = tokenEl.dataset.previewToken;
+        const tokenValue = tokenEl.dataset.previewValue;
+        if (!tokenType || !tokenValue) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, tooltip._previewOptions || {});
+    });
     document.body.appendChild(tooltip);
     activeTooltip = tooltip;
     return tooltip;
@@ -126,7 +134,7 @@ function buildKeywordHtml(info, rawLabel) {
         `;
     }
     const kindLabel = info.kind === 'card' ? '卡牌关键字' : '能力关键字';
-    const description = info.description ? formatTooltipText(info.description) : '暂无关键词说明。';
+    const description = info.description ? renderDescriptionHtml(info.description) : '暂无关键词说明。';
     return `
         <div class="preview-tooltip-header">
             <span class="preview-tooltip-title">${escapeHtml(info.name)}</span>
@@ -180,6 +188,7 @@ function resolveDerivedArtUrls(card) {
 export async function showPreviewDescriptionTooltip(anchorEl, tokenType, tokenValue, options = {}) {
     if (!anchorEl || !tokenType || !tokenValue) return;
     const tooltip = ensureTooltip();
+    tooltip._previewOptions = { ...options };
     const requestId = ++activeRequestId;
 
     let contentHtml = '';
@@ -211,7 +220,12 @@ export async function showPreviewDescriptionTooltip(anchorEl, tokenType, tokenVa
             }
             const { previewUrl, detailUrl } = resolveDerivedArtUrls(result.match);
             hidePreviewDescriptionTooltip();
-            showCardDetailModal(result.match, { previewUrl, detailUrl });
+            showCardDetailModal(result.match, {
+                previewUrl,
+                detailUrl,
+                cards: options.cards,
+                navigationMode: 'push'
+            });
             return;
         }
     }

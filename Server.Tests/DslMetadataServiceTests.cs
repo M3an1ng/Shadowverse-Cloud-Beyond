@@ -97,5 +97,65 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal("Int32", frequency!.ReturnTypeName);
             Assert.Equal(2, frequency.Parameters.Count);
         }
+
+        [Fact]
+        public void BuildMetadata_Exposes_Db_Context_With_EnvironmentScoped_CardPools()
+        {
+            var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);
+            var service = new DslMetadataService(registry);
+
+            var metadata = service.GetDslMetadata();
+            Assert.NotNull(metadata);
+
+            var dbContext = metadata.ContextObjects.FirstOrDefault(obj =>
+                string.Equals(obj.Name, "db", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(dbContext);
+            Assert.Equal("CardDefinitionDatabaseRoot", dbContext!.TypeName);
+            Assert.Contains(dbContext.Properties, prop => string.Equals(prop.Name, "rotationCards", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(dbContext.Properties, prop => string.Equals(prop.Name, "unlimitedCards", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(dbContext.Properties, prop => string.Equals(prop.Name, "openCards", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(dbContext.Properties, prop => string.Equals(prop.Name, "currentEnvironmentCards", StringComparison.OrdinalIgnoreCase));
+
+            Assert.True(metadata.TypeMetadata.TryGetValue("CardDefinitionDatabaseRoot", out var typeMetadata));
+            Assert.NotNull(typeMetadata);
+            Assert.Contains(typeMetadata!.Properties, prop => string.Equals(prop.Name, "rotationCards", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(typeMetadata.Properties, prop => string.Equals(prop.Name, "unlimitedCards", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(typeMetadata.Properties, prop => string.Equals(prop.Name, "openCards", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(typeMetadata.Properties, prop => string.Equals(prop.Name, "currentEnvironmentCards", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public void BuildMetadata_Exposes_CardInstance_EffectiveAbilities_Property()
+        {
+            var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);
+            var service = new DslMetadataService(registry);
+
+            var metadata = service.GetDslMetadata();
+            Assert.NotNull(metadata);
+            Assert.True(metadata.TypeMetadata.TryGetValue("CardInstance", out var typeMetadata));
+
+            var property = Assert.Single(typeMetadata!.Properties.Where(prop =>
+                string.Equals(prop.Name, "effectiveAbilities", StringComparison.OrdinalIgnoreCase)));
+
+            Assert.Equal("IReadOnlyList<Ability>", property.TypeName);
+        }
+
+        [Fact]
+        public void BuildMetadata_Merges_EventParameterCache_Into_IGameEvent_TypeMetadata()
+        {
+            var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);
+            var service = new DslMetadataService(registry);
+
+            var metadata = service.GetDslMetadata();
+            Assert.NotNull(metadata);
+            Assert.True(metadata.TypeMetadata.TryGetValue("IGameEvent", out var typeMetadata));
+
+            Assert.Contains(typeMetadata!.Properties, prop =>
+                string.Equals(prop.Name, "currentPlayerId", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(typeMetadata.Properties, prop =>
+                string.Equals(prop.Name, "currentPlayerTurnNumber", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(typeMetadata.Properties, prop =>
+                string.Equals(prop.Name, "sourceAbilityKeywords", StringComparison.OrdinalIgnoreCase));
+        }
     }
 }

@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Entities;
+﻿using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
@@ -92,8 +92,10 @@ public interface IEconomyService
     /// 获取用户元进度状态（金币/任务/排行/每日奖励）
     /// </summary>
     /// <param name="userId">用户ID</param>
+    /// <param name="environment">可选环境过滤（all 表示不过滤）</param>
+    /// <param name="deckRule">可选构筑规则过滤（all 表示不过滤）</param>
     /// <returns>元进度聚合视图</returns>
-    Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId);
+    Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId, string? environment = null, string? deckRule = null);
 
     /// <summary>
     /// 更新用户排名
@@ -173,3 +175,4 @@ public interface IEconomyService
     /// <returns>是否成功</returns>
     Task<bool> InitializeUserEconomyAsync(Guid userId);
 }
+

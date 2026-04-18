@@ -535,13 +535,32 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class ActStateUpdatedEvent : GameEventBase
     {
-        public int ActLastUsedTurnNumber { get; }
+        public int ActsThisTurn { get; }
+        public int MaxActsPerTurn { get; }
 
-        public ActStateUpdatedEvent(CardInstance sourceCard, int actLastUsedTurnNumber, Guid? eventId = null, DateTime? timestamp = null)
+        public ActStateUpdatedEvent(CardInstance sourceCard, int actsThisTurn, int maxActsPerTurn, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.ActStateUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(sourceCard);
-            ActLastUsedTurnNumber = actLastUsedTurnNumber;
+            ActsThisTurn = actsThisTurn;
+            MaxActsPerTurn = maxActsPerTurn;
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when a card's Fusion usage state changes.
+    /// </summary>
+    public class FusionStateUpdatedEvent : GameEventBase
+    {
+        public int FusionsThisTurn { get; }
+        public int MaxFusionsPerTurn { get; }
+
+        public FusionStateUpdatedEvent(CardInstance sourceCard, int fusionsThisTurn, int maxFusionsPerTurn, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.FusionStateUpdated, eventId, timestamp)
+        {
+            Source = TargetInfo.ForCard(sourceCard);
+            FusionsThisTurn = fusionsThisTurn;
+            MaxFusionsPerTurn = maxFusionsPerTurn;
         }
     }
 
@@ -631,18 +650,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
     }
 
     /// <summary>
-    /// Event triggered when a player's PP+1 uses availability changes.
+    /// Event triggered when a player's PP+1 state changes.
     /// </summary>
-    [GameEventMetadata("PP+1次数更新", "当玩家的PP+1可用次数发生变化时触发。", EventType.PpBoostStateUpdated, visibility: EventMetadataVisibility.System)]
+    [GameEventMetadata("PP+1状态更新", "当玩家的PP+1可用次数或预留状态发生变化时触发。", EventType.PpBoostStateUpdated, visibility: EventMetadataVisibility.System)]
     public class PpBoostStateUpdatedEvent : GameEventBase
     {
         public int PpBoostUsesAvailable { get; }
+        public bool IsArmed { get; }
 
-        public PpBoostStateUpdatedEvent(PlayerState player, int usesAvailable, Guid? eventId = null, DateTime? timestamp = null)
+        public PpBoostStateUpdatedEvent(PlayerState player, int usesAvailable, bool isArmed, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.PpBoostStateUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             PpBoostUsesAvailable = usesAvailable;
+            IsArmed = isArmed;
         }
     }
 }

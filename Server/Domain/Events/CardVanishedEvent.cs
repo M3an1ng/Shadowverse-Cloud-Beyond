@@ -34,8 +34,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("消失目标快照", "生成事件时记录的消失目标快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? VanishedCardSnapshot { get; }
 
-        public bool VanishApplied { get; private set; }
-
         public CardVanishedEvent(
             CardInstance card,
             CardZone originalZone,
@@ -60,7 +58,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
-            VanishApplied = false;
             var card = VanishedCard;
             if (card == null)
             {
@@ -76,17 +73,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             // Important: Commit MUST NOT call a method that enqueues another CardVanishedEvent to avoid recursion.
             var result = new DomainOperationResult { Success = true };
             result.GeneratedEvents.Add(new CardMovedEvent(card, card.CurrentZone, CardZone.Removed, CardMoveReason.Vanished));
-            VanishApplied = true;
             return result;
         }
 
         public string GetAnnouncement(GameState gameState)
         {
-            if (!VanishApplied)
-            {
-                return string.Empty;
-            }
-
             var card = VanishedCard;
             if (card == null)
             {

@@ -53,7 +53,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     parameters.DurationType,
                     parameters.DurationParameter,
                     effectKey,
-                    parameters.CanStack);
+                    parameters.CanStack,
+                    parameters.RemoveCondition);
             };
 
             var serviceResult = _targetProcessingService.ProcessTargets(

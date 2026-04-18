@@ -65,6 +65,8 @@ public class CoinTransaction
             CoinTransactionType.CardPackPurchase => "购买卡包",
             CoinTransactionType.SeasonReward => "赛季奖励",
             CoinTransactionType.AdminGrant => "管理员发放",
+            CoinTransactionType.CardCommunityFirstVote => "卡牌社区首次投票奖励",
+            CoinTransactionType.CardCommunityFirstComment => "卡牌社区首次评论奖励",
             CoinTransactionType.Other => "其他",
             _ => "未知"
         };
@@ -128,6 +130,16 @@ public enum CoinTransactionType
     /// 管理员发放
     /// </summary>
     AdminGrant = 7,
+
+    /// <summary>
+    /// 卡牌社区首次投票奖励
+    /// </summary>
+    CardCommunityFirstVote = 8,
+
+    /// <summary>
+    /// 卡牌社区首次评论奖励
+    /// </summary>
+    CardCommunityFirstComment = 9,
 
     /// <summary>
     /// 其他

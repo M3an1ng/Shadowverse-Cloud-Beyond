@@ -47,6 +47,9 @@ export function getReadableValueLabel(editor, node) {
     }
 
     if (meta.type === 'property') {
+        if (meta.isDynamicMemberAccess) {
+            return meta.displayName || node.value || '?';
+        }
         const path = meta.fullPath || node.value || '';
         if (!path.includes('.') && meta.displayName) {
             return meta.displayName;

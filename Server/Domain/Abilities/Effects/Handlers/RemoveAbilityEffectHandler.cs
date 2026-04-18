@@ -39,8 +39,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, RemoveAbilityEffectParams parameters)
         {
             const string effectName = "RemoveAbilityEffect";
+            var currentAbility = context.GetCurrentAbility();
 
-            if (!ShouldApplySuppression(parameters))
+            if (!ShouldApplySuppression(parameters, currentAbility))
             {
                 return new GameStateActionResult { Success = true };
             }
@@ -66,8 +67,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     var suppressionEffect = new AbilitySuppressionBuffEffect(
                         parameters.RemoveMode,
                         parameters.AbilityDefinitionIds,
-                        parameters.AbilityKeyword);
+                        parameters.AbilityKeyword,
+                        sourceAbility?.RuntimeId);
                     var effects = new List<IBuffEffect> { suppressionEffect };
+
+                    if (parameters.RemoveMode == RemoveAbilityMode.All)
+                    {
+                        var capturedKeywords = _buffService.GetEffectiveKeywords(card, ctx)
+                            .Where(keyword => keyword != CardKeyword.None)
+                            .Distinct()
+                            .ToList();
+                        if (capturedKeywords.Count > 0)
+                        {
+                            effects.Add(new RemoveKeywordBuffEffect(capturedKeywords));
+                        }
+                    }
+
+                    var suppressedAbilities = AbilitySuppressionEvaluator.CollectSuppressedAbilities(
+                        ctx.AbilityManager.GetAbilitiesForCard(card.InstanceId),
+                        new[] { suppressionEffect });
+                    foreach (var suppressedAbility in suppressedAbilities)
+                    {
+                        if (suppressedAbility is Ability concreteAbility)
+                        {
+                            concreteAbility.InvalidateQueuedEffects("remove_ability");
+                        }
+                    }
 
                     Buff buff;
                     if (sourceAbility == null)
@@ -78,7 +103,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                             currentTurn: turnNumber,
                             effects: effects,
                             durationType: parameters.DurationType,
-                            durationParameter: parameters.DurationParameter);
+                            durationParameter: parameters.DurationParameter,
+                            removalCondition: parameters.RemoveCondition);
                     }
                     else
                     {
@@ -89,7 +115,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                             effects: effects,
                             durationType: parameters.DurationType,
                             durationParameter: parameters.DurationParameter,
-                            currentTurn: turnNumber);
+                            currentTurn: turnNumber,
+                            removeCondition: parameters.RemoveCondition);
                     }
 
                     if (!string.IsNullOrWhiteSpace(effectKey) && buff.SourceAbilityId != Guid.Empty)
@@ -115,11 +142,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             return serviceResult;
         }
 
-        private static bool ShouldApplySuppression(RemoveAbilityEffectParams parameters)
+        private static bool ShouldApplySuppression(RemoveAbilityEffectParams parameters, IAbility? currentAbility)
         {
             if (parameters.RemoveMode == RemoveAbilityMode.All)
             {
                 return true;
+            }
+
+            if (parameters.RemoveMode == RemoveAbilityMode.Self)
+            {
+                return currentAbility != null && currentAbility.RuntimeId != Guid.Empty;
             }
 
             if (parameters.RemoveMode == RemoveAbilityMode.Id)

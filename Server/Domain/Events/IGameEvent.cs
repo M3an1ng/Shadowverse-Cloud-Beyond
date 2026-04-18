@@ -5,11 +5,15 @@
 // - 实体关系图: 文档/04-数据库设计/01-实体关系图.md
 //
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Dtos;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
@@ -61,6 +65,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [DslExposable("游戏事件基类", Description = "所有游戏事件的基类，提供通用功能")]
     public abstract class GameEventBase : IGameEvent
     {
+        private bool _hasCapturedBaseSnapshot;
+
         [DslExposable("事件类型", Description = "事件的类型标识")]
         public EventType EventType { get; protected set; }
 
@@ -75,11 +81,62 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("事件目标", Description = "事件的目标列表（玩家或卡牌）")]
         public List<TargetInfo> Target { get; protected set; } = new();
 
+        [GameEventParameter("当前玩家ID", "事件进入处理时的当前玩家ID。", Scope = GameEventParameterScope.Output)]
+        public Guid? CurrentPlayerId { get; private set; }
+
+        [GameEventParameter("当前玩家回合数", "事件进入处理时当前玩家的回合数。", Scope = GameEventParameterScope.Output)]
+        public int CurrentPlayerTurnNumber { get; private set; }
+
+        [GameEventParameter("来源能力运行时ID", "事件生成时记录的来源能力运行时ID。", Scope = GameEventParameterScope.Output)]
+        public Guid? SourceAbilityRuntimeId { get; private set; }
+
+        [GameEventParameter("来源能力定义ID", "事件生成时记录的来源能力定义ID。", Scope = GameEventParameterScope.Output)]
+        public long? SourceAbilityDefinitionId { get; private set; }
+
+        [GameEventParameter("来源能力关键字", "事件生成时记录的来源能力关键字列表。", Scope = GameEventParameterScope.Output)]
+        public IReadOnlyList<AbilityKeyword> SourceAbilityKeywords { get; private set; } = Array.Empty<AbilityKeyword>();
+
         protected GameEventBase(EventType eventType, Guid? eventId = null, DateTime? timestamp = null)
         {
             EventType = eventType;
             EventId = eventId ?? Guid.NewGuid();
             Timestamp = timestamp ?? DateTime.UtcNow;
+        }
+
+        internal void CaptureCurrentPlayerSnapshot(GameContext context)
+        {
+            if (_hasCapturedBaseSnapshot || context == null)
+            {
+                return;
+            }
+
+            var gameState = context.CurrentGameState;
+            CurrentPlayerId = gameState.CurrentPlayerId;
+            CurrentPlayerTurnNumber = gameState.CurrentPlayerId.HasValue
+                ? gameState.GetPlayerState(gameState.CurrentPlayerId.Value)?.TurnNumber ?? 0
+                : 0;
+
+            var sourceAbility = context.GetCurrentAbility();
+            CaptureSourceAbilitySnapshot(sourceAbility);
+
+            _hasCapturedBaseSnapshot = true;
+        }
+
+        private void CaptureSourceAbilitySnapshot(IAbility? sourceAbility)
+        {
+            if (sourceAbility == null)
+            {
+                SourceAbilityRuntimeId = null;
+                SourceAbilityDefinitionId = null;
+                SourceAbilityKeywords = Array.Empty<AbilityKeyword>();
+                return;
+            }
+
+            SourceAbilityRuntimeId = sourceAbility.RuntimeId == Guid.Empty ? null : sourceAbility.RuntimeId;
+            SourceAbilityDefinitionId = sourceAbility.DefinitionId;
+            SourceAbilityKeywords = sourceAbility.Keywords.Count == 0
+                ? Array.Empty<AbilityKeyword>()
+                : sourceAbility.Keywords.ToArray();
         }
     }
 

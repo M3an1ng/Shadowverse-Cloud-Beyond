@@ -277,11 +277,33 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
 
             return selectionOp.Strategy switch
             {
-                SelectionStrategy.First => pool.Take(count).ToList(),
-                SelectionStrategy.Last => pool.Skip(Math.Max(0, pool.Count - count)).Take(count).ToList(),
+                SelectionStrategy.First => ApplyFirstSelection(pool, count),
+                SelectionStrategy.Last => ApplyLastSelection(pool, count),
                 SelectionStrategy.Random => ApplyRandomSelection(pool, count),
                 _ => pool
             };
+        }
+
+        private List<object> ApplyFirstSelection(List<object> pool, int count)
+        {
+            if (count <= 0)
+            {
+                return new List<object>();
+            }
+
+            var effectiveCount = Math.Min(count, pool.Count);
+            return pool.Take(effectiveCount).ToList();
+        }
+
+        private List<object> ApplyLastSelection(List<object> pool, int count)
+        {
+            if (count <= 0)
+            {
+                return new List<object>();
+            }
+
+            var effectiveCount = Math.Min(count, pool.Count);
+            return pool.AsEnumerable().Reverse().Take(effectiveCount).ToList();
         }
 
         private List<object> ApplyRandomSelection(List<object> pool, int count)
@@ -291,12 +313,8 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
                 return new List<object>();
             }
 
-            if (count >= pool.Count)
-            {
-                return pool;
-            }
-
-            return pool.OrderBy(_ => _random.Next()).Take(count).ToList();
+            var effectiveCount = Math.Min(count, pool.Count);
+            return pool.OrderBy(_ => _random.Next()).Take(effectiveCount).ToList();
         }
 
         private List<object> ApplyPostProcessingOperation(List<object> pool, PostProcessingOperation postProcessingOp, TargetSelectionContext tsc)

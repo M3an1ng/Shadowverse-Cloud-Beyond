@@ -42,18 +42,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// Unregisters an ability instance, removing it from all indexes.
         /// </summary>
-        void UnregisterAbility(IAbility ability);
+        void UnregisterAbility(IAbility ability, string removalReason = "unregistered");
 
         /// <summary>
         /// Unregisters all abilities associated with a specific card instance ID.
         /// </summary>
-        void UnregisterCardAbilities(Guid cardInstanceId);
+        void UnregisterCardAbilities(Guid cardInstanceId, string removalReason = "card_unregistered");
 
         /// <summary>
         /// Unregisters all abilities that were granted by a specific buff.
         /// </summary>
         /// <param name="buffId">The ID of the source buff.</param>
-        void UnregisterAbilitiesFromBuff(Guid buffId);
+        void UnregisterAbilitiesFromBuff(Guid buffId, string removalReason = "buff_removed");
 
         /// <summary>
         /// Gets the runtime ability IDs associated with a buff.

@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Shadowverse.Domain.Interfaces; // For ICard
 using ShadowverseBeyond.Server.Dtos; // For CardZone enum and CardInstanceDto
 using ShadowverseBeyond.Server.Dtos.Enums; // For CardType enum
@@ -24,6 +25,7 @@ using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetInfo
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For DomainOperationResult
 using ShadowverseBeyond.Server.Services; // For GameDataProvider static instance
+using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 
@@ -37,10 +39,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     [DslExposable("卡牌实例", Description = "代表游戏中一张具体的卡牌实例")]
     public class CardInstance : ICard
     {
-        private const string ActLastUsedTurnKey = "act.lastUsedTurnNumber";
         public const string SpellboostCounterKey = "spellboost";
         public const string EarthsigilCounterKey = "earthsigil";
         private static readonly string[] SystemCounterKeys = { SpellboostCounterKey, EarthsigilCounterKey };
+        private static Dictionary<CardActionUsageType, int> CreateDefaultActionUsageCounts()
+            => Enum.GetValues<CardActionUsageType>().ToDictionary(static actionType => actionType, static _ => 0);
+
+        private static Dictionary<CardActionUsageType, int> CreateDefaultActionUsageLimits()
+            => Enum.GetValues<CardActionUsageType>().ToDictionary(static actionType => actionType, static _ => 1);
 
         /// <summary>
         /// Unique identifier for this card instance within the current game.
@@ -98,8 +104,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Future enhancement: Calculate as BaseCost + buff modifications.
         /// </summary>
         [DslExposable("当前费用", Description = "卡牌当前的费用（包含效果修正）")]
-        public int CurrentCost => Math.Max(0, GameServiceProvider.BuffService.GetEffectiveCost(this, GameServiceProvider.CurrentGameContext
-            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider.")));
+        public int CurrentCost
+        {
+            get
+            {
+                var context = GameServiceProvider.CurrentGameContext;
+                return context == null
+                    ? Math.Max(0, BaseCost)
+                    : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveCost(this, context));
+            }
+        }
 
         /// <summary>
         /// Base attack from CardDefinition (before any buffs or effects).
@@ -112,8 +126,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Future enhancement: Calculate as BaseAttack + buff modifications.
         /// </summary>
         [DslExposable("当前攻击力", Description = "卡牌当前的攻击力（包含效果修正）")]
-        public int CurrentAttack => Math.Max(0, GameServiceProvider.BuffService.GetEffectiveAttack(this, GameServiceProvider.CurrentGameContext
-            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider.")));
+        public int CurrentAttack
+        {
+            get
+            {
+                var context = GameServiceProvider.CurrentGameContext;
+                return context == null
+                    ? Math.Max(0, BaseAttack)
+                    : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveAttack(this, context));
+            }
+        }
 
         /// <summary>
         /// Current health value (for units/leaders).
@@ -133,8 +155,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Maximum health value (for units/leaders).
         /// </summary>
         [DslExposable("最大生命值", Description = "卡牌的最大生命值（包含效果修正）")]
-        public int MaxHealth => GameServiceProvider.BuffService.GetEffectiveMaxHealth(this, GameServiceProvider.CurrentGameContext
-            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider."));
+        public int MaxHealth
+        {
+            get
+            {
+                var context = GameServiceProvider.CurrentGameContext;
+                return context == null
+                    ? Math.Max(0, BaseHealth)
+                    : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveMaxHealth(this, context));
+            }
+        }
 
 
         /// <summary>
@@ -153,8 +183,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Note: This does not include keywords from buffs. The BuffService is responsible for the final list.
         /// </summary>
         [DslExposable("关键字", Description = "卡牌当前拥有的关键字列表")]
-        public List<CardKeyword> Keywords => GameServiceProvider.BuffService.GetEffectiveKeywords(this, GameServiceProvider.CurrentGameContext
-            ?? throw new InvalidOperationException("GameContext is not available via GameServiceProvider."));
+        public List<CardKeyword> Keywords
+        {
+            get
+            {
+                var context = GameServiceProvider.CurrentGameContext;
+                return context == null
+                    ? BaseKeywords
+                    : GameServiceProvider.BuffService.GetEffectiveKeywords(this, context);
+            }
+        }
 
         /// <summary>
         /// Gets the effect keywords aggregated from this card's abilities (deduplicated).
@@ -168,6 +206,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             .Distinct()
             .ToList();
 
+        [DslExposable("当前有效能力", Description = "卡牌当前生效中的完整能力列表")]
+        public IReadOnlyList<Ability> EffectiveAbilities => GetEffectiveAbilities();
+
         /// <summary>
         /// Base keywords from the card's current definition.
         /// </summary>
@@ -177,9 +218,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             .ToList();
 
         /// <summary>
-        /// Countdown value (for amulets and crests only).
+        /// Countdown value (for amulets, crests, and faith cards).
         /// </summary>
-        [DslExposable("倒计时", Description = "护符与纹章的倒计时值")]
+        [DslExposable("倒计时", Description = "护符、纹章与信仰的倒计时值")]
         public int? Countdown => CurrentCountdown;
 
         /// <summary>
@@ -194,8 +235,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("卡牌位置", Description = "卡牌在所在区域的位置排序")]
         public int? ZoneIndex { get; set; }
 
-        [DslExposable("战场生存时间", Description = "卡牌在战场上存活了多少轮")]
-        public int FieldTurn { get; set; }
+        [DslExposable("区域停留时间", Description = "卡牌在所在区域上停留了多少轮")]
+        public int ZoneStayTurn { get; set; }
 
         /// <summary>
         /// Whether this card can attack this turn.
@@ -203,8 +244,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("可以攻击", Description = "该卡牌本回合是否可以攻击")]
         public bool CanAttack =>
             !HasKeyword(CardKeyword.Shackle) &&
-            (HasKeyword(CardKeyword.Rush) || HasKeyword(CardKeyword.Storm) || IsEvolved || FieldTurn > 0) &&
-            AttacksThisTurn < GetMaxAttacksPerTurn();
+            (HasKeyword(CardKeyword.Rush) || HasKeyword(CardKeyword.Storm) || IsEvolved || ZoneStayTurn > 0) &&
+            HasRemainingActionUsage(CardActionUsageType.Attack);
 
         /// <summary>
         /// Whether this card is silenced (loses all abilities and keywords but retains stat modifications).
@@ -217,13 +258,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Number of attacks made this turn.
         /// </summary>
         [DslExposable("当前攻击次数", Description = "该卡牌在回合中攻击的次数")]
-        public int AttacksThisTurn { get; set; } = 0;
+        public int AttacksThisTurn
+        {
+            get => GetActionUsageCount(CardActionUsageType.Attack);
+            set => SetActionUsageCount(CardActionUsageType.Attack, value);
+        }
 
         /// <summary>
         /// Maximum number of attacks this card can perform per turn.
         /// </summary>
         [DslExposable("最大攻击次数", Description = "该卡牌每回合可攻击次数上限")]
-        public int MaxAttacksPerTurn { get; set; } = 1;
+        public int MaxAttacksPerTurn
+        {
+            get => GetActionUsageLimit(CardActionUsageType.Attack);
+            set => SetBaseActionUsageLimit(CardActionUsageType.Attack, value);
+        }
 
         /// <summary>
         /// 存储与此卡牌实例关联的能力的持久运行时状态（例如计数器）。
@@ -234,6 +283,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         private readonly List<string> _additionalTribes = new();
         private readonly List<string> _additionalNames = new();
         private readonly List<CardInstance> _fusedCards = new();
+        private readonly Dictionary<CardActionUsageType, int> _actionUsageCounts = CreateDefaultActionUsageCounts();
+        private readonly Dictionary<CardActionUsageType, int> _baseActionUsageLimits = CreateDefaultActionUsageLimits();
 
         private readonly Counters _counters;
 
@@ -245,6 +296,43 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("已融合卡牌列表", Description = "该卡牌已融合素材实例列表")]
         public IReadOnlyList<CardInstance> FusedCards => _fusedCards;
 
+        public int GetActionUsageCount(CardActionUsageType actionType)
+            => _actionUsageCounts.TryGetValue(actionType, out var value) ? Math.Max(0, value) : 0;
+
+        public void SetActionUsageCount(CardActionUsageType actionType, int value)
+        {
+            _actionUsageCounts[actionType] = Math.Max(0, value);
+        }
+
+        public int GetBaseActionUsageLimit(CardActionUsageType actionType)
+            => _baseActionUsageLimits.TryGetValue(actionType, out var value) ? Math.Max(0, value) : 1;
+
+        public void SetBaseActionUsageLimit(CardActionUsageType actionType, int value)
+        {
+            _baseActionUsageLimits[actionType] = Math.Max(0, value);
+        }
+
+        public int GetActionUsageLimit(CardActionUsageType actionType)
+        {
+            var context = GameServiceProvider.CurrentGameContext;
+            return context == null
+                ? GetBaseActionUsageLimit(actionType)
+                : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveActionUsageLimit(this, actionType, context));
+        }
+
+        public bool HasRemainingActionUsage(CardActionUsageType actionType)
+            => GetActionUsageCount(actionType) < GetActionUsageLimit(actionType);
+
+        public void ConsumeActionUsage(CardActionUsageType actionType)
+        {
+            SetActionUsageCount(actionType, GetActionUsageCount(actionType) + 1);
+        }
+
+        public void ResetActionUsage(CardActionUsageType actionType)
+        {
+            SetActionUsageCount(actionType, 0);
+        }
+
         // [DslExposable("重置前快照", Description = "卡牌上一次重置前保存的轻量快照")]
         // public CardInstanceResetSnapshot? LastPreResetSnapshot { get; private set; }
 
@@ -253,12 +341,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("土之印", Description = "earthsigil 计数器数值")]
         public int Earthsigil => GetCounter(EarthsigilCounterKey);
-
-        /// <summary>
-        /// Whether this card currently has at least one Activated (Act) ability.
-        /// </summary>
-        public bool HasActAbility =>
-            GetEffectiveAbilities().Any(a => a.AbilityKeywords.Any(k => k.Keyword == AbilityKeyword.Act));
 
         /// <summary>
         /// Whether this card currently has at least one Enhance ability.
@@ -385,41 +467,59 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         /// <summary>
-        /// The owner's turn number when this card last used Act. Null if never used.
-        /// </summary>
-        public int? ActLastUsedTurnNumber
-        {
-            get
-            {
-                if (!AbilityState.TryGetValue(ActLastUsedTurnKey, out var value) || value == null)
-                    return null;
-
-                return value switch
-                {
-                    int i => i,
-                    long l => checked((int)l),
-                    _ => null
-                };
-            }
-        }
-
-        /// <summary>
         /// Number of Act activations used this turn.
         /// </summary>
-        public int ActsThisTurn { get; set; } = 0;
+        [DslExposable("当前启动次数", Description = "该卡牌在回合中启动的次数")]
+        public int ActsThisTurn
+        {
+            get => GetActionUsageCount(CardActionUsageType.Act);
+            set => SetActionUsageCount(CardActionUsageType.Act, value);
+        }
 
         /// <summary>
         /// Maximum Act activations allowed per turn.
         /// </summary>
-        public int MaxActsPerTurn { get; set; } = 1;
-
-        public bool HasUsedActThisTurn(int ownerTurnNumber)
-            => ActsThisTurn >= GetMaxActsPerTurn();
-
-        public void MarkActUsed(int ownerTurnNumber)
+        [DslExposable("最大启动次数", Description = "该卡牌每回合可启动次数上限")]
+        public int MaxActsPerTurn
         {
-            ActsThisTurn = Math.Max(0, ActsThisTurn + 1);
-            AbilityState[ActLastUsedTurnKey] = ownerTurnNumber;
+            get => GetActionUsageLimit(CardActionUsageType.Act);
+            set => SetBaseActionUsageLimit(CardActionUsageType.Act, value);
+        }
+
+        /// <summary>
+        /// Number of Fusion activations used this turn.
+        /// </summary>
+        [DslExposable("当前融合次数", Description = "该卡牌在回合中融合的次数")]
+        public int FusionsThisTurn
+        {
+            get => GetActionUsageCount(CardActionUsageType.Fusion);
+            set => SetActionUsageCount(CardActionUsageType.Fusion, value);
+        }
+
+        /// <summary>
+        /// Maximum Fusion activations allowed per turn.
+        /// </summary>
+        [DslExposable("最大融合次数", Description = "该卡牌每回合可融合次数上限")]
+        public int MaxFusionsPerTurn
+        {
+            get => GetActionUsageLimit(CardActionUsageType.Fusion);
+            set => SetBaseActionUsageLimit(CardActionUsageType.Fusion, value);
+        }
+
+        public bool HasUsedActThisTurn()
+            => !HasRemainingActionUsage(CardActionUsageType.Act);
+
+        public void MarkActUsed()
+        {
+            ConsumeActionUsage(CardActionUsageType.Act);
+        }
+
+        public bool HasUsedFusionThisTurn()
+            => !HasRemainingActionUsage(CardActionUsageType.Fusion);
+
+        public void MarkFusionUsed()
+        {
+            ConsumeActionUsage(CardActionUsageType.Fusion);
         }
 
         /// <summary>
@@ -452,7 +552,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Gets the list of card names this instance can be treated as.
         /// Includes the base definition name plus any runtime aliases.
         /// </summary>
-        [DslExposable("卡名列表", Description = "卡牌可被视为的名称列表（包含基础名称）")]
         public List<string> CardNames
         {
             get
@@ -500,14 +599,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             get
             {
-                var baseTribes = CurrentDefinition?.Tribe ?? new List<string>();
+                var baseTribes = CanonicalizeTribes(CurrentDefinition?.Tribe);
                 if (_additionalTribes.Count == 0)
                 {
                     return baseTribes;
                 }
 
                 var combined = new List<string>(baseTribes);
-                foreach (var tribe in _additionalTribes)
+                foreach (var tribe in CanonicalizeTribes(_additionalTribes))
                 {
                     if (!combined.Any(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -618,8 +717,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             var wardFollowers = opponentField.Where(HasEffectiveWard).ToList();
+            var ignoresWard = HasKeyword(CardKeyword.IgnoreWard);
 
-            if (wardFollowers.Any() && !wardFollowers.Contains(target))
+            if (!ignoresWard && wardFollowers.Any() && !wardFollowers.Contains(target))
             {
                 // If there are Ward followers, the target must be one of them.
                 return false;
@@ -653,7 +753,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 // 1. The attacker has Storm.
                 // 2. The attacker is not under "summoning sickness" (i.e., it has been on the field for more than its entry turn).
                 // Rush only allows attacking followers on the turn the card is played.
-                bool hasSummoningSickness = this.FieldTurn == 0;
+                bool hasSummoningSickness = this.ZoneStayTurn == 0;
                 if (!this.HasKeyword(CardKeyword.Storm) && hasSummoningSickness)
                 {
                     return false;
@@ -669,12 +769,17 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// <returns>最大攻击次数</returns>
         private int GetMaxAttacksPerTurn()
         {
-            return Math.Max(0, MaxAttacksPerTurn);
+            return GetActionUsageLimit(CardActionUsageType.Attack);
         }
 
         private int GetMaxActsPerTurn()
         {
-            return Math.Max(0, MaxActsPerTurn);
+            return GetActionUsageLimit(CardActionUsageType.Act);
+        }
+
+        private int GetMaxFusionsPerTurn()
+        {
+            return GetActionUsageLimit(CardActionUsageType.Fusion);
         }
 
 
@@ -845,7 +950,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         private void InitializeCountdown(CardDefinition? definition)
         {
-            if (definition == null || (definition.Type != CardType.Amulet && definition.Type != CardType.Crest))
+            if (definition == null || (definition.Type != CardType.Amulet && definition.Type != CardType.Crest && definition.Type != CardType.Faith))
             {
                 CurrentCountdown = null;
                 return;
@@ -891,41 +996,94 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         public void ApplyAttackPerformed()
         {
-            AttacksThisTurn += 1;
+            ConsumeActionUsage(CardActionUsageType.Attack);
+        }
+
+        internal sealed record CardRuntimeStateSnapshot
+        {
+            public int Damage { get; init; }
+            public bool IsEvolved { get; init; }
+            public bool IsSuperEvolved { get; init; }
+            public int? CurrentCountdown { get; init; }
+            public bool IsSilenced { get; init; }
+            public int ZoneStayTurn { get; init; }
+            public Dictionary<CardActionUsageType, int> ActionUsageCounts { get; init; } = new();
+            public Dictionary<CardActionUsageType, int> ActionUsageLimits { get; init; } = new();
+            public Dictionary<string, object> AbilityState { get; init; } = new();
+            public List<string> AdditionalNames { get; init; } = new();
+            public List<string> AdditionalTribes { get; init; } = new();
+            public List<CardInstance> FusedCards { get; init; } = new();
+            public Dictionary<string, int> Counters { get; init; } = new();
+        }
+
+        internal CardRuntimeStateSnapshot CaptureRuntimeStateSnapshot()
+        {
+            return new CardRuntimeStateSnapshot
+            {
+                Damage = Damage,
+                IsEvolved = IsEvolved,
+                IsSuperEvolved = IsSuperEvolved,
+                CurrentCountdown = CurrentCountdown,
+                IsSilenced = IsSilenced,
+                ZoneStayTurn = ZoneStayTurn,
+                ActionUsageCounts = Enum.GetValues<CardActionUsageType>()
+                    .ToDictionary(actionType => actionType, actionType => GetActionUsageCount(actionType)),
+                ActionUsageLimits = Enum.GetValues<CardActionUsageType>()
+                    .ToDictionary(actionType => actionType, actionType => GetBaseActionUsageLimit(actionType)),
+                AbilityState = new Dictionary<string, object>(AbilityState),
+                AdditionalNames = new List<string>(_additionalNames),
+                AdditionalTribes = new List<string>(_additionalTribes),
+                FusedCards = new List<CardInstance>(_fusedCards),
+                Counters = new Dictionary<string, int>(_counters)
+            };
         }
 
         internal void CopyRuntimeStateFrom(CardInstance source)
+        {
+            CopyRuntimeStateFrom(source.CaptureRuntimeStateSnapshot());
+        }
+
+        internal void CopyRuntimeStateFrom(CardRuntimeStateSnapshot source)
         {
             Damage = source.Damage;
             IsEvolved = source.IsEvolved;
             IsSuperEvolved = source.IsSuperEvolved;
             CurrentCountdown = source.CurrentCountdown;
             IsSilenced = source.IsSilenced;
-            FieldTurn = source.FieldTurn;
-            AttacksThisTurn = source.AttacksThisTurn;
-            MaxAttacksPerTurn = source.MaxAttacksPerTurn;
-            ActsThisTurn = source.ActsThisTurn;
-            MaxActsPerTurn = source.MaxActsPerTurn;
+            ZoneStayTurn = source.ZoneStayTurn;
+            foreach (var actionType in Enum.GetValues<CardActionUsageType>())
+            {
+                SetActionUsageCount(actionType, source.ActionUsageCounts.TryGetValue(actionType, out var usageCount) ? usageCount : 0);
+                SetBaseActionUsageLimit(actionType, source.ActionUsageLimits.TryGetValue(actionType, out var usageLimit) ? usageLimit : 1);
+            }
             AbilityState = new Dictionary<string, object>(source.AbilityState);
             _additionalNames.Clear();
-            _additionalNames.AddRange(source._additionalNames);
+            _additionalNames.AddRange(source.AdditionalNames);
             _additionalTribes.Clear();
-            _additionalTribes.AddRange(source._additionalTribes);
+            _additionalTribes.AddRange(source.AdditionalTribes);
             _fusedCards.Clear();
-            _fusedCards.AddRange(source._fusedCards);
-            _counters.CopyFrom(source._counters);
+            _fusedCards.AddRange(source.FusedCards);
+            ResetCounters();
+            foreach (var (key, value) in source.Counters)
+            {
+                SetCounter(key, value);
+            }
         }
 
         internal void ResetAttackState()
         {
-            AttacksThisTurn = 0;
-            FieldTurn = 0;
+            ResetActionUsage(CardActionUsageType.Attack);
+            ZoneStayTurn = 0;
         }
 
         internal void ResetActState()
         {
-            ActsThisTurn = 0;
-            AbilityState.Remove(ActLastUsedTurnKey);
+            ResetActionUsage(CardActionUsageType.Act);
+        }
+
+        internal void ResetFusionState()
+        {
+            ResetActionUsage(CardActionUsageType.Fusion);
         }
 
         internal void ResetToDefinitionState()
@@ -934,11 +1092,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             IsEvolved = false;
             IsSuperEvolved = false;
             IsSilenced = false;
-            FieldTurn = 0;
-            AttacksThisTurn = 0;
-            MaxAttacksPerTurn = 1;
-            ActsThisTurn = 0;
-            MaxActsPerTurn = 1;
+            ZoneStayTurn = 0;
+            foreach (var actionType in Enum.GetValues<CardActionUsageType>())
+            {
+                ResetActionUsage(actionType);
+                SetBaseActionUsageLimit(actionType, 1);
+            }
             AbilityState.Clear();
             _additionalNames.Clear();
             _additionalTribes.Clear();
@@ -1104,27 +1263,29 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         public void AddTribeMarker(string tribe)
         {
-            if (string.IsNullOrWhiteSpace(tribe))
+            var normalized = NormalizeTribeValue(tribe);
+            if (string.IsNullOrWhiteSpace(normalized))
             {
                 return;
             }
 
-            if (_additionalTribes.Any(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase)))
+            if (_additionalTribes.Any(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase)))
             {
                 return;
             }
 
-            _additionalTribes.Add(tribe);
+            _additionalTribes.Add(normalized);
         }
 
         public void RemoveTribeMarker(string tribe)
         {
-            if (string.IsNullOrWhiteSpace(tribe))
+            var normalized = NormalizeTribeValue(tribe);
+            if (string.IsNullOrWhiteSpace(normalized))
             {
                 return;
             }
 
-            var index = _additionalTribes.FindIndex(existing => string.Equals(existing, tribe, StringComparison.OrdinalIgnoreCase));
+            var index = _additionalTribes.FindIndex(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase));
             if (index >= 0)
             {
                 _additionalTribes.RemoveAt(index);
@@ -1149,6 +1310,45 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             _additionalNames.Add(cardName);
+        }
+
+        private static List<string> CanonicalizeTribes(IEnumerable<string>? rawTribes)
+        {
+            var result = new List<string>();
+            if (rawTribes == null)
+            {
+                return result;
+            }
+
+            foreach (var rawTribe in rawTribes)
+            {
+                var normalized = NormalizeTribeValue(rawTribe);
+                if (string.IsNullOrWhiteSpace(normalized))
+                {
+                    continue;
+                }
+
+                if (result.Any(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                result.Add(normalized);
+            }
+
+            return result;
+        }
+
+        private static string NormalizeTribeValue(string? rawTribe)
+        {
+            var trimmed = rawTribe?.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return string.Empty;
+            }
+
+            var registry = GameServiceProvider.CurrentGameContext?.ServiceProvider.GetService<ITribeRegistry>();
+            return registry?.Normalize(trimmed) ?? trimmed;
         }
 
         internal void AddFusedCards(IEnumerable<CardInstance> fusedCards)
@@ -1289,7 +1489,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // 5. Generate the notification event (after transform)
             context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.InstanceId);
-            result.GeneratedEvents.Add(new TransformEvent(this, context.SourceCard));
             result.Success = true;
 
             return result;

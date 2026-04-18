@@ -442,12 +442,28 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         /// <summary> Match by ability definition ID. </summary>
         [Description("按ID")]
         Id,
+        /// <summary> Match the current source ability instance. </summary>
+        [Description("本能力")]
+        Self,
         /// <summary> Match by ability keyword. </summary>
         [Description("按关键字")]
         Keyword,
         /// <summary> Suppress all abilities on the target card. </summary>
         [Description("全部")]
         All
+    }
+
+    public enum TriggerAbilityMode
+    {
+        [Description("按关键字")]
+
+        ByKeyword = 0,
+        [Description("按能力ID")]
+
+        ByAbilityDefinitionId = 1,
+        [Description("按事件类型")]
+
+        ByEventType = 2
     }
 }
 /// <summary>

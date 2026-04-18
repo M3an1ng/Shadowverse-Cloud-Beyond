@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Dtos.Enums;
+﻿using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
 
@@ -9,7 +9,10 @@ public class MatchDeckSelection
     public Guid? DeckId { get; set; }
     public string? DeckCode { get; set; }
     public CardClass? DeckClass { get; set; }
+    public CardClass? SecondaryClass { get; set; }
     public DeckEnvironment? Environment { get; set; }
+    public DeckRule? Rule { get; set; }
 
     public bool HasSelection => DeckId.HasValue || !string.IsNullOrWhiteSpace(DeckCode);
 }
+

@@ -17,6 +17,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.MaxPP, opt => opt.MapFrom(src => src.MaxPlayPoints))
                 .ForMember(dest => dest.CurrentPP, opt => opt.MapFrom(src => src.CurrentPlayPoints))
                 .ForMember(dest => dest.PpBoostUsesAvailable, opt => opt.MapFrom(src => src.PpBoostUsesAvailable))
+                .ForMember(dest => dest.IsPpBoostArmed, opt => opt.MapFrom(src => src.IsPpBoostArmed))
                 .ForMember(dest => dest.MaxEP, opt => opt.MapFrom(src => src.MaxEvolutionPoints))
                 .ForMember(dest => dest.CurrentEP, opt => opt.MapFrom(src => src.CurrentEvolutionPoints))
                 .ForMember(dest => dest.IsEvolutionUnlocked, opt => opt.MapFrom(src => src.IsEvolutionUnlocked))
@@ -65,12 +66,49 @@ namespace ShadowverseBeyond.Server.Mappings
             {
                 [PlayerState.ComboCounterKey] = "连击数",
                 [PlayerState.GraveyardCounterKey] = "墓场数",
-                [PlayerState.BloodPoolCounterKey] = "血池"
+                [PlayerState.BloodPoolCounterKey] = "血池",
+                [PlayerState.RallyCounterKey] = "连携数"
             };
 
             if (playerState == null)
             {
                 return result;
+            }
+
+            foreach (var card in EnumeratePlayerCards(playerState))
+            {
+                var abilities = card?.Abilities;
+                if (abilities == null || abilities.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var ability in abilities)
+                {
+                    var registrations = ability?.Config?.PlayerCounterRegistrations;
+                    if (registrations == null || registrations.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    foreach (var registration in registrations)
+                    {
+                        if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                        {
+                            continue;
+                        }
+
+                        var name = registration.Name.Trim();
+                        if (result.ContainsKey(name))
+                        {
+                            continue;
+                        }
+
+                        result[name] = string.IsNullOrWhiteSpace(registration.DisplayName)
+                            ? name
+                            : registration.DisplayName.Trim();
+                    }
+                }
             }
 
             foreach (var key in playerState.CounterMap.Keys)
@@ -84,6 +122,46 @@ namespace ShadowverseBeyond.Server.Mappings
             }
 
             return result;
+        }
+
+        private static IEnumerable<CardInstance> EnumeratePlayerCards(PlayerState playerState)
+        {
+            if (playerState?.Leader != null)
+            {
+                yield return playerState.Leader;
+            }
+
+            var seen = new HashSet<Guid>();
+            if (playerState?.Leader != null)
+            {
+                seen.Add(playerState.Leader.InstanceId);
+            }
+
+            foreach (var zone in new[]
+            {
+                playerState?.Hand,
+                playerState?.Deck,
+                playerState?.Field,
+                playerState?.Graveyard,
+                playerState?.Extra,
+                playerState?.Emblem
+            })
+            {
+                if (zone == null)
+                {
+                    continue;
+                }
+
+                foreach (var card in zone)
+                {
+                    if (card == null || !seen.Add(card.InstanceId))
+                    {
+                        continue;
+                    }
+
+                    yield return card;
+                }
+            }
         }
     }
 }

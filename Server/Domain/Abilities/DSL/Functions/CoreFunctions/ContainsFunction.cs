@@ -70,7 +70,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
             if (IsCollection(collection))
             {
                 var enumerable = ConvertToEnumerable(collection);
-                return ContainsValue(enumerable, searchValue);
+                return ContainsValue(enumerable, searchValue, context);
             }
 
             return false;
@@ -79,8 +79,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         /// <summary>
         /// 检查集合是否包含指定值
         /// </summary>
-        private static bool ContainsValue(IEnumerable<object?> collection, object? searchValue)
+        private static bool ContainsValue(IEnumerable<object?> collection, object? searchValue, GameContext context)
         {
+            if (searchValue is string searchString && TryConvertToStringCollection(collection, out var stringCollection))
+            {
+                return DslTribeOperations.Contains(context, stringCollection, searchString);
+            }
+
             foreach (var item in collection)
             {
                 if (AreEqual(item, searchValue))
@@ -134,6 +139,23 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions
         private static bool IsNumeric(object? value)
         {
             return value is int or double or float or decimal;
+        }
+
+        private static bool TryConvertToStringCollection(IEnumerable<object?> collection, out List<string> stringCollection)
+        {
+            stringCollection = new List<string>();
+            foreach (var item in collection)
+            {
+                if (item is not string text)
+                {
+                    stringCollection.Clear();
+                    return false;
+                }
+
+                stringCollection.Add(text);
+            }
+
+            return true;
         }
     }
 }

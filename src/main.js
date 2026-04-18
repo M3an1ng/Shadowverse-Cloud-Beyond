@@ -17,7 +17,7 @@ import {
     handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealApplied,
     handleCardSummoned, handleCardPlayed, handleHealthChanged, handleCardVanished,
     handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleAttackStateUpdated,
-    handleActStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
+    handleActStateUpdated, handleFusionStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
     handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
     handleChatHistory, handleChatMessage, handleMatchHistorySync,
@@ -30,9 +30,116 @@ import { ensureEnumLocalizations } from './enumLocalizationCache.js';
 import { getRouteNameFromHash, shouldReuseCachedHandshake } from './handshakePolicy.js';
 import { shouldDeferRoomLeaveForDecision } from './roomExitDecisionPolicy.js';
 import { getStoredValue, removeStoredValue, setStoredValue } from './storageFallback.js';
+import { buildDebugLogLine, getConnectionDebugId } from './debugDiagnostics.js';
+import { createDeckSelectionPickerModal } from './components/deckSelectionPickerModal.js';
+import { registerPwaServiceWorker, setupPwaInstallUI } from './pwaInstall.js';
+import {
+    ensureDeckEnvironmentOptions,
+    getDeckEnvironmentLabel as getDeckEnvironmentLabelFromOptions,
+    getDeckEnvironmentOptions,
+    getDefaultDeckEnvironment,
+    normalizeDeckEnvironment as normalizeDeckEnvironmentFromOptions
+} from './deckEnvironmentOptions.js';
+import {
+    buildDeckPresentation,
+    formatDeckSummaryLabel,
+    getDeckEnvironmentLabel,
+    getDeckRuleLabel,
+    normalizeDeckRule as normalizeDeckRuleShared,
+    normalizeEnvironment as normalizeEnvironmentShared
+} from './deckPresentation.js';
+import { filterUiVisibleDecks } from './deckRuleAvailability.js';
+import { DECK_VALIDATION_RULES_UPDATED_EVENT } from './dataChangeEvents.js';
+import { initializeBattleCustomization } from './battleCustomization.js';
 // import { endTurn } from './turnManager.js'; // Keep commented out
 // Old SignalR setup code removed. New setup will be added later.
 // --- End SignalR Setup ---
+
+function getPerfDebugState() {
+    if (typeof window === 'undefined') {
+        return {
+            enabled: false,
+            menuStarrySky: null,
+            handDrag: null
+        };
+    }
+
+    if (!window.__svPerfDebug) {
+        window.__svPerfDebug = {
+            enabled: true,
+            menuStarrySky: {
+                isAnimating: false,
+                route: '',
+                lastFrameAt: 0,
+                frameCount: 0,
+                slowFrameCount: 0
+            },
+            handDrag: {
+                sessionId: 0,
+                pendingRafAt: 0,
+                sampleCount: 0
+            }
+        };
+    }
+
+    return window.__svPerfDebug;
+}
+
+function logPerfDebug(scope, message, details = null) {
+    const debugState = getPerfDebugState();
+    if (!debugState.enabled) return;
+    console.info(buildDebugLogLine(scope, message, details));
+}
+
+function summarizeSignalRPayload(eventName, eventData) {
+    switch (eventName) {
+        case 'ReceiveGameState': {
+            const players = Array.isArray(eventData?.Players) ? eventData.Players : [];
+            return {
+                phase: eventData?.Phase ?? '',
+                turnNumber: eventData?.TurnNumber ?? null,
+                currentPlayerId: eventData?.CurrentPlayerId ?? null,
+                players: players.length
+            };
+        }
+        case 'HandUpdated':
+            return {
+                playerId: eventData?.PlayerId ?? eventData?.playerId ?? null,
+                handCount: Array.isArray(eventData?.Hand) ? eventData.Hand.length : null
+            };
+        case 'PlayerMulliganCompleted':
+            return {
+                playerId: eventData?.PlayerId ?? eventData?.playerId ?? null
+            };
+        case 'CardMoved':
+            return {
+                cardUid: eventData?.CardUid ?? eventData?.cardUid ?? null,
+                fromZone: eventData?.FromZone ?? eventData?.fromZone ?? null,
+                toZone: eventData?.ToZone ?? eventData?.toZone ?? null
+            };
+        case 'CardInstanceUpdated':
+            return {
+                cardUid: eventData?.CardUid ?? eventData?.InstanceId ?? eventData?.cardUid ?? null
+            };
+        case 'ChatHistory':
+            return {
+                items: Array.isArray(eventData) ? eventData.length : null
+            };
+        case 'MatchHistorySync':
+            return {
+                items: Array.isArray(eventData?.Items) ? eventData.Items.length : (Array.isArray(eventData) ? eventData.length : null)
+            };
+        case 'PlayerConnectionStatusUpdated':
+            return {
+                playerId: eventData?.PlayerId ?? eventData?.playerId ?? null,
+                isConnected: eventData?.IsConnected ?? eventData?.isConnected ?? null
+            };
+        default:
+            return {
+                hasPayload: eventData !== undefined && eventData !== null
+            };
+    }
+}
 
 // Simple GUID generator (RFC4122 v4 simulation)
 function generateGuid() {
@@ -139,7 +246,16 @@ const deckSelectionState = {
     decks: [],
     loaded: false,
     loading: null,
+    needsValidationRefresh: true,
     singleplayerMode: 'ai',
+    available: {
+        multiplayer: [],
+        singleplayer: [],
+        ai: []
+    },
+    validationCache: new Map(),
+    validationInFlight: new Map(),
+    multiplayerFormat: null,
     selected: {
         multiplayer: null,
         singleplayer: null,
@@ -147,36 +263,269 @@ const deckSelectionState = {
     }
 };
 
-const CARD_CLASS_LABELS = {
-    neutral: '中立',
-    forestcraft: '精灵',
-    swordcraft: '皇家护卫',
-    runecraft: '巫师',
-    dragoncraft: '龙族',
-    abysscraft: '梦魇',
-    havencraft: '主教',
-    portalcraft: '复仇者'
-};
+const DECK_SELECTION_CONTEXT_STORAGE_KEY = 'svb.deck-selection-context.v1';
+const DEFAULT_MULTIPLAYER_DECK_FORMAT = Object.freeze({
+    environment: getDefaultDeckEnvironment(),
+    rule: 'standard'
+});
+
+let deckSelectionPickerModal = null;
 
 function normalizeDeckId(value) {
     const text = String(value ?? '').trim();
     return text.length > 0 ? text : null;
 }
 
+function normalizeEnumValue(value) {
+    if (value === null || value === undefined) return '';
+    return String(value).trim().toLowerCase();
+}
+
+function normalizeEnvironment(value, fallback = DEFAULT_MULTIPLAYER_DECK_FORMAT.environment) {
+    return normalizeEnvironmentShared(value, fallback);
+}
+
+function normalizeDeckRule(value, fallback = DEFAULT_MULTIPLAYER_DECK_FORMAT.rule) {
+    return normalizeDeckRuleShared(value, fallback);
+}
+
 function resolveDeckId(deck) {
     return deck?.deckId || deck?.id || deck?.DeckId || null;
 }
 
-function getDeckClassLabel(value) {
-    const normalized = String(value ?? '').trim().toLowerCase();
-    return CARD_CLASS_LABELS[normalized] || value || '未知职业';
+function resolveDeckUpdatedAt(deck) {
+    return String(deck?.updatedAt ?? deck?.UpdatedAt ?? '');
+}
+
+function resolveDeckFormat(deck) {
+    return {
+        environment: normalizeEnvironment(deck?.environment ?? deck?.Environment),
+        rule: normalizeDeckRule(deck?.rule ?? deck?.Rule)
+    };
+}
+
+function matchesDeckFormat(deck, format) {
+    if (!deck || !format) return false;
+    const normalizedFormat = {
+        environment: normalizeEnvironment(format.environment),
+        rule: normalizeDeckRule(format.rule)
+    };
+    const deckFormat = resolveDeckFormat(deck);
+    return deckFormat.environment === normalizedFormat.environment
+        && deckFormat.rule === normalizedFormat.rule;
+}
+
+function getDeckValidationCacheKey(deck) {
+    const deckId = resolveDeckId(deck);
+    if (!deckId) return null;
+    return `${deckId}|${resolveDeckUpdatedAt(deck)}`;
+}
+
+function pruneDeckValidationCache(decks) {
+    const activeKeys = new Set(
+        (Array.isArray(decks) ? decks : [])
+            .map(deck => getDeckValidationCacheKey(deck))
+            .filter(Boolean)
+    );
+    for (const key of deckSelectionState.validationCache.keys()) {
+        if (!activeKeys.has(key)) {
+            deckSelectionState.validationCache.delete(key);
+        }
+    }
+    for (const key of deckSelectionState.validationInFlight.keys()) {
+        if (!activeKeys.has(key)) {
+            deckSelectionState.validationInFlight.delete(key);
+        }
+    }
+}
+
+function invalidateDeckValidationCache() {
+    deckSelectionState.validationCache.clear();
+    deckSelectionState.validationInFlight.clear();
+    deckSelectionState.needsValidationRefresh = true;
+}
+
+function rebuildAvailableDeckBuckets() {
+    const validDecks = deckSelectionState.decks.filter(deck => deck?.isBattleReady === true);
+    deckSelectionState.available.singleplayer = validDecks;
+    deckSelectionState.available.ai = validDecks;
+    // Deck picker should always allow switching among all battle-ready decks.
+    // Room/match format checks are still enforced when joining/syncing.
+    deckSelectionState.available.multiplayer = validDecks;
+}
+
+async function validateDeckForSelection(deck, options = {}) {
+    const deckId = resolveDeckId(deck);
+    if (!deckId) return false;
+    const force = options.force === true;
+
+    const cacheKey = getDeckValidationCacheKey(deck);
+    if (!force && cacheKey && deckSelectionState.validationCache.has(cacheKey)) {
+        return deckSelectionState.validationCache.get(cacheKey) === true;
+    }
+
+    if (!force && cacheKey && deckSelectionState.validationInFlight.has(cacheKey)) {
+        return await deckSelectionState.validationInFlight.get(cacheKey);
+    }
+
+    const validatePromise = (async () => {
+        const query = getDeckOwnerQuery();
+        try {
+            const response = await fetch(`/api/decks/${encodeURIComponent(deckId)}/code?${query}`, { method: 'GET' });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    })();
+
+    if (cacheKey) {
+        deckSelectionState.validationInFlight.set(cacheKey, validatePromise);
+    }
+
+    try {
+        const valid = await validatePromise;
+        if (cacheKey) {
+            deckSelectionState.validationCache.set(cacheKey, valid);
+        }
+        return valid;
+    } finally {
+        if (cacheKey) {
+            deckSelectionState.validationInFlight.delete(cacheKey);
+        }
+    }
+}
+
+function readDeckSelectionContext() {
+    try {
+        const raw = getStoredValue(DECK_SELECTION_CONTEXT_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeDeckSelectionContext(context) {
+    if (!context || typeof context !== 'object') return;
+    const normalized = {
+        source: context.source === 'multiplayer' ? 'multiplayer' : 'singleplayer',
+        environment: normalizeEnvironment(context.environment),
+        rule: normalizeDeckRule(context.rule),
+        updatedAt: Date.now()
+    };
+    try {
+        setStoredValue(DECK_SELECTION_CONTEXT_STORAGE_KEY, JSON.stringify(normalized));
+    } catch (err) {
+        console.warn('MAIN: Failed to persist deck selection context.', err);
+    }
+}
+
+function setMultiplayerDeckFormat(format, source = 'multiplayer') {
+    if (!format) return;
+    deckSelectionState.multiplayerFormat = {
+        environment: normalizeEnvironment(format.environment),
+        rule: normalizeDeckRule(format.rule)
+    };
+    writeDeckSelectionContext({
+        source,
+        environment: deckSelectionState.multiplayerFormat.environment,
+        rule: deckSelectionState.multiplayerFormat.rule
+    });
+}
+
+function getCurrentMultiplayerDeckFormat() {
+    if (deckSelectionState.multiplayerFormat) {
+        return deckSelectionState.multiplayerFormat;
+    }
+    return null;
+}
+
+async function refreshSelectableDecks() {
+    pruneDeckValidationCache(deckSelectionState.decks);
+
+    const needValidation = deckSelectionState.needsValidationRefresh
+        || deckSelectionState.decks.some(deck => typeof deck?.isBattleReady !== 'boolean');
+
+    if (!needValidation) {
+        rebuildAvailableDeckBuckets();
+        return;
+    }
+
+    await Promise.all(deckSelectionState.decks.map(async (deck) => {
+        const valid = await validateDeckForSelection(deck);
+        deck.isBattleReady = valid === true;
+        return valid;
+    }));
+
+    deckSelectionState.needsValidationRefresh = false;
+    rebuildAvailableDeckBuckets();
+}
+
+function getDecksForKey(key) {
+    return Array.isArray(deckSelectionState.available[key]) ? deckSelectionState.available[key] : [];
 }
 
 function formatDeckLabel(deck) {
-    const name = deck?.name || '未命名卡组';
-    const deckClass = getDeckClassLabel(deck?.class ?? deck?.Class);
-    const count = deck?.cardCount ?? 0;
-    return `${name} · ${deckClass} · ${count}/40`;
+    return formatDeckSummaryLabel(deck);
+}
+
+function getDeckById(deckId, decks = deckSelectionState.decks) {
+    const normalized = normalizeDeckId(deckId);
+    if (!normalized) return null;
+    return decks.find(deck => resolveDeckId(deck) === normalized) ?? null;
+}
+
+function ensureSelectedDeckId(key, decks = getDecksForKey(key)) {
+    if (!decks.length) {
+        deckSelectionState.selected[key] = null;
+        return null;
+    }
+    const selected = normalizeDeckId(deckSelectionState.selected[key]);
+    const fallback = resolveDeckId(decks[0]);
+    const resolved = decks.some(deck => resolveDeckId(deck) === selected) ? selected : fallback;
+    deckSelectionState.selected[key] = resolved;
+    return resolved;
+}
+
+function ensureDeckPickerModal() {
+    if (!deckSelectionPickerModal) {
+        deckSelectionPickerModal = createDeckSelectionPickerModal();
+    }
+    return deckSelectionPickerModal;
+}
+
+async function pickDeckFromModal({ key, title, skipRefresh = false }) {
+    if (!skipRefresh) {
+        await refreshSelectableDecks();
+    }
+    const decks = getDecksForKey(key);
+    const selectedDeckId = ensureSelectedDeckId(key, decks);
+    const pickerDecks = decks.map(deck => {
+        const presentation = buildDeckPresentation(deck);
+        return ({
+        id: resolveDeckId(deck),
+        name: deck?.name || '未命名卡组',
+        classLabel: presentation.classLabel,
+        environmentLabel: presentation.environmentLabel,
+        ruleLabel: presentation.ruleLabel,
+        isBattleReady: deck?.isBattleReady === true,
+        cardCount: Number(deck?.cardCount ?? deck?.CardCount ?? 0),
+        totalGames: Number(deck?.totalGames ?? deck?.TotalGames ?? 0),
+        totalWins: Number(deck?.totalWins ?? deck?.TotalWins ?? 0),
+        goingFirstGames: Number(deck?.goingFirstGames ?? deck?.GoingFirstGames ?? 0),
+        goingFirstWins: Number(deck?.goingFirstWins ?? deck?.GoingFirstWins ?? 0),
+        goingSecondGames: Number(deck?.goingSecondGames ?? deck?.GoingSecondGames ?? 0),
+        goingSecondWins: Number(deck?.goingSecondWins ?? deck?.GoingSecondWins ?? 0)
+    });
+    });
+    const pickedDeckId = await ensureDeckPickerModal().open({
+        title,
+        decks: pickerDecks,
+        selectedDeckId
+    });
+    return normalizeDeckId(pickedDeckId);
 }
 
 async function ensureDecksLoaded() {
@@ -190,7 +539,9 @@ async function ensureDecksLoaded() {
     deckSelectionState.loading = (async () => {
         await bootstrapDecks();
         const decks = await listDecks();
-        deckSelectionState.decks = Array.isArray(decks) ? decks : [];
+        deckSelectionState.decks = filterUiVisibleDecks(Array.isArray(decks) ? decks : []);
+        deckSelectionState.needsValidationRefresh = true;
+        await refreshSelectableDecks();
         deckSelectionState.loaded = true;
         deckSelectionState.loading = null;
         return deckSelectionState.decks;
@@ -199,114 +550,66 @@ async function ensureDecksLoaded() {
     return deckSelectionState.loading;
 }
 
-function applyDeckOptions(selectEl, key, outputEl) {
-    if (!selectEl) return;
-    const decks = deckSelectionState.decks;
+function updateDeckPickerDisplay(currentEl, selectBtn, key, emptyText = '没有可用卡组') {
+    if (!currentEl) return;
+    const decks = getDecksForKey(key);
     if (!decks.length) {
-        selectEl.innerHTML = '<option value="">没有可用卡组</option>';
-        selectEl.disabled = true;
-        if (outputEl) {
-            outputEl.textContent = '没有可用卡组，请先在牌组编辑中创建。';
-            outputEl.style.color = '#ff4f00';
-        }
+        currentEl.textContent = emptyText;
+        if (selectBtn) selectBtn.disabled = true;
         return;
     }
 
-    selectEl.disabled = false;
-    selectEl.innerHTML = [
-        '<option value="">请选择卡组</option>',
-        ...decks.map(deck => {
-            const deckId = resolveDeckId(deck);
-            const label = formatDeckLabel(deck);
-            return `<option value="${deckId}">${label}</option>`;
-        })
-    ].join('');
-
-    const selected = normalizeDeckId(deckSelectionState.selected[key]);
-    const fallback = resolveDeckId(decks[0]);
-    const resolved = decks.some(deck => resolveDeckId(deck) === selected) ? selected : fallback;
-    deckSelectionState.selected[key] = resolved;
-    selectEl.value = resolved || '';
-    if (outputEl) {
-        outputEl.textContent = '';
-        outputEl.style.color = '';
-    }
-}
-
-function getDeckIndexById(deckId) {
-    const normalized = normalizeDeckId(deckId);
-    if (!normalized) return -1;
-    return deckSelectionState.decks.findIndex(deck => resolveDeckId(deck) === normalized);
+    const resolved = ensureSelectedDeckId(key, decks);
+    const selectedDeck = getDeckById(resolved, decks) || decks[0];
+    currentEl.textContent = formatDeckLabel(selectedDeck);
+    if (selectBtn) selectBtn.disabled = false;
 }
 
 function updateMultiplayerDeckSwitcher() {
     const currentEl = document.getElementById('mp-deck-current');
-    const prevBtn = document.getElementById('mp-deck-prev');
-    const nextBtn = document.getElementById('mp-deck-next');
-    if (!currentEl) return;
-
-    const decks = deckSelectionState.decks;
-    if (!decks.length) {
-        currentEl.textContent = '没有可用卡组';
-        if (prevBtn) prevBtn.disabled = true;
-        if (nextBtn) nextBtn.disabled = true;
-        return;
-    }
-
-    const selectedId = normalizeDeckId(deckSelectionState.selected.multiplayer);
-    const resolvedIndex = getDeckIndexById(selectedId);
-    const index = resolvedIndex >= 0 ? resolvedIndex : 0;
-    const deck = decks[index];
-    deckSelectionState.selected.multiplayer = resolveDeckId(deck);
-    currentEl.textContent = formatDeckLabel(deck);
-
-    const disableNav = decks.length <= 1;
-    if (prevBtn) prevBtn.disabled = disableNav;
-    if (nextBtn) nextBtn.disabled = disableNav;
+    const selectBtn = document.getElementById('mp-deck-select-btn');
+    updateDeckPickerDisplay(currentEl, selectBtn, 'multiplayer');
 }
 
 function updateSingleplayerDeckSwitcher() {
     const currentEl = document.getElementById('sp-deck-current');
-    const prevBtn = document.getElementById('sp-deck-prev');
-    const nextBtn = document.getElementById('sp-deck-next');
-    if (!currentEl) return;
+    const selectBtn = document.getElementById('sp-deck-select-btn');
+    updateDeckPickerDisplay(currentEl, selectBtn, 'singleplayer');
+}
 
-    const decks = deckSelectionState.decks;
-    if (!decks.length) {
-        currentEl.textContent = '没有可用卡组';
-        if (prevBtn) prevBtn.disabled = true;
-        if (nextBtn) nextBtn.disabled = true;
-        return;
-    }
-
-    const selectedId = normalizeDeckId(deckSelectionState.selected.singleplayer);
-    const resolvedIndex = getDeckIndexById(selectedId);
-    const index = resolvedIndex >= 0 ? resolvedIndex : 0;
-    const deck = decks[index];
-    deckSelectionState.selected.singleplayer = resolveDeckId(deck);
-    currentEl.textContent = formatDeckLabel(deck);
-
-    const disableNav = decks.length <= 1;
-    if (prevBtn) prevBtn.disabled = disableNav;
-    if (nextBtn) nextBtn.disabled = disableNav;
+function updateSingleplayerAiDeckSwitcher() {
+    const currentEl = document.getElementById('sp-ai-deck-current');
+    const selectBtn = document.getElementById('sp-ai-deck-select-btn');
+    updateDeckPickerDisplay(currentEl, selectBtn, 'ai');
 }
 
 async function refreshDeckSelectionUI() {
     try {
         await ensureDecksLoaded();
+        await refreshSelectableDecks();
         updateMultiplayerDeckSwitcher();
         const mpOutput = document.getElementById('mp-deck-output');
         if (mpOutput) {
-            if (!deckSelectionState.decks.length) {
-                mpOutput.textContent = '没有可用卡组，请先在牌组编辑中创建。';
+            if (!getDecksForKey('multiplayer').length) {
+                mpOutput.textContent = '没有通过校验的可用卡组，请先在牌组编辑中修正。';
                 mpOutput.style.color = '#ff4f00';
             } else {
                 mpOutput.textContent = '';
                 mpOutput.style.color = '';
             }
         }
+        const spOutput = document.getElementById('sp-deck-output');
+        if (spOutput) {
+            if (!getDecksForKey('singleplayer').length) {
+                spOutput.textContent = '没有通过校验的卡组，请先在牌组编辑中修正。';
+                spOutput.style.color = '#ff4f00';
+            } else {
+                spOutput.textContent = '';
+                spOutput.style.color = '';
+            }
+        }
         updateSingleplayerDeckSwitcher();
-        applyDeckOptions(document.getElementById('sp-ai-deck'), 'ai', document.getElementById('sp-deck-output'));
+        updateSingleplayerAiDeckSwitcher();
     } catch (err) {
         const message = err?.message || String(err);
         const outputEls = [
@@ -384,6 +687,7 @@ function loadCachedHandshake() {
 function clearCachedHandshake() {
     lobbyHandshake = null;
     pendingHandshake = null;
+    deckSelectionState.multiplayerFormat = null;
     clearPendingRoomExitDecision();
     const removed = removeStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
     if (!removed) {
@@ -536,6 +840,31 @@ async function handlePendingRoomExitDecisionOnNavigation() {
     await leaveCurrentPvpRoom('mainmenu-room-exit-decision');
 }
 
+function appendAfterRouteChangeHandler(handlerName, callback) {
+    if (!router || typeof router.setAfterRouteChange !== 'function' || typeof callback !== 'function') {
+        return false;
+    }
+
+    const previousAfter = router.afterRouteChange;
+    router.setAfterRouteChange(async (oldRoute, newRoute) => {
+        if (typeof previousAfter === 'function') {
+            try {
+                await previousAfter(oldRoute, newRoute);
+            } catch (err) {
+                console.error(`MAIN: afterRouteChange chain failed before "${handlerName}".`, err);
+            }
+        }
+
+        try {
+            await callback(oldRoute, newRoute);
+        } catch (err) {
+            console.error(`MAIN: afterRouteChange handler "${handlerName}" failed.`, err);
+        }
+    });
+
+    return true;
+}
+
 function registerRoomExitDecisionRouteHooks() {
     if (!router || typeof router.setBeforeRouteChange !== 'function') {
         return;
@@ -557,16 +886,7 @@ function registerRoomExitDecisionRouteHooks() {
         return true;
     });
 
-    if (typeof router.setAfterRouteChange !== 'function') {
-        return;
-    }
-
-    const originalAfter = router.afterRouteChange;
-    router.setAfterRouteChange(async (oldRoute, newRoute) => {
-        if (typeof originalAfter === 'function') {
-            await originalAfter(oldRoute, newRoute);
-        }
-
+    appendAfterRouteChangeHandler('room-exit-decision', async (_oldRoute, newRoute) => {
         try {
             if (newRoute === 'navigation') {
                 await handlePendingRoomExitDecisionOnNavigation();
@@ -647,7 +967,9 @@ async function createMatch(useAiFallback) {
 
 async function joinMatch(gameId, joinCode, options = {}) {
     const session = getUserSession();
-    const resolvedPlayerId = options.playerId === undefined ? (session.userId || null) : options.playerId;
+    const resolvedPlayerId = options.playerId === undefined
+        ? (session.userId || session.guestId || null)
+        : options.playerId;
     const payload = await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/join`, {
         joinCode,
         playerId: resolvedPlayerId
@@ -725,10 +1047,26 @@ async function setupSignalRConnection(gameId, playerId, token, initialStateGate,
         .configureLogging(signalR.LogLevel.Trace) // Changed level to Trace
         .build();
 
+    const connectionId = getConnectionDebugId(connection, 'game');
+    logPerfDebug('signalr-game', 'connection created', {
+        connectionId,
+        gameId,
+        playerId,
+        skipInitialReset: options.skipInitialReset === true
+    });
+
     registerSignalREventHandlers(connection, initialStateGate); // Pass resolver down
 
     try {
+        logPerfDebug('signalr-game', 'starting connection', {
+            connectionId,
+            state: connection.state
+        });
         await connection.start();
+        logPerfDebug('signalr-game', 'connection started', {
+            connectionId,
+            state: connection.state
+        });
         return connection;
     } catch (err) {
         console.error("MAIN: SignalR Connection Failed: ", err);
@@ -770,10 +1108,29 @@ function registerActionSignalREventHandlers(conn) {
     if (!conn) return;
 
     let lastChoiceRequestKey = null;
+    const wirePlayerScopedEvent = (eventName, handler) => {
+        conn.on(eventName, (eventData) => {
+            try {
+                handler(eventData);
+            } catch (err) {
+                console.error(`MAIN: Action-connection handler failed for ${eventName}:`, err);
+            }
+        });
+    };
+
+    // Keep this list aligned with gameplay interaction handlers in registerSignalREventHandlers.
+    wirePlayerScopedEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
+    wirePlayerScopedEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
+    wirePlayerScopedEvent("AttackStateUpdated", handleAttackStateUpdated);
+    wirePlayerScopedEvent("ActStateUpdated", handleActStateUpdated);
+    wirePlayerScopedEvent("FusionStateUpdated", handleFusionStateUpdated);
+    wirePlayerScopedEvent("EvolveStateUpdated", handleEvolveStateUpdated);
+    wirePlayerScopedEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
+    wirePlayerScopedEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
 
     // Dual-control guest connection must receive player-scoped choice events,
     // otherwise the selected seat cannot submit a decision and the game stalls.
-    conn.on("PlayerChoiceRequested", (eventData) => {
+    wirePlayerScopedEvent("PlayerChoiceRequested", (eventData) => {
         const choiceRequest = eventData?.ChoiceRequest;
         const pendingChoiceId = choiceRequest?.PendingChoiceId;
         const sourceAbilityRuntimeId = choiceRequest?.SourceAbilityRuntimeId;
@@ -787,6 +1144,25 @@ function registerActionSignalREventHandlers(conn) {
         lastChoiceRequestKey = requestKey;
 
         handlePlayerChoiceRequested(eventData);
+    });
+
+    conn.on("ReceiveError", (errorMessage) => {
+        const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
+        console.error("MAIN: Received Error from Server (action connection):", message);
+
+        if (message.startsWith("ROOM_CLOSED:")) {
+            const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
+            alert(reason);
+            clearCachedHandshake();
+            try {
+                router.navigateTo('navigation');
+            } catch (err) {
+                // ignore navigation errors during teardown
+            }
+            return;
+        }
+
+        alert(`操作失败: ${message}`);
     });
 }
 
@@ -833,10 +1209,25 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
         .configureLogging(signalR.LogLevel.Trace)
         .build();
 
+    const connectionId = getConnectionDebugId(connection, 'spectator');
+    logPerfDebug('signalr-game', 'spectator connection created', {
+        connectionId,
+        gameId,
+        skipInitialReset: options.skipInitialReset === true
+    });
+
     registerSignalREventHandlers(connection, initialStateGate);
 
     try {
+        logPerfDebug('signalr-game', 'starting spectator connection', {
+            connectionId,
+            state: connection.state
+        });
         await connection.start();
+        logPerfDebug('signalr-game', 'spectator connection started', {
+            connectionId,
+            state: connection.state
+        });
         return connection;
     } catch (err) {
         console.error("MAIN: SignalR Connection Failed (spectate): ", err);
@@ -851,6 +1242,7 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
  * @param {signalR.HubConnection} conn - The SignalR connection instance.
  */
 function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolver as parameter
+    const connectionId = getConnectionDebugId(conn, 'game');
     const EVENT_STREAM_NAMES = [
         "TurnStarted",
         "TurnEnded",
@@ -890,12 +1282,48 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         "PlayerChoiceRequested",
         "LogEvent"
     ];
+    const eventReceiptCounts = new Map();
+    const criticalEvents = new Set([
+        'ReceiveGameState',
+        'HandUpdated',
+        'PlayerMulliganCompleted',
+        'CardMoved',
+        'CardInstanceUpdated',
+        'ChatHistory',
+        'MatchHistorySync',
+        'PlayerConnectionStatusUpdated'
+    ]);
+
+    const logEventReceipt = (eventName, eventData, extra = null) => {
+        const nextCount = (eventReceiptCounts.get(eventName) ?? 0) + 1;
+        eventReceiptCounts.set(eventName, nextCount);
+        if (!criticalEvents.has(eventName) || nextCount > 4) {
+            return nextCount;
+        }
+        logPerfDebug('signalr-game', 'incoming event', {
+            connectionId,
+            eventName,
+            sequence: nextCount,
+            ...summarizeSignalRPayload(eventName, eventData),
+            ...(extra || {})
+        });
+        return nextCount;
+    };
+
+    logPerfDebug('signalr-game', 'register handlers complete', {
+        connectionId,
+        eventHandlerCount: EVENT_STREAM_NAMES.length + 5,
+        criticalEvents: Array.from(criticalEvents)
+    });
 
     const wireEvent = (eventName, handler, logMapper) => {
         conn.on(eventName, (eventData) => {
+            logEventReceipt(eventName, eventData);
             if (EVENT_STREAM_NAMES.includes(eventName)) {
                 const payloadForLog = typeof logMapper === 'function' ? logMapper(eventData) : eventData;
+                handler(eventData);
                 appendGameLog(eventName, payloadForLog);
+                return;
             }
             handler(eventData);
         });
@@ -905,6 +1333,11 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     // --- MODIFIED FOR M6 ---
     conn.on("ReceiveGameState", (receivedGameState) => {
         const timestamp = new Date().toISOString();
+        logEventReceipt('ReceiveGameState', receivedGameState, {
+            initialStateReceived,
+            hasInitialStateGate: typeof initialStateGate?.resolve === 'function',
+            timestamp
+        });
         if (!initialStateReceived && typeof initialStateGate?.resolve === 'function') {
             if (!receivedGameState) {
                 initialStateReceived = true;
@@ -990,6 +1423,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("GameOver", handleGameOver);
     wireEvent("AttackStateUpdated", handleAttackStateUpdated);
     wireEvent("ActStateUpdated", handleActStateUpdated);
+    wireEvent("FusionStateUpdated", handleFusionStateUpdated);
     // 【BUG修复】注册处理手牌可玩性更新的事件监听器
     wireEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
     wireEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
@@ -1039,10 +1473,11 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             setConnectionStatus('disconnected', '连接失败，请点击重连');
         }
 
-        alert(`服务器错误: ${message}`); // Use alert instead of displayError
+        alert(`操作失败: ${message}`); // Use alert instead of displayError
     });
 
     conn.on("PlayerConnectionStatusUpdated", (eventData) => {
+        logEventReceipt('PlayerConnectionStatusUpdated', eventData);
         const playerId = eventData?.PlayerId || eventData?.playerId;
         const isConnected = eventData?.IsConnected ?? eventData?.isConnected;
         if (!playerId || typeof isConnected !== 'boolean') {
@@ -1061,6 +1496,11 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 
     // --- Connection Lifecycle Handlers ---
     conn.onclose((error) => {
+        logPerfDebug('signalr-game', 'connection closed', {
+            connectionId,
+            state: conn.state,
+            error: error ? { message: error.message, name: error.name } : null
+        });
         console.error(`MAIN: SignalR Connection Closed. Error: "${error}". State: ${conn.state}.`);
         if (manualReconnectInProgress) {
             connection = null;
@@ -1083,6 +1523,11 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     });
 
     conn.onreconnecting((error) => {
+        logPerfDebug('signalr-game', 'connection reconnecting', {
+            connectionId,
+            state: conn.state,
+            error: error ? { message: error.message, name: error.name } : null
+        });
         console.warn("MAIN: SignalR Connection Reconnecting...", error);
         alert("连接中断，正在尝试重新连接服务器..."); // Use alert instead of displayInfo
         // Disable UI interactions while reconnecting?
@@ -1091,6 +1536,11 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     });
 
     conn.onreconnected((connectionId) => {
+        logPerfDebug('signalr-game', 'connection reconnected', {
+            connectionId: getConnectionDebugId(conn, 'game'),
+            transportConnectionId: connectionId,
+            state: conn.state
+        });
         alert("已重新连接到服务器。"); // Use alert instead of displayInfo
         forceFullStateOnNextReceive = true;
         reconnectInProgress = false;
@@ -1395,7 +1845,7 @@ async function initializeApp() {
             }
             console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
             // Handle errors from loadCards, setupSignalRConnection, or state reception issues
-            alert(`游戏初始化失败：${error.message || '未知错误'}. 请刷新页面重试。`);
+            alert(`游戏初始化失败：${error.message || '未知错误'} 请刷新页面重试。`);
             // Optionally disable UI or show persistent error
             const cached = getReconnectHandshake();
             if (cached?.gameId) {
@@ -1503,8 +1953,7 @@ function setupMultiplayerUI() {
     const btnSpectate = document.getElementById('mp-spectate-btn');
     const inputSpectateGame = document.getElementById('mp-spectate-game');
     const outSpectate = document.getElementById('mp-spectate-output');
-    const deckPrev = document.getElementById('mp-deck-prev');
-    const deckNext = document.getElementById('mp-deck-next');
+    const deckSelectBtn = document.getElementById('mp-deck-select-btn');
 
     const copyTextToClipboard = async (text) => {
         const value = String(text ?? '');
@@ -1598,12 +2047,37 @@ function setupMultiplayerUI() {
         queuedDeckId: null
     };
 
+    const updateMultiplayerFormatFromRoom = (room) => {
+        const environment = normalizeEnvironment(
+            room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
+            ''
+        );
+        const rule = normalizeDeckRule(
+            room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
+            ''
+        );
+        if (!environment || !rule) {
+            return false;
+        }
+
+        const current = getCurrentMultiplayerDeckFormat();
+        if (current && current.environment === environment && current.rule === rule) {
+            return false;
+        }
+
+        setMultiplayerDeckFormat({ environment, rule }, 'multiplayer');
+        void refreshDeckSelectionUI();
+        return true;
+    };
+
     const markRoomDeckSynced = (handshake, deckId) => {
         const normalizedDeckId = normalizeDeckId(deckId);
         if (!handshake?.gameId || !normalizedDeckId) return;
         roomDeckSyncState.gameId = handshake.gameId;
         roomDeckSyncState.lastDeckId = normalizedDeckId;
         roomDeckSyncState.queuedDeckId = null;
+        // Keep room-constrained format source as authoritative (from room status),
+        // don't lock global picker format to a local deck selection.
     };
 
     const getDeckSyncHandshake = () => {
@@ -1620,6 +2094,15 @@ function setupMultiplayerUI() {
         }
 
         return handshake;
+    };
+
+    const isRoomUnavailableError = (message) => {
+        const text = String(message || '');
+        return text.includes('房间已关闭')
+            || text.includes('房间不存在')
+            || text.includes('房间已过期')
+            || text.includes('Not Found')
+            || text.includes('404');
     };
 
     const syncSelectedDeckToRoom = async (deckId, options = {}) => {
@@ -1662,12 +2145,14 @@ function setupMultiplayerUI() {
                     const message = err?.message || String(err);
                     if (message.includes('房间已开始')) {
                         setDeckOutput('房间已开始，切换卡组不会影响本局。', true);
-                    } else if (
-                        message.includes('房间已关闭') ||
-                        message.includes('房间不存在') ||
-                        message.includes('房间已过期')
-                    ) {
-                        setDeckOutput('房间不可用，卡组仅保留本地选择。', true);
+                    } else if (isRoomUnavailableError(message)) {
+                        // Cached handshake may be stale after room close/expiry.
+                        // Clear it to avoid repeated sync attempts when no active room exists.
+                        clearCachedHandshake();
+                        roomDeckSyncState.gameId = null;
+                        roomDeckSyncState.lastDeckId = null;
+                        roomDeckSyncState.queuedDeckId = null;
+                        setDeckOutput('卡组已切换。当前无可用房间，创建或加入后会自动提交。');
                     } else {
                         setDeckOutput(`同步房间卡组失败：${message}`, true);
                     }
@@ -1682,22 +2167,41 @@ function setupMultiplayerUI() {
         }
     };
 
-    const getSelectedMultiplayerDeckId = () => {
+    const getSelectedMultiplayerDeckId = async () => {
+        await refreshSelectableDecks();
+        const decks = getDecksForKey('multiplayer');
         const current = normalizeDeckId(deckSelectionState.selected.multiplayer);
-        if (current) return current;
-        const fallback = resolveDeckId(deckSelectionState.decks[0]);
+        if (current && decks.some(deck => resolveDeckId(deck) === current)) {
+            return current;
+        }
+        const fallback = resolveDeckId(decks[0]);
         deckSelectionState.selected.multiplayer = fallback;
         return fallback;
     };
 
-    const cycleDeck = (delta) => {
-        const decks = deckSelectionState.decks;
-        if (!decks.length) return;
-        const currentIndex = getDeckIndexById(deckSelectionState.selected.multiplayer);
-        const index = currentIndex >= 0 ? currentIndex : 0;
-        const nextIndex = (index + delta + decks.length) % decks.length;
-        const deck = decks[nextIndex];
-        const selectedDeckId = resolveDeckId(deck);
+    deckSelectBtn?.addEventListener('click', async () => {
+        const targetRoomId = inputJoinGame?.value?.trim();
+        if (targetRoomId && isValidGuid(targetRoomId)) {
+            try {
+                const room = await getMatch(targetRoomId);
+                updateMultiplayerFormatFromRoom(room);
+            } catch {
+                // Ignore probing errors while just opening deck picker.
+            }
+        }
+
+        await ensureDecksLoaded();
+        await refreshSelectableDecks();
+        if (!getDecksForKey('multiplayer').length) {
+            setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
+            return;
+        }
+        const selectedDeckId = await pickDeckFromModal({
+            key: 'multiplayer',
+            title: '选择多人对战卡组',
+            skipRefresh: true
+        });
+        if (!selectedDeckId) return;
         deckSelectionState.selected.multiplayer = selectedDeckId;
         updateMultiplayerDeckSwitcher();
         setDeckOutput('');
@@ -1705,10 +2209,7 @@ function setupMultiplayerUI() {
             silentWhenNoRoom: true,
             silentWhenAlreadySynced: true
         });
-    };
-
-    deckPrev?.addEventListener('click', () => cycleDeck(-1));
-    deckNext?.addEventListener('click', () => cycleDeck(1));
+    });
 
     refreshDeckSelectionUI().catch(() => {
         setDeckOutput('卡组加载失败，请稍后重试。', true);
@@ -1716,7 +2217,7 @@ function setupMultiplayerUI() {
 
     bindButton(btnCreateHost, async () => {
         if (!outCreate) return;
-        const deckId = getSelectedMultiplayerDeckId();
+        const deckId = await getSelectedMultiplayerDeckId();
         if (!deckId) {
             setDeckOutput('请先选择卡组。', true);
             return;
@@ -1738,6 +2239,7 @@ function setupMultiplayerUI() {
             mpPollTimerId = setInterval(async () => {
                 try {
                     const room = await getMatch(handshake.gameId);
+                    updateMultiplayerFormatFromRoom(room);
                     const status = room.status;
                     const guestJoined = !!room.guestPlayerId;
                     if (status === "Closed") {
@@ -1780,27 +2282,71 @@ function setupMultiplayerUI() {
 
     bindButton(btnJoin, async () => {
         if (!outJoin) return;
-        const deckId = getSelectedMultiplayerDeckId();
-        if (!deckId) {
-            setDeckOutput('请先选择卡组。', true);
-            return;
-        }
         const gameId = inputJoinGame?.value?.trim();
         const joinCode = inputJoinCode?.value?.trim();
         if (!gameId || !joinCode) {
             setOutput(outJoin, '请输入 GameId 与 JoinCode。', true);
             return;
         }
+
+        await ensureDecksLoaded();
+        const selectedDeckId = normalizeDeckId(deckSelectionState.selected.multiplayer);
+        if (!selectedDeckId) {
+            setDeckOutput('请先在多人对战中选择卡组。', true);
+            return;
+        }
+        const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
+        if (!selectedDeck) {
+            setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
+            return;
+        }
+
+        let requiredFormat = null;
+        try {
+            const room = await getMatch(gameId);
+            const environment = normalizeEnvironment(
+                room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
+                ''
+            );
+            const rule = normalizeDeckRule(
+                room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
+                ''
+            );
+            if (environment && rule) {
+                requiredFormat = { environment, rule };
+            }
+        } catch {
+            // Ignore here and let join flow surface authoritative errors.
+        }
+
+        const selectedDeckValid = await validateDeckForSelection(selectedDeck);
+        if (!selectedDeckValid) {
+            setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
+            return;
+        }
+
+        if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
+            setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
+            return;
+        }
+
+        if (requiredFormat) {
+            setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
+        }
+        await refreshSelectableDecks();
+        updateMultiplayerDeckSwitcher();
+        setDeckOutput('');
+
         setOutput(outJoin, '加入房间中...');
         try {
             const handshake = await joinMatch(gameId, joinCode);
             await markReady(handshake.gameId, handshake.playerId, handshake.token);
-            const selection = await submitDeckSelection(handshake, { deckId });
+            const selection = await submitDeckSelection(handshake, { deckId: selectedDeckId });
             if (!selection.ok) {
                 setOutput(outJoin, `卡组选择失败：${selection.message}`, true);
                 return;
             }
-            markRoomDeckSynced(handshake, deckId);
+            markRoomDeckSynced(handshake, selectedDeckId);
             try {
                 await startMatch(handshake.gameId, handshake.playerId, handshake.token);
             } catch (err) {
@@ -1813,6 +2359,7 @@ function setupMultiplayerUI() {
             mpPollTimerId = setInterval(async () => {
                 try {
                     const room = await getMatch(handshake.gameId);
+                    updateMultiplayerFormatFromRoom(room);
                     if (room.status === "Closed") {
                         stopMultiplayerPolling();
                         const reason = room.closedReason || "房间已关闭。";
@@ -1856,7 +2403,7 @@ function setupMultiplayerUI() {
         // For PVP rooms, only enter game when Started (avoids hanging init while waiting)
         (async () => {
             try {
-                const deckId = getSelectedMultiplayerDeckId();
+                const deckId = await getSelectedMultiplayerDeckId();
                 if (!deckId) {
                     alert('请先选择卡组。');
                     return;
@@ -1868,6 +2415,7 @@ function setupMultiplayerUI() {
                 }
                 markRoomDeckSynced(handshake, deckId);
                 const room = await getMatch(handshake.gameId);
+                updateMultiplayerFormatFromRoom(room);
                 if (room.status === "Ready") {
                     try {
                         await startMatch(handshake.gameId, handshake.playerId, handshake.token);
@@ -1876,6 +2424,7 @@ function setupMultiplayerUI() {
                     }
                 }
                 const room2 = await getMatch(handshake.gameId);
+                updateMultiplayerFormatFromRoom(room2);
                 if (room2.status === "Closed") {
                     const reason = room2.closedReason || "房间已关闭。";
                     clearCachedHandshake();
@@ -1903,6 +2452,20 @@ function setupMultiplayerUI() {
         }
 
         try {
+            setOutput(outSpectate, '检测房间状态中...');
+
+            const room = await getMatch(gameId);
+            if (room?.status === "Closed") {
+                const reason = room.closedReason || '房间已关闭。';
+                setOutput(outSpectate, `无法开始观战：${reason}`, true);
+                return;
+            }
+
+            if (room?.status !== "Started" || !room?.activeGameId) {
+                setOutput(outSpectate, '房间尚未开始，暂不可观战。', true);
+                return;
+            }
+
             stopMultiplayerPolling();
             clearCachedHandshake();
             suppressMultiplayerLeaveOnce = true;
@@ -1916,6 +2479,7 @@ function setupMultiplayerUI() {
             params.delete('useAiFallback');
 
             window.history.replaceState(window.history.state, '', `?${params.toString()}${window.location.hash}`);
+            setOutput(outSpectate, '开始观战中...');
             router.navigateTo('game');
         } catch (err) {
             setOutput(outSpectate, `无法开始观战：${err?.message || String(err)}`, true);
@@ -1928,12 +2492,11 @@ function setupSingleplayerUI() {
     if (!singlePanel) return;
 
     const modeSelect = document.getElementById('sp-mode');
-    const aiSelect = document.getElementById('sp-ai-deck');
+    const playerDeckSelectBtn = document.getElementById('sp-deck-select-btn');
+    const aiDeckSelectBtn = document.getElementById('sp-ai-deck-select-btn');
     const outDeck = document.getElementById('sp-deck-output');
     const outStart = document.getElementById('sp-start-output');
     const btnStart = document.getElementById('sp-start-btn');
-    const deckPrev = document.getElementById('sp-deck-prev');
-    const deckNext = document.getElementById('sp-deck-next');
     const modeNote = document.getElementById('sp-mode-note');
     const modeHint = document.getElementById('sp-mode-hint');
     const startDesc = document.getElementById('sp-start-desc');
@@ -1972,36 +2535,59 @@ function setupSingleplayerUI() {
         if (opponentLabel) opponentLabel.textContent = isDual ? '对手卡组' : 'AI 卡组';
     };
 
-    const getSelectedSingleplayerDeckId = () => {
+    const getSelectedSingleplayerDeckId = async () => {
+        await refreshSelectableDecks();
+        const decks = getDecksForKey('singleplayer');
         const current = normalizeDeckId(deckSelectionState.selected.singleplayer);
-        if (current) return current;
-        const fallback = resolveDeckId(deckSelectionState.decks[0]);
+        if (current && decks.some(deck => resolveDeckId(deck) === current)) {
+            return current;
+        }
+        const fallback = resolveDeckId(decks[0]);
         deckSelectionState.selected.singleplayer = fallback;
         return fallback;
     };
 
-    const cycleDeck = (delta) => {
-        const decks = deckSelectionState.decks;
-        if (!decks.length) return;
-        const currentIndex = getDeckIndexById(deckSelectionState.selected.singleplayer);
-        const index = currentIndex >= 0 ? currentIndex : 0;
-        const nextIndex = (index + delta + decks.length) % decks.length;
-        const deck = decks[nextIndex];
-        deckSelectionState.selected.singleplayer = resolveDeckId(deck);
+    playerDeckSelectBtn?.addEventListener('click', async () => {
+        await ensureDecksLoaded();
+        await refreshSelectableDecks();
+        if (!getDecksForKey('singleplayer').length) {
+            setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
+            return;
+        }
+        const selectedDeckId = await pickDeckFromModal({
+            key: 'singleplayer',
+            title: '选择玩家卡组',
+            skipRefresh: true
+        });
+        if (!selectedDeckId) return;
+        deckSelectionState.selected.singleplayer = selectedDeckId;
         updateSingleplayerDeckSwitcher();
         setDeckOutput('');
-    };
-
-    deckPrev?.addEventListener('click', () => cycleDeck(-1));
-    deckNext?.addEventListener('click', () => cycleDeck(1));
+    });
 
     modeSelect?.addEventListener('change', () => {
         applySingleplayerMode(modeSelect.value);
         setDeckOutput('');
     });
 
-    aiSelect?.addEventListener('change', () => {
-        deckSelectionState.selected.ai = normalizeDeckId(aiSelect.value);
+    aiDeckSelectBtn?.addEventListener('click', async () => {
+        await ensureDecksLoaded();
+        await refreshSelectableDecks();
+        if (!getDecksForKey('ai').length) {
+            setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
+            return;
+        }
+        const title = normalizeSingleplayerMode(modeSelect?.value || deckSelectionState.singleplayerMode) === 'dual'
+            ? '选择对手卡组'
+            : '选择 AI 卡组';
+        const selectedDeckId = await pickDeckFromModal({
+            key: 'ai',
+            title,
+            skipRefresh: true
+        });
+        if (!selectedDeckId) return;
+        deckSelectionState.selected.ai = selectedDeckId;
+        updateSingleplayerAiDeckSwitcher();
         setDeckOutput('');
     });
 
@@ -2012,8 +2598,8 @@ function setupSingleplayerUI() {
 
     bindButton(btnStart, async () => {
         const mode = getSingleplayerMode();
-        const playerDeckId = getSelectedSingleplayerDeckId();
-        const aiDeckId = normalizeDeckId(aiSelect?.value || deckSelectionState.selected.ai);
+        const playerDeckId = await getSelectedSingleplayerDeckId();
+        const aiDeckId = ensureSelectedDeckId('ai', getDecksForKey('ai'));
         if (!playerDeckId || !aiDeckId) {
             const opponentLabelText = mode === 'dual' ? '对手' : 'AI';
             setDeckOutput(`请先选择玩家与 ${opponentLabelText} 卡组。`, true);
@@ -2075,13 +2661,9 @@ function setupSingleplayerUI() {
         }
     });
 
-    if (router && typeof router.setAfterRouteChange === 'function') {
-        const originalAfter = router.afterRouteChange;
-        router.setAfterRouteChange(async (oldRoute, newRoute) => {
-            if (originalAfter) await originalAfter(oldRoute, newRoute);
-            setStartOutput('');
-        });
-    }
+    appendAfterRouteChangeHandler('singleplayer-output-reset', async () => {
+        setStartOutput('');
+    });
 }
 
 function setupUserInfoUI() {
@@ -2097,6 +2679,8 @@ function setupUserInfoUI() {
     const avatarTextEl = document.getElementById('user-info-avatar-text');
     const idInline = document.getElementById('user-id-inline');
     const coinsEl = document.getElementById('user-info-coins');
+    const coinsItemEl = coinsEl?.closest('.user-resource-item.resource-coin') ?? null;
+    const totalWinsEl = document.getElementById('user-info-total-wins');
     const authSection = document.getElementById('user-auth');
     const usernameInput = document.getElementById('user-auth-username');
     const passwordInput = document.getElementById('user-auth-password');
@@ -2108,6 +2692,14 @@ function setupUserInfoUI() {
     if (!toggle || !card || !nameEl || !roleEl || !idEl || !avatarEl || !avatarTextEl) {
         return;
     }
+
+    const winStatColumns = Array.from(card.querySelectorAll('.win-stat-column[data-class]')).map((column) => ({
+        key: String(column.getAttribute('data-class') || '').trim().toLowerCase(),
+        fillEl: column.querySelector('.win-stat-fill'),
+        valueEl: column.querySelector('.win-stat-value')
+    })).filter((item) => item.key.length > 0);
+    const winStatsTitleEl = card.querySelector('#win-stats-title');
+    const winStatsEnvironmentToggleBtn = card.querySelector('#win-stats-mode-toggle');
 
     const isAvatarUrl = (value) => {
         if (!value) return false;
@@ -2186,10 +2778,189 @@ function setupUserInfoUI() {
     };
 
     let economyRequest = null;
+    let winStatsRequest = null;
+    const COMMUNITY_COINS_UPDATED_EVENT = 'svb:economy-coins-updated';
     const economyCache = {
         userId: null,
         coins: null,
         fetchedAt: 0
+    };
+    const winStatsCache = {
+        userId: null,
+        environment: null,
+        totalWins: null,
+        classWins: null,
+        fetchedAt: 0
+    };
+    const DEFAULT_WIN_STATS_ENVIRONMENT = getDefaultDeckEnvironment();
+    const FIXED_WIN_STATS_DECK_RULE = 'standard';
+    let activeWinStatsEnvironment = DEFAULT_WIN_STATS_ENVIRONMENT;
+    let winStatsEnvironmentsLoaded = false;
+    let winStatsEnvironments = [];
+
+    const pickValue = (source, camelKey, pascalKey) => {
+        if (!source || typeof source !== 'object') return null;
+        if (source[camelKey] != null) return source[camelKey];
+        if (source[pascalKey] != null) return source[pascalKey];
+        return null;
+    };
+
+    const toSafeInt = (value, fallback = 0) => {
+        const parsed = Number.parseInt(String(value ?? ''), 10);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const normalizeClassKey = (value) => String(value ?? '').trim().toLowerCase();
+    const normalizeWinStatsEnvironment = (value) =>
+        normalizeDeckEnvironmentFromOptions(value, getDefaultDeckEnvironment());
+    const getDefaultWinStatsEnvironments = () =>
+        getDeckEnvironmentOptions().map((item) => ({ key: item.value, label: item.label }));
+    const resolveWinStatsEnvironmentOption = (environment) => {
+        const normalized = normalizeWinStatsEnvironment(environment);
+        return winStatsEnvironments.find((item) => item.key === normalized) || null;
+    };
+    const resolveWinStatsEnvironment = (environment) =>
+        resolveWinStatsEnvironmentOption(environment)?.key
+        || (winStatsEnvironments[0]?.key ?? DEFAULT_WIN_STATS_ENVIRONMENT);
+    const getNextWinStatsEnvironment = (environment) => {
+        const current = resolveWinStatsEnvironment(environment);
+        if (winStatsEnvironments.length <= 1) return current;
+        const currentIndex = winStatsEnvironments.findIndex((item) => item.key === current);
+        const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % winStatsEnvironments.length : 0;
+        return winStatsEnvironments[nextIndex].key;
+    };
+    const getWinStatsEnvironmentLabel = (environment) => {
+        return resolveWinStatsEnvironmentOption(environment)?.label
+            || getDeckEnvironmentLabelFromOptions(environment);
+    };
+    const getWinStatsTitleText = (environment) => `位阶对战：${getWinStatsEnvironmentLabel(environment)}`;
+    const getEnvironmentToggleAriaLabel = (environment) => {
+        if (winStatsEnvironments.length <= 1) {
+            return `当前环境：${getWinStatsEnvironmentLabel(environment)}`;
+        }
+        const nextEnvironment = getNextWinStatsEnvironment(environment);
+        return `切换到${getWinStatsEnvironmentLabel(nextEnvironment)}职业胜场`;
+    };
+
+    const ensureWinStatsEnvironmentsLoaded = async () => {
+        if (winStatsEnvironmentsLoaded) return;
+        winStatsEnvironments = getDefaultWinStatsEnvironments();
+        try {
+            await ensureDeckEnvironmentOptions();
+            const options = getDeckEnvironmentOptions();
+            if (options.length > 0) {
+                winStatsEnvironments = options.map((item) => ({
+                    key: item.value,
+                    label: item.label
+                }));
+            }
+        } catch (error) {
+            console.warn('MAIN: Failed to load DeckEnvironment enum localization, fallback to default environment list.', error);
+        } finally {
+            winStatsEnvironmentsLoaded = true;
+            activeWinStatsEnvironment = resolveWinStatsEnvironment(activeWinStatsEnvironment);
+            syncWinStatsEnvironmentToggle();
+        }
+    };
+
+    const syncWinStatsEnvironmentToggle = () => {
+        const normalizedEnvironment = resolveWinStatsEnvironment(activeWinStatsEnvironment);
+        activeWinStatsEnvironment = normalizedEnvironment;
+        if (winStatsTitleEl) {
+            winStatsTitleEl.textContent = getWinStatsTitleText(normalizedEnvironment);
+        }
+        if (!winStatsEnvironmentToggleBtn) return;
+        winStatsEnvironmentToggleBtn.dataset.environment = normalizedEnvironment;
+        winStatsEnvironmentToggleBtn.setAttribute('aria-label', getEnvironmentToggleAriaLabel(normalizedEnvironment));
+        winStatsEnvironmentToggleBtn.disabled = winStatsEnvironments.length <= 1;
+        const nextEnvironment = getNextWinStatsEnvironment(normalizedEnvironment);
+        const nextEnvironmentText = getWinStatsEnvironmentLabel(nextEnvironment);
+        winStatsEnvironmentToggleBtn.setAttribute('title', winStatsEnvironments.length <= 1 ? `当前仅支持${getWinStatsEnvironmentLabel(normalizedEnvironment)}` : `切换到${nextEnvironmentText}`);
+        if (winStatsEnvironmentToggleBtn instanceof HTMLButtonElement) {
+            winStatsEnvironmentToggleBtn.dataset.nextEnvironment = nextEnvironment;
+        }
+    };
+
+    const setWinStatsEnvironment = (environment, forceRefresh = false) => {
+        const normalized = resolveWinStatsEnvironment(environment);
+        const changed = normalized !== activeWinStatsEnvironment;
+        activeWinStatsEnvironment = normalized;
+        syncWinStatsEnvironmentToggle();
+        if (changed || forceRefresh) {
+            refreshWinStats(true).catch(() => { });
+        }
+    };
+
+    const createZeroClassWins = () => {
+        const wins = {};
+        for (const item of winStatColumns) {
+            wins[item.key] = 0;
+        }
+        return wins;
+    };
+
+    const normalizeClassWins = (statePayload) => {
+        const normalizedWins = createZeroClassWins();
+        if (!winStatColumns.length) return normalizedWins;
+        const classStats = pickValue(statePayload, 'classStats', 'ClassStats');
+        if (!Array.isArray(classStats)) return normalizedWins;
+
+        for (const item of classStats) {
+            const rawClass = normalizeClassKey(pickValue(item, 'deckClass', 'DeckClass'));
+            if (!rawClass || !(rawClass in normalizedWins)) continue;
+            const wins = Math.max(0, toSafeInt(pickValue(item, 'totalWins', 'TotalWins'), 0));
+            normalizedWins[rawClass] += wins;
+        }
+        return normalizedWins;
+    };
+
+    const setClassWinsValue = (winsByClass) => {
+        if (!winStatColumns.length) return;
+        const fillToneClasses = [
+            'tone-forestcraft',
+            'tone-swordcraft',
+            'tone-runecraft',
+            'tone-dragoncraft',
+            'tone-abysscraft',
+            'tone-havencraft',
+            'tone-portalcraft'
+        ];
+        const normalizedWins = createZeroClassWins();
+        if (winsByClass && typeof winsByClass === 'object') {
+            for (const key of Object.keys(normalizedWins)) {
+                const wins = toSafeInt(winsByClass[key], 0);
+                normalizedWins[key] = Math.max(0, wins);
+            }
+        }
+
+        let maxWins = 0;
+        for (const item of winStatColumns) {
+            const wins = normalizedWins[item.key] ?? 0;
+            maxWins = Math.max(maxWins, wins);
+            if (item.valueEl) {
+                item.valueEl.textContent = String(wins);
+            }
+            if (item.fillEl) {
+                item.fillEl.style.height = '0%';
+                item.fillEl.classList.remove('active', ...fillToneClasses);
+            }
+        }
+
+        if (maxWins <= 0) return;
+
+        const minimumBarHeightPercent = 6;
+        for (const item of winStatColumns) {
+            const wins = normalizedWins[item.key] ?? 0;
+            if (wins <= 0 || !item.fillEl) continue;
+            const ratio = wins / maxWins;
+            const barHeight = Math.max(minimumBarHeightPercent, Math.round(ratio * 100));
+            item.fillEl.style.height = `${Math.min(barHeight, 100)}%`;
+            item.fillEl.classList.add('active');
+            const toneClass = `tone-${item.key}`;
+            if (fillToneClasses.includes(toneClass)) {
+                item.fillEl.classList.add(toneClass);
+            }
+        }
     };
 
     const setCoinsValue = (value) => {
@@ -2197,11 +2968,56 @@ function setupUserInfoUI() {
         coinsEl.textContent = value;
     };
 
+    let coinsGainAnimationTimer = null;
+    const triggerCoinsGainAnimation = (gain) => {
+        if (!coinsItemEl || !Number.isFinite(gain) || gain <= 0) {
+            return;
+        }
+
+        coinsItemEl.dataset.coinGain = `+${gain}`;
+        coinsItemEl.classList.remove('is-gain-pulse');
+        void coinsItemEl.offsetWidth;
+        coinsItemEl.classList.add('is-gain-pulse');
+
+        if (coinsGainAnimationTimer) {
+            window.clearTimeout(coinsGainAnimationTimer);
+        }
+        coinsGainAnimationTimer = window.setTimeout(() => {
+            coinsItemEl.classList.remove('is-gain-pulse');
+            delete coinsItemEl.dataset.coinGain;
+            coinsGainAnimationTimer = null;
+        }, 1500);
+    };
+
+    const applyCoinsUpdate = (userId, coins) => {
+        if (!coinsEl) return;
+        const session = getUserSession();
+        if (session.mode !== 'user' || !session.userId || session.userId !== userId) {
+            return;
+        }
+
+        const previousCoins = economyCache.userId === userId && Number.isFinite(economyCache.coins)
+            ? economyCache.coins
+            : null;
+        economyCache.userId = userId;
+        economyCache.coins = coins;
+        economyCache.fetchedAt = Date.now();
+        setCoinsValue(String(coins));
+        if (previousCoins != null && coins > previousCoins) {
+            triggerCoinsGainAnimation(coins - previousCoins);
+        }
+    };
+
+    const setTotalWinsValue = (value) => {
+        if (!totalWinsEl) return;
+        totalWinsEl.textContent = value;
+    };
+
     const refreshEconomy = async (force = false) => {
         if (!coinsEl) return;
         const session = getUserSession();
         if (session.mode !== 'user' || !session.userId) {
-            setCoinsValue('--');
+            setCoinsValue('0');
             return;
         }
 
@@ -2221,14 +3037,14 @@ function setupUserInfoUI() {
         setCoinsValue('...');
         economyRequest = (async () => {
             try {
-                const state = await apiGetJson(`/api/economy/state/${session.userId}`);
-                const coins = Number.isFinite(state?.rank?.coins) ? state.rank.coins : 0;
+                const coinsPayload = await apiGetJson(`/api/economy/coins/${session.userId}`);
+                const coins = Math.max(0, toSafeInt(coinsPayload, 0));
                 economyCache.userId = session.userId;
                 economyCache.coins = coins;
                 economyCache.fetchedAt = Date.now();
                 setCoinsValue(String(coins));
             } catch (err) {
-                setCoinsValue('--');
+                setCoinsValue('0');
             } finally {
                 economyRequest = null;
             }
@@ -2236,6 +3052,75 @@ function setupUserInfoUI() {
 
         await economyRequest;
     };
+
+    const refreshWinStats = async (force = false) => {
+        if (!totalWinsEl && !winStatColumns.length) return;
+        await ensureWinStatsEnvironmentsLoaded();
+        const session = getUserSession();
+        const activeEnvironment = resolveWinStatsEnvironment(activeWinStatsEnvironment);
+        if (session.mode !== 'user' || !session.userId) {
+                setTotalWinsValue('--');
+                setClassWinsValue(null);
+            return;
+        }
+
+        const now = Date.now();
+        if (!force &&
+            winStatsCache.userId === session.userId &&
+            winStatsCache.environment === activeEnvironment &&
+            now - winStatsCache.fetchedAt < 15000) {
+            if (winStatsCache.totalWins != null || winStatsCache.classWins != null) {
+                setTotalWinsValue(winStatsCache.totalWins != null ? String(winStatsCache.totalWins) : '--');
+                setClassWinsValue(winStatsCache.classWins);
+                return;
+            }
+        }
+
+        if (winStatsRequest) {
+            await winStatsRequest;
+            if (!force &&
+                winStatsCache.userId === session.userId &&
+                winStatsCache.environment === activeEnvironment) {
+                return;
+            }
+        }
+
+        setTotalWinsValue('...');
+        winStatsRequest = (async () => {
+            try {
+                const query = new URLSearchParams();
+                query.set('environment', activeEnvironment);
+                query.set('deckRule', FIXED_WIN_STATS_DECK_RULE);
+                const state = await apiGetJson(`/api/economy/state/${session.userId}?${query.toString()}`);
+                const classWins = normalizeClassWins(state);
+                const classWinsTotal = Object.values(classWins).reduce((sum, item) => sum + toSafeInt(item, 0), 0);
+                // Keep total wins aligned with current environment/rule filters.
+                const totalWins = classWinsTotal;
+
+                winStatsCache.userId = session.userId;
+                winStatsCache.environment = activeEnvironment;
+                winStatsCache.totalWins = totalWins;
+                winStatsCache.classWins = classWins;
+                winStatsCache.fetchedAt = Date.now();
+                setTotalWinsValue(String(totalWins));
+                setClassWinsValue(classWins);
+            } catch (err) {
+                setTotalWinsValue('--');
+                setClassWinsValue(null);
+            } finally {
+                winStatsRequest = null;
+            }
+        })();
+
+        await winStatsRequest;
+    };
+
+    winStatsEnvironmentToggleBtn?.addEventListener('click', () => {
+        const nextEnvironment = getNextWinStatsEnvironment(activeWinStatsEnvironment);
+        setWinStatsEnvironment(nextEnvironment, true);
+    });
+    syncWinStatsEnvironmentToggle();
+    ensureWinStatsEnvironmentsLoaded().catch(() => { });
 
     const applySession = () => {
         const session = getUserSession();
@@ -2269,6 +3154,7 @@ function setupUserInfoUI() {
         }
 
         refreshEconomy(true).catch(() => { });
+        refreshWinStats(true).catch(() => { });
     };
 
     const setOpen = (open) => {
@@ -2282,6 +3168,7 @@ function setupUserInfoUI() {
             resetIdRow(idEl?.dataset.fullId || idEl?.textContent || "-");
         } else {
             refreshEconomy(false).catch(() => { });
+            refreshWinStats(false).catch(() => { });
         }
         syncTopNavHoverLock();
     };
@@ -2290,6 +3177,15 @@ function setupUserInfoUI() {
 
     document.addEventListener(USER_SESSION_CHANGED_EVENT, () => {
         applySession();
+    });
+    document.addEventListener(COMMUNITY_COINS_UPDATED_EVENT, (event) => {
+        const detail = event?.detail;
+        const userId = String(detail?.userId ?? '').trim();
+        const coins = Number.parseInt(String(detail?.coins ?? ''), 10);
+        if (!userId || !Number.isFinite(coins) || coins < 0) {
+            return;
+        }
+        applyCoinsUpdate(userId, coins);
     });
 
     toggle.addEventListener('click', (event) => {
@@ -2873,12 +3769,9 @@ function setupAboutUI() {
 }
 
 function setupTopNavHoverLock() {
-    if (!router || typeof router.setAfterRouteChange !== 'function') return;
-    const originalAfter = router.afterRouteChange;
-    router.setAfterRouteChange(async (oldRoute, newRoute) => {
-        if (originalAfter) await originalAfter(oldRoute, newRoute);
+    if (!appendAfterRouteChangeHandler('topnav-hover-lock', async () => {
         syncTopNavHoverLock();
-    });
+    })) return;
     syncTopNavHoverLock();
 }
 
@@ -2895,11 +3788,27 @@ function setupMenuRouteOverlays() {
     );
     const pinnedRoutes = new Set(['singleplayer', 'multiplayer']);
 
+    const ensureOverlayImageLoaded = route => {
+        const overlay = overlayByRoute.get(route);
+        const image = overlay?.querySelector('.menu-route-image');
+        const targetSrc = image?.dataset?.src;
+        if (!image || !targetSrc || image.dataset.loaded === 'true') {
+            return;
+        }
+
+        image.decoding = 'async';
+        image.loading = 'lazy';
+        image.fetchPriority = 'low';
+        image.src = targetSrc;
+        image.dataset.loaded = 'true';
+    };
+
     let pinnedRoute = null;
     let activeRoute = null;
     let hoverRoute = null;
 
     const showOverlay = (route) => {
+        ensureOverlayImageLoaded(route);
         activeRoute = route;
         overlays.forEach(overlay => {
             const matches = overlay.dataset.route === route;
@@ -2982,12 +3891,9 @@ function setupMenuRouteOverlays() {
     window.addEventListener('resize', updateOverlayImageSizing);
     updateOverlayImageSizing();
 
-    if (router && typeof router.setAfterRouteChange === 'function') {
-        const originalAfter = router.afterRouteChange;
-        router.setAfterRouteChange(async (oldRoute, newRoute) => {
-            if (originalAfter) await originalAfter(oldRoute, newRoute);
+    if (appendAfterRouteChangeHandler('menu-route-overlays', async (_oldRoute, newRoute) => {
             syncPinnedWithRoute(newRoute);
-        });
+    })) {
         syncPinnedWithRoute(router.getCurrentRoute ? router.getCurrentRoute() : '');
     }
 }
@@ -3016,6 +3922,8 @@ function setupMenuStarrySky() {
     const isMobile = window.matchMedia('(max-width: 768px)').matches;
     const STAR_COUNT = isMobile ? 200 : 320;
     const NEBULA_COUNT = isMobile ? 2 : 3;
+    const perfDebug = getPerfDebugState();
+    const menuPerfState = perfDebug.menuStarrySky;
 
     const initNebulas = () => {
         nebulas.length = 0;
@@ -3074,6 +3982,26 @@ function setupMenuStarrySky() {
 
     const draw = () => {
         if (!isAnimating) return;
+        const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now();
+        if (menuPerfState) {
+            const deltaMs = menuPerfState.lastFrameAt > 0 ? now - menuPerfState.lastFrameAt : 0;
+            menuPerfState.lastFrameAt = now;
+            menuPerfState.frameCount += 1;
+            if (deltaMs >= 34) {
+                menuPerfState.slowFrameCount += 1;
+                if (menuPerfState.slowFrameCount <= 12) {
+                    logPerfDebug('menu-starry-sky', 'slow frame detected', {
+                        deltaMs: Number(deltaMs.toFixed(1)),
+                        route: router.getCurrentRoute ? router.getCurrentRoute() : '',
+                        frameCount: menuPerfState.frameCount,
+                        slowFrameCount: menuPerfState.slowFrameCount
+                    });
+                }
+            }
+        }
+
         time += prefersReducedMotion ? 0.2 : 1;
         ctx.clearRect(0, 0, width, height);
 
@@ -3182,6 +4110,18 @@ function setupMenuStarrySky() {
     const start = () => {
         if (isAnimating) return;
         isAnimating = true;
+        if (menuPerfState) {
+            menuPerfState.isAnimating = true;
+            menuPerfState.lastFrameAt = 0;
+            menuPerfState.frameCount = 0;
+            menuPerfState.slowFrameCount = 0;
+            menuPerfState.route = router.getCurrentRoute ? router.getCurrentRoute() : '';
+        }
+        logPerfDebug('menu-starry-sky', 'start', {
+            route: router.getCurrentRoute ? router.getCurrentRoute() : '',
+            prefersReducedMotion,
+            isMobile
+        });
         draw();
     };
 
@@ -3189,11 +4129,28 @@ function setupMenuStarrySky() {
         if (!isAnimating) return;
         isAnimating = false;
         cancelAnimationFrame(animationFrameId);
+        if (menuPerfState) {
+            menuPerfState.isAnimating = false;
+            menuPerfState.route = router.getCurrentRoute ? router.getCurrentRoute() : '';
+        }
+        logPerfDebug('menu-starry-sky', 'stop', {
+            route: router.getCurrentRoute ? router.getCurrentRoute() : '',
+            frameCount: menuPerfState?.frameCount ?? 0,
+            slowFrameCount: menuPerfState?.slowFrameCount ?? 0
+        });
     };
 
     const syncAnimationWithRoute = (route) => {
         const shouldAnimate = !route || menuRoutes.has(route);
         allowAnimation = shouldAnimate;
+        if (menuPerfState) {
+            menuPerfState.route = route || '';
+        }
+        logPerfDebug('menu-starry-sky', 'sync route state', {
+            route: route || '',
+            shouldAnimate,
+            isAnimating
+        });
         if (!shouldAnimate) {
             stop();
             return;
@@ -3205,12 +4162,9 @@ function setupMenuStarrySky() {
     window.addEventListener('resize', resizeHandler);
     resizeHandler();
 
-    if (router && typeof router.setAfterRouteChange === 'function') {
-        const originalAfter = router.afterRouteChange;
-        router.setAfterRouteChange(async (oldRoute, newRoute) => {
-            if (originalAfter) await originalAfter(oldRoute, newRoute);
+    if (appendAfterRouteChangeHandler('menu-starry-sky', async (_oldRoute, newRoute) => {
             syncAnimationWithRoute(newRoute);
-        });
+    })) {
         syncAnimationWithRoute(router.getCurrentRoute ? router.getCurrentRoute() : '');
     } else {
         syncAnimationWithRoute('');
@@ -3355,10 +4309,19 @@ function setupMetaProgressionUI() {
 
 // 设置路由系统的游戏初始化钩子
 document.addEventListener('initializeGame', async () => {
+    logPerfDebug('route-game', 'initializeGame event received', {
+        route: router.getCurrentRoute ? router.getCurrentRoute() : '',
+        alreadyInitialized: window.gameInitialized === true,
+        isInitializing
+    });
     if (!window.gameInitialized) {
         const initialized = await initializeApp();
         if (initialized) {
             window.gameInitialized = true;
+            logPerfDebug('route-game', 'initializeGame completed', {
+                route: router.getCurrentRoute ? router.getCurrentRoute() : '',
+                initialized: true
+            });
         }
     }
 });
@@ -3382,12 +4345,18 @@ ensureGameRouteInitialization();
 
 // 设置路由系统的游戏清理钩子
 document.addEventListener('cleanupGame', () => {
+    logPerfDebug('route-game', 'cleanupGame event received', {
+        route: router.getCurrentRoute ? router.getCurrentRoute() : '',
+        hadConnection: Boolean(connection),
+        hadGuestConnection: Boolean(guestConnection)
+    });
     // 这里可以添加游戏清理逻辑
     const handshake = getActiveNonAiRoomHandshake();
     const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
         pendingRouteTransition?.fromRoute,
         pendingRouteTransition?.toRoute,
-        handshake
+        handshake,
+        { gameOver: gameState.gameOver === true }
     );
     if (shouldDeferLeave) {
         rememberPendingRoomExitDecision();
@@ -3427,7 +4396,8 @@ document.addEventListener('cleanupMultiplayer', () => {
     const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
         pendingRouteTransition?.fromRoute,
         pendingRouteTransition?.toRoute,
-        handshake
+        handshake,
+        { gameOver: false }
     );
     if (shouldDeferLeave) {
         rememberPendingRoomExitDecision();
@@ -3445,12 +4415,15 @@ document.addEventListener('requestReconnect', () => {
 });
 
 // 初始化开发者控制台（如果需要）
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
 
-    ensureEnumLocalizations(['CardRarity', 'CardClass', 'CardType'])
+    ensureEnumLocalizations(['CardRarity', 'CardClass', 'CardType', 'DeckEnvironment'])
         .catch(error => {
             console.warn('MAIN: Failed to prefetch card enum labels.', error);
         });
+    ensureDeckEnvironmentOptions().catch(error => {
+        console.warn('MAIN: Failed to prefetch DeckEnvironment options.', error);
+    });
     
     // Initialize dev console early to bind global handlers
     try {
@@ -3488,11 +4461,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (router) {
             // Initial check
             updateConsoleButtonState(router.getCurrentRoute());
-            
+
             // Listen for route changes
-            const originalAfter = router.afterRouteChange;
-            router.setAfterRouteChange(async (oldRoute, newRoute) => {
-                if (originalAfter) await originalAfter(oldRoute, newRoute);
+            appendAfterRouteChangeHandler('dev-console-toggle-state', async (_oldRoute, newRoute) => {
                 updateConsoleButtonState(newRoute);
             });
         }
@@ -3513,6 +4484,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
+        appendAfterRouteChangeHandler('deck-selection-context-route', async (_oldRoute, newRoute) => {
+            if (newRoute !== 'multiplayer' && newRoute !== 'singleplayer') {
+                return;
+            }
+
+            writeDeckSelectionContext({
+                source: newRoute,
+                ...(getCurrentMultiplayerDeckFormat() || DEFAULT_MULTIPLAYER_DECK_FORMAT)
+            });
+        });
+
+        const initialRoute = router?.getCurrentRoute?.();
+        if (initialRoute === 'multiplayer' || initialRoute === 'singleplayer') {
+            writeDeckSelectionContext({
+                source: initialRoute,
+                ...(getCurrentMultiplayerDeckFormat() || DEFAULT_MULTIPLAYER_DECK_FORMAT)
+            });
+        }
+    } catch (error) {
+        console.error('MAIN: Failed to initialize deck selection context route handler:', error);
+    }
+
+    try {
         setupUserInfoUI();
     } catch (error) {
         console.error('MAIN: Failed to initialize user info UI:', error);
@@ -3525,9 +4519,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
+        setupPwaInstallUI();
+    } catch (error) {
+        console.error('MAIN: Failed to initialize PWA install UI:', error);
+    }
+
+    try {
+        void registerPwaServiceWorker({ productionMode: import.meta.env.PROD });
+    } catch (error) {
+        console.error('MAIN: Failed to register PWA service worker:', error);
+    }
+
+    try {
         setupTopNavHoverLock();
     } catch (error) {
         console.error('MAIN: Failed to initialize top nav hover lock:', error);
+    }
+
+    try {
+        await initializeBattleCustomization({
+            appendAfterRouteChangeHandler,
+            getCurrentRoute: () => router?.getCurrentRoute?.() || ''
+        });
+    } catch (error) {
+        console.error('MAIN: Failed to initialize battle customization:', error);
     }
 
     try {
@@ -3559,6 +4574,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 document.addEventListener('deckListUpdated', () => {
+    invalidateDeckValidationCache();
+    deckSelectionState.loaded = false;
+    deckSelectionState.loading = null;
+    refreshDeckSelectionUI().catch(() => {});
+});
+
+document.addEventListener(DECK_VALIDATION_RULES_UPDATED_EVENT, () => {
+    invalidateDeckValidationCache();
     deckSelectionState.loaded = false;
     deckSelectionState.loading = null;
     refreshDeckSelectionUI().catch(() => {});

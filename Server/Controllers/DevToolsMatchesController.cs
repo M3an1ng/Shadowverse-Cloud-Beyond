@@ -78,17 +78,19 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             var room = createResult.Room;
-            room.DevMatchConfig = safeConfig;
+            room.DevMatchConfig = safeConfig ?? new DevMatchConfig();
+            room.DevMatchConfig.IgnoreDeckFormatConsistency = true;
+            room.DevMatchConfig.AllowIncompleteDecks = true;
 
             Guid? guestPlayerId = null;
             string? guestToken = null;
 
             if (mode == "dual")
             {
-                var joinResult = _matchService.TryJoin(room.GameId, room.JoinCode, null);
+                var joinResult = _matchService.TryJoin(room.RoomId, room.JoinCode, null);
                 if (!joinResult.Success || joinResult.Room == null || !joinResult.Room.GuestPlayerId.HasValue || string.IsNullOrWhiteSpace(joinResult.Room.GuestToken))
                 {
-                    _matchService.Close(room.GameId, "Devtools join failed.");
+                    _matchService.Close(room.RoomId, "Devtools join failed.");
                     return StatusCode(StatusCodes.Status500InternalServerError, joinResult.Message ?? "加入房间失败。");
                 }
 
@@ -97,24 +99,28 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             var owner = new DeckOwner(request.UserId, null);
-            var playerDeckCheck = await _deckService.ExportCodeAsync(owner, request.PlayerDeckId, cancellationToken);
-            if (!playerDeckCheck.Success)
+            var playerDeckDetail = await _deckService.GetAsync(owner, request.PlayerDeckId, cancellationToken);
+            if (playerDeckDetail == null)
             {
-                _matchService.Close(room.GameId, "Devtools host deck invalid.");
-                return BadRequest(playerDeckCheck.Error ?? "玩家卡组不存在或无效。");
+                _matchService.Close(room.RoomId, "Devtools host deck invalid.");
+                return BadRequest("玩家卡组不存在或无效。");
             }
 
-            var opponentDeckCheck = await _deckService.ExportCodeAsync(owner, request.OpponentDeckId, cancellationToken);
-            if (!opponentDeckCheck.Success)
+            var opponentDeckDetail = await _deckService.GetAsync(owner, request.OpponentDeckId, cancellationToken);
+            if (opponentDeckDetail == null)
             {
-                _matchService.Close(room.GameId, "Devtools opponent deck invalid.");
-                return BadRequest(opponentDeckCheck.Error ?? "对手卡组不存在或无效。");
+                _matchService.Close(room.RoomId, "Devtools opponent deck invalid.");
+                return BadRequest("对手卡组不存在或无效。");
             }
 
             var hostSelection = new MatchDeckSelection
             {
                 UserId = request.UserId,
-                DeckId = request.PlayerDeckId
+                DeckId = request.PlayerDeckId,
+                DeckClass = playerDeckDetail.Class,
+                SecondaryClass = playerDeckDetail.SecondaryClass,
+                Environment = playerDeckDetail.Environment,
+                Rule = playerDeckDetail.Rule
             };
 
             if (mode == "ai")
@@ -122,13 +128,17 @@ namespace ShadowverseBeyond.Server.Controllers
                 var aiSelection = new MatchDeckSelection
                 {
                     UserId = request.UserId,
-                    DeckId = request.OpponentDeckId
+                    DeckId = request.OpponentDeckId,
+                    DeckClass = opponentDeckDetail.Class,
+                    SecondaryClass = opponentDeckDetail.SecondaryClass,
+                    Environment = opponentDeckDetail.Environment,
+                    Rule = opponentDeckDetail.Rule
                 };
 
-                var selectResult = _matchService.SubmitDeckSelection(room.GameId, room.HostPlayerId, hostSelection, aiSelection);
+                var selectResult = _matchService.SubmitDeckSelection(room.RoomId, room.HostPlayerId, hostSelection, aiSelection);
                 if (!selectResult.Success)
                 {
-                    _matchService.Close(room.GameId, "Devtools deck selection failed.");
+                    _matchService.Close(room.RoomId, "Devtools deck selection failed.");
                     return StatusCode(StatusCodes.Status500InternalServerError, selectResult.Message ?? "卡组选择失败。");
                 }
             }
@@ -137,59 +147,80 @@ namespace ShadowverseBeyond.Server.Controllers
                 var guestSelection = new MatchDeckSelection
                 {
                     UserId = request.UserId,
-                    DeckId = request.OpponentDeckId
+                    DeckId = request.OpponentDeckId,
+                    DeckClass = opponentDeckDetail.Class,
+                    SecondaryClass = opponentDeckDetail.SecondaryClass,
+                    Environment = opponentDeckDetail.Environment,
+                    Rule = opponentDeckDetail.Rule
                 };
 
-                var hostSelect = _matchService.SubmitDeckSelection(room.GameId, room.HostPlayerId, hostSelection);
+                var hostSelect = _matchService.SubmitDeckSelection(room.RoomId, room.HostPlayerId, hostSelection);
                 if (!hostSelect.Success)
                 {
-                    _matchService.Close(room.GameId, "Devtools host deck selection failed.");
+                    _matchService.Close(room.RoomId, "Devtools host deck selection failed.");
                     return StatusCode(StatusCodes.Status500InternalServerError, hostSelect.Message ?? "玩家卡组选择失败。");
                 }
 
-                var guestSelect = _matchService.SubmitDeckSelection(room.GameId, guestPlayerId.Value, guestSelection);
+                var guestSelect = _matchService.SubmitDeckSelection(room.RoomId, guestPlayerId.Value, guestSelection);
                 if (!guestSelect.Success)
                 {
-                    _matchService.Close(room.GameId, "Devtools guest deck selection failed.");
+                    _matchService.Close(room.RoomId, "Devtools guest deck selection failed.");
                     return StatusCode(StatusCodes.Status500InternalServerError, guestSelect.Message ?? "对手卡组选择失败。");
                 }
             }
 
-            var hostReady = _matchService.MarkReady(room.GameId, room.HostPlayerId);
+            var hostReady = _matchService.MarkReady(room.RoomId, room.HostPlayerId);
             if (!hostReady.Success)
             {
-                _matchService.Close(room.GameId, "Devtools host ready failed.");
+                _matchService.Close(room.RoomId, "Devtools host ready failed.");
                 return StatusCode(StatusCodes.Status500InternalServerError, hostReady.Message ?? "准备失败。");
             }
 
             if (guestPlayerId.HasValue)
             {
-                var guestReady = _matchService.MarkReady(room.GameId, guestPlayerId.Value);
+                var guestReady = _matchService.MarkReady(room.RoomId, guestPlayerId.Value);
                 if (!guestReady.Success)
                 {
-                    _matchService.Close(room.GameId, "Devtools guest ready failed.");
+                    _matchService.Close(room.RoomId, "Devtools guest ready failed.");
                     return StatusCode(StatusCodes.Status500InternalServerError, guestReady.Message ?? "对手准备失败。");
                 }
             }
 
-            var startResult = _matchService.Start(room.GameId, room.HostPlayerId);
+            var startResult = _matchService.Start(room.RoomId, room.HostPlayerId);
             if (!startResult.Success || startResult.Room == null)
             {
-                _matchService.Close(room.GameId, "Devtools match start failed.");
-                return StatusCode(StatusCodes.Status500InternalServerError, startResult.Message ?? "房间启动失败。");
+                var failureMessage = startResult.Message ?? "房间启动失败。";
+                _logger.LogWarning(
+                    "Devtools match start failed. RoomId={RoomId}, Mode={Mode}, HostDeckId={HostDeckId}, OpponentDeckId={OpponentDeckId}, Reason={Reason}",
+                    room.RoomId,
+                    mode,
+                    request.PlayerDeckId,
+                    request.OpponentDeckId,
+                    failureMessage);
+                _matchService.Close(room.RoomId, $"Devtools match start failed: {failureMessage}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = failureMessage });
             }
 
-            return Ok(new DevToolsMatchResponse
+            var startedRoom = startResult.Room;
+
+            var response = new DevToolsMatchResponse
             {
-                GameId = room.GameId,
-                JoinCode = room.JoinCode,
-                HostPlayerId = room.HostPlayerId,
-                HostToken = room.HostToken,
+                RoomId = startedRoom.RoomId,
+                ActiveGameId = startedRoom.ActiveGameId,
+                JoinCode = startedRoom.JoinCode,
+                HostPlayerId = startedRoom.HostPlayerId,
+                HostToken = startedRoom.HostToken,
                 GuestPlayerId = guestPlayerId,
                 GuestToken = guestToken,
-                UseAiFallback = room.UseAiFallback,
+                UseAiFallback = startedRoom.UseAiFallback,
                 Mode = mode
-            });
+            };
+
+#pragma warning disable CS0618
+            response.GameId = startedRoom.RoomId;
+#pragma warning restore CS0618
+
+            return Ok(response);
         }
 
         private static string? NormalizeMode(string? raw)
@@ -297,6 +328,9 @@ namespace ShadowverseBeyond.Server.Controllers
 
         public class DevToolsMatchResponse
         {
+            public string RoomId { get; set; } = string.Empty;
+            public string? ActiveGameId { get; set; }
+            [Obsolete("Use RoomId instead.")]
             public string GameId { get; set; } = string.Empty;
             public string JoinCode { get; set; } = string.Empty;
             public Guid HostPlayerId { get; set; }

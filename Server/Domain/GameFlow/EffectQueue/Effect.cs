@@ -79,6 +79,12 @@ namespace ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue
         public Guid? sourceAbilityId { get; set; }
 
         /// <summary>
+        /// Captures the source ability's queued-effect state version when this effect is created.
+        /// Effects are skipped if the source ability advances to a newer version before execution.
+        /// </summary>
+        public long? SourceAbilityStateVersion { get; set; }
+
+        /// <summary>
         /// Ability runtime id used for UI-only buff summary grouping.
         /// For chained/decision abilities this points to the root (parent) ability.
         /// </summary>

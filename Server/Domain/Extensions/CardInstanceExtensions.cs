@@ -151,7 +151,7 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
             if (cardDto.HasStorm())
                 return true;
 
-            return cardDto.FieldTurn > 0;
+            return cardDto.ZoneStayTurn > 0;
         }
 
         /// <summary>

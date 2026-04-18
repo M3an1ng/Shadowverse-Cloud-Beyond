@@ -23,6 +23,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public int CurrentPP { get; set; }
         public int MaxPP { get; set; }
         public int PpBoostUsesAvailable { get; set; }
+        public bool IsPpBoostArmed { get; set; }
         public int CurrentEP { get; set; }
         public int MaxEP { get; set; }
         public bool IsEvolutionUnlocked { get; set; }

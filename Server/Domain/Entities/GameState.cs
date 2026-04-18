@@ -123,6 +123,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             .Concat(AllGraveyard)
             .Concat(AllExtra)
             .Concat(AllEmblem)
+            .Concat(AllLeaders)
             .ToList();
 
         /// <summary>
@@ -183,6 +184,35 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (Player1?.PlayerId == playerId) return Player2;
             if (Player2?.PlayerId == playerId) return Player1;
             return null; // Or throw if playerId doesn't match either player
+        }
+
+        public bool TryGetUniqueEnvironment(out DeckEnvironment environment)
+        {
+            if (Player1 == null || Player2 == null)
+            {
+                environment = default;
+                return false;
+            }
+
+            if (Player1.Environment != Player2.Environment)
+            {
+                environment = default;
+                return false;
+            }
+
+            environment = Player1.Environment;
+            return true;
+        }
+
+        public DeckEnvironment GetRequiredUniqueEnvironment()
+        {
+            if (TryGetUniqueEnvironment(out var environment))
+            {
+                return environment;
+            }
+
+            throw new InvalidOperationException(
+                $"Game '{GameId}' does not have a unique environment. Player1={Player1?.Environment}, Player2={Player2?.Environment}.");
         }
 
         /// <summary>

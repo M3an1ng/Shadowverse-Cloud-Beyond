@@ -138,7 +138,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 result.GeneratedEvents.AddRange(earthSigilResult.GeneratedEvents);
             }
 
-            if (effectiveToZone == CardZone.Graveyard && FromZone != CardZone.Graveyard)
+            if (effectiveToZone == CardZone.Field
+                && effectiveMoveReason == CardMoveReason.Summoned
+                && card.CardType == CardType.Follower)
+            {
+                var oldValue = owner.Rally;
+                var newValue = owner.AddCounter(PlayerState.RallyCounterKey, 1);
+                result.GeneratedEvents.Add(new CounterChangedEvent(owner, PlayerState.RallyCounterKey, oldValue, newValue));
+            }
+
+            if (effectiveToZone == CardZone.Graveyard && (FromZone != CardZone.Graveyard) && (card.CardType == CardType.Follower || card.CardType == CardType.Spell || card.CardType == CardType.Amulet))
             {
                 var oldValue = owner.GraveyardCount;
                 var newValue = owner.AddCounter(PlayerState.GraveyardCounterKey, 1);

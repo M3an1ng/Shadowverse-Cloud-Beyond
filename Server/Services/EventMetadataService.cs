@@ -57,6 +57,7 @@ namespace ShadowverseBeyond.Server.Services
             { EventType.SilenceApplied, AbilityEditorCategories.TempStateId },
             { EventType.SilenceRemoved, AbilityEditorCategories.TempStateId },
             { EventType.SpellBoost, AbilityEditorCategories.TempStateId },
+            { EventType.ActTimesReset, AbilityEditorCategories.TempStateId },
 
             { EventType.PpUpdated, AbilityEditorCategories.ResourceValueId },
             { EventType.PpMaxUpdated, AbilityEditorCategories.ResourceValueId },

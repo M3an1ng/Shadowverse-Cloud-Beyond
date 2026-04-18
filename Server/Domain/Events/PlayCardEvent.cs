@@ -29,18 +29,28 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("支付费用", "本次出牌实际消耗的费用。")]
         public int PaidCost { get; }
 
+        public Guid? TriggeredAbilityRuntimeId { get; }
+
         public PlayCardEvent(PlayerState player, CardInstance card, PlayMode playMode, int? paidCost)
-            : this(player, card, playMode, paidCost, null, null)
+            : this(player, card, playMode, paidCost, null, null, null)
         {
         }
 
-        public PlayCardEvent(PlayerState player, CardInstance card, PlayMode playMode = PlayMode.Base, int? paidCost = null, Guid? eventId = null, DateTime? timestamp = null)
+        public PlayCardEvent(
+            PlayerState player,
+            CardInstance card,
+            PlayMode playMode = PlayMode.Base,
+            int? paidCost = null,
+            Guid? triggeredAbilityRuntimeId = null,
+            Guid? eventId = null,
+            DateTime? timestamp = null)
             : base(EventType.PlayCard, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));
             PlayMode = playMode;
             PaidCost = paidCost ?? card.CurrentCost;
+            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -58,7 +68,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             // Delegate to domain method that performs the play and generates factual events.
             // This method is expected to validate, apply PP cost, move card to appropriate zone,
             // and generate resulting events like HandUpdatedEvent, CardMovedEvent, Summon/Spell resolution events, etc.
-            return player.ExecutePlayCard(card, EventId, PaidCost);
+            result = player.ExecutePlayCard(card, EventId, PaidCost);
+
+            return result;
         }
 
         public string GetAnnouncement(GameState gameState)

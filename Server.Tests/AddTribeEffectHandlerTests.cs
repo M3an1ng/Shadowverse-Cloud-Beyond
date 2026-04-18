@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
@@ -38,7 +39,8 @@ namespace ShadowverseBeyond.Server.Tests
                     It.IsAny<DurationType>(),
                     It.IsAny<int?>(),
                     It.IsAny<string?>(),
-                    It.IsAny<bool>()))
+                    It.IsAny<bool>(),
+                    It.IsAny<ConditionConfig?>()))
                 .Returns(new DomainOperationResult { Success = true });
 
             var (context, card) = CreateContext(buffService.Object);
@@ -78,7 +80,8 @@ namespace ShadowverseBeyond.Server.Tests
                 DurationType.EndOfTurn,
                 2,
                 It.Is<string?>(key => !string.IsNullOrWhiteSpace(key) && key.EndsWith(":2")),
-                false), Times.Once);
+                false,
+                null), Times.Once);
         }
 
         [Fact]
@@ -109,7 +112,8 @@ namespace ShadowverseBeyond.Server.Tests
                 It.IsAny<DurationType>(),
                 It.IsAny<int?>(),
                 It.IsAny<string?>(),
-                It.IsAny<bool>()), Times.Never);
+                It.IsAny<bool>(),
+                It.IsAny<ConditionConfig?>()), Times.Never);
         }
 
         private static (GameContext Context, CardInstance Card) CreateContext(IBuffService buffService)

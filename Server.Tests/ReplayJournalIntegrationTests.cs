@@ -142,13 +142,6 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Single(range);
             Assert.Equal(rawEventJson, range[0].RawEventJson);
 
-            var gameService = new Mock<IGameService>();
-            gameService.Setup(s => s.GetGameState(gameId)).Returns((ShadowverseBeyond.Server.Domain.Entities.GameState?)null);
-            var rehydrator = new BestEffortGameEventRehydrator(gameService.Object);
-
-            var hydrated = await rehydrator.RehydrateAsync(gameId, range[0]);
-            var rawBacked = Assert.IsAssignableFrom<IRawEventBackedGameEvent>(hydrated);
-            Assert.Equal(2, rawBacked.OutputPayload["Damage"]!.GetValue<int>());
         }
 
         [Fact]

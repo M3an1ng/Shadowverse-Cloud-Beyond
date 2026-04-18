@@ -219,7 +219,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
 
         public static class Tribes
         {
-            public const string Reanimate = "Reanimate";
+            public const string MatchAll = "全部";
         }
 
         /// <summary>
@@ -246,7 +246,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// <summary>
             /// Default connection timeout in seconds
             /// </summary>
-            public const int DefaultConnectionTimeoutSeconds = 120;
+            public const int DefaultConnectionTimeoutSeconds = 180;
 
             /// <summary>
             /// Maximum reconnection attempts
@@ -311,7 +311,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// <summary>
             /// Maximum times the same event signature can be processed in a single transaction.
             /// </summary>
-            public const int MaxEventSignatureRepeats = 64;
+            public const int MaxEventSignatureRepeats = 128;
 
             /// <summary>
             /// Gets the priority value for a given card zone and ownership context.

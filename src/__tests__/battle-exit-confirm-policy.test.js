@@ -1,5 +1,6 @@
 import {
     BATTLE_EXIT_CONFIRM_MESSAGE,
+    isLeavingBattleRoute,
     shouldConfirmBattleExit
 } from "../battleExitConfirmPolicy.js";
 
@@ -17,6 +18,13 @@ describe("battle exit confirm policy", () => {
         const button = document.createElement("button");
         button.classList.add("tool-button");
         expect(shouldConfirmBattleExit("game", "navigation", button)).toBe(false);
+    });
+
+    test("treats any game -> non-game route as leaving battle", () => {
+        expect(isLeavingBattleRoute("game", "navigation")).toBe(true);
+        expect(isLeavingBattleRoute("game", "card-editor")).toBe(true);
+        expect(isLeavingBattleRoute("game", "game")).toBe(false);
+        expect(isLeavingBattleRoute("navigation", "game")).toBe(false);
     });
 
     test("exports non-empty confirmation message", () => {

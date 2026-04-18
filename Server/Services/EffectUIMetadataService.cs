@@ -46,6 +46,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.Transform, AbilityEditorCategories.TempStateId },
             { EffectType.Reveal, AbilityEditorCategories.TurnFlowId },
             { EffectType.AddDeck, AbilityEditorCategories.PositionChangeId },
+            { EffectType.ReplaceDeck, AbilityEditorCategories.PositionChangeId },
             { EffectType.AddEmblem, AbilityEditorCategories.PositionChangeId },
             { EffectType.Reanimate, AbilityEditorCategories.PositionChangeId },
 
@@ -55,6 +56,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.AddTribe, AbilityEditorCategories.TempStateId },
             { EffectType.SetAttackTimes, AbilityEditorCategories.TempStateId },
             { EffectType.ResetAttackTimes, AbilityEditorCategories.TempStateId },
+            { EffectType.ResetActTimes, AbilityEditorCategories.TempStateId },
             { EffectType.AddAura, AbilityEditorCategories.TempStateId },
 
             { EffectType.SetPP, AbilityEditorCategories.ResourceValueId },

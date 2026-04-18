@@ -7,6 +7,7 @@ using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Interfaces;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -14,7 +15,7 @@ namespace ShadowverseBeyond.Server.Services
     /// 游戏数据提供者实现，负责预加载和缓存核心静态游戏数据
     /// 采用单例模式，在应用启动时预加载所有数据到内存中
     /// </summary>
-    public class GameDataProvider : IGameDataProvider
+    public class GameDataProvider : IGameDataProvider, IEnvironmentScopedGameDataProvider
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<GameDataProvider> _logger;
@@ -23,11 +24,15 @@ namespace ShadowverseBeyond.Server.Services
         {
             public CacheSnapshot(
                 Dictionary<int, CardDefinition> cardDefinitions,
+                IReadOnlyList<CardDefinition> cards,
+                IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> cardDefinitionsByEnvironment,
                 Dictionary<int, List<AbilityConfig>> abilityConfigsByCard,
                 Dictionary<long, AbilityConfig> abilityConfigsById,
                 Dictionary<string, BuffDefinition> buffDefinitions)
             {
                 CardDefinitions = cardDefinitions;
+                Cards = cards;
+                CardDefinitionsByEnvironment = cardDefinitionsByEnvironment;
                 AbilityConfigsByCard = abilityConfigsByCard;
                 AbilityConfigsById = abilityConfigsById;
                 BuffDefinitions = buffDefinitions;
@@ -35,11 +40,15 @@ namespace ShadowverseBeyond.Server.Services
 
             public static CacheSnapshot Empty { get; } = new(
                 new Dictionary<int, CardDefinition>(),
+                Array.Empty<CardDefinition>(),
+                new Dictionary<DeckEnvironment, IReadOnlyList<CardDefinition>>(),
                 new Dictionary<int, List<AbilityConfig>>(),
                 new Dictionary<long, AbilityConfig>(),
                 new Dictionary<string, BuffDefinition>());
 
             public Dictionary<int, CardDefinition> CardDefinitions { get; }
+            public IReadOnlyList<CardDefinition> Cards { get; }
+            public IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> CardDefinitionsByEnvironment { get; }
             public Dictionary<int, List<AbilityConfig>> AbilityConfigsByCard { get; }
             public Dictionary<long, AbilityConfig> AbilityConfigsById { get; }
             public Dictionary<string, BuffDefinition> BuffDefinitions { get; }
@@ -170,7 +179,24 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <inheritdoc />
-        public IReadOnlyCollection<CardDefinition> Cards => Volatile.Read(ref _snapshot).CardDefinitions.Values.ToList();
+        public IReadOnlyCollection<CardDefinition> Cards => Volatile.Read(ref _snapshot).Cards;
+
+        public IReadOnlyCollection<CardDefinition> GetCardDefinitionsForEnvironment(DeckEnvironment environment)
+        {
+            if (!_isInitialized)
+            {
+                _logger.LogWarning("GameDataProvider未初始化，无法获取环境卡池 {Environment}", environment);
+                return Array.Empty<CardDefinition>();
+            }
+
+            var snapshot = Volatile.Read(ref _snapshot);
+            if (snapshot.CardDefinitionsByEnvironment.TryGetValue(environment, out var scopedCards))
+            {
+                return scopedCards;
+            }
+
+            return Array.Empty<CardDefinition>();
+        }
 
         /// <inheritdoc />
         public List<AbilityConfig> GetAbilityConfigs(int cardId)
@@ -301,14 +327,48 @@ namespace ShadowverseBeyond.Server.Services
         private async Task<CacheSnapshot> BuildSnapshotAsync()
         {
             var cardDefinitions = await LoadCardDefinitionsAsync();
+            var cards = cardDefinitions.Values.ToList();
+            var cardsByEnvironment = BuildCardDefinitionsByEnvironment(cards);
             var abilityConfigs = await LoadAbilityConfigsAsync();
             var buffDefinitions = await LoadBuffDefinitionsAsync();
 
             return new CacheSnapshot(
                 cardDefinitions,
+                cards,
+                cardsByEnvironment,
                 abilityConfigs.ByCard,
                 abilityConfigs.ById,
                 buffDefinitions);
+        }
+
+        private static IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> BuildCardDefinitionsByEnvironment(
+            IReadOnlyCollection<CardDefinition> cardDefinitions)
+        {
+            var cardsByEnvironment = new Dictionary<DeckEnvironment, List<CardDefinition>>();
+
+            foreach (var card in cardDefinitions)
+            {
+                var environments = card.CardSetDefinition?.Environments;
+                if (environments == null || environments.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var environment in environments.Distinct())
+                {
+                    if (!cardsByEnvironment.TryGetValue(environment, out var list))
+                    {
+                        list = new List<CardDefinition>();
+                        cardsByEnvironment[environment] = list;
+                    }
+
+                    list.Add(card);
+                }
+            }
+
+            return cardsByEnvironment.ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<CardDefinition>)pair.Value);
         }
 
         private async Task<Dictionary<int, CardDefinition>> LoadCardDefinitionsAsync()

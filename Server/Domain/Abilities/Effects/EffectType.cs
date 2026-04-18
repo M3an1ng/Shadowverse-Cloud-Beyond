@@ -121,6 +121,13 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         [Description("重置攻击次数")]
         ResetAttackTimes = 15,
 
+        /// <summary>
+        /// 重置启动次数 - 重置卡牌本回合已启动次数
+        /// 🔄 可实现：清空ActsThisTurn
+        /// </summary>
+        [Description("重置启动次数")]
+        ResetActTimes = 16,
+
         // ==================== 特殊控制效果 (90-99) ====================
 
         /// <summary>
@@ -136,6 +143,13 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// </summary>
         [Description("随机")]
         Random = 91,
+
+        /// <summary>
+        /// 触发能力效果 - 触发目标卡当前拥有的指定关键字能力
+        /// ✅ 已实现：按运行时能力执行并可选择自动随机目标
+        /// </summary>
+        [Description("触发能力")]
+        TriggerAbility = 96,
 
         /// <summary>
         /// 改写事件参数 - Before阶段用于改写触发事件的参数
@@ -322,6 +336,9 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// </summary>
         [Description("添加种类")]
         AddTribe = 150,
+
+        [Description("鏇挎崲鐗屽簱")]
+        ReplaceDeck = 151,
 
         /// <summary>
         /// 添加光环 - 注册可刷新的持续效果

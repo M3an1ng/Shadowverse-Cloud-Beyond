@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Dtos.Enums;
@@ -34,6 +34,7 @@ public class DevToolsWinrateStatsController : ControllerBase
     public async Task<ActionResult<WinrateStatsSummaryResponse>> GetSummary(
         [FromQuery] Guid userId,
         [FromQuery] string? environment = null,
+        [FromQuery] string? deckRule = null,
         [FromQuery] int top = DefaultTop,
         [FromQuery] string? cardName = null,
         [FromQuery] string? startDate = null,
@@ -55,6 +56,10 @@ public class DevToolsWinrateStatsController : ControllerBase
         {
             return BadRequest("Unsupported environment.");
         }
+        if (!TryParseDeckRule(deckRule, out var targetDeckRule))
+        {
+            return BadRequest("Unsupported deck rule.");
+        }
         if (!TryParseDateRange(startDate, endDate, out var rangeStartUtc, out var rangeEndUtcInclusive, out var dateError))
         {
             return BadRequest(dateError ?? "Unsupported date range.");
@@ -66,7 +71,8 @@ public class DevToolsWinrateStatsController : ControllerBase
             .AsNoTracking()
             .Where(item =>
                 item.IsOfficial &&
-                item.Environment == targetEnvironment);
+                item.Environment == targetEnvironment &&
+                item.Rule == targetDeckRule);
         if (rangeStartUtc.HasValue)
         {
             factsQuery = factsQuery.Where(item => item.EndedAtUtc >= rangeStartUtc.Value);
@@ -214,6 +220,7 @@ public class DevToolsWinrateStatsController : ControllerBase
         var response = new WinrateStatsSummaryResponse
         {
             Environment = targetEnvironment.ToString(),
+            Rule = targetDeckRule.ToString(),
             Top = take,
             GeneratedAtUtc = DateTime.UtcNow,
             CardStats = topCardAggs.Select(item => new CardWinrateSummary
@@ -269,9 +276,10 @@ public class DevToolsWinrateStatsController : ControllerBase
         };
 
         _logger.LogDebug(
-            "Loaded devtools winrate summary. UserId={UserId} Environment={Environment} CardName={CardName} Start={StartDate} End={EndDate} Top={Top} CardRows={CardRows} DeckRows={DeckRows} ClassRows={ClassRows}",
+            "Loaded devtools winrate summary. UserId={UserId} Environment={Environment} Rule={Rule} CardName={CardName} Start={StartDate} End={EndDate} Top={Top} CardRows={CardRows} DeckRows={DeckRows} ClassRows={ClassRows}",
             userId,
             targetEnvironment,
+            targetDeckRule,
             normalizedCardNameKeyword,
             startDate,
             endDate,
@@ -292,6 +300,7 @@ public class DevToolsWinrateStatsController : ControllerBase
         [FromQuery] Guid userId,
         [FromQuery] string deckShapeHash,
         [FromQuery] string? environment = null,
+        [FromQuery] string? deckRule = null,
         CancellationToken cancellationToken = default)
     {
         if (userId == Guid.Empty)
@@ -314,6 +323,10 @@ public class DevToolsWinrateStatsController : ControllerBase
         {
             return BadRequest("Unsupported environment.");
         }
+        if (!TryParseDeckRule(deckRule, out var targetDeckRule))
+        {
+            return BadRequest("Unsupported deck rule.");
+        }
 
         var normalizedHash = deckShapeHash.Trim().ToUpperInvariant();
         var fact = await _db.GameParticipantStatsFacts
@@ -321,6 +334,7 @@ public class DevToolsWinrateStatsController : ControllerBase
             .Where(item =>
                 item.IsOfficial &&
                 item.Environment == targetEnvironment &&
+                item.Rule == targetDeckRule &&
                 item.DeckShapeHash == normalizedHash)
             .OrderByDescending(item => item.EndedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
@@ -366,14 +380,16 @@ public class DevToolsWinrateStatsController : ControllerBase
             DeckShapeHash = normalizedHash,
             DeckClass = fact.DeckClass.ToString(),
             Environment = targetEnvironment.ToString(),
+            Rule = targetDeckRule.ToString(),
             TotalCount = cards.Sum(item => item.Count),
             Cards = cards
         };
 
         _logger.LogDebug(
-            "Loaded deck composition by hash. UserId={UserId} Environment={Environment} DeckShapeHash={DeckShapeHash} CardRows={CardRows}",
+            "Loaded deck composition by hash. UserId={UserId} Environment={Environment} Rule={Rule} DeckShapeHash={DeckShapeHash} CardRows={CardRows}",
             userId,
             targetEnvironment,
+            targetDeckRule,
             normalizedHash,
             response.Cards.Count);
 
@@ -382,13 +398,24 @@ public class DevToolsWinrateStatsController : ControllerBase
 
     private static bool TryParseEnvironment(string? raw, out DeckEnvironment environment)
     {
-        environment = DeckEnvironment.Open;
+        environment = DeckEnvironment.Rotation;
         if (string.IsNullOrWhiteSpace(raw))
         {
             return true;
         }
 
         return Enum.TryParse(raw.Trim(), ignoreCase: true, out environment);
+    }
+
+    private static bool TryParseDeckRule(string? raw, out DeckRule rule)
+    {
+        rule = DeckRule.Standard;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        return Enum.TryParse(raw.Trim(), ignoreCase: true, out rule);
     }
 
     private static string? NormalizeKeyword(string? raw)
@@ -696,7 +723,8 @@ public class DevToolsWinrateStatsController : ControllerBase
 
     public sealed class WinrateStatsSummaryResponse
     {
-        public string Environment { get; set; } = DeckEnvironment.Open.ToString();
+        public string Environment { get; set; } = DeckEnvironment.Rotation.ToString();
+        public string Rule { get; set; } = DeckRule.Standard.ToString();
         public int Top { get; set; } = DefaultTop;
         public DateTime GeneratedAtUtc { get; set; }
         public List<CardWinrateSummary> CardStats { get; set; } = new();
@@ -813,7 +841,8 @@ public class DevToolsWinrateStatsController : ControllerBase
     {
         public string DeckShapeHash { get; set; } = string.Empty;
         public string DeckClass { get; set; } = CardClass.Neutral.ToString();
-        public string Environment { get; set; } = DeckEnvironment.Open.ToString();
+        public string Environment { get; set; } = DeckEnvironment.Rotation.ToString();
+        public string Rule { get; set; } = DeckRule.Standard.ToString();
         public int TotalCount { get; set; }
         public List<DeckCompositionCard> Cards { get; set; } = new();
     }
@@ -829,3 +858,6 @@ public class DevToolsWinrateStatsController : ControllerBase
         public string? ArtPreview { get; set; }
     }
 }
+
+
+

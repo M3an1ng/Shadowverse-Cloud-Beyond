@@ -62,7 +62,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         durationParameter: parameters.DurationParameter,
                         modifierLayer: parameters.ModifierLayer,
                         effectKey: effectKey,
-                        canStack: parameters.CanStack
+                        canStack: parameters.CanStack,
+                        removeCondition: parameters.RemoveCondition
                     );
 
                     result.GeneratedEvents.Add(statChangedEvent);

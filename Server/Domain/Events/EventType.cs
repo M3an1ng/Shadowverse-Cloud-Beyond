@@ -102,6 +102,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [Description("攻击次数重置")]
         AttackTimesReset,
         /// <summary>
+        /// 卡牌本回合已启动次数被重置时触发。
+        /// </summary>
+        [Description("启动次数重置")]
+        ActTimesReset,
+        /// <summary>
         /// 玩家的可进化状态发生改变时触发。
         /// </summary>
         [Description("进化状态更新")]
@@ -451,6 +456,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         [Description("启动状态更新")]
         ActStateUpdated,
+        /// <summary>
+        /// 手牌卡牌的 Fusion 可用性/已使用状态发生变化（用于驱动客户端 UI）。
+        /// </summary>
+        [Description("融合状态更新")]
+        FusionStateUpdated,
         [Description("加入牌库")]
         AddDeck,
         /// <summary>
@@ -498,6 +508,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         Play = 5, Cover = 6, Attack = 7, Evolve = 8, Fusion = 9, Act = 10,
         Accelerate = 11, Crystalize = 12, SetAttackTimes = 13,
         ResetAttackTimes = 15,
+        ResetActTimes = 16,
         ChangeFlag = 90,
         Random = 91,
         Sequence = 148,

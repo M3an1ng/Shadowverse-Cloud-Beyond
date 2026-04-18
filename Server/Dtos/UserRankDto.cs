@@ -33,6 +33,11 @@ public class UserRankDto
     public int Coins { get; set; }
 
     /// <summary>
+    /// 总胜场数
+    /// </summary>
+    public int TotalWins { get; set; }
+
+    /// <summary>
     /// 连续登录天数
     /// </summary>
     public int DailyLoginStreak { get; set; }
@@ -70,6 +75,7 @@ public class UserRankDto
             RankName = ranking?.GetRankName() ?? "青铜",
             RankPoints = ranking?.RankPoints ?? 0,
             Coins = userEconomy.Coins,
+            TotalWins = ranking?.TotalWins ?? 0,
             DailyLoginStreak = dailyReward?.ConsecutiveDays ?? 0,
             LastDailyReward = dailyReward?.LastClaimedAt ?? DateTime.MinValue,
             CanClaimDailyReward = dailyReward?.CanClaimDailyReward() ?? true,

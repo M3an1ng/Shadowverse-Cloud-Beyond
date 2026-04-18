@@ -12,6 +12,7 @@ using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -45,6 +46,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var card = targetInfo.Card;
+
+                    if (card.CurrentZone != CardZone.Field)
+                    {
+                        Logger.LogWarning("{EffectName}: Target card zone is not Field.", effectName);
+                        return new DomainOperationResult { Success = true };
+                    }
 
                     // 根据框架约束：ReturnCardToHand 会直接引起状态变化，Handler 侧应只产出事件
                     var owner = ctx.CurrentGameState.GetPlayerState(card.OwnerPlayerId);

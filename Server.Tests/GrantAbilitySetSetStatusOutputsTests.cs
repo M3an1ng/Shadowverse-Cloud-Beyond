@@ -26,9 +26,11 @@ using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Domain.Factories;
 using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Services;
+using ShadowverseBeyond.Server.Mappings;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using Xunit;
@@ -88,6 +90,110 @@ namespace ShadowverseBeyond.Server.Tests
             CommitGeneratedEvents(expiryEvents, context);
 
             Assert.DoesNotContain(target.Abilities, ability => ability.Name == "Granted Ability");
+        }
+
+        [Fact]
+        public void GrantAbility_EndOfTurn_RemovesGrantedAbilityFromLeader()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(1011, env.PlayerId);
+            var target = env.Player.Leader;
+            Assert.NotNull(target);
+
+            using var context = env.CreateContext(source);
+
+            var grantedAbility = new AbilityConfig
+            {
+                Name = "Leader Granted Ability",
+                Type = AbilityType.Triggered,
+                Trigger = new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { EventType.TurnStart },
+                    Timing = TriggerTiming.On
+                }
+            };
+
+            var parameters = new GrantAbilityEffectParams
+            {
+                AbilityConfigs = new List<AbilityConfig> { grantedAbility },
+                DurationType = DurationType.EndOfTurn
+            };
+
+            var effectConfig = new EffectConfig { Type = EffectType.GrantAbility };
+            var effect = new Effect(
+                effectConfig,
+                env.PlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(target!) },
+                parentAbilityId: null,
+                triggeredEventId: Guid.Empty,
+                sourceCardId: source.InstanceId);
+
+            var handler = new GrantAbilityEffectHandler(
+                NullLogger<GrantAbilityEffectHandler>.Instance,
+                new TargetProcessingService(NullLogger<TargetProcessingService>.Instance));
+
+            var applyResult = handler.Apply(effect, context, parameters);
+            Assert.True(applyResult.Success);
+
+            CommitGeneratedEvents(applyResult.GeneratedEvents, context);
+
+            Assert.Contains(target!.Abilities, ability => ability.Name == "Leader Granted Ability");
+
+            var expiryEvents = env.BuffService.CollectEndOfTurnExpiryEvents(context);
+            Assert.NotEmpty(expiryEvents);
+            CommitGeneratedEvents(expiryEvents, context);
+
+            Assert.DoesNotContain(target.Abilities, ability => ability.Name == "Leader Granted Ability");
+        }
+
+        [Fact]
+        public void BuffDisplayFalse_HidesBuffSummariesButKeepsBuffEffect()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(1101, env.PlayerId);
+            var target = env.CreateCard(1102, env.PlayerId);
+            using var ambientContext = env.CreateContext(source);
+
+            var hiddenAbilityConfig = new AbilityConfig
+            {
+                Id = 1101001,
+                CardId = source.CurrentDefinitionId,
+                Name = "Hidden Persistent Ability",
+                Type = AbilityType.Triggered,
+                BuffDisplay = false,
+                Trigger = new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { EventType.TurnStart },
+                    Timing = TriggerTiming.On
+                }
+            };
+
+            var sourceAbility = Assert.Single(env.AbilityManager.CreateAbilitiesForCard(
+                source,
+                new List<AbilityConfig> { hiddenAbilityConfig },
+                null,
+                env.GameState));
+
+            var effectContext = ambientContext with { SourceAbility = sourceAbility };
+            var statEvent = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: 2,
+                healthModifier: null,
+                costModifier: null,
+                durationType: DurationType.Permanent,
+                durationParameter: 0);
+
+            var applyResult = statEvent.Commit(effectContext);
+            Assert.True(applyResult.Success);
+            CommitGeneratedEvents(applyResult.GeneratedEvents, effectContext);
+
+            Assert.Equal(3, env.BuffService.GetEffectiveAttack(target, effectContext));
+
+            var mapper = new MapperConfiguration(cfg => cfg.AddProfile(new CardInstanceProfile())).CreateMapper();
+            var dto = mapper.Map<CardInstanceDto>(target);
+
+            Assert.Empty(dto.BuffSummaries);
+            Assert.Null(dto.BuffStatSummary);
         }
 
         [Fact]
@@ -325,6 +431,7 @@ namespace ShadowverseBeyond.Server.Tests
                 Player = new PlayerState(PlayerId);
                 var opponent = new PlayerState(Guid.NewGuid());
                 GameState = new GameState("grant-ability-tests", Player, opponent, PlayerId);
+                InitializeLeaders(Player, opponent);
 
                 var functionRegistry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);
                 var memoryCache = new MemoryCache(new MemoryCacheOptions());
@@ -363,6 +470,7 @@ namespace ShadowverseBeyond.Server.Tests
                 services.AddSingleton(valueSourceResolver);
                 services.AddSingleton<IDslCompiler>(dslCompiler);
                 services.AddSingleton<IQueryExecutor>(queryExecutor);
+                services.AddSingleton<IBuffFactory>(BuffFactory);
                 services.AddSingleton<IBuffService>(BuffService);
                 services.AddSingleton<ITargetProcessingService>(new TargetProcessingService(NullLogger<TargetProcessingService>.Instance));
                 services.AddSingleton<ICardFactory>(Mock.Of<ICardFactory>());
@@ -411,6 +519,21 @@ namespace ShadowverseBeyond.Server.Tests
                 GameState.RegisterCardInstance(instance);
                 GameState.GetPlayerState(ownerId)?.Field.Add(instance);
                 return instance;
+            }
+
+            private void InitializeLeaders(PlayerState player, PlayerState opponent)
+            {
+                player.Leader = new CardInstance(Guid.NewGuid(), 900001, player.PlayerId)
+                {
+                    CurrentZone = CardZone.Field
+                };
+                opponent.Leader = new CardInstance(Guid.NewGuid(), 900002, opponent.PlayerId)
+                {
+                    CurrentZone = CardZone.Field
+                };
+
+                GameState.RegisterCardInstance(player.Leader);
+                GameState.RegisterCardInstance(opponent.Leader);
             }
 
             private void SetupGameDataProvider()

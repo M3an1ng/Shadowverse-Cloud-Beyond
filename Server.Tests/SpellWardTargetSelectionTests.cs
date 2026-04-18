@@ -163,7 +163,7 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
-        public async Task ResolveTargetsAsync_PlayerChoiceBelowMin_BlockExecutionOnly_FailsAtResolutionButNotAvailability()
+        public async Task ResolveTargetsAsync_PlayerChoiceBelowMin_BlockExecutionOnly_SkipsAbilityExecution()
         {
             var harness = CreateHarness();
             harness.QueryExecutor
@@ -203,6 +203,58 @@ namespace ShadowverseBeyond.Server.Tests
 
             var availability = await ability.CheckTargetAvailabilityAsync(context);
             Assert.True(availability.IsAvailable);
+
+            var result = await ability.ResolveTargetsAsync(context);
+            Assert.Equal(ResolutionStatus.Skipped, result.Status);
+            Assert.Contains("可选目标不足", result.ErrorMessage ?? string.Empty);
+
+            harness.PendingActionService.Verify(x => x.WaitForPlayerChoiceAsync(
+                It.IsAny<string>(),
+                It.IsAny<PlayerChoiceRequest>(),
+                It.IsAny<System.Threading.CancellationToken>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task ResolveTargetsAsync_PlayerChoiceBelowMin_BlockPlayerOperation_FailsAtResolution()
+        {
+            var harness = CreateHarness();
+            harness.QueryExecutor
+                .Setup(x => x.ExecuteQuery(
+                    It.IsAny<QueryConfig>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Dictionary<string, List<TargetInfo>>?>()))
+                .Returns(new QueryResult
+                {
+                    Success = true,
+                    Results = new List<object> { harness.NormalFollower }
+                });
+
+            var ability = CreateAbility(
+                harness.TargetSelectionService,
+                harness.SourceCard,
+                new TargetConfig
+                {
+                    Query = new QueryConfig { SourcePoolExpression = "stub" },
+                    RequireValidTarget = true,
+                    TargetHandling = TargetHandlingStrategy.BlockPlayerOperation,
+                    PlayerChoiceOptions = new PlayerChoiceConfig
+                    {
+                        IsRequired = true,
+                        MinCount = 2,
+                        MaxCount = 2
+                    }
+                });
+
+            using var context = new GameContext(
+                harness.ServiceProvider,
+                Mock.Of<IMapper>(),
+                harness.Accessor,
+                harness.GameState,
+                harness.Player1.PlayerId,
+                sourceCard: harness.SourceCard);
+
+            var availability = await ability.CheckTargetAvailabilityAsync(context);
+            Assert.False(availability.IsAvailable);
 
             var result = await ability.ResolveTargetsAsync(context);
             Assert.Equal(ResolutionStatus.Failed, result.Status);
@@ -541,6 +593,73 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public async Task ResolveTargetsAsync_PlayerChoiceInverseSingleTarget_AmbushOnlyAffectsSelectableRange()
+        {
+            var harness = CreateHarness();
+            harness.QueryExecutor
+                .Setup(x => x.ExecuteQuery(
+                    It.IsAny<QueryConfig>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Dictionary<string, List<TargetInfo>>?>()))
+                .Returns(new QueryResult
+                {
+                    Success = true,
+                    Results = new List<object> { harness.NormalFollower, harness.AmbushFollower }
+                });
+
+            PlayerChoiceRequest? capturedRequest = null;
+            harness.PendingActionService
+                .Setup(x => x.WaitForPlayerChoiceAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<PlayerChoiceRequest>(),
+                    It.IsAny<System.Threading.CancellationToken>()))
+                .Callback((string _, PlayerChoiceRequest request, System.Threading.CancellationToken _) =>
+                {
+                    capturedRequest = request;
+                })
+                .ReturnsAsync(new PlayerChoiceResult
+                {
+                    WasCancelled = false,
+                    ChosenTargetIds = new List<Guid> { harness.NormalFollower.InstanceId }
+                });
+
+            var ability = CreateAbility(
+                harness.TargetSelectionService,
+                harness.SourceCard,
+                new TargetConfig
+                {
+                    Query = new QueryConfig { SourcePoolExpression = "stub" },
+                    RequireValidTarget = true,
+                    PlayerChoiceOptions = new PlayerChoiceConfig
+                    {
+                        IsRequired = true,
+                        MinCount = 1,
+                        MaxCount = 1,
+                        IsInverseSelection = true
+                    }
+                });
+
+            using var context = new GameContext(
+                harness.ServiceProvider,
+                Mock.Of<IMapper>(),
+                harness.Accessor,
+                harness.GameState,
+                harness.Player1.PlayerId,
+                sourceCard: harness.SourceCard);
+
+            var result = await ability.ResolveTargetsAsync(context);
+
+            Assert.NotNull(capturedRequest);
+            Assert.Single(capturedRequest!.SelectableTargetIds);
+            Assert.Equal(harness.NormalFollower.InstanceId, capturedRequest.SelectableTargetIds[0]);
+
+            Assert.Equal(ResolutionStatus.Completed, result.Status);
+            Assert.True(result.ResolvedTargets.TryGetValue("target", out var resolvedTargets));
+            Assert.Single(resolvedTargets);
+            Assert.Equal(harness.AmbushFollower.InstanceId, resolvedTargets[0].InstanceId);
+        }
+
+        [Fact]
         public async Task ResolveTargetsAsync_FusionChoice_NoSelectableTargets_StillRequestsCancellableChoice()
         {
             var harness = CreateHarness();
@@ -647,21 +766,34 @@ namespace ShadowverseBeyond.Server.Tests
             var sourceCard = new CardInstance(Guid.NewGuid(), 1000, player1.PlayerId) { CurrentZone = CardZone.Field };
             var spellWardFollower = new CardInstance(Guid.NewGuid(), 1001, player2.PlayerId) { CurrentZone = CardZone.Field };
             var normalFollower = new CardInstance(Guid.NewGuid(), 1002, player2.PlayerId) { CurrentZone = CardZone.Field };
+            var ambushFollower = new CardInstance(Guid.NewGuid(), 1003, player2.PlayerId) { CurrentZone = CardZone.Field };
 
             player1.Field.Add(sourceCard);
             player2.Field.Add(spellWardFollower);
             player2.Field.Add(normalFollower);
+            player2.Field.Add(ambushFollower);
 
             gameState.RegisterCardInstance(sourceCard);
             gameState.RegisterCardInstance(spellWardFollower);
             gameState.RegisterCardInstance(normalFollower);
+            gameState.RegisterCardInstance(ambushFollower);
 
             buffService
                 .Setup(x => x.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns<CardInstance, GameContext>((card, _) =>
-                    card.InstanceId == spellWardFollower.InstanceId
-                        ? new List<CardKeyword> { CardKeyword.SpellWard }
-                        : new List<CardKeyword>());
+                {
+                    if (card.InstanceId == spellWardFollower.InstanceId)
+                    {
+                        return new List<CardKeyword> { CardKeyword.SpellWard };
+                    }
+
+                    if (card.InstanceId == ambushFollower.InstanceId)
+                    {
+                        return new List<CardKeyword> { CardKeyword.Ambush };
+                    }
+
+                    return new List<CardKeyword>();
+                });
 
             queryExecutor
                 .Setup(x => x.ExecuteQuery(
@@ -695,7 +827,8 @@ namespace ShadowverseBeyond.Server.Tests
                 player1,
                 sourceCard,
                 spellWardFollower,
-                normalFollower);
+                normalFollower,
+                ambushFollower);
         }
 
         private sealed record TestHarness(
@@ -708,6 +841,7 @@ namespace ShadowverseBeyond.Server.Tests
             PlayerState Player1,
             CardInstance SourceCard,
             CardInstance SpellWardFollower,
-            CardInstance NormalFollower);
+            CardInstance NormalFollower,
+            CardInstance AmbushFollower);
     }
 }

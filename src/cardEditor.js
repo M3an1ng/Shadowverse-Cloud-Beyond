@@ -15,7 +15,22 @@ import { getBlockingLoader } from './components/blockingLoader.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
 import { ensureAbilityData, refreshAbilityDataCache } from './abilityDataCache.js';
 import { compareCardsForEditorAndDeck } from './cardListSort.js';
+import { compareCardSetDisplayOrder } from './cardSetDisplayOrder.js';
+import {
+    CARD_SET_UNSPECIFIED_ENVIRONMENT,
+    buildGroupedCardSetOptions
+} from './cardSetFilterOptions.js';
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
+import {
+    ensureDeckEnvironmentOptions,
+    getDeckEnvironmentLabel,
+    getDeckEnvironmentOptions,
+    normalizeDeckEnvironment
+} from './deckEnvironmentOptions.js';
+import {
+    CARD_CATALOG_INVALIDATED_EVENT,
+    syncDataRevisionFromResponse
+} from './dataChangeEvents.js';
 
 function normalizeEnumName(value) {
     if (typeof value !== 'string') return value;
@@ -28,6 +43,11 @@ function normalizeEnumName(value) {
             .join('_');
     }
     return trimmed[0].toUpperCase() + trimmed.slice(1);
+}
+
+function normalizeEnumLookupKey(value) {
+    const text = String(value ?? '').trim();
+    return text ? text.toLowerCase() : '';
 }
 
 function escapeRegExp(value) {
@@ -48,13 +68,43 @@ function equalsIgnoreCase(a, b) {
     return a.toLowerCase() === b.toLowerCase();
 }
 
+const LEADER_CARD_ID = 0;
+
+function normalizeCardDefinitionId(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getCardDefinitionId(card) {
+    const id = card?.id ?? card?.CardId ?? card?.Id ?? card?.cardId ?? null;
+    return id === undefined ? null : id;
+}
+
+function isLeaderCardDefinition(card) {
+    const cardId = normalizeCardDefinitionId(getCardDefinitionId(card));
+    const rawType = card?.type ?? card?.Type ?? '';
+    const cardType = normalizeEnumName(rawType);
+    const cardName = card?.name ?? card?.Name ?? '';
+    const isLeaderType = equalsIgnoreCase(cardType, 'Leader') || rawType === 0;
+    return isLeaderType || cardId === LEADER_CARD_ID || equalsIgnoreCase(cardName, '主战者');
+}
+
 let editorEnumLocalizationPromise = null;
 function ensureEditorEnumLocalization(editorInstance) {
     if (!editorEnumLocalizationPromise) {
-        editorEnumLocalizationPromise = ensureEnumLocalizations(['CardRarity', 'CardClass', 'CardType'])
+        editorEnumLocalizationPromise = ensureEnumLocalizations([
+            'CardRarity',
+            'CardClass',
+            'CardType',
+            'AbilityType',
+            'AbilityKeyword'
+        ])
             .then(() => {
                 if (editorInstance?.currentCard) {
                     editorInstance.updateCardPreview();
+                }
+                if (editorInstance?.currentCardAbilities?.length) {
+                    editorInstance.renderAbilitiesListContent(editorInstance.currentCardAbilities);
                 }
             })
             .catch(error => {
@@ -102,6 +152,18 @@ function getCardSetKey(card) {
 function getCardSetLabel(info) {
     if (!info) return '';
     return info.name || '';
+}
+
+function normalizeCardSetEnvironmentValue(value) {
+    return normalizeDeckEnvironment(value, '');
+}
+
+function getCardSetEnvironmentLabel(value) {
+    if (value === CARD_SET_UNSPECIFIED_ENVIRONMENT) {
+        return '未指定环境';
+    }
+
+    return getDeckEnvironmentLabel(value);
 }
 
 function normalizeAbilityKeywords(ability) {
@@ -159,10 +221,11 @@ function formatAbilityKeywordsDisplay(ability) {
 
 function formatAbilityKeywordLabel(entry) {
     if (!entry || !entry.keyword) return '';
+    const localizedKeyword = getCachedEnumLabel('AbilityKeyword', entry.keyword, entry.keyword);
     if (entry.value !== null && entry.value !== undefined && entry.value !== '') {
-        return `${entry.keyword}:${entry.value}`;
+        return `${localizedKeyword}:${entry.value}`;
     }
-    return entry.keyword;
+    return localizedKeyword;
 }
 
 const ABILITY_TYPE_LABELS = {
@@ -171,23 +234,55 @@ const ABILITY_TYPE_LABELS = {
     2: 'Activated'
 };
 
+const ABILITY_TYPE_DISPLAY_LABELS = {
+    triggered: '触发式',
+    continuous: '持久式',
+    activated: '启动式',
+    '0': '触发式',
+    '1': '持久式',
+    '2': '启动式'
+};
+
+function getAbilityTypeDisplayLabel(value, fallback = '') {
+    const normalizedValue = normalizeEnumLookupKey(value);
+    if (normalizedValue && ABILITY_TYPE_DISPLAY_LABELS[normalizedValue]) {
+        return ABILITY_TYPE_DISPLAY_LABELS[normalizedValue];
+    }
+
+    const cachedLabel = getCachedEnumLabel('AbilityType', value, fallback);
+    const normalizedCachedLabel = normalizeEnumLookupKey(cachedLabel);
+    if (normalizedCachedLabel && ABILITY_TYPE_DISPLAY_LABELS[normalizedCachedLabel]) {
+        return ABILITY_TYPE_DISPLAY_LABELS[normalizedCachedLabel];
+    }
+
+    return cachedLabel || fallback || '触发式';
+}
+
 function resolveAbilityTypeLabel(ability, config) {
     const rawTypeValue = ability?.abilityType ?? ability?.AbilityType ?? config?.abilityType;
     const configType = normalizeEnumName(config?.type ?? ability?.type ?? ability?.Type ?? ability?.jsonConfig?.type ?? '');
+    const localizedConfigType = getAbilityTypeDisplayLabel(configType, configType);
     if (rawTypeValue !== null && rawTypeValue !== undefined && rawTypeValue !== '') {
         const numericValue = Number(rawTypeValue);
         if (Number.isFinite(numericValue)) {
-            const numericLabel = ABILITY_TYPE_LABELS[numericValue];
-            if (configType && numericLabel && configType.toLowerCase() !== numericLabel.toLowerCase()) {
-                return configType;
+            const numericLabel = getAbilityTypeDisplayLabel(
+                rawTypeValue,
+                getAbilityTypeDisplayLabel(ABILITY_TYPE_LABELS[numericValue], ABILITY_TYPE_LABELS[numericValue])
+            );
+            if (configType && numericLabel && configType.toLowerCase() !== ABILITY_TYPE_LABELS[numericValue]?.toLowerCase()) {
+                return localizedConfigType;
             }
-            return numericLabel || configType || 'Triggered';
+            return numericLabel || localizedConfigType || getAbilityTypeDisplayLabel('Triggered', '触发式');
         }
         if (typeof rawTypeValue === 'string') {
-            return normalizeEnumName(rawTypeValue) || configType || 'Triggered';
+            const normalizedType = normalizeEnumName(rawTypeValue);
+            return getAbilityTypeDisplayLabel(
+                rawTypeValue,
+                getAbilityTypeDisplayLabel(normalizedType, normalizedType || localizedConfigType || '触发式')
+            );
         }
     }
-    return configType || 'Triggered';
+    return localizedConfigType || getAbilityTypeDisplayLabel('Triggered', '触发式');
 }
 
 function normalizeEventKey(value) {
@@ -285,6 +380,15 @@ class CardEditor {
         this.abilityDetailCache = new Map();
         this.abilityCountsCache = new Map();
         this.abilitiesLibraryCache = null;
+        this.cardCatalogInvalidationHandler = null;
+        this.editorMode = 'card';
+        this.cardTab = 'basic';
+        this.playerSettingsTab = 'leaderAbility';
+        this.previousCardIdBeforeSettingsMode = null;
+        this.tribeDefinitions = [];
+        this.tribeSearchQuery = '';
+        this.activeTribeDefinitionName = null;
+        this.isCreatingTribeDefinition = false;
     }
 
     /**
@@ -312,11 +416,14 @@ class CardEditor {
             // 初始化UI渲染器
             await this.uiRenderer.initialize(this.metadataManager);
 
+            await ensureDeckEnvironmentOptions();
+
             // 加载卡包定义用于输入补全
             await this.loadCardSetDefinitions();
 
             // 创建编辑器布局
             this.createEditorLayout();
+            await this.renderEditorModeContent();
             this.updateTabAvailability();
 
             // 初始化列表筛选控件选项
@@ -324,6 +431,7 @@ class CardEditor {
 
             // 绑定事件监听器
             this.bindEventListeners();
+            this.bindGlobalInvalidationListener();
             // 加载卡牌列表
             await this.loadCardList();
 
@@ -381,33 +489,38 @@ class CardEditor {
                 <!-- 左栏：卡牌列表 -->
                 <div class="editor-sidebar left-sidebar tech-panel">
                     <div class="sidebar-header">
-                        <h3 class="tech-header">DATABASE // CARDS</h3>
-                        <button class="btn-tech btn-primary" id="new-card-btn">
-                            NEW ENTRY
-                        </button>
+                        <h3 class="tech-header">卡牌数据库</h3>
+                        <div class="sidebar-header-actions">
+                            <button class="btn-tech btn-primary" id="new-card-btn">
+                                新建卡牌
+                            </button>
+                            <button class="btn-tech btn-secondary" id="player-settings-btn">
+                                玩家设定
+                            </button>
+                        </div>
                     </div>
                     <div class="sidebar-content">
                         <div class="search-section">
-                            <input type="text" id="card-search" placeholder="SEARCH DATABASE..." class="search-input tech-input">
+                            <input type="text" id="card-search" placeholder="搜索卡牌..." class="search-input tech-input">
                             <div class="filter-section">
                                 <select id="class-filter" class="filter-select tech-select">
-                                    <option value="">ALL CLASSES</option>
+                                    <option value="">全部职业</option>
                                 </select>
                                 <select id="type-filter" class="filter-select tech-select">
-                                    <option value="">ALL TYPES</option>
+                                    <option value="">全部类型</option>
                                 </select>
                                 <select id="rarity-filter" class="filter-select tech-select">
-                                    <option value="">ALL RARITIES</option>
+                                    <option value="">全部稀有度</option>
                                 </select>
                                 <select id="set-filter" class="filter-select tech-select">
-                                    <option value="">ALL SETS</option>
+                                    <option value="">全部卡包</option>
                                 </select>
                             </div>
                         </div>
                         <div class="card-list custom-scrollbar" id="card-list">
                             <div class="card-list-placeholder">
-                                <p class="tech-text-dim">NO DATA FOUND</p>
-                                <small class="tech-text-small">INITIATE NEW ENTRY</small>
+                                <p class="tech-text-dim">未找到卡牌</p>
+                                <small class="tech-text-small">可以从上方新建卡牌</small>
                             </div>
                         </div>
                     </div>
@@ -416,69 +529,31 @@ class CardEditor {
                 <!-- 中栏：编辑区 -->
                 <div class="editor-main tech-panel">
                     <div class="editor-header">
-                        <h3 id="editor-title" class="tech-header-large">AWAITING SELECTION</h3>
+                        <h3 id="editor-title" class="tech-header-large">等待选择卡牌</h3>
                         <div class="editor-actions">
-                            <button class="btn-tech btn-secondary" id="save-btn" disabled>SAVE DATA</button>
-                            <button class="btn-tech btn-secondary" id="save-as-btn" disabled>SAVE AS</button>
-                            <button class="btn-tech btn-danger" id="delete-btn" disabled>DELETE</button>
+                            <button class="btn-tech btn-secondary" id="save-btn" disabled>保存</button>
+                            <button class="btn-tech btn-secondary" id="save-as-btn" disabled>另存为</button>
+                            <button class="btn-tech btn-danger" id="delete-btn" disabled>删除</button>
                         </div>
                     </div>
-                    <div class="editor-content">
-                        <div class="editor-tabs">
-                            <button class="tab-button active" data-tab="basic">BASIC INFO</button>
-                            <button class="tab-button" data-tab="abilities">ABILITIES</button>
-                            <button class="tab-button" data-tab="assets">ASSETS</button>
-                        </div>
-                        <div class="tab-content custom-scrollbar">
-                            <div class="tab-panel active" id="basic-tab">
-                                <div class="form-placeholder">
-                                    <p class="tech-text-dim">SELECT A CARD TO EDIT</p>
-                                </div>
-                            </div>
-                            <div class="tab-panel" id="abilities-tab">
-                                <div class="abilities-container">
-                                    <div class="abilities-header">
-                                        <h4 class="tech-header-small">ABILITY CONFIGURATION</h4>
-                                        <div class="abilities-header-actions">
-                                            <button class="btn-tech btn-small" id="add-ability-btn">ADD ABILITY</button>
-                                            <button class="btn-tech btn-small" id="link-ability-btn">COPY EXISTING</button>
-                                        </div>
-                                    </div>
-                                    <div class="abilities-content">
-                                        <div class="abilities-list" id="abilities-list">
-                                            <div class="abilities-placeholder">
-                                                <p class="tech-text-dim">NO ABILITIES LINKED</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="tab-panel" id="assets-tab">
-                                <div class="assets-container" id="assets-container">
-                                    <div class="form-placeholder">
-                                        <p class="tech-text-dim">SELECT A CARD TO EDIT</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <div class="editor-content" id="editor-mode-host"></div>
                 </div>
 
                 <!-- 右栏：预览区 -->
                 <div class="editor-sidebar right-sidebar tech-panel">
                     <div class="sidebar-header">
-                        <h3 class="tech-header">VISUALIZATION</h3>
+                        <h3 class="tech-header">预览</h3>
                     </div>
                     <div class="sidebar-content">
                         <div class="card-preview-container" id="card-preview">
                             <div class="preview-placeholder">
-                                <p class="tech-text-dim">AWAITING DATA</p>
+                                <p class="tech-text-dim">等待载入数据</p>
                             </div>
                         </div>
                         <div class="preview-info">
-                            <h4 class="tech-header-small">DEBUG INFO</h4>
+                            <h4 class="tech-header-small">调试信息</h4>
                             <div class="preview-details tech-code-block" id="preview-details">
-                                <p>NO DATA</p>
+                                <p>暂无数据</p>
                             </div>
                         </div>
                     </div>
@@ -487,20 +562,147 @@ class CardEditor {
         `;
     }
 
+    renderCardEditorShell() {
+        return `
+            <div class="card-editor-shell">
+                <div class="editor-tabs">
+                    <button class="tab-button${this.cardTab === 'basic' ? ' active' : ''}" data-tab="basic">卡牌信息</button>
+                    <button class="tab-button${this.cardTab === 'abilities' ? ' active' : ''}" data-tab="abilities">能力管理</button>
+                    <button class="tab-button${this.cardTab === 'assets' ? ' active' : ''}" data-tab="assets">媒体资源</button>
+                </div>
+                <div class="tab-content custom-scrollbar">
+                    <div class="tab-panel${this.cardTab === 'basic' ? ' active' : ''}" id="basic-tab">
+                        <div class="form-placeholder">
+                            <p class="tech-text-dim">请选择一张卡牌进行编辑</p>
+                        </div>
+                    </div>
+                    <div class="tab-panel${this.cardTab === 'abilities' ? ' active' : ''}" id="abilities-tab">
+                        <div class="abilities-container">
+                            <div class="abilities-header">
+                                <h4 class="tech-header-small">能力配置</h4>
+                                <div class="abilities-header-actions">
+                                    <button class="btn-tech btn-small" id="add-ability-btn">新增能力</button>
+                                    <button class="btn-tech btn-small" id="link-ability-btn">复制已有能力</button>
+                                </div>
+                            </div>
+                            <div class="abilities-content">
+                                <div class="abilities-list" id="abilities-list">
+                                    <div class="abilities-placeholder">
+                                        <p class="tech-text-dim">当前未绑定能力</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tab-panel${this.cardTab === 'assets' ? ' active' : ''}" id="assets-tab">
+                        <div class="assets-container" id="assets-container">
+                            <div class="form-placeholder">
+                                <p class="tech-text-dim">请选择一张卡牌进行编辑</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderPlayerSettingsShell() {
+        return `
+            <div class="settings-shell">
+                <div class="settings-hero tech-section">
+                    <div>
+                        <h4 class="tech-header-small">玩家级设定</h4>
+                        <p class="tech-text-dim">集中维护主战者能力、种类定义等系统数据.</p>
+                    </div>
+                    <div class="settings-hero-badges">
+                        <span class="tech-tag">主战者能力</span>
+                        <span class="tech-tag">种类管理</span>
+                    </div>
+                </div>
+                <div class="editor-tabs settings-tabs" role="tablist" aria-label="玩家设定">
+                    <button class="tab-button settings-tab-button${this.playerSettingsTab === 'leaderAbility' ? ' active' : ''}" data-settings-tab="leaderAbility" aria-selected="${this.playerSettingsTab === 'leaderAbility'}">
+                        主战者能力
+                    </button>
+                    <button class="tab-button settings-tab-button${this.playerSettingsTab === 'tribeManagement' ? ' active' : ''}" data-settings-tab="tribeManagement" aria-selected="${this.playerSettingsTab === 'tribeManagement'}">
+                        种类管理
+                    </button>
+                </div>
+                <div class="tab-content player-settings-tab-content custom-scrollbar">
+                    <div class="tab-panel settings-tab-panel${this.playerSettingsTab === 'leaderAbility' ? ' active' : ''}" id="leader-ability-settings-tab">
+                        <div class="abilities-container">
+                            <div class="abilities-header">
+                                <div>
+                                    <h4 class="tech-header-small">主战者能力</h4>
+                                    <p class="tech-text-dim">维护主战者的能力列表与 DSL 配置。</p>
+                                </div>
+                                <div class="abilities-header-actions">
+                                    <button class="btn-tech btn-small" id="add-ability-btn">新增能力</button>
+                                    <button class="btn-tech btn-small" id="link-ability-btn">复制已有能力</button>
+                                </div>
+                            </div>
+                            <div class="abilities-content">
+                                <div class="abilities-list" id="abilities-list">
+                                    <div class="abilities-placeholder">
+                                        <p class="tech-text-dim">正在载入主战者能力...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tab-panel settings-tab-panel${this.playerSettingsTab === 'tribeManagement' ? ' active' : ''}" id="tribe-management-tab">
+                        <div class="form-placeholder">
+                            <p class="tech-text-dim">正在载入种类定义...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    async renderEditorModeContent() {
+        const host = this.container?.querySelector('#editor-mode-host');
+        if (!host) {
+            return;
+        }
+
+        host.innerHTML = this.editorMode === 'playerSettings'
+            ? this.renderPlayerSettingsShell()
+            : this.renderCardEditorShell();
+
+        const editorMain = this.container.querySelector('.editor-main');
+        if (editorMain) {
+            editorMain.classList.toggle('player-settings-mode', this.editorMode === 'playerSettings');
+        }
+
+        this.syncEditorModeUi();
+
+        if (this.editorMode === 'playerSettings') {
+            this.disableEditorButtons();
+            await this.switchPlayerSettingsTab(this.playerSettingsTab);
+            return;
+        }
+
+        this.updateTabAvailability();
+
+        if (!this.currentCard) {
+            this.updateEmptyPreviewState();
+            return;
+        }
+
+        const activeTab = this.cardTab || 'basic';
+        if (activeTab === 'basic') {
+            await this.renderBasicInfoForm();
+        } else if (activeTab === 'abilities') {
+            await this.renderAbilitiesList();
+        } else if (activeTab === 'assets') {
+            this.renderAssetsTab();
+        }
+    }
+
     /**
      * 绑定事件监听器
      */
     bindEventListeners() {
-        // 标签页切换
-        this.container.addEventListener('click', (event) => {
-            if (event.target.classList.contains('tab-button')) {
-                if (event.target.disabled) {
-                    return;
-                }
-                this.switchTab(event.target.dataset.tab);
-            }
-        });
-
         this.container.addEventListener('click', (event) => {
             const tokenEl = event.target.closest('[data-preview-token]');
             if (!tokenEl) return;
@@ -510,39 +712,95 @@ class CardEditor {
             event.preventDefault();
             event.stopPropagation();
             void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, {
-                cards: this.allCardsData
+                cards: this.allCardsData,
+                currentCardId: this.currentCard?.id ?? this.currentCard?.Id ?? this.currentCard?.CardId ?? null,
+                currentCardName: this.currentCard?.name ?? this.currentCard?.Name ?? ''
             });
         });
 
-        // 保存按钮
-        const saveBtn = this.container.querySelector('#save-btn');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', async () => {
+        this.container.addEventListener('click', async (event) => {
+            const settingsTabButton = event.target.closest('.settings-tab-button');
+            if (settingsTabButton && this.container.contains(settingsTabButton)) {
+                await this.switchPlayerSettingsTab(settingsTabButton.dataset.settingsTab);
+                return;
+            }
+
+            const cardTabButton = event.target.closest('.tab-button[data-tab]');
+            if (cardTabButton && this.container.contains(cardTabButton)) {
+                if (cardTabButton.disabled) {
+                    return;
+                }
+
+                this.switchTab(cardTabButton.dataset.tab);
+                return;
+            }
+
+            const tribeListItem = event.target.closest('.tribe-list-item');
+            if (tribeListItem && this.container.contains(tribeListItem)) {
+                this.selectTribeDefinition(tribeListItem.dataset.tribeName);
+                return;
+            }
+
+            const actionButton = event.target.closest('button');
+            if (!actionButton || !this.container.contains(actionButton)) {
+                return;
+            }
+
+            switch (actionButton.id) {
+            case 'save-btn':
                 await this.saveCurrentCard(false);
-            });
-        }
-
-        // 另存为按钮
-        const saveAsBtn = this.container.querySelector('#save-as-btn');
-        if (saveAsBtn) {
-            saveAsBtn.addEventListener('click', async () => {
+                return;
+            case 'save-as-btn':
                 await this.saveCurrentCard(true);
-            });
-        }
-
-        // 删除按钮
-        const deleteBtn = this.container.querySelector('#delete-btn');
-        if (deleteBtn) {
-            deleteBtn.addEventListener('click', async () => {
+                return;
+            case 'delete-btn':
                 await this.deleteCurrentCard();
-            });
-        }
+                return;
+            case 'new-card-btn':
+                await this.createNewCard();
+                return;
+            case 'player-settings-btn':
+                if (this.editorMode === 'playerSettings') {
+                    await this.exitPlayerSettingsMode();
+                } else {
+                    await this.enterPlayerSettingsMode();
+                }
+                return;
+            case 'add-ability-btn':
+                this.showAddAbilityModal();
+                return;
+            case 'link-ability-btn':
+                this.showLinkExistingAbilityModal();
+                return;
+            case 'new-tribe-btn':
+                this.startNewTribeDefinitionDraft();
+                return;
+            case 'refresh-tribes-btn':
+                await this.loadTribeDefinitions({ force: true });
+                await this.renderTribeManagementTab();
+                return;
+            case 'save-tribe-definition-btn':
+                await this.saveTribeDefinitionFromForm();
+                return;
+            case 'delete-tribe-definition-btn':
+                await this.deleteActiveTribeDefinition();
+                return;
+            default:
+                break;
+            }
+        });
 
-        // 新建卡牌按钮
-        const newCardBtn = this.container.querySelector('#new-card-btn');
-        if (newCardBtn) {
-            newCardBtn.addEventListener('click', () => this.createNewCard());
-        }
+        this.container.addEventListener('change', async (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+                return;
+            }
+
+            if (target.id === 'tribe-search-input') {
+                this.tribeSearchQuery = target.value.trim();
+                await this.renderTribeManagementTab();
+            }
+        });
 
         // 搜索与筛选
         const searchInput = this.container.querySelector('#card-search');
@@ -557,22 +815,18 @@ class CardEditor {
             }
         });
 
-        // 添加能力按钮
-        const addAbilityBtn = this.container.querySelector('#add-ability-btn');
-        if (addAbilityBtn) {
-            addAbilityBtn.addEventListener('click', () => this.showAddAbilityModal());
-        }
-
-        const linkAbilityBtn = this.container.querySelector('#link-ability-btn');
-        if (linkAbilityBtn) {
-            linkAbilityBtn.addEventListener('click', () => this.showLinkExistingAbilityModal());
-        }
     }
 
     /**
      * 切换标签页
      */
     switchTab(tabName) {
+        if (!tabName) {
+            return;
+        }
+
+        this.cardTab = tabName;
+
         // 移除所有活动状态
         this.container.querySelectorAll('.tab-button').forEach(btn => {
             btn.classList.remove('active');
@@ -589,6 +843,9 @@ class CardEditor {
             tabButton.classList.add('active');
             tabPanel.classList.add('active');
 
+            if (tabName === 'basic' && this.currentCard) {
+                this.renderBasicInfoForm();
+            }
             // 如果切换到能力管理标签页，渲染能力列表
             if (tabName === 'abilities' && this.currentCard) {
                 this.renderAbilitiesList();
@@ -599,10 +856,517 @@ class CardEditor {
         }
     }
 
+    async switchPlayerSettingsTab(tabName) {
+        this.playerSettingsTab = tabName || 'leaderAbility';
+
+        this.container.querySelectorAll('.settings-tab-button').forEach(btn => {
+            const isActive = btn.dataset.settingsTab === this.playerSettingsTab;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        this.container.querySelectorAll('.settings-tab-panel').forEach(panel => {
+            panel.classList.toggle('active', panel.id === `${this.playerSettingsTab === 'leaderAbility' ? 'leader-ability-settings' : 'tribe-management'}-tab`);
+        });
+
+        if (this.playerSettingsTab === 'leaderAbility') {
+            if (this.currentCard) {
+                await this.renderAbilitiesList();
+                this.updateCardPreview();
+            }
+            return;
+        }
+
+        await this.renderTribeManagementTab();
+        this.renderTribeManagementPreview();
+    }
+
+    async ensureCardEditorMode() {
+        if (this.editorMode === 'card') {
+            return;
+        }
+
+        this.editorMode = 'card';
+        await this.renderEditorModeContent();
+    }
+
+    syncEditorModeUi() {
+        const settingsBtn = this.container?.querySelector('#player-settings-btn');
+        if (settingsBtn) {
+            settingsBtn.textContent = this.editorMode === 'playerSettings' ? '返回编辑' : '玩家设定';
+            settingsBtn.classList.toggle('btn-secondary', this.editorMode === 'playerSettings');
+            settingsBtn.classList.toggle('btn-primary', this.editorMode !== 'playerSettings');
+        }
+
+        const editorActions = this.container?.querySelector('.editor-actions');
+        if (editorActions) {
+            editorActions.hidden = this.editorMode === 'playerSettings';
+        }
+    }
+
+    updateEmptyPreviewState(message = '等待载入数据', detail = '暂无数据') {
+        const previewContainer = this.container?.querySelector('#card-preview');
+        if (previewContainer) {
+            previewContainer.innerHTML = `
+                <div class="preview-placeholder">
+                    <p class="tech-text-dim">${escapeHtml(message)}</p>
+                </div>
+            `;
+        }
+
+        const previewDetails = this.container?.querySelector('#preview-details');
+        if (previewDetails) {
+            previewDetails.innerHTML = `<p>${escapeHtml(detail)}</p>`;
+        }
+    }
+
+    renderTribeManagementPreview() {
+        const definitions = Array.isArray(this.tribeDefinitions) ? this.tribeDefinitions : [];
+        const enabledCount = definitions.filter(item => item.isEnabled).length;
+        const reservedCount = definitions.filter(item => item.isReserved).length;
+        const previewContainer = this.container?.querySelector('#card-preview');
+        if (previewContainer) {
+            previewContainer.innerHTML = `
+                <div class="settings-preview-card tech-panel">
+                    <h4 class="tech-header-small">种类注册表</h4>
+                    <div class="settings-preview-metrics">
+                        <div class="settings-preview-metric">
+                            <span class="settings-preview-value">${definitions.length}</span>
+                            <span class="settings-preview-label">已登记种类</span>
+                        </div>
+                        <div class="settings-preview-metric">
+                            <span class="settings-preview-value">${enabledCount}</span>
+                            <span class="settings-preview-label">启用中</span>
+                        </div>
+                        <div class="settings-preview-metric">
+                            <span class="settings-preview-value">${reservedCount}</span>
+                            <span class="settings-preview-label">保留项</span>
+                        </div>
+                    </div>
+                    <p class="tech-text-dim">卡牌分配 tribe 仍在卡牌信息页完成，这里只维护定义、别名与特殊行为。</p>
+                </div>
+            `;
+        }
+
+        const previewDetails = this.container?.querySelector('#preview-details');
+        if (previewDetails) {
+            previewDetails.innerHTML = `
+                <p>模式: 玩家设定</p>
+                <p>子页: 种类管理</p>
+                <p>筛选: ${escapeHtml(this.tribeSearchQuery || '全部')}</p>
+            `;
+        }
+    }
+
+    async enterPlayerSettingsMode() {
+        const previousCardId = this.currentCard?.id ?? null;
+        if (this.editorMode !== 'playerSettings' && previousCardId !== null && previousCardId !== LEADER_CARD_ID) {
+            this.previousCardIdBeforeSettingsMode = previousCardId;
+        }
+
+        const editorRoot = this.container?.querySelector('.card-editor-layout') || this.container;
+        const loader = editorRoot ? getBlockingLoader(editorRoot) : null;
+        loader?.show('正在加载玩家设定...');
+
+        try {
+            this.currentCard = await this.loadLeaderCard();
+            this.editorMode = 'playerSettings';
+
+            const editorTitle = this.container?.querySelector('#editor-title');
+            if (editorTitle) {
+                editorTitle.textContent = '玩家设定';
+            }
+
+            await this.renderEditorModeContent();
+        } catch (error) {
+            console.error('CardEditor: Failed to enter player settings mode:', error);
+            alert(`加载玩家设定失败: ${error.message}`);
+        } finally {
+            loader?.hide();
+        }
+    }
+
+    async exitPlayerSettingsMode() {
+        const previousCardId = this.previousCardIdBeforeSettingsMode;
+        this.previousCardIdBeforeSettingsMode = null;
+        this.editorMode = 'card';
+        this.currentCard = null;
+
+        await this.renderEditorModeContent();
+
+        if (previousCardId !== null && previousCardId !== undefined) {
+            await this.selectCard(previousCardId);
+            return;
+        }
+
+        this.disableEditorButtons();
+        this.updateTabAvailability();
+        this.switchTab('basic');
+
+        const editorTitle = this.container?.querySelector('#editor-title');
+        if (editorTitle) {
+            editorTitle.textContent = '等待选择卡牌';
+        }
+
+        this.updateEmptyPreviewState();
+    }
+
+    selectTribeDefinition(name) {
+        this.activeTribeDefinitionName = name || null;
+        this.isCreatingTribeDefinition = false;
+        void this.renderTribeManagementTab();
+    }
+
+    startNewTribeDefinitionDraft() {
+        this.activeTribeDefinitionName = null;
+        this.isCreatingTribeDefinition = true;
+        void this.renderTribeManagementTab();
+    }
+
+    normalizeTribeDefinition(raw) {
+        return {
+            name: (raw?.name ?? raw?.Name ?? '').trim(),
+            aliases: Array.isArray(raw?.aliases ?? raw?.Aliases) ? [...(raw.aliases ?? raw.Aliases)] : [],
+            behavior: (raw?.behavior ?? raw?.Behavior ?? 'Normal').toString().trim() || 'Normal',
+            isReserved: Boolean(raw?.isReserved ?? raw?.IsReserved),
+            isEnabled: raw?.isEnabled ?? raw?.IsEnabled ?? true,
+            usageCount: Number(raw?.usageCount ?? raw?.UsageCount ?? 0) || 0
+        };
+    }
+
+    async loadTribeDefinitions(options = {}) {
+        if (!options.force && Array.isArray(this.tribeDefinitions) && this.tribeDefinitions.length > 0) {
+            return this.tribeDefinitions;
+        }
+
+        const response = await fetch('/api/tribes');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        this.applyDataRevisionFromResponse(response);
+        const data = await response.json();
+        this.tribeDefinitions = Array.isArray(data)
+            ? data.map(item => this.normalizeTribeDefinition(item))
+            : [];
+
+        if (!this.isCreatingTribeDefinition && !this.activeTribeDefinitionName && this.tribeDefinitions.length > 0) {
+            this.activeTribeDefinitionName = this.tribeDefinitions[0].name;
+        }
+
+        return this.tribeDefinitions;
+    }
+
+    async populateTribeSuggestionOptions(datalist) {
+        if (!datalist) {
+            return;
+        }
+
+        try {
+            if (!Array.isArray(this.tribeDefinitions) || this.tribeDefinitions.length === 0) {
+                await this.loadTribeDefinitions();
+            }
+
+            const suggestions = (Array.isArray(this.tribeDefinitions) ? this.tribeDefinitions : [])
+                .filter(item => item.isEnabled)
+                .map(item => item.name)
+                .sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+
+            datalist.innerHTML = suggestions
+                .map(item => `<option value="${escapeHtml(item)}"></option>`)
+                .join('');
+        } catch (error) {
+            console.warn('CardEditor: Failed to populate tribe suggestions:', error);
+            datalist.innerHTML = '';
+        }
+    }
+
+    parseAliasInput(rawValue) {
+        return String(rawValue ?? '')
+            .split(/[\n,]/)
+            .map(value => value.trim())
+            .filter(Boolean)
+            .filter((value, index, items) => items.findIndex(existing => existing.toLowerCase() === value.toLowerCase()) === index);
+    }
+
+    getFilteredTribeDefinitions() {
+        const query = (this.tribeSearchQuery || '').trim().toLowerCase();
+        const source = Array.isArray(this.tribeDefinitions) ? this.tribeDefinitions : [];
+        if (!query) {
+            return source;
+        }
+
+        return source.filter(item => {
+            if (item.name.toLowerCase().includes(query)) {
+                return true;
+            }
+
+            return item.aliases.some(alias => alias.toLowerCase().includes(query));
+        });
+    }
+
+    getActiveTribeDefinition(definitions = this.tribeDefinitions) {
+        if (this.isCreatingTribeDefinition) {
+            return null;
+        }
+
+        const source = Array.isArray(definitions) ? definitions : [];
+        const selected = source.find(item => item.name === this.activeTribeDefinitionName);
+        if (selected) {
+            return selected;
+        }
+
+        return source[0] ?? null;
+    }
+
+    async renderTribeManagementTab() {
+        const panel = this.container?.querySelector('#tribe-management-tab');
+        if (!panel) {
+            return;
+        }
+
+        try {
+            await this.loadTribeDefinitions();
+            const definitions = this.getFilteredTribeDefinitions();
+            const activeDefinition = this.getActiveTribeDefinition(definitions) ?? this.getActiveTribeDefinition(this.tribeDefinitions);
+            if (!this.isCreatingTribeDefinition && activeDefinition && !this.activeTribeDefinitionName) {
+                this.activeTribeDefinitionName = activeDefinition.name;
+            }
+
+            const isEditingExisting = !this.isCreatingTribeDefinition && !!activeDefinition;
+            const definition = isEditingExisting
+                ? activeDefinition
+                : {
+                    name: '',
+                    aliases: [],
+                    behavior: 'Normal',
+                    isReserved: false,
+                    isEnabled: true,
+                    usageCount: 0
+                };
+            const nameReadOnlyAttr = isEditingExisting ? 'readonly' : '';
+            const behaviorDisabledAttr = definition.isReserved ? 'disabled' : '';
+            const enabledDisabledAttr = definition.isReserved ? 'disabled' : '';
+            const deleteDisabledAttr = !isEditingExisting || definition.isReserved || definition.usageCount > 0 ? 'disabled' : '';
+
+            panel.innerHTML = `
+                <div class="tribe-management-shell">
+                    <div class="tribe-overview-grid">
+                        <div class="settings-overview-card tech-section">
+                            <span class="settings-overview-label">定义数量</span>
+                            <strong class="settings-overview-value">${this.tribeDefinitions.length}</strong>
+                        </div>
+                        <div class="settings-overview-card tech-section">
+                            <span class="settings-overview-label">启用中</span>
+                            <strong class="settings-overview-value">${this.tribeDefinitions.filter(item => item.isEnabled).length}</strong>
+                        </div>
+                        <div class="settings-overview-card tech-section">
+                            <span class="settings-overview-label">保留项</span>
+                            <strong class="settings-overview-value">${this.tribeDefinitions.filter(item => item.isReserved).length}</strong>
+                        </div>
+                    </div>
+                    <div class="tribe-management-layout">
+                        <section class="tribe-management-catalog tech-section">
+                            <div class="tribe-management-catalog-header">
+                                <div>
+                                    <h4 class="tech-header-small">种类目录</h4>
+                                    <p class="tech-text-dim">在同一视野内筛选、浏览并切换要维护的规范值。</p>
+                                </div>
+                                <div class="tribe-management-toolbar">
+                                    <button class="btn-tech btn-small" id="new-tribe-btn">新增种类</button>
+                                    <button class="btn-tech btn-small" id="refresh-tribes-btn">刷新</button>
+                                </div>
+                            </div>
+                            <div class="tribe-management-search-row">
+                                <input
+                                    type="search"
+                                    id="tribe-search-input"
+                                    class="search-input tech-input"
+                                    placeholder="搜索名称或别名"
+                                    value="${escapeHtml(this.tribeSearchQuery)}">
+                            </div>
+                            <div class="tribe-definition-list">
+                                ${definitions.length > 0 ? definitions.map(item => `
+                                    <button type="button" class="tribe-list-item${!this.isCreatingTribeDefinition && item.name === definition.name ? ' is-active' : ''}" data-tribe-name="${escapeHtml(item.name)}">
+                                        <div class="tribe-list-item-main">
+                                            <span class="tribe-list-item-name">${escapeHtml(item.name)}</span>
+                                            <div class="tribe-list-item-badges">
+                                                ${item.isReserved ? '<span class="tech-tag">保留</span>' : ''}
+                                                ${item.behavior === 'MatchAllKnownTribes' ? '<span class="tech-tag">全部</span>' : ''}
+                                                ${!item.isEnabled ? '<span class="tech-tag">停用</span>' : ''}
+                                            </div>
+                                        </div>
+                                        <div class="tribe-list-item-meta">
+                                            <span>${item.aliases.length} 个别名</span>
+                                            <span>${item.usageCount} 张卡使用</span>
+                                        </div>
+                                    </button>
+                                `).join('') : `
+                                    <div class="form-placeholder">
+                                        <p class="tech-text-dim">没有匹配的种类定义</p>
+                                    </div>
+                                `}
+                            </div>
+                        </section>
+                        <section class="tribe-management-workspace tech-section">
+                            <div class="tribe-management-workspace-header">
+                                <div>
+                                    <h4 class="tech-header-small">${isEditingExisting ? '编辑种类定义' : '新增种类定义'}</h4>
+                                    <p class="tech-text-dim">名称用于卡牌与 DSL 的规范比较；别名用于兼容旧输入。</p>
+                                </div>
+                                <div class="tribe-management-workspace-meta">
+                                    ${definition.isReserved ? '<span class="tech-tag">系统保留</span>' : ''}
+                                    ${definition.usageCount > 0 ? `<span class="tech-tag">${definition.usageCount} 张卡使用</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="form-grid form-grid-2">
+                                <div class="form-group">
+                                    <label class="form-label required">名称</label>
+                                    <input type="text" id="tribe-definition-name" class="form-input tech-input" value="${escapeHtml(definition.name)}" placeholder="请输入种类名称" ${nameReadOnlyAttr}>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">行为</label>
+                                    <select id="tribe-definition-behavior" class="form-input tech-select" ${behaviorDisabledAttr}>
+                                        <option value="Normal" ${definition.behavior === 'Normal' ? 'selected' : ''}>普通种类</option>
+                                        <option value="MatchAllKnownTribes" ${definition.behavior === 'MatchAllKnownTribes' ? 'selected' : ''}>拥有全部已知种类</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">别名</label>
+                                <textarea id="tribe-definition-aliases" class="form-textarea tech-input" placeholder="每行或逗号分隔一个别名">${escapeHtml(definition.aliases.join('\n'))}</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">启用状态</label>
+                                <label class="form-toggle">
+                                    <input type="checkbox" id="tribe-definition-enabled" ${definition.isEnabled ? 'checked' : ''} ${enabledDisabledAttr}>
+                                    <span class="form-toggle-text">${definition.isEnabled ? '启用' : '停用'}</span>
+                                </label>
+                            </div>
+                            <div class="tribe-management-actions">
+                                <button class="btn-tech btn-primary" id="save-tribe-definition-btn">${isEditingExisting ? '保存定义' : '创建定义'}</button>
+                                <button class="btn-tech btn-danger" id="delete-tribe-definition-btn" ${deleteDisabledAttr}>删除定义</button>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('CardEditor: Failed to render tribe management tab:', error);
+            panel.innerHTML = `
+                <div class="error-container">
+                    <div class="error-icon">⚠️</div>
+                    <h3 class="error-title">种类定义加载失败</h3>
+                    <p class="error-message">${escapeHtml(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+
+    async saveTribeDefinitionFromForm() {
+        try {
+            const nameInput = this.container?.querySelector('#tribe-definition-name');
+            const aliasesInput = this.container?.querySelector('#tribe-definition-aliases');
+            const behaviorSelect = this.container?.querySelector('#tribe-definition-behavior');
+            const enabledInput = this.container?.querySelector('#tribe-definition-enabled');
+
+            if (!nameInput || !aliasesInput || !behaviorSelect || !enabledInput) {
+                return;
+            }
+
+            const request = {
+                name: nameInput.value.trim(),
+                aliases: this.parseAliasInput(aliasesInput.value),
+                behavior: behaviorSelect.value,
+                isEnabled: enabledInput.checked
+            };
+
+            if (!request.name) {
+                alert('请输入种类名称。');
+                return;
+            }
+
+            const isCreate = this.isCreatingTribeDefinition;
+            const url = isCreate
+                ? '/api/tribes'
+                : `/api/tribes/${encodeURIComponent(this.activeTribeDefinitionName)}`;
+            const method = isCreate ? 'POST' : 'PUT';
+            const body = isCreate
+                ? request
+                : {
+                    aliases: request.aliases,
+                    behavior: request.behavior,
+                    isEnabled: request.isEnabled
+                };
+
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                const errorMessage = await response.text();
+                throw new Error(errorMessage || `HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            this.applyDataRevisionFromResponse(response);
+            const saved = this.normalizeTribeDefinition(await response.json());
+            this.isCreatingTribeDefinition = false;
+            this.activeTribeDefinitionName = saved.name;
+            this.tribeDefinitions = [];
+            await this.loadTribeDefinitions({ force: true });
+            await this.renderTribeManagementTab();
+            this.renderTribeManagementPreview();
+            alert(isCreate ? '种类定义已创建。' : '种类定义已保存。');
+        } catch (error) {
+            console.error('CardEditor: Failed to save tribe definition:', error);
+            alert(`保存种类定义失败: ${error.message}`);
+        }
+    }
+
+    async deleteActiveTribeDefinition() {
+        try {
+            const active = this.getActiveTribeDefinition(this.tribeDefinitions);
+            if (!active) {
+                return;
+            }
+
+            if (!confirm(`确定要删除种类定义 "${active.name}" 吗？`)) {
+                return;
+            }
+
+            const response = await fetch(`/api/tribes/${encodeURIComponent(active.name)}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok && response.status !== 204) {
+                const errorMessage = await response.text();
+                throw new Error(errorMessage || `HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            this.applyDataRevisionFromResponse(response);
+            this.activeTribeDefinitionName = null;
+            this.tribeDefinitions = [];
+            await this.loadTribeDefinitions({ force: true });
+            await this.renderTribeManagementTab();
+            this.renderTribeManagementPreview();
+            alert('种类定义已删除。');
+        } catch (error) {
+            console.error('CardEditor: Failed to delete tribe definition:', error);
+            alert(`删除种类定义失败: ${error.message}`);
+        }
+    }
+
     /**
      * 创建新卡牌
      */
     async createNewCard() {
+        if (this.editorMode !== 'card') {
+            this.currentCard = null;
+        }
+        await this.ensureCardEditorMode();
+        this.previousCardIdBeforeSettingsMode = null;
 
         this.currentCard = {
             id: null,
@@ -626,6 +1390,7 @@ class CardEditor {
             isNew: true
         };
 
+        this.cardTab = 'basic';
         this.updateTabAvailability();
 
         const editorTitle = this.container.querySelector('#editor-title');
@@ -658,6 +1423,10 @@ class CardEditor {
     cleanup() {
         this.isInitialized = false;
         this.currentCard = null;
+        if (this.cardCatalogInvalidationHandler) {
+            document.removeEventListener(CARD_CATALOG_INVALIDATED_EVENT, this.cardCatalogInvalidationHandler);
+            this.cardCatalogInvalidationHandler = null;
+        }
 
         if (this.container) {
             this.container.innerHTML = '';
@@ -716,6 +1485,14 @@ CardEditor.prototype.getCardIdKey = function(value) {
     return String(value);
 };
 
+CardEditor.prototype.getResolvedCardId = function(card) {
+    return getCardDefinitionId(card);
+};
+
+CardEditor.prototype.getCurrentCardId = function() {
+    return this.getResolvedCardId(this.currentCard);
+};
+
 CardEditor.prototype.getAbilityIdKey = function(value) {
     if (value === undefined || value === null) return null;
     return String(value);
@@ -725,16 +1502,40 @@ CardEditor.prototype.applyDataRevisionFromResponse = function(response) {
     if (!response || !response.headers) return false;
     const revision = response.headers.get('X-Data-Revision');
     if (!revision) return false;
+    let changed = false;
     if (this.dataRevision && this.dataRevision !== revision) {
         this.clearDataCaches();
         this.dataRevision = revision;
         this.queueCardListReload();
-        return true;
-    }
-    if (!this.dataRevision) {
+        changed = true;
+    } else if (!this.dataRevision) {
         this.dataRevision = revision;
+        changed = true;
     }
-    return false;
+
+    syncDataRevisionFromResponse(response, {
+        source: 'card-editor',
+        containerId: this.containerId
+    });
+    return changed;
+};
+
+CardEditor.prototype.bindGlobalInvalidationListener = function() {
+    if (this.cardCatalogInvalidationHandler) {
+        return;
+    }
+
+    this.cardCatalogInvalidationHandler = (event) => {
+        const detail = event?.detail || {};
+        if (detail.source === 'card-editor' && detail.containerId === this.containerId) {
+            return;
+        }
+
+        this.clearDataCaches();
+        this.queueCardListReload();
+    };
+
+    document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, this.cardCatalogInvalidationHandler);
 };
 
 CardEditor.prototype.queueCardListReload = function() {
@@ -842,6 +1643,11 @@ CardEditor.prototype.enableEditorButtons = function() {
     const saveAsBtn = this.container.querySelector('#save-as-btn');
     const deleteBtn = this.container.querySelector('#delete-btn');
 
+    if (this.editorMode !== 'card') {
+        this.disableEditorButtons();
+        return;
+    }
+
     if (saveBtn) saveBtn.disabled = false;
     if (saveAsBtn) saveAsBtn.disabled = false;
     if (deleteBtn) deleteBtn.disabled = this.currentCard?.isNew;
@@ -900,23 +1706,17 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
 
     return `
         <div class="form-container tech-form basic-compact">
-            ${this.currentCard.isEvolvedForm ? `
-                <div class="evolution-form-notice tech-notice">
-                    <span class="evolution-notice-icon">EVOLVED</span>
-                    <span class="evolution-notice-text">EDITING EVOLVED FORM</span>
-                </div>
-            ` : ''}
             <div class="basic-compact-main">
                 <div class="basic-compact-fields">
                     <div class="basic-compact-row">
-                        <label class="form-label required">NAME</label>
-                        <input type="text" id="card-name" class="form-input tech-input" value="${this.currentCard.name}" placeholder="ENTER NAME" ${readOnlyAttr}>
+                        <label class="form-label required">名称</label>
+                        <input type="text" id="card-name" class="form-input tech-input" value="${this.currentCard.name}" placeholder="请输入名称" ${readOnlyAttr}>
                     </div>
                     <div class="basic-compact-row basic-compact-stats">
-                        <label class="form-label required">STATS</label>
+                        <label class="form-label required">属性</label>
                         <div class="basic-compact-stats-grid">
                             <div class="form-group">
-                                <label class="form-label required">COST</label>
+                                <label class="form-label required">费用</label>
                                 <div class="number-stepper tech-stepper">
                                     <button type="button" class="stepper-btn decrease" data-target="card-cost" ${disabledAttr}>-</button>
                                     <input type="number" id="card-cost" class="form-input number-input tech-input" value="${this.currentCard.cost}" min="0" max="20" ${readOnlyAttr}>
@@ -925,7 +1725,7 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
                             </div>
                             <div id="stats-container" class="basic-compact-stats">
                                 <div class="form-group">
-                                    <label class="form-label">ATTACK</label>
+                                    <label class="form-label">攻击</label>
                                     <div class="number-stepper tech-stepper">
                                         <button type="button" class="stepper-btn decrease" data-target="card-attack">-</button>
                                         <input type="number" id="card-attack" class="form-input number-input tech-input" value="${this.currentCard.attack}" min="0" max="99">
@@ -933,7 +1733,7 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
                                     </div>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label">HEALTH</label>
+                                    <label class="form-label">生命</label>
                                     <div class="number-stepper tech-stepper">
                                         <button type="button" class="stepper-btn decrease" data-target="card-health">-</button>
                                         <input type="number" id="card-health" class="form-input number-input tech-input" value="${this.currentCard.health}" min="1" max="99">
@@ -943,7 +1743,7 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
                             </div>
                             <div id="countdown-container" class="basic-compact-countdown">
                                 <div class="form-group">
-                                    <label class="form-label">COUNTDOWN</label>
+                                    <label class="form-label">倒计时</label>
                                     <div class="number-stepper tech-stepper">
                                         <button type="button" class="stepper-btn decrease" data-target="card-countdown">-</button>
                                         <input type="number" id="card-countdown" class="form-input number-input tech-input" value="${this.currentCard.countdown ?? 0}" min="0" max="99">
@@ -955,19 +1755,19 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
                         </div>
                     </div>
                     <div class="basic-compact-row">
-                        <label class="form-label required">TYPE</label>
+                        <label class="form-label required">类型</label>
                         <div class="option-group" data-option-group="type">
                             ${this.renderOptionButtonGroup(cardTypeOptions, this.currentCard.cardType)}
                         </div>
                     </div>
                     <div class="basic-compact-row">
-                        <label class="form-label required">RARITY</label>
+                        <label class="form-label required">稀有度</label>
                         <div class="option-group" data-option-group="rarity">
                             ${this.renderOptionButtonGroup(cardRarityOptions, this.currentCard.rarity)}
                         </div>
                     </div>
                     <div class="basic-compact-row">
-                        <label class="form-label required">CLASS</label>
+                        <label class="form-label required">职业</label>
                         <div class="option-group" data-option-group="class">
                             ${this.renderOptionButtonGroup(cardClassOptions, this.currentCard.cardClass)}
                         </div>
@@ -975,55 +1775,56 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
                 </div>
                 <div class="basic-compact-art">
                     <div class="basic-art-header">
-                        <div class="tech-header-small">PREVIEW ART</div>
-                        <span class="asset-hint">Used in editor preview</span>
+                        <div class="tech-header-small">预览图</div>
+                        <span class="asset-hint">用于编辑器预览</span>
                     </div>
                     <div class="basic-art-preview${previewUrl ? ' has-image' : ''}">
                         ${previewUrl
                             ? `<img src="${previewUrl}" alt="Preview art">`
-                            : `<div class="asset-placeholder">NO PREVIEW IMAGE</div>`}
+                            : `<div class="asset-placeholder">暂无预览图</div>`}
                     </div>
                     <div class="basic-art-actions">
-                        <button type="button" class="btn-tech btn-small" data-upload-kind="preview" ${isEditable ? '' : 'disabled'}>UPLOAD</button>
+                        <button type="button" class="btn-tech btn-small" data-upload-kind="preview" ${isEditable ? '' : 'disabled'}>上传</button>
                     </div>
-                    <div class="basic-art-path">${previewPath || 'NO FILE'}</div>
+                    <div class="basic-art-path">${previewPath || '暂无文件'}</div>
                 </div>
             </div>
             <div class="basic-compact-extra">
                 <div class="form-section tech-section">
-                    <h4 class="form-section-title tech-header-small">DESCRIPTION</h4>
+                    <h4 class="form-section-title tech-header-small">描述</h4>
                     <div class="form-group">
-                        <label class="form-label">DESCRIPTION</label>
-                        <textarea id="card-description" class="form-textarea tech-input" placeholder="ENTER DESCRIPTION" ${readOnlyAttr}>${this.currentCard.description}</textarea>
+                        <label class="form-label">描述</label>
+                        <textarea id="card-description" class="form-textarea tech-input" placeholder="请输入描述" ${readOnlyAttr}>${this.currentCard.description}</textarea>
                     </div>
                 </div>
 
                 <div class="form-section tech-section">
-                    <h4 class="form-section-title tech-header-small">TAGS & METADATA</h4>
+                    <h4 class="form-section-title tech-header-small">标签与元数据</h4>
                     <div class="form-grid form-grid-2">
                         <div class="form-group">
-                            <label class="form-label">KEYWORDS</label>
+                            <label class="form-label">关键字</label>
                             <div class="tag-input-container tech-tag-container">
                                 <div class="tag-list" id="keywords-list">
                                     ${this.renderTagList(this.currentCard.keywords || [], 'keywords')}
                                 </div>
                                 <div class="tag-input-wrapper">
                                     <select id="keywords-select" class="tag-select tech-select">
-                                        <option value="">SELECT KEYWORD</option>
+                                        <option value="">选择关键字</option>
                                     </select>
-                                    <button type="button" class="tag-add-btn btn-tech-small" data-target="keywords">ADD</button>
+                                    <button type="button" class="tag-add-btn btn-tech-small" data-target="keywords">+</button>
                                 </div>
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">TRIBE</label>
+                            <label class="form-label">种族</label>
                             <div class="tag-input-container tech-tag-container">
                                 <div class="tag-list" id="tribe-list">
                                     ${this.renderTagList(this.currentCard.tribe || [], 'tribe')}
                                 </div>
                                 <div class="tag-input-wrapper">
-                                    <input type="text" id="tribe-input" class="tag-input tech-input" placeholder="ENTER TRIBE">
-                                    <button type="button" class="tag-add-btn btn-tech-small" data-target="tribe">ADD</button>
+                                    <input type="text" id="tribe-input" class="tag-input tech-input" placeholder="请输入种族" list="tribe-suggestions">
+                                    <datalist id="tribe-suggestions"></datalist>
+                                    <button type="button" class="tag-add-btn btn-tech-small" data-target="tribe">+</button>
                                 </div>
                             </div>
                         </div>
@@ -1031,18 +1832,18 @@ CardEditor.prototype.renderBasicInfoFormCompact = function({
                 </div>
 
                 <div class="form-section tech-section">
-                    <h4 class="form-section-title tech-header-small">CLASSIFICATION</h4>
+                    <h4 class="form-section-title tech-header-small">分类</h4>
                     <div class="form-grid form-grid-2">
                         <div class="form-group">
-                            <label class="form-label">SET</label>
-                            <input type="text" id="card-set" class="form-input tech-input" value="${this.currentCard.cardSet || ''}" placeholder="ENTER SET" list="card-set-options" ${readOnlyAttr}>
+                            <label class="form-label">卡包</label>
+                            <input type="text" id="card-set" class="form-input tech-input" value="${this.currentCard.cardSet || ''}" placeholder="请输入卡包" list="card-set-options" ${readOnlyAttr}>
                             <datalist id="card-set-options"></datalist>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">COLLECTIBLE</label>
+                            <label class="form-label">可收集</label>
                             <label class="form-toggle">
                                 <input type="checkbox" id="card-collectible" ${this.currentCard.isCollectible ? 'checked' : ''}>
-                                <span class="form-toggle-text" id="card-collectible-label">${this.currentCard.isCollectible ? 'YES' : 'NO'}</span>
+                                <span class="form-toggle-text" id="card-collectible-label">${this.currentCard.isCollectible ? '是' : '否'}</span>
                             </label>
                         </div>
                     </div>
@@ -1067,9 +1868,9 @@ CardEditor.prototype.populateCardListFilterOptions = async function() {
         this.metadataManager.getCardRarityOptions()
     ]);
 
-    classFilter.innerHTML = '<option value="">ALL CLASSES</option>' + this.generateSelectOptions(classOptions, '');
-    typeFilter.innerHTML = '<option value="">ALL TYPES</option>' + this.generateSelectOptions(typeOptions, '');
-    rarityFilter.innerHTML = '<option value="">ALL RARITIES</option>' + this.generateSelectOptions(rarityOptions, '');
+    classFilter.innerHTML = '<option value="">全部职业</option>' + this.generateSelectOptions(classOptions, '');
+    typeFilter.innerHTML = '<option value="">全部类型</option>' + this.generateSelectOptions(typeOptions, '');
+    rarityFilter.innerHTML = '<option value="">全部稀有度</option>' + this.generateSelectOptions(rarityOptions, '');
 };
 
 CardEditor.prototype.populateCardSetFilterOptions = function(cards) {
@@ -1078,27 +1879,47 @@ CardEditor.prototype.populateCardSetFilterOptions = function(cards) {
         return;
     }
 
-    const currentValue = setFilter.value || '';
-    const setMap = new Map();
     const source = Array.isArray(cards) ? cards : [];
-
-    source.forEach(card => {
-        const info = getCardSetInfo(card);
-        const value = info.name;
-        if (!value) return;
-        const key = value.toLowerCase();
-        if (!setMap.has(key)) {
-            setMap.set(key, {
-                value,
-                label: getCardSetLabel(info)
-            });
-        }
+    const groupedOptions = buildGroupedCardSetOptions(source, {
+        getCardSetInfo,
+        normalizeEnvironment: normalizeCardSetEnvironmentValue,
+        getEnvironmentLabel: getCardSetEnvironmentLabel,
+        knownEnvironmentOptions: getDeckEnvironmentOptions()
     });
+    const currentValue = setFilter.value || '';
+    const availableValues = new Set(
+        groupedOptions.flatMap(group => group.options.map(option => option.value.toLowerCase()))
+    );
+    const nextValue = availableValues.has(currentValue.toLowerCase()) ? currentValue : '';
 
-    const setOptions = Array.from(setMap.values())
-        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+    setFilter.disabled = groupedOptions.length === 0;
+    setFilter.innerHTML = this.renderGroupedCardSetFilterOptions(groupedOptions, nextValue);
+};
 
-    setFilter.innerHTML = '<option value="">ALL SETS</option>' + this.generateSelectOptions(setOptions, currentValue);
+CardEditor.prototype.renderGroupedCardSetFilterOptions = function(groups, selectedValue) {
+    let hasSelected = false;
+    const groupHtml = (Array.isArray(groups) ? groups : [])
+        .map(group => {
+            const optionsHtml = (Array.isArray(group.options) ? group.options : [])
+                .map(option => {
+                    const shouldSelect = !hasSelected && equalsIgnoreCase(option.value, selectedValue);
+                    if (shouldSelect) {
+                        hasSelected = true;
+                    }
+
+                    return `<option value="${escapeHtml(option.value)}"${shouldSelect ? ' selected' : ''}>${escapeHtml(option.label)}</option>`;
+                })
+                .join('');
+
+            if (!optionsHtml) {
+                return '';
+            }
+
+            return `<optgroup label="${escapeHtml(group.label)}">${optionsHtml}</optgroup>`;
+        })
+        .join('');
+
+    return '<option value="">全部卡包</option>' + groupHtml;
 };
 
 CardEditor.prototype.loadCardSetDefinitions = async function() {
@@ -1131,7 +1952,10 @@ CardEditor.prototype.refreshCardSetDatalist = function() {
 
     const options = Array.from(values)
         .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+        .sort((a, b) => compareCardSetDisplayOrder(
+            (this.cardSetDefinitions || []).find(set => String(set?.name ?? set?.Name ?? '').trim() === a) ?? { name: a },
+            (this.cardSetDefinitions || []).find(set => String(set?.name ?? set?.Name ?? '').trim() === b) ?? { name: b }
+        ))
         .map(value => `<option value="${escapeHtml(value)}"></option>`)
         .join('');
 
@@ -1240,7 +2064,9 @@ CardEditor.prototype.updateCardPreview = function() {
     bindPreviewDetailHandler(previewContainer);
     void hydrateDescriptionReferences(previewContainer, {
         cards: this.allCardsData,
-        fallbackPreviewUrl: artPreviewUrl
+        fallbackPreviewUrl: artPreviewUrl,
+        currentCardId: card?.id ?? card?.Id ?? card?.CardId ?? null,
+        currentCardName: card?.name ?? card?.Name ?? ''
     });
 
     // 更新 DEBUG INFO 区域
@@ -1250,31 +2076,31 @@ CardEditor.prototype.updateCardPreview = function() {
             <div class="debug-grid">
                 <div class="debug-row">
                     <span class="debug-label">ID</span>
-                    <span class="debug-value">${card.id || 'N/A'}</span>
+                    <span class="debug-value">${card.id || '无'}</span>
                 </div>
                 <div class="debug-row">
-                    <span class="debug-label">INTERNAL NAME</span>
-                    <span class="debug-value">${card.name || 'N/A'}</span>
+                    <span class="debug-label">内部名称</span>
+                    <span class="debug-value">${card.name || '无'}</span>
                 </div>
                 <div class="debug-row">
-                    <span class="debug-label">KEYWORDS</span>
+                    <span class="debug-label">关键字</span>
                     <span class="debug-value">[${(card.keywords || []).join(', ')}]</span>
                 </div>
                 <div class="debug-row">
-                    <span class="debug-label">TRIBE</span>
+                    <span class="debug-label">种族</span>
                     <span class="debug-value">[${(card.tribe || []).join(', ')}]</span>
                 </div>
                 <div class="debug-row">
-                    <span class="debug-label">EVOLVE ID</span>
-                    <span class="debug-value">${card.evolveId || 'None'}</span>
+                    <span class="debug-label">进化目标 ID</span>
+                    <span class="debug-value">${card.evolveId || '无'}</span>
                 </div>
                 <div class="debug-row">
-                    <span class="debug-label">IS NEW</span>
-                    <span class="debug-value">${card.isNew ? 'YES' : 'NO'}</span>
+                    <span class="debug-label">新建卡牌</span>
+                    <span class="debug-value">${card.isNew ? '是' : '否'}</span>
                 </div>
                 <div class="debug-row">
-                    <span class="debug-label">COLLECTIBLE</span>
-                    <span class="debug-value">${card.isCollectible ? 'YES' : 'NO'}</span>
+                    <span class="debug-label">可收集</span>
+                    <span class="debug-value">${card.isCollectible ? '是' : '否'}</span>
                 </div>
             </div>
         `;
@@ -1290,7 +2116,7 @@ CardEditor.prototype.renderAssetsTab = function() {
     if (!this.currentCard) {
         assetsContainer.innerHTML = `
             <div class="form-placeholder">
-                <p class="tech-text-dim">SELECT A CARD TO EDIT</p>
+                <p class="tech-text-dim">请选择一张卡牌进行编辑</p>
             </div>
         `;
         return;
@@ -1307,44 +2133,44 @@ CardEditor.prototype.renderAssetsTab = function() {
     assetsContainer.innerHTML = `
         <div class="form-container tech-form">
             <div class="form-section tech-section">
-                <h4 class="form-section-title tech-header-small">ART ASSETS</h4>
+                <h4 class="form-section-title tech-header-small">美术资源</h4>
                 <div class="form-grid form-grid-2 ${gridClass}">
                     ${showPreview ? `
                         <div class="asset-panel">
                             <div class="asset-header">
-                                <h4 class="tech-header-small">PREVIEW ART</h4>
-                                <span class="asset-hint">Used in editor preview</span>
+                                <h4 class="tech-header-small">预览图</h4>
+                                <span class="asset-hint">用于编辑器预览</span>
                             </div>
                             <div class="asset-preview${previewUrl ? ' has-image' : ''}">
                                 ${previewUrl
                                     ? `<img src="${previewUrl}" alt="Preview art">`
-                                    : `<div class="asset-placeholder">NO PREVIEW IMAGE</div>`}
+                                    : `<div class="asset-placeholder">暂无预览图</div>`}
                             </div>
                             <div class="asset-actions">
-                                <button type="button" class="btn-tech btn-small" data-upload-kind="preview" ${isEditable ? '' : 'disabled'}>UPLOAD</button>
+                                <button type="button" class="btn-tech btn-small" data-upload-kind="preview" ${isEditable ? '' : 'disabled'}>上传</button>
                             </div>
-                            <div class="asset-path">${previewPath || 'NO FILE'}</div>
+                            <div class="asset-path">${previewPath || '暂无文件'}</div>
                         </div>
                     ` : ''}
 
                     <div class="asset-panel">
                         <div class="asset-header">
-                            <h4 class="tech-header-small">DETAIL ART</h4>
-                            <span class="asset-hint">Used in deck detail view</span>
+                            <h4 class="tech-header-small">详情图</h4>
+                            <span class="asset-hint">用于卡牌详情展示</span>
                         </div>
                         <div class="asset-preview${detailUrl ? ' has-image' : ''}">
                             ${detailUrl
                                 ? `<img src="${detailUrl}" alt="Detail art">`
-                                : `<div class="asset-placeholder">NO DETAIL IMAGE</div>`}
+                                : `<div class="asset-placeholder">暂无详情图</div>`}
                         </div>
                         <div class="asset-actions">
-                            <button type="button" class="btn-tech btn-small" data-upload-kind="detail" ${isEditable ? '' : 'disabled'}>UPLOAD</button>
+                            <button type="button" class="btn-tech btn-small" data-upload-kind="detail" ${isEditable ? '' : 'disabled'}>上传</button>
                         </div>
-                        <div class="asset-path">${detailPath || 'NO FILE'}</div>
+                        <div class="asset-path">${detailPath || '暂无文件'}</div>
                     </div>
                 </div>
             </div>
-            ${isEditable ? '' : '<div class="asset-note">SAVE CARD BEFORE UPLOADING ART</div>'}
+            ${isEditable ? '' : '<div class="asset-note">请先保存卡牌，再上传图片</div>'}
         </div>
     `;
 
@@ -1378,8 +2204,8 @@ CardEditor.prototype.openArtCropModal = function(kind) {
     const outputWidth = 848;
     const outputHeight = 1024;
     const aspectRatio = isPreview ? outputWidth / outputHeight : null;
-    const title = isPreview ? 'PREVIEW ART CROP' : 'DETAIL ART CROP';
-    const statusLabel = isPreview ? 'Preview art upload' : 'Detail art upload';
+    const title = isPreview ? '预览图裁切' : '详情图裁切';
+    const statusLabel = isPreview ? '上传预览图' : '上传详情图';
 
     const modal = document.createElement('div');
     modal.className = 'card-art-crop-modal';
@@ -1387,7 +2213,7 @@ CardEditor.prototype.openArtCropModal = function(kind) {
         <div class="card-art-crop-card">
             <div class="card-art-crop-header">
                 <div class="card-art-crop-title">${title}</div>
-                <button type="button" class="card-art-crop-close">x</button>
+                <button type="button" class="card-art-crop-close">×</button>
             </div>
             <div class="card-art-crop-stage">
                 <img class="card-art-crop-image" alt="Card art preview">
@@ -1395,14 +2221,14 @@ CardEditor.prototype.openArtCropModal = function(kind) {
                     <span class="card-art-crop-handle"></span>
                 </div>
                 <div class="card-art-crop-placeholder">
-                    <div class="card-art-crop-placeholder-title">UPLOAD IMAGE</div>
-                    <div class="card-art-crop-placeholder-text">Click to select an image</div>
+                    <div class="card-art-crop-placeholder-title">上传图片</div>
+                    <div class="card-art-crop-placeholder-text">点击选择一张图片</div>
                 </div>
             </div>
             <input class="card-art-crop-file" type="file" accept="image/*">
             <div class="card-art-crop-actions">
-                <button type="button" class="btn-tech btn-small card-art-crop-cancel">CANCEL</button>
-                <button type="button" class="btn-tech btn-small btn-primary card-art-crop-upload">UPLOAD</button>
+                <button type="button" class="btn-tech btn-small card-art-crop-cancel">取消</button>
+                <button type="button" class="btn-tech btn-small btn-primary card-art-crop-upload">上传</button>
             </div>
             <div class="card-art-crop-status" aria-live="polite"></div>
         </div>
@@ -1549,7 +2375,7 @@ CardEditor.prototype.openArtCropModal = function(kind) {
         const file = input.files?.[0];
         if (!file) return;
         if (!file.type.startsWith('image/')) {
-            setModalStatus('Unsupported image type.', true);
+            setModalStatus('不支持的图片类型。', true);
             return;
         }
         stage?.classList.remove('has-image');
@@ -1573,7 +2399,7 @@ CardEditor.prototype.openArtCropModal = function(kind) {
             });
         };
         imageEl.onerror = () => {
-            setModalStatus('Failed to load image.', true);
+            setModalStatus('图片加载失败。', true);
         };
         imageEl.src = url;
     });
@@ -1648,10 +2474,10 @@ CardEditor.prototype.openArtCropModal = function(kind) {
 
     uploadBtn?.addEventListener('click', async () => {
         if (!imageEl?.src || !state.imageRect || state.crop.width <= 0 || state.crop.height <= 0) {
-            setModalStatus('Select an image first.', true);
+            setModalStatus('请先选择一张图片。', true);
             return;
         }
-        setModalStatus(`${statusLabel}...`);
+        setModalStatus(`${statusLabel}中...`);
         uploadBtn.disabled = true;
         try {
             const scaleX = state.naturalWidth / state.imageRect.width;
@@ -1678,7 +2504,7 @@ CardEditor.prototype.openArtCropModal = function(kind) {
 
             const ctx = canvas.getContext('2d');
             if (!ctx) {
-                throw new Error('Failed to create output.');
+                throw new Error('生成图片失败。');
             }
 
             ctx.drawImage(
@@ -1698,15 +2524,15 @@ CardEditor.prototype.openArtCropModal = function(kind) {
             });
 
             if (!blob) {
-                throw new Error('Failed to generate output.');
+                throw new Error('导出图片失败。');
             }
 
             const filename = isPreview ? 'preview.webp' : 'detail.webp';
             await this.uploadCardArt(kind, blob, filename, { silent: true });
-            setModalStatus('Upload complete.');
+            setModalStatus('上传完成。');
             setTimeout(closeModal, 400);
         } catch (error) {
-            setModalStatus(`Upload failed: ${error.message}`, true);
+            setModalStatus(`上传失败：${error.message}`, true);
         } finally {
             uploadBtn.disabled = false;
         }
@@ -1723,11 +2549,12 @@ CardEditor.prototype.openArtCropModal = function(kind) {
 };
 
 CardEditor.prototype.uploadCardArt = async function(kind, file, filename, options = {}) {
-    if (!this.currentCard || !this.currentCard.id) {
+    const currentCardId = this.getCurrentCardId();
+    if (!this.currentCard || currentCardId == null) {
         if (!options.silent) {
-            alert('Save the card before uploading art.');
+            alert('请先保存卡牌，再上传图片。');
         }
-        throw new Error('Card must be saved before uploading art.');
+        throw new Error('必须先保存卡牌，才能上传图片。');
     }
 
     try {
@@ -1739,8 +2566,8 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
         }
 
         const endpoint = kind === 'preview'
-            ? `/api/cards/${this.currentCard.id}/art/preview`
-            : `/api/cards/${this.currentCard.id}/art/detail`;
+            ? `/api/cards/${currentCardId}/art/preview`
+            : `/api/cards/${currentCardId}/art/detail`;
 
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -1751,6 +2578,7 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
+        this.applyDataRevisionFromResponse(response);
         const updated = await response.json();
         const updatedId = updated?.id ?? updated?.CardId ?? updated?.Id;
         if (updatedId != null) {
@@ -1777,7 +2605,7 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
     } catch (error) {
         console.error('CardEditor: Failed to upload art:', error);
         if (!options.silent) {
-            alert(`Upload failed: ${error.message}`);
+            alert(`上传失败：${error.message}`);
         }
         throw error;
     }
@@ -1821,21 +2649,15 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
             })
             : `
                 <div class="form-container tech-form">
-                    ${this.currentCard.isEvolvedForm ? `
-                        <div class="evolution-form-notice tech-notice">
-                            <span class="evolution-notice-icon">EVOLVED</span>
-                            <span class="evolution-notice-text">EDITING EVOLVED FORM</span>
-                        </div>
-                    ` : ''}
                     <div class="form-section tech-section">
-                        <h4 class="form-section-title tech-header-small">BASIC ATTRIBUTES</h4>
+                        <h4 class="form-section-title tech-header-small">基础属性</h4>
                         <div class="form-grid form-grid-2">
                             <div class="form-group">
-                                <label class="form-label required">NAME</label>
-                                <input type="text" id="card-name" class="form-input tech-input" value="${this.currentCard.name}" placeholder="ENTER NAME" ${readOnlyAttr}>
+                                <label class="form-label required">名称</label>
+                                <input type="text" id="card-name" class="form-input tech-input" value="${this.currentCard.name}" placeholder="请输入名称" ${readOnlyAttr}>
                             </div>
                             <div class="form-group">
-                                <label class="form-label required">COST</label>
+                                <label class="form-label required">费用</label>
                                 <div class="number-stepper tech-stepper">
                                     <button type="button" class="stepper-btn decrease" data-target="card-cost" ${disabledAttr}>-</button>
                                     <input type="number" id="card-cost" class="form-input number-input tech-input" value="${this.currentCard.cost}" min="0" max="20" ${readOnlyAttr}>
@@ -1847,7 +2669,7 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
                         <div id="stats-container">
                             <div class="form-grid form-grid-2" style="margin-bottom: var(--space-md);">
                                 <div class="form-group">
-                                    <label class="form-label">ATTACK</label>
+                                    <label class="form-label">攻击</label>
                                     <div class="number-stepper tech-stepper">
                                         <button type="button" class="stepper-btn decrease" data-target="card-attack">-</button>
                                         <input type="number" id="card-attack" class="form-input number-input tech-input" value="${this.currentCard.attack}" min="0" max="99">
@@ -1855,7 +2677,7 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
                                     </div>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label">HEALTH</label>
+                                    <label class="form-label">生命</label>
                                     <div class="number-stepper tech-stepper">
                                         <button type="button" class="stepper-btn decrease" data-target="card-health">-</button>
                                         <input type="number" id="card-health" class="form-input number-input tech-input" value="${this.currentCard.health}" min="1" max="99">
@@ -1868,7 +2690,7 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
                         <div id="countdown-container">
                             <div class="form-grid form-grid-2" style="margin-bottom: var(--space-md);">
                                 <div class="form-group">
-                                    <label class="form-label">COUNTDOWN</label>
+                                    <label class="form-label">倒计时</label>
                                     <div class="number-stepper tech-stepper">
                                         <button type="button" class="stepper-btn decrease" data-target="card-countdown">-</button>
                                         <input type="number" id="card-countdown" class="form-input number-input tech-input" value="${this.currentCard.countdown ?? 0}" min="0" max="99">
@@ -1880,37 +2702,38 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label">DESCRIPTION</label>
-                            <textarea id="card-description" class="form-textarea tech-input" placeholder="ENTER DESCRIPTION" ${readOnlyAttr}>${this.currentCard.description}</textarea>
+                            <label class="form-label">描述</label>
+                            <textarea id="card-description" class="form-textarea tech-input" placeholder="请输入描述" ${readOnlyAttr}>${this.currentCard.description}</textarea>
                         </div>
                     </div>
 
                     <div class="form-section tech-section">
-                        <h4 class="form-section-title tech-header-small">TAGS & METADATA</h4>
+                        <h4 class="form-section-title tech-header-small">标签与元数据</h4>
                         <div class="form-grid form-grid-2">
                             <div class="form-group">
-                                <label class="form-label">KEYWORDS</label>
+                                <label class="form-label">关键字</label>
                                 <div class="tag-input-container tech-tag-container">
                                     <div class="tag-list" id="keywords-list">
                                         ${this.renderTagList(this.currentCard.keywords || [], 'keywords')}
                                     </div>
                                     <div class="tag-input-wrapper">
                                         <select id="keywords-select" class="tag-select tech-select">
-                                            <option value="">SELECT KEYWORD</option>
+                                            <option value="">选择关键字</option>
                                         </select>
-                                        <button type="button" class="tag-add-btn btn-tech-small" data-target="keywords">ADD</button>
+                                        <button type="button" class="tag-add-btn btn-tech-small" data-target="keywords">+</button>
                                     </div>
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">TRIBE</label>
+                                <label class="form-label">种族</label>
                                 <div class="tag-input-container tech-tag-container">
                                     <div class="tag-list" id="tribe-list">
                                         ${this.renderTagList(this.currentCard.tribe || [], 'tribe')}
                                     </div>
                                     <div class="tag-input-wrapper">
-                                        <input type="text" id="tribe-input" class="tag-input tech-input" placeholder="ENTER TRIBE">
-                                        <button type="button" class="tag-add-btn btn-tech-small" data-target="tribe">ADD</button>
+                                        <input type="text" id="tribe-input" class="tag-input tech-input" placeholder="请输入种族" list="tribe-suggestions">
+                                        <datalist id="tribe-suggestions"></datalist>
+                                        <button type="button" class="tag-add-btn btn-tech-small" data-target="tribe">+</button>
                                     </div>
                                 </div>
                             </div>
@@ -1918,36 +2741,36 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
                     </div>
 
                     <div class="form-section tech-section">
-                        <h4 class="form-section-title tech-header-small">CLASSIFICATION</h4>
+                        <h4 class="form-section-title tech-header-small">分类</h4>
                         <div class="form-grid form-grid-3">
                             <div class="form-group">
-                                <label class="form-label required">TYPE</label>
+                                <label class="form-label required">类型</label>
                                 <div class="option-group" data-option-group="type">
                                     ${this.renderOptionButtonGroup(cardTypeOptions, this.currentCard.cardType)}
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label required">CLASS</label>
+                                <label class="form-label required">职业</label>
                                 <div class="option-group" data-option-group="class">
                                     ${this.renderOptionButtonGroup(cardClassOptions, this.currentCard.cardClass)}
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label required">RARITY</label>
+                                <label class="form-label required">稀有度</label>
                                 <div class="option-group" data-option-group="rarity">
                                     ${this.renderOptionButtonGroup(cardRarityOptions, this.currentCard.rarity)}
                                 </div>
                             </div>
                             <div class="form-group">
-                            <label class="form-label">SET</label>
-                                <input type="text" id="card-set" class="form-input tech-input" value="${this.currentCard.cardSet || ''}" placeholder="ENTER SET" list="card-set-options" ${readOnlyAttr}>
+                            <label class="form-label">卡包</label>
+                                <input type="text" id="card-set" class="form-input tech-input" value="${this.currentCard.cardSet || ''}" placeholder="请输入卡包" list="card-set-options" ${readOnlyAttr}>
                                 <datalist id="card-set-options"></datalist>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">COLLECTIBLE</label>
+                                <label class="form-label">可收集</label>
                                 <label class="form-toggle">
                                     <input type="checkbox" id="card-collectible" ${this.currentCard.isCollectible ? 'checked' : ''}>
-                                    <span class="form-toggle-text" id="card-collectible-label">${this.currentCard.isCollectible ? 'YES' : 'NO'}</span>
+                                    <span class="form-toggle-text" id="card-collectible-label">${this.currentCard.isCollectible ? '是' : '否'}</span>
                                 </label>
                             </div>
                         </div>
@@ -1996,28 +2819,30 @@ CardEditor.prototype.renderCardList = function(cards) {
 
     // 生成卡牌列表HTML
     const cardListHTML = cards.map(card => {
-        // 检查是否有进化形态
-        const evolvedForms = this.findEvolvedFormsForCard(card);
-        const hasEvolvedForms = evolvedForms.length > 0;
+        const rawType = (card.type ?? card.Type) ?? 'UNKNOWN';
+        const rawClass = (card.class ?? card.Class) ?? 'NEUTRAL';
+        const rawRarity = (card.rarity ?? card.Rarity) ?? 'COMMON';
+        const normalizedType = normalizeEnumName(rawType);
+        const normalizedClass = normalizeEnumName(rawClass);
+        const normalizedRarity = normalizeEnumName(rawRarity);
 
         return `
             <div class="card-list-item tech-list-item" data-card-id="${card.id !== undefined ? card.id : card.CardId}">
                 <div class="card-item-header">
-                    <span class="card-item-name tech-text-bold">${card.name || card.Name || 'UNTITLED'}</span>
+                    <span class="card-item-name tech-text-bold">${card.name || card.Name || '未命名'}</span>
                     <div class="card-item-indicators">
-                        ${hasEvolvedForms ? '<div class="indicator-icon evolve" title="EVOLVE"></div>' : ''}
                         <span class="card-item-cost tech-badge">${(card.cost ?? card.Cost) ?? 0}</span>
                     </div>
                 </div>
                 <div class="card-item-details">
-                    <span class="card-item-type tech-tag">${normalizeEnumName((card.type ?? card.Type) ?? 'UNKNOWN')}</span>
-                    <span class="card-item-class tech-tag">${normalizeEnumName((card.class ?? card.Class) ?? 'NEUTRAL')}</span>
-                    <span class="card-item-rarity tech-tag rarity-${normalizeEnumName((card.rarity ?? card.Rarity) ?? 'Common').toLowerCase()}">${normalizeEnumName((card.rarity ?? card.Rarity) ?? 'COMMON')}</span>
+                    <span class="card-item-type tech-tag">${getCachedEnumLabel('CardType', rawType, normalizedType)}</span>
+                    <span class="card-item-class tech-tag">${getCachedEnumLabel('CardClass', rawClass, normalizedClass)}</span>
+                    <span class="card-item-rarity tech-tag rarity-${normalizedRarity.toLowerCase()}">${getCachedEnumLabel('CardRarity', rawRarity, normalizedRarity)}</span>
                 </div>
-                ${(equalsIgnoreCase(normalizeEnumName(card.type || card.Type), 'Follower')) ? `
+                ${(equalsIgnoreCase(normalizedType, 'Follower')) ? `
                     <div class="card-item-stats">
-                        <span class="stat-attack">ATK ${(card.attack ?? card.Attack) ?? 0}</span>
-                        <span class="stat-health">HP ${(card.health ?? card.Health) ?? 1}</span>
+                        <span class="stat-attack">攻击力 ${(card.attack ?? card.Attack) ?? 0}</span>
+                        <span class="stat-health">生命值 ${(card.health ?? card.Health) ?? 1}</span>
                     </div>
                 ` : ''}
                 <div class="tech-corner-decoration"></div>
@@ -2168,7 +2993,7 @@ CardEditor.prototype.bindBasicFormEvents = function() {
             this.updateCardProperty('isCollectible', value);
             const label = basicTab.querySelector('#card-collectible-label');
             if (label) {
-                label.textContent = value ? 'YES' : 'NO';
+                label.textContent = value ? '是' : '否';
             }
         });
     }
@@ -2215,7 +3040,10 @@ CardEditor.prototype.updateStatsVisibility = function() {
     // 只有随从卡牌显示攻击力和生命值
     const cardType = normalizeEnumName(this.currentCard.cardType);
     const shouldShowStats = equalsIgnoreCase(cardType, 'Follower');
-    const shouldShowCountdown = equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest');
+    const shouldShowCountdown =
+        equalsIgnoreCase(cardType, 'Amulet') ||
+        equalsIgnoreCase(cardType, 'Crest') ||
+        equalsIgnoreCase(cardType, 'Faith');
     const visibleDisplay = this.layoutMode === 'test' ? 'flex' : 'block';
     statsContainer.style.display = shouldShowStats ? visibleDisplay : 'none';
     countdownContainer.style.display = shouldShowCountdown ? visibleDisplay : 'none';
@@ -2226,13 +3054,17 @@ CardEditor.prototype.buildCardUpsertDto = function(isCreate) {
 
     const cardType = normalizeEnumName(this.currentCard.cardType);
     const isFollower = equalsIgnoreCase(cardType, 'Follower');
-    const isCountdownType = equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest');
+    const isCountdownType =
+        equalsIgnoreCase(cardType, 'Amulet') ||
+        equalsIgnoreCase(cardType, 'Crest') ||
+        equalsIgnoreCase(cardType, 'Faith');
     const hasCountdownKeyword = (this.currentCard.keywords || []).some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
 
     const rawPack = (this.currentCard.cardSet || '').trim();
+    const currentCardId = this.getCurrentCardId();
 
     return {
-        id: isCreate ? null : this.currentCard.id,
+        id: isCreate ? null : currentCardId,
         name: this.currentCard.name?.trim() || '',
         type: cardType,
         rarity: normalizeEnumName(this.currentCard.rarity),
@@ -2267,6 +3099,11 @@ CardEditor.prototype.isKnownCardSetName = function(name) {
 };
 
 CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
+    if (this.editorMode !== 'card') {
+        alert('玩家设定模式下不允许修改卡牌数据。');
+        return;
+    }
+
     if (!this.currentCard) {
         alert('请先选择或创建一张卡牌');
         return;
@@ -2293,7 +3130,8 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
     loader?.show('正在保存卡牌...');
 
     try {
-        const url = isCreate ? '/api/cards' : `/api/cards/${this.currentCard.id}`;
+        const currentCardId = this.getCurrentCardId();
+        const url = isCreate ? '/api/cards' : `/api/cards/${currentCardId}`;
         const method = isCreate ? 'POST' : 'PUT';
 
         const response = await fetch(url, {
@@ -2347,6 +3185,11 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
 };
 
 CardEditor.prototype.deleteCurrentCard = async function() {
+    if (this.editorMode !== 'card') {
+        alert('玩家设定模式下不允许删除卡牌。');
+        return;
+    }
+
     if (!this.currentCard || this.currentCard.isNew) {
         return;
     }
@@ -2356,8 +3199,8 @@ CardEditor.prototype.deleteCurrentCard = async function() {
     }
 
     try {
-        const deletingCardId = this.currentCard.id;
-        const response = await fetch(`/api/cards/${this.currentCard.id}`, { method: 'DELETE' });
+        const deletingCardId = this.getCurrentCardId();
+        const response = await fetch(`/api/cards/${deletingCardId}`, { method: 'DELETE' });
         if (!response.ok && response.status !== 204) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -2368,13 +3211,13 @@ CardEditor.prototype.deleteCurrentCard = async function() {
         this.disableEditorButtons();
         this.updateTabAvailability();
         const editorTitle = this.container.querySelector('#editor-title');
-        if (editorTitle) editorTitle.textContent = 'AWAITING SELECTION';
+        if (editorTitle) editorTitle.textContent = '等待选择卡牌';
 
         const basicTab = this.container.querySelector('#basic-tab');
         if (basicTab) {
             basicTab.innerHTML = `
                 <div class="form-placeholder">
-                    <p class="tech-text-dim">SELECT A CARD TO EDIT</p>
+                    <p class="tech-text-dim">请选择一张卡牌进行编辑</p>
                 </div>
             `;
         }
@@ -2383,7 +3226,7 @@ CardEditor.prototype.deleteCurrentCard = async function() {
         if (previewContainer) {
             previewContainer.innerHTML = `
                 <div class="preview-placeholder">
-                    <p class="tech-text-dim">AWAITING DATA</p>
+                    <p class="tech-text-dim">等待载入数据</p>
                 </div>
             `;
         }
@@ -2455,18 +3298,9 @@ CardEditor.prototype.filterCardsForList = function(cards) {
         return [];
     }
 
-
     return cards.filter(card => {
-        const cardId = card.id !== undefined ? card.id : card.CardId;
-        const rawType = card.type ?? card.Type ?? '';
-        const cardType = normalizeEnumName(rawType);
         const rarity = normalizeEnumName(card.rarity ?? card.Rarity ?? '');
-        const cardName = card.name ?? card.Name ?? '';
-        const isLeaderType = equalsIgnoreCase(cardType, 'Leader') || rawType === 0;
-        const isLeaderCard = isLeaderType || cardId === 0 || equalsIgnoreCase(cardName, '主战者');
-
-
-        if (isLeaderCard) {
+        if (isLeaderCardDefinition(card)) {
             return false;
         }
 
@@ -2478,35 +3312,13 @@ CardEditor.prototype.filterCardsForList = function(cards) {
     });
 };
 
-CardEditor.prototype.findEvolvedFormsForCard = function(baseCard) {
-
-    if (!this.allCardsData || !Array.isArray(this.allCardsData)) {
-        return [];
-    }
-
-    const baseCardEvolveId = baseCard.evolve_id || baseCard.EvolveId || baseCard.evolveId;
-
-    // 查找进化形态：
-    // 基础卡牌的evolve_id指向进化形态的ID
-    if (!baseCardEvolveId) {
-        return []; // 如果没有evolve_id，说明不能进化
-    }
-
-    const evolvedForms = this.allCardsData.filter(card => {
-        const cardId = card.id !== undefined ? card.id : card.CardId;
-
-        // 查找ID等于基础卡牌evolve_id的卡牌
-        const matches = cardId === baseCardEvolveId;
-        if (matches) {
-        }
-        return matches;
-    });
-
-    return evolvedForms;
-};
-
 CardEditor.prototype.selectCard = async function(cardId) {
     try {
+        this.previousCardIdBeforeSettingsMode = null;
+        if (this.editorMode !== 'card') {
+            this.currentCard = null;
+        }
+        await this.ensureCardEditorMode();
 
         const editorRoot = this.container?.querySelector('.card-editor-layout') || this.container;
         const loader = editorRoot ? getBlockingLoader(editorRoot) : null;
@@ -2543,6 +3355,7 @@ CardEditor.prototype.selectCard = async function(cardId) {
 
         // 转换为编辑器格式
         this.currentCard = this.convertApiCardToEditorFormat(cardData);
+        this.cardTab = this.cardTab || 'basic';
         this.updateTabAvailability();
 
         // 更新编辑器标题
@@ -2567,9 +3380,6 @@ CardEditor.prototype.selectCard = async function(cardId) {
 
         // 更新预览
         this.updateCardPreview();
-
-        // 加载进化形态信息
-        this.loadEvolvedForms();
     } catch (error) {
         console.error('CardEditor: Failed to select card:', error);
         alert(`加载卡牌失败: ${error.message}`);
@@ -2581,179 +3391,58 @@ CardEditor.prototype.selectCard = async function(cardId) {
 };
 
 CardEditor.prototype.updateTabAvailability = function() {
+    const basicTab = this.container.querySelector('.tab-button[data-tab="basic"]');
     const abilitiesTab = this.container.querySelector('.tab-button[data-tab="abilities"]');
     const assetsTab = this.container.querySelector('.tab-button[data-tab="assets"]');
     const canAccess = !!this.currentCard && !this.currentCard.isNew;
+    const basicEnabled = this.editorMode === 'card';
+    const abilitiesEnabled = this.editorMode === 'card' && canAccess;
+    const assetsEnabled = this.editorMode === 'card' && canAccess;
 
-    [abilitiesTab, assetsTab].forEach(tab => {
+    [
+        [basicTab, basicEnabled],
+        [abilitiesTab, abilitiesEnabled],
+        [assetsTab, assetsEnabled]
+    ].forEach(([tab, isEnabled]) => {
         if (!tab) return;
-        tab.disabled = !canAccess;
-        tab.classList.toggle('is-disabled', !canAccess);
+        tab.disabled = !isEnabled;
+        tab.classList.toggle('is-disabled', !isEnabled);
     });
 
-    if (!canAccess) {
+    if (this.editorMode === 'card' && !canAccess) {
         const activeTab = this.container.querySelector('.tab-button.active');
         if (activeTab && activeTab.dataset.tab !== 'basic') {
             this.switchTab('basic');
         }
     }
+
+    this.syncEditorModeUi();
 };
 
-CardEditor.prototype.loadEvolvedForms = function() {
-    if (!this.currentCard) {
-        return;
-    }
-
-
-    // 查找当前卡牌的进化形态
-    const evolvedForms = this.findEvolvedFormsForCard(this.currentCard);
-    this.currentCardEvolvedForms = evolvedForms;
-    this.currentEvolvedFormIndex = -1; // -1表示显示原始形态
-
-
-    // 更新进化形态导航UI
-    this.updateEvolvedFormsNavigation();
-};
-
-CardEditor.prototype.updateEvolvedFormsNavigation = function() {
-
-    // 查找或创建进化形态导航区域
-    let evolutionNav = this.container.querySelector('#evolution-navigation');
-
-    if (!this.currentCardEvolvedForms || this.currentCardEvolvedForms.length === 0) {
-        // 如果没有进化形态，隐藏导航
-        if (evolutionNav) {
-            evolutionNav.style.display = 'none';
-        }
-        return;
-    }
-
-
-    // 如果导航不存在，创建它
-    if (!evolutionNav) {
-        const editorMain = this.container.querySelector('.editor-main');
-        if (editorMain) {
-            const navHTML = `
-                <div id="evolution-navigation" class="evolution-navigation">
-                    <div class="evolution-nav-header">
-                        <span class="evolution-nav-title">卡牌形态</span>
-                        <div class="evolution-nav-controls">
-                            <button id="prev-evolution" class="evolution-nav-btn" title="上一个形态">◀</button>
-                            <span id="evolution-indicator" class="evolution-indicator-text">原始形态</span>
-                            <button id="next-evolution" class="evolution-nav-btn" title="下一个形态">▶</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            editorMain.insertAdjacentHTML('afterbegin', navHTML);
-            evolutionNav = this.container.querySelector('#evolution-navigation');
-
-            // 绑定导航事件
-            this.bindEvolutionNavigationEvents();
-        }
-    }
-
-    if (evolutionNav) {
-        evolutionNav.style.display = 'block';
-        this.updateEvolutionIndicator();
-    }
-};
-
-CardEditor.prototype.bindEvolutionNavigationEvents = function() {
-    const prevBtn = this.container.querySelector('#prev-evolution');
-    const nextBtn = this.container.querySelector('#next-evolution');
-
-    if (prevBtn) {
-        prevBtn.addEventListener('click', () => {
-            this.showPreviousEvolution();
-        });
-    }
-
-    if (nextBtn) {
-        nextBtn.addEventListener('click', () => {
-            this.showNextEvolution();
-        });
-    }
-};
-
-CardEditor.prototype.showPreviousEvolution = function() {
-    if (!this.currentCardEvolvedForms) return;
-
-    const totalForms = this.currentCardEvolvedForms.length + 1; // +1 for base form
-    this.currentEvolvedFormIndex = (this.currentEvolvedFormIndex - 1 + totalForms) % totalForms - 1;
-
-    this.switchToEvolutionForm();
-};
-
-CardEditor.prototype.showNextEvolution = function() {
-    if (!this.currentCardEvolvedForms) return;
-
-    const totalForms = this.currentCardEvolvedForms.length + 1; // +1 for base form
-    this.currentEvolvedFormIndex = (this.currentEvolvedFormIndex + 1) % totalForms;
-    if (this.currentEvolvedFormIndex >= this.currentCardEvolvedForms.length) {
-        this.currentEvolvedFormIndex = -1; // Back to base form
-    }
-
-    this.switchToEvolutionForm();
-};
-
-CardEditor.prototype.switchToEvolutionForm = function() {
-    if (this.currentEvolvedFormIndex === -1) {
-        // 显示原始形态 - 重新加载原始卡牌数据
-        this.loadOriginalCardForm();
-    } else {
-        // 显示进化形态
-        const evolvedForm = this.currentCardEvolvedForms[this.currentEvolvedFormIndex];
-        this.loadEvolvedCardForm(evolvedForm);
-    }
-
-    this.updateEvolutionIndicator();
-};
-
-CardEditor.prototype.loadOriginalCardForm = async function() {
-    // 重新加载原始卡牌数据
-    try {
-        const response = await fetch(`/api/cards/${this.currentCard.id}`);
+CardEditor.prototype.loadLeaderCard = async function() {
+    const leaderCardKey = this.getCardIdKey(LEADER_CARD_ID);
+    let leaderCard = leaderCardKey ? this.cardDetailCache.get(leaderCardKey) : null;
+    if (!leaderCard) {
+        const response = await fetch(`/api/cards/${LEADER_CARD_ID}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const cardData = await response.json();
-        this.currentCard = this.convertApiCardToEditorFormat(cardData);
-
-        // 更新表单和预览
-        await this.renderBasicInfoForm();
-        this.updateCardPreview();
-
-    } catch (error) {
-        console.error('CardEditor: Failed to load original card form:', error);
-        alert(`加载原始卡牌失败: ${error.message}`);
+        this.applyDataRevisionFromResponse(response);
+        leaderCard = await response.json();
+        if (leaderCardKey) {
+            this.cardDetailCache.set(leaderCardKey, leaderCard);
+        }
     }
+
+    return this.convertApiCardToEditorFormat(leaderCard);
 };
 
-CardEditor.prototype.loadEvolvedCardForm = function(evolvedCard) {
-    // 将进化卡牌数据转换为编辑器格式
-    this.currentCard = this.convertApiCardToEditorFormat(evolvedCard);
-
-    // 标记为进化形态（只读模式）
-    this.currentCard.isEvolvedForm = true;
-
-    // 更新表单和预览
-    this.renderBasicInfoForm();
-    this.updateCardPreview();
+CardEditor.prototype.enterLeaderAbilityMode = async function() {
+    await this.enterPlayerSettingsMode();
 };
 
-CardEditor.prototype.updateEvolutionIndicator = function() {
-    const indicator = this.container.querySelector('#evolution-indicator');
-    if (!indicator) return;
-
-    if (this.currentEvolvedFormIndex === -1) {
-        indicator.textContent = '原始形态';
-    } else {
-        const evolvedForm = this.currentCardEvolvedForms[this.currentEvolvedFormIndex];
-        const formName = evolvedForm.name || evolvedForm.Name || '进化形态';
-        indicator.textContent = formName;
-    }
+CardEditor.prototype.exitLeaderAbilityMode = async function() {
+    await this.exitPlayerSettingsMode();
 };
 
 CardEditor.prototype.convertApiCardToEditorFormat = function(apiCard) {
@@ -2863,6 +3552,11 @@ CardEditor.prototype.bindTagInputEvents = function() {
     // Tribe标签输入事件
     const tribeInput = basicTab.querySelector('#tribe-input');
     const tribeAddBtn = basicTab.querySelector('[data-target="tribe"]');
+    const tribeSuggestionList = basicTab.querySelector('#tribe-suggestions');
+
+    if (tribeSuggestionList) {
+        void this.populateTribeSuggestionOptions(tribeSuggestionList);
+    }
 
     if (tribeInput) {
         tribeInput.addEventListener('keypress', (e) => {
@@ -2998,24 +3692,27 @@ CardEditor.prototype.validateForm = function() {
     }
 
     // 验证数值范围
-    if (this.currentCard.cost < 0 || this.currentCard.cost > 20) {
-        errors.push('费用必须在0-20之间');
+    if (this.currentCard.cost < 0) {
+        errors.push('费用必须为0或以上');
     }
 
     const cardType = normalizeEnumName(this.currentCard.cardType);
     const hasCountdownKeyword = (this.currentCard.keywords || []).some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
 
     if (equalsIgnoreCase(cardType, 'Follower')) {
-        if (this.currentCard.attack < 0 || this.currentCard.attack > 99) {
-            errors.push('攻击力必须在0-99之间');
+        if (this.currentCard.attack < 0) {
+            errors.push('攻击力必须为0或以上');
         }
 
-        if (this.currentCard.health < 1 || this.currentCard.health > 99) {
-            errors.push('生命值必须在1-99之间');
+        if (this.currentCard.health < 0) {
+            errors.push('生命值必须为0或以上');
         }
-    } else if ((equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest')) && hasCountdownKeyword) {
-        if (this.currentCard.countdown < 0 || this.currentCard.countdown > 99) {
-            errors.push('倒计时必须在0-99之间');
+    } else if (
+        (equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest') || equalsIgnoreCase(cardType, 'Faith'))
+        && hasCountdownKeyword
+    ) {
+        if (this.currentCard.countdown < 0) {
+            errors.push('倒计时必须为0或以上');
         }
     }
 
@@ -3076,7 +3773,8 @@ CardEditor.prototype.renderAbilitiesList = async function(options = {}) {
     }
 
     try {
-        const cardKey = this.getCardIdKey(this.currentCard.id);
+        const currentCardId = this.getCurrentCardId();
+        const cardKey = this.getCardIdKey(currentCardId);
         const useCache = !options.force;
         const cachedAbilities = useCache && cardKey ? this.abilitiesByCardCache.get(cardKey) : null;
 
@@ -3095,7 +3793,7 @@ CardEditor.prototype.renderAbilitiesList = async function(options = {}) {
 
 
         // 获取卡牌的能力列表
-        const response = await fetch(`/api/cards/${this.currentCard.id}/abilities`);
+        const response = await fetch(`/api/cards/${currentCardId}/abilities`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -3136,7 +3834,7 @@ CardEditor.prototype.renderAbilitiesListContent = function(abilities) {
             }
         });
     }
-    const currentCardKey = this.getCardIdKey(this.currentCard?.id);
+    const currentCardKey = this.getCardIdKey(this.getCurrentCardId());
     if (currentCardKey) {
         this.abilityCountsCache.set(currentCardKey, this.currentCardAbilities.length);
     }
@@ -3183,17 +3881,17 @@ CardEditor.prototype.renderAbilitiesListContent = function(abilities) {
                     ${eventTagsHtml}
                 </div>
                 <div class="ability-actions">
-                    <button class="btn-tech-small edit-ability-btn" data-ability-id="${ability.id}">EDIT</button>
-                    <button class="btn-tech-small btn-danger remove-ability-btn" data-ability-id="${ability.id}">DELETE</button>
+                    <button class="btn-tech-small edit-ability-btn" data-ability-id="${ability.id}">编辑</button>
+                    <button class="btn-tech-small btn-danger remove-ability-btn" data-ability-id="${ability.id}">删除</button>
                 </div>
             </div>
             <div class="ability-details">
                 <div class="ability-description tech-text-dim">${ability.description || '暂无描述'}</div>
                 <div class="ability-config">
-                    <span class="config-item tech-tag">TYPE: ${abilityTypeLabel}</span>
+                    <span class="config-item tech-tag">类型：${abilityTypeLabel}</span>
                     ${keywordTagsHtml}
                     <span class="config-item tech-tag ${ability.isActive ? 'status-active' : 'status-inactive'}">
-                        ${ability.isActive ? 'ACTIVE' : 'INACTIVE'}
+                        ${ability.isActive ? '启用中' : '未启用'}
                     </span>
                 </div>
             </div>
@@ -3323,9 +4021,10 @@ CardEditor.prototype.showAddAbilityEditorModal = async function(mode) {
     const editorContainer = document.getElementById('add-ability-editor-container');
     const { AbilityEditor } = await import('./components/AbilityEditor.js');
     let abilityEditor = new AbilityEditor();
+    const currentCardId = this.getCurrentCardId();
 
     const defaultAbilityConfig = {
-        cardId: this.currentCard.id,
+        cardId: currentCardId,
         cardName: this.currentCard.name || '',
         abilitySequence: this.getNextAbilitySequence(),
         name: '',
@@ -3335,6 +4034,7 @@ CardEditor.prototype.showAddAbilityEditorModal = async function(mode) {
         priority: 0,
         isActive: true,
         broadcastOnTrigger: true,
+        buffDisplay: true,
         type: mode === 'aura' ? 'Continuous' : 'Triggered',
         trigger: {
             eventTypes: [],
@@ -3374,11 +4074,12 @@ CardEditor.prototype.showAddAbilityEditorModal = async function(mode) {
 */
 CardEditor.prototype.createNewAbilityFromConfig = async function(config) {
 try {
+    const currentCardId = this.getCurrentCardId();
 
     // 构建API请求数据
     // 注意：后端API可能需要特定的字段结构，这里确保与saveAbilityChanges保持一致但用于创建
     const abilityData = {
-        cardId: this.currentCard.id,
+        cardId: currentCardId,
         name: config.name,
         description: config.description,
         abilityKeywords: config.abilityKeywords || [],
@@ -3404,7 +4105,7 @@ try {
 
     const result = await response.json();
 
-    this.invalidateAbilitiesForCard(this.currentCard.id);
+    this.invalidateAbilitiesForCard(currentCardId);
     this.invalidateAbilityLibraryCache();
     const resultKey = this.getAbilityIdKey(result?.id ?? result?.Id);
     if (resultKey) {
@@ -3497,7 +4198,8 @@ CardEditor.prototype.getNextAbilitySequence = function() {
 };
 
 CardEditor.prototype.showLinkExistingAbilityModal = async function() {
-    if (!this.currentCard || !this.currentCard.id) {
+    const currentCardId = this.getCurrentCardId();
+    if (!this.currentCard || currentCardId == null) {
         alert('请先选择并保存一张卡牌');
         return;
     }
@@ -3591,9 +4293,9 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
             countMap.clear();
 
             this.cardListCache.forEach(card => {
-                const rawCardId = card?.id ?? card?.CardId;
+                const rawCardId = this.getResolvedCardId(card);
                 const cardId = normalizeCardId(rawCardId);
-                if (!cardId) return;
+                if (cardId == null) return;
                 const abilities = abilityData.abilitiesByCard?.get?.(Number(rawCardId)) || [];
                 const normalized = Array.isArray(abilities) ? abilities : [];
                 abilityMap.set(cardId, normalized);
@@ -3626,8 +4328,8 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
         this.allCardsData = Array.isArray(allCards) ? allCards : [];
         const visibleCards = this.filterCardsForList(allCards);
         cardEntries = visibleCards.map(card => {
-            const cardId = normalizeCardId(card?.id ?? card?.CardId);
-            if (!cardId) return null;
+            const cardId = normalizeCardId(this.getResolvedCardId(card));
+            if (cardId == null) return null;
 
             const cardName = (card.name ?? card.Name ?? `Card ${cardId}`).toString().trim() || `Card ${cardId}`;
             const cardCost = (card.cost ?? card.Cost) ?? 0;
@@ -3743,10 +4445,10 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
                                 <span class="ability-copy-card-id tech-text-dim">#${entry.cardId}</span>
                             </div>
                             <div class="ability-copy-card-meta">
-                                <span class="tech-badge">COST ${entry.cardCost}</span>
+                                <span class="tech-badge">费用 ${entry.cardCost}</span>
                                 <span class="tech-tag">${entry.cardType}</span>
                                 <span class="tech-tag">${entry.cardClass}</span>
-                                <span class="tech-tag">ABILITIES ${abilityCountLabel}</span>
+                                <span class="tech-tag">能力 ${abilityCountLabel}</span>
                             </div>
                             <span class="ability-copy-card-toggle" aria-hidden="true">></span>
                         </button>
@@ -4013,6 +4715,7 @@ CardEditor.prototype.confirmAddAbility = async function() {
 CardEditor.prototype.createNewAbility = async function() {
     const modal = document.getElementById('add-ability-modal');
     if (!modal) return;
+    const currentCardId = this.getCurrentCardId();
 
     // 获取表单数据
     const name = modal.querySelector('#ability-name').value.trim();
@@ -4034,7 +4737,7 @@ CardEditor.prototype.createNewAbility = async function() {
 
     // 构建能力配置
     const abilityConfig = {
-        cardId: this.currentCard.id,
+        cardId: currentCardId,
         name: name,
         description: description,
         abilityKeywords: [{ keyword: abilityTag }],
@@ -4054,7 +4757,8 @@ CardEditor.prototype.createNewAbility = async function() {
             conditions: [],
             targets: {},
             effects: [],
-            broadcastOnTrigger: true
+            broadcastOnTrigger: true,
+            buffDisplay: true
         })
     };
 
@@ -4074,7 +4778,7 @@ CardEditor.prototype.createNewAbility = async function() {
     this.applyDataRevisionFromResponse(response);
 
     const result = await response.json();
-    this.invalidateAbilitiesForCard(this.currentCard.id);
+    this.invalidateAbilitiesForCard(currentCardId);
     this.invalidateAbilityLibraryCache();
     const resultKey = this.getAbilityIdKey(result?.id ?? result?.Id);
     if (resultKey) {
@@ -4096,7 +4800,8 @@ CardEditor.prototype.linkExistingAbility = async function() {
 };
 
 CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
-    if (!this.currentCard || !this.currentCard.id) {
+    const currentCardId = this.getCurrentCardId();
+    if (!this.currentCard || currentCardId == null) {
         throw new Error('请先选择并保存一张卡牌');
     }
 
@@ -4116,7 +4821,7 @@ CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
     }
 
     const abilityData = {
-        cardId: this.currentCard.id,
+        cardId: currentCardId,
         name: ability.name,
         description: ability.description,
         abilityKeywords: ability.abilityKeywords || normalizeAbilityKeywords(ability),
@@ -4140,7 +4845,7 @@ CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
     this.applyDataRevisionFromResponse(createRes);
 
     const created = await createRes.json();
-    this.invalidateAbilitiesForCard(this.currentCard.id);
+    this.invalidateAbilitiesForCard(currentCardId);
     this.invalidateAbilityLibraryCache();
     const createdKey = this.getAbilityIdKey(created?.id ?? created?.Id);
     if (createdKey) {
@@ -4192,8 +4897,9 @@ CardEditor.prototype.removeAbility = async function(abilityId) {
         loader?.show('正在移除能力...');
 
         try {
+            const currentCardId = this.getCurrentCardId();
             // 调用后端API移除能力关联
-            const response = await fetch(`/api/cards/${this.currentCard.id}/abilities/${abilityId}`, {
+            const response = await fetch(`/api/cards/${currentCardId}/abilities/${abilityId}`, {
                 method: 'DELETE'
             });
 
@@ -4202,8 +4908,7 @@ CardEditor.prototype.removeAbility = async function(abilityId) {
             }
             this.applyDataRevisionFromResponse(response);
 
-
-            this.invalidateAbilitiesForCard(this.currentCard.id);
+            this.invalidateAbilitiesForCard(currentCardId);
             this.invalidateAbilityDetailCache(abilityId);
             this.invalidateAbilityLibraryCache();
 
@@ -4285,6 +4990,7 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
         priority: ability.priority || 0,
         isActive: ability.isActive !== false,
         broadcastOnTrigger: true,
+        buffDisplay: true,
         type: ability.type || ability.Type || 'Triggered',
         trigger: {
             eventTypes: [],
@@ -4342,6 +5048,12 @@ CardEditor.prototype.parseAbilityConfig = function(ability) {
             const broadcastOnTrigger = jsonConfig.broadcastOnTrigger ?? jsonConfig.BroadcastOnTrigger;
             if (broadcastOnTrigger !== undefined) {
                 config.broadcastOnTrigger = broadcastOnTrigger !== false;
+            }
+            const buffDisplay = jsonConfig.buffDisplay ?? jsonConfig.BuffDisplay;
+            if (buffDisplay !== undefined) {
+                config.buffDisplay = buffDisplay !== false;
+            } else if (broadcastOnTrigger !== undefined) {
+                config.buffDisplay = broadcastOnTrigger !== false;
             }
         } catch (error) {
             console.warn('CardEditor: Failed to parse ability JSON config:', error);
@@ -4412,8 +5124,8 @@ CardEditor.prototype.saveAbilityChanges = async function(originalAbility, update
         if (abilityKey) {
             this.abilityDetailCache.set(abilityKey, result);
         }
-        const cardId = this.currentCard?.id ?? result?.cardId ?? originalAbility?.cardId;
-        if (cardId) {
+        const cardId = this.getCurrentCardId() ?? result?.cardId ?? originalAbility?.cardId;
+        if (cardId != null) {
             this.invalidateAbilitiesForCard(cardId);
         }
         this.invalidateAbilityLibraryCache();
@@ -4471,4 +5183,3 @@ CardEditor.prototype.loadKeywordOptions = async function(selectElement) {
         });
     }
 };
-

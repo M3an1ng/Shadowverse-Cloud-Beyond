@@ -155,14 +155,18 @@ public sealed class DeckServiceWinrateResetTests
             validation
                 .Setup(item => item.ValidateAsync(
                     It.IsAny<CardClass>(),
+                    It.IsAny<CardClass?>(),
                     It.IsAny<IReadOnlyList<DeckCardEntryDto>>(),
                     It.IsAny<DeckEnvironment>(),
+                    It.IsAny<DeckRule>(),
                     It.IsAny<bool>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync((
                     CardClass cardClass,
+                    CardClass? secondaryClass,
                     IReadOnlyList<DeckCardEntryDto> cards,
                     DeckEnvironment environment,
+                    DeckRule rule,
                     bool requireComplete,
                     CancellationToken cancellationToken) => DeckOperationResult<List<DeckCardEntryDto>>.Ok(cards.ToList()));
 
@@ -208,7 +212,9 @@ public sealed class DeckServiceWinrateResetTests
                 UserId = userId,
                 Name = "test-deck",
                 Class = deckClass,
+                SecondaryClass = null,
                 Environment = DeckEnvironment.Open,
+                Rule = DeckRule.Standard,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
                 Cards = cardEntries.Select(item => new UserDeckCard
@@ -221,7 +227,7 @@ public sealed class DeckServiceWinrateResetTests
             };
             Db.UserDecks.Add(userDeck);
 
-            var deckShapeHash = BuildDeckShapeHash(deckClass, cardEntries);
+            var deckShapeHash = BuildDeckShapeHash(deckClass, secondaryClass: null, DeckRule.Standard, cardEntries);
 
             Db.GameParticipantStatsFacts.AddRange(
                 new GameParticipantStatsFact
@@ -276,7 +282,7 @@ public sealed class DeckServiceWinrateResetTests
             }
         }
 
-        private static string BuildDeckShapeHash(CardClass deckClass, IReadOnlyList<DeckCardEntryDto> cardEntries)
+        private static string BuildDeckShapeHash(CardClass deckClass, CardClass? secondaryClass, DeckRule mode, IReadOnlyList<DeckCardEntryDto> cardEntries)
         {
             var payload = string.Join(",",
                 cardEntries
@@ -285,7 +291,7 @@ public sealed class DeckServiceWinrateResetTests
                     .OrderBy(group => group.Key)
                     .Select(group => $"{group.Key}:{group.Sum(item => item.Count)}"));
 
-            var raw = $"{deckClass}|{payload}";
+            var raw = $"{deckClass}|{secondaryClass?.ToString() ?? string.Empty}|{mode}|{payload}";
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
             return Convert.ToHexString(hash);
         }

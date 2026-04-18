@@ -81,6 +81,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
+            return string.Empty;
             var player = TargetPlayer;
             var source = SourceCard;
             if (player == null || source == null)

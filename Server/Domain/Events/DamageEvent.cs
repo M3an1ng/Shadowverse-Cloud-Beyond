@@ -46,12 +46,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public bool IsCounterAttack { get; }
 
         public DamageEvent(CardInstance target, int damage, CardInstance source)
-            : this(target, damage, source, DamageKind.Unknown, null, null, false)
-        {
-        }
-
-        public DamageEvent(CardInstance target, int damage, CardInstance source, Guid? eventId, DateTime? timestamp)
-            : this(target, damage, source, DamageKind.Unknown, eventId, timestamp, false)
+            : this(target, damage, source, DamageKind.Ability, null, null, false)
         {
         }
 
@@ -148,8 +143,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private static void TryApplyEffectScopedLeaveFieldDelay(GameContext context, LeaveFieldEvent leaveFieldEvent)
         {
-            var parentEventId = context.TriggeringEvent?.EventId
+            // Scope delayed leave-field to the currently executing effect first.
+            // This keeps AOE batching within one effect while avoiding cross-ability blocking
+            // under the same trigger event (e.g. multiple Clash-triggered abilities).
+            var parentEventId = context.CurrentEffect?.Id
                 ?? context.CurrentEffect?.TriggeredEventId
+                ?? context.TriggeringEvent?.EventId
                 ?? Guid.Empty;
             if (parentEventId == Guid.Empty)
             {

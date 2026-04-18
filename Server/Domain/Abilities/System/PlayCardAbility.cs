@@ -30,7 +30,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public string Name => "Play Card";
         private static readonly IReadOnlyList<AbilityKeywordConfig> SystemKeywords = Array.Empty<AbilityKeywordConfig>();
         public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => SystemKeywords;
-        public AbilityKeyword PrimaryKeyword => AbilityKeyword.None;
+        public IReadOnlyList<AbilityKeyword> Keywords => Array.Empty<AbilityKeyword>();
         public string KeywordSummary => AbilityKeyword.None.ToString();
         public AbilityType Type => AbilityType.Triggered;
         public List<Target> Targets { get; } = new List<Target>();
@@ -111,10 +111,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
             }
 
             // Check PP cost
-            if (activePlayerState.CurrentPlayPoints < cardToPlay.CurrentCost)
+            var spendablePp = activePlayerState.GetSpendablePlayPoints();
+            if (cardToPlay.CurrentCost > spendablePp)
             {
                 _logger?.LogWarning("{AbilityName}: Player {PlayerId} does not have enough PP to play {CardName} (Cost: {Cost}, Available: {PP}).",
-                    Name, requestEvent.PlayerId, cardToPlay.Name, cardToPlay.CurrentCost, activePlayerState.CurrentPlayPoints);
+                    Name, requestEvent.PlayerId, cardToPlay.Name, cardToPlay.CurrentCost, spendablePp);
                 return false;
             }
 

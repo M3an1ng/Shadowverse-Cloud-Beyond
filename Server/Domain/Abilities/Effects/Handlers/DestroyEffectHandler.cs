@@ -13,6 +13,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue; // For mapping PlayerState to PlayerStateDto
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -61,6 +62,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     {
                         Logger.LogError("{EffectName}: Could not find owner PlayerState for card {CardId}.", effectName, targetCard.InstanceId);
                         return new DomainOperationResult { Success = false, ErrorMessage = "Owner player not found for target card." };
+                    }
+
+                    if (targetInfo.Card.CurrentZone != CardZone.Field && targetInfo.Card.CurrentZone != CardZone.Emblem)
+                    {
+                        Logger.LogWarning("{EffectName}: Target card zone is not Field.", effectName);
+                        return new DomainOperationResult { Success = true };
                     }
 
                     result.GeneratedEvents.Add(new LeaveFieldEvent(

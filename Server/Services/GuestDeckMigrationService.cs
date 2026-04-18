@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Dtos;
+﻿using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Services;
@@ -42,7 +42,9 @@ public sealed class GuestDeckMigrationService : IGuestDeckMigrationService
             {
                 Name = string.IsNullOrWhiteSpace(deck.Name) ? "Migrated Deck" : deck.Name,
                 Class = deck.Class,
+                SecondaryClass = deck.SecondaryClass,
                 Environment = deck.Environment,
+                Rule = deck.Rule,
                 Cards = deck.Cards?.Select(card => new DeckCardEntryDto
                 {
                     CardDefinitionId = card.CardDefinitionId,
@@ -70,3 +72,5 @@ public sealed class GuestDeckMigrationService : IGuestDeckMigrationService
         return new GuestDeckMigrationResult(migrated, failed);
     }
 }
+
+

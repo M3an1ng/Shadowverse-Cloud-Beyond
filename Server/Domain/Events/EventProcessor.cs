@@ -20,6 +20,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using AutoMapper; // Added for IMapper
 using ShadowverseBeyond.Server.Services.Abstractions; // 【修复】添加IGameDataProvider
+using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
 
 namespace ShadowverseBeyond.Server.Domain.Events
@@ -59,7 +60,24 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             var result = new ProcessorResult();
             var abilityManager = context.AbilityManager;
-            _logger.LogInformation("[EventProcessor] Identifying abilities for event {EventType}.", initialEvent.EventType);
+            if (initialEvent is AbilityTriggeredEvent abilityTriggeredEvent)
+            {
+                var triggeredAbility = abilityTriggeredEvent.TriggeredAbility;
+                var sourceCard = triggeredAbility.SourceCard;
+                var abilityName = (triggeredAbility as Ability)?.Name ?? triggeredAbility.Name;
+
+                _logger.LogInformation(
+                    "[EventProcessor] Identifying abilities for event {EventType}. Triggered ability: {AbilityName} (TriggerEventType: {TriggerEventType}, SourceCardName: {SourceCardName}, SourceCardId: {SourceCardId}).",
+                    initialEvent.EventType,
+                    abilityName,
+                    abilityTriggeredEvent.TriggerEventType,
+                    sourceCard?.Name ?? "<none>",
+                    sourceCard?.InstanceId);
+            }
+            else
+            {
+                _logger.LogInformation("[EventProcessor] Identifying abilities for event {EventType}.", initialEvent.EventType);
+            }
 
             try
             {
@@ -171,6 +189,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.StatChanged => ConvertStatChangedEvent(gameEvent),
                     EventType.AttackStateUpdated => ConvertAttackStateUpdatedEvent(gameEvent),
                     EventType.ActStateUpdated => ConvertActStateUpdatedEvent(gameEvent),
+                    EventType.FusionStateUpdated => ConvertFusionStateUpdatedEvent(gameEvent),
                     EventType.EvolveStateUpdated => ConvertEvolveStateUpdatedEvent(gameEvent),
                     EventType.SuperEvolveStateUpdated => ConvertSuperEvolveStateUpdatedEvent(gameEvent),
                     EventType.CardRevealed => ConvertCardRevealedEvent(gameEvent),
@@ -212,7 +231,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return new CardSummonedEventDto(
                 e.Source.Player.PlayerId,
                 cardDto,
-                "Played" // TODO: The source of summon (e.g., "Played", "Effect") should come from the event.
+                e.Reason == EventReasonSource.Ability ? "Effect" : "Played"
             );
         }
 
@@ -448,19 +467,25 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             if (gameEvent is Events.BuffRemovedEvent buffRemovedEvent)
             {
-                var buff = buffRemovedEvent.RemovedBuff;
-                var sourceAbility = ResolveSourceAbility(context, buff.SourceAbilityId);
-                var sourceCard = sourceAbility?.SourceCard;
-                var sourcePlayerId = sourceCard?.OwnerPlayerId ?? Guid.Empty;
+                var buffs = buffRemovedEvent.RemovedBuffs;
+                var sourceCard = buffRemovedEvent.RemovalSource;
+                var targetCard = buffRemovedEvent.RemovalTarget;
+                var sourcePlayerId = sourceCard?.OwnerPlayerId
+                    ?? targetCard?.OwnerPlayerId
+                    ?? Guid.Empty;
 
                 return new BuffRemovedEventDto(
                     sourcePlayerId,
-                    buff.Id,
-                    buff.TargetCardInstanceId,
                     buffRemovedEvent.RemovalReason,
-                    sourceAbility?.SourceCardId,
-                    buff.DefinitionId,
-                    ExtractBuffType(buff)
+                    buffs.Select(static buff => buff.Id).ToList(),
+                    targetCard != null
+                        ? new List<Guid> { targetCard.InstanceId }
+                        : buffs.Select(static buff => buff.TargetCardInstanceId).Distinct().ToList(),
+                    sourceCard != null
+                        ? new List<Guid?> { sourceCard.InstanceId }
+                        : Array.Empty<Guid?>(),
+                    buffs.Select(static buff => buff.DefinitionId).ToList(),
+                    buffs.Select(ExtractBuffType).ToList()
                 );
             }
 
@@ -498,6 +523,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 {
                     case StatBuffEffect:
                         effectTypes.Add("ModifyStats");
+                        break;
+                    case ActionUsageLimitBuffEffect:
+                        effectTypes.Add("ActionUsageLimit");
                         break;
                     case KeywordBuffEffect:
                         effectTypes.Add("AddKeyword");
@@ -636,7 +664,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (player == null) return null;
             return new PpBoostStateUpdatedEventDto(
                 player.PlayerId,
-                e.PpBoostUsesAvailable
+                e.PpBoostUsesAvailable,
+                e.IsArmed
             );
         }
 
@@ -766,7 +795,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 targetEntityUid: targetCard.InstanceId,
                 newAttack: targetCard.CurrentAttack,
                 newCurrentHealth: targetCard.CurrentHealth,
-                newMaxHealth: targetCard.MaxHealth
+                newMaxHealth: targetCard.MaxHealth,
+                newCost: targetCard.CurrentCost
             );
         }
 
@@ -853,7 +883,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return new ActStateUpdatedEventDto(
                 e.Source.Card.OwnerPlayerId,
                 e.Source.Card.InstanceId,
-                e.ActLastUsedTurnNumber
+                e.ActsThisTurn,
+                e.MaxActsPerTurn
+            );
+        }
+
+        private GameEventDto? ConvertFusionStateUpdatedEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not FusionStateUpdatedEvent e) return null;
+            if (e.Source?.Card == null) return null;
+
+            return new FusionStateUpdatedEventDto(
+                e.Source.Card.OwnerPlayerId,
+                e.Source.Card.InstanceId,
+                e.FusionsThisTurn,
+                e.MaxFusionsPerTurn
             );
         }
 

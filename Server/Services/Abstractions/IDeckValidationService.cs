@@ -7,9 +7,11 @@ namespace ShadowverseBeyond.Server.Services.Abstractions;
 public interface IDeckValidationService
 {
     Task<DeckOperationResult<List<DeckCardEntryDto>>> ValidateAsync(
-        CardClass deckClass,
+        CardClass primaryClass,
+        CardClass? secondaryClass,
         IReadOnlyList<DeckCardEntryDto> cards,
         DeckEnvironment environment,
+        DeckRule rule,
         bool requireComplete,
         CancellationToken cancellationToken);
 }

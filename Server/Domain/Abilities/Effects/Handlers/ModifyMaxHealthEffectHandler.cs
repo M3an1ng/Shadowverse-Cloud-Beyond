@@ -54,6 +54,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         modifierLayer: parameters.ModifierLayer,
                         effectKey: effectKey,
                         canStack: parameters.CanStack,
+                        removeCondition: parameters.RemoveCondition,
                         preserveCurrentHealthOnMaxHealthChange: true);
 
                     var result = new DomainOperationResult { Success = true };

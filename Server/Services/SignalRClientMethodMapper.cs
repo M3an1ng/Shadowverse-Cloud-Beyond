@@ -85,6 +85,7 @@ namespace ShadowverseBeyond.Server.Services
                     EvolveStateUpdatedEventDto e => clientProxy.EvolveStateUpdated(e),
                     SuperEvolveStateUpdatedEventDto e => clientProxy.SuperEvolveStateUpdated(e),
                     ActStateUpdatedEventDto e => clientProxy.ActStateUpdated(e),
+                    FusionStateUpdatedEventDto e => clientProxy.FusionStateUpdated(e),
                     PpBoostStateUpdatedEventDto e => clientProxy.PpBoostStateUpdated(e),
                     PlayerChoiceRequestedEventDto e => clientProxy.PlayerChoiceRequested(e), // 【TARGETING_FIX】添加缺失的目标选择事件映射
                     LogEventDto e => clientProxy.LogEvent(e),

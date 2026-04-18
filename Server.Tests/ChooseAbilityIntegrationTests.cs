@@ -216,9 +216,9 @@ namespace ShadowverseBeyond.Server.Tests
                 Guid? sourceBuffId,
                 GameState? gameState) => new();
             public void RegisterAbility(IAbility ability) { }
-            public void UnregisterAbility(IAbility ability) { }
-            public void UnregisterCardAbilities(Guid cardInstanceId) { }
-            public void UnregisterAbilitiesFromBuff(Guid buffId) { }
+            public void UnregisterAbility(IAbility ability, string removalReason = "unregistered") { }
+            public void UnregisterCardAbilities(Guid cardInstanceId, string removalReason = "card_unregistered") { }
+            public void UnregisterAbilitiesFromBuff(Guid buffId, string removalReason = "buff_removed") { }
             public IReadOnlyList<Guid> GetAbilityRuntimeIdsForBuff(Guid buffId) => Array.Empty<Guid>();
             public void ClearAllAbilities() { }
             public List<IAbility> GetAbilitiesForCard(Guid cardInstanceId) => new();
@@ -253,10 +253,12 @@ namespace ShadowverseBeyond.Server.Tests
             public int GetEffectiveCost(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
             public List<CardKeyword> GetEffectiveKeywords(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
             public int GetEffectiveAbilityKeywordValue(CardInstance card, AbilityKeyword keyword, int baseValue, GameContext gameContext) => baseValue;
-            public DomainOperationResult ApplyKeywordBuff(GameContext context, CardInstance target, List<CardKeyword> keywords, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
-            public DomainOperationResult ApplyRemoveKeywordBuff(GameContext context, CardInstance target, List<CardKeyword> keywordsToRemove, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
-            public DomainOperationResult ApplyStatBuff(GameContext context, CardInstance target, List<StatModification> modifications, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
-            public DomainOperationResult ApplyTribeBuff(GameContext context, CardInstance target, List<string> tribes, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true) => throw new NotImplementedException();
+            public int GetEffectiveActionUsageLimit(CardInstance card, CardActionUsageType actionType, GameContext gameContext) => card.GetBaseActionUsageLimit(actionType);
+            public DomainOperationResult ApplyKeywordBuff(GameContext context, CardInstance target, List<CardKeyword> keywords, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true, ConditionConfig? removeCondition = null) => throw new NotImplementedException();
+            public DomainOperationResult ApplyRemoveKeywordBuff(GameContext context, CardInstance target, List<CardKeyword> keywordsToRemove, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true, ConditionConfig? removeCondition = null) => throw new NotImplementedException();
+            public DomainOperationResult ApplyStatBuff(GameContext context, CardInstance target, List<StatModification> modifications, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true, ConditionConfig? removeCondition = null) => throw new NotImplementedException();
+            public DomainOperationResult ApplyTribeBuff(GameContext context, CardInstance target, List<string> tribes, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true, ConditionConfig? removeCondition = null) => throw new NotImplementedException();
+            public DomainOperationResult ApplyActionUsageLimitBuff(GameContext context, CardInstance target, List<ActionUsageLimitModification> modifications, DurationType durationType, int? durationParameter, string? effectKey = null, bool canStack = true, ConditionConfig? removeCondition = null) => throw new NotImplementedException();
             public DomainOperationResult ApplyBuffProcess(Buff buff, GameContext context, bool canStack = true) => throw new NotImplementedException();
             public DomainOperationResult RemoveBuffProcess(Guid buffId, GameContext context) => throw new NotImplementedException();
             public DomainOperationResult RemoveBuffsFromSource(long sourceAbilityId, GameContext context) => throw new NotImplementedException();

@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Dtos.Enums;
+﻿using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Dtos;
 
@@ -13,7 +13,9 @@ public record DeckSummaryDto
     public Guid DeckId { get; init; }
     public string Name { get; init; } = string.Empty;
     public CardClass Class { get; init; } = CardClass.Neutral;
-    public DeckEnvironment Environment { get; init; } = DeckEnvironment.Open;
+    public CardClass? SecondaryClass { get; init; }
+    public DeckEnvironment Environment { get; init; } = DeckEnvironment.Rotation;
+    public DeckRule Rule { get; init; } = DeckRule.Standard;
     public int CardCount { get; init; }
     public int TotalGames { get; init; }
     public int TotalWins { get; init; }
@@ -34,7 +36,9 @@ public record CreateDeckRequest
 {
     public string Name { get; init; } = string.Empty;
     public CardClass Class { get; init; } = CardClass.Neutral;
-    public DeckEnvironment? Environment { get; init; }
+    public CardClass? SecondaryClass { get; init; }
+    public DeckEnvironment? Environment { get; init; } = DeckEnvironment.Rotation;
+    public DeckRule? Rule { get; init; } = DeckRule.Standard;
     public List<DeckCardEntryDto>? Cards { get; init; }
 }
 
@@ -42,7 +46,9 @@ public record UpdateDeckRequest
 {
     public string? Name { get; init; }
     public CardClass? Class { get; init; }
+    public CardClass? SecondaryClass { get; init; }
     public DeckEnvironment? Environment { get; init; }
+    public DeckRule? Rule { get; init; }
     public List<DeckCardEntryDto>? Cards { get; init; }
 }
 
@@ -51,10 +57,14 @@ public record ImportDeckCodeRequest
     public string Code { get; init; } = string.Empty;
     public string? Name { get; init; }
     public Guid? TargetDeckId { get; init; }
+    public CardClass? SecondaryClass { get; init; }
     public DeckEnvironment? Environment { get; init; }
+    public DeckRule? Rule { get; init; }
 }
 
 public record DeckAvailabilityDto
 {
     public bool HasDeck { get; init; }
 }
+
+

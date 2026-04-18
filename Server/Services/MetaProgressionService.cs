@@ -14,8 +14,8 @@ namespace ShadowverseBeyond.Server.Services;
 /// </summary>
 public sealed class MetaProgressionService : IMetaProgressionService
 {
-    private const int WinCoinReward = 120;
-    private const int LossCoinReward = 120;
+    private const int WinCoinReward = 100;
+    private const int LossCoinReward = 100;
 
     private readonly ApplicationDbContext _db;
     private readonly IEconomyService _economyService;

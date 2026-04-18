@@ -1,4 +1,4 @@
-// File: Server/Services/MatchService.cs
+﻿// File: Server/Services/MatchService.cs
 //
 // 相关文档:
 // - 多人联机方案A: 内存房间 + JoinCode/Token
@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Services
@@ -18,6 +19,7 @@ namespace ShadowverseBeyond.Server.Services
     public class MatchService : IMatchService
     {
         private readonly ConcurrentDictionary<string, MatchRoom> _rooms = new();
+        private readonly ConcurrentDictionary<string, string> _gameToRoom = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, object> _locks = new();
         private readonly TimeSpan _defaultTtl = TimeSpan.FromMinutes(30);
         private readonly TimeSpan _closedRetention = TimeSpan.FromMinutes(2);
@@ -32,40 +34,42 @@ namespace ShadowverseBeyond.Server.Services
         {
             CleanupExpired();
 
-            var gameId = Guid.NewGuid().ToString();
+            var roomId = Guid.NewGuid().ToString("D");
             var hostId = hostPlayerId ?? Guid.NewGuid();
             var room = new MatchRoom
             {
-                GameId = gameId,
+                RoomId = roomId,
                 HostPlayerId = hostId,
                 JoinCode = GenerateJoinCode(),
                 HostToken = GenerateToken(),
                 UseAiFallback = useAiFallback,
                 CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.Add(ttl ?? _defaultTtl)
+                ExpiresAt = DateTime.UtcNow.Add(ttl ?? _defaultTtl),
+                ActiveGameId = null,
+                Round = 0
             };
 
-            if (!_rooms.TryAdd(gameId, room))
+            if (!_rooms.TryAdd(roomId, room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.Forbidden, "创建房间失败，请重试。");
             }
 
-            _logger.LogInformation("[MatchService] Created room {GameId} with joinCode {JoinCode}", gameId, room.JoinCode);
+            _logger.LogInformation("[MatchService] Created room {RoomId} with joinCode {JoinCode}", roomId, room.JoinCode);
             return MatchOperationResult.Ok(room);
         }
 
-        public MatchOperationResult TryJoin(string gameId, string joinCode, Guid? guestPlayerId = null)
+        public MatchOperationResult TryJoin(string roomId, string joinCode, Guid? guestPlayerId = null)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
             }
 
-            lock (GetLock(gameId))
+            lock (GetLock(roomId))
             {
                 if (IsExpired(room))
                 {
-                    CloseInternal(gameId, "房间已过期");
+                    CloseInternal(roomId, "房间已过期");
                     return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
                 }
 
@@ -74,14 +78,29 @@ namespace ShadowverseBeyond.Server.Services
                     return MatchOperationResult.Fail(MatchOperationError.InvalidJoinCode, "邀请码不正确。");
                 }
 
-                if (room.Status == MatchStatus.Started)
-                {
-                    return MatchOperationResult.Fail(MatchOperationError.AlreadyStarted, "房间已开始。");
-                }
-
                 if (room.Status == MatchStatus.Closed)
                 {
                     return MatchOperationResult.Fail(MatchOperationError.AlreadyClosed, room.ClosedReason ?? "房间已关闭。");
+                }
+
+                var requestedGuestId = guestPlayerId.HasValue && guestPlayerId.Value != Guid.Empty
+                    ? guestPlayerId.Value
+                    : (Guid?)null;
+
+                // Idempotent rejoin: if the same guest joins again, return the existing seat instead of conflict.
+                if (room.GuestPlayerId.HasValue &&
+                    requestedGuestId.HasValue &&
+                    room.GuestPlayerId.Value == requestedGuestId.Value)
+                {
+                    room.GuestToken ??= GenerateToken();
+                    room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
+                    _logger.LogInformation("[MatchService] Guest {GuestId} rejoined room {RoomId}.", requestedGuestId.Value, roomId);
+                    return MatchOperationResult.Ok(Clone(room));
+                }
+
+                if (room.Status == MatchStatus.Started)
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.AlreadyStarted, "房间已开始。");
                 }
 
                 if (room.GuestPlayerId.HasValue)
@@ -89,9 +108,7 @@ namespace ShadowverseBeyond.Server.Services
                     return MatchOperationResult.Fail(MatchOperationError.AlreadyFull, "房间已满。");
                 }
 
-                var guestId = guestPlayerId.HasValue && guestPlayerId.Value != Guid.Empty
-                    ? guestPlayerId.Value
-                    : Guid.NewGuid();
+                var guestId = requestedGuestId ?? Guid.NewGuid();
                 if (guestId == room.HostPlayerId)
                 {
                     return MatchOperationResult.Fail(MatchOperationError.Forbidden, "玩家已在房间内。");
@@ -101,23 +118,23 @@ namespace ShadowverseBeyond.Server.Services
                 room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
                 room.Status = MatchStatus.Waiting;
 
-                _logger.LogInformation("[MatchService] Player {GuestId} joined room {GameId}", guestId, gameId);
+                _logger.LogInformation("[MatchService] Player {GuestId} joined room {RoomId}", guestId, roomId);
                 return MatchOperationResult.Ok(Clone(room));
             }
         }
 
-        public MatchOperationResult MarkReady(string gameId, Guid playerId)
+        public MatchOperationResult MarkReady(string roomId, Guid playerId)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
             }
 
-            lock (GetLock(gameId))
+            lock (GetLock(roomId))
             {
                 if (IsExpired(room))
                 {
-                    CloseInternal(gameId, "房间已过期");
+                    CloseInternal(roomId, "房间已过期");
                     return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
                 }
 
@@ -149,18 +166,18 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        public MatchOperationResult SubmitDeckSelection(string gameId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null)
+        public MatchOperationResult SubmitDeckSelection(string roomId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
             }
 
-            lock (GetLock(gameId))
+            lock (GetLock(roomId))
             {
                 if (IsExpired(room))
                 {
-                    CloseInternal(gameId, "房间已过期");
+                    CloseInternal(roomId, "房间已过期");
                     return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
                 }
 
@@ -196,18 +213,18 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        public MatchOperationResult Start(string gameId, Guid playerId)
+        public MatchOperationResult Start(string roomId, Guid playerId)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
             }
 
-            lock (GetLock(gameId))
+            lock (GetLock(roomId))
             {
                 if (IsExpired(room))
                 {
-                    CloseInternal(gameId, "房间已过期");
+                    CloseInternal(roomId, "房间已过期");
                     return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
                 }
 
@@ -232,40 +249,58 @@ namespace ShadowverseBeyond.Server.Services
                     return MatchOperationResult.Fail(MatchOperationError.MissingDeckSelection, "卡组尚未选择完成。");
                 }
 
+                if (!AreDeckFormatsConsistent(room, out var mismatchReason))
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.NotReady, mismatchReason);
+                }
+
+                if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
+                {
+                    _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                }
+
+                var activeGameId = Guid.NewGuid().ToString("D");
+                room.ActiveGameId = activeGameId;
+                room.Round = Math.Max(1, room.Round + 1);
+                _gameToRoom[activeGameId] = room.RoomId;
                 room.Status = MatchStatus.Started;
                 room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
 
-                _logger.LogInformation("[MatchService] Room {GameId} started by {PlayerId}", gameId, playerId);
+                _logger.LogInformation("[MatchService] Room {RoomId} started by {PlayerId}. ActiveGameId={GameId} Round={Round}",
+                    roomId,
+                    playerId,
+                    activeGameId,
+                    room.Round);
                 return MatchOperationResult.Ok(Clone(room));
             }
         }
 
-        public MatchOperationResult Get(string gameId)
+        public MatchOperationResult Get(string roomId)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
             }
 
             if (IsExpired(room))
             {
-                CloseInternal(gameId, "房间已过期");
+                CloseInternal(roomId, "房间已过期");
                 return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
             }
 
             return MatchOperationResult.Ok(Clone(room));
         }
 
-        public MatchOperationResult ValidateConnection(string gameId, Guid playerId, string token)
+        public MatchOperationResult ValidateConnection(string roomId, Guid playerId, string token)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
             }
 
             if (IsExpired(room))
             {
-                CloseInternal(gameId, "房间已过期");
+                CloseInternal(roomId, "房间已过期");
                 return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
             }
 
@@ -289,9 +324,87 @@ namespace ShadowverseBeyond.Server.Services
             return MatchOperationResult.Ok(Clone(room));
         }
 
-        public void Close(string gameId, string reason)
+        public MatchOperationResult GetByGameId(string gameId)
         {
-            CloseInternal(gameId, reason);
+            if (string.IsNullOrWhiteSpace(gameId))
+            {
+                return MatchOperationResult.Fail(MatchOperationError.NotFound, "对局不存在。");
+            }
+
+            if (!TryGetRoomIdByGameId(gameId, out var roomId))
+            {
+                return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
+            }
+
+            return Get(roomId);
+        }
+
+        public bool TryGetRoomIdByGameId(string gameId, out string roomId)
+        {
+            if (string.IsNullOrWhiteSpace(gameId))
+            {
+                roomId = string.Empty;
+                return false;
+            }
+
+            return _gameToRoom.TryGetValue(gameId, out roomId);
+        }
+
+        public MatchOperationResult Leave(string roomId, Guid playerId, string? hostLeaveReason = null)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+            {
+                return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
+            }
+
+            lock (GetLock(roomId))
+            {
+                if (IsExpired(room))
+                {
+                    CloseInternal(roomId, "房间已过期");
+                    return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
+                }
+
+                if (!IsParticipant(room, playerId))
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.NotParticipant, "玩家不在房间内。");
+                }
+
+                if (room.Status == MatchStatus.Closed)
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.AlreadyClosed, room.ClosedReason ?? "房间已关闭。", Clone(room));
+                }
+
+                if (playerId == room.HostPlayerId)
+                {
+                    CloseInternal(roomId, hostLeaveReason ?? "房主已退出，房间已解散。");
+                    return MatchOperationResult.Ok(Clone(room));
+                }
+
+                // Guest leaves: keep room alive and release guest seat for future joins.
+                if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
+                {
+                    _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                }
+
+                room.ActiveGameId = null;
+                room.GuestPlayerId = null;
+                room.GuestToken = null;
+                room.GuestReady = false;
+                room.HostReady = false;
+                room.GuestDeckSelection = new MatchDeckSelection();
+                room.Status = MatchStatus.Waiting;
+                room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
+                room.ClosedReason = null;
+
+                _logger.LogInformation("[MatchService] Guest {PlayerId} left room {RoomId}. Seat released for rejoin.", playerId, roomId);
+                return MatchOperationResult.Ok(Clone(room));
+            }
+        }
+
+        public void Close(string roomId, string reason)
+        {
+            CloseInternal(roomId, reason);
         }
 
         public void CleanupExpired()
@@ -305,6 +418,10 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         _rooms.TryRemove(kvp.Key, out _);
                         _locks.TryRemove(kvp.Key, out _);
+                        if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
+                        {
+                            _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                        }
                     }
                     else
                     {
@@ -314,27 +431,32 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        private void CloseInternal(string gameId, string reason)
+        private void CloseInternal(string roomId, string reason)
         {
-            if (!_rooms.TryGetValue(gameId, out var room))
+            if (!_rooms.TryGetValue(roomId, out var room))
             {
                 return;
             }
 
-            lock (GetLock(gameId))
+            lock (GetLock(roomId))
             {
+                if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
+                {
+                    _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                }
+
                 room.Status = MatchStatus.Closed;
                 room.ClosedReason = reason;
                 room.HostReady = false;
                 room.GuestReady = false;
                 room.ExpiresAt = DateTime.UtcNow.Add(_closedRetention);
-                _logger.LogInformation("[MatchService] Room {GameId} closed: {Reason}", gameId, reason);
+                _logger.LogInformation("[MatchService] Room {RoomId} closed: {Reason}", roomId, reason);
             }
         }
 
         private static bool IsExpired(MatchRoom room) => DateTime.UtcNow > room.ExpiresAt;
 
-        private object GetLock(string gameId) => _locks.GetOrAdd(gameId, _ => new object());
+        private object GetLock(string roomId) => _locks.GetOrAdd(roomId, _ => new object());
 
         private static bool IsParticipant(MatchRoom room, Guid playerId)
         {
@@ -354,6 +476,51 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return room.UseAiFallback && room.AiDeckSelection.HasSelection;
+        }
+
+        private static bool AreDeckFormatsConsistent(MatchRoom room, out string message)
+        {
+            message = "双方卡组环境或模式不一致。";
+            var ignoreDeckFormatConsistency = room.DevMatchConfig?.IgnoreDeckFormatConsistency == true;
+
+            if (!room.HostDeckSelection.HasSelection)
+            {
+                message = "房主尚未选择卡组。";
+                return false;
+            }
+
+            var opponentSelection = room.GuestPlayerId.HasValue
+                ? room.GuestDeckSelection
+                : room.AiDeckSelection;
+
+            if (!opponentSelection.HasSelection)
+            {
+                message = "对手尚未选择卡组。";
+                return false;
+            }
+
+            if (ignoreDeckFormatConsistency)
+            {
+                return true;
+            }
+
+            var hostEnvironment = room.HostDeckSelection.Environment ?? DeckEnvironment.Rotation;
+            var opponentEnvironment = opponentSelection.Environment ?? DeckEnvironment.Rotation;
+            if (hostEnvironment != opponentEnvironment)
+            {
+                message = "双方卡组环境不一致。";
+                return false;
+            }
+
+            var hostMode = room.HostDeckSelection.Rule ?? DeckRule.Standard;
+            var opponentMode = opponentSelection.Rule ?? DeckRule.Standard;
+            if (hostMode != opponentMode)
+            {
+                message = "双方卡组模式不一致。";
+                return false;
+            }
+
+            return true;
         }
 
         private static string GenerateJoinCode()
@@ -385,7 +552,9 @@ namespace ShadowverseBeyond.Server.Services
         {
             return new MatchRoom
             {
-                GameId = source.GameId,
+                RoomId = source.RoomId,
+                ActiveGameId = source.ActiveGameId,
+                Round = source.Round,
                 HostPlayerId = source.HostPlayerId,
                 GuestPlayerId = source.GuestPlayerId,
                 JoinCode = source.JoinCode,
@@ -405,6 +574,8 @@ namespace ShadowverseBeyond.Server.Services
                     ? null
                     : new DevMatchConfig
                     {
+                        IgnoreDeckFormatConsistency = source.DevMatchConfig.IgnoreDeckFormatConsistency,
+                        AllowIncompleteDecks = source.DevMatchConfig.AllowIncompleteDecks,
                         StartingPlayPoints = source.DevMatchConfig.StartingPlayPoints,
                         MaxPlayPoints = source.DevMatchConfig.MaxPlayPoints,
                         StartingHandSize = source.DevMatchConfig.StartingHandSize,
@@ -425,8 +596,12 @@ namespace ShadowverseBeyond.Server.Services
                 DeckId = selection.DeckId,
                 DeckCode = selection.DeckCode,
                 DeckClass = selection.DeckClass,
+                SecondaryClass = selection.SecondaryClass,
+                Rule = selection.Rule,
                 Environment = selection.Environment
             };
         }
     }
 }
+
+

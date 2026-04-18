@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Services;
 using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Mappings
 {
@@ -56,13 +57,15 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.IsEvolved, opt => opt.MapFrom(src => src.IsEvolved))
                 .ForMember(dest => dest.IsSuperEvolved, opt => opt.MapFrom(src => src.IsSuperEvolved))
                 .ForMember(dest => dest.CanAttack, opt => opt.MapFrom(src => src.CanAttack))
-                .ForMember(dest => dest.HasActAbility, opt => opt.MapFrom(src => src.HasActAbility))
                 .ForMember(dest => dest.ActAbilities, opt => opt.MapFrom(src => BuildActionSummaries(src, AbilityKeyword.Act)))
-                .ForMember(dest => dest.ActLastUsedTurnNumber, opt => opt.MapFrom(src => src.ActLastUsedTurnNumber))
+                .ForMember(dest => dest.ActsThisTurn, opt => opt.MapFrom(src => src.ActsThisTurn))
+                .ForMember(dest => dest.MaxActsPerTurn, opt => opt.MapFrom(src => src.MaxActsPerTurn))
                 .ForMember(dest => dest.FusionAbilities, opt => opt.MapFrom(src => BuildActionSummaries(src, AbilityKeyword.Fusion)))
                 .ForMember(dest => dest.FusedCards, opt => opt.MapFrom(src => src.FusedCards))
+                .ForMember(dest => dest.FusionsThisTurn, opt => opt.MapFrom(src => src.FusionsThisTurn))
+                .ForMember(dest => dest.MaxFusionsPerTurn, opt => opt.MapFrom(src => src.MaxFusionsPerTurn))
                 .ForMember(dest => dest.AttacksThisTurn, opt => opt.MapFrom(src => src.AttacksThisTurn))
-                .ForMember(dest => dest.FieldTurn, opt => opt.MapFrom(src => src.FieldTurn)) // BUG修复：添加缺失的FieldTurn映射
+                .ForMember(dest => dest.ZoneStayTurn, opt => opt.MapFrom(src => src.ZoneStayTurn))
                 .ForMember(dest => dest.CurrentCountdown, opt => opt.MapFrom(src => src.CurrentCountdown))
                 .ForMember(dest => dest.MaxAttacksPerTurn, opt => opt.MapFrom(src => src.MaxAttacksPerTurn))
                 .ForMember(dest => dest.Zone, opt => opt.MapFrom(src => src.CurrentZone))
@@ -115,10 +118,35 @@ namespace ShadowverseBeyond.Server.Mappings
                 var registrations = ability?.Config?.CounterRegistrations;
                 if (registrations == null || registrations.Count == 0)
                 {
-                    continue;
+                    registrations = new List<CounterRegistrationConfig>();
                 }
 
                 foreach (var registration in registrations)
+                {
+                    if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                    {
+                        continue;
+                    }
+
+                    var name = registration.Name.Trim();
+                    if (result.ContainsKey(name))
+                    {
+                        continue;
+                    }
+
+                    var displayName = string.IsNullOrWhiteSpace(registration.DisplayName)
+                        ? name
+                        : registration.DisplayName.Trim();
+                    result[name] = displayName;
+                }
+
+                var playerRegistrations = ability?.Config?.PlayerCounterRegistrations;
+                if (playerRegistrations == null || playerRegistrations.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var registration in playerRegistrations)
                 {
                     if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
                     {
@@ -179,7 +207,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 return new List<BuffSummaryDto>();
             }
 
-            var buffs = buffManager.GetBuffsForCard(cardInstance.InstanceId);
+            var buffs = GetVisibleBuffs(cardInstance, context, buffManager);
             if (buffs.Count == 0)
             {
                 return new List<BuffSummaryDto>();
@@ -350,13 +378,12 @@ namespace ShadowverseBeyond.Server.Mappings
         {
             var context = GameServiceProvider.CurrentGameContext;
             var buffManager = context?.BuffManager;
-            var buffService = context?.BuffService;
-            if (buffManager == null || buffService == null)
+            if (buffManager == null)
             {
                 return null;
             }
 
-            var buffs = buffManager.GetBuffsForCard(cardInstance.InstanceId);
+            var buffs = GetVisibleBuffs(cardInstance, context, buffManager);
             if (buffs.Count == 0)
             {
                 return null;
@@ -368,9 +395,9 @@ namespace ShadowverseBeyond.Server.Mappings
                 return null;
             }
 
-            var attackDelta = buffService.GetEffectiveAttack(cardInstance, context) - cardInstance.BaseAttack;
-            var healthDelta = buffService.GetEffectiveMaxHealth(cardInstance, context) - cardInstance.BaseHealth;
-            var costDelta = buffService.GetEffectiveCost(cardInstance, context) - cardInstance.BaseCost;
+            var attackDelta = ComputeVisibleStatValue(cardInstance.BaseAttack, buffs, StatType.Attack) - cardInstance.BaseAttack;
+            var healthDelta = ComputeVisibleStatValue(cardInstance.BaseHealth, buffs, StatType.Health) - cardInstance.BaseHealth;
+            var costDelta = ComputeVisibleStatValue(cardInstance.BaseCost, buffs, StatType.Cost) - cardInstance.BaseCost;
 
             if (attackDelta == 0 && healthDelta == 0 && costDelta == 0)
             {
@@ -383,6 +410,108 @@ namespace ShadowverseBeyond.Server.Mappings
                 HealthDelta = healthDelta,
                 CostDelta = costDelta
             };
+        }
+
+        private static List<Buff> GetVisibleBuffs(CardInstance cardInstance, GameContext context, IBuffManager buffManager)
+        {
+            var buffs = buffManager.GetBuffsForCard(cardInstance.InstanceId);
+            if (buffs.Count == 0)
+            {
+                return new List<Buff>();
+            }
+
+            return buffs
+                .Where(buff => ShouldDisplayBuff(buff, context))
+                .ToList();
+        }
+
+        private static bool ShouldDisplayBuff(Buff buff, GameContext context)
+        {
+            if (buff == null || context?.AbilityManager == null)
+            {
+                return true;
+            }
+
+            ResolveSourceAbility(buff, context.AbilityManager, out var ability, out var snapshot);
+            return (ability as Ability)?.BuffDisplay != false
+                && snapshot?.BuffDisplay != false;
+        }
+
+        private static void ResolveSourceAbility(
+            Buff buff,
+            IAbilityManager abilityManager,
+            out IAbility? ability,
+            out AbilitySnapshot? snapshot)
+        {
+            ability = null;
+            snapshot = null;
+
+            if (buff == null || abilityManager == null)
+            {
+                return;
+            }
+
+            var preferredAbilityId = buff.SummaryRootAbilityId.HasValue && buff.SummaryRootAbilityId.Value != Guid.Empty
+                ? buff.SummaryRootAbilityId.Value
+                : buff.SourceAbilityId;
+
+            if (preferredAbilityId != Guid.Empty)
+            {
+                ability = abilityManager.GetAbilityByRuntimeId(preferredAbilityId);
+                if (ability == null)
+                {
+                    abilityManager.TryGetAbilitySnapshot(preferredAbilityId, out snapshot);
+                }
+            }
+
+            if (ability == null && snapshot == null && buff.SourceAbilityId != Guid.Empty && buff.SourceAbilityId != preferredAbilityId)
+            {
+                ability = abilityManager.GetAbilityByRuntimeId(buff.SourceAbilityId);
+                if (ability == null)
+                {
+                    abilityManager.TryGetAbilitySnapshot(buff.SourceAbilityId, out snapshot);
+                }
+            }
+        }
+
+        private static int ComputeVisibleStatValue(int baseValue, IEnumerable<Buff> buffs, StatType stat)
+        {
+            var currentValue = baseValue;
+            foreach (var buff in buffs)
+            {
+                if (buff?.IsActive != true)
+                {
+                    continue;
+                }
+
+                var modifiers = buff.GetStatModifications()
+                    .Where(modification => modification.Stat == stat)
+                    .OrderBy(modification => modification.Layer);
+
+                foreach (var modification in modifiers)
+                {
+                    currentValue = ApplyStatModification(currentValue, modification);
+                }
+            }
+
+            return currentValue;
+        }
+
+        private static int ApplyStatModification(int currentValue, StatModification modification)
+        {
+            return modification.Layer switch
+            {
+                ModifierLayer.Additive => currentValue + (int)modification.Value,
+                ModifierLayer.Multiplicative => CeilToInt(currentValue * modification.Value),
+                ModifierLayer.Set => CeilToInt(modification.Value),
+                ModifierLayer.Base => CeilToInt(modification.Value),
+                _ => currentValue
+            };
+        }
+
+        private static int CeilToInt(double value)
+        {
+            return (int)Math.Ceiling(value);
         }
     }
 }

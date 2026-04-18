@@ -7,34 +7,35 @@ namespace ShadowverseBeyond.Server.Hubs
         private const string GamePrefix = "Game_";
         private const string PlayerPrefix = "Player_";
 
-        public static string Game(string gameId)
+        // Group is room-scoped: all rounds in a room share the same channel.
+        public static string Game(string roomId)
         {
-            return $"{GamePrefix}{NormalizeGameId(gameId)}";
+            return $"{GamePrefix}{NormalizeRoomId(roomId)}";
         }
 
-        public static string Game(Guid gameId)
+        public static string Game(Guid roomId)
         {
-            return Game(gameId.ToString("D"));
+            return Game(roomId.ToString("D"));
         }
 
-        public static string Player(string gameId, Guid playerId)
+        public static string Player(string roomId, Guid playerId)
         {
-            return $"{PlayerPrefix}{playerId:D}_{NormalizeGameId(gameId)}";
+            return $"{PlayerPrefix}{playerId:D}_{NormalizeRoomId(roomId)}";
         }
 
-        public static string Player(Guid gameId, Guid playerId)
+        public static string Player(Guid roomId, Guid playerId)
         {
-            return Player(gameId.ToString("D"), playerId);
+            return Player(roomId.ToString("D"), playerId);
         }
 
-        private static string NormalizeGameId(string gameId)
+        private static string NormalizeRoomId(string roomId)
         {
-            if (Guid.TryParse(gameId, out var parsed))
+            if (Guid.TryParse(roomId, out var parsed))
             {
                 return parsed.ToString("D");
             }
 
-            return gameId?.Trim() ?? string.Empty;
+            return roomId?.Trim() ?? string.Empty;
         }
     }
 }

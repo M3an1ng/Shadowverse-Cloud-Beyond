@@ -2,6 +2,7 @@ import { getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from "./us
 
 const USERS_ENDPOINT = "/api/users";
 const MIN_PASSWORD_LENGTH = 6;
+const DEFAULT_COINS = 1000;
 const MANAGED_ROLES = [
     { value: "Player", label: "普通用户", level: 10 },
     { value: "Admin", label: "管理员", level: 100 }
@@ -129,6 +130,10 @@ class DevToolsUserManagement {
                 if (!userId) return;
                 if (action === "save-role") {
                     void this.updateUserRole(userId, button);
+                    return;
+                }
+                if (action === "set-coins") {
+                    void this.updateUserCoins(userId, button);
                     return;
                 }
                 if (action === "reset-password") {
@@ -269,7 +274,7 @@ class DevToolsUserManagement {
 
         if (!Array.isArray(items) || items.length === 0) {
             const emptyRow = document.createElement("tr");
-            emptyRow.innerHTML = `<td colspan="8" class="admin-user-empty">暂无用户数据</td>`;
+            emptyRow.innerHTML = `<td colspan="9" class="admin-user-empty">暂无用户数据</td>`;
             this.tableBody.appendChild(emptyRow);
             return;
         }
@@ -280,6 +285,10 @@ class DevToolsUserManagement {
             const role = normalizeRole(pickValue(item, "role", "Role"));
             const permissionLevel = Number.parseInt(
                 String(pickValue(item, "permissionLevel", "PermissionLevel") ?? resolvePermissionLevel(role)),
+                10
+            );
+            const coins = Number.parseInt(
+                String(pickValue(item, "coins", "Coins") ?? DEFAULT_COINS),
                 10
             );
             const createdAt = String(pickValue(item, "createdAt", "CreatedAt") || "");
@@ -293,6 +302,7 @@ class DevToolsUserManagement {
                 <td>${username}${isCurrent ? ' <span class="admin-user-self-tag">当前账号</span>' : ''}</td>
                 <td>${roleLabel(role)}</td>
                 <td>L${Number.isFinite(permissionLevel) ? permissionLevel : resolvePermissionLevel(role)}</td>
+                <td>${Number.isFinite(coins) ? coins : DEFAULT_COINS}</td>
                 <td>${isActive ? "启用" : "禁用"}</td>
                 <td>${createdAt ? new Date(createdAt).toLocaleString() : "-"}</td>
                 <td>${lastLoginAt ? new Date(lastLoginAt).toLocaleString() : "-"}</td>
@@ -308,6 +318,9 @@ class DevToolsUserManagement {
                         <button class="tool-button admin-user-save-btn" type="button" data-action="save-role" data-user-id="${userId}">
                             保存
                         </button>
+                        <button class="tool-button admin-user-set-coins-btn" type="button" data-action="set-coins" data-user-id="${userId}">
+                            设置金币
+                        </button>
                         <button class="tool-button admin-user-reset-btn" type="button" data-action="reset-password" data-user-id="${userId}">
                             重置密码
                         </button>
@@ -321,6 +334,13 @@ class DevToolsUserManagement {
     resolveUsername(targetUserId) {
         const item = this.currentUsers.find(user => String(pickValue(user, "userId", "UserId") || "") === String(targetUserId));
         return String(pickValue(item, "username", "Username") || targetUserId || "User");
+    }
+
+    resolveUserCoins(targetUserId) {
+        const item = this.currentUsers.find(user => String(pickValue(user, "userId", "UserId") || "") === String(targetUserId));
+        const coins = Number.parseInt(String(pickValue(item, "coins", "Coins") ?? DEFAULT_COINS), 10);
+        if (!Number.isFinite(coins) || coins < 0) return DEFAULT_COINS;
+        return coins;
     }
 
     collectNewPassword(targetUserId) {
@@ -343,6 +363,27 @@ class DevToolsUserManagement {
         }
 
         return normalizedPassword;
+    }
+
+    collectNewCoins(targetUserId) {
+        const username = this.resolveUsername(targetUserId);
+        const oldCoins = this.resolveUserCoins(targetUserId);
+        const rawValue = window.prompt(`请输入用户 ${username} 的金币数量（当前：${oldCoins}）`, String(oldCoins));
+        if (rawValue == null) return null;
+
+        const normalized = String(rawValue).trim();
+        if (!/^\d+$/.test(normalized)) {
+            this.setMessage("金币必须是非负整数。", true);
+            return null;
+        }
+
+        const coins = Number.parseInt(normalized, 10);
+        if (!Number.isFinite(coins) || coins < 0) {
+            this.setMessage("金币必须是非负整数。", true);
+            return null;
+        }
+
+        return { coins, oldCoins };
     }
 
     async resetUserPassword(targetUserId, button) {
@@ -379,6 +420,56 @@ class DevToolsUserManagement {
             this.setMessage(`已重置 ${this.resolveUsername(targetUserId)} 的密码。`);
         } catch (error) {
             this.setMessage(`重置密码失败：${error?.message || String(error)}`, true);
+        } finally {
+            button.removeAttribute("disabled");
+        }
+    }
+
+    async updateUserCoins(targetUserId, button) {
+        const session = getUserSession();
+        if (session.mode !== "user" || !session.userId) return;
+
+        const payloadInput = this.collectNewCoins(targetUserId);
+        if (!payloadInput) return;
+
+        button.setAttribute("disabled", "disabled");
+        this.setMessage(`正在更新 ${targetUserId} 的金币...`);
+        try {
+            const response = await fetch(`/api/users/${encodeURIComponent(targetUserId)}/coins`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    actorUserId: session.userId,
+                    coins: payloadInput.coins
+                })
+            });
+
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (err) {
+                // ignore parse errors
+            }
+
+            if (!response.ok) {
+                const message = payload?.message || payload?.Message || response.statusText;
+                throw new Error(message || `HTTP ${response.status}`);
+            }
+
+            const oldCoins = Number.parseInt(
+                String(pickValue(payload, "oldCoins", "OldCoins") ?? payloadInput.oldCoins),
+                10
+            );
+            const newCoins = Number.parseInt(
+                String(pickValue(payload, "coins", "Coins") ?? payloadInput.coins),
+                10
+            );
+            const oldValue = Number.isFinite(oldCoins) ? oldCoins : payloadInput.oldCoins;
+            const newValue = Number.isFinite(newCoins) ? newCoins : payloadInput.coins;
+            this.setMessage(`已更新 ${this.resolveUsername(targetUserId)} 的金币：${oldValue} -> ${newValue}。`);
+            await this.refreshUsers(true);
+        } catch (error) {
+            this.setMessage(`更新金币失败：${error?.message || String(error)}`, true);
         } finally {
             button.removeAttribute("disabled");
         }

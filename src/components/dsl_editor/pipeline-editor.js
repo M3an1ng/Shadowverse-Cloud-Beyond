@@ -538,7 +538,9 @@ export function getPipelineStageSummary(editor, stage) {
         return readable ? `${label}: ${readable}` : "未设置数量";
     }
     if (stage.node.type === "listDistinct") {
-        return readable ? `去重键: ${readable}` : "未设置去重键";
+        return readable
+            ? `去重键: ${readable}（列表键会展开后尽可能多保留元素）`
+            : "未设置去重键（支持标量或标量列表）";
     }
     if (stage.node.type === "listSelect") {
         return readable ? `投影: ${readable}` : "未设置投影";
@@ -665,7 +667,7 @@ function syncInlineSuggestionEditor(editor, inlineEditor, expectedType, contextO
             eventType: contextOverride.eventType || null
         }
         : null;
-    inlineEditor.hideFavoritesToolbar = true;
+    inlineEditor.hideFavoritesToolbar = false;
     inlineEditor.enumLocalizationCache = editor.enumLocalizationCache;
     inlineEditor.enumLocalizationRequests = editor.enumLocalizationRequests;
 }
@@ -859,7 +861,7 @@ export function getPipelineStageTypeIssue(editor, stage) {
     } else if (stage.node.type === "listDistinct") {
         slot = "keyExpression";
         exprNode = stage.node.keyExpression;
-        fallbackExpectedType = "NonEntity";
+        fallbackExpectedType = "ScalarOrScalarList";
     } else if (stage.node.type === "listSelect") {
         slot = "selectExpression";
         exprNode = stage.node.selectExpression;
@@ -880,6 +882,24 @@ export function getPipelineStageTypeIssue(editor, stage) {
     let hasIssue = false;
     if (normalizedExpectedType === "Int32") {
         hasIssue = !editor.isNumericType(actualType);
+    } else if (normalizedExpectedType === "ScalarOrScalarList") {
+        const isEntity = typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(actualType);
+        const isDictionary = typeof editor.isDictionaryType === "function" && editor.isDictionaryType(actualType);
+        const isCollection = typeof editor.isCollectionType === "function" && editor.isCollectionType(actualType);
+
+        if (isEntity || isDictionary) {
+            hasIssue = true;
+        } else if (isCollection) {
+            const match = String(actualType).trim().match(/^(List|IEnumerable|IReadOnlyList|IReadOnlyCollection|ICollection)<(.+)>$/);
+            const innerType = match?.[2] ? String(match[2]).trim() : null;
+            const innerIsEntity = innerType && typeof editor.isBusinessObjectType === "function"
+                ? editor.isBusinessObjectType(innerType)
+                : false;
+            const innerIsDictionary = innerType && typeof editor.isDictionaryType === "function"
+                ? editor.isDictionaryType(innerType)
+                : false;
+            hasIssue = Boolean(innerIsEntity || innerIsDictionary);
+        }
     } else if (normalizedExpectedType === "NonEntity") {
         const isEntity = typeof editor.isBusinessObjectType === "function" && editor.isBusinessObjectType(actualType);
         const isCollection = typeof editor.isCollectionType === "function" && editor.isCollectionType(actualType);

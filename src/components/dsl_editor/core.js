@@ -788,8 +788,8 @@ export class ListDistinctNode extends ASTNode {
         if (!v.isValid) errors.push(...v.errors);
 
         const keyType = normalizeSemanticTypeName(getSemanticNodeType(this.keyExpression));
-        if (keyType && (isSemanticCollectionType(keyType) || isSemanticDictionaryType(keyType) || isSemanticBusinessObjectType(keyType))) {
-            errors.push(`Distinct去重键必须为非实体类型，当前返回: ${formatTypeName(keyType)}`);
+        if (keyType && (isSemanticDictionaryType(keyType) || isSemanticBusinessObjectType(keyType))) {
+            errors.push(`Distinct去重键必须返回标量或标量列表，当前返回: ${formatTypeName(keyType)}`);
         }
 
         return { isValid: errors.length === 0, errors };

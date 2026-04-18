@@ -218,7 +218,7 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (!_options.RequireJoinCodeForReplayReads) return true;
 
-            var roomResult = _matchService.Get(gameId);
+            var roomResult = _matchService.GetByGameId(gameId);
             if (!roomResult.Success || roomResult.Room == null)
             {
                 // No active room (ended or expired) -> allow reads for now.

@@ -122,7 +122,39 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.True(result.Success);
             var evt = Assert.Single(result.GeneratedEvents.OfType<AddEmblemEvent>());
             Assert.Equal(player1Id, evt.TargetPlayer?.PlayerId);
-            Assert.Equal(1, evt.CardsToAdd.Count);
+            Assert.Single(evt.CardsToAdd);
+        }
+
+        [Fact]
+        public void AddEmblem_DefinitionMode_AddsFaithCards()
+        {
+            var serviceProvider = BuildServiceProvider();
+            var player1Id = Guid.NewGuid();
+            var gameState = BuildGameState(player1Id, Guid.NewGuid());
+            SetCardDefinition(410, CardType.Faith);
+
+            var effectConfig = new EffectConfig { Type = EffectType.AddEmblem };
+            var effect = new Effect(effectConfig, player1Id, new List<TargetInfo>(), null, Guid.NewGuid(), null);
+            var parameters = new AddEmblemEffectParams
+            {
+                CardDefinitionId = new List<int> { 410 },
+                Amount = 1,
+                CardSourceMode = CardSourceMode.Definition,
+                PlayerScope = PlayerScope.Self
+            };
+
+            var handler = new AddEmblemEffectHandler(
+                NullLogger<AddEmblemEffectHandler>.Instance,
+                new TargetProcessingService(NullLogger<TargetProcessingService>.Instance),
+                BuildCardFactory());
+
+            using var context = BuildContext(gameState, player1Id, serviceProvider);
+            var result = handler.Apply(effect, context, parameters);
+
+            Assert.True(result.Success);
+            var evt = Assert.Single(result.GeneratedEvents.OfType<AddEmblemEvent>());
+            Assert.Equal(player1Id, evt.TargetPlayer?.PlayerId);
+            Assert.Single(evt.CardsToAdd);
         }
 
         [Fact]

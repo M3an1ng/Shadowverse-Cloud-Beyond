@@ -139,19 +139,19 @@ namespace ShadowverseBeyond.Server.Dtos
         public bool CanAttack { get; set; }
 
         /// <summary>
-        /// Indicates whether this card has an Act (Activated) ability.
-        /// </summary>
-        public bool HasActAbility { get; set; }
-
-        /// <summary>
         /// Act ability summaries for action button rendering.
         /// </summary>
         public List<AbilityActionSummaryDto> ActAbilities { get; set; } = new();
 
         /// <summary>
-        /// The owner's turn number when this card last used Act. Null if never used.
+        /// Number of Act activations used this turn.
         /// </summary>
-        public int? ActLastUsedTurnNumber { get; set; }
+        public int ActsThisTurn { get; set; }
+
+        /// <summary>
+        /// Maximum number of Act activations allowed per turn.
+        /// </summary>
+        public int MaxActsPerTurn { get; set; } = 1;
 
         /// <summary>
         /// Fusion ability summaries for action button rendering.
@@ -164,15 +164,25 @@ namespace ShadowverseBeyond.Server.Dtos
         public List<CardInstanceDto> FusedCards { get; set; } = new();
 
         /// <summary>
+        /// Number of Fusion activations used this turn.
+        /// </summary>
+        public int FusionsThisTurn { get; set; }
+
+        /// <summary>
+        /// Maximum number of Fusion activations allowed per turn.
+        /// </summary>
+        public int MaxFusionsPerTurn { get; set; } = 1;
+
+        /// <summary>
         /// Number of attacks made by this follower instance this turn.
         /// Relevant primarily for followers on the field.
         /// </summary>
         public int AttacksThisTurn { get; set; }
 
         /// <summary>
-        /// How many turns this instance has been on the field. 0 means it was just played.
+        /// How many turns this instance has stayed in its current zone. 0 means it just entered that zone.
         /// </summary>
-        public int FieldTurn { get; set; }
+        public int ZoneStayTurn { get; set; }
 
         /// <summary>
         /// Maximum attack of the instance (including buffs).
@@ -300,6 +310,10 @@ namespace ShadowverseBeyond.Server.Dtos
             IsSuperEvolved = false;
             CanAttack = false; // Usually false initially (unless Rush etc.)
             AttacksThisTurn = 0;
+            ActsThisTurn = 0;
+            MaxActsPerTurn = 1;
+            FusionsThisTurn = 0;
+            MaxFusionsPerTurn = 1;
             var hasCountdown = definition.Keywords?.Any(k => string.Equals(k, nameof(CardKeyword.Countdown), StringComparison.OrdinalIgnoreCase)) ?? false;
             CurrentCountdown = hasCountdown ? definition.Countdown : null;
             Zone = initialZone;

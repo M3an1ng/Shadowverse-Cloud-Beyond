@@ -3,6 +3,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Entities;
 using Xunit;
 
 namespace ShadowverseBeyond.Server.Tests
@@ -40,6 +41,14 @@ namespace ShadowverseBeyond.Server.Tests
                     {
                         Tribe = "Reanimate"
                     }
+                },
+                ActionUsageLimitModifiers = new List<ActionUsageLimitModifierConfig>
+                {
+                    new ActionUsageLimitModifierConfig
+                    {
+                        ActionType = CardActionUsageType.Attack,
+                        Value = new StaticValueConfig { Value = 2 }
+                    }
                 }
             };
 
@@ -55,11 +64,16 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(legacyTemplate.StatModifiers.Count, config.StatModifiers.Count);
             Assert.Equal(legacyTemplate.KeywordModifiers.Count, config.KeywordModifiers.Count);
             Assert.Equal(legacyTemplate.TribeModifiers.Count, config.TribeModifiers.Count);
+            Assert.Equal(legacyTemplate.ActionUsageLimitModifiers.Count, config.ActionUsageLimitModifiers.Count);
             Assert.Equal(legacyTemplate.StatModifiers[0].Stat, config.StatModifiers[0].Stat);
             Assert.Equal(legacyTemplate.StatModifiers[0].Layer, config.StatModifiers[0].Layer);
             Assert.Equal(legacyTemplate.KeywordModifiers[0].Keyword, config.KeywordModifiers[0].Keyword);
             Assert.Equal(legacyTemplate.KeywordModifiers[0].Operation, config.KeywordModifiers[0].Operation);
             Assert.Equal(legacyTemplate.TribeModifiers[0].Tribe, config.TribeModifiers[0].Tribe);
+            Assert.Equal(legacyTemplate.ActionUsageLimitModifiers[0].ActionType, config.ActionUsageLimitModifiers[0].ActionType);
+            var templateActionValue = Assert.IsType<StaticValueConfig>(legacyTemplate.ActionUsageLimitModifiers[0].Value);
+            var configActionValue = Assert.IsType<StaticValueConfig>(config.ActionUsageLimitModifiers[0].Value);
+            Assert.Equal(templateActionValue.Value, configActionValue.Value);
         }
     }
 }

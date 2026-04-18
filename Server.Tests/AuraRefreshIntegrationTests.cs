@@ -264,6 +264,43 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.NotEmpty(harness.GameState.BuffManager.GetBuffsForCard(target.InstanceId));
         }
 
+        [Fact]
+        public async Task AuraConfig_action_usage_limit_buff_updates_target_attack_limit()
+        {
+            using var harness = new AuraTestHarness();
+            var source = harness.CreateCard(SourceDefinitionId, harness.Player1, CardZone.Field);
+            var target = harness.CreateCard(FollowerDefinitionId, harness.Player1, CardZone.Field);
+            target.ZoneStayTurn = 1;
+
+            var auraConfig = new AuraConfig
+            {
+                BuffConfigs = new List<BuffConfig>
+                {
+                    new BuffConfig
+                    {
+                        DurationType = DurationType.Permanent,
+                        DurationParameter = new StaticValueConfig { Value = 0 },
+                        ActionUsageLimitModifiers = new List<ActionUsageLimitModifierConfig>
+                        {
+                            new ActionUsageLimitModifierConfig
+                            {
+                                ActionType = CardActionUsageType.Attack,
+                                Value = new StaticValueConfig { Value = 2 }
+                            }
+                        }
+                    }
+                }
+            };
+
+            var ability = harness.RegisterAbility(source, "AuraActionUsage", BuildFollowerTargets(), null, new List<AuraConfig> { auraConfig });
+
+            var registerResult = harness.RegisterAura(auraConfig, ability, source);
+            Assert.True(registerResult.Success);
+            await harness.ApplyGeneratedEventsAsync(registerResult);
+
+            Assert.Equal(2, target.MaxAttacksPerTurn);
+        }
+
         private static AuraConfig BuildAuraConfig(IEnumerable<EventType> eventTypes, TriggerTiming timing, bool canStack = false)
         {
             return new AuraConfig

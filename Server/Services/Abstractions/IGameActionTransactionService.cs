@@ -12,6 +12,8 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     {
         public bool IsSuccess { get; protected set; }
         public string? ErrorMessage { get; protected set; }
+        public virtual bool CanContinue => IsSuccess;
+        public bool ShouldStop => !CanContinue;
 
         public static TransactionResult Success() => new TransactionResult { IsSuccess = true };
         public static TransactionResult Failure(string message) => new TransactionResult { IsSuccess = false, ErrorMessage = message };
@@ -24,6 +26,7 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     {
         public bool IsCancelled { get; private set; }
         public IReadOnlyList<IGameEvent> ProcessedEvents { get; private set; } = new List<IGameEvent>();
+        public override bool CanContinue => IsSuccess && !IsCancelled;
 
         public static PausableTransactionResult Success(IReadOnlyList<IGameEvent> processedEvents) => new PausableTransactionResult { IsSuccess = true, ProcessedEvents = processedEvents };
         public new static PausableTransactionResult Failure(string message) => new PausableTransactionResult { IsSuccess = false, ErrorMessage = message };

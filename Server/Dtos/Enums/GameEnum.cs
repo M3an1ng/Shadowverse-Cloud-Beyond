@@ -121,7 +121,13 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         /// Represents a crest/emblem card stored in the Emblem zone.
         /// </summary>
         [Description("纹章")]
-        Crest
+        Crest,
+
+        /// <summary>
+        /// Represents a faith card stored in the Emblem zone.
+        /// </summary>
+        [Description("信仰")]
+        Faith
     }
 
     /// <summary>
@@ -152,8 +158,23 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
     /// </summary>
     public enum DeckEnvironment
     {
-        [Description("默认环境")]
-        Open = 0
+        [Description("指定")]
+        Rotation = 0,
+        [Description("无限制")]
+        Unlimited = 1,
+        [Description("开放")]
+        Open = 2,
+    }
+
+    /// <summary>
+    /// Represents the deck rule that defines deck construction and match rules.
+    /// </summary>
+    public enum DeckRule
+    {
+        [Description("传统对战")]
+        Standard = 0,
+        [Description("混合职业")]
+        DualClass = 1
     }
 
     /// <summary>

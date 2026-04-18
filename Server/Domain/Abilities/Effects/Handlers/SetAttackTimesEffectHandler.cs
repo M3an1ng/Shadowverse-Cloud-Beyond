@@ -30,6 +30,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         public override GameStateActionResult Apply(Effect effect, GameContext context, SetAttackTimesEffectParams parameters)
         {
             const string effectName = "SetAttackTimesEffect";
+            var effectKey = BuildEffectKey(effect);
 
             Func<TargetInfo, GameContext, DomainOperationResult> action =
                 (targetInfo, _) =>
@@ -48,7 +49,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var result = new DomainOperationResult { Success = true };
-                    result.GeneratedEvents.Add(new AttackTimesUpdatedEvent(card, parameters.MaxAttacksPerTurn));
+                    result.GeneratedEvents.Add(new AttackTimesUpdatedEvent(card, parameters.MaxAttacksPerTurn, effectKey));
                     return result;
                 };
 
@@ -64,6 +65,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             }
 
             return serviceResult;
+        }
+
+        private static string? BuildEffectKey(Effect effect)
+        {
+            if (!effect.sourceAbilityId.HasValue)
+            {
+                return null;
+            }
+
+            return $"{effect.sourceAbilityId.Value:N}:{effect.EffectIndex}";
         }
     }
 }

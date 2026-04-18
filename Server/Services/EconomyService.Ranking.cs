@@ -1,5 +1,6 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Services;
 
@@ -20,7 +21,7 @@ public partial class EconomyService
         return UserRankDto.FromEntities(userEconomy, userRanking, userDailyReward);
     }
 
-    public async Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId)
+    public async Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId, string? environment = null, string? deckRule = null)
     {
         if (!await EnsurePersistedUserAsync(userId, nameof(GetMetaProgressionStateAsync)))
         {
@@ -28,19 +29,96 @@ public partial class EconomyService
             {
                 UserId = userId,
                 Rank = null,
-                Quests = new List<UserQuestDto>()
+                Quests = new List<UserQuestDto>(),
+                ClassStats = new List<UserClassWinStatsDto>()
             };
         }
 
         var rank = await GetUserRankAsync(userId);
         var quests = await GetUserQuestsAsync(userId);
+        var environmentCode = ResolveWinStatsEnvironmentCode(environment);
+        var deckRuleCode = ResolveWinStatsDeckRuleCode(deckRule);
+        var participantFactsQuery = _context.GameParticipantStatsFacts
+            .AsNoTracking()
+            .Where(item => item.PlayerId == userId && item.IsOfficial);
+        if (environmentCode.HasValue)
+        {
+            participantFactsQuery = participantFactsQuery.Where(item => (int)item.Environment == environmentCode.Value);
+        }
+        if (deckRuleCode.HasValue)
+        {
+            participantFactsQuery = participantFactsQuery.Where(item => (int)item.Rule == deckRuleCode.Value);
+        }
+
+        var classStats = await participantFactsQuery
+            .GroupBy(item => item.DeckClass)
+            .OrderBy(group => group.Key)
+            .Select(group => new UserClassWinStatsDto
+            {
+                DeckClass = group.Key.ToString(),
+                TotalGames = group.Count(),
+                TotalWins = group.Sum(item => item.IsWinner ? 1 : 0)
+            })
+            .ToListAsync();
 
         return new MetaProgressionStateDto
         {
             UserId = userId,
             Rank = rank,
-            Quests = quests
+            Quests = quests,
+            ClassStats = classStats
         };
+    }
+
+    private static int? ResolveWinStatsEnvironmentCode(string? environment)
+    {
+        var key = string.IsNullOrWhiteSpace(environment) ? nameof(DeckEnvironment.Rotation) : environment.Trim();
+        if (string.Equals(key, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (Enum.TryParse<DeckEnvironment>(key, true, out var parsedEnvironment)
+            && Enum.IsDefined(typeof(DeckEnvironment), parsedEnvironment))
+        {
+            return (int)parsedEnvironment;
+        }
+
+        if (int.TryParse(key, out var parsedValue)
+            && Enum.IsDefined(typeof(DeckEnvironment), parsedValue))
+        {
+            return parsedValue;
+        }
+
+        return (int)DeckEnvironment.Rotation;
+    }
+
+    private static int? ResolveWinStatsDeckRuleCode(string? deckRule)
+    {
+        if (string.IsNullOrWhiteSpace(deckRule))
+        {
+            return null;
+        }
+
+        var key = deckRule.Trim();
+        if (string.Equals(key, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (Enum.TryParse<DeckRule>(key, true, out var parsedRule)
+            && Enum.IsDefined(typeof(DeckRule), parsedRule))
+        {
+            return (int)parsedRule;
+        }
+
+        if (int.TryParse(key, out var parsedValue)
+            && Enum.IsDefined(typeof(DeckRule), parsedValue))
+        {
+            return parsedValue;
+        }
+
+        return null;
     }
 
     public async Task<bool> UpdateUserRankAsync(Guid userId, bool isWin)
@@ -105,3 +183,6 @@ public partial class EconomyService
 
     #endregion
 }
+
+
+

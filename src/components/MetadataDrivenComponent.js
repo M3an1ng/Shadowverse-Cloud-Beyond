@@ -49,6 +49,7 @@ export class MetadataDrivenComponent {
             Boolean: '布尔',
             String: '文本',
             NonEntity: '非实体',
+            ScalarOrScalarList: '标量或标量列表',
             Guid: 'ID',
             DateTime: '时间',
             CardInstance: '卡牌',

@@ -15,6 +15,7 @@ public class UsersController : ControllerBase
     private const int DefaultListLimit = 50;
     private const int MaxListLimit = 200;
     private const int MinPasswordLength = 6;
+    private const int DefaultInitialCoins = 1000;
 
     private readonly ApplicationDbContext _db;
     private readonly IWebHostEnvironment _environment;
@@ -78,7 +79,18 @@ public class UsersController : ControllerBase
             .ThenBy(u => u.Username)
             .Take(take)
             .ToListAsync(cancellationToken);
-        var users = entities.Select(ToUserSummary).ToList();
+        var userIds = entities.Select(u => u.Id).ToList();
+        var userCoinsMap = await _db.UserEconomies
+            .AsNoTracking()
+            .Where(e => userIds.Contains(e.UserId))
+            .ToDictionaryAsync(e => e.UserId, e => e.Coins, cancellationToken);
+        var users = entities.Select(user =>
+        {
+            var coins = userCoinsMap.TryGetValue(user.Id, out var value)
+                ? value
+                : DefaultInitialCoins;
+            return ToUserSummary(user, coins);
+        }).ToList();
 
         return Ok(new UserListResponse
         {
@@ -142,6 +154,79 @@ public class UsersController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
 
         return Ok(ToUserSummary(target));
+    }
+
+    [HttpPut("{userId:guid}/coins")]
+    [ProducesResponseType(typeof(UpdateUserCoinsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UpdateUserCoinsResponse>> UpdateUserCoins(
+        Guid userId,
+        [FromBody] UpdateUserCoinsRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request == null)
+        {
+            return BadRequest("Request body is required.");
+        }
+
+        if (request.ActorUserId == Guid.Empty)
+        {
+            return BadRequest("actorUserId is required.");
+        }
+
+        if (request.Coins < 0)
+        {
+            return BadRequest("coins must be greater than or equal to 0.");
+        }
+
+        var actor = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == request.ActorUserId, cancellationToken);
+        if (!CanManageUsers(actor))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can update user coins.");
+        }
+
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (target == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        var utcNow = DateTime.UtcNow;
+        var userEconomy = await _db.UserEconomies.FirstOrDefaultAsync(e => e.UserId == userId, cancellationToken);
+        var oldCoins = DefaultInitialCoins;
+        if (userEconomy == null)
+        {
+            userEconomy = new UserEconomy
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                Coins = request.Coins,
+                CreatedAt = utcNow,
+                UpdatedAt = utcNow
+            };
+            _db.UserEconomies.Add(userEconomy);
+        }
+        else
+        {
+            oldCoins = userEconomy.Coins;
+            userEconomy.Coins = request.Coins;
+            userEconomy.UpdatedAt = utcNow;
+        }
+
+        target.UpdatedAt = utcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new UpdateUserCoinsResponse
+        {
+            UserId = userId,
+            OldCoins = oldCoins,
+            Coins = userEconomy.Coins,
+            UpdatedAt = userEconomy.UpdatedAt
+        });
     }
 
     [HttpPut("{userId:guid}/password")]
@@ -284,7 +369,7 @@ public class UsersController : ControllerBase
         return true;
     }
 
-    private static UserSummaryResponse ToUserSummary(User user)
+    private static UserSummaryResponse ToUserSummary(User user, int coins = DefaultInitialCoins)
     {
         return new UserSummaryResponse
         {
@@ -292,6 +377,7 @@ public class UsersController : ControllerBase
             Username = user.Username,
             Role = user.Role.ToString(),
             PermissionLevel = ResolvePermissionLevel(user.Role),
+            Coins = coins,
             IsActive = user.IsActive,
             CreatedAt = user.CreatedAt,
             UpdatedAt = user.UpdatedAt,
@@ -349,6 +435,20 @@ public class UsersController : ControllerBase
         public string Role { get; set; } = string.Empty;
     }
 
+    public class UpdateUserCoinsRequest
+    {
+        public Guid ActorUserId { get; set; }
+        public int Coins { get; set; }
+    }
+
+    public class UpdateUserCoinsResponse
+    {
+        public Guid UserId { get; set; }
+        public int OldCoins { get; set; }
+        public int Coins { get; set; }
+        public DateTime UpdatedAt { get; set; }
+    }
+
     public class ResetUserPasswordRequest
     {
         public Guid ActorUserId { get; set; }
@@ -373,6 +473,7 @@ public class UsersController : ControllerBase
         public string Username { get; set; } = string.Empty;
         public string Role { get; set; } = UserRole.Player.ToString();
         public int PermissionLevel { get; set; }
+        public int Coins { get; set; } = DefaultInitialCoins;
         public bool IsActive { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

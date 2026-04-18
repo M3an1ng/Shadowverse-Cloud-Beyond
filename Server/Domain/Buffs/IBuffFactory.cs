@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities; // For Ability class
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Constants;
@@ -36,7 +37,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<StatModification> statModifications,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn);
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// 创建系统属性修改Buff（无来源能力）。
@@ -52,7 +54,26 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<StatModification> statModifications,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn);
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
+
+        Buff CreateActionUsageLimitBuff(
+            CardInstance target,
+            CardInstance? sourceCard,
+            IAbility sourceAbility,
+            List<ActionUsageLimitModification> modifications,
+            DurationType durationType,
+            int? durationParameter,
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
+
+        Buff CreateSystemActionUsageLimitBuff(
+            CardInstance target,
+            List<ActionUsageLimitModification> modifications,
+            DurationType durationType,
+            int? durationParameter,
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// 创建关键字Buff
@@ -72,7 +93,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywords,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn);
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// 创建系统关键字Buff（无来源能力）。
@@ -88,7 +110,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywords,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn);
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// 创建复合Buff（包含多种效果）
@@ -109,7 +132,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             DurationType durationType,
             int? durationParameter,
             int currentTurn,
-            string? definitionId = null);
+            string? definitionId = null,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// 根据BuffDefinition创建Buff实例（使用缓存）
@@ -146,7 +170,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywordsToRemove,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn);
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// 创建系统关键字移除Buff（无来源能力）。
@@ -160,7 +185,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             List<CardKeyword> keywordsToRemove,
             DurationType durationType,
             int? durationParameter,
-            int currentTurn);
+            int currentTurn,
+            ConditionConfig? removeCondition = null);
 
     }
 }

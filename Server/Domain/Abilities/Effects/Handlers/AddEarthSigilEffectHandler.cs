@@ -83,7 +83,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     var summonResult = new DomainOperationResult { Success = true };
                     var expectedPosition = player.Field.Count + 1;
-                    summonResult.GeneratedEvents.Add(new SummonEvent(player, token, expectedPosition));
+                    summonResult.GeneratedEvents.Add(new SummonEvent(player, token, expectedPosition, EventReasonSource.Ability));
                     return summonResult;
                 };
 

@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
@@ -18,7 +18,11 @@ public class UserDeck
 
     public CardClass Class { get; set; } = CardClass.Neutral;
 
-    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Open;
+    public CardClass? SecondaryClass { get; set; }
+
+    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Rotation;
+
+    public DeckRule Rule { get; set; } = DeckRule.Standard;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -33,3 +37,5 @@ public class UserDeck
         UpdatedAt = DateTime.UtcNow;
     }
 }
+
+

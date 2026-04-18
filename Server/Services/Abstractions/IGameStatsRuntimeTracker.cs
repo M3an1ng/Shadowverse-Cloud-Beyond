@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Entities;
+﻿using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
@@ -23,8 +23,11 @@ public sealed record ParticipantRuntimeStatsSnapshot(
     bool IsFirstPlayer,
     CardClass DeckClass,
     DeckEnvironment Environment,
+    DeckRule Rule,
     Guid? UserDeckId,
     string DeckShapeHash,
     IReadOnlyDictionary<int, int> InitialDeckCardCounts,
     IReadOnlySet<int> DrawnCardDefinitionIds,
     IReadOnlySet<int> PlayedCardDefinitionIds);
+
+

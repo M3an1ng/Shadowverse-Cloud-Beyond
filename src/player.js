@@ -34,6 +34,7 @@ export function createPlayer(id, isAI = false) {
         pp: 0,         // 当前 Play Points
         maxPP: 0,      // 当前回合 Play Points 上限
         ppBoostUsesAvailable: 0, // PP+1 可用次数
+        ppBoostArmed: false, // PP+1 是否已预留
         ep: 0,         // 当前 Evolution Points
         maxEP: 0,      // EP 上限 (先手2, 后手2)
         sep: 0,        // 当前 Super Evolution Points
@@ -52,6 +53,7 @@ export function createPlayer(id, isAI = false) {
         graveyardCount: 0, // 墓场计数
         bloodPool: 0, // 血池
         combo: 0, // 连击数
+        rally: 0, // 连携数
         counters: {}, // 玩家变量映射
         counterDisplayNames: {}, // 玩家变量显示名
 

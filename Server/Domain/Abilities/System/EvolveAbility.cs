@@ -31,7 +31,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public string Name => "Evolve";
         private static readonly IReadOnlyList<AbilityKeywordConfig> SystemKeywords = Array.Empty<AbilityKeywordConfig>();
         public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => SystemKeywords;
-        public AbilityKeyword PrimaryKeyword => AbilityKeyword.None;
+        public IReadOnlyList<AbilityKeyword> Keywords => Array.Empty<AbilityKeyword>();
         public string KeywordSummary => AbilityKeyword.None.ToString();
         public AbilityType Type => AbilityType.Triggered;
         public List<Target> Targets { get; } = new List<Target>();

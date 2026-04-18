@@ -6,6 +6,7 @@
 //
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities; // Added ShadowverseBeyond prefix
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Persistence.Entities;
@@ -121,9 +122,24 @@ public class ApplicationDbContext : DbContext
   public DbSet<UserDeckCard> UserDeckCards { get; set; } = null!;
 
   /// <summary>
+  /// Gets or sets the DbSet for DeckCardCopyLimitPolicy entities.
+  /// </summary>
+  public DbSet<DeckCardCopyLimitPolicy> DeckCardCopyLimitPolicies { get; set; } = null!;
+
+  /// <summary>
   /// Gets or sets the DbSet for AbilityDslFavorite entities. Represents the AbilityDslFavorites table.
   /// </summary>
   public DbSet<AbilityDslFavorite> AbilityDslFavorites { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for CardComment entities. Represents the CardComments table.
+  /// </summary>
+  public DbSet<CardComment> CardComments { get; set; } = null!;
+
+  /// <summary>
+  /// Gets or sets the DbSet for CardVote entities. Represents the CardVotes table.
+  /// </summary>
+  public DbSet<CardVote> CardVotes { get; set; } = null!;
 
   /// <summary>
   /// Gets or sets the DbSet for QuestDefinition entities. Represents the QuestDefinitions table.
@@ -150,6 +166,8 @@ public class ApplicationDbContext : DbContext
   /// </summary>
   public DbSet<BuffDefinition> BuffDefinitions { get; set; } = null!;
 
+  public DbSet<TribeDefinition> TribeDefinitions { get; set; } = null!;
+
   /// <summary>
   /// Gets or sets the DbSet for ReplayEventRecord entities. Represents the ReplayEvents table.
   /// </summary>
@@ -173,6 +191,7 @@ public class ApplicationDbContext : DbContext
     ConfigureCardDefinition(modelBuilder);
     ConfigureCardAbility(modelBuilder);
     ConfigureBuffDefinition(modelBuilder);
+    ConfigureTribeDefinition(modelBuilder);
 
     // 配置用户管理实体
     ConfigureUserEntities(modelBuilder);
@@ -190,6 +209,7 @@ public class ApplicationDbContext : DbContext
     ConfigureWinrateStatsEntities(modelBuilder);
 
     ConfigureDslFavoriteEntities(modelBuilder);
+    ConfigureCardCommunityEntities(modelBuilder);
 
     ConfigureReplayEntities(modelBuilder);
   }
@@ -415,7 +435,7 @@ public class ApplicationDbContext : DbContext
       // Idempotency for critical reward paths (avoid duplicate grants on retries/replays).
       entity.HasIndex(e => new { e.UserId, e.Type, e.RelatedEntityId })
             .IsUnique()
-            .HasFilter("[RelatedEntityId] IS NOT NULL AND [Type] IN (1, 2, 3, 4)");
+            .HasFilter("[RelatedEntityId] IS NOT NULL AND [Type] IN (1, 2, 3, 4, 8, 9)");
 
       entity.Property(e => e.Description).HasMaxLength(500);
       entity.Property(e => e.RelatedEntityId).HasMaxLength(100);
@@ -578,7 +598,8 @@ public class ApplicationDbContext : DbContext
       entity.HasIndex(e => e.UpdatedAt);
 
       entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
-      entity.Property(e => e.Environment).HasDefaultValue(DeckEnvironment.Open);
+      entity.Property(e => e.Environment).HasDefaultValue(DeckEnvironment.Rotation);
+      entity.Property(e => e.Rule).HasDefaultValue(DeckRule.Standard);
 
       entity.HasOne(e => e.User)
             .WithMany(u => u.Decks)
@@ -598,6 +619,26 @@ public class ApplicationDbContext : DbContext
             .WithMany(d => d.Cards)
             .HasForeignKey(e => e.DeckId)
             .OnDelete(DeleteBehavior.Cascade);
+
+      entity.HasOne(e => e.CardDefinition)
+            .WithMany()
+            .HasForeignKey(e => e.CardDefinitionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
+
+    modelBuilder.Entity<DeckCardCopyLimitPolicy>(entity =>
+    {
+      entity.ToTable("DeckCardCopyLimitPolicies");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => new { e.Environment, e.Rule, e.CardDefinitionId }).IsUnique();
+      entity.HasIndex(e => e.UpdatedAtUtc);
+
+      entity.Property(e => e.Environment).HasDefaultValue(DeckEnvironment.Rotation);
+      entity.Property(e => e.Rule).HasDefaultValue(DeckRule.Standard);
+      entity.Property(e => e.MaxCopies)
+            .HasDefaultValue(GameConstants.Cards.MaxCopiesPerCard)
+            .ValueGeneratedNever();
 
       entity.HasOne(e => e.CardDefinition)
             .WithMany()
@@ -644,6 +685,57 @@ public class ApplicationDbContext : DbContext
     });
   }
 
+  private void ConfigureCardCommunityEntities(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<CardComment>(entity =>
+    {
+      entity.ToTable("CardComments");
+      entity.HasKey(e => e.Id);
+
+      entity.HasIndex(e => e.UserId);
+      entity.HasIndex(e => new { e.CardDefinitionId, e.CreatedAt });
+
+      entity.Property(e => e.Content)
+        .HasMaxLength(500)
+        .IsRequired();
+
+      entity.HasOne(e => e.User)
+        .WithMany()
+        .HasForeignKey(e => e.UserId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+      entity.HasOne(e => e.CardDefinition)
+        .WithMany()
+        .HasForeignKey(e => e.CardDefinitionId)
+        .OnDelete(DeleteBehavior.Cascade);
+    });
+
+    modelBuilder.Entity<CardVote>(entity =>
+    {
+      entity.ToTable("CardVotes");
+      entity.HasKey(e => e.Id);
+
+      entity.Property(e => e.VoteType)
+        .HasConversion<int>()
+        .IsRequired();
+
+      entity.HasIndex(e => e.UserId);
+      entity.HasIndex(e => new { e.CardDefinitionId, e.VoteType });
+      entity.HasIndex(e => new { e.CardDefinitionId, e.UserId }).IsUnique();
+      entity.HasCheckConstraint("CK_CardVotes_VoteType", "VoteType IN (1, -1)");
+
+      entity.HasOne(e => e.User)
+        .WithMany()
+        .HasForeignKey(e => e.UserId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+      entity.HasOne(e => e.CardDefinition)
+        .WithMany()
+        .HasForeignKey(e => e.CardDefinitionId)
+        .OnDelete(DeleteBehavior.Cascade);
+    });
+  }
+
   private void ConfigureMetaProgressionEntities(ModelBuilder modelBuilder)
   {
     modelBuilder.Entity<GameSettlement>(entity =>
@@ -682,6 +774,37 @@ public class ApplicationDbContext : DbContext
 
       // 配置乐观锁
       entity.Property(e => e.RowVersion).IsRowVersion();
+    });
+  }
+
+  private void ConfigureTribeDefinition(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<TribeDefinition>(entity =>
+    {
+      entity.ToTable("TribeDefinitions");
+      entity.HasKey(e => e.Name);
+
+      entity.Property(e => e.Name)
+        .HasMaxLength(100)
+        .IsRequired();
+
+      entity.Property(e => e.Behavior)
+        .HasConversion<int>();
+
+      entity.Property(e => e.Aliases)
+        .HasConversion(
+          v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+          v => string.IsNullOrWhiteSpace(v)
+            ? new List<string>()
+            : JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new List<string>())
+        .Metadata.SetValueComparer(
+          new ValueComparer<List<string>>(
+            (c1, c2) => (c1 ?? new List<string>()).SequenceEqual(c2 ?? new List<string>()),
+            c => c == null ? 0 : c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+            c => c == null ? new List<string>() : c.ToList()));
+
+      entity.HasIndex(e => e.IsEnabled);
+      entity.HasIndex(e => new { e.IsReserved, e.IsEnabled });
     });
   }
 
@@ -758,10 +881,11 @@ public class ApplicationDbContext : DbContext
       entity.HasKey(e => e.Id);
 
       entity.HasIndex(e => new { e.GameId, e.PlayerId }).IsUnique();
-      entity.HasIndex(e => new { e.Environment, e.EndedAtUtc });
+      entity.HasIndex(e => new { e.Environment, e.Rule, e.EndedAtUtc });
       entity.HasIndex(e => e.IsOfficial);
 
       entity.Property(e => e.GameId).HasMaxLength(100).IsRequired();
+      entity.Property(e => e.Rule).HasDefaultValue(DeckRule.Standard);
       entity.Property(e => e.DeckShapeHash).HasMaxLength(128).IsRequired();
       entity.Property(e => e.InitialDeckCardCountsJson).HasColumnType("TEXT").IsRequired();
       entity.Property(e => e.DrawnCardIdsJson).HasColumnType("TEXT").IsRequired();
@@ -773,8 +897,9 @@ public class ApplicationDbContext : DbContext
       entity.ToTable("CardStatsAggs");
       entity.HasKey(e => e.Id);
 
-      entity.HasIndex(e => new { e.Environment, e.CardDefinitionId }).IsUnique();
+      entity.HasIndex(e => new { e.Environment, e.Rule, e.CardDefinitionId }).IsUnique();
       entity.HasIndex(e => e.UpdatedAtUtc);
+      entity.Property(e => e.Rule).HasDefaultValue(DeckRule.Standard);
     });
 
     modelBuilder.Entity<DeckStatsAgg>(entity =>
@@ -782,9 +907,10 @@ public class ApplicationDbContext : DbContext
       entity.ToTable("DeckStatsAggs");
       entity.HasKey(e => e.Id);
 
-      entity.HasIndex(e => new { e.Environment, e.DeckShapeHash }).IsUnique();
+      entity.HasIndex(e => new { e.Environment, e.Rule, e.DeckShapeHash }).IsUnique();
       entity.HasIndex(e => e.UpdatedAtUtc);
 
+      entity.Property(e => e.Rule).HasDefaultValue(DeckRule.Standard);
       entity.Property(e => e.DeckShapeHash).HasMaxLength(128).IsRequired();
     });
 
@@ -801,7 +927,7 @@ public class ApplicationDbContext : DbContext
 
   private static string SerializeEnvironments(List<DeckEnvironment>? environments)
   {
-    var normalized = environments == null || environments.Count == 0
+    var normalized = environments == null
       ? new List<DeckEnvironment> { DeckEnvironment.Open }
       : environments.Distinct().ToList();
     return JsonSerializer.Serialize(normalized);
@@ -833,15 +959,17 @@ public class ApplicationDbContext : DbContext
     try
     {
       var parsed = JsonSerializer.Deserialize<List<DeckEnvironment>>(trimmed);
-      if (parsed != null && parsed.Count > 0)
+      if (parsed != null)
       {
-        return parsed;
+        return parsed.Distinct().ToList();
       }
     }
     catch
     {
     }
 
-    return new List<DeckEnvironment> { DeckEnvironment.Open };
+      return new List<DeckEnvironment> { DeckEnvironment.Open };
   }
 }
+
+

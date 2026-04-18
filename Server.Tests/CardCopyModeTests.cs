@@ -103,11 +103,14 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 Damage = 4,
                 IsEvolved = true,
-                FieldTurn = 2,
+                ZoneStayTurn = 2,
                 AttacksThisTurn = 3,
-                MaxAttacksPerTurn = 5
+                MaxAttacksPerTurn = 5,
+                ActsThisTurn = 1,
+                MaxActsPerTurn = 2,
+                FusionsThisTurn = 1,
+                MaxFusionsPerTurn = 2
             };
-            original.AbilityState["act.lastUsedTurnNumber"] = 7;
             original.AbilityState["custom"] = 11;
             original.ApplySilence();
 
@@ -124,11 +127,13 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(original.IsEvolved, copy.IsEvolved);
             Assert.Equal(original.IsSilenced, copy.IsSilenced);
             Assert.Equal(original.MaxAttacksPerTurn, copy.MaxAttacksPerTurn);
-            Assert.Equal(0, copy.FieldTurn);
+            Assert.Equal(0, copy.ZoneStayTurn);
             Assert.Equal(0, copy.AttacksThisTurn);
-            Assert.False(copy.AbilityState.ContainsKey("act.lastUsedTurnNumber"));
+            Assert.Equal(0, copy.ActsThisTurn);
+            Assert.Equal(original.MaxActsPerTurn, copy.MaxActsPerTurn);
+            Assert.Equal(0, copy.FusionsThisTurn);
+            Assert.Equal(original.MaxFusionsPerTurn, copy.MaxFusionsPerTurn);
             Assert.Equal(11, copy.AbilityState["custom"]);
-            Assert.Null(copy.ActLastUsedTurnNumber);
             Assert.Equal(CardZone.Hand, copy.CurrentZone);
             Assert.Contains(copy, gameState.GetPlayerState(player2Id)!.Hand);
         }

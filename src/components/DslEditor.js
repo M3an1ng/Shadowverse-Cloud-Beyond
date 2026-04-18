@@ -1160,6 +1160,10 @@ export class DslEditor extends MetadataDrivenComponent {
     renderEditor() {
         this.ensureEditingPathConsistency();
 
+        if (!this.container) {
+            return;
+        }
+
         if (!this.isPipelineInline) {
             this.syncPipelineContext();
         }
@@ -1279,15 +1283,41 @@ export class DslEditor extends MetadataDrivenComponent {
         return requestParseAstApi(expression);
     }
 
-    applyParsedAst(rootNode, expression) {
-        const finalNode = this.createEncapsulatedFrom(rootNode);
-        this.virtualRoot.main = finalNode;
+    replaceMainExpression(rootNode, options = {}) {
+        if (!rootNode) {
+            this.setParseStatus("empty", "");
+            this.initializeWorkspace();
+            return false;
+        }
+
+        const {
+            expression = rootNode?.toExpression?.() || "",
+            parseState = null,
+            parseMessage = "",
+            parseErrors = []
+        } = options;
+
+        this.selectedNode = null;
+        this.virtualRoot.main = this.createEncapsulatedFrom(rootNode);
         this.workspaceAST = this.cloneAST(rootNode);
         this.astRoot = this.workspaceAST;
-        this.expression = this.astRoot?.toExpression?.() || expression;
+        this.expression = this.workspaceAST?.toExpression?.() || expression;
         this.normalizeLoadedAst();
-        this.syncMainWorkspaceContext();
-        this.setParseStatus("parsed", "解析成功");
+
+        if (parseState) {
+            this.setParseStatus(parseState, parseMessage, parseErrors);
+        }
+
+        this.enterMainEditMode();
+        return true;
+    }
+
+    applyParsedAst(rootNode, expression) {
+        this.replaceMainExpression(rootNode, {
+            expression,
+            parseState: "parsed",
+            parseMessage: "解析成功"
+        });
     }
 
     normalizeLoadedAst() {
@@ -1314,14 +1344,12 @@ export class DslEditor extends MetadataDrivenComponent {
             type: "rawText",
             rawText: expression
         });
-        const finalNode = this.createEncapsulatedFrom(rawNode);
-        this.virtualRoot.main = finalNode;
-        this.workspaceAST = this.cloneAST(rawNode);
-        this.astRoot = this.workspaceAST;
-        this.expression = this.astRoot?.toExpression?.() || expression;
-        this.maintainASTRelationships(this.virtualRoot.main);
-        this.syncMainWorkspaceContext();
-        this.setParseStatus("fallback", message, errors);
+        this.replaceMainExpression(rawNode, {
+            expression,
+            parseState: "fallback",
+            parseMessage: message,
+            parseErrors: errors
+        });
     }
 
     syncMainWorkspaceContext() {
@@ -1557,25 +1585,28 @@ export class DslEditor extends MetadataDrivenComponent {
         }
     }
 
-    insertFavoriteExpression(expression) {
-        const rootNode = this.buildAstFromExpression(expression);
-        if (!rootNode) {
+    async insertFavoriteExpression(expression) {
+        const raw = (expression ?? "").trim();
+        if (!raw) {
             this.showExpressionError("收藏表达式为空，无法插入。");
-            return;
+            return false;
         }
 
-        this.selectedNode = null;
-        this.workspaceAST = this.cloneAST(rootNode);
-        this.astRoot = this.workspaceAST;
-        this.isExpressionCompleted = false;
+        this.setParseStatus("loading", "正在加载收藏表达式...");
 
-        this.updateExpressionFromAST();
-        this.renderEditor();
+        try {
+            await this.loadExpressionWithParseApi(raw);
+        } catch (error) {
+            console.error("DslEditor: Failed to load favorite expression", error);
+            this.showExpressionError(error?.message || "收藏表达式加载失败");
+            return false;
+        }
 
         const validation = this.validateExpressionForCompletion();
         if (!validation.isValid) {
             this.showExpressionError(validation.error);
         }
+        return true;
     }
 
     removeFavoritesMenu() {
@@ -2239,21 +2270,27 @@ export class DslEditor extends MetadataDrivenComponent {
      * 添加节点 (AST重构版)
      */
     addNode(option) {
-    
-        this.selectedNode = null;
-    
         if (option.type === "complete") {
             this.handleCompleteExpression();
             return;
         }
-    
+
+        const previousSelectedNode = this.selectedNode;
+
         // 统一逻辑入口
         if (!this.astRoot || (this.astRoot.type === 'value' && this.astRoot.metadata?.type === 'empty')) {
+            this.selectedNode = null;
             this.createRootNode(option);
-        } else {
-            this.extendAST(option);
+            return;
         }
-    
+
+        const changed = this.extendAST(option);
+        if (!changed) {
+            this.selectedNode = previousSelectedNode;
+            return;
+        }
+
+        this.selectedNode = null;
         // 关键修复：统一在 addNode 的末尾触发状态更新和重新渲染
         this.triggerStateUpdate();
     }
@@ -2935,24 +2972,34 @@ export class DslEditor extends MetadataDrivenComponent {
      * 扩展属性访问
      */
     extendPropertyAccess(option) {
-        // 找到最右侧的叶子节点进行扩展
-        const rightmostNode = findRightmostLeafNode(this.astRoot);
+        const targetNode = this.resolvePropertyExtensionTarget();
+        if (!targetNode) {
+            this.showExpressionError("无法添加属性：缺少有效的扩展目标。");
+            return false;
+        }
 
-        if (rightmostNode && rightmostNode.type === 'value' && rightmostNode.metadata.type === 'context') {
-            // 从上下文对象访问属性
-            const newPath = `${rightmostNode.value}.${option.value}`;
+        const actualTarget = targetNode?.metadata?.type === 'encapsulated' && targetNode?.metadata?.innerAST
+            ? targetNode.metadata.innerAST
+            : targetNode;
+
+        if (actualTarget && actualTarget.type === 'value' && actualTarget.metadata?.type === 'context') {
+            const newPath = `${actualTarget.value}.${option.value}`;
             const newNode = createValueNode(newPath, option.returnType, {
                 type: "property",
-                contextObject: rightmostNode.value,
+                contextObject: actualTarget.value,
                 property: option.value,
                 fullPath: newPath,
                 displayName: option.label
             });
 
-            this.replaceNodeInAST(rightmostNode, newNode);
-        } else if (rightmostNode && rightmostNode.type === 'value' && rightmostNode.metadata.type === 'property') {
-            // 继续扩展属性链
-            const newPath = `${rightmostNode.value}.${option.value}`;
+            this.replaceNodeInAST(actualTarget, newNode);
+            if (this.astRoot === actualTarget) {
+                this.astRoot = newNode;
+                this.workspaceAST = newNode;
+            }
+            return true;
+        } else if (actualTarget && actualTarget.type === 'value' && actualTarget.metadata?.type === 'property' && !actualTarget.metadata?.isDynamicMemberAccess) {
+            const newPath = `${actualTarget.value}.${option.value}`;
             const newNode = createValueNode(newPath, option.returnType, {
                 type: "property",
                 fullPath: newPath,
@@ -2960,14 +3007,78 @@ export class DslEditor extends MetadataDrivenComponent {
                 displayName: option.label
             });
 
-            this.replaceNodeInAST(rightmostNode, newNode);
+            this.replaceNodeInAST(actualTarget, newNode);
 
-            // 关键修复：如果被替换的节点就是根节点，则必须更新根节点引用
-            if (this.astRoot === rightmostNode) {
+            if (this.astRoot === actualTarget) {
                 this.astRoot = newNode;
-                this.workspaceAST = newNode; // 确保 workspaceAST 也同步更新
+                this.workspaceAST = newNode;
             }
+            return true;
         }
+
+        const memberAccessNode = this.createDynamicMemberAccessNode(actualTarget, option);
+        if (!memberAccessNode) {
+            this.showExpressionError("无法添加属性：当前表达式不支持继续扩展。");
+            return false;
+        }
+
+        this.replaceNodeInAST(targetNode, memberAccessNode);
+        if (this.astRoot === targetNode || this.astRoot === actualTarget) {
+            this.astRoot = memberAccessNode;
+            this.workspaceAST = memberAccessNode;
+        }
+        return true;
+    }
+
+    resolvePropertyExtensionTarget() {
+        if (!this.astRoot) return null;
+
+        if (this.isLightWorkspace && this.lightWorkspaceFocus?.parentNode && this.lightWorkspaceFocus?.slot) {
+            return this.getSlotNode(
+                this.lightWorkspaceFocus.parentNode,
+                this.lightWorkspaceFocus.slot,
+                this.lightWorkspaceFocus.index
+            ) || this.workspaceAST || this.astRoot;
+        }
+
+        const incompleteNode = findIncompleteNode(this.astRoot);
+        if (incompleteNode) {
+            const rightmostNode = findRightmostLeafNode(this.astRoot);
+            return rightmostNode || this.astRoot;
+        }
+
+        return this.workspaceAST || this.astRoot;
+    }
+
+    formatExpressionForMemberAccess(node) {
+        if (!node) return "";
+        const rawExpression = node.toExpression?.() || node.value || "";
+        if (!rawExpression) return "";
+        if (node.type === "operator") {
+            return `(${rawExpression})`;
+        }
+        return rawExpression;
+    }
+
+    createDynamicMemberAccessNode(baseNode, option) {
+        if (!baseNode || !option?.value) {
+            return null;
+        }
+
+        const baseExpression = this.formatExpressionForMemberAccess(baseNode);
+        if (!baseExpression) {
+            return null;
+        }
+
+        const value = `${baseExpression}.${option.value}`;
+        return createValueNode(value, option.returnType || "Object", {
+            type: "property",
+            fullPath: value,
+            baseExpression,
+            property: option.value,
+            displayName: option.label || option.value,
+            isDynamicMemberAccess: true
+        });
     }
 
 
@@ -3102,6 +3213,11 @@ export class DslEditor extends MetadataDrivenComponent {
             } catch (error) {
                 console.error("DslEditor: Error maintaining AST relationships for workspaceAST:", error);
             }
+        }
+        const top = this.peekEditingPath ? this.peekEditingPath() : null;
+        const isEditingMain = top?.parentNode === this.virtualRoot && top?.slot === "main";
+        if (isEditingMain && this.workspaceAST) {
+            this.virtualRoot.main = this.createEncapsulatedFrom(this.workspaceAST);
         }
         if (this.virtualRoot.main) {
             try {

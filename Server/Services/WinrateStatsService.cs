@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
@@ -91,6 +91,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
                         EndedAtUtc = gameEndEvent.Timestamp,
                         DeckClass = participant.DeckClass,
                         Environment = participant.Environment,
+                        Rule = participant.Rule,
                         DeckShapeHash = participant.DeckShapeHash,
                         UserDeckId = participant.UserDeckId,
                         InitialDeckCardCountsJson = JsonSerializer.Serialize(participant.InitialDeckCardCounts),
@@ -124,12 +125,16 @@ public sealed class WinrateStatsService : IWinrateStatsService
         foreach (var cardDefinitionId in participant.InitialDeckCardCounts.Keys)
         {
             var cardAgg = _db.CardStatsAggs.Local.FirstOrDefault(
-                item => item.Environment == participant.Environment && item.CardDefinitionId == cardDefinitionId);
+                item => item.Environment == participant.Environment
+                    && item.Rule == participant.Rule
+                    && item.CardDefinitionId == cardDefinitionId);
 
             if (cardAgg == null)
             {
                 cardAgg = await _db.CardStatsAggs.FirstOrDefaultAsync(
-                    item => item.Environment == participant.Environment && item.CardDefinitionId == cardDefinitionId,
+                    item => item.Environment == participant.Environment
+                        && item.Rule == participant.Rule
+                        && item.CardDefinitionId == cardDefinitionId,
                     cancellationToken);
             }
 
@@ -139,6 +144,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
                 {
                     Id = Guid.NewGuid(),
                     Environment = participant.Environment,
+                    Rule = participant.Rule,
                     CardDefinitionId = cardDefinitionId
                 };
                 _db.CardStatsAggs.Add(cardAgg);
@@ -178,12 +184,16 @@ public sealed class WinrateStatsService : IWinrateStatsService
         CancellationToken cancellationToken)
     {
         var deckAgg = _db.DeckStatsAggs.Local.FirstOrDefault(
-            item => item.Environment == participant.Environment && item.DeckShapeHash == participant.DeckShapeHash);
+            item => item.Environment == participant.Environment
+                && item.Rule == participant.Rule
+                && item.DeckShapeHash == participant.DeckShapeHash);
 
         if (deckAgg == null)
         {
             deckAgg = await _db.DeckStatsAggs.FirstOrDefaultAsync(
-                item => item.Environment == participant.Environment && item.DeckShapeHash == participant.DeckShapeHash,
+                item => item.Environment == participant.Environment
+                    && item.Rule == participant.Rule
+                    && item.DeckShapeHash == participant.DeckShapeHash,
                 cancellationToken);
         }
 
@@ -193,6 +203,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
             {
                 Id = Guid.NewGuid(),
                 Environment = participant.Environment,
+                Rule = participant.Rule,
                 DeckShapeHash = participant.DeckShapeHash,
                 DeckClass = participant.DeckClass
             };
@@ -266,3 +277,5 @@ public sealed class WinrateStatsService : IWinrateStatsService
         userClassAgg.UpdatedAtUtc = DateTime.UtcNow;
     }
 }
+
+

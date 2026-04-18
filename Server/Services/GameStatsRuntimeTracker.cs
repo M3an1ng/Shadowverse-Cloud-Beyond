@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -63,6 +63,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
                     pair.Value.IsFirstPlayer,
                     pair.Value.DeckClass,
                     pair.Value.Environment,
+                    pair.Value.Rule,
                     pair.Value.UserDeckId,
                     pair.Value.DeckShapeHash,
                     new Dictionary<int, int>(pair.Value.InitialDeckCardCounts),
@@ -135,6 +136,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
             player.IsFirst,
             player.Class,
             player.Environment,
+            player.Rule,
             player.UserDeckId,
             BuildDeckShapeHash(player.Class, counts),
             counts,
@@ -215,6 +217,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
             bool isFirstPlayer,
             CardClass deckClass,
             DeckEnvironment environment,
+            DeckRule rule,
             Guid? userDeckId,
             string deckShapeHash,
             Dictionary<int, int> initialDeckCardCounts,
@@ -226,6 +229,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
             IsFirstPlayer = isFirstPlayer;
             DeckClass = deckClass;
             Environment = environment;
+            Rule = rule;
             UserDeckId = userDeckId;
             DeckShapeHash = deckShapeHash;
             InitialDeckCardCounts = initialDeckCardCounts;
@@ -238,6 +242,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
         public bool IsFirstPlayer { get; }
         public CardClass DeckClass { get; }
         public DeckEnvironment Environment { get; }
+        public DeckRule Rule { get; }
         public Guid? UserDeckId { get; }
         public string DeckShapeHash { get; }
         public Dictionary<int, int> InitialDeckCardCounts { get; }
@@ -246,3 +251,6 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
         public HashSet<int> PlayedCardDefinitionIds { get; }
     }
 }
+
+
+

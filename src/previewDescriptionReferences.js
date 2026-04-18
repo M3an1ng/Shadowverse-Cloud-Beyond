@@ -3,6 +3,10 @@ import { resolveDerivedCardMatch } from './previewDescriptionLookup.js';
 
 const EMPTY_DESCRIPTION_HTML = '<span class="text-dim"><暂无描述></span>';
 
+function normalizeCardName(value) {
+    return String(value ?? '').trim().toLowerCase();
+}
+
 function resolveField(card, keys) {
     for (const key of keys) {
         const value = card?.[key];
@@ -47,6 +51,28 @@ function buildStatsText(card) {
     return `${attack} / ${health}`;
 }
 
+function buildReferenceKey(card, fallbackName = '') {
+    const cardId = resolveField(card, ['id', 'Id', 'CardId', 'cardDefinitionId', 'CardDefinitionId']);
+    if (cardId !== null && cardId !== undefined && String(cardId).trim() !== '') {
+        return `id:${String(cardId).trim()}`;
+    }
+
+    const normalizedName = normalizeCardName(resolveField(card, ['name', 'Name']) || fallbackName);
+    return normalizedName ? `name:${normalizedName}` : null;
+}
+
+function buildReferenceChain(options = {}) {
+    const chain = Array.isArray(options.referenceChain) ? [...options.referenceChain] : [];
+    const currentKey = buildReferenceKey({
+        id: options.currentCardId,
+        name: options.currentCardName
+    });
+    if (currentKey && !chain.includes(currentKey)) {
+        chain.push(currentKey);
+    }
+    return chain;
+}
+
 function buildReferenceCardHtml(card, displayName, options) {
     const previewUrl = resolvePreviewUrl(card);
     const fallbackPreviewUrl = normalizePreviewUrl(options?.fallbackPreviewUrl);
@@ -76,6 +102,18 @@ function buildReferenceCardHtml(card, displayName, options) {
     `;
 }
 
+function buildReferenceWarningHtml(displayName, message) {
+    return `
+        <div class="preview-ref-card preview-ref-card-warning">
+            <div class="preview-ref-header no-stats">
+                <div class="preview-ref-icon is-empty"><span>!</span></div>
+                <div class="preview-ref-title">${escapeHtml(displayName)}</div>
+            </div>
+            <div class="preview-ref-body">${escapeHtml(message)}</div>
+        </div>
+    `;
+}
+
 async function hydrateReferenceElement(element, options) {
     if (!element || element.dataset.previewReferenceHydrated === 'true') {
         return;
@@ -100,9 +138,22 @@ async function hydrateReferenceElement(element, options) {
         return;
     }
 
+    const referenceChain = buildReferenceChain(options);
+    const matchKey = buildReferenceKey(result.match, name);
+    if (matchKey && referenceChain.includes(matchKey)) {
+        element.classList.add('is-resolved', 'has-reference-cycle');
+        element.innerHTML = buildReferenceWarningHtml(name, '检测到引用循环，已停止展开。');
+        return;
+    }
+
+    const nestedOptions = {
+        ...options,
+        referenceChain: matchKey ? [...referenceChain, matchKey] : referenceChain
+    };
+
     element.classList.add('is-resolved');
-    element.innerHTML = buildReferenceCardHtml(result.match, name, options);
-    await hydrateDescriptionReferences(element, options);
+    element.innerHTML = buildReferenceCardHtml(result.match, name, nestedOptions);
+    await hydrateDescriptionReferences(element, nestedOptions);
 }
 
 export async function hydrateDescriptionReferences(container, options = {}) {

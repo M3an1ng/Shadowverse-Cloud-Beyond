@@ -6,18 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shadowverse:World Beyond</title>
     <link rel="icon" href="/favicon.jpg?v=2" type="image/jpeg">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0b0f19">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="星云">
+    <link rel="apple-touch-icon" href="/pwa-icon-192.png">
 
     <!-- Fonts -->
     <link
         href="https://fonts.loli.net/css2?family=Cinzel:wght@400;700;900&family=Rajdhani:wght@300;500;700&family=Inter:wght@300;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap"
         rel="stylesheet">
 
-    <!-- Styles --> <!-- Legacy styles, to be refactored -->
+    <!-- Styles --> <!-- Legacy styles, to be refactored -->
 
     <!-- defer 确保在 HTML 解析完成后执行脚本 -->
     <!-- type="module" 启用 ES Module 功能 -->
-  <script type="module" crossorigin src="/assets/index-Ci9bg7n5.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CdeZJsbk.css">
+  <script type="module" crossorigin src="/assets/index-BTOjb6Uj.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-D1sW6fEF.css">
 </head>
 
 <body>
@@ -35,36 +41,126 @@
             <div id="user-info-card" class="user-card-popup user-info-card" aria-hidden="true">
                 <button id="user-auth-logout" class="user-logout-btn" type="button">退出</button>
                 <div class="user-card-header">
-                    <div class="user-avatar-large" id="user-info-avatar" title="Upload avatar">
-                        <img id="user-info-avatar-img" class="user-avatar-img" alt="User avatar">
-                        <span id="user-info-avatar-text">G</span>
+                    <div class="user-header-main">
+                        <div class="user-avatar-large" id="user-info-avatar" title="Upload avatar">
+                            <img id="user-info-avatar-img" class="user-avatar-img" alt="User avatar">
+                            <span id="user-info-avatar-text">G</span>
+                        </div>
+                        <div class="user-details">
+                            <div class="user-name-row">
+                                <div class="user-name" id="user-info-name">游客</div>
+                                <div class="user-role" id="user-info-role">GUEST</div>
+                            </div>
+                            <div id="user-id-inline" class="user-id-inline" role="button" tabindex="0" aria-expanded="false">
+                                <span class="label">ID</span>
+                                <span class="value" id="user-info-id" title="Click to reveal">********</span>
+                                <span class="hint">点击展示</span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="user-details">
-                        <div class="user-name-row">
-                            <div class="user-name" id="user-info-name">游客</div>
-                            <div class="user-role" id="user-info-role">GUEST</div>
+                    <div class="user-header-resources" aria-label="用户资源">
+                        <div class="user-resource-item resource-coin" aria-label="金币">
+                            <span class="resource-icon resource-icon-coin" aria-hidden="true">
+                                <img src="/assets/coins-Bm1oESGX.png" alt="">
+                            </span>
+                            <div class="resource-meta">
+                                <span class="resource-label">金币</span>
+                                <span class="resource-value" id="user-info-coins">0</span>
+                            </div>
                         </div>
-                        <div id="user-id-inline" class="user-id-inline" role="button" tabindex="0" aria-expanded="false">
-                            <span class="label">ID</span>
-                            <span class="value" id="user-info-id" title="Click to reveal">********</span>
-                            <span class="hint">点击展示</span>
-                        </div>
+                        <!-- <div class="user-resource-item resource-crystal" aria-label="水晶">
+                            <span class="resource-icon resource-icon-crystal" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" focusable="false">
+                                    <path d="M12 2.2 5.4 8.7l1.4 8.5L12 21.8l5.2-4.6 1.4-8.5L12 2.2zm0 3.2 3.3 3.3L12 12 8.7 8.7 12 5.4zm-3.6 5.1L11 13v5.2l-2.2-2-.4-5.7zm7.2 0-.4 5.7-2.2 2V13l2.6-2.5z" />
+                                </svg>
+                            </span>
+                            <div class="resource-meta">
+                                <span class="resource-label">水晶</span>
+                                <span class="resource-value">0</span>
+                            </div>
+                        </div> -->
                     </div>
                 </div>
                 <div class="user-card-body">
-                    <div id="user-info-resources" class="user-resources">
-                        <div class="resource-item">
-                            <span class="resource-label">金币</span>
-                            <span class="resource-value" id="user-info-coins">--</span>
+                    <div id="user-win-stats" class="user-win-stats">
+                        <div class="user-win-stats-header">
+                            <div class="win-stats-heading">
+                                <div class="win-stats-diamond"></div>
+                                <span class="win-stats-title" id="win-stats-title">位阶对战：环境加载中</span>
+                            </div>
+                            <button type="button" class="win-stats-mode-toggle" id="win-stats-mode-toggle" aria-label="切换职业胜场统计环境">
+                                <span class="win-stats-mode-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" focusable="false">
+                                        <path d="M7.9 7.6h8l-1.6-1.6a1 1 0 1 1 1.4-1.4l3.3 3.3a1 1 0 0 1 0 1.4l-3.3 3.3a1 1 0 0 1-1.4-1.4l1.6-1.6h-8a1 1 0 0 1 0-2zm8.2 8.8h-8l1.6 1.6a1 1 0 1 1-1.4 1.4L5 16.1a1 1 0 0 1 0-1.4l3.3-3.3a1 1 0 1 1 1.4 1.4l-1.6 1.6h8a1 1 0 0 1 0 2z" />
+                                    </svg>
+                                </span>
+                            </button>
                         </div>
-                        <div class="resource-item is-placeholder">
-                            <span class="resource-label">资源位</span>
-                            <span class="resource-value">--</span>
+                        <div class="win-stats-chart">
+                            <div class="win-stat-column" data-class="forestcraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="data:image/png;base64,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" class="win-stat-icon" alt="Forestcraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-forestcraft'"></div>
+                                <div class="win-stat-value">0</div>
+                            </div>
+                            <div class="win-stat-column" data-class="swordcraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="/assets/utx_icon_class_royal-BIgkVWk-.png" class="win-stat-icon" alt="Swordcraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-swordcraft'"></div>
+                                <div class="win-stat-value">0</div>
+                            </div>
+                            <div class="win-stat-column" data-class="runecraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill active purple" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="/assets/utx_icon_class_witch-BbzxwOso.png" class="win-stat-icon" alt="Runecraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-runecraft'"></div>
+                                <div class="win-stat-value active">0</div>
+                            </div>
+                            <div class="win-stat-column" data-class="dragoncraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="/assets/utx_icon_class_dragon-BjNG5dXp.png" class="win-stat-icon" alt="Dragoncraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-dragoncraft'"></div>
+                                <div class="win-stat-value">0</div>
+                            </div>
+                            <div class="win-stat-column" data-class="abysscraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="/assets/utx_icon_class_nightmare-b8Dl9r1Z.png" class="win-stat-icon" alt="Abysscraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-abysscraft'"></div>
+                                <div class="win-stat-value">0</div>
+                            </div>
+                            <div class="win-stat-column" data-class="havencraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="/assets/utx_icon_class_bishop-CecTTUQQ.png" class="win-stat-icon" alt="Havencraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-havencraft'"></div>
+                                <div class="win-stat-value">0</div>
+                            </div>
+                            <div class="win-stat-column" data-class="portalcraft">
+                                <div class="win-stat-track">
+                                    <div class="win-stat-fill active cyan" style="height: 0%;"></div>
+                                </div>
+                                <div class="win-stat-icon-wrapper"><img src="/assets/utx_icon_class_nemesis-Bwgjjz59.png" class="win-stat-icon" alt="Portalcraft"
+                                        onerror="this.src=''; this.className='win-stat-icon fallback-portalcraft'"></div>
+                                <div class="win-stat-value active">0</div>
+                            </div>
                         </div>
-                        <div class="resource-item is-placeholder">
-                            <span class="resource-label">资源位</span>
-                            <span class="resource-value">--</span>
-                        </div>
+                        <!-- <div class="user-win-stats-footer">
+                            <div class="win-stats-total">
+                                <span class="win-stats-total-label">胜利数</span>
+                                <span class="win-stats-total-value" id="user-info-total-wins">--</span>
+                            </div>
+                            <button class="win-stats-ranking-btn" type="button">排行榜</button>
+                        </div> -->
                     </div>
                     <div id="user-auth" class="user-auth">
                         <div class="user-auth-row">
@@ -113,6 +209,17 @@
                         </div>
                     </div>
                     <div class="about-block">
+                        <div class="about-block-title">安装应用</div>
+                        <div class="about-install">
+                            <button id="pwa-install-btn" class="about-install-btn" type="button">
+                                查看安装方式
+                            </button>
+                            <div id="pwa-install-status" class="about-install-status" aria-live="polite">
+                                安装后可用独立窗口启动。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="about-block">
                         <div class="about-block-title">更新日志</div>
                         <ul id="about-changelog" class="about-changelog"></ul>
                     </div>
@@ -139,19 +246,19 @@
             <!-- Background Elements -->
             <div class="menu-grid-overlay"></div>
             <div class="menu-route-overlay overlay-left" data-route="singleplayer" aria-hidden="true">
-                <img class="menu-route-image" src="/assets/background_1-DA1v3mWF.jpg" alt="">
+                <img class="menu-route-image" data-src="src/background/background_1.jpg" loading="lazy" decoding="async" fetchpriority="low" alt="">
             </div>
             <div class="menu-route-overlay overlay-right" data-route="card-editor" aria-hidden="true">
-                <img class="menu-route-image" src="/assets/background_2-COu8OpkI.jpg" alt="">
+                <img class="menu-route-image" data-src="src/background/background_2.jpg" loading="lazy" decoding="async" fetchpriority="low" alt="">
             </div>
             <div class="menu-route-overlay overlay-left" data-route="deck-builder" aria-hidden="true">
-                <img class="menu-route-image" src="/assets/background_3-Bv1VUZCR.jpg" alt="">
+                <img class="menu-route-image" data-src="src/background/background_3.jpg" loading="lazy" decoding="async" fetchpriority="low" alt="">
             </div>
             <div class="menu-route-overlay overlay-right" data-route="multiplayer" aria-hidden="true">
-                <img class="menu-route-image" src="/assets/background_4-CuofyCku.jpg" alt="">
+                <img class="menu-route-image" data-src="src/background/background_4.jpg" loading="lazy" decoding="async" fetchpriority="low" alt="">
             </div>
             <div class="menu-route-overlay overlay-left" data-route="dev-tools" aria-hidden="true">
-                <img class="menu-route-image" src="/assets/background_5-DwufBDdt.jpg" alt="">
+                <img class="menu-route-image" data-src="src/background/background_5.jpg" loading="lazy" decoding="async" fetchpriority="low" alt="">
             </div>
             <canvas id="menu-starry-sky" class="menu-starry-sky" aria-hidden="true"></canvas>
             <div class="hud-line top"></div>
@@ -257,9 +364,8 @@
                     <div class="mp-deck-switcher">
                         <div class="mp-deck-label">当前卡组</div>
                         <div class="mp-deck-controls">
-                            <button id="mp-deck-prev" class="mp-btn ghost" type="button">←</button>
                             <div id="mp-deck-current" class="mp-deck-current">加载中...</div>
-                            <button id="mp-deck-next" class="mp-btn ghost" type="button">→</button>
+                            <button id="mp-deck-select-btn" class="mp-btn ghost" type="button">选择卡组</button>
                         </div>
                         <div id="mp-deck-output" class="mp-output"></div>
                     </div>
@@ -322,9 +428,8 @@
                     <div class="mp-deck-switcher">
                         <div class="mp-deck-label">当前卡组</div>
                         <div class="mp-deck-controls">
-                            <button id="sp-deck-prev" class="mp-btn ghost" type="button">←</button>
                             <div id="sp-deck-current" class="mp-deck-current">加载中...</div>
-                            <button id="sp-deck-next" class="mp-btn ghost" type="button">→</button>
+                            <button id="sp-deck-select-btn" class="mp-btn ghost" type="button">选择卡组</button>
                         </div>
                         <div id="sp-deck-output" class="mp-output"></div>
                     </div>
@@ -342,10 +447,11 @@
                             </select>
                         </div>
                         <div class="mp-field">
-                            <label for="sp-ai-deck" id="sp-ai-deck-label">AI 卡组</label>
-                            <select id="sp-ai-deck">
-                                <option value="">加载中...</option>
-                            </select>
+                            <label id="sp-ai-deck-label">AI 卡组</label>
+                            <div class="mp-deck-controls sp-ai-deck-controls">
+                                <div id="sp-ai-deck-current" class="mp-deck-current">加载中...</div>
+                                <button id="sp-ai-deck-select-btn" class="mp-btn ghost" type="button">选择卡组</button>
+                            </div>
                         </div>
                         <button id="sp-start-btn" class="mp-btn primary">开始对战</button>
                         <div id="sp-start-output" class="mp-output"></div>
@@ -487,6 +593,10 @@
                                 <span class="resource-label">DECK</span>
                                 <span class="resource-value" id="player2-deck-count">0</span>
                             </div>
+                            <div class="resource-box hand-box">
+                                <span class="resource-label">HAND</span>
+                                <span class="resource-value" id="player2-hand-count">0</span>
+                            </div>
                             <div class="resource-box grave-box">
                                 <span class="resource-label">GRAVE</span>
                                 <span class="resource-value" id="player2-grave-count">0</span>
@@ -498,6 +608,10 @@
                             <div class="resource-box combo-box">
                                 <span class="resource-label">COMBO</span>
                                 <span class="resource-value" id="player2-combo-count">0</span>
+                            </div>
+                            <div class="resource-box rally-box">
+                                <span class="resource-label">RALLY</span>
+                                <span class="resource-value" id="player2-rally-count">0</span>
                             </div>
                         </div>
                     </div>
@@ -593,6 +707,10 @@
                                 <span class="resource-label">DECK</span>
                                 <span class="resource-value" id="player1-deck-count">0</span>
                             </div>
+                            <div class="resource-box hand-box">
+                                <span class="resource-label">HAND</span>
+                                <span class="resource-value" id="player1-hand-count">0</span>
+                            </div>
                             <div class="resource-box grave-box">
                                 <span class="resource-label">GRAVE</span>
                                 <span class="resource-value" id="player1-grave-count">0</span>
@@ -604,6 +722,10 @@
                             <div class="resource-box combo-box">
                                 <span class="resource-label">COMBO</span>
                                 <span class="resource-value" id="player1-combo-count">0</span>
+                            </div>
+                            <div class="resource-box rally-box">
+                                <span class="resource-label">RALLY</span>
+                                <span class="resource-value" id="player1-rally-count">0</span>
                             </div>
                         </div>
                     </div>
@@ -746,6 +868,16 @@
                         <p>仅管理员可访问，用于查看当前注册用户并调整权限等级。</p>
                         <button id="admin-user-open-btn" class="tool-button" type="button">打开用户管理</button>
                     </section>
+                    <section id="devtools-copy-limit-panel" class="tool-card admin-copy-limit-management" aria-label="禁限卡牌管理">
+                        <h3>禁限卡牌管理</h3>
+                        <p>仅管理员可访问，可按环境/规则编辑卡牌携带上限。</p>
+                        <button id="devtools-copy-limit-open-btn" class="tool-button" type="button">打开禁限卡牌</button>
+                    </section>
+                    <section id="devtools-cardset-env-panel" class="tool-card admin-copy-limit-management" aria-label="环境卡包配置">
+                        <h3>环境卡包配置</h3>
+                        <p>仅管理员可访问，可配置当前环境包含哪些卡包。</p>
+                        <button id="devtools-cardset-env-open-btn" class="tool-button" type="button">打开环境配置</button>
+                    </section>
                     <section id="devtools-winrate-panel" class="tool-card" aria-label="胜率看板">
                         <h3>胜率看板</h3>
                         <p>查看卡牌胜率与卡组胜率聚合数据（CardStatsAggs / DeckStatsAggs）。</p>
@@ -818,6 +950,7 @@
                                             <th>用户名</th>
                                             <th>角色</th>
                                             <th>等级</th>
+                                            <th>金币</th>
                                             <th>状态</th>
                                             <th>创建时间</th>
                                             <th>最后登录</th>
@@ -831,6 +964,179 @@
                     </div>
                 </div>
 
+                <div id="devtools-copy-limit-modal" class="log-viewer-modal devtools-copy-limit-modal" aria-hidden="true">
+                    <div class="log-viewer-panel devtools-copy-limit-dialog" role="dialog" aria-label="禁限卡牌管理">
+                        <div class="log-viewer-panel-header">
+                            <div class="log-viewer-panel-title">禁限卡牌管理</div>
+                            <button id="devtools-copy-limit-close-btn" class="tool-button" type="button">关闭</button>
+                        </div>
+                        <div id="devtools-copy-limit-message" class="devtools-copy-limit-message" data-tone="neutral">
+                            请登录后加载禁限卡牌管理。
+                        </div>
+                        <div id="devtools-copy-limit-management-panel" class="devtools-copy-limit-management-panel" hidden>
+                            <div class="devtools-copy-limit-controls">
+                                <label class="devtools-copy-limit-field" for="devtools-copy-limit-query-environment">
+                                    <span>环境</span>
+                                    <select id="devtools-copy-limit-query-environment" class="form-input"></select>
+                                </label>
+                                <label class="devtools-copy-limit-field" for="devtools-copy-limit-query-rule">
+                                    <span>规则</span>
+                                    <select id="devtools-copy-limit-query-rule" class="form-input">
+                                        <option value="standard" selected>传统对战</option>
+                                        <option value="dualClass">混合职业</option>
+                                    </select>
+                                </label>
+                                <label class="devtools-copy-limit-field" for="devtools-copy-limit-query-search">
+                                    <span>筛选</span>
+                                    <input id="devtools-copy-limit-query-search" class="form-input" type="text" placeholder="按卡牌 ID / 名称过滤">
+                                </label>
+                                <button id="devtools-copy-limit-query-refresh-btn" class="tool-button devtools-copy-limit-icon-btn" type="button" title="刷新" aria-label="刷新">↻</button>
+                                <button id="devtools-copy-limit-add-btn" class="tool-button devtools-copy-limit-icon-btn" type="button" title="新增规则" aria-label="新增规则">＋</button>
+                            </div>
+                            <div class="devtools-copy-limit-meta">
+                                当前结果：<span id="devtools-copy-limit-count">0</span> 条规则
+                            </div>
+                            <div class="devtools-copy-limit-table-wrap">
+                                <table class="devtools-copy-limit-table">
+                                    <thead>
+                                        <tr>
+                                            <th>CardDefinitionId</th>
+                                            <th>卡牌名称</th>
+                                            <th>上限</th>
+                                            <th>更新时间</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="devtools-copy-limit-table-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="devtools-copy-limit-guidance">
+                            查询与编辑分离：列表仅用于查看/筛选，新增和编辑通过弹窗完成。
+                        </div>
+                    </div>
+                </div>
+                <div id="devtools-copy-limit-editor-modal" class="modal-overlay devtools-copy-limit-editor-overlay" hidden aria-hidden="true">
+                    <div class="modal-container ability-edit-container devtools-copy-limit-editor-modal">
+                        <div class="modal-header">
+                            <h3 id="devtools-copy-limit-editor-title">新增禁限卡牌</h3>
+                            <button class="modal-close-btn" id="devtools-copy-limit-editor-close-btn" type="button" aria-label="关闭">×</button>
+                        </div>
+                        <div class="modal-content devtools-copy-limit-editor-content">
+                            <div class="devtools-copy-limit-editor-form">
+                                <label class="devtools-copy-limit-field" for="devtools-copy-limit-editor-environment">
+                                    <span>环境</span>
+                                    <select id="devtools-copy-limit-editor-environment" class="form-input"></select>
+                                </label>
+                                <label class="devtools-copy-limit-field" for="devtools-copy-limit-editor-rule">
+                                    <span>规则</span>
+                                    <select id="devtools-copy-limit-editor-rule" class="form-input">
+                                        <option value="standard" selected>传统对战</option>
+                                        <option value="dualClass">混合职业模式</option>
+                                    </select>
+                                </label>
+                                <label class="devtools-copy-limit-field" for="devtools-copy-limit-editor-max">
+                                    <span>携带上限</span>
+                                    <select id="devtools-copy-limit-editor-max" class="form-input">
+                                        <option value="0" selected>0（禁用）</option>
+                                        <option value="1">1</option>
+                                        <option value="2">2</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="devtools-copy-limit-editor-card-row">
+                                <div class="devtools-copy-limit-editor-card-label">卡牌</div>
+                                <div id="devtools-copy-limit-editor-card-display" class="devtools-copy-limit-editor-card-display">未选择卡牌</div>
+                                <button id="devtools-copy-limit-editor-select-card-btn" class="btn-tech btn-secondary" type="button">选择卡牌</button>
+                            </div>
+                            <div id="devtools-copy-limit-editor-summary" class="devtools-copy-limit-editor-summary" data-tone="neutral">
+                                请先选择卡牌，再保存禁限卡牌。
+                            </div>
+                            <div class="modal-actions devtools-copy-limit-editor-actions">
+                                <button id="devtools-copy-limit-editor-cancel-btn" class="btn-tech btn-secondary" type="button">取消</button>
+                                <button id="devtools-copy-limit-editor-save-btn" class="btn-tech btn-primary" type="button">保存规则</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="devtools-copy-limit-card-picker-modal" class="modal-overlay devtools-copy-limit-card-picker-overlay" hidden aria-hidden="true">
+                    <div class="modal-container ability-edit-container grant-ability-copy-modal devtools-copy-limit-card-picker-modal">
+                        <div class="modal-header">
+                            <h3>选择卡牌</h3>
+                            <button class="modal-close-btn" id="devtools-copy-limit-card-picker-close-btn" type="button" aria-label="关闭">×</button>
+                        </div>
+                        <div class="modal-content ability-copy-modal">
+                            <div class="ability-copy-filters">
+                                <div class="ability-copy-search">
+                                    <label class="form-label" for="devtools-copy-limit-card-picker-search">筛选</label>
+                                    <input class="tech-input" type="search" id="devtools-copy-limit-card-picker-search" placeholder="搜索卡牌名称或ID">
+                                </div>
+                                <div class="ability-copy-stats tech-text-dim" id="devtools-copy-limit-card-picker-stats">卡牌 0</div>
+                            </div>
+                            <div class="tech-text-dim ability-copy-hint">点击卡牌后确认选择</div>
+                            <div class="ability-copy-list custom-scrollbar" id="devtools-copy-limit-card-picker-list">
+                                <div class="loading-spinner"></div>
+                                <p>正在加载卡牌列表...</p>
+                            </div>
+                            <div class="ability-copy-pagination">
+                                <button class="btn-tech btn-secondary btn-small" id="devtools-copy-limit-card-picker-prev" type="button" disabled>上一页</button>
+                                <div class="ability-copy-page-info tech-text-dim" id="devtools-copy-limit-card-picker-page-info">1 / 1</div>
+                                <button class="btn-tech btn-secondary btn-small" id="devtools-copy-limit-card-picker-next" type="button" disabled>下一页</button>
+                            </div>
+                            <div class="modal-actions ability-copy-actions">
+                                <button class="btn-tech btn-secondary" id="devtools-copy-limit-card-picker-cancel" type="button">取消</button>
+                                <button class="btn-tech btn-primary" id="devtools-copy-limit-card-picker-confirm" type="button" disabled>确认选择</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="devtools-cardset-env-modal" class="log-viewer-modal devtools-copy-limit-modal" aria-hidden="true">
+                    <div class="log-viewer-panel devtools-copy-limit-dialog" role="dialog" aria-label="环境卡包配置">
+                        <div class="log-viewer-panel-header">
+                            <div class="log-viewer-panel-title">环境卡包配置</div>
+                            <button id="devtools-cardset-env-close-btn" class="tool-button" type="button">关闭</button>
+                        </div>
+                        <div id="devtools-cardset-env-message" class="devtools-copy-limit-message" data-tone="neutral">
+                            请登录后加载环境卡包配置。
+                        </div>
+                        <div id="devtools-cardset-env-management-panel" class="devtools-copy-limit-management-panel" hidden>
+                            <div class="devtools-copy-limit-controls">
+                                <label class="devtools-copy-limit-field" for="devtools-cardset-env-environment">
+                                    <span>环境</span>
+                                    <select id="devtools-cardset-env-environment" class="form-input"></select>
+                                </label>
+                                <label class="devtools-copy-limit-field" for="devtools-cardset-env-search">
+                                    <span>筛选</span>
+                                    <input id="devtools-cardset-env-search" class="form-input" type="text" placeholder="按卡包 ID / 名称 / 代码过滤">
+                                </label>
+                                <button id="devtools-cardset-env-refresh-btn" class="tool-button" type="button">刷新</button>
+                                <button id="devtools-cardset-env-save-btn" class="tool-button" type="button">保存配置</button>
+                            </div>
+                            <div class="devtools-copy-limit-meta">
+                                当前结果：<span id="devtools-cardset-env-count">0</span> 个卡包
+                            </div>
+                            <div class="devtools-copy-limit-table-wrap">
+                                <table class="devtools-copy-limit-table devtools-cardset-env-table">
+                                    <thead>
+                                        <tr>
+                                            <th>包含</th>
+                                            <th>CardSetDefinitionId</th>
+                                            <th>代码</th>
+                                            <th>名称</th>
+                                            <th>缩写</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="devtools-cardset-env-table-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="devtools-copy-limit-guidance">
+                            勾选“包含”后保存，即可将对应卡包加入当前环境。
+                        </div>
+                    </div>
+                </div>
+
                 <div id="devtools-winrate-modal" class="log-viewer-modal devtools-winrate-modal" aria-hidden="true">
                     <div class="log-viewer-panel devtools-winrate-panel" role="dialog" aria-label="胜率看板">
                         <div class="log-viewer-panel-header">
@@ -840,8 +1146,13 @@
                         <div class="devtools-winrate-controls">
                             <label class="devtools-winrate-field" for="devtools-winrate-environment">
                                 <span>环境</span>
-                                <select id="devtools-winrate-environment" class="form-input">
-                                    <option value="open" selected>Open</option>
+                                <select id="devtools-winrate-environment" class="form-input"></select>
+                            </label>
+                            <label class="devtools-winrate-field" for="devtools-winrate-mode">
+                                <span>模式</span>
+                                <select id="devtools-winrate-mode" class="form-input">
+                                    <option value="standard" selected>传统对战</option>
+                                    <option value="dualclass">混合职业</option>
                                 </select>
                             </label>
                             <label class="devtools-winrate-field" for="devtools-winrate-start-date">
@@ -1085,7 +1396,3 @@
 </body>
 
 </html>
-
-
-
-

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.ComponentModel;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Functions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 using ShadowverseBeyond.Server.Dtos.Dsl;
@@ -9,6 +10,7 @@ using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -117,6 +119,15 @@ namespace ShadowverseBeyond.Server.Services
                 contextObjectDtos.Add(contextObjectDto);
             }
 
+            contextObjectDtos.Add(new DslContextObjectDto
+            {
+                Name = "db",
+                DisplayName = "卡牌数据集",
+                Description = "按构筑环境拆分后的静态卡牌定义集合",
+                TypeName = "CardDefinitionDatabaseRoot",
+                Properties = BuildEnvironmentScopedDatabaseProperties()
+            });
+
             return contextObjectDtos;
         }
 
@@ -181,7 +192,97 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
 
+            MergeEventParameterTypeMetadata(typeMetadata, assembly);
+
+            typeMetadata["CardDefinitionDatabaseRoot"] = new DslTypeDto
+            {
+                TypeName = "CardDefinitionDatabaseRoot",
+                DisplayName = "卡牌数据集",
+                Description = "按构筑环境拆分后的静态卡牌定义集合",
+                Properties = BuildEnvironmentScopedDatabaseProperties()
+            };
+
             return typeMetadata;
+        }
+
+        private void MergeEventParameterTypeMetadata(Dictionary<string, DslTypeDto> typeMetadata, Assembly assembly)
+        {
+            MergeEventParameterDescriptor(typeMetadata, typeof(IGameEvent), typeof(GameEventBase));
+
+            var eventTypes = assembly.GetTypes()
+                .Where(t => typeof(IGameEvent).IsAssignableFrom(t) && t.IsClass)
+                .ToList();
+
+            foreach (var eventType in eventTypes)
+            {
+                MergeEventParameterDescriptor(typeMetadata, eventType, eventType);
+            }
+        }
+
+        private void MergeEventParameterDescriptor(
+            Dictionary<string, DslTypeDto> typeMetadata,
+            Type metadataType,
+            Type descriptorType)
+        {
+            var typeName = GetCleanTypeName(metadataType);
+            if (!typeMetadata.TryGetValue(typeName, out var typeDto))
+            {
+                typeDto = new DslTypeDto
+                {
+                    TypeName = typeName,
+                    DisplayName = metadataType.Name,
+                    Description = string.Empty,
+                    Properties = new List<DslPropertyDto>()
+                };
+                typeMetadata[typeName] = typeDto;
+            }
+
+            var existingPropertyNames = new HashSet<string>(
+                typeDto.Properties.Select(prop => prop.Name),
+                StringComparer.OrdinalIgnoreCase);
+
+            var descriptor = EventParameterCache.GetDescriptor(descriptorType);
+            foreach (var parameter in descriptor.Parameters)
+            {
+                var propertyName = ToDslPropertyName(parameter.PropertyName);
+                if (!existingPropertyNames.Add(propertyName))
+                {
+                    continue;
+                }
+
+                typeDto.Properties.Add(new DslPropertyDto
+                {
+                    Name = propertyName,
+                    DisplayName = parameter.DisplayName,
+                    Description = parameter.Description,
+                    TypeName = GetCleanTypeName(parameter.PropertyType)
+                });
+            }
+        }
+
+        private static List<DslPropertyDto> BuildEnvironmentScopedDatabaseProperties()
+        {
+            return DslEnvironmentCardPoolNames.GetAll()
+                .Select(entry => new DslPropertyDto
+                {
+                    Name = entry.PropertyName,
+                    DisplayName = $"{GetEnvironmentDisplayName(entry.Environment)}卡池",
+                    Description = $"仅包含 {GetEnvironmentDisplayName(entry.Environment)} 环境可用的卡牌定义",
+                    TypeName = "List<CardDefinition>"
+                })
+                .ToList();
+        }
+
+        private static string GetEnvironmentDisplayName(DeckEnvironment? environment)
+        {
+            if (!environment.HasValue)
+            {
+                return "当前";
+            }
+
+            var field = typeof(DeckEnvironment).GetField(environment.Value.ToString());
+            var description = field?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+            return string.IsNullOrWhiteSpace(description) ? environment.Value.ToString() : description;
         }
 
         private List<DslEnumTypeDto> BuildEnumMetadata()
@@ -287,7 +388,17 @@ namespace ShadowverseBeyond.Server.Services
 
         private string GetDslPropertyName(PropertyInfo property)
         {
-            return char.ToLowerInvariant(property.Name[0]) + property.Name.Substring(1);
+            return ToDslPropertyName(property.Name);
+        }
+
+        private static string ToDslPropertyName(string propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+            {
+                return propertyName;
+            }
+
+            return char.ToLowerInvariant(propertyName[0]) + propertyName.Substring(1);
         }
     }
 }

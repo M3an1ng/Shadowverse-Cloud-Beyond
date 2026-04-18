@@ -46,9 +46,12 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         await this.initialize();
         
         this.container = container;
-        this.effects = (effects || []).map(effect => this.normalizeEffectConfig(effect));
         this.onChange = onChange;
         this.options = options || {};
+        this.effects = this.synchronizeDecisionBranchTriggers(
+            (effects || []).map(effect => this.normalizeEffectConfig(effect)),
+            this.options?.trigger
+        );
         this.outputEditorsByEffect.clear();
         this.closeChainedAbilityModal();
 
@@ -373,6 +376,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const hasCardSourceMode = this.hasEffectParameter(effectMeta, 'CardSourceMode');
         const hasRemoveMode = this.hasEffectParameter(effectMeta, 'RemoveMode');
         const hasModifierLayer = this.hasEffectParameter(effectMeta, 'ModifierLayer');
+        const hasTriggerAbilityMode = this.hasEffectParameter(effectMeta, 'TriggerMode');
         const useSearchMode = hasSearchMode
             ? this.normalizeBooleanValue(this.getEffectParameterValue(parameters, effectMeta, 'UseSearchMode'))
             : false;
@@ -385,6 +389,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const modifierLayer = hasModifierLayer
             ? this.normalizeModifierLayer(this.getEffectParameterValue(parameters, effectMeta, 'ModifierLayer'))
             : null;
+        const triggerAbilityMode = hasTriggerAbilityMode
+            ? this.normalizeTriggerAbilityMode(this.getEffectParameterValue(parameters, effectMeta, 'TriggerMode'))
+            : null;
         const renderContext = {
             hasSearchMode,
             useSearchMode,
@@ -393,7 +400,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             hasRemoveMode,
             removeMode,
             hasModifierLayer,
-            modifierLayer
+            modifierLayer,
+            hasTriggerAbilityMode,
+            triggerAbilityMode
         };
 
         effectiveParameters.forEach(paramMeta => {
@@ -2385,11 +2394,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 if (!isDecisionAbility) {
                     return null;
                 }
-                return {
-                    lockedTrigger: this.getDecisionAbilityLockConfig(ability),
-                    lockedTriggerMessage: '分支能力触发时机与有效区域已锁定，无法修改。',
-                    lockValidZones: true
-                };
+                return this.buildDecisionAbilityEditorOptions(ability);
             };
 
             const wrapper = document.createElement('div');
@@ -2493,7 +2498,10 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
                     const summary = document.createElement('div');
                     summary.className = 'grant-ability-summary';
-                    summary.textContent = this.formatAbilityTriggerName(ability);
+                    summary.textContent = this.formatAbilityTriggerName(
+                        ability,
+                        isDecisionAbility ? this.options?.trigger : null
+                    );
 
                     main.appendChild(title);
                     main.appendChild(summary);
@@ -2619,6 +2627,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             normalized.playerCounterRegistrations = ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [];
             normalized.isActive = ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true;
             normalized.broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
+            normalized.buffDisplay = ability.buffDisplay ?? ability.BuffDisplay ?? normalized.broadcastOnTrigger;
             normalized.version = ability.version ?? ability.Version ?? '1.0';
 
             delete normalized.id;
@@ -2648,13 +2657,15 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         normalizeAbilityConfigFromSource(ability, parsedConfig) {
             if (!ability && !parsedConfig) return null;
             const base = parsedConfig || {};
+            const broadcastOnTrigger = ability?.broadcastOnTrigger ?? ability?.BroadcastOnTrigger ?? base.broadcastOnTrigger ?? true;
             const config = {
                 ...base,
                 name: ability?.name ?? ability?.Name ?? base.name ?? '未命名能力',
                 description: ability?.description ?? ability?.Description ?? base.description ?? '',
                 abilityKeywords: ability?.abilityKeywords ?? ability?.AbilityKeywords ?? base.abilityKeywords ?? [],
                 isActive: ability?.isActive ?? ability?.IsActive ?? base.isActive ?? true,
-                broadcastOnTrigger: ability?.broadcastOnTrigger ?? ability?.BroadcastOnTrigger ?? base.broadcastOnTrigger ?? true,
+                broadcastOnTrigger,
+                buffDisplay: ability?.buffDisplay ?? ability?.BuffDisplay ?? base.buffDisplay ?? broadcastOnTrigger,
                 version: base.version ?? base.Version ?? '1.0'
             };
             return this.normalizeAbilityConfigForList(config);
@@ -2717,10 +2728,12 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 counterRegistrations: [],
                 playerCounterRegistrations: [],
                 isActive: true,
-                broadcastOnTrigger: true
+                broadcastOnTrigger: true,
+                buffDisplay: true
             };
-        }
+            }
 
+            const broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
             return {
                 name: ability.name ?? ability.Name ?? '',
                 description: ability.description ?? ability.Description ?? '',
@@ -2739,7 +2752,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 counterRegistrations: ability.counterRegistrations ?? ability.CounterRegistrations ?? [],
                 playerCounterRegistrations: ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [],
                 isActive: ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true,
-                broadcastOnTrigger: ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true
+                broadcastOnTrigger,
+                buffDisplay: ability.buffDisplay ?? ability.BuffDisplay ?? broadcastOnTrigger
             };
         }
 
@@ -2775,18 +2789,21 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 playerCounterRegistrations: finalConfig.playerCounterRegistrations ?? [],
                 isActive: finalConfig.isActive ?? true,
                 broadcastOnTrigger: finalConfig.broadcastOnTrigger ?? true,
+                buffDisplay: finalConfig.buffDisplay ?? true,
                 version: finalConfig.version ?? '1.0'
             };
 
             return this.normalizeAbilityConfigForList(fallback);
         }
 
-        formatAbilityTriggerName(ability) {
-            const trigger = ability?.trigger ?? ability?.Trigger ?? null;
-            const rawEvents = trigger?.eventTypes ?? trigger?.EventTypes ?? [];
-            const events = Array.isArray(rawEvents)
-                ? rawEvents.map(eventType => String(eventType)).filter(Boolean)
-                : [];
+    formatAbilityTriggerName(ability, fallbackTrigger = null) {
+        const trigger = fallbackTrigger
+            ? this.mergeInheritedTriggerFields(ability?.trigger ?? ability?.Trigger, fallbackTrigger)
+            : (ability?.trigger ?? ability?.Trigger ?? null);
+        const rawEvents = trigger?.eventTypes ?? trigger?.EventTypes ?? [];
+        const events = Array.isArray(rawEvents)
+            ? rawEvents.map(eventType => String(eventType)).filter(Boolean)
+            : [];
 
             if (events.length === 0) {
                 return '触发: 未配置';
@@ -3314,7 +3331,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     isCardSourceModeRestrictedEffect(effectTypeName) {
         if (!effectTypeName) return false;
         const normalized = effectTypeName.toLowerCase();
-        return normalized === 'gettoken' || normalized === 'adddeck';
+        return normalized === 'gettoken' || normalized === 'adddeck' || normalized === 'transform';
     }
 
     getEffectParameterName(paramMeta) {
@@ -3416,6 +3433,29 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         return 'Id';
     }
 
+    normalizeTriggerAbilityMode(value) {
+        if (value == null || value === '') return 'ByKeyword';
+        if (typeof value === 'number') {
+            return this.mapTriggerAbilityModeValue(value);
+        }
+        const raw = String(value).trim();
+        if (raw === '') return 'ByKeyword';
+        if (/^\d+$/.test(raw)) {
+            return this.mapTriggerAbilityModeValue(Number(raw));
+        }
+        const lowered = raw.toLowerCase();
+        if (lowered === 'bykeyword') return 'ByKeyword';
+        if (lowered === 'byabilitydefinitionid') return 'ByAbilityDefinitionId';
+        if (lowered === 'byeventtype') return 'ByEventType';
+        return raw;
+    }
+
+    mapTriggerAbilityModeValue(value) {
+        if (value === 1) return 'ByAbilityDefinitionId';
+        if (value === 2) return 'ByEventType';
+        return 'ByKeyword';
+    }
+
     normalizeModifierLayer(value) {
         if (value == null || value === '') return 'Additive';
         if (typeof value === 'number') {
@@ -3455,13 +3495,21 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         if (context?.hasCardSourceMode) {
             const isDefinition = context.cardSourceMode === 'Definition';
             const isInstance = context.cardSourceMode === 'Instance';
-            if (normalized === 'carddefinitionid') return isDefinition;
+            const isCopy = context.cardSourceMode === 'Copy';
+            if (normalized === 'carddefinitionid' || normalized === 'targetcarddefinitionid') return isDefinition;
+            if (normalized === 'copysourcetargets') return isCopy;
             if (normalized === 'amount' || normalized === 'summoncount') return !isInstance;
         }
 
         if (context?.hasRemoveMode) {
             if (normalized === 'abilitydefinitionids') return context.removeMode === 'Id';
             if (normalized === 'abilitykeyword') return context.removeMode === 'Keyword';
+        }
+
+        if (context?.hasTriggerAbilityMode) {
+            if (normalized === 'abilitykeyword') return context.triggerAbilityMode === 'ByKeyword';
+            if (normalized === 'abilitydefinitionids') return context.triggerAbilityMode === 'ByAbilityDefinitionId';
+            if (normalized === 'triggereventtype') return context.triggerAbilityMode === 'ByEventType';
         }
 
         return true;
@@ -3473,6 +3521,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const hasCardSourceMode = this.hasEffectParameter(effectMeta, 'CardSourceMode');
         const hasRemoveMode = this.hasEffectParameter(effectMeta, 'RemoveMode');
         const hasModifierLayer = this.hasEffectParameter(effectMeta, 'ModifierLayer');
+        const hasTriggerMode = this.hasEffectParameter(effectMeta, 'TriggerMode');
 
         if (hasSearchMode) {
             const prevValue = this.normalizeBooleanValue(this.getEffectParameterValue(previousParams, effectMeta, 'UseSearchMode'));
@@ -3496,6 +3545,12 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             const prevLayer = this.normalizeModifierLayer(this.getEffectParameterValue(previousParams, effectMeta, 'ModifierLayer'));
             const nextLayer = this.normalizeModifierLayer(this.getEffectParameterValue(nextParams, effectMeta, 'ModifierLayer'));
             if (prevLayer !== nextLayer) return true;
+        }
+
+        if (hasTriggerMode) {
+            const prevMode = this.normalizeTriggerAbilityMode(this.getEffectParameterValue(previousParams, effectMeta, 'TriggerMode'));
+            const nextMode = this.normalizeTriggerAbilityMode(this.getEffectParameterValue(nextParams, effectMeta, 'TriggerMode'));
+            if (prevMode !== nextMode) return true;
         }
 
         if (this.isReplaceEventEffectMeta(effectMeta)) {
@@ -3556,40 +3611,25 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     }
 
     getDecisionAbilityLockConfig(ability) {
-        const fallback = {
-            eventTypes: [],
-            relationType: '',
-            timing: 'On',
-            validZones: [],
-            revalidateZoneBeforeExecution: false
-        };
-        const defaultTrigger = this.options?.trigger ?? fallback;
-        const rawTrigger = ability?.trigger ?? ability?.Trigger ?? null;
-        const rawEventTypes = rawTrigger?.eventTypes ?? rawTrigger?.EventTypes ?? [];
-        const rawValidZones = rawTrigger?.validZones ?? rawTrigger?.ValidZones ?? [];
-        const hasTrigger = rawTrigger && typeof rawTrigger === 'object' && (
-            (Array.isArray(rawEventTypes) && rawEventTypes.length > 0)
-            || (rawTrigger.relationType ?? rawTrigger.RelationType)
-            || (rawTrigger.timing ?? rawTrigger.Timing)
-            || (Array.isArray(rawValidZones) && rawValidZones.length > 0)
-            || rawTrigger.revalidateZoneBeforeExecution
-            || rawTrigger.RevalidateZoneBeforeExecution
-        );
-        const source = hasTrigger ? rawTrigger : defaultTrigger;
+        const parentTrigger = this.options?.trigger;
+        if (parentTrigger && typeof parentTrigger === 'object') {
+            return this.normalizeInheritedTriggerFields(parentTrigger);
+        }
 
-        const eventTypes = source?.eventTypes ?? source?.EventTypes ?? fallback.eventTypes;
-        const relationType = source?.relationType ?? source?.RelationType ?? fallback.relationType;
-        const timing = source?.timing ?? source?.Timing ?? fallback.timing;
-        const validZones = source?.validZones ?? source?.ValidZones ?? fallback.validZones;
-        const revalidateZoneBeforeExecution =
-            source?.revalidateZoneBeforeExecution ?? source?.RevalidateZoneBeforeExecution ?? false;
+        return this.normalizeInheritedTriggerFields(ability?.trigger ?? ability?.Trigger ?? null);
+    }
 
+    getInheritedTriggeringEventOutputs() {
+        const outputs = this.options?.triggeringEventOutputs;
+        return Array.isArray(outputs) ? outputs.slice() : [];
+    }
+
+    buildDecisionAbilityEditorOptions(ability) {
         return {
-            eventTypes: Array.isArray(eventTypes) ? eventTypes : fallback.eventTypes,
-            relationType,
-            timing,
-            validZones: Array.isArray(validZones) ? validZones : fallback.validZones,
-            revalidateZoneBeforeExecution: !!revalidateZoneBeforeExecution
+            lockedTrigger: this.getDecisionAbilityLockConfig(ability),
+            lockedTriggerMessage: '分支能力触发时机与有效区域已锁定，无法修改。',
+            lockValidZones: true,
+            triggeringEventOutputs: this.getInheritedTriggeringEventOutputs()
         };
     }
 
@@ -4253,6 +4293,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
     notifyChange() {
         if (!this.onChange) return;
 
+        this.effects = this.synchronizeDecisionBranchTriggers(this.effects, this.options?.trigger);
+
         const sanitizedEffects = this.effects.map(effect => {
             const cleanParams = this.sanitizeParameters(effect.parameters);
             const cleanOutputs = this.sanitizeOutputs(effect.outputs ?? effect.Outputs);
@@ -4320,6 +4362,91 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             }
         }
         return result;
+    }
+
+    normalizeInheritedTriggerFields(trigger) {
+        const source = trigger && typeof trigger === 'object' && !Array.isArray(trigger)
+            ? trigger
+            : {};
+        const rawEventTypes = source.eventTypes ?? source.EventTypes ?? [];
+        const rawValidZones = source.validZones ?? source.ValidZones ?? [];
+        return {
+            eventTypes: Array.isArray(rawEventTypes) ? rawEventTypes.filter(Boolean) : [],
+            relationType: source.relationType ?? source.RelationType ?? '',
+            timing: source.timing ?? source.Timing ?? 'On',
+            validZones: Array.isArray(rawValidZones) ? rawValidZones.filter(Boolean) : [],
+            revalidateZoneBeforeExecution: !!(source.revalidateZoneBeforeExecution ?? source.RevalidateZoneBeforeExecution ?? false)
+        };
+    }
+
+    mergeInheritedTriggerFields(trigger, inheritedTrigger) {
+        const existing = trigger && typeof trigger === 'object' && !Array.isArray(trigger)
+            ? { ...trigger }
+            : {};
+        const inherited = this.normalizeInheritedTriggerFields(inheritedTrigger);
+        const merged = {
+            ...existing,
+            eventTypes: [...inherited.eventTypes],
+            relationType: inherited.relationType,
+            timing: inherited.timing,
+            validZones: [...inherited.validZones],
+            revalidateZoneBeforeExecution: inherited.revalidateZoneBeforeExecution
+        };
+
+        delete merged.EventTypes;
+        delete merged.RelationType;
+        delete merged.Timing;
+        delete merged.ValidZones;
+        delete merged.RevalidateZoneBeforeExecution;
+
+        return merged;
+    }
+
+    synchronizeDecisionAbilityConfig(ability, parentTrigger) {
+        if (!ability || typeof ability !== 'object') {
+            return ability;
+        }
+
+        return {
+            ...ability,
+            trigger: this.mergeInheritedTriggerFields(ability.trigger ?? ability.Trigger, parentTrigger)
+        };
+    }
+
+    synchronizeDecisionBranchTriggers(effects, parentTrigger) {
+        if (!Array.isArray(effects) || !parentTrigger || typeof parentTrigger !== 'object') {
+            return Array.isArray(effects) ? effects : [];
+        }
+
+        return effects.map(effect => {
+            if (!effect || typeof effect !== 'object') {
+                return effect;
+            }
+
+            if (!this.isDecisionAbilityEffect(effect.type ?? effect.Type ?? '')) {
+                return effect;
+            }
+
+            const parameters = effect.parameters ?? effect.Parameters ?? {};
+            const rawAbilityConfigs = parameters.abilityConfigs ?? parameters.AbilityConfigs;
+            if (!Array.isArray(rawAbilityConfigs)) {
+                return effect;
+            }
+
+            const abilityConfigs = rawAbilityConfigs.map(ability =>
+                this.synchronizeDecisionAbilityConfig(ability, parentTrigger)
+            );
+            const nextParameters = {
+                ...parameters,
+                abilityConfigs: abilityConfigs
+            };
+            delete nextParameters.AbilityConfigs;
+
+            return {
+                ...effect,
+                parameters: nextParameters
+            };
+        });
     }
 
     normalizeValueConfig(value) {
@@ -4449,12 +4576,13 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         if (!Array.isArray(effects)) return effects;
         const meta = metadataOverride || this.metadata;
         const effectList = meta?.effects || [];
+        const normalizedEffects = this.synchronizeDecisionBranchTriggers(effects, this.options?.trigger);
 
         const getEffectMeta = (type) => effectList.find(item =>
             item?.effectTypeName === type || item?.EffectTypeName === type
         );
 
-        return effects.map(effect => {
+        return normalizedEffects.map(effect => {
             if (!effect || typeof effect !== 'object') return effect;
             const effectMeta = getEffectMeta(effect.type);
             const withDefaults = this.applyDefaultParameters(effect, effectMeta);

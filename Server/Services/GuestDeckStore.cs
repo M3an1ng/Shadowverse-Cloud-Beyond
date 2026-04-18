@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Linq;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
@@ -27,14 +27,16 @@ public class GuestDeckStore : IGuestDeckStore
         return null;
     }
 
-    public GuestDeckRecord Create(Guid guestId, string name, CardClass deckClass, DeckEnvironment environment)
+    public GuestDeckRecord Create(Guid guestId, string name, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule)
     {
         var deck = new GuestDeckRecord
         {
             DeckId = Guid.NewGuid(),
             Name = name,
             Class = deckClass,
+            SecondaryClass = secondaryClass,
             Environment = environment,
+            Rule = rule,
             UpdatedAt = DateTime.UtcNow,
             Cards = new List<DeckCardEntryDto>()
         };
@@ -55,7 +57,7 @@ public class GuestDeckStore : IGuestDeckStore
         return false;
     }
 
-    public bool SaveCards(Guid guestId, Guid deckId, CardClass deckClass, DeckEnvironment environment, IReadOnlyList<DeckCardEntryDto> cards)
+    public bool SaveCards(Guid guestId, Guid deckId, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule, IReadOnlyList<DeckCardEntryDto> cards)
     {
         if (_store.TryGetValue(guestId, out var decks) && decks.TryGetValue(deckId, out var deck))
         {
@@ -68,7 +70,9 @@ public class GuestDeckStore : IGuestDeckStore
             decks[deckId] = deck with
             {
                 Class = deckClass,
+                SecondaryClass = secondaryClass,
                 Environment = environment,
+                Rule = rule,
                 Cards = clonedCards,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -93,3 +97,6 @@ public class GuestDeckStore : IGuestDeckStore
         _store.TryRemove(guestId, out _);
     }
 }
+
+
+

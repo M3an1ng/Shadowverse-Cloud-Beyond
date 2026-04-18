@@ -3,7 +3,11 @@
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
 //
-import { BATTLE_EXIT_CONFIRM_MESSAGE, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
+import {
+    BATTLE_EXIT_CONFIRM_MESSAGE,
+    isLeavingBattleRoute,
+    shouldConfirmBattleExit
+} from './battleExitConfirmPolicy.js';
 
 /**
  * 简单的单页应用路由管理器
@@ -96,6 +100,16 @@ class Router {
      * 绑定事件监听器
      */
     bindEventListeners() {
+        const navigateSafely = (route, pushState = true, onBlocked = null) => {
+            this.navigateTo(route, pushState).then((navigated) => {
+                if (navigated === false && typeof onBlocked === 'function') {
+                    onBlocked();
+                }
+            }).catch((error) => {
+                console.error(`Router: Navigation to "${route}" failed:`, error);
+            });
+        };
+
         // 监听导航按钮点击
         document.addEventListener('click', (event) => {
             const routeButton = event.target.closest('[data-route]');
@@ -108,14 +122,26 @@ class Router {
                         return;
                     }
                 }
-                this.navigateTo(route);
+                navigateSafely(route);
             }
         });
 
         // 监听浏览器前进后退
         window.addEventListener('popstate', (event) => {
             const route = event.state?.route || 'navigation';
-            this.navigateTo(route, false); // 不推送历史记录
+            if (route === this.currentRoute) {
+                return;
+            }
+            if (isLeavingBattleRoute(this.currentRoute, route)) {
+                const confirmed = window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE);
+                if (!confirmed) {
+                    window.history.go(1);
+                    return;
+                }
+            }
+            navigateSafely(route, false, () => {
+                window.history.pushState({ route: this.currentRoute }, '', `#${this.currentRoute}`);
+            }); // 不推送历史记录
         });
     }
 
@@ -127,14 +153,14 @@ class Router {
     async navigateTo(route, pushState = true) {
         if (!this.routes.has(route)) {
             console.error(`Router: Unknown route "${route}"`);
-            return;
+            return false;
         }
 
         // 执行路由前钩子
         if (this.beforeRouteChange) {
             const shouldContinue = await this.beforeRouteChange(this.currentRoute, route);
             if (!shouldContinue) {
-                return;
+                return false;
             }
         }
 
@@ -179,6 +205,7 @@ class Router {
             await this.afterRouteChange(oldRoute, route);
         }
 
+        return true;
     }
 
     /**
@@ -324,15 +351,19 @@ class Router {
     async initDevToolsPage() {
 
         try {
-            const [logModule, userModule, winrateModule] = await Promise.all([
+            const [logModule, userModule, winrateModule, copyLimitModule, cardSetEnvModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
                 import('./devToolsUserManagement.js'),
-                import('./devToolsWinrateStats.js')
+                import('./devToolsWinrateStats.js'),
+                import('./devToolsCopyLimitPolicies.js'),
+                import('./devToolsCardSetEnvironmentMembership.js')
             ]);
             await Promise.all([
                 logModule.initializeDevToolsLogViewer(),
                 userModule.initializeDevToolsUserManagement(),
-                winrateModule.initializeDevToolsWinrateStats()
+                winrateModule.initializeDevToolsWinrateStats(),
+                copyLimitModule.initializeDevToolsCopyLimitPolicies(),
+                cardSetEnvModule.initializeDevToolsCardSetEnvironmentMembership()
             ]);
         } catch (error) {
             console.error('Router: Failed to initialize dev tools:', error);
@@ -341,15 +372,19 @@ class Router {
 
     async cleanupDevToolsPage() {
         try {
-            const [logModule, userModule, winrateModule] = await Promise.all([
+            const [logModule, userModule, winrateModule, copyLimitModule, cardSetEnvModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
                 import('./devToolsUserManagement.js'),
-                import('./devToolsWinrateStats.js')
+                import('./devToolsWinrateStats.js'),
+                import('./devToolsCopyLimitPolicies.js'),
+                import('./devToolsCardSetEnvironmentMembership.js')
             ]);
             await Promise.all([
                 logModule.cleanupDevToolsLogViewer(),
                 userModule.cleanupDevToolsUserManagement(),
-                winrateModule.cleanupDevToolsWinrateStats()
+                winrateModule.cleanupDevToolsWinrateStats(),
+                copyLimitModule.cleanupDevToolsCopyLimitPolicies(),
+                cardSetEnvModule.cleanupDevToolsCardSetEnvironmentMembership()
             ]);
         } catch (error) {
             console.error('Router: Failed to cleanup dev tools:', error);
@@ -438,7 +473,9 @@ const initRouter = () => {
 
     const initialRoute = hash && router.routes.has(hash) ? hash : 'navigation';
 
-    router.navigateTo(initialRoute, false);
+    router.navigateTo(initialRoute, false).catch((error) => {
+        console.error(`Router: Failed to initialize route "${initialRoute}".`, error);
+    });
 };
 
 if (document.readyState === 'loading') {

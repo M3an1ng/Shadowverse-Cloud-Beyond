@@ -1,3 +1,5 @@
+import { CARD_CATALOG_INVALIDATED_EVENT } from './dataChangeEvents.js';
+
 const abilityDataCache = {
     cards: null,
     abilities: null,
@@ -10,13 +12,13 @@ const abilityDataCache = {
 
 function normalizeId(value) {
     const id = Number(value);
-    return Number.isFinite(id) && id > 0 ? id : null;
+    return Number.isFinite(id) && id >= 0 ? id : null;
 }
 
 function buildCardIndex(cards) {
     const index = new Map();
     (cards || []).forEach(card => {
-        const id = normalizeId(card?.id ?? card?.Id);
+        const id = normalizeId(card?.id ?? card?.CardId ?? card?.Id);
         if (id == null) return;
         index.set(id, card);
     });
@@ -46,7 +48,10 @@ function buildAbilitiesByCard(abilities) {
 }
 
 async function fetchCards() {
-    const response = await fetch('/api/cards');
+    const response = await fetch('/api/cards', {
+        method: 'GET',
+        cache: 'no-store'
+    });
     if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -148,3 +153,9 @@ export async function refreshAbilityDataCache() {
     clearAbilityDataCache();
     return await ensureAbilityData();
 }
+
+document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
+    abilityDataCache.cards = null;
+    abilityDataCache.cardIndex = new Map();
+    abilityDataCache.cardsPromise = null;
+});

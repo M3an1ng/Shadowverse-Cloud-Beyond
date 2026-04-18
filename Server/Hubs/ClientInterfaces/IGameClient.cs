@@ -235,6 +235,11 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         Task ActStateUpdated(ActStateUpdatedEventDto eventDto);
 
         /// <summary>
+        /// Notifies the client that a card's Fusion state has been updated.
+        /// </summary>
+        Task FusionStateUpdated(FusionStateUpdatedEventDto eventDto);
+
+        /// <summary>
         /// Notifies the client that a player's PP+1 uses availability has been updated.
         /// </summary>
         Task PpBoostStateUpdated(PpBoostStateUpdatedEventDto eventDto);

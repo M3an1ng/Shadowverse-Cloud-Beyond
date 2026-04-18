@@ -9,6 +9,7 @@ using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Entities;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -80,6 +81,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "CounterOperation", typeof(CounterOperation) },
                 { "FailureHandling", typeof(FailureHandling) },
                 { "CardKeyword", typeof(CardKeyword) },
+                { "AbilityType", typeof(AbilityType) },
                 { "AbilityKeyword", typeof(AbilityKeyword) },
                 { "PlayerScope", typeof(PlayerScope) },
                 { "CardSourceMode", typeof(CardSourceMode) },
@@ -90,10 +92,13 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "EventReasonSource", typeof(EventReasonSource) },
                 { "ModifierLayer", typeof(ModifierLayer) },
                 { "StatType", typeof(StatType) },
+                { "CardActionUsageType", typeof(CardActionUsageType) },
                 { "PlayMode", typeof(PlayMode) },
+                { "DeckEnvironment", typeof(DeckEnvironment) },
                 { "RemoveAbilityMode", typeof(RemoveAbilityMode) },
                 { "SequenceOrder", typeof(SequenceOrder) },
                 { "DeckInsertMode", typeof(DeckInsertMode) },
+                { "TriggerAbilityMode", typeof(TriggerAbilityMode) },
             };
 
             return enumTypes.TryGetValue(enumName, out var type) ? type : null;
@@ -133,6 +138,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "Spell", "法术" },
                 { "Amulet", "护符" },
                 { "Crest", "纹章" },
+                { "Faith", "信仰" },
                 { "Leader", "主战者" },
 
                 // CardClass
@@ -151,6 +157,11 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "Gold", "黄金" },
                 { "Legendary", "传说" },
                 { "Special", "特殊" },
+
+                // AbilityType
+                { "Triggered", "触发式" },
+                { "Continuous", "持久式" },
+                { "Activated", "启动式" },
 
                 // TriggerTiming
                 { "Before", "之前" },
@@ -206,7 +217,11 @@ namespace ShadowverseBeyond.Server.Controllers
                 // StatType
                 { "Attack", "攻击力" },
                 { "Health", "生命值" },
-                { "Cost", "费用" }
+                { "Cost", "费用" },
+
+                // DeckEnvironment
+                { "Open", "开放环境" },
+                { "Rotation", "指定系列" }
             };
 
             return defaultLocalizations.TryGetValue(enumValue, out var localized) ? localized : enumValue;

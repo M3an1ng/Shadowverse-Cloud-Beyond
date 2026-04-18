@@ -27,6 +27,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using Microsoft.AspNetCore.SignalR;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 {
@@ -364,6 +365,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             {
                 return;
             }
+            var matchService = _serviceProvider.GetService<IMatchService>();
+            var roomScopedId = matchService != null
+                && matchService.TryGetRoomIdByGameId(context.CurrentGameState.GameId, out var roomId)
+                && !string.IsNullOrWhiteSpace(roomId)
+                    ? roomId
+                    : context.CurrentGameState.GameId;
 
             var sourceCard = ability?.SourceCard;
             var cardName = sourceCard?.Name ?? "UnknownCard";
@@ -399,7 +406,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                     Message = message
                 };
 
-                _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceSucceeded(dto);
+                _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceSucceeded(dto);
             }
         }
 

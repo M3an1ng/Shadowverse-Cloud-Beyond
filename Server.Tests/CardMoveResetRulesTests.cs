@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using AutoMapper;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities;
@@ -38,6 +39,17 @@ namespace ShadowverseBeyond.Server.Tests
 
         private static ServiceProvider BuildServiceProvider(Mock<IBuffService> buffService)
         {
+            buffService.Setup(service => service.GetEffectiveAttack(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, GameContext _) => card.BaseAttack);
+            buffService.Setup(service => service.GetEffectiveMaxHealth(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, GameContext _) => card.BaseHealth);
+            buffService.Setup(service => service.GetEffectiveCost(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, GameContext _) => card.BaseCost);
+            buffService.Setup(service => service.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, GameContext _) => card.BaseKeywords);
+            buffService.Setup(service => service.GetEffectiveActionUsageLimit(It.IsAny<CardInstance>(), It.IsAny<CardActionUsageType>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, CardActionUsageType actionType, GameContext _) => card.GetBaseActionUsageLimit(actionType));
+
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
@@ -48,6 +60,11 @@ namespace ShadowverseBeyond.Server.Tests
 
         private static GameState BuildGameState(Guid player1Id, Guid player2Id, Mock<IAbilityManager> abilityManager)
         {
+            abilityManager.Setup(manager => manager.GetAbilitiesForCard(It.IsAny<Guid>()))
+                .Returns(new List<ShadowverseBeyond.Server.Domain.Abilities.Common.IAbility>());
+            abilityManager.Setup(manager => manager.GetEffectiveAbilitiesForCard(It.IsAny<Guid>(), It.IsAny<GameContext>()))
+                .Returns(new List<ShadowverseBeyond.Server.Domain.Abilities.Common.IAbility>());
+
             var player1 = new PlayerState(player1Id);
             var player2 = new PlayerState(player2Id);
             return new GameState("test-game", player1, player2, player1Id)
@@ -61,11 +78,15 @@ namespace ShadowverseBeyond.Server.Tests
         {
             var mapper = new Mock<IMapper>().Object;
             var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
-            return new GameContext(serviceProvider, mapper, accessor, gameState, requestingPlayerId);
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.Logger = NullLogger.Instance;
+            var context = new GameContext(serviceProvider, mapper, accessor, gameState, requestingPlayerId);
+            accessor.GameContext = context;
+            return context;
         }
 
         [Fact]
-        public void CardMoved_PreserveTransition_DoesNotResetState()
+        public void CardMoved_PreserveTransition_PreservesRuntimeStateButResetsZoneStayTurn()
         {
             const int definitionId = 1;
             SetTestGameDataProvider(definitionId);
@@ -77,6 +98,12 @@ namespace ShadowverseBeyond.Server.Tests
                     It.IsAny<CardInstance>(),
                     It.IsAny<List<AbilityConfig>>(),
                     It.IsAny<Guid?>()))
+                .Returns(new List<Ability>());
+            abilityManager.Setup(manager => manager.CreateAbilitiesForCard(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<List<AbilityConfig>>(),
+                    It.IsAny<Guid?>(),
+                    It.IsAny<GameState>()))
                 .Returns(new List<Ability>());
 
             var gameState = BuildGameState(player1Id, player2Id, abilityManager);
@@ -95,12 +122,15 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 Damage = 3,
                 IsEvolved = true,
-                FieldTurn = 2,
+                ZoneStayTurn = 2,
                 AttacksThisTurn = 1,
                 MaxAttacksPerTurn = 2,
+                ActsThisTurn = 1,
+                MaxActsPerTurn = 2,
+                FusionsThisTurn = 1,
+                MaxFusionsPerTurn = 2,
                 CurrentZone = CardZone.Deck
             };
-            card.AbilityState["act.lastUsedTurnNumber"] = 4;
             card.AbilityState["custom"] = 9;
             card.ApplySilence();
             gameState.Player1.Deck.Add(card);
@@ -113,12 +143,98 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(3, card.Damage);
             Assert.True(card.IsEvolved);
             Assert.True(card.IsSilenced);
-            Assert.Equal(2, card.FieldTurn);
+            Assert.Equal(0, card.ZoneStayTurn);
             Assert.Equal(1, card.AttacksThisTurn);
             Assert.Equal(2, card.MaxAttacksPerTurn);
-            Assert.True(card.AbilityState.ContainsKey("act.lastUsedTurnNumber"));
+            Assert.Equal(1, card.ActsThisTurn);
+            Assert.Equal(2, card.MaxActsPerTurn);
+            Assert.Equal(1, card.FusionsThisTurn);
+            Assert.Equal(2, card.MaxFusionsPerTurn);
             Assert.Equal(9, card.AbilityState["custom"]);
             Assert.Contains(card, gameState.Player1.Hand);
+        }
+
+        [Fact]
+        public void StartTurn_IncrementsZoneStayTurnAcrossAllOwnedZones()
+        {
+            const int definitionId = 1;
+            SetTestGameDataProvider(definitionId);
+
+            var player1Id = Guid.NewGuid();
+            var player2Id = Guid.NewGuid();
+            var abilityManager = new Mock<IAbilityManager>();
+            abilityManager.Setup(manager => manager.GetAbilitiesForCard(It.IsAny<Guid>()))
+                .Returns(new List<ShadowverseBeyond.Server.Domain.Abilities.Common.IAbility>());
+
+            var gameState = BuildGameState(player1Id, player2Id, abilityManager);
+            gameState.Phase = GamePhase.Main;
+
+            var buffService = new Mock<IBuffService>();
+            var serviceProvider = BuildServiceProvider(buffService);
+            using var context = BuildContext(gameState, player1Id, serviceProvider);
+
+            var deckCard = new CardInstance(Guid.NewGuid(), definitionId, player1Id)
+            {
+                CurrentZone = CardZone.Deck,
+                ZoneStayTurn = 2
+            };
+            var handCard = new CardInstance(Guid.NewGuid(), definitionId, player1Id)
+            {
+                CurrentZone = CardZone.Hand,
+                ZoneStayTurn = 3,
+                FusionsThisTurn = 1
+            };
+            var fieldCard = new CardInstance(Guid.NewGuid(), definitionId, player1Id)
+            {
+                CurrentZone = CardZone.Field,
+                ZoneStayTurn = 1,
+                AttacksThisTurn = 1,
+                ActsThisTurn = 1,
+                FusionsThisTurn = 1
+            };
+            var graveyardCard = new CardInstance(Guid.NewGuid(), definitionId, player1Id)
+            {
+                CurrentZone = CardZone.Graveyard,
+                ZoneStayTurn = 4
+            };
+            var extraCard = new CardInstance(Guid.NewGuid(), definitionId, player1Id)
+            {
+                CurrentZone = CardZone.Extra,
+                ZoneStayTurn = 5
+            };
+            var emblemCard = new CardInstance(Guid.NewGuid(), definitionId, player1Id)
+            {
+                CurrentZone = CardZone.Emblem,
+                ZoneStayTurn = 6
+            };
+            var opponentHandCard = new CardInstance(Guid.NewGuid(), definitionId, player2Id)
+            {
+                CurrentZone = CardZone.Hand,
+                ZoneStayTurn = 7
+            };
+
+            gameState.Player1.Deck.Add(deckCard);
+            gameState.Player1.Hand.Add(handCard);
+            gameState.Player1.Field.Add(fieldCard);
+            gameState.Player1.Graveyard.Add(graveyardCard);
+            gameState.Player1.Extra.Add(extraCard);
+            gameState.Player1.Emblem.Add(emblemCard);
+            gameState.Player2.Hand.Add(opponentHandCard);
+
+            var result = gameState.Player1.StartTurn(context);
+
+            Assert.True(result.Success);
+            Assert.Equal(3, deckCard.ZoneStayTurn);
+            Assert.Equal(4, handCard.ZoneStayTurn);
+            Assert.Equal(0, handCard.FusionsThisTurn);
+            Assert.Equal(2, fieldCard.ZoneStayTurn);
+            Assert.Equal(0, fieldCard.AttacksThisTurn);
+            Assert.Equal(0, fieldCard.ActsThisTurn);
+            Assert.Equal(0, fieldCard.FusionsThisTurn);
+            Assert.Equal(5, graveyardCard.ZoneStayTurn);
+            Assert.Equal(6, extraCard.ZoneStayTurn);
+            Assert.Equal(7, emblemCard.ZoneStayTurn);
+            Assert.Equal(7, opponentHandCard.ZoneStayTurn);
         }
 
         [Fact]
@@ -135,6 +251,12 @@ namespace ShadowverseBeyond.Server.Tests
                     It.IsAny<List<AbilityConfig>>(),
                     It.IsAny<Guid?>()))
                 .Returns(new List<Ability>());
+            abilityManager.Setup(manager => manager.CreateAbilitiesForCard(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<List<AbilityConfig>>(),
+                    It.IsAny<Guid?>(),
+                    It.IsAny<GameState>()))
+                .Returns(new List<Ability>());
 
             var gameState = BuildGameState(player1Id, player2Id, abilityManager);
 
@@ -152,12 +274,15 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 Damage = 3,
                 IsEvolved = true,
-                FieldTurn = 2,
+                ZoneStayTurn = 2,
                 AttacksThisTurn = 1,
                 MaxAttacksPerTurn = 2,
+                ActsThisTurn = 1,
+                MaxActsPerTurn = 2,
+                FusionsThisTurn = 1,
+                MaxFusionsPerTurn = 2,
                 CurrentZone = CardZone.Field
             };
-            card.AbilityState["act.lastUsedTurnNumber"] = 4;
             card.AbilityState["custom"] = 9;
             card.ApplySilence();
             gameState.Player1.Field.Add(card);
@@ -170,9 +295,13 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(0, card.Damage);
             Assert.False(card.IsEvolved);
             Assert.False(card.IsSilenced);
-            Assert.Equal(0, card.FieldTurn);
+            Assert.Equal(0, card.ZoneStayTurn);
             Assert.Equal(0, card.AttacksThisTurn);
             Assert.Equal(1, card.MaxAttacksPerTurn);
+            Assert.Equal(0, card.ActsThisTurn);
+            Assert.Equal(1, card.MaxActsPerTurn);
+            Assert.Equal(0, card.FusionsThisTurn);
+            Assert.Equal(1, card.MaxFusionsPerTurn);
             Assert.Empty(card.AbilityState);
             Assert.Contains(card, gameState.Player1.Graveyard);
         }
@@ -219,6 +348,12 @@ namespace ShadowverseBeyond.Server.Tests
                     It.IsAny<List<AbilityConfig>>(),
                     It.IsAny<Guid?>()))
                 .Returns(new List<Ability>());
+            abilityManager.Setup(manager => manager.CreateAbilitiesForCard(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<List<AbilityConfig>>(),
+                    It.IsAny<Guid?>(),
+                    It.IsAny<GameState>()))
+                .Returns(new List<Ability>());
 
             var gameState = BuildGameState(player1Id, player2Id, abilityManager);
 
@@ -236,14 +371,15 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 Damage = 5,
                 IsEvolved = true,
-                FieldTurn = 2,
+                ZoneStayTurn = 2,
                 AttacksThisTurn = 1,
                 MaxAttacksPerTurn = 2,
                 ActsThisTurn = 1,
                 MaxActsPerTurn = 2,
+                FusionsThisTurn = 1,
+                MaxFusionsPerTurn = 2,
                 CurrentZone = CardZone.Field
             };
-            card.AbilityState["act.lastUsedTurnNumber"] = 4;
             card.AbilityState["custom"] = 9;
             card.SetCounter("custom.counter", 7);
             card.ApplySilence();
@@ -256,25 +392,26 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(0, card.Damage);
             Assert.False(card.IsEvolved);
             Assert.False(card.IsSilenced);
-            Assert.Equal(0, card.FieldTurn);
+            Assert.Equal(0, card.ZoneStayTurn);
             Assert.Equal(0, card.AttacksThisTurn);
             Assert.Equal(1, card.MaxAttacksPerTurn);
             Assert.Equal(0, card.ActsThisTurn);
             Assert.Equal(1, card.MaxActsPerTurn);
+            Assert.Equal(0, card.FusionsThisTurn);
+            Assert.Equal(1, card.MaxFusionsPerTurn);
             Assert.Empty(card.AbilityState);
             Assert.Equal(0, card.GetCounter("custom.counter"));
-            Assert.Contains(result.GeneratedEvents, gameEvent => gameEvent is TransformEvent);
-
             buffService.Verify(service => service.RemoveAllBuffs(
                     card.InstanceId,
                     It.IsAny<GameContext>(),
                     It.IsAny<Func<Buff, bool>>()),
                 Times.Once);
-            abilityManager.Verify(manager => manager.UnregisterCardAbilities(card.InstanceId), Times.Once);
+            abilityManager.Verify(manager => manager.UnregisterCardAbilities(card.InstanceId, It.IsAny<string>()), Times.Once);
             abilityManager.Verify(manager => manager.CreateAbilitiesForCard(
                     card,
                     It.Is<List<AbilityConfig>>(configs => configs.Count == transformedAbilityConfigs.Count),
-                    It.IsAny<Guid?>()),
+                    It.IsAny<Guid?>(),
+                    It.IsAny<GameState>()),
                 Times.Once);
         }
 
@@ -291,6 +428,12 @@ namespace ShadowverseBeyond.Server.Tests
                     It.IsAny<CardInstance>(),
                     It.IsAny<List<AbilityConfig>>(),
                     It.IsAny<Guid?>()))
+                .Returns(new List<Ability>());
+            abilityManager.Setup(manager => manager.CreateAbilitiesForCard(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<List<AbilityConfig>>(),
+                    It.IsAny<Guid?>(),
+                    It.IsAny<GameState>()))
                 .Returns(new List<Ability>());
 
             var gameState = BuildGameState(player1Id, player2Id, abilityManager);
@@ -343,6 +486,12 @@ namespace ShadowverseBeyond.Server.Tests
                     It.IsAny<CardInstance>(),
                     It.IsAny<List<AbilityConfig>>(),
                     It.IsAny<Guid?>()))
+                .Returns(new List<Ability>());
+            abilityManager.Setup(manager => manager.CreateAbilitiesForCard(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<List<AbilityConfig>>(),
+                    It.IsAny<Guid?>(),
+                    It.IsAny<GameState>()))
                 .Returns(new List<Ability>());
 
             var gameState = BuildGameState(player1Id, player2Id, abilityManager);

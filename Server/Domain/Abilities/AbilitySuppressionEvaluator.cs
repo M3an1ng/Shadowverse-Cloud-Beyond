@@ -18,6 +18,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             return effect.RemoveMode switch
             {
                 RemoveAbilityMode.All => true,
+                RemoveAbilityMode.Self => effect.SourceAbilityRuntimeId.HasValue
+                                          && effect.SourceAbilityRuntimeId.Value != Guid.Empty
+                                          && ability.RuntimeId == effect.SourceAbilityRuntimeId.Value,
                 RemoveAbilityMode.Keyword => effect.AbilityKeyword != AbilityKeyword.None
                                              && ability.HasKeyword(effect.AbilityKeyword),
                 RemoveAbilityMode.Id => effect.AbilityDefinitionIds.Count > 0

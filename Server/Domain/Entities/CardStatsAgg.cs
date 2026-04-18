@@ -1,16 +1,17 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
 
 /// <summary>
-/// Aggregated per-card winrate counters by environment.
+/// Aggregated per-card winrate counters by environment and deck rule.
 /// </summary>
 public class CardStatsAgg
 {
     public Guid Id { get; set; }
 
-    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Open;
+    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Rotation;
+    public DeckRule Rule { get; set; } = DeckRule.Standard;
     public int CardDefinitionId { get; set; }
 
     public int DeckGames { get; set; }
@@ -24,3 +25,5 @@ public class CardStatsAgg
 
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }
+
+

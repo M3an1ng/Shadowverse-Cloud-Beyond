@@ -23,6 +23,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     public class AbilityConfig
     {
         private Dictionary<string, ValueConfig> _properties = new(StringComparer.OrdinalIgnoreCase);
+        private bool _broadcastOnTrigger = true;
+        private bool _buffDisplay = true;
+        [JsonIgnore]
+        private bool _buffDisplayExplicitlySet;
         [JsonIgnore] // This will be populated from the database entity's Id, not the JSON config.
         public long Id { get; set; }
         public int CardId { get; set; } // 添加 CardId 属性
@@ -67,7 +71,29 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public List<EffectConfig> Effects { get; set; } = new();
         public List<AuraConfig> Auras { get; set; } = new();
         public bool IsEnabled { get; set; } = true;
-        public bool BroadcastOnTrigger { get; set; } = true;
+        public bool BroadcastOnTrigger
+        {
+            get => _broadcastOnTrigger;
+            set
+            {
+                _broadcastOnTrigger = value;
+                if (!_buffDisplayExplicitlySet)
+                {
+                    _buffDisplay = value;
+                }
+            }
+        }
+
+        public bool BuffDisplay
+        {
+            get => _buffDisplay;
+            set
+            {
+                _buffDisplay = value;
+                _buffDisplayExplicitlySet = true;
+            }
+        }
+
         public string Version { get; set; } = "1.0";
         public List<CounterRegistrationConfig> CounterRegistrations { get; set; } = new();
         public List<PlayerCounterRegistrationConfig> PlayerCounterRegistrations { get; set; } = new();

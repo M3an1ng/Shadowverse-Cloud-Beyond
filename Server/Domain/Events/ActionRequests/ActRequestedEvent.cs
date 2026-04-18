@@ -71,7 +71,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
             var abilities = context.AbilityManager.GetEffectiveAbilitiesForCard(card.InstanceId, context)
                 ?? new List<IAbility>();
-            var hasActAbility = abilities
+            var hasActKeywordAbility = abilities
                 .Any(a => a.AbilityKeywords?.Any(k => k.Keyword == AbilityKeyword.Act) == true);
 
             Ability? selectedAbility = null;
@@ -102,7 +102,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 selectedAbility = ability;
             }
 
-            if (!hasActAbility && selectedAbility == null)
+            if (!hasActKeywordAbility && selectedAbility == null)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has no Act ability." };
             }
@@ -113,7 +113,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player state not found for {PlayerId}." };
             }
 
-            if (card.HasUsedActThisTurn(owner.TurnNumber))
+            if (card.HasUsedActThisTurn())
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has already used Act this turn." };
             }

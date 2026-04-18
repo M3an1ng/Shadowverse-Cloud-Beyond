@@ -47,4 +47,15 @@ describe("room exit decision policy", () => {
         expect(shouldDeferRoomLeaveForDecision("game", "navigation", handshake)).toBe(true);
         expect(shouldDeferRoomLeaveForDecision("game", "card-editor", handshake)).toBe(false);
     });
+
+    test("does not defer room leave after game over", () => {
+        const handshake = {
+            gameId: "g1",
+            playerId: "p1",
+            token: "t1",
+            useAiFallback: false
+        };
+        expect(shouldDeferRoomLeaveForDecision("game", "navigation", handshake, { gameOver: true })).toBe(false);
+        expect(shouldDeferRoomLeaveForDecision("game", "navigation", handshake, { gameOver: false })).toBe(true);
+    });
 });

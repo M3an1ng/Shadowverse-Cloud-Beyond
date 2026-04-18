@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Factories;
@@ -22,6 +23,8 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Domain.Constants;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -49,8 +52,14 @@ namespace ShadowverseBeyond.Server.Tests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
-            services.AddSingleton<IBuffService>(new Mock<IBuffService>().Object);
+            var buffService = new Mock<IBuffService>();
+            buffService.Setup(s => s.GetEffectiveMaxHealth(It.IsAny<CardInstance>(), It.IsAny<GameContext>())).Returns(10);
+            buffService.Setup(s => s.GetEffectiveAttack(It.IsAny<CardInstance>(), It.IsAny<GameContext>())).Returns(1);
+            buffService.Setup(s => s.GetEffectiveCost(It.IsAny<CardInstance>(), It.IsAny<GameContext>())).Returns(0);
+            buffService.Setup(s => s.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>())).Returns(new List<CardKeyword>());
+            services.AddSingleton<IBuffService>(buffService.Object);
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            services.AddSingleton(_mockQueryExecutor.Object);
             _serviceProvider = services.BuildServiceProvider();
 
             GameServiceProvider.ContextAccessor = _serviceProvider.GetRequiredService<IGameContextAccessor>();
@@ -207,6 +216,72 @@ namespace ShadowverseBeyond.Server.Tests
                 Assert.DoesNotContain(buffAbility, abilitiesOnCard);
                 Assert.Contains(normalAbility, abilitiesOnCard);
                 Assert.Single(abilitiesOnCard);
+            }
+        }
+
+        [Fact]
+        public void UnregisterAbility_ShouldCaptureExtendedTombstoneSnapshot()
+        {
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = CreateTestGameState(player, opponent);
+            gameState.AbilityManager = _abilityManager;
+            gameState.BuffManager = new BuffManager(NullLogger<BuffManager>.Instance, _abilityManager);
+
+            var cardInstance = new CardInstance(Guid.NewGuid(), 1, player.PlayerId)
+            {
+                CurrentZone = CardZone.Field,
+                ZoneIndex = 0
+            };
+
+            player.Field.Add(cardInstance);
+            gameState.RegisterCardInstance(cardInstance);
+
+            var mockConditionFactory = new Mock<IConditionFactory>();
+            var mockTargetFactory = new Mock<ITargetFactory>();
+            var abilityConfig = new AbilityConfig
+            {
+                Id = 7001,
+                Name = "SnapshotTarget",
+                AbilityKeywords = new List<AbilityKeywordConfig>
+                {
+                    new() { Keyword = AbilityKeyword.Lastword, Value = 1 }
+                }
+            };
+
+            var ability = new Ability(
+                abilityConfig,
+                mockConditionFactory.Object,
+                mockTargetFactory.Object,
+                _targetSelectionService,
+                cardInstance);
+
+            _abilityManager.RegisterAbility(ability);
+
+            var accessor = _serviceProvider.GetRequiredService<IGameContextAccessor>();
+            using (var context = new GameContext(_serviceProvider, _mockMapper.Object, accessor, gameState, player.PlayerId))
+            {
+                GameServiceProvider.ContextAccessor = accessor;
+                GameServiceProvider.ContextAccessor.GameContext = context;
+
+                ability.InvalidateQueuedEffects("remove_ability");
+                _abilityManager.UnregisterAbility(ability, "suppressed_cleanup");
+                var found = _abilityManager.TryGetAbilitySnapshot(ability.RuntimeId, out var snapshot);
+                Assert.True(found);
+                Assert.NotNull(snapshot);
+                Assert.Equal(ability.RuntimeId, snapshot.RuntimeId);
+                Assert.Equal(cardInstance.InstanceId, snapshot.SourceCardId);
+                Assert.Equal(cardInstance.Name, snapshot.SourceCardName);
+                Assert.Equal("SnapshotTarget", snapshot.AbilityName);
+                Assert.Equal(7001, snapshot.DefinitionId);
+                Assert.Null(snapshot.SourceBuffId);
+                Assert.Equal(new[] { AbilityKeyword.Lastword }, snapshot.Keywords);
+                Assert.Equal(ability.KeywordSummary, snapshot.KeywordSummary);
+                Assert.Equal("suppressed_cleanup", snapshot.RemovalReason);
+                Assert.True(snapshot.WasSuppressedWhenUnregistered);
+                Assert.True(snapshot.ShouldCancelQueuedEffects);
+                Assert.Equal(1, snapshot.QueuedEffectInvalidationVersion);
+                Assert.Equal("remove_ability", snapshot.QueuedEffectInvalidationReason);
             }
         }
 
@@ -577,5 +652,83 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(CardZone.Hand, leftCard.CurrentZone);
             Assert.Equal(0, leftCard.ZoneIndex);
         }
+
+        [Fact]
+        public async Task ProcessSingleAbilityAsync_TargetResolutionSkipped_ShouldReturnSuccessWithoutEffects()
+        {
+            var player1 = new PlayerState(Guid.NewGuid());
+            var player2 = new PlayerState(Guid.NewGuid());
+            var gameState = CreateTestGameState(player1, player2);
+            gameState.AbilityManager = _abilityManager;
+            gameState.BuffManager = new BuffManager(NullLogger<BuffManager>.Instance, _abilityManager);
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player1.PlayerId) { CurrentZone = CardZone.Field };
+            var candidateTarget = new CardInstance(Guid.NewGuid(), 2, player2.PlayerId) { CurrentZone = CardZone.Field };
+            player1.Field.Add(sourceCard);
+            player2.Field.Add(candidateTarget);
+            gameState.RegisterCardInstance(sourceCard);
+            gameState.RegisterCardInstance(candidateTarget);
+
+            _mockQueryExecutor
+                .Setup(q => q.ExecuteQuery(
+                    It.IsAny<QueryConfig>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Dictionary<string, List<TargetInfo>>?>()))
+                .Returns(new QueryResult
+                {
+                    Success = true,
+                    Results = new List<object> { candidateTarget }
+                });
+
+            var conditionFactory = Mock.Of<IConditionFactory>();
+            var targetFactory = new TargetFactory(_targetSelectionService, NullLogger<ShadowverseBeyond.Server.Domain.Abilities.Runtime.Target>.Instance);
+            var config = new AbilityConfig
+            {
+                Name = "skip-on-insufficient-targets",
+                Trigger = new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { EventType.Evolve },
+                    Timing = TriggerTiming.On,
+                    RelationType = TriggerRelationType.SourceSelf,
+                    IsEnabled = true
+                },
+                Targets = new Dictionary<string, TargetConfig>
+                {
+                    ["target"] = new TargetConfig
+                    {
+                        Query = new QueryConfig { SourcePoolExpression = "stub" },
+                        TargetHandling = TargetHandlingStrategy.BlockAbilityExecutionOnly,
+                        PlayerChoiceOptions = new PlayerChoiceConfig
+                        {
+                            IsRequired = true,
+                            MinCount = 2,
+                            MaxCount = 2
+                        }
+                    }
+                },
+                Effects = new List<EffectConfig>
+                {
+                    new() { Type = EffectType.Destroy }
+                }
+            };
+            var ability = new Ability(config, conditionFactory, targetFactory, _targetSelectionService, sourceCard);
+
+            using var context = new GameContext(
+                _serviceProvider,
+                _mockMapper.Object,
+                _serviceProvider.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                player1.PlayerId,
+                default,
+                new EvolveEvent(sourceCard, TargetInfo.ForPlayer(player1)),
+                sourceCard);
+
+            var result = await _abilityManager.ProcessSingleAbilityAsync(ability, context, false, false);
+
+            Assert.True(result.IsSuccess);
+            Assert.False(result.IsCancelled);
+            Assert.Empty(result.Effects);
+        }
+
     }
 }

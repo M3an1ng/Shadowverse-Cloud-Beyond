@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Entities;
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
 {
@@ -13,12 +15,14 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public string Key { get; set; } = string.Empty;
         public DurationType DurationType { get; set; } = DurationType.Permanent;
         public ValueConfig? DurationParameter { get; set; } = new StaticValueConfig { Value = 0 };
+        public ConditionConfig? RemoveCondition { get; set; }
         public bool CanStack { get; set; } = false;
 
         public List<StatModifierConfig> StatModifiers { get; set; } = new();
         public List<KeywordModifierConfig> KeywordModifiers { get; set; } = new();
         public List<TribeModifierConfig> TribeModifiers { get; set; } = new();
         public List<AbilityKeywordModifierConfig> AbilityKeywordModifiers { get; set; } = new();
+        public List<ActionUsageLimitModifierConfig> ActionUsageLimitModifiers { get; set; } = new();
         public List<AbilityConfig> GrantedAbilities { get; set; } = new();
     }
 
@@ -26,12 +30,14 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     {
         public DurationType DurationType { get; set; } = DurationType.Permanent;
         public ValueConfig? DurationParameter { get; set; } = new StaticValueConfig { Value = 0 };
+        public ConditionConfig? RemoveCondition { get; set; }
         public bool CanStack { get; set; } = false;
 
         public List<StatModifierConfig> StatModifiers { get; set; } = new();
         public List<KeywordModifierConfig> KeywordModifiers { get; set; } = new();
         public List<TribeModifierConfig> TribeModifiers { get; set; } = new();
         public List<AbilityKeywordModifierConfig> AbilityKeywordModifiers { get; set; } = new();
+        public List<ActionUsageLimitModifierConfig> ActionUsageLimitModifiers { get; set; } = new();
         public List<AbilityConfig> GrantedAbilities { get; set; } = new();
     }
 
@@ -55,6 +61,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public ValueConfig? Value { get; set; }
     }
 
+    public class ActionUsageLimitModifierConfig
+    {
+        public CardActionUsageType ActionType { get; set; } = CardActionUsageType.Attack;
+        public ValueConfig? Value { get; set; }
+    }
+
     public class TribeModifierConfig
     {
         public string Tribe { get; set; } = string.Empty;
@@ -73,13 +85,16 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             {
                 new BuffConfig
                 {
+                    Key = string.Empty,
                     DurationType = template.DurationType,
                     DurationParameter = template.DurationParameter,
+                    RemoveCondition = template.RemoveCondition,
                     CanStack = template.CanStack,
                     StatModifiers = template.StatModifiers ?? new List<StatModifierConfig>(),
                     KeywordModifiers = template.KeywordModifiers ?? new List<KeywordModifierConfig>(),
                     TribeModifiers = template.TribeModifiers ?? new List<TribeModifierConfig>(),
                     AbilityKeywordModifiers = template.AbilityKeywordModifiers ?? new List<AbilityKeywordModifierConfig>(),
+                    ActionUsageLimitModifiers = template.ActionUsageLimitModifiers ?? new List<ActionUsageLimitModifierConfig>(),
                     GrantedAbilities = template.GrantedAbilities ?? new List<AbilityConfig>()
                 }
             };

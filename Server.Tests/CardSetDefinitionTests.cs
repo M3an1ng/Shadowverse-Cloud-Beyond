@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using ShadowverseBeyond.Server.Controllers;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities;
@@ -42,7 +43,8 @@ public class CardSetDefinitionTests
             db,
             new StubHostEnvironment(),
             new StubGameService(),
-            new StubGameDataProvider());
+            new StubGameDataProvider(),
+            Mock.Of<ITribeRegistry>());
     }
 
     [Fact]
@@ -128,31 +130,47 @@ public class CardSetDefinitionTests
             Environments = new List<DeckEnvironment> { DeckEnvironment.Open }
         };
         db.CardSetDefinitions.Add(set);
-        db.CardDefinitions.Add(new CardDefinition
+        for (var cardId = 1; cardId <= 40; cardId++)
         {
-            Id = 1,
-            Name = "Rotation Follower",
-            Type = CardType.Follower,
-            Cost = 1,
-            Attack = 1,
-            Health = 1,
-            Class = CardClass.Neutral,
-            CardSetDefinition = set,
-            CardSetDefinitionId = set.Id
-        });
+            db.CardDefinitions.Add(new CardDefinition
+            {
+                Id = cardId,
+                Name = $"Rotation Follower {cardId}",
+                Type = CardType.Follower,
+                Cost = 1,
+                Attack = 1,
+                Health = 1,
+                Class = CardClass.Neutral,
+                CardSetDefinition = set,
+                CardSetDefinitionId = set.Id
+            });
+        }
         await db.SaveChangesAsync();
 
         var service = new DeckValidationService(db);
-        var cards = new List<DeckCardEntryDto>
-        {
-            new DeckCardEntryDto { CardDefinitionId = 1, Count = 1 }
-        };
+        var cards = Enumerable.Range(1, 40)
+            .Select(cardId => new DeckCardEntryDto { CardDefinitionId = cardId, Count = 1 })
+            .ToList();
 
-        var invalid = await service.ValidateAsync(CardClass.Neutral, cards, (DeckEnvironment)1, true, CancellationToken.None);
+        var invalid = await service.ValidateAsync(
+            CardClass.Neutral,
+            secondaryClass: null,
+            cards,
+            (DeckEnvironment)1,
+            DeckRule.Standard,
+            requireComplete: true,
+            CancellationToken.None);
         Assert.False(invalid.Success);
         Assert.Equal("Deck contains cards outside the selected environment.", invalid.Error);
 
-        var valid = await service.ValidateAsync(CardClass.Neutral, cards, DeckEnvironment.Open, true, CancellationToken.None);
+        var valid = await service.ValidateAsync(
+            CardClass.Neutral,
+            secondaryClass: null,
+            cards,
+            DeckEnvironment.Open,
+            DeckRule.Standard,
+            requireComplete: true,
+            CancellationToken.None);
         Assert.True(valid.Success);
     }
 
@@ -161,26 +179,82 @@ public class CardSetDefinitionTests
     {
         var dbName = $"cardset-legacy-{Guid.NewGuid()}";
         await using var db = CreateDbContext(dbName);
-        db.CardDefinitions.Add(new CardDefinition
+        for (var cardId = 1; cardId <= 40; cardId++)
         {
-            Id = 1,
-            Name = "Legacy Follower",
-            Type = CardType.Follower,
-            Cost = 1,
-            Attack = 1,
-            Health = 1,
-            Class = CardClass.Neutral
-        });
+            db.CardDefinitions.Add(new CardDefinition
+            {
+                Id = cardId,
+                Name = $"Legacy Follower {cardId}",
+                Type = CardType.Follower,
+                Cost = 1,
+                Attack = 1,
+                Health = 1,
+                Class = CardClass.Neutral
+            });
+        }
         await db.SaveChangesAsync();
 
         var service = new DeckValidationService(db);
-        var cards = new List<DeckCardEntryDto>
-        {
-            new DeckCardEntryDto { CardDefinitionId = 1, Count = 1 }
-        };
+        var cards = Enumerable.Range(1, 40)
+            .Select(cardId => new DeckCardEntryDto { CardDefinitionId = cardId, Count = 1 })
+            .ToList();
 
-        var result = await service.ValidateAsync(CardClass.Neutral, cards, DeckEnvironment.Open, true, CancellationToken.None);
+        var result = await service.ValidateAsync(
+            CardClass.Neutral,
+            secondaryClass: null,
+            cards,
+            DeckEnvironment.Open,
+            DeckRule.Standard,
+            requireComplete: true,
+            CancellationToken.None);
         Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task DeckValidation_RejectsCardsWhenCardSetHasNoEnvironmentMembership()
+    {
+        var dbName = $"cardset-empty-env-{Guid.NewGuid()}";
+        await using var db = CreateDbContext(dbName);
+        var set = new CardSetDefinition
+        {
+            Name = "No Env Set",
+            Abbreviation = "NONE",
+            Region = 0,
+            Sequence = 3,
+            Environments = new List<DeckEnvironment>()
+        };
+        db.CardSetDefinitions.Add(set);
+        for (var cardId = 2001; cardId <= 2040; cardId++)
+        {
+            db.CardDefinitions.Add(new CardDefinition
+            {
+                Id = cardId,
+                Name = $"Blocked Follower {cardId}",
+                Type = CardType.Follower,
+                Cost = 1,
+                Attack = 1,
+                Health = 1,
+                Class = CardClass.Neutral,
+                CardSetDefinition = set,
+                CardSetDefinitionId = set.Id
+            });
+        }
+        await db.SaveChangesAsync();
+
+        var service = new DeckValidationService(db);
+        var result = await service.ValidateAsync(
+            CardClass.Neutral,
+            secondaryClass: null,
+            Enumerable.Range(2001, 40)
+                .Select(cardId => new DeckCardEntryDto { CardDefinitionId = cardId, Count = 1 })
+                .ToList(),
+            DeckEnvironment.Open,
+            DeckRule.Standard,
+            requireComplete: true,
+            CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal("Deck contains cards outside the selected environment.", result.Error);
     }
 
     private sealed class StubHostEnvironment : IWebHostEnvironment

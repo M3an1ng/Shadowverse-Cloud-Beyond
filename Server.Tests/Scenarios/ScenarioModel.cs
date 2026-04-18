@@ -55,7 +55,7 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
         public CardZone Zone { get; init; } = CardZone.Hand;
         public int? Damage { get; init; }
         public int? AttacksThisTurn { get; init; }
-        public int? FieldTurn { get; init; }
+        public int? ZoneStayTurn { get; init; }
         public bool? IsEvolved { get; init; }
         public bool? IsSuperEvolved { get; init; }
         public bool RegisterAbilities { get; init; } = true;

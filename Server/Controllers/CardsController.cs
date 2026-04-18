@@ -45,6 +45,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
         private readonly IWebHostEnvironment _environment;
         private readonly IGameService _gameService;
         private readonly IGameDataProvider _gameDataProvider;
+        private readonly ITribeRegistry _tribeRegistry;
         private const string DataRevisionHeader = "X-Data-Revision";
         private static readonly HashSet<string> AllowedArtExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -61,7 +62,8 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             ApplicationDbContext db,
             IWebHostEnvironment environment,
             IGameService gameService,
-            IGameDataProvider gameDataProvider) // Inject Repository
+            IGameDataProvider gameDataProvider,
+            ITribeRegistry tribeRegistry) // Inject Repository
         {
             _cardRepository = cardRepository ?? throw new ArgumentNullException(nameof(cardRepository)); // Assign Repository
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -70,6 +72,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             _environment = environment ?? throw new ArgumentNullException(nameof(environment));
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
+            _tribeRegistry = tribeRegistry ?? throw new ArgumentNullException(nameof(tribeRegistry));
         }
 
         private void AppendDataRevisionHeader()
@@ -131,7 +134,8 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 setDefinition ??= await ResolveLegacyCardSetDefinitionAsync();
                 var normalizedDto = dto with
                 {
-                    CardSet = NormalizeCardSet(setDefinition?.Name ?? dto.CardSet)
+                    CardSet = NormalizeCardSet(setDefinition?.Name ?? dto.CardSet),
+                    Tribe = await NormalizeTribesAsync(dto.Tribe)
                 };
 
                 var entity = _mapper.Map<CardDefinition>(normalizedDto);
@@ -144,6 +148,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 await _cardRepository.AddAsync(entity);
                 await _gameService.NotifyCardDefinitionUpdatedAsync(entity.Id);
                 var resultDto = _mapper.Map<CardDefinitionDto>(entity);
+                AppendDataRevisionHeader();
                 return CreatedAtAction(nameof(GetCardById), new { id = entity.Id }, resultDto);
             }
             catch (Exception ex)
@@ -186,7 +191,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     // Avoid accidental data loss when the client doesn't send optional fields.
                     AbilityIds = dto.AbilityIds ?? existing.AbilityIds,
                     Keywords = dto.Keywords ?? existing.Keywords,
-                    Tribe = dto.Tribe ?? existing.Tribe,
+                    Tribe = dto.Tribe != null ? await NormalizeTribesAsync(dto.Tribe) : existing.Tribe,
                     Rarity = string.IsNullOrWhiteSpace(dto.Rarity) ? existing.Rarity.ToString() : dto.Rarity,
                     Class = string.IsNullOrWhiteSpace(dto.Class) ? existing.Class.ToString() : dto.Class,
                     ArtPreview = dto.ArtPreview ?? existing.ArtPreview,
@@ -211,6 +216,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 await _gameService.NotifyCardDefinitionUpdatedAsync(id);
 
                 var resultDto = _mapper.Map<CardDefinitionDto>(updatedEntity);
+                AppendDataRevisionHeader();
                 return Ok(resultDto);
             }
             catch (Exception ex)
@@ -390,6 +396,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 await _db.SaveChangesAsync();
                 await _gameDataProvider.RefreshCacheAsync();
 
+                AppendDataRevisionHeader();
                 return Ok(new { message = "Ability linked", cardId, abilityId });
             }
             catch (Exception ex)
@@ -424,6 +431,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 await _db.SaveChangesAsync();
                 await _gameDataProvider.RefreshCacheAsync();
 
+                AppendDataRevisionHeader();
                 return Ok(new { message = "Ability unlinked", cardId, abilityId });
             }
             catch (Exception ex)
@@ -451,6 +459,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 await _db.SaveChangesAsync();
                 await _gameDataProvider.RefreshCacheAsync();
 
+                AppendDataRevisionHeader();
                 return NoContent();
             }
             catch (Exception ex)
@@ -552,6 +561,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             await _cardRepository.UpdateAsync(card);
             await _gameService.NotifyCardDefinitionUpdatedAsync(id);
             var dto = _mapper.Map<CardDefinitionDto>(card);
+            AppendDataRevisionHeader();
             return Ok(dto);
         }
 
@@ -599,6 +609,17 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
         private static string NormalizeCardSet(string? value)
         {
             return string.IsNullOrWhiteSpace(value) ? "Legacy" : value.Trim();
+        }
+
+        private async Task<List<string>?> NormalizeTribesAsync(List<string>? tribes)
+        {
+            if (tribes == null)
+            {
+                return null;
+            }
+
+            var normalized = await _tribeRegistry.NormalizeAndRegisterAsync(tribes);
+            return normalized.Count == 0 ? null : normalized.ToList();
         }
 
         private static bool TryParsePackCode(string? value, out int region, out int sequence)
@@ -743,3 +764,4 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
     }
 }
+

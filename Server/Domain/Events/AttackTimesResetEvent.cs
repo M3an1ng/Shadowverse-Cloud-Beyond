@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var oldCanAttack = card.CanAttack;
-            card.AttacksThisTurn = 0;
+            card.ResetActionUsage(CardActionUsageType.Attack);
 
             var result = new DomainOperationResult { Success = true };
             if (oldCanAttack != card.CanAttack)

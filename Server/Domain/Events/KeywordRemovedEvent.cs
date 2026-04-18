@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events; // EventType, GameContext
@@ -35,10 +36,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("持续参数", "持续时间参数。")]
         public int? DurationParameter { get; }
 
+        public ConditionConfig? RemoveCondition { get; }
+
         public string? EffectKey { get; }
         public bool CanStack { get; }
 
-        public KeywordRemovedEvent(CardKeyword keyword, CardInstance target, CardInstance? source = null, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, Guid? eventId = null, DateTime? timestamp = null)
+        public KeywordRemovedEvent(CardKeyword keyword, CardInstance target, CardInstance? source = null, DurationType durationType = DurationType.Permanent, int? durationParameter = null, string? effectKey = null, bool canStack = true, ConditionConfig? removeCondition = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.KeywordRemoved, eventId, timestamp)
         {
             Keyword = keyword;
@@ -51,6 +54,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             DurationParameter = durationParameter;
             EffectKey = effectKey;
             CanStack = canStack;
+            RemoveCondition = removeCondition;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -69,7 +73,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 durationType: DurationType,
                 durationParameter: DurationParameter,
                 effectKey: EffectKey,
-                canStack: CanStack
+                canStack: CanStack,
+                removeCondition: RemoveCondition
             );
             return buffResult;
         }

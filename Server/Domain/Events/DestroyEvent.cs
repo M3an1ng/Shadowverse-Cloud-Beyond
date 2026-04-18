@@ -31,8 +31,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("被破坏目标快照", "生成事件时记录的被破坏目标快照。", Scope = GameEventParameterScope.Input)]
         public CardInstanceSnapshot? DestroyTargetSnapshot { get; }
 
-        public bool DestroyApplied { get; private set; }
-
         public DestroyEvent(
             CardInstance target,
             CardInstance source,
@@ -52,7 +50,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
-            DestroyApplied = false;
             var targetCard = DestroyTarget;
             var sourceCard = DestroySource;
 
@@ -72,7 +69,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Owner player for card {targetCard.InstanceId} not found." };
             }
 
-            DestroyApplied = true;
             var moveReason = ResolveMoveReason(Reason);
             var destroyResult = ownerPlayer.DestroyCard(targetCard, sourceCard, Reason, moveReason);
             if (destroyResult.Success)
@@ -84,10 +80,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public string GetAnnouncement(GameState gameState)
         {
-            if (!DestroyApplied)
-            {
-                return string.Empty;
-            }
 
             var target = DestroyTarget;
             if (target == null)

@@ -46,6 +46,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             Func<TargetInfo, GameContext, DomainOperationResult> tuckAction =
                 (targetInfo, ctx) =>
                 {
+                    if (targetInfo.Card?.CurrentZone != CardZone.Field)
+                    {
+                        Logger.LogWarning("{EffectName}: Target card zone is not Field.", effectName);
+                        return new DomainOperationResult { Success = true };
+                    }
+
                     var result = new DomainOperationResult { Success = true };
                     result.GeneratedEvents.Add(new LeaveFieldEvent(
                         targetInfo.Card!,

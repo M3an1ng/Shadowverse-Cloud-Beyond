@@ -16,6 +16,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -44,6 +45,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     {
                         return new DomainOperationResult { Success = false, ErrorMessage = "Evolve target is not a valid card." };
                     }
+
+                    if (targetInfo.Card.CurrentZone != CardZone.Field)
+                    {
+                        Logger.LogWarning("{EffectName}: Target card zone is not Field.", effectName);
+                        return new DomainOperationResult { Success = true };
+                    }
+
 
                     var cardToEvolve = targetInfo.Card;
                     var ownerPlayer = ctx.CurrentGameState.GetPlayerState(cardToEvolve.OwnerPlayerId);

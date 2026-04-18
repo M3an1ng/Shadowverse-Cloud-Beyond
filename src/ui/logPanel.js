@@ -1,5 +1,6 @@
 ﻿// src/ui/logPanel.js
 import { gameState, findCardInstanceByUid, sendChatMessage } from '../gameManager.js';
+import { ensureCardDefinitions, getAbilityDataSnapshot } from '../abilityDataCache.js';
 import { getUserSession } from '../userSession.js';
 
 function normalizeArtPath(rawPath) {
@@ -974,6 +975,94 @@ function normalizeMatchHistoryCost(cost) {
     return Math.max(0, Math.trunc(numericCost));
 }
 
+function normalizeMatchHistoryCardId(cardId) {
+    const numericCardId = Number(cardId);
+    if (!Number.isFinite(numericCardId)) return null;
+    const normalized = Math.trunc(numericCardId);
+    return normalized > 0 ? normalized : null;
+}
+
+function normalizeMatchHistoryPreviewSource(source) {
+    if (!source) return null;
+
+    const cardName = String(source.cardName ?? source.cardname ?? '').trim() || '未知卡牌';
+    const cardId = normalizeMatchHistoryCardId(source.cardId ?? source.cardid);
+    const cost = normalizeMatchHistoryCost(source.cost);
+    const artPreview = String(source.artPreview ?? source.artpreview ?? '').trim();
+    const ownerId = String(source.ownerId ?? source.ownerid ?? '').trim();
+
+    return {
+        cardId,
+        cardName,
+        cost,
+        artPreview,
+        ownerId
+    };
+}
+
+function getCardDefinitionForMatchHistory(cardId) {
+    if (cardId === null) return null;
+    const snapshot = getAbilityDataSnapshot();
+    return snapshot?.cardIndex?.get(cardId) ?? null;
+}
+
+export async function buildMatchHistoryPreviewCard(source) {
+    const normalized = normalizeMatchHistoryPreviewSource(source);
+    if (!normalized) return null;
+
+    let definition = getCardDefinitionForMatchHistory(normalized.cardId);
+    if (!definition && normalized.cardId !== null) {
+        await ensureCardDefinitions();
+        definition = getCardDefinitionForMatchHistory(normalized.cardId);
+    }
+
+    const resolvedCardId = normalizeMatchHistoryCardId(
+        normalized.cardId
+        ?? definition?.id
+        ?? definition?.CardId
+        ?? definition?.Id
+    );
+    const resolvedCost = normalized.cost
+        ?? normalizeMatchHistoryCost(definition?.cost ?? definition?.Cost)
+        ?? 0;
+    const resolvedAttack = Number(definition?.attack ?? definition?.Attack ?? 0) || 0;
+    const resolvedHealth = Number(definition?.health ?? definition?.Health ?? 0) || 0;
+    const resolvedCountdown = Number(definition?.countdown ?? definition?.Countdown ?? 0) || 0;
+    const resolvedArtPreview = normalized.artPreview
+        || String(definition?.artPreview ?? definition?.ArtPreview ?? '').trim();
+    const resolvedArtDetail = String(definition?.artDetail ?? definition?.ArtDetail ?? '').trim()
+        || resolvedArtPreview;
+
+    return {
+        source: 'match-history',
+        id: resolvedCardId,
+        cardId: resolvedCardId,
+        name: normalized.cardName || String(definition?.name ?? definition?.Name ?? '').trim() || '未知卡牌',
+        cost: resolvedCost,
+        currentCost: resolvedCost,
+        attack: resolvedAttack,
+        currentAttack: resolvedAttack,
+        health: resolvedHealth,
+        currentHealth: resolvedHealth,
+        countdown: resolvedCountdown > 0 ? resolvedCountdown : null,
+        type: definition?.type ?? definition?.Type ?? '',
+        rarity: definition?.rarity ?? definition?.Rarity ?? 'Common',
+        class: definition?.class ?? definition?.Class ?? 'Neutral',
+        description: String(definition?.description ?? definition?.Description ?? '').trim(),
+        artPreview: resolvedArtPreview,
+        artDetail: resolvedArtDetail,
+        keywords: Array.isArray(definition?.keywords)
+            ? definition.keywords
+            : (Array.isArray(definition?.Keywords) ? definition.Keywords : []),
+        tribe: Array.isArray(definition?.tribe)
+            ? definition.tribe
+            : (Array.isArray(definition?.Tribe) ? definition.Tribe : []),
+        effectDescriptions: [],
+        ownerId: normalized.ownerId || null,
+        zone: 'History'
+    };
+}
+
 function buildUsedCardSummaryForPlayer(playerId, entries = usedCardHistoryEntries) {
     const normalizedPlayerId = String(playerId || '').trim();
     const perCard = new Map();
@@ -994,6 +1083,7 @@ function buildUsedCardSummaryForPlayer(playerId, entries = usedCardHistoryEntrie
         const existing = perCard.get(cardKey);
         if (!existing) {
             perCard.set(cardKey, {
+                ownerId,
                 cardName: entry.cardName || '未知卡牌',
                 cardId: entry.cardId,
                 cost: entry.cost,
@@ -1082,6 +1172,23 @@ function renderMatchHistoryCardRow(container, card) {
 
     const row = document.createElement('div');
     row.className = 'match-history-card-row';
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    if (card.cardId !== null && card.cardId !== undefined) {
+        row.dataset.historyCardId = String(card.cardId);
+    }
+    row.dataset.historyCardName = String(card.cardName || '未知卡牌');
+    row.dataset.historyCardCost = card.cost !== null && card.cost !== undefined
+        ? String(card.cost)
+        : '';
+    row.dataset.historyCardArtPreview = String(card.artPreview || '');
+    row.dataset.historyOwnerId = String(card.ownerId || '');
+    row.title = '点击查看卡牌预览';
+    row.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        row.click();
+    });
 
     const avatar = document.createElement('div');
     avatar.className = 'match-history-card-avatar';

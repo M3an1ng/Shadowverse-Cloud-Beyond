@@ -213,6 +213,18 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     cardAbility.Priority = priorityProp.GetInt32();
                 }
+                if (abilityData.TryGetProperty("isActive", out var activeProp))
+                {
+                    if (activeProp.ValueKind == JsonValueKind.True || activeProp.ValueKind == JsonValueKind.False)
+                    {
+                        cardAbility.IsActive = activeProp.GetBoolean();
+                    }
+                    else if (activeProp.ValueKind == JsonValueKind.String
+                             && bool.TryParse(activeProp.GetString(), out var parsedActive))
+                    {
+                        cardAbility.IsActive = parsedActive;
+                    }
+                }
                 var incomingKeywords = ExtractAbilityKeywords(abilityData);
 
                 // 将前端完整配置保存为 JsonConfig（优先使用 jsonConfig 字段）
@@ -233,6 +245,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 await _gameDataProvider.RefreshCacheAsync();
 
                 _logger.LogInformation("Ability {AbilityId} updated successfully", id);
+                AppendDataRevisionHeader();
                 return Ok(new { message = "Ability updated", id });
             }
             catch (Exception ex)
@@ -335,6 +348,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 };
 
                 _logger.LogInformation("New ability created with ID: {AbilityId}", entity.Id);
+                AppendDataRevisionHeader();
                 return CreatedAtAction(nameof(GetAbilityById), new { id = entity.Id }, created);
             }
             catch (Exception ex)

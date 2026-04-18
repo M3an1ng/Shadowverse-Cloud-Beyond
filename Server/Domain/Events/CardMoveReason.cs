@@ -32,5 +32,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         AddedToDeck = 12,
         [Description("满场")]
         Packed = 13,
+        [Description("卡组替换")]
+        DeckReplaced = 14,
     }
 }

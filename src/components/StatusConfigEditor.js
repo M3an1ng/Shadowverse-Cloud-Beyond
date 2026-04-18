@@ -173,6 +173,9 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         } else if (type === 'abilityKeyword') {
             const abilityKeywordSection = this.createAbilityKeywordModifiersSection(buff, index);
             content.appendChild(abilityKeywordSection);
+        } else if (type === 'actionUsage') {
+            const actionUsageSection = this.createActionUsageModifiersSection(buff, index);
+            content.appendChild(actionUsageSection);
         } else if (type === 'ability') {
             const abilitySection = this.createGrantedAbilitiesSection(buff, index);
             content.appendChild(abilitySection);
@@ -276,6 +279,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             { type: 'keyword', title: '关键词状态', desc: '添加或移除卡牌关键词' },
             { type: 'tribe', title: '种类状态', desc: '为卡牌附加额外种类' },
             { type: 'abilityKeyword', title: '能力关键字状态', desc: '调整启动/爆能/融合等关键字数值' },
+            { type: 'actionUsage', title: '动作次数状态', desc: '设置攻击/启动/融合的每回合次数' },
             { type: 'ability', title: '能力状态', desc: '授予额外能力' }
         ];
 
@@ -304,6 +308,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         if (Array.isArray(buff.keywordModifiers) && buff.keywordModifiers.length > 0) return 'keyword';
         if (Array.isArray(buff.tribeModifiers) && buff.tribeModifiers.length > 0) return 'tribe';
         if (Array.isArray(buff.abilityKeywordModifiers) && buff.abilityKeywordModifiers.length > 0) return 'abilityKeyword';
+        if (Array.isArray(buff.actionUsageLimitModifiers) && buff.actionUsageLimitModifiers.length > 0) return 'actionUsage';
         if (Array.isArray(buff.grantedAbilities) && buff.grantedAbilities.length > 0) return 'ability';
         return '';
     }
@@ -318,6 +323,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 return '种类';
             case 'abilityKeyword':
                 return '能力关键字';
+            case 'actionUsage':
+                return '动作次数';
             case 'ability':
                 return '能力';
             default:
@@ -331,6 +338,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         if (type === 'keyword') return buff.keywordModifiers?.length || 0;
         if (type === 'tribe') return buff.tribeModifiers?.length || 0;
         if (type === 'abilityKeyword') return buff.abilityKeywordModifiers?.length || 0;
+        if (type === 'actionUsage') return buff.actionUsageLimitModifiers?.length || 0;
         if (type === 'ability') return buff.grantedAbilities?.length || 0;
         return 0;
     }
@@ -350,6 +358,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 keywordModifiers: [],
                 tribeModifiers: [],
                 abilityKeywordModifiers: [],
+                actionUsageLimitModifiers: [],
                 grantedAbilities: []
             });
             return;
@@ -363,6 +372,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                     : [{ keyword: 'None', operation: 'Add' }],
                 tribeModifiers: [],
                 abilityKeywordModifiers: [],
+                actionUsageLimitModifiers: [],
                 grantedAbilities: []
             });
             return;
@@ -376,6 +386,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                     ? current.tribeModifiers
                     : [{ tribe: '' }],
                 abilityKeywordModifiers: [],
+                actionUsageLimitModifiers: [],
                 grantedAbilities: []
             });
             return;
@@ -389,6 +400,21 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 abilityKeywordModifiers: (current.abilityKeywordModifiers && current.abilityKeywordModifiers.length > 0)
                     ? current.abilityKeywordModifiers
                     : [{ keyword: 'None', layer: 'Additive', value: null }],
+                actionUsageLimitModifiers: [],
+                grantedAbilities: []
+            });
+            return;
+        }
+        if (type === 'actionUsage') {
+            this.updateBuffConfig(index, {
+                _uiType: 'actionUsage',
+                statModifiers: [],
+                keywordModifiers: [],
+                tribeModifiers: [],
+                abilityKeywordModifiers: [],
+                actionUsageLimitModifiers: (current.actionUsageLimitModifiers && current.actionUsageLimitModifiers.length > 0)
+                    ? current.actionUsageLimitModifiers
+                    : [{ actionType: 'Attack', value: null }],
                 grantedAbilities: []
             });
             return;
@@ -400,6 +426,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 keywordModifiers: [],
                 tribeModifiers: [],
                 abilityKeywordModifiers: [],
+                actionUsageLimitModifiers: [],
                 grantedAbilities: Array.isArray(current.grantedAbilities) ? current.grantedAbilities : []
             });
         }
@@ -721,6 +748,82 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         return section;
     }
 
+    createActionUsageModifiersSection(buff, buffIndex) {
+        const section = document.createElement('div');
+        section.className = 'parameters-panel';
+
+        const list = document.createElement('div');
+        list.className = 'modifier-list';
+
+        const getBuff = () => this.buffConfigs[buffIndex] || {};
+        const renderList = () => {
+            this.clearContainer(list);
+            const modifiers = getBuff().actionUsageLimitModifiers || [];
+
+            if (!modifiers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'text-muted';
+                empty.textContent = '暂无动作次数配置';
+                list.appendChild(empty);
+                return;
+            }
+
+            modifiers.forEach((modifier, index) => {
+                const row = document.createElement('div');
+                row.className = 'operation-item';
+
+                const grid = document.createElement('div');
+                grid.className = 'form-grid-layout';
+
+                const actionTypeControl = document.createElement('div');
+                actionTypeControl.className = 'parameter-control';
+                const actionTypeSelect = this.createEnumSelect(
+                    'CardActionUsageType',
+                    modifier.actionType || 'Attack',
+                    (value) => this.updateActionUsageModifier(buffIndex, index, { actionType: value || 'Attack' })
+                );
+                actionTypeControl.appendChild(actionTypeSelect);
+                grid.appendChild(this.createFormGroup(this.createParameterLabel('类型'), actionTypeControl));
+
+                const valueControl = document.createElement('div');
+                valueControl.className = 'parameter-control';
+                const valueInput = this.createValueConfigEditorControl(
+                    modifier.value,
+                    (value) => this.updateActionUsageModifier(buffIndex, index, { value }),
+                    { parameterType: 'Int32', parameterLabel: '数值' }
+                );
+                valueControl.appendChild(valueInput);
+                grid.appendChild(this.createValueConfigFormGroup(null, valueControl));
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn-icon delete-btn';
+                removeBtn.type = 'button';
+                removeBtn.title = '移除动作次数配置';
+                removeBtn.textContent = '×';
+                removeBtn.addEventListener('click', () => {
+                    this.removeActionUsageModifier(buffIndex, index);
+                    renderList();
+                });
+
+                row.appendChild(grid);
+                row.appendChild(removeBtn);
+                list.appendChild(row);
+            });
+        };
+
+        renderList();
+        section.appendChild(list);
+
+        const addBtn = this.createButton('添加动作次数配置', () => {
+            this.addActionUsageModifier(buffIndex);
+            renderList();
+        }, 'secondary');
+        addBtn.classList.add('btn-small');
+        section.appendChild(addBtn);
+
+        return section;
+    }
+
     createEnumSelect(enumName, currentValue, onChange, placeholder = '加载中...') {
         const select = document.createElement('select');
         select.className = 'form-select';
@@ -902,6 +1005,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             if (base.keywordModifiers.length > 0) types.push('keyword');
             if (base.tribeModifiers.length > 0) types.push('tribe');
             if (base.abilityKeywordModifiers.length > 0) types.push('abilityKeyword');
+            if (base.actionUsageLimitModifiers.length > 0) types.push('actionUsage');
             if (base.grantedAbilities.length > 0) types.push('ability');
 
             if (types.length === 0) {
@@ -925,6 +1029,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                     keywordModifiers: type === 'keyword' ? base.keywordModifiers : [],
                     tribeModifiers: type === 'tribe' ? base.tribeModifiers : [],
                     abilityKeywordModifiers: type === 'abilityKeyword' ? base.abilityKeywordModifiers : [],
+                    actionUsageLimitModifiers: type === 'actionUsage' ? base.actionUsageLimitModifiers : [],
                     grantedAbilities: type === 'ability' ? base.grantedAbilities : [],
                     _statAdjustment: type === 'stat' ? base._statAdjustment : this.deriveStatAdjustmentState([]),
                     _statAdjustmentDirty: type === 'stat' ? (base._statAdjustmentDirty ?? false) : false
@@ -953,6 +1058,9 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         const abilityKeywordModifiers = Array.isArray(raw.abilityKeywordModifiers ?? raw.AbilityKeywordModifiers)
             ? (raw.abilityKeywordModifiers ?? raw.AbilityKeywordModifiers).map(item => this.normalizeAbilityKeywordModifier(item))
             : [];
+        const actionUsageLimitModifiers = Array.isArray(raw.actionUsageLimitModifiers ?? raw.ActionUsageLimitModifiers)
+            ? (raw.actionUsageLimitModifiers ?? raw.ActionUsageLimitModifiers).map(item => this.normalizeActionUsageLimitModifier(item))
+            : [];
         const rawAbilities = raw.grantedAbilities ?? raw.GrantedAbilities;
         const grantedAbilities = Array.isArray(rawAbilities)
             ? rawAbilities.map(item => this.abilityListHelper.normalizeAbilityConfigForList(item)).filter(Boolean)
@@ -967,6 +1075,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             keywordModifiers,
             tribeModifiers,
             abilityKeywordModifiers,
+            actionUsageLimitModifiers,
             grantedAbilities,
             _uiType: raw._uiType ?? raw.UiType ?? '',
             _statAdjustment: this.deriveStatAdjustmentState(statModifiers),
@@ -984,6 +1093,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             keywordModifiers: [],
             tribeModifiers: [],
             abilityKeywordModifiers: [],
+            actionUsageLimitModifiers: [],
             grantedAbilities: [],
             _uiType: '',
             _statAdjustment: this.deriveStatAdjustmentState([]),
@@ -1028,6 +1138,16 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         return {
             keyword: raw.keyword ?? raw.Keyword ?? 'None',
             layer: raw.layer ?? raw.Layer ?? 'Additive',
+            value: raw.value ?? raw.Value ?? null
+        };
+    }
+
+    normalizeActionUsageLimitModifier(raw) {
+        if (!raw || typeof raw !== 'object') {
+            return { actionType: 'Attack', value: null };
+        }
+        return {
+            actionType: raw.actionType ?? raw.ActionType ?? 'Attack',
             value: raw.value ?? raw.Value ?? null
         };
     }
@@ -1339,6 +1459,27 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         this.updateBuffConfig(buffIndex, { abilityKeywordModifiers: next });
     }
 
+    addActionUsageModifier(buffIndex) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.actionUsageLimitModifiers || [])];
+        next.push({ actionType: 'Attack', value: null });
+        this.updateBuffConfig(buffIndex, { actionUsageLimitModifiers: next });
+    }
+
+    updateActionUsageModifier(buffIndex, index, updates) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.actionUsageLimitModifiers || [])];
+        next[index] = { ...next[index], ...updates };
+        this.updateBuffConfig(buffIndex, { actionUsageLimitModifiers: next });
+    }
+
+    removeActionUsageModifier(buffIndex, index) {
+        const buff = this.buffConfigs[buffIndex];
+        const next = [...(buff.actionUsageLimitModifiers || [])];
+        next.splice(index, 1);
+        this.updateBuffConfig(buffIndex, { actionUsageLimitModifiers: next });
+    }
+
     buildBuffConfigsForSave(buffConfigs) {
         const list = Array.isArray(buffConfigs) ? buffConfigs : [];
         return list.map(item => {
@@ -1363,6 +1504,9 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                     ? (Array.isArray(item.tribeModifiers) ? item.tribeModifiers.filter(modifier => String(modifier?.tribe ?? '').trim() !== '') : [])
                     : [],
                 abilityKeywordModifiers: type === 'abilityKeyword' ? (Array.isArray(item.abilityKeywordModifiers) ? item.abilityKeywordModifiers : []) : [],
+                actionUsageLimitModifiers: type === 'actionUsage'
+                    ? (Array.isArray(item.actionUsageLimitModifiers) ? item.actionUsageLimitModifiers : [])
+                    : [],
                 grantedAbilities: type === 'ability' ? (Array.isArray(item.grantedAbilities) ? item.grantedAbilities : []) : []
             };
         });

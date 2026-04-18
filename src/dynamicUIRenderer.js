@@ -6,6 +6,7 @@
 //
 
 import { DslEditor } from './components/DslEditor.js';
+import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 
 /**
  * 动态UI渲染器
@@ -610,12 +611,10 @@ export class DynamicUIRenderer {
         try {
             cardList.innerHTML = '<div class="loading-spinner"></div><p>正在加载卡牌...</p>';
 
-            const response = await fetch('/api/cards');
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const cards = await response.json();
+            const cards = await loadCardDefinitions({
+                useCache: false,
+                force: true
+            });
             this.renderCardOptions(cards, cardList, onChange, selectedCard);
 
         } catch (error) {

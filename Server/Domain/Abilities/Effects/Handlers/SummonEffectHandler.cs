@@ -122,7 +122,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var expectedPosition = NextExpectedPosition(owner);
-                    instanceResult.GeneratedEvents.Add(new SummonEvent(owner, card, expectedPosition));
+                    instanceResult.GeneratedEvents.Add(new SummonEvent(owner, card, expectedPosition, EventReasonSource.Ability));
                     availableSlotsByPlayer[owner.PlayerId] = availableSlots - 1;
                 }
 
@@ -176,7 +176,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                             if (availableSlots > 0)
                             {
                                 var expectedPosition = NextExpectedPosition(player);
-                                copyResult.GeneratedEvents.Add(new SummonEvent(player, copy, expectedPosition));
+                                copyResult.GeneratedEvents.Add(new SummonEvent(player, copy, expectedPosition, EventReasonSource.Ability));
                                 availableSlots -= 1;
                             }
                             else
@@ -244,7 +244,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         if (remainingSlots > 0)
                         {
                             var expectedPosition = NextExpectedPosition(player);
-                            var evt = new SummonEvent(player, token, expectedPosition);
+                            var evt = new SummonEvent(player, token, expectedPosition, EventReasonSource.Ability);
                             combinedResult.GeneratedEvents.Add(evt);
                             remainingSlots -= 1;
                         }

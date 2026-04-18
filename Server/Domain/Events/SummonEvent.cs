@@ -20,18 +20,28 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("召唤位置", "卡牌被召唤到的位置。", Scope = GameEventParameterScope.Both)]
         public int? Position { get; private set; }
 
+        [GameEventParameter("召唤原因", "召唤来源（系统/能力）。", Scope = GameEventParameterScope.Input)]
+        public EventReasonSource Reason { get; }
+
         [GameEventParameter("召唤玩家", "执行召唤的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? SummoningPlayer => Source?.Player;
 
         [GameEventParameter("被召唤的卡牌", "被召唤的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? SummonedCard => Target.FirstOrDefault()?.Card;
 
-        public SummonEvent(PlayerState player, CardInstance card, int? position = null, Guid? eventId = null, DateTime? timestamp = null)
+        public SummonEvent(
+            PlayerState player,
+            CardInstance card,
+            int? position = null,
+            EventReasonSource reasonSource = EventReasonSource.System,
+            Guid? eventId = null,
+            DateTime? timestamp = null)
             : base(EventType.Summon, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));
             Position = position;
+            Reason = reasonSource;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -58,13 +68,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     result.GeneratedEvents.Add(new LeaveFieldEvent(
                         cardToSummon,
                         LeaveFieldKind.Destroy,
-                        EventReasonSource.System,
+                        Reason,
                         cardToSummon));
-                else if ((cardToSummon.CardType == CardType.Amulet || cardToSummon.CardType == CardType.Crest) && cardToSummon.Keywords.Contains(Constants.CardKeyword.Countdown) && cardToSummon.Countdown <= 0)
+                else if ((cardToSummon.CardType == CardType.Amulet || cardToSummon.CardType == CardType.Crest || cardToSummon.CardType == CardType.Faith) && cardToSummon.Keywords.Contains(Constants.CardKeyword.Countdown) && cardToSummon.Countdown <= 0)
                     result.GeneratedEvents.Add(new LeaveFieldEvent(
                         cardToSummon,
                         LeaveFieldKind.Destroy,
-                        EventReasonSource.System,
+                        Reason,
                         cardToSummon));
             }
 

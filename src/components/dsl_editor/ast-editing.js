@@ -493,7 +493,7 @@ export function extendAST(editor, option) {
     if (editor.isLightWorkspace && editor.lightWorkspaceFocus) {
         const applied = applyOptionToFocusedSlot(editor, option);
         if (applied) {
-            return;
+            return true;
         }
     }
 
@@ -502,7 +502,7 @@ export function extendAST(editor, option) {
         const preservedWorkspace = editor.cloneAST(editor.workspaceAST);
         editor.expandMainExpression();
         if (editor.editingPath.length === 0) {
-            return;
+            return false;
         }
         if (preservedWorkspace) {
             editor.workspaceAST = preservedWorkspace;
@@ -515,19 +515,22 @@ export function extendAST(editor, option) {
     if (incompleteNode && incompleteNode.type === 'operator') {
         // 为操作符添加右操作数
         addRightOperandToOperator(editor, incompleteNode, option);
+        return true;
     } else if (incompleteNode && incompleteNode.type === 'functionCall') {
         addArgToFunctionCall(editor, incompleteNode, option);
+        return true;
     } else if (option.type === "operator") {
         // 创建新的操作符节点 (基于工作区)
         createOperatorFromCurrent(editor, option);
+        return true;
     } else if (option.type === "property") {
         // 扩展属性访问
-        editor.extendPropertyAccess(option);
+        return editor.extendPropertyAccess(option);
     } else if (option.type === "propertyInput") {
         const rightmostNode = findRightmostLeafNode(editor.astRoot);
         if (!rightmostNode || rightmostNode.type !== 'value') {
             editor.showExpressionError("无法添加键名输入：缺少有效的字典路径。");
-            return;
+            return false;
         }
         if (rightmostNode.metadata?.type === 'context' || rightmostNode.metadata?.type === 'property') {
             const newNode = createPropertyInputNode(rightmostNode.value, option);
@@ -537,9 +540,10 @@ export function extendAST(editor, option) {
                 editor.workspaceAST = newNode;
             }
             editor.currentNode = newNode;
-            return;
+            return true;
         }
         editor.showExpressionError("无法添加键名输入：当前节点不支持继续扩展。");
+        return false;
     } else if (option.type === "eventField") {
         const newNode = createValueNode(option.value, option.returnType, {
             type: "eventField",
@@ -555,6 +559,7 @@ export function extendAST(editor, option) {
             editor.astRoot = newNode;
             editor.workspaceAST = newNode;
         }
+        return true;
     } else if (option.type === "enumValue") {
         const newNode = createEnumValueNode(editor, option);
         const rightmostNode = findRightmostLeafNode(editor.astRoot);
@@ -564,22 +569,32 @@ export function extendAST(editor, option) {
             editor.astRoot = newNode;
             editor.workspaceAST = newNode;
         }
+        return true;
     } else if (option.type === "listPipeline") {
         editor.openPipelineFromCurrent({ forceFresh: true });
+        return true;
     } else if (option.type === "listQuery") {
         // 创建查询节点
         createQueryNodeFromCurrent(editor, option);
+        return true;
     } else if (option.type === "listSort") {
         createSortNodeFromCurrent(editor, option);
+        return true;
     } else if (option.type === "listTake") {
         createTakeNodeFromCurrent(editor, option);
+        return true;
     } else if (option.type === "listDistinct") {
         createDistinctNodeFromCurrent(editor, option);
+        return true;
     } else if (option.type === "listSelect") {
         createSelectNodeFromCurrent(editor, option);
+        return true;
     } else if (option.type === "function") {
         createFunctionCallFromCurrent(editor, option);
+        return true;
     }
+
+    return false;
 }
 
 export function createFunctionCallFromCurrent(editor, option) {
@@ -1135,4 +1150,3 @@ export function handleEnterEditModeForSlot(editor, parentNode, slot, index = nul
     }
     editor.renderEditor();
 }
-

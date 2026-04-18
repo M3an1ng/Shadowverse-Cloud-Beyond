@@ -108,7 +108,9 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             Effects = effects == null ? throw new ArgumentNullException(nameof(effects)) : new List<IBuffEffect>(effects);
             DefinitionId = definitionId; // Set DefinitionId
             DurationType = durationType;
-            DurationParameter = durationParameter;
+            DurationParameter = durationType == DurationType.ConditionalRemoval
+                ? null
+                : durationParameter;
             RemovalTrigger = removalTrigger;
             RemovalCondition = removalCondition;
             ApplicabilityCondition = applicabilityCondition;
@@ -116,6 +118,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
         // --- Helper methods to access specific effect types ---
         public IEnumerable<StatModification> GetStatModifications() => Effects.OfType<StatBuffEffect>().SelectMany(e => e.Modifications);
+        public IEnumerable<ActionUsageLimitModification> GetActionUsageLimitModifications() => Effects.OfType<ActionUsageLimitBuffEffect>().SelectMany(e => e.Modifications);
         public IEnumerable<CardKeyword> GetGrantedKeywords() => Effects.OfType<KeywordBuffEffect>().SelectMany(e => e.GrantedKeywords);
         public IEnumerable<AbilityConfig> GetGrantedAbilityConfigs() => Effects.OfType<AbilityBuffEffect>().SelectMany(e => e.GrantedAbilityConfigs);
         public IEnumerable<string> GetAddedTribes() => Effects.OfType<TribeBuffEffect>().SelectMany(e => e.AddedTribes);

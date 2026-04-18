@@ -30,6 +30,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// </summary>
         Completed,
         /// <summary>
+        /// Target resolution was intentionally skipped (non-fatal), so ability execution should be skipped.
+        /// </summary>
+        Skipped,
+        /// <summary>
         /// The process was paused because player input is required.
         /// </summary>
         PendingPlayerChoice,
@@ -156,6 +160,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 // Check if this specific target requires player choice.
                 if (target.Config.PlayerChoiceOptions?.IsRequired == true)
                 {
+                    var resolutionPoolTargets = candidateTargets;
                     var choicePoolTargets = ApplyAbilityTargetKeywordRules(
                         candidateTargets,
                         target.Config,
@@ -184,10 +189,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     {
                         if (target.Config.ShouldBlockAbilityExecutionOnInsufficientTargets())
                         {
-                            finalResult.Status = ResolutionStatus.Failed;
-                            finalResult.ErrorMessage = $"能力“{ability.KeywordSummary}”的目标“{target.Key}”可选目标不足：需要 {requiredMinSelectionCount} 个，实际仅有 {selectableCount} 个。";
+                            var handlingStrategy = target.Config.GetEffectiveTargetHandlingStrategy();
+                            if (handlingStrategy == TargetHandlingStrategy.BlockPlayerOperation)
+                            {
+                                finalResult.Status = ResolutionStatus.Failed;
+                                finalResult.ErrorMessage = $"能力“{ability.KeywordSummary}”的目标“{target.Key}”可选目标不足：需要 {requiredMinSelectionCount} 个，实际仅有 {selectableCount} 个。";
+                                _logger.LogInformation(finalResult.ErrorMessage);
+                                SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
+                                return finalResult;
+                            }
+
+                            finalResult.Status = ResolutionStatus.Skipped;
+                            finalResult.ErrorMessage = $"能力“{ability.KeywordSummary}”的目标“{target.Key}”可选目标不足：需要 {requiredMinSelectionCount} 个，实际仅有 {selectableCount} 个。已按配置跳过能力执行。";
                             _logger.LogInformation(finalResult.ErrorMessage);
-                            SendTargetTrace(context, ability, false, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
+                            SendTargetTrace(context, ability, true, traceEntries, GetResolvedTargetCount(resolvedTargetsForQuery), finalResult.ErrorMessage);
                             return finalResult;
                         }
 
@@ -214,6 +229,35 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     var message = forceFusionChoicePrompt && selectableCount == 0
                         ? "没有可供选择的目标。"
                         : BuildPlayerChoicePrompt(requestMinSelectionCount, maxSelectionCount);
+
+                    if (context.InvocationOptions.AutoRandomTargetSelection)
+                    {
+                        var randomSelectionCount = ResolveRandomSelectionCount(
+                            maxSelectionCount,
+                            selectableCount);
+                        var randomlySelectedTargets = SelectRandomTargets(
+                            selectableTargets,
+                            choicePoolTargets,
+                            randomSelectionCount,
+                            context);
+
+                        var randomSelectedIdSet = new HashSet<Guid>(randomlySelectedTargets.Select(target => target.InstanceId));
+                        List<TargetInfo> randomChosenTargets;
+                        if (target.Config.PlayerChoiceOptions?.IsInverseSelection == true)
+                        {
+                            randomChosenTargets = resolutionPoolTargets
+                                .Where(t => !randomSelectedIdSet.Contains(t.InstanceId))
+                                .ToList();
+                        }
+                        else
+                        {
+                            randomChosenTargets = randomlySelectedTargets;
+                        }
+
+                        target.SetResolvedTargets(randomChosenTargets, triggeringEventId);
+                        resolvedTargetsForQuery[target.Key] = randomChosenTargets;
+                        continue;
+                    }
 
                     var choiceRequest = new PlayerChoiceRequest
                     {
@@ -265,7 +309,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     List<TargetInfo> chosenTargets;
                     if (target.Config.PlayerChoiceOptions?.IsInverseSelection == true)
                     {
-                        chosenTargets = choicePoolTargets
+                        chosenTargets = resolutionPoolTargets
                             .Where(t => !chosenTargetIdSet.Contains(t.InstanceId))
                             .ToList();
                     }
@@ -446,6 +490,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             {
                 return;
             }
+            var matchService = context.ServiceProvider.GetService<IMatchService>();
+            var roomScopedId = matchService != null
+                && matchService.TryGetRoomIdByGameId(context.CurrentGameState.GameId, out var roomId)
+                && !string.IsNullOrWhiteSpace(roomId)
+                    ? roomId
+                    : context.CurrentGameState.GameId;
 
             var sourceCard = ability.SourceCard;
             var cardName = sourceCard?.Name ?? "UnknownCard";
@@ -483,11 +533,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                 if (success)
                 {
-                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceSucceeded(dto);
+                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceSucceeded(dto);
                 }
                 else
                 {
-                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(context.CurrentGameState.GameId, playerId)).ConditionTraceFailed(dto);
+                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceFailed(dto);
                 }
             }
         }
@@ -607,6 +657,124 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
             return $"请选择 {minCount}-{maxCount} 个目标。";
         }
+
+        private static int ResolveRandomSelectionCount(
+            int maxSelectionCount,
+            int availableCount)
+        {
+            if (availableCount <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Min(Math.Max(1, maxSelectionCount), availableCount);
+        }
+
+        private static List<TargetInfo> SelectRandomTargets(
+            IReadOnlyList<TargetInfo> selectableTargets,
+            IReadOnlyCollection<TargetInfo> choicePoolTargets,
+            int selectionCount,
+            GameContext context)
+        {
+            if (selectionCount <= 0 || selectableTargets.Count == 0)
+            {
+                return new List<TargetInfo>();
+            }
+
+            if (selectionCount >= selectableTargets.Count)
+            {
+                return selectableTargets.ToList();
+            }
+
+            var rng = Random.Shared;
+            for (var attempt = 0; attempt < 32; attempt++)
+            {
+                var sampled = selectableTargets
+                    .OrderBy(_ => rng.Next())
+                    .Take(selectionCount)
+                    .ToList();
+
+                if (SatisfiesSpellWardSelectionRule(sampled, choicePoolTargets, context))
+                {
+                    return sampled;
+                }
+            }
+
+            return BuildSpellWardSafeSelection(selectableTargets, choicePoolTargets, selectionCount, context, rng);
+        }
+
+        private static List<TargetInfo> BuildSpellWardSafeSelection(
+            IReadOnlyList<TargetInfo> selectableTargets,
+            IReadOnlyCollection<TargetInfo> choicePoolTargets,
+            int selectionCount,
+            GameContext context,
+            Random rng)
+        {
+            var selected = new List<TargetInfo>(selectionCount);
+            var abilityOwnerId = context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId;
+            var opponentPlayer = context.CurrentGameState.GetOpponentPlayerState(abilityOwnerId);
+            var choicePoolIds = new HashSet<Guid>(
+                choicePoolTargets
+                    .Where(target => target.Type == TargetType.Card)
+                    .Select(target => target.InstanceId));
+            var spellWardIds = new HashSet<Guid>(
+                (opponentPlayer?.Field ?? new List<CardInstance>())
+                    .Where(card => card != null
+                                   && card.IsFollower
+                                   && card.HasKeyword(CardKeyword.SpellWard)
+                                   && !card.HasKeyword(CardKeyword.Aura))
+                    .Select(card => card.InstanceId));
+            spellWardIds.IntersectWith(choicePoolIds);
+
+            var selfOrAllyTargets = selectableTargets
+                .Where(target => target.Card == null || target.Card.OwnerPlayerId == abilityOwnerId)
+                .OrderBy(_ => rng.Next())
+                .ToList();
+
+            foreach (var target in selfOrAllyTargets)
+            {
+                if (selected.Count >= selectionCount)
+                {
+                    return selected;
+                }
+
+                selected.Add(target);
+            }
+
+            var wardTargets = selectableTargets
+                .Where(target => target.Card != null
+                                 && target.Card.OwnerPlayerId != abilityOwnerId
+                                 && spellWardIds.Contains(target.InstanceId))
+                .OrderBy(_ => rng.Next())
+                .ToList();
+
+            foreach (var target in wardTargets)
+            {
+                if (selected.Count >= selectionCount)
+                {
+                    return selected;
+                }
+
+                selected.Add(target);
+            }
+
+            var remainingTargets = selectableTargets
+                .Where(target => selected.All(existing => existing.InstanceId != target.InstanceId))
+                .OrderBy(_ => rng.Next())
+                .ToList();
+
+            foreach (var target in remainingTargets)
+            {
+                if (selected.Count >= selectionCount)
+                {
+                    break;
+                }
+
+                selected.Add(target);
+            }
+
+            return selected;
+        }
         private void HandleSelectionFailure(FailureHandling failureHandling, Exception exception)
         {
             switch (failureHandling)
@@ -646,4 +814,3 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         List<Guid>? ValidTargetIds = null,
         bool CanPlayWithoutTarget = false);
 }
-

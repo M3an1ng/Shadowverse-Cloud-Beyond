@@ -17,7 +17,16 @@ export function isMatchToNavigationTransition(fromRoute, toRoute) {
     return (from === "game" || from === "multiplayer") && to === "navigation";
 }
 
-export function shouldDeferRoomLeaveForDecision(fromRoute, toRoute, handshake) {
-    return isMatchToNavigationTransition(fromRoute, toRoute)
-        && isNonAiMultiplayerHandshake(handshake);
+export function shouldDeferRoomLeaveForDecision(fromRoute, toRoute, handshake, options = {}) {
+    if (!isMatchToNavigationTransition(fromRoute, toRoute)) {
+        return false;
+    }
+
+    if (!isNonAiMultiplayerHandshake(handshake)) {
+        return false;
+    }
+
+    // Once a match is already over, leaving the game page should immediately
+    // release the room seat instead of keeping a deferred reconnect decision.
+    return options.gameOver !== true;
 }

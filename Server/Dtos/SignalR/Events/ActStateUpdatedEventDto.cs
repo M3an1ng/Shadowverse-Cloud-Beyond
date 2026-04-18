@@ -6,14 +6,15 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public class ActStateUpdatedEventDto : GameEventDto
     {
         public Guid TargetCardInstanceId { get; set; }
-        public int ActLastUsedTurnNumber { get; set; }
+        public int ActsThisTurn { get; set; }
+        public int MaxActsPerTurn { get; set; }
 
-        public ActStateUpdatedEventDto(Guid sourcePlayerId, Guid targetCardInstanceId, int actLastUsedTurnNumber)
+        public ActStateUpdatedEventDto(Guid sourcePlayerId, Guid targetCardInstanceId, int actsThisTurn, int maxActsPerTurn)
             : base(sourcePlayerId, "ActStateUpdated")
         {
             TargetCardInstanceId = targetCardInstanceId;
-            ActLastUsedTurnNumber = actLastUsedTurnNumber;
+            ActsThisTurn = actsThisTurn;
+            MaxActsPerTurn = maxActsPerTurn;
         }
     }
 }
-

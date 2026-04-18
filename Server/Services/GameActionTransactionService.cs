@@ -9,6 +9,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // Add this for PlayerChoiceRequest
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Events;
@@ -49,6 +50,7 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IGameEventRawEventMapper _rawEventMapper;
         private readonly IMetaProgressionService _metaProgressionService;
         private readonly IWinrateStatsService _winrateStatsService;
+        private readonly IMatchService? _matchService;
         private readonly ReplayOptions _replayOptions;
         private readonly Queue<Effect> _effectQueue = new();
         private readonly HashSet<Guid> _activeEffectExecutionIds = new();
@@ -60,6 +62,12 @@ namespace ShadowverseBeyond.Server.Services
         private static readonly ConcurrentDictionary<Type, IReadOnlyList<ReplacementConstructorBinding>> ReplacementEventConstructorCache = new();
         private static readonly ConcurrentDictionary<Type, Func<object?, (bool Ok, object? Value, string? ErrorMessage)>> ValueCoercerCache = new();
         private enum DecisionResolutionPhase
+        {
+            Preflight,
+            Commit
+        }
+
+        private enum InterceptExecutionPhase
         {
             Preflight,
             Commit
@@ -123,6 +131,7 @@ namespace ShadowverseBeyond.Server.Services
             public Guid TransactionId { get; init; }
             public IReadOnlyList<Guid> ActionRootEventIds { get; init; } = Array.Empty<Guid>();
             public Dictionary<DecisionCacheKey, PreflightDecisionState> DecisionSnapshots { get; } = new();
+            public HashSet<SameNameTriggerKey> SameNameTriggeredInPreflight { get; } = new();
             public Dictionary<TargetSignatureKey, TargetSignatureSnapshot> TargetSignatures { get; } = new();
             public Dictionary<ChainedAbilitySnapshotKey, List<IAbility>> ChainedAbilitySnapshots { get; } = new();
             public CommitPlan CommitPlan { get; set; } = new();
@@ -135,6 +144,7 @@ namespace ShadowverseBeyond.Server.Services
         private sealed class PreflightDecisionState
         {
             public DecisionInputSignature Signature { get; init; }
+            public Ability.DecisionInput? PreparedInput { get; init; }
             public List<int> SelectedIndexes { get; init; } = new();
             public List<IAbility> BranchAbilities { get; init; } = new();
         }
@@ -152,7 +162,8 @@ namespace ShadowverseBeyond.Server.Services
             IGameEventRawEventMapper rawEventMapper,
             IMetaProgressionService metaProgressionService,
             IWinrateStatsService winrateStatsService,
-            IOptions<ReplayOptions> replayOptions)
+            IOptions<ReplayOptions> replayOptions,
+            IMatchService? matchService = null)
         {
             _logger = logger;
             _abilityManager = abilityManager;
@@ -166,7 +177,21 @@ namespace ShadowverseBeyond.Server.Services
             _rawEventMapper = rawEventMapper;
             _metaProgressionService = metaProgressionService;
             _winrateStatsService = winrateStatsService;
+            _matchService = matchService;
             _replayOptions = replayOptions.Value;
+        }
+
+        private string ResolveRoomScopedId(string gameId)
+        {
+            if (!string.IsNullOrWhiteSpace(gameId)
+                && _matchService != null
+                && _matchService.TryGetRoomIdByGameId(gameId, out var roomId)
+                && !string.IsNullOrWhiteSpace(roomId))
+            {
+                return roomId;
+            }
+
+            return gameId;
         }
 
         /// <inheritdoc />
@@ -179,11 +204,12 @@ namespace ShadowverseBeyond.Server.Services
             {
                 ClearActivePreflightSession();
                 ResetSameNameTriggerLimitState();
+                ResetAbilityEventFlags(gameContext);
                 _deferredTargetResolutionCache.Clear();
                 _activeEffectExecutionIds.Clear();
 
                 var expansionResult = ExpandRequestToActionRoots(gameContext, initialEventList);
-                if (!expansionResult.Result.IsSuccess)
+                if (expansionResult.Result.ShouldStop)
                 {
                     return expansionResult.Result;
                 }
@@ -192,11 +218,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 // Phase 1: Analyze and resolve primary abilities (Cancellable Part)
                 var analysisResult = await AnalyzePrimaryAbilitiesAsync(gameContext, expansionResult.ActionRootEvents);
-                if (!analysisResult.IsSuccess)
-                {
-                    return analysisResult;
-                }
-                if (analysisResult.IsCancelled)
+                if (analysisResult.ShouldStop)
                 {
                     return analysisResult;
                 }
@@ -212,13 +234,13 @@ namespace ShadowverseBeyond.Server.Services
                 // }
 
                 var commitPlanBuildResult = BuildCommitPlan();
-                if (!commitPlanBuildResult.IsSuccess)
+                if (commitPlanBuildResult.ShouldStop)
                 {
                     return commitPlanBuildResult;
                 }
 
                 var commitValidationResult = ValidateCommitPreflightConsistency(gameContext);
-                if (!commitValidationResult.IsSuccess)
+                if (commitValidationResult.ShouldStop)
                 {
                     return commitValidationResult;
                 }
@@ -230,6 +252,7 @@ namespace ShadowverseBeyond.Server.Services
             }
             finally
             {
+                ResetAbilityEventFlags(gameContext);
                 ClearActivePreflightSession();
                 ResetSameNameTriggerLimitState();
                 _deferredTargetResolutionCache.Clear();
@@ -473,6 +496,11 @@ namespace ShadowverseBeyond.Server.Services
                 && _activePreflightSession.DecisionSnapshots.ContainsKey(cacheKey);
         }
 
+        private HashSet<SameNameTriggerKey>? GetPreflightSameNameState()
+        {
+            return _activePreflightSession?.SameNameTriggeredInPreflight;
+        }
+
         private void UpsertPreflightDecisionState(
             DecisionCacheKey cacheKey,
             DecisionInputSignature signature,
@@ -486,8 +514,33 @@ namespace ShadowverseBeyond.Server.Services
             _activePreflightSession.DecisionSnapshots[cacheKey] = new PreflightDecisionState
             {
                 Signature = signature,
+                PreparedInput = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out var existing)
+                    ? existing.PreparedInput
+                    : null,
                 SelectedIndexes = selectedIndexes.ToList(),
-                BranchAbilities = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out var existing)
+                BranchAbilities = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out existing)
+                    ? existing.BranchAbilities
+                    : new List<IAbility>()
+            };
+        }
+
+        private void SetPreflightPreparedDecisionInput(DecisionCacheKey cacheKey, Ability.DecisionInput preparedInput)
+        {
+            if (_activePreflightSession == null)
+            {
+                return;
+            }
+
+            _activePreflightSession.DecisionSnapshots[cacheKey] = new PreflightDecisionState
+            {
+                Signature = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out var existing)
+                    ? existing.Signature
+                    : default,
+                PreparedInput = preparedInput,
+                SelectedIndexes = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out existing)
+                    ? existing.SelectedIndexes
+                    : new List<int>(),
+                BranchAbilities = _activePreflightSession.DecisionSnapshots.TryGetValue(cacheKey, out existing)
                     ? existing.BranchAbilities
                     : new List<IAbility>()
             };
@@ -504,6 +557,7 @@ namespace ShadowverseBeyond.Server.Services
             _activePreflightSession.DecisionSnapshots[cacheKey] = new PreflightDecisionState
             {
                 Signature = state.Signature,
+                PreparedInput = state.PreparedInput,
                 SelectedIndexes = state.SelectedIndexes,
                 BranchAbilities = branchAbilities.ToList()
             };
@@ -584,6 +638,8 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var gameEvent in actionRootEvents)
             {
+                CaptureEventCurrentPlayerSnapshot(gameContext, gameEvent);
+
                 // A primary ability is linked to a direct player action.
                 if (gameEvent is IPlayerActionEvent)
                 {
@@ -594,7 +650,8 @@ namespace ShadowverseBeyond.Server.Services
                         ?? new List<IAbility>();
                     triggeredAbilities = FilterTriggeredAbilitiesByTransactionSameNameLimit(
                         triggeredAbilities,
-                        "preflight-primary");
+                        "preflight-primary",
+                        GetPreflightSameNameState());
 
                     // According to the design doc, a "Primary Ability" is one where the ability's source
                     // is the same as the event's source. The user has clarified to use gameContext.SourceCard.
@@ -681,7 +738,7 @@ namespace ShadowverseBeyond.Server.Services
                                 return preflightDecisionResult;
                             }
 
-                            if (!preflightDecisionResult.IsSuccess)
+                            if (preflightDecisionResult.ShouldStop)
                             {
                                 return preflightDecisionResult;
                             }
@@ -702,7 +759,7 @@ namespace ShadowverseBeyond.Server.Services
                                 return chainedPreflightResult;
                             }
 
-                            if (!chainedPreflightResult.IsSuccess)
+                            if (chainedPreflightResult.ShouldStop)
                             {
                                 return chainedPreflightResult;
                             }
@@ -886,7 +943,7 @@ namespace ShadowverseBeyond.Server.Services
                     };
 
                     var decisionPreparation = await PrepareDecisionEventAsync(effect, effectContext, executionIndex);
-                    if (!decisionPreparation.Result.IsSuccess)
+                    if (decisionPreparation.Result.ShouldStop)
                     {
                         return decisionPreparation.Result;
                     }
@@ -896,11 +953,23 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
-                    var (interceptResult, interceptedEvent, _, preflightPrevented) = await ApplyBeforeInterceptsAsync(
+                    if (decisionPreparation.DecisionAbility != null
+                        && decisionPreparation.PreparedInput != null
+                        && TryCreateDecisionCacheKey(
+                            effect,
+                            decisionPreparation.DecisionAbility,
+                            effect.Type == EffectType.Random,
+                            out var preflightDecisionCacheKey))
+                    {
+                        SetPreflightPreparedDecisionInput(preflightDecisionCacheKey, decisionPreparation.PreparedInput);
+                    }
+
+                    var (interceptResult, interceptedEvent, _, _, preflightPrevented) = await ApplyBeforeInterceptsAsync(
                         effectContext,
                         decisionPreparation.DecisionEvent,
-                        processedEvents);
-                    if (!interceptResult.IsSuccess)
+                        processedEvents,
+                        phase: InterceptExecutionPhase.Preflight);
+                    if (interceptResult.ShouldStop)
                     {
                         return interceptResult;
                     }
@@ -916,7 +985,7 @@ namespace ShadowverseBeyond.Server.Services
                         return decisionResolveResult;
                     }
 
-                    if (!decisionResolveResult.IsSuccess)
+                    if (decisionResolveResult.ShouldStop)
                     {
                         return decisionResolveResult;
                     }
@@ -934,7 +1003,7 @@ namespace ShadowverseBeyond.Server.Services
                         decisionPreparation.DecisionAbility,
                         interceptedEvent,
                         out var branchAbilities);
-                    if (!branchResolveResult.IsSuccess)
+                    if (branchResolveResult.ShouldStop)
                     {
                         return branchResolveResult;
                     }
@@ -958,7 +1027,7 @@ namespace ShadowverseBeyond.Server.Services
                         triggeringEvent,
                         effect,
                         branchAbilities);
-                    if (!branchPreflightResult.IsSuccess)
+                    if (branchPreflightResult.ShouldStop)
                     {
                         return branchPreflightResult;
                     }
@@ -1031,7 +1100,7 @@ namespace ShadowverseBeyond.Server.Services
                             concreteBranchAbility,
                             triggeringEvent,
                             branchResult.Effects);
-                        if (!nestedResult.IsSuccess)
+                        if (nestedResult.ShouldStop)
                         {
                             return nestedResult;
                         }
@@ -1327,6 +1396,8 @@ namespace ShadowverseBeyond.Server.Services
             IGameEvent gameEvent,
             TriggerTiming timing)
         {
+            CaptureEventCurrentPlayerSnapshot(gameContext, gameEvent);
+
             var generatedEffects = new List<Effect>();
             var generatedEvents = new List<IGameEvent>();
             var abilityTriggerContext = ShouldSuppressAuraRefreshForEvent(gameContext, gameEvent)
@@ -1400,34 +1471,51 @@ namespace ShadowverseBeyond.Server.Services
 
         private bool ShouldSuppressAuraRefreshForEvent(GameContext gameContext, IGameEvent gameEvent)
         {
-            Guid sourceAbilityId = Guid.Empty;
             if (gameEvent is BuffAppliedEvent appliedEvent)
             {
-                sourceAbilityId = appliedEvent.AppliedBuff.SourceAbilityId;
+                var sourceAbilityId = appliedEvent.AppliedBuff.SourceAbilityId;
+                if (sourceAbilityId == Guid.Empty)
+                {
+                    return false;
+                }
+
+                var sourceAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(sourceAbilityId);
+                return sourceAbility is Ability appliedAbility && appliedAbility.Config.Auras.Any();
             }
             else if (gameEvent is BuffRemovedEvent removedEvent)
             {
-                sourceAbilityId = removedEvent.RemovedBuff.SourceAbilityId;
-            }
+                foreach (var removedBuff in removedEvent.RemovedBuffs)
+                {
+                    if (removedBuff.SourceAbilityId == Guid.Empty)
+                    {
+                        continue;
+                    }
 
-            if (sourceAbilityId == Guid.Empty)
-            {
+                    var sourceAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(removedBuff.SourceAbilityId);
+                    if (sourceAbility is Ability removedAbility && removedAbility.Config.Auras.Any())
+                    {
+                        return true;
+                    }
+                }
+
                 return false;
             }
 
-            var sourceAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(sourceAbilityId);
-            return sourceAbility is Ability ability && ability.Config.Auras.Any();
+            return false;
         }
 
         private List<IAbility> FilterTriggeredAbilitiesByTransactionSameNameLimit(
             IEnumerable<IAbility> triggeredAbilities,
-            string phaseTag)
+            string phaseTag,
+            HashSet<SameNameTriggerKey>? sameNameTriggered = null)
         {
             var candidates = triggeredAbilities?.ToList() ?? new List<IAbility>();
             if (candidates.Count == 0)
             {
                 return candidates;
             }
+
+            sameNameTriggered ??= _sameNameTriggeredInTransaction;
 
             var filtered = new List<IAbility>(candidates.Count);
             var seenInBatch = new HashSet<SameNameTriggerKey>();
@@ -1440,7 +1528,7 @@ namespace ShadowverseBeyond.Server.Services
                     continue;
                 }
 
-                if (_sameNameTriggeredInTransaction.Contains(key))
+                if (sameNameTriggered.Contains(key))
                 {
                     _logger.LogDebug(
                         "Suppressed same-name trigger candidate in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
@@ -1468,14 +1556,19 @@ namespace ShadowverseBeyond.Server.Services
             return filtered;
         }
 
-        private bool TryAcquireSameNameTriggerSlot(IAbility ability, string phaseTag)
+        private bool TryAcquireSameNameTriggerSlot(
+            IAbility ability,
+            string phaseTag,
+            HashSet<SameNameTriggerKey>? sameNameTriggered = null)
         {
             if (!TryGetSameNameTriggerKey(ability, out var key))
             {
                 return true;
             }
 
-            if (_sameNameTriggeredInTransaction.Contains(key))
+            sameNameTriggered ??= _sameNameTriggeredInTransaction;
+
+            if (sameNameTriggered.Contains(key))
             {
                 _logger.LogDebug(
                     "Suppressed same-name trigger execution in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
@@ -1486,7 +1579,7 @@ namespace ShadowverseBeyond.Server.Services
                 return false;
             }
 
-            _sameNameTriggeredInTransaction.Add(key);
+            sameNameTriggered.Add(key);
             return true;
         }
 
@@ -1597,6 +1690,45 @@ namespace ShadowverseBeyond.Server.Services
             delayedEventsByParent.Clear();
         }
 
+        private async Task<PausableTransactionResult> DrainStagedEventsForBarrierAsync(
+            GameContext context,
+            List<IGameEvent> processedEvents,
+            Dictionary<string, int> eventSignatureCounts,
+            Queue<IGameEvent> eventStagingArea,
+            Dictionary<Guid, Queue<IGameEvent>> delayedEventsByParent,
+            Queue<IGameEvent> queueDrainedDelayedEvents,
+            HashSet<Guid> readyQueueDrainedEvents,
+            Dictionary<Guid, AttackFlowContext> attackFlowsByEventId,
+            int recursionDepth)
+        {
+            // Barrier events should be evaluated outside the currently executing effect scope;
+            // otherwise parent-delay checks may immediately re-queue them.
+            var barrierContext = context with { CurrentEffect = null };
+
+            while (eventStagingArea.Count > 0)
+            {
+                var stagedEvent = eventStagingArea.Dequeue();
+                var stagedResult = await ProcessEventRecursivelyAsync(
+                    barrierContext,
+                    stagedEvent,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    attackFlowsByEventId,
+                    recursionDepth + 1);
+
+                if (stagedResult.ShouldStop)
+                {
+                    return stagedResult;
+                }
+            }
+
+            return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
         private void ReleaseQueueDrainedEventIfReady(
             Queue<IGameEvent> queueDrainedDelayedEvents,
             HashSet<Guid> readyQueueDrainedEvents,
@@ -1618,7 +1750,7 @@ namespace ShadowverseBeyond.Server.Services
             eventStagingArea.Enqueue(next);
         }
 
-        private async Task<(PausableTransactionResult Result, IGameEvent FinalEvent, List<IGameEvent> GeneratedEvents, bool IsPrevented)> ApplyBeforeInterceptsAsync(
+        private async Task<(PausableTransactionResult Result, IGameEvent FinalEvent, List<IGameEvent> GeneratedEvents, List<Effect> DeferredEffects, bool IsPrevented)> ApplyBeforeInterceptsAsync(
             GameContext gameContext,
             IGameEvent initialEvent,
             List<IGameEvent> processedEvents,
@@ -1628,7 +1760,8 @@ namespace ShadowverseBeyond.Server.Services
             Queue<IGameEvent>? queueDrainedDelayedEvents = null,
             HashSet<Guid>? readyQueueDrainedEvents = null,
             Dictionary<Guid, AttackFlowContext>? attackFlowsByEventId = null,
-            int recursionDepth = 0)
+            int recursionDepth = 0,
+            InterceptExecutionPhase phase = InterceptExecutionPhase.Commit)
         {
             var currentEvent = initialEvent;
             var interceptIteration = 0;
@@ -1636,6 +1769,11 @@ namespace ShadowverseBeyond.Server.Services
             var maxIterations = GameConstants.AbilityTrigger.BeforeInterceptMaxIterations;
             var generatedEvents = new List<IGameEvent>();
             var generatedEventIds = new HashSet<Guid>();
+            var deferredEffects = new List<Effect>();
+            var sameNameTriggered = phase == InterceptExecutionPhase.Preflight
+                ? GetPreflightSameNameState()
+                : null;
+            var shouldRecordRuntimeState = phase == InterceptExecutionPhase.Commit;
             var canExecuteFollowUps =
                 eventSignatureCounts != null &&
                 eventStagingArea != null &&
@@ -1646,12 +1784,15 @@ namespace ShadowverseBeyond.Server.Services
 
             while (interceptIteration < maxIterations)
             {
+                CaptureEventCurrentPlayerSnapshot(gameContext, currentEvent);
+
                 bool eventChanged = false;
 
                 var triggeredAbilities = await gameContext.AbilityManager.GetTriggeredAbilitiesAsync(currentEvent, gameContext, TriggerTiming.Before);
                 triggeredAbilities = FilterTriggeredAbilitiesByTransactionSameNameLimit(
                     triggeredAbilities,
-                    "before-intercept");
+                    phase == InterceptExecutionPhase.Preflight ? "before-intercept-preflight" : "before-intercept",
+                    sameNameTriggered);
 
                 foreach (var ability in triggeredAbilities)
                 {
@@ -1670,7 +1811,7 @@ namespace ShadowverseBeyond.Server.Services
 
                     if (!abilityResult.IsSuccess)
                     {
-                        return (PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Before intercept ability processing failed."), currentEvent, generatedEvents, false);
+                        return (PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Before intercept ability processing failed."), currentEvent, generatedEvents, deferredEffects, false);
                     }
 
                     var interceptEffects = abilityResult.Effects.Where(IsInterceptEffect).ToList();
@@ -1679,16 +1820,23 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
-                    if (!TryAcquireSameNameTriggerSlot(ability, "before-intercept"))
+                    if (!TryAcquireSameNameTriggerSlot(
+                        ability,
+                        phase == InterceptExecutionPhase.Preflight ? "before-intercept-preflight" : "before-intercept",
+                        sameNameTriggered))
                     {
                         continue;
                     }
 
                     interceptedAbilityIds.Add(ability.RuntimeId);
-                    ability.RecordTrigger(abilityContext);
-                    if (ShouldEmitAbilityTriggeredEvent(ability, abilityContext))
+                    deferredEffects.AddRange(abilityResult.Effects.Where(effect => !IsInterceptEffect(effect)));
+                    if (shouldRecordRuntimeState)
                     {
-                        generatedEvents.Add(new AbilityTriggeredEvent(ability, abilityContext.TriggeringEvent!));
+                        ability.RecordTrigger(abilityContext);
+                        if (ShouldEmitAbilityTriggeredEvent(ability, abilityContext))
+                        {
+                            generatedEvents.Add(new AbilityTriggeredEvent(ability, abilityContext.TriggeringEvent!));
+                        }
                     }
 
                     AppendGeneratedEvents(generatedEvents, generatedEventIds, abilityResult.GeneratedEvents);
@@ -1696,9 +1844,9 @@ namespace ShadowverseBeyond.Server.Services
                     foreach (var interceptEffect in interceptEffects)
                     {
                         var (effectResult, actionResult) = await ExecuteInterceptEffectAsync(interceptEffect, abilityContext, processedEvents);
-                        if (!effectResult.IsSuccess)
+                        if (effectResult.ShouldStop)
                         {
-                            return (effectResult, currentEvent, generatedEvents, false);
+                            return (effectResult, currentEvent, generatedEvents, deferredEffects, false);
                         }
 
                         if (actionResult != null)
@@ -1725,9 +1873,9 @@ namespace ShadowverseBeyond.Server.Services
                                     readyQueueDrainedEvents!,
                                     attackFlowsByEventId!,
                                     recursionDepth + 1);
-                                if (!chainedResult.IsSuccess)
+                                if (chainedResult.ShouldStop)
                                 {
-                                    return (chainedResult, currentEvent, generatedEvents, false);
+                                    return (chainedResult, currentEvent, generatedEvents, deferredEffects, false);
                                 }
                             }
                         }
@@ -1740,13 +1888,13 @@ namespace ShadowverseBeyond.Server.Services
 
                         if (!TryApplyEventIntercept(gameContext, currentEvent, intercept, out var updatedEvent, out var changed, out var prevented, out var errorMessage))
                         {
-                            return (PausableTransactionResult.Failure(errorMessage ?? "Before intercept failed to apply."), currentEvent, generatedEvents, false);
+                            return (PausableTransactionResult.Failure(errorMessage ?? "Before intercept failed to apply."), currentEvent, generatedEvents, deferredEffects, false);
                         }
 
                         if (prevented)
                         {
                             ResetResolvedStateAfterInterceptChange(gameContext, currentEvent.EventId);
-                            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent, generatedEvents, true);
+                            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent, generatedEvents, deferredEffects, true);
                         }
 
                         if (changed)
@@ -1777,7 +1925,7 @@ namespace ShadowverseBeyond.Server.Services
                     maxIterations, currentEvent.EventType, currentEvent.EventId);
             }
 
-            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent, generatedEvents, false);
+            return (PausableTransactionResult.Success(new List<IGameEvent>()), currentEvent, generatedEvents, deferredEffects, false);
         }
 
         private static void AppendGeneratedEvents(
@@ -2031,7 +2179,10 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
                 {
-                    UpsertPreflightDecisionState(cacheKey, signature, selectedIndexes);
+                    UpsertPreflightDecisionState(
+                        cacheKey,
+                        signature,
+                        selectedIndexes);
                 }
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
@@ -2039,15 +2190,11 @@ namespace ShadowverseBeyond.Server.Services
             if (resolvedChoose != null)
             {
                 var selectionCount = Math.Max(0, resolvedChoose.SelectionCount);
+                selectionCount = Math.Min(selectionCount, optionIds.Count);
                 if (selectionCount == 0)
                 {
                     resolvedChoose.SetSelectedOptionIndexes(Array.Empty<int>());
                     return PausableTransactionResult.Success(new List<IGameEvent>());
-                }
-
-                if (optionIds.Count < selectionCount)
-                {
-                    return PausableTransactionResult.Failure("Not enough decision options for the required selection count.");
                 }
 
                 var request = new PlayerChoiceRequest
@@ -2092,7 +2239,10 @@ namespace ShadowverseBeyond.Server.Services
                 resolvedChoose.SetSelectedOptionIndexes(selectedIndexes);
                 if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
                 {
-                    UpsertPreflightDecisionState(cacheKey, signature, selectedIndexes);
+                    UpsertPreflightDecisionState(
+                        cacheKey,
+                        signature,
+                        selectedIndexes);
                 }
             }
 
@@ -2316,6 +2466,101 @@ namespace ShadowverseBeyond.Server.Services
             return weights.Count - 1;
         }
 
+        private bool ShouldSkipQueuedEffectExecution(
+            Effect effect,
+            GameContext gameContext,
+            CardInstance? sourceCard,
+            bool isInterceptEffect)
+        {
+            if (effect.ForceExecution || !effect.sourceAbilityId.HasValue)
+            {
+                return false;
+            }
+
+            var abilityRuntimeId = effect.sourceAbilityId.Value;
+            var activeAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(abilityRuntimeId);
+            AbilitySnapshot? snapshot = null;
+            var hasSnapshot = activeAbility == null
+                && gameContext.AbilityManager.TryGetAbilitySnapshot(abilityRuntimeId, out snapshot);
+
+            if (effect.SourceAbilityStateVersion.HasValue)
+            {
+                var abilityForVersionCheck = activeAbility as Ability ?? effect.SourceAbility as Ability;
+                if (abilityForVersionCheck != null
+                    && abilityForVersionCheck.QueuedEffectStateVersion > effect.SourceAbilityStateVersion.Value)
+                {
+                    _logger.LogDebug(
+                        "Skipping {EffectPipeline} effect {EffectType} ({EffectId}) because source ability {AbilityRuntimeId} advanced from state version {CapturedVersion} to {CurrentVersion}. InvalidationReason={InvalidationReason}",
+                        isInterceptEffect ? "intercept" : "queued",
+                        effect.Type,
+                        effect.Id,
+                        abilityForVersionCheck.RuntimeId,
+                        effect.SourceAbilityStateVersion.Value,
+                        abilityForVersionCheck.QueuedEffectStateVersion,
+                        abilityForVersionCheck.LastQueuedEffectInvalidationReason);
+                    return true;
+                }
+
+                if (hasSnapshot
+                    && snapshot!.QueuedEffectInvalidationVersion > effect.SourceAbilityStateVersion.Value)
+                {
+                    _logger.LogDebug(
+                        "Skipping {EffectPipeline} effect {EffectType} ({EffectId}) because source ability {AbilityRuntimeId} was unregistered after advancing from state version {CapturedVersion} to {CurrentVersion}. InvalidationReason={InvalidationReason}",
+                        isInterceptEffect ? "intercept" : "queued",
+                        effect.Type,
+                        effect.Id,
+                        abilityRuntimeId,
+                        effect.SourceAbilityStateVersion.Value,
+                        snapshot.QueuedEffectInvalidationVersion,
+                        snapshot.QueuedEffectInvalidationReason);
+                    return true;
+                }
+            }
+
+            if (hasSnapshot && snapshot!.ShouldCancelQueuedEffects)
+            {
+                _logger.LogDebug(
+                    "Skipping {EffectPipeline} effect {EffectType} ({EffectId}) because source ability {AbilityRuntimeId} was unregistered with cancellation flag. RemovalReason={RemovalReason}",
+                    isInterceptEffect ? "intercept" : "queued",
+                    effect.Type,
+                    effect.Id,
+                    abilityRuntimeId,
+                    snapshot.RemovalReason);
+                return true;
+            }
+
+            var abilityForSuppression = activeAbility ?? effect.SourceAbility;
+            if (abilityForSuppression != null && gameContext.AbilityManager.IsAbilitySuppressed(abilityForSuppression, gameContext))
+            {
+                _logger.LogDebug(
+                    "Skipping {EffectPipeline} effect {EffectType} ({EffectId}) because source ability {AbilityRuntimeId} is currently suppressed.",
+                    isInterceptEffect ? "intercept" : "queued",
+                    effect.Type,
+                    effect.Id,
+                    abilityForSuppression.RuntimeId);
+                return true;
+            }
+
+            var abilityForZoneRevalidation = activeAbility ?? effect.SourceAbility;
+            if (abilityForZoneRevalidation?.TriggerConfig?.RevalidateZoneBeforeExecution == true)
+            {
+                var cardToCheck = sourceCard ?? abilityForZoneRevalidation.SourceCard;
+                if (cardToCheck != null && !abilityForZoneRevalidation.TriggerConfig.IsValidZone(cardToCheck.CurrentZone))
+                {
+                    _logger.LogDebug(
+                        "Skipping {EffectPipeline} effect {EffectType} ({EffectId}) because source card {CardId} is now in zone {Zone}, which is outside ValidZones.",
+                        isInterceptEffect ? "intercept" : "queued",
+                        effect.Type,
+                        effect.Id,
+                        cardToCheck.InstanceId,
+                        cardToCheck.CurrentZone);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private async Task<(PausableTransactionResult Result, GameStateActionResult? ActionResult)> ExecuteInterceptEffectAsync(
             Effect effect,
             GameContext gameContext,
@@ -2331,23 +2576,9 @@ namespace ShadowverseBeyond.Server.Services
                 sourceAbility = gameContext.AbilityManager.GetAbilityByRuntimeId(effect.sourceAbilityId.Value);
             }
 
-            if (!effect.ForceExecution && effect.sourceAbilityId.HasValue)
+            if (ShouldSkipQueuedEffectExecution(effect, gameContext, sourceCard, isInterceptEffect: true))
             {
-                var ability = effect.SourceAbility ?? gameContext.AbilityManager.GetAbilityByRuntimeId(effect.sourceAbilityId.Value);
-                if (ability?.TriggerConfig?.RevalidateZoneBeforeExecution == true)
-                {
-                    var cardToCheck = sourceCard ?? ability.SourceCard;
-                    if (cardToCheck != null && !ability.TriggerConfig.IsValidZone(cardToCheck.CurrentZone))
-                    {
-                        _logger.LogDebug(
-                            "Skipping intercept effect {EffectType} ({EffectId}) because source card {CardId} is now in zone {Zone}, which is outside ValidZones.",
-                            effect.Type,
-                            effect.Id,
-                            cardToCheck.InstanceId,
-                            cardToCheck.CurrentZone);
-                        return (PausableTransactionResult.Success(new List<IGameEvent>()), null);
-                    }
-                }
+                return (PausableTransactionResult.Success(new List<IGameEvent>()), null);
             }
 
             IGameEvent? triggeringEvent = null;
@@ -2374,7 +2605,7 @@ namespace ShadowverseBeyond.Server.Services
             };
 
             var deferredResolutionResult = await ResolveDeferredTargetsIfNeededAsync(effect, effectContext);
-            if (!deferredResolutionResult.IsSuccess)
+            if (deferredResolutionResult.ShouldStop)
             {
                 return (deferredResolutionResult, null);
             }
@@ -3070,7 +3301,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_failed_partial");
 
-                var groupName = SignalRGroupNames.Game(gameContext.CurrentGameState.GameId);
+                var groupName = SignalRGroupNames.Game(ResolveRoomScopedId(gameContext.CurrentGameState.GameId));
 
                 if (processedEvents.Count > 0)
                 {
@@ -3116,7 +3347,7 @@ namespace ShadowverseBeyond.Server.Services
                             readyQueueDrainedEvents,
                             attackFlowsByEventId,
                             recursionDepth: 0);
-                        if (!result.IsSuccess) return await FinalizeFailedTransactionAsync(result);
+                        if (result.ShouldStop) return await FinalizeFailedTransactionAsync(result);
                     }
                     else
                     {
@@ -3132,7 +3363,7 @@ namespace ShadowverseBeyond.Server.Services
                             readyQueueDrainedEvents,
                             attackFlowsByEventId,
                             recursionDepth: 0);
-                        if (!result.IsSuccess) return await FinalizeFailedTransactionAsync(result);
+                        if (result.ShouldStop) return await FinalizeFailedTransactionAsync(result);
                     }
                 }
             }
@@ -3155,6 +3386,10 @@ namespace ShadowverseBeyond.Server.Services
 
                 cardUpdateEventAdded = true;
             }
+
+            // Ensure all CardInstanceDto mappings in this transaction observe the latest derived state
+            // (attack/health/cost/keywords) before materializing broadcast DTOs.
+            gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_end");
 
             var (broadcastPlan, recordedEvents) = await BuildBroadcastArtifactsAsync(processedEvents);
 
@@ -3200,12 +3435,11 @@ namespace ShadowverseBeyond.Server.Services
 
             // --- Broadcast all processed events AFTER the entire transaction is complete ---
             // Apply meta-progression updates (economy/profile/quests) after state commit, before broadcasting.
-            gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_end");
             await _metaProgressionService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
             await _winrateStatsService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
 
             _logger.LogInformation("Broadcasting {Count} processed events at the end of the transaction.", processedEvents.Count);
-            string groupName = SignalRGroupNames.Game(gameContext.CurrentGameState.GameId);
+            string groupName = SignalRGroupNames.Game(ResolveRoomScopedId(gameContext.CurrentGameState.GameId));
             await BroadcastPlanAsync(groupName, broadcastPlan);
 
             _logger.LogInformation("--- Transaction End: All events and effects processed successfully. ---");
@@ -3245,10 +3479,13 @@ namespace ShadowverseBeyond.Server.Services
                 }
                 else if (gameEvent is BuffRemovedEvent buffRemoved)
                 {
-                    var targetId = buffRemoved.RemovedBuff.TargetCardInstanceId;
-                    if (targetId != Guid.Empty)
+                    foreach (var removedBuff in buffRemoved.RemovedBuffs)
                     {
-                        updatedIds.Add(targetId);
+                        var targetId = removedBuff.TargetCardInstanceId;
+                        if (targetId != Guid.Empty)
+                        {
+                            updatedIds.Add(targetId);
+                        }
                     }
                 }
             }
@@ -3316,6 +3553,8 @@ namespace ShadowverseBeyond.Server.Services
 
             _logger.LogDebug("Processing event: {EventType} ({EventId})", gameEvent.GetType().Name, gameEvent.EventId);
 
+            CaptureEventCurrentPlayerSnapshot(gameContext, gameEvent);
+
             var resolvedAttackFlow = ResolveAttackFlowContext(gameContext.AttackFlow, gameEvent, attackFlowsByEventId);
             if (!ReferenceEquals(resolvedAttackFlow, gameContext.AttackFlow))
             {
@@ -3373,14 +3612,14 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!expiryResult.IsSuccess) return expiryResult;
+                    if (expiryResult.ShouldStop) return expiryResult;
                 }
 
                 gameContext.BuffService.RefreshDerivedStateCache(gameContext, "turn_start");
             }
 
             // 1a. Before phase (intercept sub-phase): allow rewrites/replacements before commit.
-            var (interceptResult, interceptedEvent, interceptGeneratedEvents, eventPrevented) = await ApplyBeforeInterceptsAsync(
+            var (interceptResult, interceptedEvent, interceptGeneratedEvents, deferredBeforeEffects, eventPrevented) = await ApplyBeforeInterceptsAsync(
                 gameContext,
                 gameEvent,
                 processedEvents,
@@ -3393,7 +3632,7 @@ namespace ShadowverseBeyond.Server.Services
                 attackFlowsByEventId,
 
                 recursionDepth);
-            if (!interceptResult.IsSuccess) return interceptResult;
+            if (interceptResult.ShouldStop) return interceptResult;
             gameEvent = interceptedEvent;
 
             if (eventPrevented)
@@ -3420,7 +3659,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!eventResult.IsSuccess) return eventResult;
+                    if (eventResult.ShouldStop) return eventResult;
                 }
 
                 foreach (var abilityEvent in deferredInterceptAbilityTriggeredEvents)
@@ -3438,7 +3677,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!eventResult.IsSuccess) return eventResult;
+                    if (eventResult.ShouldStop) return eventResult;
                 }
 
                 ResetAbilityEventFlags(gameContext);
@@ -3447,13 +3686,13 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             var decisionResolveResult = await ResolveDecisionEventIfNeededAsync(gameContext, gameEvent, DecisionResolutionPhase.Commit);
-            if (!decisionResolveResult.IsSuccess) return decisionResolveResult;
+            if (decisionResolveResult.ShouldStop) return decisionResolveResult;
 
             processedEvents.Add(gameEvent);
 
             // 1b. Before phase: Effects are executed immediately and their events are processed recursively.
             var (beforeResult, beforeEffects, beforeEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.Before);
-            if (!beforeResult.IsSuccess) return beforeResult;
+            if (beforeResult.ShouldStop) return beforeResult;
             var beforePhaseEvents = new List<IGameEvent>(interceptGeneratedEvents.Count + beforeEvents.Count);
             if (interceptGeneratedEvents.Count > 0)
             {
@@ -3486,9 +3725,19 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!eventResult.IsSuccess) return eventResult;
+                if (eventResult.ShouldStop) return eventResult;
             }
-            foreach (var effect in beforeEffects.Where(effect => !IsInterceptEffect(effect)))
+            var immediateBeforeEffects = new List<Effect>(deferredBeforeEffects.Count + beforeEffects.Count);
+            if (deferredBeforeEffects.Count > 0)
+            {
+                immediateBeforeEffects.AddRange(deferredBeforeEffects);
+            }
+            if (beforeEffects.Count > 0)
+            {
+                immediateBeforeEffects.AddRange(beforeEffects.Where(effect => !IsInterceptEffect(effect)));
+            }
+
+            foreach (var effect in immediateBeforeEffects)
             {
                 var result = await ProcessEffectAsync(
                     effect,
@@ -3503,7 +3752,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!result.IsSuccess) return result;
+                if (result.ShouldStop) return result;
             }
 
             foreach (var abilityEvent in deferredBeforeAbilityTriggeredEvents)
@@ -3521,12 +3770,12 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!eventResult.IsSuccess) return eventResult;
+                if (eventResult.ShouldStop) return eventResult;
             }
 
             // 2. 'On' phase: Effects are enqueued for later processing.
             var (onResult, onEffects, onEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.On);
-            if (!onResult.IsSuccess) return onResult;
+            if (onResult.ShouldStop) return onResult;
             var deferredOnAbilityTriggeredEvents = new List<IGameEvent>();
             foreach (var abilityEvent in onEvents)
             {
@@ -3549,7 +3798,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!eventResult.IsSuccess) return eventResult;
+                if (eventResult.ShouldStop) return eventResult;
             }
             foreach (var effect in onEffects)
             {
@@ -3571,7 +3820,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!eventResult.IsSuccess) return eventResult;
+                if (eventResult.ShouldStop) return eventResult;
             }
 
             // 3. 'Commit' phase: The event's state change is applied, and resulting events are processed recursively.
@@ -3614,7 +3863,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!recursiveResult.IsSuccess) return recursiveResult;
+                    if (recursiveResult.ShouldStop) return recursiveResult;
                 }
 
                 if (gameEvent is TurnEndEvent)
@@ -3635,7 +3884,7 @@ namespace ShadowverseBeyond.Server.Services
                             attackFlowsByEventId,
 
                             recursionDepth + 1);
-                        if (!expiryResult.IsSuccess) return expiryResult;
+                        if (expiryResult.ShouldStop) return expiryResult;
                     }
 
                     gameContext.BuffService.RefreshDerivedStateCache(gameContext, "turn_end");
@@ -3649,7 +3898,7 @@ namespace ShadowverseBeyond.Server.Services
 
             // 4. 'After' phase: Effects are enqueued for later processing.
             var (afterResult, afterEffects, afterEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.After);
-            if (!afterResult.IsSuccess) return afterResult;
+            if (afterResult.ShouldStop) return afterResult;
             var deferredAfterAbilityTriggeredEvents = new List<IGameEvent>();
             foreach (var abilityEvent in afterEvents)
             {
@@ -3672,7 +3921,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!eventResult.IsSuccess) return eventResult;
+                if (eventResult.ShouldStop) return eventResult;
             }
             foreach (var effect in afterEffects)
             {
@@ -3694,12 +3943,20 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!eventResult.IsSuccess) return eventResult;
+                if (eventResult.ShouldStop) return eventResult;
             }
 
             ResetAbilityEventFlags(gameContext);
             ReleaseDelayedEventsIfReady(gameEvent.EventId, eventStagingArea, delayedEventsByParent);
             return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private static void CaptureEventCurrentPlayerSnapshot(GameContext gameContext, IGameEvent? gameEvent)
+        {
+            if (gameEvent is GameEventBase eventBase)
+            {
+                eventBase.CaptureCurrentPlayerSnapshot(gameContext);
+            }
         }
 
         private async Task RecordEventHistoryAsync(GameContext gameContext, IGameEvent gameEvent)
@@ -3918,36 +4175,6 @@ namespace ShadowverseBeyond.Server.Services
             {
                 _logger.LogInformation("Effect {EffectType} has {Count} chained abilities. Processing them...", executedEffect.Type, chainedAbilities.Count);
 
-                async Task<PausableTransactionResult> DrainStagedEventsForBarrierAsync()
-                {
-                    // Barrier events should be evaluated outside the currently executing effect scope;
-                    // otherwise parent-delay checks may immediately re-queue them.
-                    var barrierContext = context with { CurrentEffect = null };
-
-                    while (eventStagingArea.Count > 0)
-                    {
-                        var stagedEvent = eventStagingArea.Dequeue();
-                        var stagedResult = await ProcessEventRecursivelyAsync(
-                            barrierContext,
-                            stagedEvent,
-                            processedEvents,
-                            eventSignatureCounts,
-                            eventStagingArea,
-                            delayedEventsByParent,
-                            queueDrainedDelayedEvents,
-                            readyQueueDrainedEvents,
-                            attackFlowsByEventId,
-                            recursionDepth + 1);
-
-                        if (!stagedResult.IsSuccess)
-                        {
-                            return stagedResult;
-                        }
-                    }
-
-                    return PausableTransactionResult.Success(new List<IGameEvent>());
-                }
-
                 // Find the EffectCompletedEvent emitted by the current effect itself.
                 // GeneratedEvents may already include nested EffectCompletedEvent entries from decision/chained execution.
                 // The current effect's own EffectCompletedEvent is appended last by ProcessEffectAsync.
@@ -3961,8 +4188,17 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     // Settlement barrier: make sure previously released delayed events are committed
                     // before resolving the next chained ability.
-                    var preBarrierResult = await DrainStagedEventsForBarrierAsync();
-                    if (!preBarrierResult.IsSuccess)
+                    var preBarrierResult = await DrainStagedEventsForBarrierAsync(
+                        context,
+                        processedEvents,
+                        eventSignatureCounts,
+                        eventStagingArea,
+                        delayedEventsByParent,
+                        queueDrainedDelayedEvents,
+                        readyQueueDrainedEvents,
+                        attackFlowsByEventId,
+                        recursionDepth);
+                    if (preBarrierResult.ShouldStop)
                     {
                         return preBarrierResult;
                     }
@@ -4003,7 +4239,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!generatedEventResult.IsSuccess)
+                    if (generatedEventResult.ShouldStop)
                     {
                         return generatedEventResult;
                     }
@@ -4023,7 +4259,7 @@ namespace ShadowverseBeyond.Server.Services
                             attackFlowsByEventId,
 
                             recursionDepth + 1);
-                        if (!subEffectResult.IsSuccess)
+                        if (subEffectResult.ShouldStop)
                         {
                             return subEffectResult;
                         }
@@ -4031,8 +4267,17 @@ namespace ShadowverseBeyond.Server.Services
 
                     // Settlement barrier: process newly released delayed events (including destroy)
                     // before moving to the next chained ability.
-                    var postBarrierResult = await DrainStagedEventsForBarrierAsync();
-                    if (!postBarrierResult.IsSuccess)
+                    var postBarrierResult = await DrainStagedEventsForBarrierAsync(
+                        context,
+                        processedEvents,
+                        eventSignatureCounts,
+                        eventStagingArea,
+                        delayedEventsByParent,
+                        queueDrainedDelayedEvents,
+                        readyQueueDrainedEvents,
+                        attackFlowsByEventId,
+                        recursionDepth);
+                    if (postBarrierResult.ShouldStop)
                     {
                         return postBarrierResult;
                     }
@@ -4156,6 +4401,24 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var decisionAbility in effect.DecisionAbilities)
             {
+                // Settlement barrier: make sure previously released delayed events are committed
+                // before resolving the next decision branch.
+                var preBarrierResult = await DrainStagedEventsForBarrierAsync(
+                    context,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    attackFlowsByEventId,
+                    recursionDepth);
+                if (preBarrierResult.ShouldStop)
+                {
+                    return preBarrierResult;
+                }
+
+                var branchProcessedStart = processedEvents.Count;
                 var abilityContext = context with
                 {
                     SourceCard = decisionAbility.SourceCard,
@@ -4184,7 +4447,7 @@ namespace ShadowverseBeyond.Server.Services
                     recursionDepth + 1,
                     decisionEvents,
                     capturedEventIds);
-                if (!generatedEventResult.IsSuccess)
+                if (generatedEventResult.ShouldStop)
                 {
                     return generatedEventResult;
                 }
@@ -4205,7 +4468,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!subEffectResult.IsSuccess)
+                    if (subEffectResult.ShouldStop)
                     {
                         return subEffectResult;
                     }
@@ -4219,9 +4482,177 @@ namespace ShadowverseBeyond.Server.Services
                         }
                     }
                 }
+
+                // Settlement barrier: process newly released delayed events (including destroy)
+                // before moving to the next decision branch.
+                var postBarrierResult = await DrainStagedEventsForBarrierAsync(
+                    context,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    attackFlowsByEventId,
+                    recursionDepth);
+                if (postBarrierResult.ShouldStop)
+                {
+                    return postBarrierResult;
+                }
+
+                for (var i = branchProcessedStart; i < processedEvents.Count; i++)
+                {
+                    var newEvent = processedEvents[i];
+                    if (capturedEventIds.Add(newEvent.EventId))
+                    {
+                        decisionEvents.Add(newEvent);
+                    }
+                }
             }
 
             return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private async Task<PausableTransactionResult> ExecuteTriggeredAbilitiesAsync(
+            Effect effect,
+            GameContext context,
+            TriggerAbilityEffectParams parameters,
+            EffectCompletedEvent triggeringEvent,
+            List<IGameEvent> processedEvents,
+            Dictionary<string, int> eventSignatureCounts,
+            Queue<IGameEvent> eventStagingArea,
+            Dictionary<Guid, Queue<IGameEvent>> delayedEventsByParent,
+            Queue<IGameEvent> queueDrainedDelayedEvents,
+            HashSet<Guid> readyQueueDrainedEvents,
+            Dictionary<Guid, AttackFlowContext> attackFlowsByEventId,
+            int recursionDepth)
+        {
+            if (!effect.SelectedTargets.Any())
+            {
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
+            var triggeredAbilities = ResolveTriggeredAbilities(effect, context, parameters);
+            if (triggeredAbilities.Count == 0)
+            {
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
+            var invocationOptions = parameters.AutoRandomTargetSelection
+                ? new AbilityInvocationOptions
+                {
+                    AutoRandomTargetSelection = parameters.AutoRandomTargetSelection
+                }
+                : AbilityInvocationOptions.None;
+
+            foreach (var triggeredAbility in triggeredAbilities)
+            {
+                var abilityContext = context with
+                {
+                    SourceCard = triggeredAbility.SourceCard,
+                    TriggeringEvent = triggeringEvent,
+                    CurrentEffect = effect,
+                    ResolvedTargets = effect.ResolvedTargets,
+                    InvocationOptions = invocationOptions
+                };
+
+                var result = await context.AbilityManager.ProcessSingleAbilityAsync(triggeredAbility, abilityContext, false, true);
+                if (!result.IsSuccess)
+                {
+                    var error = result.ErrorMessage ?? $"Triggered ability {triggeredAbility.KeywordSummary} failed.";
+                    _logger.LogError(
+                        "Triggered ability {AbilityKeywords} on card {CardId} failed: {Error}",
+                        triggeredAbility.KeywordSummary,
+                        triggeredAbility.SourceCardId,
+                        error);
+                    return PausableTransactionResult.Failure(error);
+                }
+
+                var generatedEventResult = await ProcessAbilityGeneratedEventsAsync(
+                    abilityContext,
+                    result.GeneratedEvents,
+                    processedEvents,
+                    eventSignatureCounts,
+                    eventStagingArea,
+                    delayedEventsByParent,
+                    queueDrainedDelayedEvents,
+                    readyQueueDrainedEvents,
+                    attackFlowsByEventId,
+                    recursionDepth + 1);
+                if (generatedEventResult.ShouldStop)
+                {
+                    return generatedEventResult;
+                }
+
+                foreach (var newEffect in result.Effects)
+                {
+                    var subEffectResult = await ProcessEffectAsync(
+                        newEffect,
+                        abilityContext,
+                        processedEvents,
+                        eventSignatureCounts,
+                        eventStagingArea,
+                        delayedEventsByParent,
+                        queueDrainedDelayedEvents,
+                        readyQueueDrainedEvents,
+                        attackFlowsByEventId,
+                        recursionDepth + 1);
+                    if (subEffectResult.ShouldStop)
+                    {
+                        return subEffectResult;
+                    }
+                }
+            }
+
+            return PausableTransactionResult.Success(new List<IGameEvent>());
+        }
+
+        private List<IAbility> ResolveTriggeredAbilities(
+            Effect effect,
+            GameContext context,
+            TriggerAbilityEffectParams parameters)
+        {
+            var matchedAbilities = new List<IAbility>();
+            var seenRuntimeIds = new HashSet<Guid>();
+
+            foreach (var selectedTarget in effect.SelectedTargets)
+            {
+                var targetCard = selectedTarget.AsCard;
+                if (targetCard == null)
+                {
+                    continue;
+                }
+
+                var targetAbilities = context.AbilityManager
+                    .GetEffectiveAbilitiesForCard(targetCard.InstanceId, context)
+                    .Where(ability => MatchesTriggeredAbility(ability, parameters));
+
+                foreach (var targetAbility in targetAbilities)
+                {
+                    if (!seenRuntimeIds.Add(targetAbility.RuntimeId))
+                    {
+                        continue;
+                    }
+
+                    matchedAbilities.Add(targetAbility);
+                }
+            }
+
+            return matchedAbilities;
+        }
+
+        private static bool MatchesTriggeredAbility(IAbility ability, TriggerAbilityEffectParams parameters)
+        {
+            return parameters.TriggerMode switch
+            {
+                TriggerAbilityMode.ByKeyword => parameters.AbilityKeyword != AbilityKeyword.None
+                    && ability.HasKeyword(parameters.AbilityKeyword),
+                TriggerAbilityMode.ByAbilityDefinitionId => parameters.AbilityDefinitionIds.Count > 0
+                    && parameters.AbilityDefinitionIds.Contains(ability.DefinitionId),
+                TriggerAbilityMode.ByEventType => parameters.TriggerEventType != EventType.Unknown
+                    && ability.TriggerConfig?.EventTypes?.Contains(parameters.TriggerEventType) == true,
+                _ => false
+            };
         }
 
         private async Task<PausableTransactionResult> ProcessAbilityGeneratedEventsAsync(
@@ -4287,7 +4718,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth);
-                if (!recursiveResult.IsSuccess)
+                if (recursiveResult.ShouldStop)
                 {
                     return recursiveResult;
                 }
@@ -4318,7 +4749,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth);
-                if (!recursiveResult.IsSuccess)
+                if (recursiveResult.ShouldStop)
                 {
                     return recursiveResult;
                 }
@@ -4327,14 +4758,14 @@ namespace ShadowverseBeyond.Server.Services
             return PausableTransactionResult.Success(new List<IGameEvent>());
         }
 
-        private Task<(PausableTransactionResult Result, Ability? DecisionAbility, IGameEvent? DecisionEvent)> PrepareDecisionEventAsync(
+        private Task<(PausableTransactionResult Result, Ability? DecisionAbility, IGameEvent? DecisionEvent, Ability.DecisionInput? PreparedInput)> PrepareDecisionEventAsync(
             Effect effect,
             GameContext effectContext,
             int executionIndex = 0)
         {
             if (!IsDecisionEffectType(effect.Type))
             {
-                return Task.FromResult((PausableTransactionResult.Success(new List<IGameEvent>()), (Ability?)null, (IGameEvent?)null));
+                return Task.FromResult((PausableTransactionResult.Success(new List<IGameEvent>()), (Ability?)null, (IGameEvent?)null, (Ability.DecisionInput?)null));
             }
 
             var ability = effect.SourceAbility as Ability;
@@ -4345,24 +4776,35 @@ namespace ShadowverseBeyond.Server.Services
 
             if (ability == null)
             {
-                return Task.FromResult((PausableTransactionResult.Failure("Decision effect requires a source ability."), (Ability?)null, (IGameEvent?)null));
+                return Task.FromResult((PausableTransactionResult.Failure("Decision effect requires a source ability."), (Ability?)null, (IGameEvent?)null, (Ability.DecisionInput?)null));
             }
 
+            var decisionMode = GetDecisionModeFromEffectType(effect.Type);
             Ability.DecisionInput input;
-            try
+            if (decisionMode == Ability.DecisionMode.Choose
+                && _activePreflightSession?.CommitStarted == true
+                && TryCreateDecisionCacheKey(effect, ability, isRandom: false, out var cacheKey)
+                && TryGetPreflightDecisionState(cacheKey, out var cachedDecision)
+                && cachedDecision.PreparedInput != null)
             {
-                var decisionMode = GetDecisionModeFromEffectType(effect.Type);
-                input = ability.PrepareDecisionInput(
-                    effectContext,
-                    effect.TriggeredEventId,
-                    effect.EffectIndex,
-                    effect.EffectConfig,
-                    mode: decisionMode,
-                    executionIndex: executionIndex);
+                input = cachedDecision.PreparedInput;
             }
-            catch (GameLogicException ex)
+            else
             {
-                return Task.FromResult((PausableTransactionResult.Failure(ex.Message), (Ability?)null, (IGameEvent?)null));
+                try
+                {
+                    input = ability.PrepareDecisionInput(
+                        effectContext,
+                        effect.TriggeredEventId,
+                        effect.EffectIndex,
+                        effect.EffectConfig,
+                        mode: decisionMode,
+                        executionIndex: executionIndex);
+                }
+                catch (GameLogicException ex)
+                {
+                    return Task.FromResult((PausableTransactionResult.Failure(ex.Message), (Ability?)null, (IGameEvent?)null, (Ability.DecisionInput?)null));
+                }
             }
 
             IGameEvent decisionEvent = effect.Type switch
@@ -4386,7 +4828,7 @@ namespace ShadowverseBeyond.Server.Services
                 _ => throw new GameLogicException($"Unsupported decision effect type: {effect.Type}")
             };
 
-            return Task.FromResult((PausableTransactionResult.Success(new List<IGameEvent>()), (Ability?)ability, (IGameEvent?)decisionEvent));
+            return Task.FromResult((PausableTransactionResult.Success(new List<IGameEvent>()), (Ability?)ability, (IGameEvent?)decisionEvent, (Ability.DecisionInput?)input));
         }
 
         private PausableTransactionResult ResolveDecisionAbilitiesFromEvent(
@@ -4614,23 +5056,9 @@ namespace ShadowverseBeyond.Server.Services
                 ? gameContext.CurrentGameState.FindCardInstance(effect.SourceCardId.Value)
                 : null;
 
-            if (!effect.ForceExecution && effect.sourceAbilityId.HasValue)
+            if (ShouldSkipQueuedEffectExecution(effect, gameContext, sourceCard, isInterceptEffect: false))
             {
-                var ability = effect.SourceAbility ?? gameContext.AbilityManager.GetAbilityByRuntimeId(effect.sourceAbilityId.Value);
-                if (ability?.TriggerConfig?.RevalidateZoneBeforeExecution == true)
-                {
-                    var cardToCheck = sourceCard ?? ability.SourceCard;
-                    if (cardToCheck != null && !ability.TriggerConfig.IsValidZone(cardToCheck.CurrentZone))
-                    {
-                        _logger.LogDebug(
-                            "Skipping effect {EffectType} ({EffectId}) because source card {CardId} is now in zone {Zone}, which is outside ValidZones.",
-                            effect.Type,
-                            effect.Id,
-                            cardToCheck.InstanceId,
-                            cardToCheck.CurrentZone);
-                        return PausableTransactionResult.Success(new List<IGameEvent>());
-                    }
-                }
+                return PausableTransactionResult.Success(new List<IGameEvent>());
             }
 
             IGameEvent? triggeringEvent = null;
@@ -4669,7 +5097,7 @@ namespace ShadowverseBeyond.Server.Services
             };
 
             var deferredResolutionResult = await ResolveDeferredTargetsIfNeededAsync(effect, effectContext);
-            if (!deferredResolutionResult.IsSuccess)
+            if (deferredResolutionResult.ShouldStop)
             {
                 return deferredResolutionResult;
             }
@@ -4750,7 +5178,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 var decisionPreparation = await PrepareDecisionEventAsync(effect, effectContext, executionIndex);
-                if (!decisionPreparation.Result.IsSuccess) return decisionPreparation.Result;
+                if (decisionPreparation.Result.ShouldStop) return decisionPreparation.Result;
 
                 if (decisionPreparation.DecisionEvent != null)
                 {
@@ -4767,7 +5195,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!decisionEventResult.IsSuccess) return decisionEventResult;
+                    if (decisionEventResult.ShouldStop) return decisionEventResult;
                 }
 
                 var decisionAbilities = new List<IAbility>();
@@ -4791,7 +5219,7 @@ namespace ShadowverseBeyond.Server.Services
                             decisionPreparation.DecisionAbility,
                             decisionPreparation.DecisionEvent,
                             out decisionAbilities);
-                        if (!abilityResult.IsSuccess) return abilityResult;
+                        if (abilityResult.ShouldStop) return abilityResult;
                     }
                 }
 
@@ -4810,7 +5238,7 @@ namespace ShadowverseBeyond.Server.Services
                         decisionEvents,
                         attackFlowsByEventId,
                         recursionDepth + 1);
-                    if (!decisionResult.IsSuccess) return decisionResult;
+                    if (decisionResult.ShouldStop) return decisionResult;
                 }
 
                 effect.GeneratedEvents = decisionEvents;
@@ -4848,7 +5276,7 @@ namespace ShadowverseBeyond.Server.Services
                         attackFlowsByEventId,
 
                         recursionDepth + 1);
-                    if (!result.IsSuccess)
+                    if (result.ShouldStop)
                     {
                         eventProcessingSucceeded = false;
                         eventProcessingError = result.ErrorMessage ?? "Generated event processing failed.";
@@ -4896,11 +5324,36 @@ namespace ShadowverseBeyond.Server.Services
                             attackFlowsByEventId,
 
                             recursionDepth + 1);
-                        if (!result.IsSuccess)
+                        if (result.ShouldStop)
                         {
                             eventProcessingSucceeded = false;
                             eventProcessingError = result.ErrorMessage ?? "Generated event processing failed.";
                         }
+                    }
+                }
+
+                if (eventProcessingSucceeded
+                    && effect.Type == EffectType.TriggerAbility
+                    && effectResult.ReturnValue is TriggerAbilityEffectParams triggerAbilityParams
+                    && effectCompletedEvent != null)
+                {
+                    var triggerAbilityResult = await ExecuteTriggeredAbilitiesAsync(
+                        effect,
+                        effectContext,
+                        triggerAbilityParams,
+                        effectCompletedEvent,
+                        processedEvents,
+                        eventSignatureCounts,
+                        eventStagingArea,
+                        delayedEventsByParent,
+                        queueDrainedDelayedEvents,
+                        readyQueueDrainedEvents,
+                        attackFlowsByEventId,
+                        recursionDepth + 1);
+                    if (triggerAbilityResult.ShouldStop)
+                    {
+                        eventProcessingSucceeded = false;
+                        eventProcessingError = triggerAbilityResult.ErrorMessage ?? "Triggered ability execution failed.";
                     }
                 }
 
@@ -4952,7 +5405,7 @@ namespace ShadowverseBeyond.Server.Services
                     attackFlowsByEventId,
 
                     recursionDepth + 1);
-                if (!chainedResult.IsSuccess) return chainedResult;
+                if (chainedResult.ShouldStop) return chainedResult;
             }
 
             if (IsDecisionEffectType(effect.Type))
@@ -5034,6 +5487,3 @@ namespace ShadowverseBeyond.Server.Services
 
     }
 }
-
-
-

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -185,6 +186,49 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void BuffExpiryCollections_RemoveConditionalBuffWhenRemoveConditionMatches()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+            var conditionEvaluator = new TestConditionEvaluator();
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, _) = CreateContext(gameState, buffManager, evaluator, conditionEvaluator);
+
+            var removeCondition = ConditionConfig.FromExpression("test.remove");
+            var conditionalBuff = new Buff(
+                sourceAbilityId: Guid.Empty,
+                targetCardInstanceId: card.InstanceId,
+                currentTurn: 1,
+                effects: new List<IBuffEffect>
+                {
+                    new StatBuffEffect(new List<StatModification>
+                    {
+                        new(StatType.Attack, 1, ModifierLayer.Additive)
+                    })
+                },
+                durationType: DurationType.ConditionalRemoval,
+                durationParameter: 99,
+                removalCondition: removeCondition);
+            buffManager.RegisterBuffInstance(conditionalBuff, gameState);
+
+            using (context)
+            {
+                conditionEvaluator.Result = false;
+                var firstEndEvents = context.BuffService.CollectEndOfTurnExpiryEvents(context);
+                Assert.Empty(firstEndEvents);
+                Assert.Null(conditionalBuff.DurationParameter);
+                Assert.Equal(removeCondition, conditionEvaluator.LastConfig);
+
+                conditionEvaluator.Result = true;
+                var secondEndEvents = context.BuffService.CollectEndOfTurnExpiryEvents(context);
+                var removedEvent = Assert.Single(secondEndEvents);
+                Assert.Equal(conditionalBuff.Id, removedEvent.RemovedBuff.Id);
+                Assert.Equal("duration_conditional_removal", removedEvent.RemovalReason);
+            }
+        }
+
+        [Fact]
         public void BuffExpiryCollections_RespectOwnerOpponentTurnTypes()
         {
             var buffManager = new TestBuffManager();
@@ -352,6 +396,122 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void RemoveAllBuffs_BatchesByStoredSourceIdentity_WhenRuntimeSourceCardCannotBeResolved()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, _) = CreateContext(gameState, buffManager, evaluator);
+
+            var sourceCardId = Guid.NewGuid();
+            var firstBuff = new Buff(
+                sourceAbilityId: Guid.NewGuid(),
+                targetCardInstanceId: card.InstanceId,
+                currentTurn: 1,
+                effects: new List<IBuffEffect>())
+            {
+                SourceCardInstanceId = sourceCardId
+            };
+            var secondBuff = new Buff(
+                sourceAbilityId: Guid.NewGuid(),
+                targetCardInstanceId: card.InstanceId,
+                currentTurn: 1,
+                effects: new List<IBuffEffect>())
+            {
+                SourceCardInstanceId = sourceCardId
+            };
+
+            buffManager.RegisterBuffInstance(firstBuff, gameState);
+            buffManager.RegisterBuffInstance(secondBuff, gameState);
+
+            using (context)
+            {
+                var result = context.BuffService.RemoveAllBuffs(card.InstanceId, context);
+
+                Assert.True(result.Success);
+                var removedEvent = Assert.Single(result.GeneratedEvents.OfType<BuffRemovedEvent>());
+                Assert.Null(removedEvent.RemovalSource);
+                Assert.Equal(card.InstanceId, removedEvent.RemovalTarget?.InstanceId);
+                Assert.Equal(2, removedEvent.RemovedBuffs.Count);
+                Assert.Contains(removedEvent.RemovedBuffs, buff => buff.Id == firstBuff.Id);
+                Assert.Contains(removedEvent.RemovedBuffs, buff => buff.Id == secondBuff.Id);
+            }
+        }
+
+        [Fact]
+        public void DerivedStateKeywords_RemoveThenAdd_ReappliesKeyword()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var addShieldBeforeRemove = buffFactory.CreateSystemKeywordBuff(
+                target: card,
+                keywords: new List<CardKeyword> { CardKeyword.Shield },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(addShieldBeforeRemove, gameState);
+
+            var removeShield = buffFactory.CreateSystemRemoveKeywordBuff(
+                target: card,
+                keywordsToRemove: new List<CardKeyword> { CardKeyword.Shield },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(removeShield, gameState);
+
+            var addShieldAfterRemove = buffFactory.CreateSystemKeywordBuff(
+                target: card,
+                keywords: new List<CardKeyword> { CardKeyword.Shield },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(addShieldAfterRemove, gameState);
+
+            using (context)
+            {
+                var effectiveKeywords = context.BuffService.GetEffectiveKeywords(card, context);
+                Assert.Contains(CardKeyword.Shield, effectiveKeywords);
+            }
+        }
+
+        [Fact]
+        public void DerivedStateKeywords_AddThenRemove_KeywordIsAbsent()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var addShield = buffFactory.CreateSystemKeywordBuff(
+                target: card,
+                keywords: new List<CardKeyword> { CardKeyword.Shield },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(addShield, gameState);
+
+            var removeShield = buffFactory.CreateSystemRemoveKeywordBuff(
+                target: card,
+                keywordsToRemove: new List<CardKeyword> { CardKeyword.Shield },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(removeShield, gameState);
+
+            using (context)
+            {
+                var effectiveKeywords = context.BuffService.GetEffectiveKeywords(card, context);
+                Assert.DoesNotContain(CardKeyword.Shield, effectiveKeywords);
+            }
+        }
+
+        [Fact]
         public void TribeBuff_ApplyAndRemove_UpdatesCardTribe()
         {
             var buffManager = new TestBuffManager();
@@ -362,12 +522,12 @@ namespace ShadowverseBeyond.Server.Tests
 
             using (context)
             {
-                Assert.DoesNotContain(GameConstants.Tribes.Reanimate, card.Tribe);
+                Assert.DoesNotContain("亡者", card.Tribe);
 
                 var applyResult = context.BuffService.ApplyTribeBuff(
                     context,
                     card,
-                    new List<string> { GameConstants.Tribes.Reanimate },
+                    new List<string> { "亡者" },
                     DurationType.Permanent,
                     null);
                 Assert.True(applyResult.Success);
@@ -375,7 +535,7 @@ namespace ShadowverseBeyond.Server.Tests
                 var appliedEvent = Assert.Single(applyResult.GeneratedEvents.OfType<BuffAppliedEvent>());
                 var applyCommit = appliedEvent.Commit(context);
                 Assert.True(applyCommit.Success);
-                Assert.Contains(GameConstants.Tribes.Reanimate, card.Tribe);
+                Assert.Contains("亡者", card.Tribe);
 
                 var removeResult = context.BuffService.RemoveBuffProcess(appliedEvent.AppliedBuff.Id, context);
                 Assert.True(removeResult.Success);
@@ -383,7 +543,105 @@ namespace ShadowverseBeyond.Server.Tests
                 var removedEvent = Assert.Single(removeResult.GeneratedEvents.OfType<BuffRemovedEvent>());
                 var removeCommit = removedEvent.Commit(context);
                 Assert.True(removeCommit.Success);
-                Assert.DoesNotContain(GameConstants.Tribes.Reanimate, card.Tribe);
+                Assert.DoesNotContain("亡者", card.Tribe);
+            }
+        }
+
+        [Fact]
+        public void ActionUsageLimitBuff_EndOfTurnExpiry_RestoresBaseLimit()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var buff = buffFactory.CreateSystemActionUsageLimitBuff(
+                target: card,
+                modifications: new List<ActionUsageLimitModification>
+                {
+                    new(CardActionUsageType.Attack, 2, ModifierLayer.Set)
+                },
+                durationType: DurationType.EndOfTurn,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(buff, gameState);
+
+            using (context)
+            {
+                Assert.Equal(2, context.BuffService.GetEffectiveActionUsageLimit(card, CardActionUsageType.Attack, context));
+
+                var removedEvent = Assert.Single(context.BuffService.CollectEndOfTurnExpiryEvents(context));
+                var removeResult = removedEvent.Commit(context);
+
+                Assert.True(removeResult.Success);
+                Assert.Equal(1, context.BuffService.GetEffectiveActionUsageLimit(card, CardActionUsageType.Attack, context));
+            }
+        }
+
+        [Fact]
+        public void ActionUsageLimitBuff_IsIgnoredWhileCardIsSilenced()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var buff = buffFactory.CreateSystemActionUsageLimitBuff(
+                target: card,
+                modifications: new List<ActionUsageLimitModification>
+                {
+                    new(CardActionUsageType.Attack, 2, ModifierLayer.Set)
+                },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(buff, gameState);
+
+            using (context)
+            {
+                Assert.Equal(2, context.BuffService.GetEffectiveActionUsageLimit(card, CardActionUsageType.Attack, context));
+
+                var silenceResult = card.ApplySilence();
+                Assert.True(silenceResult.Success);
+                Assert.Equal(1, context.BuffService.GetEffectiveActionUsageLimit(card, CardActionUsageType.Attack, context));
+
+                var unsilenceResult = card.RemoveSilence();
+                Assert.True(unsilenceResult.Success);
+                Assert.Equal(2, context.BuffService.GetEffectiveActionUsageLimit(card, CardActionUsageType.Attack, context));
+            }
+        }
+
+        [Fact]
+        public void AttackTimesUpdatedEvent_AppliesBuffAndSupportsMultipleUses()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, _) = CreateContext(gameState, buffManager, evaluator);
+            card.ZoneStayTurn = 1;
+
+            using (context)
+            {
+                var updateResult = new AttackTimesUpdatedEvent(card, 2, "test.multi_attack").Commit(context);
+                Assert.True(updateResult.Success);
+
+                var appliedEvent = Assert.Single(updateResult.GeneratedEvents.OfType<BuffAppliedEvent>());
+                var applyResult = appliedEvent.Commit(context);
+                Assert.True(applyResult.Success);
+
+                var stateUpdatedEvent = Assert.Single(applyResult.GeneratedEvents.OfType<AttackStateUpdatedEvent>());
+                Assert.True(stateUpdatedEvent.CanAttack);
+                Assert.Equal(2, card.MaxAttacksPerTurn);
+
+                card.ConsumeActionUsage(CardActionUsageType.Attack);
+                Assert.True(card.CanAttack);
+
+                card.ConsumeActionUsage(CardActionUsageType.Attack);
+                Assert.False(card.CanAttack);
+                Assert.False(card.HasRemainingActionUsage(CardActionUsageType.Attack));
             }
         }
 
@@ -393,10 +651,15 @@ namespace ShadowverseBeyond.Server.Tests
             var player2Id = Guid.NewGuid();
             var player1 = new PlayerState(player1Id) { IsFirst = true };
             var player2 = new PlayerState(player2Id);
+            var abilityManager = new Mock<IAbilityManager>();
+            abilityManager.Setup(manager => manager.GetAbilityRuntimeIdsForBuff(It.IsAny<Guid>()))
+                .Returns(new List<Guid>());
+            abilityManager.Setup(manager => manager.GetEffectiveAbilitiesForCard(It.IsAny<Guid>(), It.IsAny<GameContext>()))
+                .Returns(new List<IAbility>());
 
             var gameState = new GameState("buff-cache-test", player1, player2, player1Id)
             {
-                AbilityManager = Mock.Of<IAbilityManager>(),
+                AbilityManager = abilityManager.Object,
                 BuffManager = buffManager
             };
 
@@ -410,7 +673,8 @@ namespace ShadowverseBeyond.Server.Tests
         private static (GameContext Context, BuffFactory BuffFactory) CreateContext(
             GameState gameState,
             TestBuffManager buffManager,
-            IBuffEvaluator evaluator)
+            IBuffEvaluator evaluator,
+            IConditionEvaluator? conditionEvaluator = null)
         {
             var buffFactory = new BuffFactory(NullLogger<BuffFactory>.Instance);
             var stackingEngine = new BuffStackingEngine(NullLogger<BuffStackingEngine>.Instance);
@@ -425,8 +689,10 @@ namespace ShadowverseBeyond.Server.Tests
             services.AddLogging();
             services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
             services.AddSingleton<IBuffService>(buffService);
+            services.AddSingleton(conditionEvaluator ?? new TestConditionEvaluator());
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
             var serviceProvider = services.BuildServiceProvider();
+            GameServiceProvider.ContextAccessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
 
             var context = new GameContext(
                 serviceProvider,
@@ -436,6 +702,18 @@ namespace ShadowverseBeyond.Server.Tests
                 gameState.Player1.PlayerId);
 
             return (context, buffFactory);
+        }
+
+        private sealed class TestConditionEvaluator : IConditionEvaluator
+        {
+            public bool Result { get; set; }
+            public ConditionConfig? LastConfig { get; private set; }
+
+            public bool Evaluate(ConditionConfig config, GameContext context)
+            {
+                LastConfig = config;
+                return Result;
+            }
         }
 
         private sealed class CountingBuffEvaluator : IBuffEvaluator

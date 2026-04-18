@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Abilities.Common;
+﻿using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 // Server/Services/GameService.cs
 //
@@ -60,7 +60,9 @@ namespace ShadowverseBeyond.Server.Services
         private sealed record ResolvedDeckSelection(
             List<int> ExpandedCardIds,
             CardClass DeckClass,
+            CardClass? SecondaryClass,
             DeckEnvironment Environment,
+            DeckRule Rule,
             Guid? UserDeckId);
 
         // Dictionary to track the player whose action chain is currently being processed per game - Declaration moved/exists elsewhere
@@ -342,7 +344,9 @@ namespace ShadowverseBeyond.Server.Services
                                     }
                                     else
                                     {
-                                        _logger.LogError("Transaction failed for action {ActionType}: {Error}", actionWrapper.ActionType, transactionResult.ErrorMessage);
+                                        var warningMessage = BuildActionRejectedWarningMessage(actionWrapper.ActionType, transactionResult.ErrorMessage);
+                                        _logger.LogWarning("Transaction failed for action {ActionType}: {Error}", actionWrapper.ActionType, warningMessage);
+                                        await NotifyActionRejectedAsync(gameId, actionWrapper.PlayerId, warningMessage, "ACTION_BLOCKED");
                                     }
 
                                     // --- BUG-FIX: Action Completion Logic ---
@@ -374,7 +378,8 @@ namespace ShadowverseBeyond.Server.Services
                         catch (GameLogicException glex)
                         {
                             _logger.LogWarning(glex, "[GameProcessingLoop:{GameId}] Game logic error for action {ActionType} by Player {PlayerId}. Action rejected.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
-                            // TODO: Send error to player
+                            var warningMessage = BuildActionRejectedWarningMessage(actionWrapper.ActionType, glex.Message);
+                            await NotifyActionRejectedAsync(gameId, actionWrapper.PlayerId, warningMessage, "ACTION_REJECTED");
                         }
                         catch (Exception ex)
                         {
@@ -727,10 +732,12 @@ namespace ShadowverseBeyond.Server.Services
         private async Task<ResolvedDeckSelection?> ResolveDeckSelectionAsync(
             MatchDeckSelection selection,
             IServiceProvider scopeServiceProvider,
+            bool requireComplete,
             CancellationToken cancellationToken)
         {
             if (!selection.HasSelection)
             {
+                _logger.LogWarning("[GameService] Deck selection is empty.");
                 return null;
             }
 
@@ -751,43 +758,86 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
-                var validation = await deckValidation.ValidateAsync(deck.Class, deck.Cards, deck.Environment, requireComplete: true, cancellationToken);
+                var validation = await deckValidation.ValidateAsync(
+                    deck.Class,
+                    deck.SecondaryClass,
+                    deck.Cards,
+                    deck.Environment,
+                    deck.Rule,
+                    requireComplete,
+                    cancellationToken);
                 if (!validation.Success || validation.Data == null)
                 {
+                    _logger.LogWarning(
+                        "[GameService] Deck validation failed for DeckId={DeckId}, UserId={UserId}, GuestId={GuestId}. Error={Error}",
+                        selection.DeckId,
+                        selection.UserId,
+                        selection.GuestId,
+                        validation.Error ?? "Unknown");
                     return null;
                 }
 
                 selection.DeckClass ??= deck.Class;
+                selection.SecondaryClass ??= deck.SecondaryClass;
                 selection.Environment ??= deck.Environment;
+                selection.Rule ??= deck.Rule;
                 var userDeckId = selection.UserId.HasValue && selection.UserId.Value != Guid.Empty
                     ? selection.DeckId
                     : null;
                 return new ResolvedDeckSelection(
                     ExpandDeckCardIds(validation.Data),
                     deck.Class,
+                    deck.SecondaryClass,
                     deck.Environment,
+                    deck.Rule,
                     userDeckId);
             }
 
             if (!string.IsNullOrWhiteSpace(selection.DeckCode))
             {
-                if (!deckCodeService.TryDecode(selection.DeckCode, out var deckClass, out var cards, out _))
+                if (!deckCodeService.TryDecode(
+                    selection.DeckCode,
+                    out var deckClass,
+                    out var decodedSecondaryClass,
+                    out var decodedEnvironment,
+                    out var decodedRule,
+                    out var cards,
+                    out _))
                 {
                     return null;
                 }
 
-                var validation = await deckValidation.ValidateAsync(deckClass, cards, DeckEnvironment.Open, requireComplete: true, cancellationToken);
+                var environment = selection.Environment ?? decodedEnvironment ?? DeckEnvironment.Rotation;
+                var rule = selection.Rule ?? decodedRule ?? DeckRule.Standard;
+                var secondaryClass = selection.SecondaryClass ?? decodedSecondaryClass;
+                var validation = await deckValidation.ValidateAsync(
+                    deckClass,
+                    secondaryClass,
+                    cards,
+                    environment,
+                    rule,
+                    requireComplete,
+                    cancellationToken);
                 if (!validation.Success || validation.Data == null)
                 {
+                    _logger.LogWarning(
+                        "[GameService] Deck code validation failed. UserId={UserId}, GuestId={GuestId}, Error={Error}",
+                        selection.UserId,
+                        selection.GuestId,
+                        validation.Error ?? "Unknown");
                     return null;
                 }
 
                 selection.DeckClass ??= deckClass;
-                selection.Environment ??= DeckEnvironment.Open;
+                selection.SecondaryClass ??= secondaryClass;
+                selection.Environment ??= environment;
+                selection.Rule ??= rule;
                 return new ResolvedDeckSelection(
                     ExpandDeckCardIds(validation.Data),
                     deckClass,
-                    DeckEnvironment.Open,
+                    secondaryClass,
+                    environment,
+                    rule,
                     UserDeckId: null);
             }
 
@@ -999,7 +1049,7 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("[GameService] Created and assigned AbilityManager for Game {GameId}.", gameId);
                 // --- End Manual Manager Creation ---
 
-                var roomResult = _matchService.Get(gameId);
+                var roomResult = _matchService.GetByGameId(gameId);
                 if (!roomResult.Success || roomResult.Room == null)
                 {
                     _logger.LogWarning("[GameService] Match room not found while creating game state. GameId={GameId}", gameId);
@@ -1008,6 +1058,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 var room = roomResult.Room;
                 var devConfig = room.DevMatchConfig;
+                var requireCompleteDecks = devConfig?.AllowIncompleteDecks != true;
 
                 var maxPp = GameConstants.PlayPoints.InitialPlayPoints;
                 if (devConfig?.MaxPlayPoints.HasValue == true)
@@ -1050,25 +1101,64 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     secondPlayerState.PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
                 }
-                var hostDeck = await ResolveDeckSelectionAsync(room.HostDeckSelection, scopeServiceProvider, CancellationToken.None);
+                var hostDeck = await ResolveDeckSelectionAsync(
+                    room.HostDeckSelection,
+                    scopeServiceProvider,
+                    requireCompleteDecks,
+                    CancellationToken.None);
                 if (hostDeck == null)
                 {
-                    _logger.LogWarning("[GameService] Host deck selection invalid. GameId={GameId}", gameId);
+                    _logger.LogWarning(
+                        "[GameService] Host deck selection invalid. GameId={GameId}, RequireComplete={RequireComplete}",
+                        gameId,
+                        requireCompleteDecks);
                     return null;
                 }
 
                 var opponentSelection = room.GuestPlayerId.HasValue ? room.GuestDeckSelection : room.AiDeckSelection;
-                var opponentDeck = await ResolveDeckSelectionAsync(opponentSelection, scopeServiceProvider, CancellationToken.None);
+                var opponentDeck = await ResolveDeckSelectionAsync(
+                    opponentSelection,
+                    scopeServiceProvider,
+                    requireCompleteDecks,
+                    CancellationToken.None);
                 if (opponentDeck == null)
                 {
-                    _logger.LogWarning("[GameService] Opponent deck selection invalid. GameId={GameId}", gameId);
+                    _logger.LogWarning(
+                        "[GameService] Opponent deck selection invalid. GameId={GameId}, RequireComplete={RequireComplete}",
+                        gameId,
+                        requireCompleteDecks);
+                    return null;
+                }
+
+                var ignoreDeckFormatConsistency = devConfig?.IgnoreDeckFormatConsistency == true;
+                if (!ignoreDeckFormatConsistency && hostDeck.Environment != opponentDeck.Environment)
+                {
+                    _logger.LogWarning(
+                        "[GameService] Deck environment mismatch. GameId={GameId} Host={HostEnv} Opponent={OpponentEnv}",
+                        gameId,
+                        hostDeck.Environment,
+                        opponentDeck.Environment);
+                    return null;
+                }
+
+                if (!ignoreDeckFormatConsistency && hostDeck.Rule != opponentDeck.Rule)
+                {
+                    _logger.LogWarning(
+                        "[GameService] Deck rule mismatch. GameId={GameId} Host={HostRule} Opponent={OpponentRule}",
+                        gameId,
+                        hostDeck.Rule,
+                        opponentDeck.Rule);
                     return null;
                 }
 
                 player1State.Class = hostDeck.DeckClass;
+                player1State.SecondaryClass = hostDeck.SecondaryClass;
                 player2State.Class = opponentDeck.DeckClass;
+                player2State.SecondaryClass = opponentDeck.SecondaryClass;
                 player1State.Environment = hostDeck.Environment;
                 player2State.Environment = opponentDeck.Environment;
+                player1State.Rule = hostDeck.Rule;
+                player2State.Rule = opponentDeck.Rule;
                 player1State.UserDeckId = hostDeck.UserDeckId;
                 player2State.UserDeckId = opponentDeck.UserDeckId;
 
@@ -1110,6 +1200,7 @@ namespace ShadowverseBeyond.Server.Services
                         var card = player1State.Deck[0];
                         player1State.Deck.RemoveAt(0);
                         card.CurrentZone = CardZone.Hand;
+                        card.ZoneStayTurn = 0;
                         player1State.Hand.Add(card);
                     }
 
@@ -1118,6 +1209,7 @@ namespace ShadowverseBeyond.Server.Services
                         var card = player2State.Deck[0];
                         player2State.Deck.RemoveAt(0);
                         card.CurrentZone = CardZone.Hand;
+                        card.ZoneStayTurn = 0;
                         player2State.Hand.Add(card);
                     }
                 }
@@ -1230,25 +1322,26 @@ namespace ShadowverseBeyond.Server.Services
                 // --- Basic Checks ---
                 var abilityConfigs = _gameDataProvider.GetAbilityConfigs(cardDefinition.Id);
                 var modeResolution = PlayModeResolver.Resolve(cardInHand, playerState, gameContext);
-                result.PlayModes = modeResolution.Modes.ToList();
-                result.SelectedPlayMode = modeResolution.SelectedMode;
-                result.SelectedAbilityRuntimeId = modeResolution.SelectedAbilityRuntimeId;
+                    result.PlayModes = modeResolution.Modes.ToList();
+                    result.SelectedPlayMode = modeResolution.SelectedMode;
+                    result.SelectedAbilityRuntimeId = modeResolution.SelectedAbilityRuntimeId;
 
-                if (!modeResolution.HasAvailableMode)
-                {
-                    result.IsPlayable = false;
-                    result.FailureReason = modeResolution.DefaultFailureReason ??
-                        $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {playerState.CurrentPlayPoints})。";
-                    return result;
-                }
+                    if (!modeResolution.HasAvailableMode)
+                    {
+                        var spendablePp = playerState.GetSpendablePlayPoints();
+                        result.IsPlayable = false;
+                        result.FailureReason = modeResolution.DefaultFailureReason ??
+                        $"费用不足 (需要 {cardInHand.CurrentCost}, 当前 {spendablePp})。";
+                        return result;
+                    }
 
-                // Field Space Check (if Follower)
-                if (cardDefinition.Type == CardType.Follower)
+                // Field Space Check (followers and amulets both occupy field slots)
+                if (cardDefinition.Type == CardType.Follower || cardDefinition.Type == CardType.Amulet)
                 {
                     if (playerState.FieldOccupancyCount >= MaxBoardSize)
                     {
                         result.IsPlayable = false;
-                        result.FailureReason = $"场地已满 (最大 {MaxBoardSize} 个)，无法召唤随从。";
+                        result.FailureReason = $"场地已满 (最大 {MaxBoardSize} 个)，无法打出随从/护符。";
                         return result;
                     }
                 }
@@ -1493,7 +1586,7 @@ namespace ShadowverseBeyond.Server.Services
                 // Ensure _hubContext is injected and available
                 if (_hubContext != null)
                 {
-                    string groupName = SignalRGroupNames.Player(gameId, playerId);
+                    string groupName = SignalRGroupNames.Player(ResolveRoomScopedId(gameId), playerId);
                     var clientProxy = _hubContext.Clients.Group(groupName);
                     await clientProxy.SendAsync("ReceiveHandPlayabilityUpdate", updateDto);
                     _logger.LogInformation("[GameService:{GameId}] Sent hand playability update to Player Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
@@ -1563,7 +1656,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (_hubContext != null)
                 {
-                    string groupName = SignalRGroupNames.Player(gameId, playerId);
+                    string groupName = SignalRGroupNames.Player(ResolveRoomScopedId(gameId), playerId);
                     var clientProxy = _hubContext.Clients.Group(groupName);
                     await clientProxy.SendAsync("ReceiveActPlayabilityUpdate", updateDto);
                     _logger.LogInformation("[GameService:{GameId}] Sent Act playability update to Player Group {GroupName} for Player {PlayerId} with {Count} results.", gameId, groupName, playerId, playabilityResults.Count);
@@ -1602,12 +1695,6 @@ namespace ShadowverseBeyond.Server.Services
                 return result;
             }
 
-            if (!cardOnField.HasActAbility)
-            {
-                result.FailureReason = "This card has no Act ability.";
-                return result;
-            }
-
             if (gameContext.CurrentGameState.CurrentPlayerId != playerState.PlayerId)
             {
                 result.FailureReason = "It's not your turn to use Act.";
@@ -1620,7 +1707,7 @@ namespace ShadowverseBeyond.Server.Services
                 return result;
             }
 
-            if (cardOnField.HasUsedActThisTurn(playerState.TurnNumber))
+            if (cardOnField.HasUsedActThisTurn())
             {
                 result.FailureReason = "This card has already used Act this turn.";
                 return result;
@@ -1630,6 +1717,12 @@ namespace ShadowverseBeyond.Server.Services
                 .GetEffectiveAbilitiesForCard(cardOnField.InstanceId, gameContext)
                 .Where(a => a.HasKeyword(AbilityKeyword.Act))
                 .ToList();
+
+            if (actAbilities.Count == 0)
+            {
+                result.FailureReason = "This card has no Act ability.";
+                return result;
+            }
 
             var targetSelectionService = gameContext.ServiceProvider.GetRequiredService<TargetSelectionService>();
 
@@ -1644,10 +1737,11 @@ namespace ShadowverseBeyond.Server.Services
                 var actCost = cardOnField.GetActCostForAbility(ability, gameContext);
                 abilityResult.ActCost = actCost;
 
-                if (playerState.CurrentPlayPoints < actCost)
+                var spendablePp = playerState.GetSpendablePlayPoints();
+                if (actCost > spendablePp)
                 {
                     abilityResult.IsPlayable = false;
-                    abilityResult.FailureReason = $"Not enough PP (need {actCost}, have {playerState.CurrentPlayPoints}).";
+                    abilityResult.FailureReason = $"Not enough PP (need {actCost}, have {spendablePp}).";
                     result.Abilities.Add(abilityResult);
                     continue;
                 }
@@ -1853,7 +1947,7 @@ namespace ShadowverseBeyond.Server.Services
         private bool TryGetActiveRoom(string gameId, out string reason)
         {
             reason = "Unknown";
-            var roomResult = _matchService.Get(gameId);
+            var roomResult = _matchService.GetByGameId(gameId);
             if (!roomResult.Success || roomResult.Room == null)
             {
                 reason = roomResult.Message ?? "Room not found";
@@ -2076,7 +2170,8 @@ namespace ShadowverseBeyond.Server.Services
                 return;
             }
 
-            string groupName = SignalRGroupNames.Game(normalizedGameId);
+            var roomScopedId = ResolveRoomScopedId(normalizedGameId);
+            string groupName = SignalRGroupNames.Game(roomScopedId);
 
             if (IsPrivatePayloadEvent(gameEvent))
             {
@@ -2119,7 +2214,7 @@ namespace ShadowverseBeyond.Server.Services
             // Note: This relies on the client-side connection having its ConnectionId associated with the PlayerId group.
             // This is a common pattern but requires correct group management in the Hub.
             string normalizedGameId = NormalizeGameId(gameId);
-            string playerGroupName = SignalRGroupNames.Player(normalizedGameId, playerId);
+            string playerGroupName = SignalRGroupNames.Player(ResolveRoomScopedId(normalizedGameId), playerId);
             _logger.LogInformation("[BROADCAST_PLAYER:{GameId}] Attempting to broadcast event of type {EventType} to player group {PlayerGroupName}.",
                 normalizedGameId, gameEvent.GetType().Name, playerGroupName);
 
@@ -2136,6 +2231,42 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        private async Task NotifyActionRejectedAsync(string gameId, Guid playerId, string warningMessage, string? errorCode = null)
+        {
+            if (playerId == Guid.Empty || string.IsNullOrWhiteSpace(warningMessage))
+            {
+                return;
+            }
+
+            try
+            {
+                await BroadcastEventToPlayerAsync(
+                    gameId,
+                    playerId,
+                    new ErrorOccurredEventDto(playerId, warningMessage, errorCode));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[GameService:{GameId}] Failed to notify rejected action for Player {PlayerId}. Message: {WarningMessage}",
+                    gameId,
+                    playerId,
+                    warningMessage);
+            }
+        }
+
+        private static string BuildActionRejectedWarningMessage(string actionType, string? detailMessage)
+        {
+            if (!string.IsNullOrWhiteSpace(detailMessage))
+            {
+                return detailMessage.Trim();
+            }
+
+            return string.IsNullOrWhiteSpace(actionType)
+                ? "操作被阻止。"
+                : $"操作“{actionType}”被阻止。";
+        }
+
         private static string NormalizeGameId(string gameId)
         {
             if (Guid.TryParse(gameId, out var parsed))
@@ -2144,6 +2275,17 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return gameId;
+        }
+
+        private string ResolveRoomScopedId(string gameOrRoomId)
+        {
+            var normalized = NormalizeGameId(gameOrRoomId);
+            if (_matchService.TryGetRoomIdByGameId(normalized, out var roomId) && !string.IsNullOrWhiteSpace(roomId))
+            {
+                return roomId;
+            }
+
+            return normalized;
         }
 
         private static bool IsPrivatePayloadEvent(GameEventDto gameEvent)
@@ -2357,3 +2499,5 @@ namespace ShadowverseBeyond.Server.Services
 
     } // Closing brace for GameService class
 } // Closing brace for ShadowverseBeyond.Server.Services namespace
+
+

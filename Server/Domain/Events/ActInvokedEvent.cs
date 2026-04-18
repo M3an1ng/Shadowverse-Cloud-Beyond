@@ -18,7 +18,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         EventType.Act,
         AbilityEditorCategories.BaseActionId,
         AbilityEditorCategories.BaseActionLabel)]
-    public sealed class ActInvokedEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent
+    public sealed class ActInvokedEvent : GameEventBase, ICommittableEvent, IPlayerActionEvent, ILogAnnounceableEvent
     {
         [GameEventParameter("启动玩家", "发动启动能力的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? ActPlayer => Source?.Player;
@@ -56,33 +56,52 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card owner mismatch." };
             }
 
-            if (card.HasUsedActThisTurn(player.TurnNumber))
+            if (card.HasUsedActThisTurn())
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card has already used Act this turn." };
             }
 
             var actCost = PaidCost;
 
-            if (player.CurrentPlayPoints < actCost)
+            var spendablePp = player.GetSpendablePlayPoints();
+            if (actCost > spendablePp)
             {
                 return new DomainOperationResult
                 {
                     Success = false,
-                    ErrorMessage = $"Not enough PP to use Act. Required: {actCost}, Available: {player.CurrentPlayPoints}"
+                    ErrorMessage = $"Not enough PP to use Act. Required: {actCost}, Available: {spendablePp}"
                 };
             }
 
             if (actCost > 0)
             {
-                var ppResult = player.ModifyPlayPoints(-actCost);
+                var ppResult = player.SpendPlayPoints(actCost);
+                if (!ppResult.Success)
+                {
+                    return ppResult;
+                }
                 result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
             }
 
-            card.MarkActUsed(player.TurnNumber);
+            card.MarkActUsed();
 
             result.Success = true;
-            result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, player.TurnNumber));
+            result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, card.ActsThisTurn, card.MaxActsPerTurn));
             return result;
+        }
+
+        public string GetAnnouncement(GameState gameState)
+        {
+            var card = ActCard;
+            var player = ActPlayer;
+            if (card == null)
+            {
+                return string.Empty;
+            }
+
+            return player != null
+                ? $"{AnnouncementTokens.Player(player)}启动{AnnouncementTokens.Card(card)}。"
+                : $"{AnnouncementTokens.Card(card)}启动了。";
         }
     }
 }

@@ -46,13 +46,17 @@ async function apiPostJson(url, body) {
         body: JSON.stringify(body ?? {})
     });
     let payload = null;
+    let rawText = "";
     try {
-        payload = await response.json();
+        rawText = await response.text();
+        if (rawText) {
+            payload = JSON.parse(rawText);
+        }
     } catch (err) {
-        // ignore
+        // keep raw text fallback
     }
     if (!response.ok) {
-        const message = payload?.message || payload?.Message || response.statusText;
+        const message = payload?.message || payload?.Message || rawText?.trim() || response.statusText;
         throw new Error(message || `HTTP ${response.status}`);
     }
     return payload;

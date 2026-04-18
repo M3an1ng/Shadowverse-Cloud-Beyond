@@ -1,4 +1,5 @@
 ﻿using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
@@ -13,6 +14,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 
         [ParameterMetadata("持续参数", UiControlType.NumberStepper, DefaultValue = 0, Min = 0, Description = "持续时间参数（回合开始/结束时生效）。0表示默认一次。")]
         public int DurationParameter { get; set; } = 0;
+
+        [ParameterMetadata("移除条件", UiControlType.TextArea, DefaultValue = null, Description = "当持续时间为条件移除时，使用该 ConditionConfig 判断是否移除。")]
+        public ConditionConfig? RemoveCondition { get; set; }
 
         [ParameterMetadata("攻击力设定值", UiControlType.NumberStepper, DefaultValue = null, Description = "将目标攻击力设定为指定值。留空表示不修改攻击力。")]
         public int? AttackModifier { get; set; }

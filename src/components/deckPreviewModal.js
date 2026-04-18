@@ -1,3 +1,6 @@
+import { compareCardsForEditorAndDeck } from "../cardListSort.js";
+import { buildDeckCardRootClassName } from "../deckCardTypeStyling.js";
+
 const TYPE_LABELS = {
     follower: "随从",
     spell: "法术",
@@ -52,7 +55,18 @@ function normalizeCardItem(raw) {
     const cost = toInt(raw?.cost ?? card?.cost ?? card?.Cost ?? 99, 99);
     const name = String(raw?.name ?? card?.name ?? card?.Name ?? `未知卡牌 #${cardDefinitionId}`);
     const type = String(raw?.type ?? card?.type ?? card?.Type ?? "unknown");
+    const cardClass = String(raw?.cardClass ?? raw?.class ?? raw?.Class ?? card?.cardClass ?? card?.class ?? card?.Class ?? "");
     const rarity = String(raw?.rarity ?? card?.rarity ?? card?.Rarity ?? "");
+    const cardSetDefinitionId = toInt(
+        raw?.cardSetDefinitionId
+        ?? raw?.CardSetDefinitionId
+        ?? raw?.card_set_definition_id
+        ?? card?.cardSetDefinitionId
+        ?? card?.CardSetDefinitionId
+        ?? card?.card_set_definition_id
+        ?? 0,
+        0
+    );
     const artPreview = String(raw?.artPreview ?? card?.artPreview ?? card?.ArtPreview ?? "");
     return {
         cardDefinitionId,
@@ -60,8 +74,24 @@ function normalizeCardItem(raw) {
         cost,
         name,
         type,
+        cardClass,
         rarity,
+        cardSetDefinitionId,
         artPreview
+    };
+}
+
+function toComparableCard(item) {
+    if (item?.card && typeof item.card === "object") {
+        return item.card;
+    }
+    return {
+        id: item?.cardDefinitionId ?? 0,
+        cost: item?.cost ?? 99,
+        class: item?.cardClass ?? "",
+        type: item?.type ?? "",
+        rarity: item?.rarity ?? "",
+        cardSetDefinitionId: item?.cardSetDefinitionId ?? 0
     };
 }
 
@@ -70,7 +100,8 @@ export function buildDeckPreviewSnapshot(rawCards) {
         .map(normalizeCardItem)
         .filter((item) => item.cardDefinitionId > 0 && item.count > 0)
         .sort((a, b) => {
-            if (a.cost !== b.cost) return a.cost - b.cost;
+            const orderDiff = compareCardsForEditorAndDeck(toComparableCard(a), toComparableCard(b));
+            if (orderDiff !== 0) return orderDiff;
             const nameDiff = String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
             if (nameDiff !== 0) return nameDiff;
             return a.cardDefinitionId - b.cardDefinitionId;
@@ -99,7 +130,9 @@ function renderCurveHtml(curve) {
     const max = Math.max(...values, 1);
     return values.map((count, index) => `
         <div class="deck-preview-curve-col" title="${index === 8 ? "8+" : index} 费: ${count}">
-            <div class="deck-preview-curve-bar" style="height: ${(count / max) * 100}%"></div>
+            <div class="deck-preview-curve-bar-area">
+                <div class="deck-preview-curve-bar" style="height: ${(count / max) * 100}%"></div>
+            </div>
             <div class="deck-preview-curve-label">${index === 8 ? "8+" : index}</div>
         </div>
     `).join("");
@@ -114,7 +147,11 @@ function renderCardsHtml(cards) {
         const previewUrl = item.artPreview ? encodeURI(item.artPreview).replace(/'/g, "%27") : "";
         const styleAttr = previewUrl ? ` style="--deck-preview-art: url('${previewUrl}');"` : "";
         const rarityClass = getRarityClass(item.rarity);
-        const cardClassName = `deck-preview-card${previewUrl ? " has-art" : ""}${rarityClass ? ` ${rarityClass}` : ""}`;
+        const cardClassName = buildDeckCardRootClassName("deck-preview-card", {
+            hasArt: Boolean(previewUrl),
+            rarityClass,
+            type: item.type
+        });
         const costLabel = Number.isFinite(item.cost) && item.cost >= 0 && item.cost < 99 ? item.cost : "?";
         return `
             <button class="${cardClassName}" type="button" data-card-id="${item.cardDefinitionId}"${styleAttr}>
@@ -237,10 +274,10 @@ export function createDeckPreviewModal({
         curve.innerHTML = renderCurveHtml(snapshot.curve);
         counts.innerHTML = `
             <div class="deck-preview-total">${toNumber(snapshot.totalCount, 0)} / 40</div>
-            <div class="deck-preview-type-row">
-                <span>随从: ${toNumber(snapshot.typeCounts.follower, 0)}</span>
-                <span>法术: ${toNumber(snapshot.typeCounts.spell, 0)}</span>
-                <span>护符: ${toNumber(snapshot.typeCounts.amulet, 0)}</span>
+            <div class="deck-preview-type-row type-counts">
+                <span class="type-count follower">从者 ${toNumber(snapshot.typeCounts.follower, 0)}</span>
+                <span class="type-count spell">法术 ${toNumber(snapshot.typeCounts.spell, 0)}</span>
+                <span class="type-count amulet">护符 ${toNumber(snapshot.typeCounts.amulet, 0)}</span>
             </div>
         `;
         cards.innerHTML = renderCardsHtml(snapshot.items);

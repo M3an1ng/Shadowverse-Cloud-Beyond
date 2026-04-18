@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Buffs;
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
@@ -59,6 +60,11 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         int GetEffectiveAbilityKeywordValue(CardInstance card, AbilityKeyword keyword, int baseValue, GameContext gameContext);
 
         /// <summary>
+        /// Calculates the effective per-turn usage limit for a supported card action.
+        /// </summary>
+        int GetEffectiveActionUsageLimit(CardInstance card, CardActionUsageType actionType, GameContext gameContext);
+
+        /// <summary>
         /// Creates and applies a keyword buff to a target card.
         /// </summary>
         /// <param name="context">The current game context.</param>
@@ -74,7 +80,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             DurationType durationType,
             int? durationParameter,
             string? effectKey = null,
-            bool canStack = true);
+            bool canStack = true,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// Removes buffs that grant a specific keyword from a target card.
@@ -89,7 +96,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             DurationType durationType,
             int? durationParameter,
             string? effectKey = null,
-            bool canStack = true);
+            bool canStack = true,
+            ConditionConfig? removeCondition = null);
 
         DomainOperationResult ApplyStatBuff(
             GameContext context,
@@ -98,7 +106,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             DurationType durationType,
             int? durationParameter,
             string? effectKey = null,
-            bool canStack = true);
+            bool canStack = true,
+            ConditionConfig? removeCondition = null);
 
         DomainOperationResult ApplyTribeBuff(
             GameContext context,
@@ -107,7 +116,18 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             DurationType durationType,
             int? durationParameter,
             string? effectKey = null,
-            bool canStack = true);
+            bool canStack = true,
+            ConditionConfig? removeCondition = null);
+
+        DomainOperationResult ApplyActionUsageLimitBuff(
+            GameContext context,
+            CardInstance target,
+            List<ActionUsageLimitModification> modifications,
+            DurationType durationType,
+            int? durationParameter,
+            string? effectKey = null,
+            bool canStack = true,
+            ConditionConfig? removeCondition = null);
 
         /// <summary>
         /// Registers a new Buff instance, applying stacking rules and storing it.

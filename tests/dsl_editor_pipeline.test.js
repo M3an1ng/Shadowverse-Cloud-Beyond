@@ -104,7 +104,7 @@ describe('DslEditor Pipeline helpers', () => {
         renderPipelineEditorUI(editor, container);
 
         expect(container.querySelectorAll('.dsl-pipeline-stage-row')).toHaveLength(1);
-        expect(container.querySelector('.dsl-pipeline-stage-modal-overlay')).not.toBeNull();
+        expect(document.body.querySelector('.dsl-pipeline-stage-modal-overlay')).not.toBeNull();
         expect(container.querySelector('.dsl-pipeline-edit-panel')).toBeNull();
         expect(editor.renderPipelineStageInlineEditor).toHaveBeenCalledTimes(1);
     });
@@ -132,9 +132,9 @@ describe('DslEditor Pipeline helpers', () => {
         const container = document.createElement('div');
         renderPipelineEditorUI(editor, container);
 
-        const modal = container.querySelector('.dsl-pipeline-stage-modal');
-        const overlay = container.querySelector('.dsl-pipeline-stage-modal-overlay');
-        const applyBtn = container.querySelector('.dsl-pipeline-stage-modal-footer .dsl-pipeline-btn--success');
+        const modal = document.body.querySelector('.dsl-pipeline-stage-modal');
+        const overlay = document.body.querySelector('.dsl-pipeline-stage-modal-overlay');
+        const applyBtn = document.body.querySelector('.dsl-pipeline-stage-modal-footer .dsl-pipeline-btn--success');
 
         expect(modal).not.toBeNull();
         expect(overlay).not.toBeNull();

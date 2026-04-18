@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
@@ -22,7 +22,8 @@ public class GameParticipantStatsFact
     public DateTime EndedAtUtc { get; set; } = DateTime.UtcNow;
 
     public CardClass DeckClass { get; set; } = CardClass.Neutral;
-    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Open;
+    public DeckEnvironment Environment { get; set; } = DeckEnvironment.Rotation;
+    public DeckRule Rule { get; set; } = DeckRule.Standard;
 
     [StringLength(128)]
     public string DeckShapeHash { get; set; } = string.Empty;
@@ -52,3 +53,5 @@ public class GameParticipantStatsFact
     /// </summary>
     public bool IsOfficial { get; set; }
 }
+
+

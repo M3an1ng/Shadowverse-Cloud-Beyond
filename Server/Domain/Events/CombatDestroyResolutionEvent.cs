@@ -18,13 +18,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("防御者", "被攻击的单位。", DslDisplayTypeName = "事件目标")]
         public CardInstance? Defender => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("攻击者具备必杀", "战斗伤害生成时攻击者是否拥有必杀。", Scope = GameEventParameterScope.Input)]
         public bool AttackerHadBane { get; }
 
-        [GameEventParameter("防御者具备必杀", "战斗伤害生成时防御者是否拥有必杀。", Scope = GameEventParameterScope.Input)]
         public bool DefenderHadBane { get; }
 
-        [GameEventParameter("是否存在反击伤害", "本次战斗是否存在防御者对攻击者的反击伤害。", Scope = GameEventParameterScope.Input)]
         public bool HasCounterAttack { get; }
 
         public CombatDestroyResolutionEvent(

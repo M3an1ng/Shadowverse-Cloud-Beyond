@@ -241,7 +241,7 @@ namespace ShadowverseBeyond.Server.Tests
             var sourceCard = new CardInstance(Guid.NewGuid(), 1001, owner.PlayerId)
             {
                 CurrentZone = CardZone.Field,
-                FieldTurn = 1
+                ZoneStayTurn = 1
             };
             owner.Field.Add(sourceCard);
             gameState.RegisterCardInstance(sourceCard);

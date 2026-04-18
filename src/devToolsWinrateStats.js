@@ -1,9 +1,16 @@
 ﻿import { getUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
 import { createDeckPreviewModal } from "./components/deckPreviewModal.js";
+import {
+    ensureDeckEnvironmentOptions,
+    fillDeckEnvironmentSelect,
+    getDefaultDeckEnvironment,
+    getDeckEnvironmentLabel as getDeckEnvironmentLabelFromOptions,
+    normalizeDeckEnvironment as normalizeDeckEnvironmentShared
+} from "./deckEnvironmentOptions.js";
 
 const SUMMARY_ENDPOINT = "/api/devtools/winrate-stats/summary";
 const DECK_COMPOSITION_ENDPOINT = "/api/devtools/winrate-stats/deck-composition";
-const DEFAULT_ENVIRONMENT = "open";
+const DEFAULT_DECK_RULE = "standard";
 const DEFAULT_TOP = 50;
 const MAX_TOP = 2000;
 const CLASS_LABELS = {
@@ -16,9 +23,9 @@ const CLASS_LABELS = {
     portalcraft: "复仇者",
     neutral: "中立"
 };
-const ENVIRONMENT_LABELS = {
-    open: "开放环境",
-    rotation: "指定系列"
+const DECK_RULE_LABELS = {
+    standard: "传统对战",
+    dualclass: "混合职业"
 };
 const DEFAULT_SORT = {
     card: { key: "deckWinRate", direction: "desc", type: "number" },
@@ -51,6 +58,10 @@ function toNullableNumber(value) {
 
 function normalizeEnumValue(value) {
     return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeEnvironment(value) {
+    return normalizeDeckEnvironmentShared(value, getDefaultDeckEnvironment());
 }
 
 function parseLocalTemporalFilter(value) {
@@ -106,11 +117,15 @@ function getClassLabel(value) {
 }
 
 function getEnvironmentLabel(value) {
+    return getDeckEnvironmentLabelFromOptions(value);
+}
+
+function getDeckRuleLabel(value) {
     const normalized = normalizeEnumValue(value);
-    if (normalized && ENVIRONMENT_LABELS[normalized]) {
-        return ENVIRONMENT_LABELS[normalized];
+    if (normalized && DECK_RULE_LABELS[normalized]) {
+        return DECK_RULE_LABELS[normalized];
     }
-    return String(value ?? "").trim() || "未知环境";
+    return String(value ?? "").trim() || "未知模式";
 }
 
 function escapeHtml(value) {
@@ -219,6 +234,7 @@ class DevToolsWinrateStats {
         this.closeBtn = document.getElementById("devtools-winrate-close-btn");
         this.refreshBtn = document.getElementById("devtools-winrate-refresh");
         this.environmentInput = document.getElementById("devtools-winrate-environment");
+        this.modeInput = document.getElementById("devtools-winrate-mode");
         this.startDateInput = document.getElementById("devtools-winrate-start-date");
         this.endDateInput = document.getElementById("devtools-winrate-end-date");
         this.cardNameInput = document.getElementById("devtools-winrate-card-name");
@@ -239,6 +255,7 @@ class DevToolsWinrateStats {
             return;
         }
 
+        await this.loadEnvironmentOptions();
         this.deckPreview = createDeckPreviewModal({
             idPrefix: "devtools-winrate-deck-preview",
             onExport: () => this.setMessage("当前看板预览暂不支持导出卡组代码。", true)
@@ -247,6 +264,11 @@ class DevToolsWinrateStats {
         this.bindUI();
         this.setActiveView("card");
         this.closeModal();
+    }
+
+    async loadEnvironmentOptions() {
+        await ensureDeckEnvironmentOptions();
+        fillDeckEnvironmentSelect(this.environmentInput, this.environmentInput?.value);
     }
 
     bindUI() {
@@ -303,6 +325,14 @@ class DevToolsWinrateStats {
             };
             this.environmentInput.addEventListener("change", handler);
             this.handlers.push(() => this.environmentInput.removeEventListener("change", handler));
+        }
+
+        if (this.modeInput) {
+            const handler = () => {
+                void this.refreshSummary(true);
+            };
+            this.modeInput.addEventListener("change", handler);
+            this.handlers.push(() => this.modeInput.removeEventListener("change", handler));
         }
 
         if (this.topInput) {
@@ -772,10 +802,12 @@ class DevToolsWinrateStats {
             throw new Error("请先登录后再查看卡组构筑。");
         }
 
-        const selectedEnvironment = String(this.environmentInput?.value || DEFAULT_ENVIRONMENT).trim() || DEFAULT_ENVIRONMENT;
+        const selectedEnvironment = normalizeEnvironment(this.environmentInput?.value || getDefaultDeckEnvironment());
+        const selectedDeckRule = String(this.modeInput?.value || DEFAULT_DECK_RULE).trim() || DEFAULT_DECK_RULE;
         const params = new URLSearchParams();
         params.set("userId", session.userId);
         params.set("environment", selectedEnvironment);
+        params.set("deckRule", selectedDeckRule);
         params.set("deckShapeHash", deckShapeHash);
 
         const response = await fetch(`${DECK_COMPOSITION_ENDPOINT}?${params.toString()}`, { method: "GET" });
@@ -808,12 +840,20 @@ class DevToolsWinrateStats {
 
             const deckClassRaw = String(pickValue(payload, "deckClass", "DeckClass") || fallbackDeckClass || "");
             const deckClassLabel = getClassLabel(deckClassRaw);
-            const environmentRaw = String(pickValue(payload, "environment", "Environment") || this.environmentInput?.value || DEFAULT_ENVIRONMENT);
+            const environmentRaw = normalizeEnvironment(
+                pickValue(payload, "environment", "Environment") || this.environmentInput?.value || getDefaultDeckEnvironment()
+            );
             const environmentLabel = getEnvironmentLabel(environmentRaw);
+            const deckRuleRaw = String(
+                pickValue(payload, "rule", "Rule")
+                || this.modeInput?.value
+                || DEFAULT_DECK_RULE
+            );
+            const deckRuleLabel = getDeckRuleLabel(deckRuleRaw);
             const stats = this.findDeckStatsByHash(deckShapeHash);
             const opened = this.deckPreview.open({
                 titleText: `${deckClassLabel}卡组`,
-                metaText: `${deckClassLabel} | ${environmentLabel}`,
+                metaText: `${deckClassLabel} | ${environmentLabel} | ${deckRuleLabel}`,
                 cards,
                 stats,
                 exportEnabled: false,
@@ -851,7 +891,8 @@ class DevToolsWinrateStats {
             return;
         }
 
-        const selectedEnvironment = String(this.environmentInput?.value || DEFAULT_ENVIRONMENT).trim() || DEFAULT_ENVIRONMENT;
+        const selectedEnvironment = normalizeEnvironment(this.environmentInput?.value || getDefaultDeckEnvironment());
+        const selectedDeckRule = String(this.modeInput?.value || DEFAULT_DECK_RULE).trim() || DEFAULT_DECK_RULE;
         let top = toInt(this.topInput?.value, DEFAULT_TOP);
         top = Math.min(Math.max(top, 1), MAX_TOP);
         if (this.topInput) {
@@ -874,6 +915,7 @@ class DevToolsWinrateStats {
         const params = new URLSearchParams();
         params.set("userId", session.userId);
         params.set("environment", selectedEnvironment);
+        params.set("deckRule", selectedDeckRule);
         params.set("top", String(top));
         if (cardNameKeyword) {
             params.set("cardName", cardNameKeyword);

@@ -15,6 +15,7 @@ using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Domain.Entities; // Added for CardInstance casting
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 
@@ -37,6 +38,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             .GetMethod(nameof(DslTraceHelper.Capture))!;
         private static readonly MethodInfo TscResolvedTargetCardsMethod = typeof(DslTargetSelectionContextAccess)
             .GetMethod(nameof(DslTargetSelectionContextAccess.GetResolvedTargetCards), BindingFlags.Public | BindingFlags.Static)!;
+        private static readonly MethodInfo GameDataEnvironmentPoolMethod = typeof(DslGameDataAccess)
+            .GetMethod(nameof(DslGameDataAccess.ResolveEnvironmentPool), BindingFlags.Public | BindingFlags.Static)!;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ExpressionTreeBuilder"/> class with a unified context.
@@ -177,9 +180,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             // Step 2: Determine the unified source for the GameContext.
-            Expression gameContextSource = (_tscParam != null)
-                ? Expression.Property(_tscParam, nameof(TargetSelectionContext.GameContext))
-                : _gameContextParam;
+            var gameContextSource = GetGameContextSource();
 
             // Step 3: Use the unified source to resolve all common identifiers.
             switch (rootName.ToLowerInvariant())
@@ -246,6 +247,25 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 return redirectedAccess;
             }
 
+            if (typeof(IGameDataProvider).IsAssignableFrom(targetInstance.Type)
+                && (DslEnvironmentCardPoolNames.TryGetEnvironment(memberName, out _)
+                    || DslEnvironmentCardPoolNames.IsCurrentEnvironmentProperty(memberName)))
+            {
+                return Expression.Call(
+                    null,
+                    GameDataEnvironmentPoolMethod,
+                    Expression.Convert(targetInstance, typeof(IGameDataProvider)),
+                    GetGameContextSource(),
+                    Expression.Constant(memberName));
+            }
+
+            if (typeof(IGameDataProvider).IsAssignableFrom(targetInstance.Type)
+                && string.Equals(memberName, nameof(IGameDataProvider.Cards), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    "db.cards is no longer available. Use an environment-scoped pool such as db.rotationCards, db.unlimitedCards, or db.openCards.");
+            }
+
             var directAccess = TryBuildMemberAccess(targetInstance, memberName);
             if (directAccess != null)
             {
@@ -295,6 +315,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             throw new ArgumentException($"'{memberName}' is not a member of type '{targetInstance.Type.Name}'.");
+        }
+
+        private Expression GetGameContextSource()
+        {
+            return _tscParam != null
+                ? Expression.Property(_tscParam, nameof(TargetSelectionContext.GameContext))
+                : _gameContextParam;
         }
 
         private bool TryBuildTargetSelectionContextMemberAccess(Expression instance, string memberName, out Expression redirectedAccess)
@@ -689,13 +716,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             // Case 2: Collection Contains (e.g., self.Tribe == "Officer")
             if (typeof(IEnumerable<string>).IsAssignableFrom(left.Type) && right is ConstantExpression rightConstStr && rightConstStr.Value is string strValue)
             {
-                var containsMethod = typeof(Enumerable).GetMethods()
-                    .First(m => m.Name == "Contains" && m.GetParameters().Length == 2)
-                    .MakeGenericMethod(typeof(string));
+                var containsMethod = typeof(DslTribeOperations).GetMethod(
+                    nameof(DslTribeOperations.Contains),
+                    BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic);
+                if (containsMethod == null)
+                {
+                    throw new InvalidOperationException($"Cannot resolve {nameof(DslTribeOperations)}.{nameof(DslTribeOperations.Contains)}.");
+                }
 
                 // Add a null check to prevent NullReferenceException on nullable collections
                 var notNullCheck = Expression.NotEqual(left, Expression.Constant(null, left.Type));
-                var containsCall = Expression.Call(null, containsMethod, left, right);
+                var containsCall = Expression.Call(
+                    null,
+                    containsMethod,
+                    _gameContextParam,
+                    left,
+                    Expression.Constant(strValue));
                 return Expression.AndAlso(notNullCheck, containsCall);
             }
 
@@ -939,7 +975,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var elementType = ResolveQueryableElementType(sourceExpression.Type);
             var enumerableSource = EnsureEnumerableOrEmpty(sourceExpression, elementType);
 
-            var keySelector = BuildKeySelectorLambda(node.KeySelector, elementType);
+            var keySelector = BuildKeySelectorLambda(node.KeySelector, elementType, out var keyType);
+            var keySemantics = DistinctKeySemanticsClassifier.Classify(node.KeySelector, keyType);
             var distinctMethod = typeof(DslQueryOperations).GetMethod(nameof(DslQueryOperations.DistinctBy), BindingFlags.Public | BindingFlags.Static);
             if (distinctMethod == null)
             {
@@ -947,7 +984,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             var genericMethod = distinctMethod.MakeGenericMethod(elementType);
-            return Expression.Call(null, genericMethod, enumerableSource, keySelector);
+            return Expression.Call(
+                null,
+                genericMethod,
+                enumerableSource,
+                keySelector,
+                Expression.Constant(keySemantics),
+                _gameContextParam);
         }
 
         private Expression VisitQuerySelect(QuerySelectNode node)
@@ -1008,6 +1051,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         private LambdaExpression BuildKeySelectorLambda(ExpressionNode keyExpression, Type elementType)
         {
+            return BuildKeySelectorLambda(keyExpression, elementType, out _);
+        }
+
+        private LambdaExpression BuildKeySelectorLambda(ExpressionNode keyExpression, Type elementType, out Type keyType)
+        {
             var elementParam = Expression.Parameter(elementType, "item");
             var builder = new ExpressionTreeBuilder(
                 elementParam,
@@ -1017,6 +1065,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 _functionRegistry,
                 _traceCollectorParam);
             var body = builder.Build(keyExpression);
+            keyType = body.Type;
             if (body.Type != typeof(object))
             {
                 body = Expression.Convert(body, typeof(object));

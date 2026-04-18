@@ -60,7 +60,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                             parameters.DurationType,
                             parameters.DurationParameter,
                             effectKey,
-                            parameters.CanStack));
+                            parameters.CanStack,
+                            parameters.RemoveCondition));
                         break;
                     case KeywordOperation.Remove:
                         result.GeneratedEvents.Add(new KeywordRemovedEvent(
@@ -70,7 +71,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                             parameters.DurationType,
                             parameters.DurationParameter,
                             effectKey,
-                            parameters.CanStack));
+                            parameters.CanStack,
+                            parameters.RemoveCondition));
                         break;
                     default:
                         return new DomainOperationResult { Success = false, ErrorMessage = $"Unsupported keyword operation: {parameters.Operation}" };

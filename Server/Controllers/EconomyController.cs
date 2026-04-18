@@ -1,4 +1,4 @@
-//
+﻿//
 // 相关文档:
 // - API文档: 文档/06-API文档/01-端点总览.md
 // - 经济系统: 文档/05-游戏系统/06-经济系统.md
@@ -111,11 +111,14 @@ public class EconomyController : ControllerBase
     /// <param name="userId">用户ID</param>
     /// <returns>元进度状态</returns>
     [HttpGet("state/{userId}")]
-    public async Task<ActionResult<MetaProgressionStateDto>> GetMetaProgressionState(Guid userId)
+    public async Task<ActionResult<MetaProgressionStateDto>> GetMetaProgressionState(
+        Guid userId,
+        [FromQuery] string? environment = null,
+        [FromQuery] string? deckRule = null)
     {
         try
         {
-            var state = await _economyService.GetMetaProgressionStateAsync(userId);
+            var state = await _economyService.GetMetaProgressionStateAsync(userId, environment, deckRule);
             return Ok(state);
         }
         catch (Exception ex)
@@ -417,3 +420,4 @@ public class EconomyController : ControllerBase
 
     #endregion
 }
+

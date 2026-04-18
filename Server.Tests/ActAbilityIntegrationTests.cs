@@ -33,6 +33,9 @@ namespace ShadowverseBeyond.Server.Tests
             buffService
                 .Setup(b => b.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns(new List<CardKeyword>());
+            buffService
+                .Setup(b => b.GetEffectiveActionUsageLimit(It.IsAny<CardInstance>(), It.IsAny<CardActionUsageType>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, CardActionUsageType actionType, GameContext _) => card.GetBaseActionUsageLimit(actionType));
             services.AddSingleton<IBuffService>(buffService.Object);
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
 
@@ -51,6 +54,7 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 new AbilityKeywordConfig { Keyword = AbilityKeyword.Act }
             });
+            actAbilityMock.Setup(a => a.HasKeyword(AbilityKeyword.Act)).Returns(true);
             var actAbility = actAbilityMock.Object;
 
             var gameState = new GameState("act-test", player1, player2, p1Id)
@@ -70,6 +74,9 @@ namespace ShadowverseBeyond.Server.Tests
                 .Returns((Guid cardId) => cardId == card.InstanceId
                     ? new List<IAbility> { actAbility }
                     : new List<IAbility>());
+            abilityManager
+                .Setup(m => m.GetEffectiveAbilitiesForCard(card.InstanceId, It.IsAny<GameContext>()))
+                .Returns(new List<IAbility> { actAbility });
 
             GameServiceProvider.ContextAccessor = accessor;
 
@@ -80,8 +87,10 @@ namespace ShadowverseBeyond.Server.Tests
             var invoked = Assert.Single(first.GeneratedEvents.OfType<ActInvokedEvent>());
             var invokedResult = invoked.Commit(ctx);
             Assert.True(invokedResult.Success, invokedResult.ErrorMessage);
-            Assert.True(card.HasUsedActThisTurn(player1.TurnNumber));
-            Assert.Contains(invokedResult.GeneratedEvents, e => e is ActStateUpdatedEvent);
+            Assert.True(card.HasUsedActThisTurn());
+            var stateUpdated = Assert.Single(invokedResult.GeneratedEvents.OfType<ActStateUpdatedEvent>());
+            Assert.Equal(1, stateUpdated.ActsThisTurn);
+            Assert.Equal(1, stateUpdated.MaxActsPerTurn);
 
             var second = new ActRequestedEvent(p1Id, new ActActionDto { CardUid = card.InstanceId }).Commit(ctx);
             Assert.False(second.Success);
@@ -96,7 +105,7 @@ namespace ShadowverseBeyond.Server.Tests
             var invokedThird = Assert.Single(third.GeneratedEvents.OfType<ActInvokedEvent>());
             var thirdResult = invokedThird.Commit(ctx);
             Assert.True(thirdResult.Success, thirdResult.ErrorMessage);
-            Assert.True(card.HasUsedActThisTurn(player1.TurnNumber));
+            Assert.True(card.HasUsedActThisTurn());
         }
 
         [Fact]
@@ -110,6 +119,9 @@ namespace ShadowverseBeyond.Server.Tests
             buffService
                 .Setup(b => b.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns(new List<CardKeyword>());
+            buffService
+                .Setup(b => b.GetEffectiveActionUsageLimit(It.IsAny<CardInstance>(), It.IsAny<CardActionUsageType>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, CardActionUsageType actionType, GameContext _) => card.GetBaseActionUsageLimit(actionType));
             services.AddSingleton<IBuffService>(buffService.Object);
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
 
@@ -128,6 +140,7 @@ namespace ShadowverseBeyond.Server.Tests
             {
                 new AbilityKeywordConfig { Keyword = AbilityKeyword.Act }
             });
+            actAbilityMock.Setup(a => a.HasKeyword(AbilityKeyword.Act)).Returns(true);
             var actAbility = actAbilityMock.Object;
 
             var gameState = new GameState("act-test-2", player1, player2, p1Id)
@@ -143,6 +156,7 @@ namespace ShadowverseBeyond.Server.Tests
             gameState.RegisterCardInstance(card);
 
             abilityManager.Setup(m => m.GetAbilitiesForCard(card.InstanceId)).Returns(new List<IAbility> { actAbility });
+            abilityManager.Setup(m => m.GetEffectiveAbilitiesForCard(card.InstanceId, It.IsAny<GameContext>())).Returns(new List<IAbility> { actAbility });
 
             GameServiceProvider.ContextAccessor = accessor;
             using var ctx = new GameContext(sp, mapper, accessor, gameState, p2Id);

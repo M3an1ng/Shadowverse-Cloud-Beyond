@@ -21,7 +21,7 @@ using ShadowverseBeyond.Server.Services;
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
     /// <summary>
-    /// Handles the effect of adding crest cards to a player's emblem zone.
+    /// Handles the effect of adding crest/faith cards to a player's emblem zone.
     /// </summary>
     [EffectHandler(EffectType.AddEmblem)]
     public class AddEmblemEffectHandler : EffectHandlerBase<AddEmblemEffectParams>
@@ -63,12 +63,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     };
                 }
 
-                if (targetCards.Any(card => card.CardType != CardType.Crest))
+                if (targetCards.Any(card => !IsEmblemCardType(card.CardType)))
                 {
                     return new GameStateActionResult
                     {
                         Success = false,
-                        ErrorMessage = "AddEmblem can only accept crest cards."
+                        ErrorMessage = "AddEmblem can only accept emblem cards (crest/faith)."
                     };
                 }
 
@@ -114,12 +114,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     };
                 }
 
-                if (targetCards.Any(card => card.CardType != CardType.Crest))
+                if (targetCards.Any(card => !IsEmblemCardType(card.CardType)))
                 {
                     return new GameStateActionResult
                     {
                         Success = false,
-                        ErrorMessage = "AddEmblem can only accept crest cards."
+                        ErrorMessage = "AddEmblem can only accept emblem cards (crest/faith)."
                     };
                 }
 
@@ -217,12 +217,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     };
                 }
 
-                if (definition.Type != CardType.Crest)
+                if (!IsEmblemCardType(definition.Type))
                 {
                     return new GameStateActionResult
                     {
                         Success = false,
-                        ErrorMessage = "AddEmblem can only accept crest cards."
+                        ErrorMessage = "AddEmblem can only accept emblem cards (crest/faith)."
                     };
                 }
             }
@@ -312,6 +312,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         private static int GetAvailableEmblemSlots(PlayerState owner)
         {
             return Math.Max(0, GameConstants.Emblem.MaxEmblemSize - owner.Emblem.Count);
+        }
+
+        private static bool IsEmblemCardType(CardType type)
+        {
+            return type == CardType.Crest || type == CardType.Faith;
         }
 
         private static List<CardInstance> FilterEmblemAdditions(

@@ -13,13 +13,19 @@ using ShadowverseBeyond.Server.Dtos; // For PlayerStateDto, etc.
 using ShadowverseBeyond.Server.Domain.Entities; // For CardInstance, etc.
 using System.Collections;
 using System.Linq;
+using System.Reflection;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST; // Added to fix compile error
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Factories;
+using ShadowverseBeyond.Server.Domain.Query;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -158,6 +164,26 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             Assert.Equal(0, Convert.ToInt32(result));
         }
 
+        [Fact]
+        public void CompileGetter_WithCardEffectiveAbilities_ReturnsAbilityObjects()
+        {
+            var context = CreateTestGameContext();
+            var player = context.GetRequestingPlayer();
+            var card = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
+
+            var ability = CreateAbility(card, 42, "Test Ability");
+            card.SetAbilities(new[] { ability });
+
+            var getter = _compiler.CompileGetter<CardInstance>("self.effectiveAbilities");
+
+            var result = getter(card, context);
+
+            var abilities = Assert.IsAssignableFrom<IReadOnlyList<Ability>>(result);
+            var exposedAbility = Assert.Single(abilities);
+            Assert.Equal(ability.RuntimeId, exposedAbility.RuntimeId);
+            Assert.Equal("Test Ability", exposedAbility.Name);
+        }
+
         [Theory]
         [InlineData("self.Attack + 2", 10, 0, 12)]
         [InlineData("self.Defense - 1", 0, 5, 4)]
@@ -201,10 +227,86 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             Assert.Equal(expected, result);
         }
 
-        private GameContext CreateTestGameContext()
+        [Fact]
+        public void CompileGetter_DbEnvironmentCards_UsesScopedPoolWithoutAccessingAllCards()
         {
-            var player1 = new PlayerState(Guid.NewGuid());
-            var player2 = new PlayerState(Guid.NewGuid());
+            var scopedProvider = new CountingScopedGameDataProvider(new Dictionary<DeckEnvironment, IReadOnlyCollection<CardDefinition>>
+            {
+                [DeckEnvironment.Open] = new[]
+                {
+                    new CardDefinition { Id = 1001, Name = "Open Card" }
+                },
+                [DeckEnvironment.Rotation] = new[]
+                {
+                    new CardDefinition { Id = 2001, Name = "Rotation Card" }
+                }
+            });
+            var compiler = new DslCompiler(_mockLogger.Object, _mockFunctionRegistry.Object, _mockDslCache.Object, scopedProvider);
+            var context = CreateTestGameContext();
+
+            var getter = compiler.CompileGetter<object>("db.openCards");
+            var result = getter(null!, context);
+
+            var cards = Assert.IsAssignableFrom<IReadOnlyCollection<CardDefinition>>(result);
+            var card = Assert.Single(cards);
+            Assert.Equal(1001, card.Id);
+            Assert.Equal(0, scopedProvider.CardsAccessCount);
+            Assert.Equal(DeckEnvironment.Open, Assert.Single(scopedProvider.RequestedEnvironments));
+        }
+
+        [Fact]
+        public void CompileGetter_DbCurrentEnvironmentCards_UsesUniqueMatchEnvironment()
+        {
+            var scopedProvider = new CountingScopedGameDataProvider(new Dictionary<DeckEnvironment, IReadOnlyCollection<CardDefinition>>
+            {
+                [DeckEnvironment.Unlimited] = new[]
+                {
+                    new CardDefinition { Id = 3001, Name = "Unlimited Card" }
+                }
+            });
+            var compiler = new DslCompiler(_mockLogger.Object, _mockFunctionRegistry.Object, _mockDslCache.Object, scopedProvider);
+            var context = CreateTestGameContext(DeckEnvironment.Unlimited, DeckEnvironment.Unlimited);
+
+            var getter = compiler.CompileGetter<object>("db.currentEnvironmentCards");
+            var result = getter(null!, context);
+
+            var cards = Assert.IsAssignableFrom<IReadOnlyCollection<CardDefinition>>(result);
+            var card = Assert.Single(cards);
+            Assert.Equal(3001, card.Id);
+            Assert.Equal(0, scopedProvider.CardsAccessCount);
+            Assert.Equal(DeckEnvironment.Unlimited, Assert.Single(scopedProvider.RequestedEnvironments));
+        }
+
+        [Fact]
+        public void CompileGetter_DbCurrentEnvironmentCards_ThrowsWhenMatchEnvironmentIsNotUnique()
+        {
+            var scopedProvider = new CountingScopedGameDataProvider(new Dictionary<DeckEnvironment, IReadOnlyCollection<CardDefinition>>());
+            var compiler = new DslCompiler(_mockLogger.Object, _mockFunctionRegistry.Object, _mockDslCache.Object, scopedProvider);
+            var context = CreateTestGameContext(DeckEnvironment.Rotation, DeckEnvironment.Open);
+
+            var getter = compiler.CompileGetter<object>("db.currentEnvironmentCards");
+
+            var error = Assert.Throws<InvalidOperationException>(() => getter(null!, context));
+            Assert.Contains("does not have a unique environment", error.Message);
+            Assert.Empty(scopedProvider.RequestedEnvironments);
+        }
+
+        [Fact]
+        public void CompileGetter_DbCards_ThrowsGuidanceError()
+        {
+            var scopedProvider = new CountingScopedGameDataProvider(new Dictionary<DeckEnvironment, IReadOnlyCollection<CardDefinition>>());
+            var compiler = new DslCompiler(_mockLogger.Object, _mockFunctionRegistry.Object, _mockDslCache.Object, scopedProvider);
+
+            var error = Assert.Throws<ArgumentException>(() => compiler.CompileGetter<object>("db.cards"));
+            Assert.Contains("db.cards is no longer available", error.Message);
+        }
+
+        private GameContext CreateTestGameContext(
+            DeckEnvironment player1Environment = DeckEnvironment.Rotation,
+            DeckEnvironment player2Environment = DeckEnvironment.Rotation)
+        {
+            var player1 = new PlayerState(Guid.NewGuid()) { Environment = player1Environment };
+            var player2 = new PlayerState(Guid.NewGuid()) { Environment = player2Environment };
             var gameState = new GameState("test-game", player1, player2, player1.PlayerId);
             return new GameContext(_serviceProvider, _mockMapper.Object, _serviceProvider.GetRequiredService<IGameContextAccessor>(), gameState, player1.PlayerId);
         }
@@ -215,6 +317,73 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             public int Defense { get; set; }
             public int Cost { get; set; }
         }
+
+        private static Ability CreateAbility(CardInstance owner, long definitionId, string name)
+        {
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new Mock<IQueryExecutor>().Object,
+                new Mock<IPendingActionService>().Object);
+
+            var config = new AbilityConfig
+            {
+                Id = definitionId,
+                Name = name,
+                Description = $"{name} description"
+            };
+
+            return new Ability(
+                config,
+                new Mock<IConditionFactory>().Object,
+                new Mock<ITargetFactory>().Object,
+                targetSelectionService,
+                owner);
+        }
+
+        private sealed class CountingScopedGameDataProvider : IGameDataProvider, IEnvironmentScopedGameDataProvider
+        {
+            private readonly Dictionary<DeckEnvironment, IReadOnlyCollection<CardDefinition>> _cardsByEnvironment;
+
+            public CountingScopedGameDataProvider(Dictionary<DeckEnvironment, IReadOnlyCollection<CardDefinition>> cardsByEnvironment)
+            {
+                _cardsByEnvironment = cardsByEnvironment;
+            }
+
+            public int CardsAccessCount { get; private set; }
+            public List<DeckEnvironment> RequestedEnvironments { get; } = new();
+
+            public bool IsInitialized => true;
+            public Guid DataRevision => Guid.Empty;
+
+            public IReadOnlyCollection<CardDefinition> Cards
+            {
+                get
+                {
+                    CardsAccessCount += 1;
+                    return _cardsByEnvironment.Values.SelectMany(cards => cards).ToList();
+                }
+            }
+
+            public IReadOnlyCollection<CardDefinition> GetCardDefinitionsForEnvironment(DeckEnvironment environment)
+            {
+                RequestedEnvironments.Add(environment);
+                return _cardsByEnvironment.TryGetValue(environment, out var cards)
+                    ? cards
+                    : Array.Empty<CardDefinition>();
+            }
+
+            public Task InitializeAsync() => Task.CompletedTask;
+            public CardDefinition? GetCardDefinition(int cardId) => null;
+            public IReadOnlyDictionary<int, CardDefinition> GetAllCardDefinitions() => new Dictionary<int, CardDefinition>();
+            public List<AbilityConfig> GetAbilityConfigs(int cardId) => new();
+            public AbilityConfig? GetAbilityConfig(long abilityId) => null;
+            public IReadOnlyDictionary<int, List<AbilityConfig>> GetAllAbilityConfigs() => new Dictionary<int, List<AbilityConfig>>();
+            public BuffDefinition? GetBuffDefinition(string buffId) => null;
+            public Task RefreshCacheAsync() => Task.CompletedTask;
+            public void ClearCache() { }
+            public CacheStatistics GetCacheStatistics() => new();
+        }
+
         [Fact]
         public void Compile_WithFunctionCall_ReturnsCorrectResult()
         {
@@ -346,6 +515,33 @@ namespace ShadowverseBeyond.Server.Tests.DSL
 
             Assert.True(ownerPredicate(null!, context));
             Assert.True(kindPredicate(null!, context));
+        }
+
+        [Fact]
+        public void CompileGetter_WithTriggeringEventBaseSnapshotAccess_ReturnsCapturedValues()
+        {
+            var player1 = new PlayerState(Guid.NewGuid()) { TurnNumber = 3 };
+            var player2 = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("test-game", player1, player2, player1.PlayerId);
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player1.PlayerId);
+            var targetCard = new CardInstance(Guid.NewGuid(), 2, player2.PlayerId);
+            var triggeringEvent = new DamageEvent(targetCard, 3, sourceCard, DamageKind.Combat);
+            SetEventSnapshot(triggeringEvent, player1.PlayerId, 3);
+
+            var context = new GameContext(
+                _serviceProvider,
+                _mockMapper.Object,
+                _serviceProvider.GetRequiredService<IGameContextAccessor>(),
+                gameState,
+                player1.PlayerId,
+                triggeringEvent: triggeringEvent);
+
+            var turnGetter = _compiler.CompileGetter<object>("context.triggeringEvent.CurrentPlayerTurnNumber");
+            var playerGetter = _compiler.CompileGetter<object>("context.triggeringEvent.CurrentPlayerId");
+
+            Assert.Equal(3, Convert.ToInt32(turnGetter(null!, context)));
+            Assert.Equal(player1.PlayerId, Assert.IsType<Guid>(playerGetter(null!, context)));
         }
 
         [Fact]
@@ -554,6 +750,75 @@ namespace ShadowverseBeyond.Server.Tests.DSL
         }
 
         [Fact]
+        public void CompileGetter_WithTakeFirstCountExceedingLength_ReturnsWholeListInOriginalOrder()
+        {
+            var cards = new List<TestCard>
+            {
+                new TestCard { Attack = 1 },
+                new TestCard { Attack = 2 },
+                new TestCard { Attack = 3 }
+            };
+
+            var context = CreateTestGameContext();
+            var getter = _compiler.CompileGetter<List<TestCard>>("self.take(first 10)");
+
+            var result = getter(cards, context);
+            var attacks = Assert.IsAssignableFrom<IEnumerable<TestCard>>(result).Select(card => card.Attack).ToList();
+
+            Assert.Equal(new[] { 1, 2, 3 }, attacks);
+        }
+
+        [Fact]
+        public void CompileGetter_WithTakeLastCountExceedingLength_ReversesWholeList()
+        {
+            var cards = new List<TestCard>
+            {
+                new TestCard { Attack = 1 },
+                new TestCard { Attack = 2 },
+                new TestCard { Attack = 3 }
+            };
+
+            var context = CreateTestGameContext();
+            var getter = _compiler.CompileGetter<List<TestCard>>("self.take(last 10)");
+
+            var result = getter(cards, context);
+            var attacks = Assert.IsAssignableFrom<IEnumerable<TestCard>>(result).Select(card => card.Attack).ToList();
+
+            Assert.Equal(new[] { 3, 2, 1 }, attacks);
+        }
+
+        [Fact]
+        public void CompileGetter_WithTakeRandomCountExceedingLength_ShufflesWholeList()
+        {
+            var cards = new List<TestCard>
+            {
+                new TestCard { Attack = 1 },
+                new TestCard { Attack = 2 },
+                new TestCard { Attack = 3 },
+                new TestCard { Attack = 4 },
+                new TestCard { Attack = 5 }
+            };
+
+            var context = CreateTestGameContext();
+            var getter = _compiler.CompileGetter<List<TestCard>>("self.take(random 10)");
+            DslQueryOperations.RandomOverride = new Random(0);
+
+            try
+            {
+                var result = getter(cards, context);
+                var attacks = Assert.IsAssignableFrom<IEnumerable<TestCard>>(result).Select(card => card.Attack).ToList();
+
+                Assert.Equal(cards.Count, attacks.Count);
+                Assert.Equal(new[] { 1, 2, 3, 4, 5 }, attacks.OrderBy(attack => attack));
+                Assert.False(attacks.SequenceEqual(cards.Select(card => card.Attack)));
+            }
+            finally
+            {
+                DslQueryOperations.RandomOverride = null;
+            }
+        }
+
+        [Fact]
         public void CompileGetter_WithSetOperators_ReturnsExpectedResults()
         {
             // Arrange
@@ -708,6 +973,19 @@ namespace ShadowverseBeyond.Server.Tests.DSL
             var list = Assert.IsAssignableFrom<IEnumerable>(result).Cast<object>().ToList();
 
             Assert.Single(list);
+        }
+
+        private static void SetEventSnapshot(GameEventBase gameEvent, Guid currentPlayerId, int currentPlayerTurnNumber)
+        {
+            var currentPlayerIdProperty = typeof(GameEventBase).GetProperty(
+                nameof(GameEventBase.CurrentPlayerId),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            currentPlayerIdProperty!.SetValue(gameEvent, currentPlayerId);
+
+            var currentPlayerTurnProperty = typeof(GameEventBase).GetProperty(
+                nameof(GameEventBase.CurrentPlayerTurnNumber),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            currentPlayerTurnProperty!.SetValue(gameEvent, currentPlayerTurnNumber);
         }
     }
 }

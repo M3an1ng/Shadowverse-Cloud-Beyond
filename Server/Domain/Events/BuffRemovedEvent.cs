@@ -1,45 +1,96 @@
 using System;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Domain.Buffs;
-using ShadowverseBeyond.Server.Domain.Abilities.Effects; // DomainOperationResult
+using System.Collections.Generic;
+using System.Linq;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
-using System.Linq;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
-    /// Event triggered when a Buff is removed from a target.
-    /// As a committable event, it performs the removal via BuffService.
+    /// Event triggered when one or more buffs are removed from a single target.
     /// </summary>
-    [GameEventMetadata("失去临时状态", "当一个临时状态从目标身上被移除时触发的事件。", EventType.BuffRemoved)]
+    [GameEventMetadata("Buff移除事件", "当一个或多个Buff从目标上被移除时触发。", EventType.BuffRemoved)]
     public class BuffRemovedEvent : GameEventBase, ICommittableEvent
     {
-        [GameEventParameter("移除的Buff", "被移除的Buff实例。")]
-        public Buff RemovedBuff { get; }
+        private readonly IReadOnlyList<Buff> _removedBuffs;
 
-        [GameEventParameter("移除原因", "Buff被移除的原因。")]
+        [GameEventParameter("被移除的Buff", "本次事件移除的Buff实例列表。")]
+        public IReadOnlyList<Buff> RemovedBuffs => _removedBuffs;
+
+        // Keep the original single-item accessor for compatibility with existing call sites.
+        public Buff RemovedBuff => _removedBuffs[0];
+
+        [GameEventParameter("移除原因", "这些Buff被移除的原因。")]
         public string RemovalReason { get; }
 
-        [GameEventParameter("移除来源", "导致Buff移除的来源卡牌。", DslDisplayTypeName = "事件源")]
+        [GameEventParameter("Buff来源", "施加这些被移除Buff的来源卡牌。", DslDisplayTypeName = "Card")]
         public CardInstance? RemovalSource => Source?.Card;
 
-        [GameEventParameter("移除目标", "失去Buff的目标卡牌。", DslDisplayTypeName = "事件目标")]
+        [GameEventParameter("Buff目标", "这些Buff被移除时对应的目标卡牌。", DslDisplayTypeName = "Card")]
         public CardInstance? RemovalTarget => Target.FirstOrDefault()?.Card;
 
-        public BuffRemovedEvent(Buff removedBuff, CardInstance? target, CardInstance? source, string removalReason = "manual", Guid? eventId = null, DateTime? timestamp = null)
+        public bool IsBatch => _removedBuffs.Count > 1;
+
+        public BuffRemovedEvent(
+            Buff removedBuff,
+            CardInstance? target,
+            CardInstance? source,
+            string removalReason = "manual",
+            Guid? eventId = null,
+            DateTime? timestamp = null)
+            : this(new[] { removedBuff }, target, source, removalReason, eventId, timestamp)
+        {
+        }
+
+        public BuffRemovedEvent(
+            IEnumerable<Buff> removedBuffs,
+            CardInstance? target,
+            CardInstance? source,
+            string removalReason = "manual",
+            Guid? eventId = null,
+            DateTime? timestamp = null)
             : base(EventType.BuffRemoved, eventId, timestamp)
         {
-            RemovedBuff = removedBuff ?? throw new ArgumentNullException(nameof(removedBuff));
-            RemovalReason = removalReason ?? "unknown";
-            if (target != null)
+            if (removedBuffs == null)
             {
-                Target.Add(TargetInfo.ForCard(target));
+                throw new ArgumentNullException(nameof(removedBuffs));
             }
+
+            var buffs = removedBuffs.Where(static buff => buff != null).ToList();
+            if (buffs.Count == 0)
+            {
+                throw new ArgumentException("BuffRemovedEvent requires at least one removed buff.", nameof(removedBuffs));
+            }
+
+            if (target == null)
+            {
+                throw new ArgumentNullException(nameof(target), "BuffRemovedEvent requires a single target card.");
+            }
+
+            if (buffs.Any(buff => buff.TargetCardInstanceId != target.InstanceId))
+            {
+                throw new ArgumentException("All removed buffs must belong to the provided target card.", nameof(removedBuffs));
+            }
+
+            if (source != null && buffs.Any(buff =>
+                    buff.SourceCardInstanceId.HasValue
+                    && buff.SourceCardInstanceId.Value != Guid.Empty
+                    && buff.SourceCardInstanceId.Value != source.InstanceId))
+            {
+                throw new ArgumentException("All removed buffs must share the provided source card.", nameof(removedBuffs));
+            }
+
+            _removedBuffs = buffs.AsReadOnly();
+            RemovalReason = removalReason ?? "unknown";
+
+            Target.Add(TargetInfo.ForCard(target));
             if (source != null)
             {
                 Source = TargetInfo.ForCard(source);
@@ -49,8 +100,27 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public DomainOperationResult Commit(GameContext context)
         {
             var result = new DomainOperationResult { Success = true };
-            var targetCard = RemovalTarget ?? context.CurrentGameState.FindCardInstance(RemovedBuff.TargetCardInstanceId);
-            var affectsHealth = RemovedBuff.GetStatModifications().Any(mod => mod.Stat == StatType.Health);
+            var targetCard = RemovalTarget;
+
+            foreach (var removedBuff in _removedBuffs)
+            {
+                var singleResult = CommitSingleRemoval(removedBuff, targetCard, context);
+                result.Merge(singleResult);
+                if (!singleResult.Success)
+                {
+                    return singleResult;
+                }
+            }
+
+            return result;
+        }
+
+        private DomainOperationResult CommitSingleRemoval(Buff removedBuff, CardInstance? targetCard, GameContext context)
+        {
+            var result = new DomainOperationResult { Success = true };
+            targetCard ??= context.CurrentGameState.FindCardInstance(removedBuff.TargetCardInstanceId);
+
+            var affectsHealth = removedBuff.GetStatModifications().Any(mod => mod.Stat == StatType.Health);
             var previousCurrentHealth = 0;
             if (affectsHealth && targetCard != null && (targetCard.IsFollower || targetCard.IsLeader))
             {
@@ -58,36 +128,45 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 previousCurrentHealth = Math.Max(0, previousMaxHealth - targetCard.Damage);
             }
 
+            var hasSuppressionEffects = removedBuff.Effects.OfType<AbilitySuppressionBuffEffect>().Any();
+            HashSet<Guid>? effectiveBeforeSuppressionRemoval = null;
+            if (hasSuppressionEffects && targetCard != null)
+            {
+                effectiveBeforeSuppressionRemoval = context.AbilityManager
+                    .GetEffectiveAbilitiesForCard(targetCard.InstanceId, context)
+                    .Select(ability => ability.RuntimeId)
+                    .ToHashSet();
+            }
+
             var logger = context.ServiceProvider.GetService<ILogger<BuffRemovedEvent>>();
-            var sourceAbility = context.AbilityManager.GetAbilityByRuntimeId(RemovedBuff.SourceAbilityId);
-            var sourceCardId = sourceAbility?.SourceCardId ?? RemovedBuff.SourceCardInstanceId;
-            var sourceCardName = sourceAbility?.SourceCard?.Name ?? RemovedBuff.SourceCardName;
-            var sourceAbilityName = sourceAbility?.Name ?? RemovedBuff.SourceAbilityName;
+            var sourceAbility = context.AbilityManager.GetAbilityByRuntimeId(removedBuff.SourceAbilityId);
+            var sourceCardId = sourceAbility?.SourceCardId ?? removedBuff.SourceCardInstanceId;
+            var sourceCardName = sourceAbility?.SourceCard?.Name ?? removedBuff.SourceCardName;
+            var sourceAbilityName = sourceAbility?.Name ?? removedBuff.SourceAbilityName;
 
             logger?.LogInformation(
                 "[BuffRemovedEvent] Buff {BuffId} removed. TargetCardId={TargetCardId} EffectKey={EffectKey} SourceAbilityId={SourceAbilityId} SourceAbilityName={SourceAbilityName} SourceCardId={SourceCardId} SourceCardName={SourceCardName} SourceEffectIndex={SourceEffectIndex} DefinitionId={DefinitionId} RemovalReason={RemovalReason}",
-                RemovedBuff.Id,
-                RemovedBuff.TargetCardInstanceId,
-                RemovedBuff.EffectKey ?? "<null>",
-                RemovedBuff.SourceAbilityId,
+                removedBuff.Id,
+                removedBuff.TargetCardInstanceId,
+                removedBuff.EffectKey ?? "<null>",
+                removedBuff.SourceAbilityId,
                 sourceAbilityName ?? "<null>",
                 sourceCardId,
                 sourceCardName ?? "<null>",
-                RemovedBuff.SourceEffectIndex,
-                RemovedBuff.DefinitionId ?? "<null>",
+                removedBuff.SourceEffectIndex,
+                removedBuff.DefinitionId ?? "<null>",
                 RemovalReason ?? "<null>");
 
-            var abilityRuntimeIds = context.AbilityManager.GetAbilityRuntimeIdsForBuff(RemovedBuff.Id);
+            var abilityRuntimeIds = context.AbilityManager.GetAbilityRuntimeIdsForBuff(removedBuff.Id);
 
-            // The commit action is the single, atomic operation of unregistering the buff.
-            context.BuffManager.UnregisterBuffInstance(this.RemovedBuff.Id);
+            context.BuffManager.UnregisterBuffInstance(removedBuff.Id);
             context.CurrentGameState.IncrementBuffRevision();
-            context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.RemovedBuff.TargetCardInstanceId);
+            context.BuffService.InvalidateDerivedState(context.CurrentGameState, removedBuff.TargetCardInstanceId);
 
             if (targetCard != null)
             {
                 var activeBuffs = context.BuffManager.GetBuffsForCard(targetCard.InstanceId);
-                foreach (var tribe in RemovedBuff.GetAddedTribes())
+                foreach (var tribe in removedBuff.GetAddedTribes())
                 {
                     var stillProvided = activeBuffs.Any(buff =>
                         buff.Effects.OfType<TribeBuffEffect>()
@@ -117,32 +196,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 }
             }
 
-            var suppressionEffects = RemovedBuff.Effects.OfType<AbilitySuppressionBuffEffect>().ToList();
-            if (suppressionEffects.Count > 0 && targetCard != null)
+            if (hasSuppressionEffects && targetCard != null && effectiveBeforeSuppressionRemoval != null)
             {
-                var abilities = context.AbilityManager
-                    .GetAbilitiesForCard(targetCard.InstanceId)
+                var effectiveAfterSuppressionRemoval = context.AbilityManager
+                    .GetEffectiveAbilitiesForCard(targetCard.InstanceId, context)
                     .OfType<Ability>()
                     .ToList();
 
-                var affectedAbilities = AbilitySuppressionEvaluator.CollectSuppressedAbilities(abilities, suppressionEffects)
-                    .OfType<Ability>()
+                var newlyUnsuppressedAbilities = effectiveAfterSuppressionRemoval
+                    .Where(ability => !effectiveBeforeSuppressionRemoval.Contains(ability.RuntimeId))
                     .ToList();
 
-                if (affectedAbilities.Count > 0)
+                if (newlyUnsuppressedAbilities.Count > 0)
                 {
-                    var effectiveIds = new HashSet<Guid>(
-                        context.AbilityManager
-                            .GetEffectiveAbilitiesForCard(targetCard.InstanceId, context)
-                            .Select(ability => ability.RuntimeId));
-
-                    foreach (var ability in affectedAbilities)
+                    foreach (var ability in newlyUnsuppressedAbilities)
                     {
-                        if (!effectiveIds.Contains(ability.RuntimeId))
-                        {
-                            continue;
-                        }
-
                         if (ability.Type != AbilityType.Continuous || ability.Config.Auras.All(aura => aura == null || !aura.IsEnabled))
                         {
                             continue;
@@ -154,6 +222,30 @@ namespace ShadowverseBeyond.Server.Domain.Events
                         {
                             return refreshResult;
                         }
+                    }
+                }
+            }
+
+            if (targetCard != null)
+            {
+                var affectedActionTypes = removedBuff.GetActionUsageLimitModifications()
+                    .Select(static modification => modification.ActionType)
+                    .Distinct()
+                    .ToList();
+
+                foreach (var actionType in affectedActionTypes)
+                {
+                    switch (actionType)
+                    {
+                        case CardActionUsageType.Attack:
+                            result.GeneratedEvents.Add(new AttackStateUpdatedEvent(targetCard, targetCard.CanAttack));
+                            break;
+                        case CardActionUsageType.Act:
+                            result.GeneratedEvents.Add(new ActStateUpdatedEvent(targetCard, targetCard.ActsThisTurn, targetCard.MaxActsPerTurn));
+                            break;
+                        case CardActionUsageType.Fusion:
+                            result.GeneratedEvents.Add(new FusionStateUpdatedEvent(targetCard, targetCard.FusionsThisTurn, targetCard.MaxFusionsPerTurn));
+                            break;
                     }
                 }
             }

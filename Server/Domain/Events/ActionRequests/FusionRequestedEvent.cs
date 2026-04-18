@@ -66,6 +66,11 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "Fusion can only be used while the card is in hand." };
             }
 
+            if (card.HasUsedFusionThisTurn())
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "This card has already used Fusion this turn." };
+            }
+
             var fusionAbilities = context.AbilityManager
                 .GetEffectiveAbilitiesForCard(card.InstanceId, context)
                 .Where(a => a.HasKeyword(AbilityKeyword.Fusion))

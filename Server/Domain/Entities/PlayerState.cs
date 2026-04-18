@@ -24,7 +24,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public const string ComboCounterKey = "combo";
         public const string GraveyardCounterKey = "graveyard";
         public const string BloodPoolCounterKey = "bloodpool";
-        private static readonly string[] SystemCounterKeys = { ComboCounterKey, GraveyardCounterKey, BloodPoolCounterKey };
+        public const string RallyCounterKey = "rally";
+        private static readonly string[] SystemCounterKeys = { ComboCounterKey, GraveyardCounterKey, BloodPoolCounterKey, RallyCounterKey };
         private readonly Counters _counters = new Counters(SystemCounterKeys);
 
         [DslExposable("玩家ID", Description = "玩家的唯一标识符")]
@@ -37,6 +38,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int CurrentPlayPoints { get; set; } = 0;
         public int PpBoostUsesAvailable { get; set; } = 0;
         public bool PpBoostResetApplied { get; set; } = false;
+        public bool IsPpBoostArmed { get; set; } = false;
 
         [DslExposable("最大EP", Description = "玩家的最大进化点数")]
         public int MaxEvolutionPoints { get; set; } = 0;
@@ -50,10 +52,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("当前SEP", Description = "玩家当前可用的超进化点数")]
         public int CurrentSuperEvolutionPoints { get; set; } = 0;
 
-        [DslExposable("是否已解禁进化", Description = "玩家是否已解禁手动进化（通常达到指定回合后为 true）")]
+        [DslExposable("是否已解禁进化", Description = "玩家是否已解禁进化")]
         public bool IsEvolutionUnlocked { get; set; } = false;
 
-        [DslExposable("是否已解禁超进化", Description = "玩家是否已解禁手动超进化（通常达到指定回合后为 true）")]
+        [DslExposable("是否已解禁超进化", Description = "玩家是否已解禁超进化")]
         public bool IsSuperEvolutionUnlocked { get; set; } = false;
         public bool IsAI { get; set; } = false;
 
@@ -61,7 +63,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public bool IsFirst { get; set; } = false;
         [DslExposable("职业", Description = "玩家本局使用卡组的职业")]
         public CardClass Class { get; set; } = CardClass.Neutral;
-        public DeckEnvironment Environment { get; set; } = DeckEnvironment.Open;
+        public CardClass? SecondaryClass { get; set; }
+        public DeckEnvironment Environment { get; set; } = DeckEnvironment.Rotation;
+        public DeckRule Rule { get; set; } = DeckRule.Standard;
         public Guid? UserDeckId { get; set; }
         public string DisplayName { get; set; } = string.Empty;
         public string AvatarUrl { get; set; } = string.Empty;
@@ -129,17 +133,35 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             get => _counters.Get(BloodPoolCounterKey);
             set => _counters.Set(BloodPoolCounterKey, value);
         }
+
+        [DslExposable("连携", Description = "本次对战中自己已进入战场的从者卡张数（不包含变形）")]
+        public int Rally
+        {
+            get => _counters.Get(RallyCounterKey);
+            set => _counters.Set(RallyCounterKey, value);
+        }
         public List<CardInstance> Extra { get; set; } = new List<CardInstance>();
 
         [DslExposable("纹章区", Description = "玩家纹章区域中的卡牌列表")]
         public List<CardInstance> Emblem { get; set; } = new List<CardInstance>();
         public int DeckCount => Deck?.Count ?? 0;
 
-        [DslExposable("本回合可进化", Description = "玩家本回合是否还能进行手动进化（受解禁与回合内进化权影响）")]
-        public bool CanEvolve { get; set; } = false;
+        [DslExposable("本回合已用进化权", Description = "玩家本回合是否已经消耗过手动进化权（进化与超进化共用）")]
+        public bool HasUsedManualEvolutionRightThisTurn { get; private set; } = false;
 
-        [DslExposable("本回合可超进化", Description = "玩家本回合是否还能进行手动超进化（受解禁、SEP 与回合内超进化权影响）")]
-        public bool CanSuperEvolve { get; set; } = false;
+        [DslExposable("本回合可进化", Description = "玩家已解锁进化且本回合尚未消耗手动进化权")]
+        public bool CanEvolve
+        {
+            get => IsEvolutionUnlocked && !HasUsedManualEvolutionRightThisTurn;
+            set => HasUsedManualEvolutionRightThisTurn = !value;
+        }
+
+        [DslExposable("本回合可超进化", Description = "玩家已解锁超进化且本回合尚未消耗手动进化权")]
+        public bool CanSuperEvolve
+        {
+            get => IsSuperEvolutionUnlocked && !HasUsedManualEvolutionRightThisTurn;
+            set => HasUsedManualEvolutionRightThisTurn = !value;
+        }
 
         [DslExposable("变量", Description = "玩家上的系统与临时计数器")]
         public IReadOnlyDictionary<string, int> CounterMap => _counters;
@@ -178,6 +200,61 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             // Do not mutate here; just emit an event with the intended target values.
             int targetCurrent = Math.Max(0, Math.Min(this.CurrentPlayPoints + amount, this.MaxPlayPoints));
             result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent));
+            result.Success = true;
+            return result;
+        }
+
+        public int GetSpendablePlayPoints()
+        {
+            return CurrentPlayPoints + (IsPpBoostArmed ? GameConstants.PlayPoints.PpBoostAmount : 0);
+        }
+
+        public bool CanAffordPlayPoints(int cost)
+        {
+            return Math.Max(0, cost) <= GetSpendablePlayPoints();
+        }
+
+        public DomainOperationResult SpendPlayPoints(int amount)
+        {
+            var requiredCost = Math.Max(0, amount);
+            var result = new DomainOperationResult();
+
+            if (requiredCost == 0)
+            {
+                result.Success = true;
+                return result;
+            }
+
+            var spendable = GetSpendablePlayPoints();
+            if (requiredCost > spendable)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Not enough PP. Required: {requiredCost}, Available: {spendable}";
+                return result;
+            }
+
+            var normalSpent = Math.Min(CurrentPlayPoints, requiredCost);
+            var targetCurrent = CurrentPlayPoints - normalSpent;
+            if (targetCurrent != CurrentPlayPoints)
+            {
+                result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent));
+            }
+
+            var remaining = requiredCost - normalSpent;
+            if (remaining > 0)
+            {
+                if (!IsPpBoostArmed || remaining > GameConstants.PlayPoints.PpBoostAmount)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Not enough PP. Required: {requiredCost}, Available: {spendable}";
+                    return result;
+                }
+
+                ApplyPpBoostArmedChange(false);
+                ApplyPpBoostUsesChange(PpBoostUsesAvailable - 1);
+                result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(this, PpBoostUsesAvailable, IsPpBoostArmed));
+            }
+
             result.Success = true;
             return result;
         }
@@ -264,6 +341,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             card.CurrentZone = to;
+            card.ZoneStayTurn = 0;
             card.MarkCombatContinuityChanged();
             if (destinationList != null)
             {
@@ -311,13 +389,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         internal void ApplyEvolutionRightUsed()
         {
-            this.CanEvolve = false;
-            this.CanSuperEvolve = false;
+            HasUsedManualEvolutionRightThisTurn = true;
         }
 
         internal void ApplySuperEvolutionRightUsed()
         {
-            this.CanSuperEvolve = false;
+            HasUsedManualEvolutionRightThisTurn = true;
         }
         #endregion
 
@@ -381,6 +458,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             PpBoostUsesAvailable = Math.Max(0, usesAvailable);
         }
 
+        internal void ApplyPpBoostArmedChange(bool isArmed)
+        {
+            IsPpBoostArmed = isArmed;
+        }
+
         internal void ApplyMulliganCompleted()
         {
             HasCompletedMulligan = true;
@@ -419,7 +501,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
             var effectiveCost = paidCost ?? cardInHand.CurrentCost;
-            var ppResult = ModifyPlayPoints(-effectiveCost);
+            var ppResult = SpendPlayPoints(effectiveCost);
+            if (!ppResult.Success)
+            {
+                return ppResult;
+            }
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
             var oldCombo = Combo;
             ApplyPlayedCardCountChange(1);
@@ -520,7 +606,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 IsEvolutionUnlocked = true;
                 this.MaxEvolutionPoints = newEp;
                 this.CurrentEvolutionPoints = newEp;
-                this.CanEvolve = true; // Grant evolution right for the turn
                 result.GeneratedEvents.Add(new EpMaxUpdateEvent(this, this.MaxEvolutionPoints));
                 result.GeneratedEvents.Add(new EpUpdateEvent(this, this.CurrentEvolutionPoints));
             }
@@ -584,7 +669,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 IsSuperEvolutionUnlocked = true;
                 this.MaxSuperEvolutionPoints = newSep;
                 this.CurrentSuperEvolutionPoints = newSep;
-                this.CanSuperEvolve = true;
                 result.GeneratedEvents.Add(new SepMaxUpdateEvent(this, this.MaxSuperEvolutionPoints));
                 result.GeneratedEvents.Add(new SepUpdateEvent(this, this.CurrentSuperEvolutionPoints));
             }
@@ -595,6 +679,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void ApplyTurnEnd()
         {
             SetCounter(ComboCounterKey, 0);
+            IsPpBoostArmed = false;
         }
 
 
@@ -602,11 +687,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
             var oldCombo = Combo;
+            var wasPpBoostArmed = IsPpBoostArmed;
             ApplyTurnEnd();
             var newCombo = Combo;
             if (newCombo != oldCombo)
             {
                 result.GeneratedEvents.Add(new CounterChangedEvent(this, ComboCounterKey, oldCombo, newCombo));
+            }
+            if (wasPpBoostArmed != IsPpBoostArmed)
+            {
+                result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(this, PpBoostUsesAvailable, IsPpBoostArmed));
             }
             result.Success = true;
             return result;
@@ -621,10 +711,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 IsSuperEvolutionUnlocked = true;
             }
-            // Evolve right is turn-scoped and independent from EP.
-            // EP payment is validated at evolve request time and can be bypassed by FreeEvolve.
-            CanEvolve = IsEvolutionUnlocked;
-            CanSuperEvolve = IsSuperEvolutionUnlocked && CurrentSuperEvolutionPoints > 0;
+            HasUsedManualEvolutionRightThisTurn = false;
             TurnNumber += 1;
             HasTakenFirstTurn = true;
             gameState.CurrentPlayerId = PlayerId;
@@ -652,6 +739,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 this.Hand.Remove(card);
                 this.Deck.Add(card);
                 card.CurrentZone = CardZone.Deck;
+                card.ZoneStayTurn = 0;
             }
 
             // 2. Shuffle the deck
@@ -667,6 +755,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 this.Deck.RemoveAt(0);
                 this.Hand.Add(drawnCard);
                 drawnCard.CurrentZone = CardZone.Hand;
+                drawnCard.ZoneStayTurn = 0;
             }
 
             // 4. Update zone indices for consistency
@@ -696,7 +785,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
 
-            var ppResult = RestorePlayPoints();
+            var ppResult = RestorePlayPoints(DelayConfig.QueueDrained());
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
 
             result.GeneratedEvents.Add(new TurnStartEvent(this, turnStartDelayConfig));
@@ -728,7 +817,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
                 PpBoostResetApplied = true;
-                result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(this, PpBoostUsesAvailable));
+                result.GeneratedEvents.Add(new PpBoostStateUpdatedEvent(this, PpBoostUsesAvailable, IsPpBoostArmed));
             }
 
             foreach (var amulet in this.Field.Where(c => c.CurrentCountdown.HasValue && c.CurrentCountdown.Value > 0))
@@ -790,13 +879,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
         }
 
-        public DomainOperationResult RestorePlayPoints()
+        public DomainOperationResult RestorePlayPoints(DelayConfig? delayConfig = null)
         {
             var result = new DomainOperationResult();
             int targetMax = Math.Min(GameConstants.PlayPoints.MaxPlayPoints, this.MaxPlayPoints + 1);
             int targetCurrent = targetMax; // restore to full
-            result.GeneratedEvents.Add(new PpMaxUpdateEvent(this, targetMax));
-            result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent));
+            result.GeneratedEvents.Add(new PpMaxUpdateEvent(this, targetMax, delayConfig));
+            result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent, delayConfig: delayConfig));
             return result;
         }
 
@@ -988,22 +1077,52 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         private DomainOperationResult ResetCardsForTurnStart()
         {
             var result = new DomainOperationResult();
+            foreach (var card in Deck.Concat(Hand).Concat(Graveyard).Concat(Extra).Concat(Emblem))
+            {
+                var hadFusionUsage = card.FusionsThisTurn > 0;
+                if (hadFusionUsage)
+                {
+                    card.ResetActionUsage(CardActionUsageType.Fusion);
+                }
+                card.ZoneStayTurn++;
+
+                if (hadFusionUsage)
+                {
+                    result.GeneratedEvents.Add(new FusionStateUpdatedEvent(card, card.FusionsThisTurn, card.MaxFusionsPerTurn));
+                }
+            }
+
             foreach (var unit in Field)
             {
                 var oldCanAttack = unit.CanAttack;
-                unit.AttacksThisTurn = 0;
-                unit.ActsThisTurn = 0;
-                unit.FieldTurn++;
+                var hadActUsage = unit.ActsThisTurn > 0;
+                var hadFusionUsage = unit.FusionsThisTurn > 0;
+                unit.ResetActionUsage(CardActionUsageType.Attack);
+                unit.ResetActionUsage(CardActionUsageType.Act);
+                unit.ResetActionUsage(CardActionUsageType.Fusion);
+                unit.ZoneStayTurn++;
                 if (!oldCanAttack && unit.CanAttack)
                 {
                     result.GeneratedEvents.Add(new AttackStateUpdatedEvent(unit, true));
+                }
+                if (hadActUsage)
+                {
+                    result.GeneratedEvents.Add(new ActStateUpdatedEvent(unit, unit.ActsThisTurn, unit.MaxActsPerTurn));
+                }
+                if (hadFusionUsage)
+                {
+                    result.GeneratedEvents.Add(new FusionStateUpdatedEvent(unit, unit.FusionsThisTurn, unit.MaxFusionsPerTurn));
                 }
             }
             result.Success = true;
             return result;
         }
 
-        public DomainOperationResult PreparePlayCard(CardInstance cardInHand, PlayMode playMode = PlayMode.Base, int? paidCost = null)
+        public DomainOperationResult PreparePlayCard(
+            CardInstance cardInHand,
+            PlayMode playMode = PlayMode.Base,
+            int? paidCost = null,
+            Guid? triggeredAbilityRuntimeId = null)
         {
             var result = new DomainOperationResult();
             if (!this.Hand.Contains(cardInHand))
@@ -1019,16 +1138,26 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return result;
             }
             var effectiveCost = paidCost ?? cardInHand.CurrentCost;
-            if (this.CurrentPlayPoints < effectiveCost)
+            var spendablePp = GetSpendablePlayPoints();
+            if (effectiveCost > spendablePp)
             {
                 result.Success = false;
-                result.ErrorMessage = $"Not enough PP. Required: {effectiveCost}, Available: {this.CurrentPlayPoints}";
+                result.ErrorMessage = $"Not enough PP. Required: {effectiveCost}, Available: {spendablePp}";
                 return result;
             }
 
             // The cost is now paid when the PlayCardEvent is committed, not when it's requested.
             // This prevents PP loss if the player cancels target selection.
-            result.GeneratedEvents.Add(new PlayCardEvent(this, cardInHand, playMode, effectiveCost));
+            result.GeneratedEvents.Add(new PlayCardEvent(
+                this,
+                cardInHand,
+                playMode,
+                effectiveCost,
+                triggeredAbilityRuntimeId: triggeredAbilityRuntimeId));
+            if (playMode == PlayMode.Enhance)
+            {
+                result.GeneratedEvents.Add(new EnhanceEvent(this, cardInHand, effectiveCost, triggeredAbilityRuntimeId));
+            }
             return result;
         }
 
@@ -1044,7 +1173,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             // Pay PP cost and increment play count now that the action is confirmed.
             var effectiveCost = paidCost ?? cardInHand.CurrentCost;
-            var ppResult = ModifyPlayPoints(-effectiveCost);
+            var ppResult = SpendPlayPoints(effectiveCost);
+            if (!ppResult.Success)
+            {
+                return ppResult;
+            }
             result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
             var oldCombo = Combo;
             ApplyPlayedCardCountChange(1);
@@ -1058,9 +1191,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 case CardType.Follower:
                 case CardType.Amulet:
-                    cardInHand.FieldTurn = 0; // Initialize field turn count upon summon
                     var expectedPosition = Field.Count + 1;
-                    result.GeneratedEvents.Add(new SummonEvent(this, cardInHand, expectedPosition));
+                    result.GeneratedEvents.Add(new SummonEvent(this, cardInHand, expectedPosition, EventReasonSource.System));
                     break;
                 case CardType.Spell:
                     var toPlayingResult = MoveCard(cardInHand, CardZone.Playing, null);

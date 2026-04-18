@@ -10,13 +10,16 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     public interface IMatchService
     {
         MatchOperationResult Create(Guid? hostPlayerId = null, bool useAiFallback = false, TimeSpan? ttl = null);
-        MatchOperationResult TryJoin(string gameId, string joinCode, Guid? guestPlayerId = null);
-        MatchOperationResult MarkReady(string gameId, Guid playerId);
-        MatchOperationResult SubmitDeckSelection(string gameId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null);
-        MatchOperationResult Start(string gameId, Guid playerId);
-        MatchOperationResult Get(string gameId);
-        MatchOperationResult ValidateConnection(string gameId, Guid playerId, string token);
-        void Close(string gameId, string reason);
+        MatchOperationResult TryJoin(string roomId, string joinCode, Guid? guestPlayerId = null);
+        MatchOperationResult MarkReady(string roomId, Guid playerId);
+        MatchOperationResult SubmitDeckSelection(string roomId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null);
+        MatchOperationResult Start(string roomId, Guid playerId);
+        MatchOperationResult Get(string roomId);
+        MatchOperationResult ValidateConnection(string roomId, Guid playerId, string token);
+        MatchOperationResult GetByGameId(string gameId);
+        bool TryGetRoomIdByGameId(string gameId, out string roomId);
+        MatchOperationResult Leave(string roomId, Guid playerId, string? hostLeaveReason = null);
+        void Close(string roomId, string reason);
         void CleanupExpired();
     }
 

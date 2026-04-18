@@ -95,6 +95,19 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     }
 
     /// <summary>
+    /// Represents per-turn action usage limit modifiers (e.g., Attack/Act/Fusion limits) granted by a Buff.
+    /// </summary>
+    public class ActionUsageLimitBuffEffect : IBuffEffect
+    {
+        public List<ActionUsageLimitModification> Modifications { get; init; } = new();
+
+        public ActionUsageLimitBuffEffect(List<ActionUsageLimitModification> modifications)
+        {
+            Modifications = modifications ?? throw new ArgumentNullException(nameof(modifications));
+        }
+    }
+
+    /// <summary>
     /// Represents ability suppression rules applied by a Buff.
     /// </summary>
     public class AbilitySuppressionBuffEffect : IBuffEffect
@@ -102,14 +115,17 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public RemoveAbilityMode RemoveMode { get; }
         public IReadOnlyList<long> AbilityDefinitionIds { get; }
         public AbilityKeyword AbilityKeyword { get; }
+        public Guid? SourceAbilityRuntimeId { get; }
 
         public AbilitySuppressionBuffEffect(
             RemoveAbilityMode removeMode,
             IEnumerable<long>? abilityDefinitionIds = null,
-            AbilityKeyword abilityKeyword = AbilityKeyword.None)
+            AbilityKeyword abilityKeyword = AbilityKeyword.None,
+            Guid? sourceAbilityRuntimeId = null)
         {
             RemoveMode = removeMode;
             AbilityKeyword = abilityKeyword;
+            SourceAbilityRuntimeId = sourceAbilityRuntimeId;
 
             var ids = abilityDefinitionIds ?? Array.Empty<long>();
             AbilityDefinitionIds = ids
@@ -190,4 +206,10 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         Cost
         // Add other relevant stats (MaxEP, etc.)
     }
+
+    public sealed record ActionUsageLimitModification(
+        CardActionUsageType ActionType,
+        double Value,
+        ModifierLayer Layer
+    );
 }

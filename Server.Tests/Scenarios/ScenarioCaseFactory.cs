@@ -37,6 +37,7 @@ namespace ShadowverseBeyond.Server.Tests.Scenarios
             ["AddDeck"] = new[] { EventType.AddDeck },
             ["SetCountdown"] = new[] { EventType.CountdownTick },
             ["SetAttackTimes"] = new[] { EventType.AttackTimesUpdated },
+            ["ResetActTimes"] = new[] { EventType.ActTimesReset },
             ["ModifyPP"] = new[] { EventType.PpUpdated },
             ["ModifyPPMax"] = new[] { EventType.PpMaxUpdated },
             ["ModifyEP"] = new[] { EventType.EpUpdated },

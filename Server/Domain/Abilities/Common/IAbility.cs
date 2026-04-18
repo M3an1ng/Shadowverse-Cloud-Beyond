@@ -40,9 +40,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         IReadOnlyList<AbilityKeywordConfig> AbilityKeywords { get; }
 
         /// <summary>
-        /// Gets the primary keyword for display or legacy fallbacks.
+        /// Gets the normalized keyword enum list for DSL and event queries.
         /// </summary>
-        AbilityKeyword PrimaryKeyword { get; }
+        IReadOnlyList<AbilityKeyword> Keywords { get; }
 
         /// <summary>
         /// Gets a human-readable keyword summary for logging or UI fallback.

@@ -6,6 +6,9 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 using System.Diagnostics.Tracing;
+using System.Collections.Generic;
+using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -20,12 +23,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         [GameEventParameter("目标卡牌", "攻击次数被修改的卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? TargetCard => Source?.Card;
+        public string? EffectKey { get; }
 
-        public AttackTimesUpdatedEvent(CardInstance targetCard, int maxAttacksPerTurn, Guid? eventId = null, DateTime? timestamp = null)
+        public AttackTimesUpdatedEvent(CardInstance targetCard, int maxAttacksPerTurn, string? effectKey = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.AttackTimesUpdated, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(targetCard);
             MaxAttacksPerTurn = maxAttacksPerTurn;
+            EffectKey = effectKey;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -36,16 +41,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "AttackTimesUpdatedEvent.Commit: Target card is null." };
             }
 
-            var oldCanAttack = card.CanAttack;
-            card.MaxAttacksPerTurn = Math.Max(0, MaxAttacksPerTurn);
-
-            var result = new DomainOperationResult { Success = true };
-            if (oldCanAttack != card.CanAttack)
-            {
-                result.GeneratedEvents.Add(new AttackStateUpdatedEvent(card, card.CanAttack));
-            }
-
-            return result;
+            return context.BuffService.ApplyActionUsageLimitBuff(
+                context,
+                card,
+                new List<ActionUsageLimitModification>
+                {
+                    new(CardActionUsageType.Attack, MaxAttacksPerTurn, ModifierLayer.Set)
+                },
+                DurationType.Permanent,
+                null,
+                EffectKey,
+                canStack: true);
         }
 
         public string GetAnnouncement(GameState gameState)

@@ -531,7 +531,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 Buff buff;
                 if (sourceAbility == null)
                 {
-                    buff = new Buff(Guid.Empty, target.InstanceId, turnNumber, effects, durationType: durationType, durationParameter: durationParameter);
+                    buff = new Buff(
+                        Guid.Empty,
+                        target.InstanceId,
+                        turnNumber,
+                        effects,
+                        durationType: durationType,
+                        durationParameter: durationParameter,
+                        removalCondition: config.RemoveCondition);
                 }
                 else
                 {
@@ -543,7 +550,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                         durationType,
                         durationParameter,
                         turnNumber,
-                        string.IsNullOrWhiteSpace(config.Key) ? null : config.Key.Trim());
+                        string.IsNullOrWhiteSpace(config.Key) ? null : config.Key.Trim(),
+                        config.RemoveCondition);
                 }
 
                 buff.SourceEffectIndex = aura.AuraIndex;
@@ -653,6 +661,32 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
             if (abilityKeywordModifications.Count > 0)
             {
                 effects.Add(new AbilityKeywordBuffEffect(abilityKeywordModifications));
+            }
+
+            var actionUsageLimitModifications = new List<ActionUsageLimitModification>();
+            foreach (var actionUsageConfig in config.ActionUsageLimitModifiers ?? new List<ActionUsageLimitModifierConfig>())
+            {
+                if (actionUsageConfig == null || actionUsageConfig.Value == null)
+                {
+                    continue;
+                }
+
+                var resolved = _valueSourceResolver.Resolve(actionUsageConfig.Value, context);
+                var resolvedValue = CoerceToNullableDouble(resolved);
+                if (!resolvedValue.HasValue)
+                {
+                    continue;
+                }
+
+                actionUsageLimitModifications.Add(new ActionUsageLimitModification(
+                    actionUsageConfig.ActionType,
+                    resolvedValue.Value,
+                    ModifierLayer.Set));
+            }
+
+            if (actionUsageLimitModifications.Count > 0)
+            {
+                effects.Add(new ActionUsageLimitBuffEffect(actionUsageLimitModifications));
             }
 
             var addedKeywords = new List<CardKeyword>();
@@ -812,6 +846,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 if (keywordConfig.Keyword == CardKeyword.None)
                 {
                     errorMessage = "Aura registration failed: keyword modifier requires a keyword.";
+                    return false;
+                }
+
+                hasEffects = true;
+            }
+
+            foreach (var actionUsageConfig in config.ActionUsageLimitModifiers ?? new List<ActionUsageLimitModifierConfig>())
+            {
+                if (actionUsageConfig == null)
+                {
+                    continue;
+                }
+
+                if (actionUsageConfig.Value == null)
+                {
+                    errorMessage = "Aura registration failed: action usage limit value is required.";
                     return false;
                 }
 

@@ -88,6 +88,16 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 previousCurrentHealth = Math.Max(0, previousMaxHealth - targetCard.Damage);
             }
 
+            var hasSuppressionEffects = AppliedBuff.Effects.OfType<AbilitySuppressionBuffEffect>().Any();
+            HashSet<Guid>? effectiveBeforeSuppressionApply = null;
+            if (hasSuppressionEffects && targetCard != null)
+            {
+                effectiveBeforeSuppressionApply = context.AbilityManager
+                    .GetEffectiveAbilitiesForCard(targetCard.InstanceId, context)
+                    .Select(ability => ability.RuntimeId)
+                    .ToHashSet();
+            }
+
             // The commit action is now the single, atomic operation of registering the buff.
             // All business logic (stacking, etc.) has already been processed and resulted in this event.
             context.BuffManager.RegisterBuffInstance(this.AppliedBuff, context.CurrentGameState);
@@ -109,19 +119,48 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 }
             }
 
-            var suppressionEffects = AppliedBuff.Effects.OfType<AbilitySuppressionBuffEffect>().ToList();
-            if (suppressionEffects.Count > 0)
+            if (hasSuppressionEffects && targetCard != null && effectiveBeforeSuppressionApply != null)
             {
-                var abilities = context.AbilityManager.GetAbilitiesForCard(AppliedBuff.TargetCardInstanceId);
-                var suppressedAbilities = AbilitySuppressionEvaluator.CollectSuppressedAbilities(abilities, suppressionEffects);
-                var suppressedIds = suppressedAbilities.Select(ability => ability.RuntimeId).ToList();
-                if (suppressedIds.Count > 0)
+                var effectiveAfterSuppressionApply = context.AbilityManager
+                    .GetEffectiveAbilitiesForCard(targetCard.InstanceId, context)
+                    .Select(ability => ability.RuntimeId)
+                    .ToHashSet();
+
+                var newlySuppressedIds = effectiveBeforeSuppressionApply
+                    .Where(runtimeId => !effectiveAfterSuppressionApply.Contains(runtimeId))
+                    .ToList();
+
+                if (newlySuppressedIds.Count > 0)
                 {
-                    var auraResult = context.AuraManager.UnregisterBySourceAbilities(suppressedIds, context);
+                    var auraResult = context.AuraManager.UnregisterBySourceAbilities(newlySuppressedIds, context);
                     result.Merge(auraResult);
                     if (!auraResult.Success)
                     {
                         return auraResult;
+                    }
+                }
+            }
+
+            if (targetCard != null)
+            {
+                var affectedActionTypes = AppliedBuff.GetActionUsageLimitModifications()
+                    .Select(static modification => modification.ActionType)
+                    .Distinct()
+                    .ToList();
+
+                foreach (var actionType in affectedActionTypes)
+                {
+                    switch (actionType)
+                    {
+                        case CardActionUsageType.Attack:
+                            result.GeneratedEvents.Add(new AttackStateUpdatedEvent(targetCard, targetCard.CanAttack));
+                            break;
+                        case CardActionUsageType.Act:
+                            result.GeneratedEvents.Add(new ActStateUpdatedEvent(targetCard, targetCard.ActsThisTurn, targetCard.MaxActsPerTurn));
+                            break;
+                        case CardActionUsageType.Fusion:
+                            result.GeneratedEvents.Add(new FusionStateUpdatedEvent(targetCard, targetCard.FusionsThisTurn, targetCard.MaxFusionsPerTurn));
+                            break;
                     }
                 }
             }

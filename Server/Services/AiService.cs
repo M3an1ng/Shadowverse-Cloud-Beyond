@@ -173,8 +173,7 @@ namespace ShadowverseBeyond.Server.Services
                 return Task.FromResult(false);
             }
 
-            var allowedMax = aiState.MaxPP + GameConstants.PlayPoints.PpBoostOverflowAmount;
-            if (aiState.CurrentPP >= allowedMax)
+            if (aiState.IsPpBoostArmed)
             {
                 return Task.FromResult(false);
             }
@@ -350,8 +349,9 @@ namespace ShadowverseBeyond.Server.Services
                 return new List<CardInstanceDto>();
             }
             // Return playable CardInstanceDto directly
+            var spendablePp = aiState.CurrentPP + (aiState.IsPpBoostArmed ? GameConstants.PlayPoints.PpBoostAmount : 0);
             var costPlayable = aiState.Hand
-                .Where(card => card != null && card.Cost <= aiState.CurrentPP)
+                .Where(card => card != null && card.Cost <= spendablePp)
                 .ToList();
 
             if (!costPlayable.Any())
@@ -402,6 +402,7 @@ namespace ShadowverseBeyond.Server.Services
                                                 || attacker.HasKeyword(CardKeyword.CannotAttackFollower);
             var attackerCannotAttackLeader = attacker.HasKeyword(CardKeyword.Shackle)
                                              || attacker.HasKeyword(CardKeyword.CannotAttackLeader);
+            var attackerIgnoresWard = attacker.HasKeyword(CardKeyword.IgnoreWard);
 
             bool IsFollowerUnattackable(CardInstanceDto target)
             {
@@ -427,7 +428,7 @@ namespace ShadowverseBeyond.Server.Services
                     return false;
                 }
 
-                if (hasWardFollowers)
+                if (hasWardFollowers && !attackerIgnoresWard)
                 {
                     return false;
                 }
@@ -437,7 +438,7 @@ namespace ShadowverseBeyond.Server.Services
                     return false;
                 }
 
-                if (attackerCard.FieldTurn == 0 && !attackerCard.HasStorm())
+                if (attackerCard.ZoneStayTurn == 0 && !attackerCard.HasStorm())
                 {
                     return false;
                 }
@@ -456,13 +457,13 @@ namespace ShadowverseBeyond.Server.Services
                 .Select(x => x.Unit)
                 .ToList();
 
-            if (wardTargets.Any())
+            if (!attackerIgnoresWard && wardTargets.Any())
             {
                 var target = wardTargets.First();
                 _logger.LogDebug("[AiService:Helper] Attacker {AttackerUid} targeting Ward unit {TargetUid}", attacker?.InstanceId.ToString() ?? "Unknown", target.InstanceId); // Fix: Use InstanceId for both attacker and target
                 return target.InstanceId; // Fix: Use InstanceId // Convert Guid to string for return type
             }
-            else if (hasWardFollowers)
+            else if (!attackerIgnoresWard && hasWardFollowers)
             {
                 _logger.LogDebug("[AiService:Helper] Ward followers exist but none are attackable. Attacker {AttackerUid} cannot select a target.",
                     attacker?.InstanceId.ToString() ?? "Unknown");

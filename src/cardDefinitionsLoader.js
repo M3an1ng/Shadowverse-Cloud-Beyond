@@ -38,7 +38,10 @@ export async function loadCardDefinitions(options = {}) {
         }
     }
 
-    const response = await fetch('/api/cards', { method: 'GET' });
+    const response = await fetch('/api/cards', {
+        method: 'GET',
+        cache: 'no-store'
+    });
     if (!response.ok) {
         throw await createHttpError(response);
     }
@@ -52,4 +55,3 @@ export async function loadCardDefinitions(options = {}) {
     writeCache(setCached, cards);
     return cards;
 }
-
