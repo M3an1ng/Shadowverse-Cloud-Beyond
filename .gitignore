@@ -42,9 +42,19 @@ coverage/
 # AI/local tooling artifacts
 .agent/
 .augment/
+.claude/
+.cursor/
 .gemini/
+.kiro/
+.opencode/
+.playwright-cli/
+.qoder/
 .roo/
 .shared/
+.superpowers/
+.trae/
+.windsurf/
+.codex_tmp/
 .tmp_obj/
 .tmp_out/
 .codex_tmp_*.py
@@ -59,8 +69,12 @@ __pycache__/
 *.pyc
 
 # Build/publish outputs
+artifacts/
+assets/
 Server/artifacts/
+Server/publish/
 Server/publish_release/
+Server.Tests/artifacts/
 Server.Tests/TestResults/
 **/TestResults/
 
@@ -79,14 +93,22 @@ index.prod.html.bak-*
 assets.bak-*/
 
 # Temporary build/check artifacts
+.tmp-test-out/
 .tmpbuild/
 .tmp_build/
 .tmp_bin/
 .tmp_bool_probe/
+output/
 Server/.tmp_build/
 Server/.tmp_test_obj/
 Server/.tmp_test_out/
 Server.Tests/.tmp_test_*/
+
+# Local archives and scratch files
+cards.7z
+test.html
+Server/Data/.tmp_*.ps1
+Server/Data/*.bak*
 
 # OS generated files
 .DS_Store
