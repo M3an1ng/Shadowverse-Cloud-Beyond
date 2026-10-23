@@ -10,7 +10,12 @@
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-import { renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual } from "./ui.js"; // Import UI functions + specific updates + clearSelectionHighlights + updateHandDisplay + updateUnitDisplay + highlightAttacker + highlightTargets + showMulliganInterface + updateMulliganStatus
+let gameView;
+
+// 入口在处理游戏事件前提供视图，逻辑模块不再反向加载 DOM。
+export function bindGameView(view) {
+    gameView = view;
+}
 import { getUserSession } from "./userSession.js";
 
 // --- Constants ---
@@ -475,14 +480,14 @@ function startTurnTimer(endsAtMs, totalMs) {
 
     turnTimerIntervalId = setInterval(() => {
         const remainingMs = Math.max(0, turnTimerEndsAtMs - Date.now());
-        updateTurnTimerDisplay(remainingMs, turnTimerTotalMs, true);
+        gameView.updateTurnTimerDisplay(remainingMs, turnTimerTotalMs, true);
         if (remainingMs <= 0) {
             stopTurnTimer();
         }
     }, 100);
 
     const initialRemainingMs = Math.max(0, turnTimerEndsAtMs - Date.now());
-    updateTurnTimerDisplay(initialRemainingMs, turnTimerTotalMs, true);
+    gameView.updateTurnTimerDisplay(initialRemainingMs, turnTimerTotalMs, true);
 }
 
 function refreshTurnTimerFromState() {
@@ -498,7 +503,7 @@ function refreshTurnTimerFromState() {
 
     if (gameState.gameOver) {
         stopTurnTimer();
-        updateTurnTimerDisplay(0, totalMs, false);
+        gameView.updateTurnTimerDisplay(0, totalMs, false);
         return;
     }
 
@@ -519,7 +524,7 @@ function refreshTurnTimerFromState() {
 
     if (!isActive || !endsAtMs || totalMs <= 0) {
         stopTurnTimer();
-        updateTurnTimerDisplay(0, totalMs, false);
+        gameView.updateTurnTimerDisplay(0, totalMs, false);
         return;
     }
 
@@ -783,7 +788,7 @@ function selectDualControlMulliganSeat() {
     if (!nextSeat || !nextSeat.id) return;
 
     gameState.localPlayerId = nextSeat.id;
-    resetMulliganSelection();
+    gameView.resetMulliganSelection();
 }
 
 export function initializeGame(idOfGame, idOfPlayer, options = {}) {
@@ -820,9 +825,9 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     gameState.gameLog = []; // Reset log on new session
     gameState.chatMessages = [];
     pendingChatClientMessageIds.clear();
-    renderGameLog(gameState.gameLog);
-    clearInMatchChatUiState();
-    clearInMatchUsedCardUiState();
+    gameView.renderGameLog(gameState.gameLog);
+    gameView.clearInMatchChatUiState();
+    gameView.clearInMatchUsedCardUiState();
 
 } // Closing brace for initializeGame
 
@@ -854,9 +859,9 @@ export function initializeSpectator(gameId) {
     gameState.gameLog = [];
     gameState.chatMessages = [];
     pendingChatClientMessageIds.clear();
-    renderGameLog(gameState.gameLog);
-    clearInMatchChatUiState();
-    clearInMatchUsedCardUiState();
+    gameView.renderGameLog(gameState.gameLog);
+    gameView.clearInMatchChatUiState();
+    gameView.clearInMatchUsedCardUiState();
 }
 
 // --- Game Log Helpers ---
@@ -893,7 +898,7 @@ export function appendGameLog(eventName, payload) {
 
     // Keep console output consistent and structured
 
-    renderGameLog(gameState.gameLog);
+    gameView.renderGameLog(gameState.gameLog);
 }
 // --- Mulligan Phase Logic ---
 
@@ -1046,9 +1051,9 @@ function refreshPlayerZoneUi(player, zoneName) {
     if (!player || !zoneName) return;
 
     if (zoneName === "hand") {
-        updateHandDisplay(player.id, player.hand);
+        gameView.updateHandDisplay(player.id, player.hand);
         if (normalizePlayerId(player.id) === normalizePlayerId(gameState.localPlayerId)) {
-            renderHighlights(gameState);
+            gameView.renderHighlights(gameState);
             if (hasMissingHandPlayability(player.id)) {
                 schedulePlayabilityResync(player.id, 'zone-hand-missing-cache');
             }
@@ -1057,24 +1062,24 @@ function refreshPlayerZoneUi(player, zoneName) {
     }
 
     if (zoneName === "field") {
-        updateFieldDisplay(player.id, player.field);
-        renderHighlights(gameState);
+        gameView.updateFieldDisplay(player.id, player.field);
+        gameView.renderHighlights(gameState);
         return;
     }
 
     if (zoneName === "emblem") {
-        updateEmblemZone(player);
+        gameView.updateEmblemZone(player);
         return;
     }
 
     if (zoneName === "deck") {
-        updateDeckCountDisplay(player.id, player.deckCount ?? player.deck?.length ?? 0);
+        gameView.updateDeckCountDisplay(player.id, player.deckCount ?? player.deck?.length ?? 0);
         return;
     }
 
     if (zoneName === "graveyard") {
         const count = player.graveyardCount ?? player.graveyard?.length ?? 0;
-        updateGraveyardCountDisplay(player.id, count);
+        gameView.updateGraveyardCountDisplay(player.id, count);
     }
 }
 
@@ -1098,7 +1103,7 @@ function adjustZoneCount(player, zoneName, delta) {
 // Removed resolveEffects - Server now handles effect resolution.
 
 export async function playCard(cardUid, targetUid = null) {
-    const cancelCommittedVisual = () => cancelCommittedHandPlayVisual(cardUid);
+    const cancelCommittedVisual = () => gameView.cancelCommittedHandPlayVisual(cardUid);
 
     if (gameState.isSpectator) {
         alert("观战模式：不能进行操作。");
@@ -1298,7 +1303,7 @@ export async function playCard(cardUid, targetUid = null) {
         // Clear selection on error too
         gameState.selectedCardUid = null;
         cancelCommittedVisual();
-        renderHighlights(gameState); // Recover stable highlights after transient clear.
+        gameView.renderHighlights(gameState); // Recover stable highlights after transient clear.
     }
     // New body will be inserted here by next step
 }
@@ -1363,9 +1368,9 @@ export function initiateAttack(attackerUid) {
     // }
 
     // Trigger UI update to highlight attacker and potential targets
-    clearSelectionHighlights(); // Clear previous highlights first
-    highlightAttacker(attackerUid); // Highlight the selected attacker
-    highlightTargets(attackerInstance); // Highlight potential targets for this attacker
+    gameView.clearSelectionHighlights(); // Clear previous highlights first
+    gameView.highlightAttacker(attackerUid); // Highlight the selected attacker
+    gameView.highlightTargets(attackerInstance); // Highlight potential targets for this attacker
 }
 
 // 选择攻击目标 (敌方随从或英雄)
@@ -1392,7 +1397,7 @@ export async function selectAttackTarget(targetUid) {
             `GM: SelectTarget failed - Selected attacker instance ${attackerUid} not found!`
         );
         gameState.selectedAttackerUid = null; // Reset selection if attacker is invalid
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
         return;
     }
     if (attackerInstance.type !== "Follower") {
@@ -1400,7 +1405,7 @@ export async function selectAttackTarget(targetUid) {
             `GM: SelectTarget failed - Attacker ${attackerUid} (${attackerInstance.name}) is not a follower (Type: ${attackerInstance.type}).`
         );
         gameState.selectedAttackerUid = null;
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
         return;
     }
     if (!targetInstance) {
@@ -1544,7 +1549,7 @@ export async function selectAttackTarget(targetUid) {
         alert("与服务器连接丢失，无法进行攻击！");
         // Clear selection on connection error before trying to attack
         gameState.selectedAttackerUid = null;
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
         return;
     }
 
@@ -1563,7 +1568,7 @@ export async function selectAttackTarget(targetUid) {
 
         // 【重复伤害修复】简化客户端反馈，避免状态更新冲突
         gameState.selectedAttackerUid = null; // 仅清除选择状态
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
     } catch (err) {
         console.error("GM: SignalR 'PerformAttack' invocation failed:", err);
         let errorMessage = "服务器通信错误";
@@ -1574,7 +1579,7 @@ export async function selectAttackTarget(targetUid) {
 
         // Clear selection on error
         gameState.selectedAttackerUid = null;
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
     }
 
     // Trigger UI update
@@ -1623,7 +1628,7 @@ export function cancelSelection() {
     if (gameState.selectedAttackerUid) {
         gameState.selectedAttackerUid = null;
         // Re-enter unified highlight rendering so playable hints can restore immediately.
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
     } else {
     }
     // TODO: Add cancellation for selectedCardUid if needed later
@@ -2306,7 +2311,7 @@ export function handleHandPlayabilityUpdate(updateDto) {
         }
 
         if (cardInstance) {
-            refreshBattleCardPreviewIfCurrent(cardInstance);
+            gameView.refreshBattleCardPreviewIfCurrent(cardInstance);
         }
     });
 
@@ -2319,8 +2324,8 @@ export function handleHandPlayabilityUpdate(updateDto) {
 
     // HandPlayabilityUpdate 负责可用性相关视觉重绘（按钮/高亮/爆能费用），避免整手牌重建导致动画抖动。
     if (isCurrentSeatUpdate && hasHandCacheUpdate) {
-        refreshHandPlayabilityVisuals(updatePlayerId, targetPlayer.hand);
-        renderHighlights(gameState);
+        gameView.refreshHandPlayabilityVisuals(updatePlayerId, targetPlayer.hand);
+        gameView.renderHighlights(gameState);
     }
     if (isCurrentSeatUpdate && hasMissingHandPlayability(updatePlayerId)) {
         schedulePlayabilityResync(updatePlayerId, 'hand-playability-partial');
@@ -2517,9 +2522,9 @@ export function updateFullGameState(serverState) {
         resetPlayabilityResyncState();
         resetPlayCardRequestLocks();
         pendingChatClientMessageIds.clear();
-        renderGameLog(gameState.gameLog);
-        clearInMatchChatUiState();
-        clearInMatchUsedCardUiState();
+        gameView.renderGameLog(gameState.gameLog);
+        gameView.clearInMatchChatUiState();
+        gameView.clearInMatchUsedCardUiState();
     }
     // Use PascalCase: GameId
     gameState.gameId = incomingGameId; // PascalCase
@@ -2743,8 +2748,8 @@ export function updateFullGameState(serverState) {
     selectDualControlMulliganSeat();
 
     // Ensure the UI is re-rendered with the fully updated state
-    if (typeof renderGame === "function") {
-        renderGame(gameState); // Pass the updated complete gameState
+    if (typeof gameView.renderGame === "function") {
+        gameView.renderGame(gameState); // Pass the updated complete gameState
         refreshTurnTimerFromState();
     } else {
         console.error(
@@ -2786,8 +2791,8 @@ export function handleTurnStarted(eventData) {
         if (gameState.currentPlayerId && hasMissingHandPlayability(gameState.currentPlayerId)) {
             schedulePlayabilityResync(gameState.currentPlayerId, 'turn-start-missing-cache');
         }
-        if (typeof showTurnStartBanner === 'function') {
-            showTurnStartBanner(gameState.currentPlayerId);
+        if (typeof gameView.showTurnStartBanner === 'function') {
+            gameView.showTurnStartBanner(gameState.currentPlayerId);
         }
     } else {
         console.error("GM Error: TurnStarted event received without a valid nested GameState object:", eventData);
@@ -2852,7 +2857,7 @@ export function handlePpUpdate(eventData) {
         }
 
         // Render only if PP changed OR hand changed
-        updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true); // Use specific UI update
+        gameView.updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true); // Use specific UI update
         // BUG-022 FIX: Update hand display if it was changed
         // Hand update is now handled by handleCardPlayed
     } else {
@@ -2871,11 +2876,11 @@ export function handleEpUpdate(eventData) {
     if (playerToUpdate) {
         playerToUpdate.ep = eventData.CurrentEp;
         playerToUpdate.maxEP = eventData.MaxEp;
-        updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
+        gameView.updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
         if (Array.isArray(playerToUpdate.field)) {
             playerToUpdate.field.forEach(card => {
-                updateCardActionButtons(card);
-                refreshBattleCardPreviewIfCurrent(card);
+                gameView.updateCardActionButtons(card);
+                gameView.refreshBattleCardPreviewIfCurrent(card);
             });
         }
     } else {
@@ -2893,11 +2898,11 @@ export function handleSepUpdate(eventData) {
         playerToUpdate.sep = eventData.CurrentSep;
         playerToUpdate.maxSEP = eventData.MaxSep;
 
-        updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
+        gameView.updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
         if (Array.isArray(playerToUpdate.field)) {
             playerToUpdate.field.forEach(card => {
-                updateCardActionButtons(card);
-                refreshBattleCardPreviewIfCurrent(card);
+                gameView.updateCardActionButtons(card);
+                gameView.refreshBattleCardPreviewIfCurrent(card);
             });
         }
     } else {
@@ -2926,7 +2931,7 @@ export function handlePpMaxUpdate(eventData) {
         playerToUpdate.pp = playerToUpdate.maxPP;
     }
 
-    updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true);
+    gameView.updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true);
 }
 
 // 新增：仅处理 EP 最大值更新事件
@@ -2947,11 +2952,11 @@ export function handleEpMaxUpdate(eventData) {
     } else if (playerToUpdate.ep > playerToUpdate.maxEP) {
         playerToUpdate.ep = playerToUpdate.maxEP;
     }
-    updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
+    gameView.updateEpDisplay(playerToUpdate.id, playerToUpdate.ep, playerToUpdate.maxEP);
     if (Array.isArray(playerToUpdate.field)) {
         playerToUpdate.field.forEach(card => {
-            updateCardActionButtons(card);
-            refreshBattleCardPreviewIfCurrent(card);
+            gameView.updateCardActionButtons(card);
+            gameView.refreshBattleCardPreviewIfCurrent(card);
         });
     }
 }
@@ -2974,11 +2979,11 @@ export function handleSepMaxUpdate(eventData) {
         playerToUpdate.sep = playerToUpdate.maxSEP;
     }
 
-    updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
+    gameView.updateSepDisplay(playerToUpdate.id, playerToUpdate.sep, playerToUpdate.maxSEP);
     if (Array.isArray(playerToUpdate.field)) {
         playerToUpdate.field.forEach(card => {
-            updateCardActionButtons(card);
-            refreshBattleCardPreviewIfCurrent(card);
+            gameView.updateCardActionButtons(card);
+            gameView.refreshBattleCardPreviewIfCurrent(card);
         });
     }
 }
@@ -3038,8 +3043,8 @@ export function handleActPlayabilityUpdate(updateDto) {
             removeActPlayabilityForCard(cardUid, updatePlayerId);
             hasActCacheUpdate = true;
             if (cardInstance) {
-                updateActButtonState(cardInstance);
-                refreshBattleCardPreviewIfCurrent(cardInstance);
+                gameView.updateActButtonState(cardInstance);
+                gameView.refreshBattleCardPreviewIfCurrent(cardInstance);
             }
             return;
         }
@@ -3060,15 +3065,15 @@ export function handleActPlayabilityUpdate(updateDto) {
             hasActCacheUpdate = true;
         }
         if (cardInstance) {
-            updateActButtonState(cardInstance);
-            refreshBattleCardPreviewIfCurrent(cardInstance);
+            gameView.updateActButtonState(cardInstance);
+            gameView.refreshBattleCardPreviewIfCurrent(cardInstance);
         }
     });
 
     if (gameState.phase !== 'Mulligan' && gameState.phase !== 'GameOver') {
         const isCurrentSeatUpdate = normalizePlayerId(updatePlayerId) === normalizePlayerId(gameState.localPlayerId);
         if (isCurrentSeatUpdate && hasActCacheUpdate) {
-            renderHighlights(gameState);
+            gameView.renderHighlights(gameState);
         }
     }
 }
@@ -3131,14 +3136,14 @@ export function handlePpBoostStateUpdated(eventData) {
 
     playerToUpdate.ppBoostUsesAvailable = eventData.PpBoostUsesAvailable;
     playerToUpdate.ppBoostArmed = eventData.IsArmed === true;
-    updatePpDisplay(playerToUpdate.id, playerToUpdate.pp ?? 0, playerToUpdate.maxPP ?? 0, playerToUpdate.ppBoostArmed);
-    updatePpBoostDisplay(playerToUpdate.id, playerToUpdate.ppBoostUsesAvailable, playerToUpdate.ppBoostArmed);
+    gameView.updatePpDisplay(playerToUpdate.id, playerToUpdate.pp ?? 0, playerToUpdate.maxPP ?? 0, playerToUpdate.ppBoostArmed);
+    gameView.updatePpBoostDisplay(playerToUpdate.id, playerToUpdate.ppBoostUsesAvailable, playerToUpdate.ppBoostArmed);
     clearPlayabilityForPlayer(playerToUpdate.id);
     if (Array.isArray(playerToUpdate.hand)) {
-        refreshHandPlayabilityVisuals(playerToUpdate.id, playerToUpdate.hand);
+        gameView.refreshHandPlayabilityVisuals(playerToUpdate.id, playerToUpdate.hand);
     }
     if (Array.isArray(playerToUpdate.field)) {
-        playerToUpdate.field.forEach(card => updateCardActionButtons(card));
+        playerToUpdate.field.forEach(card => gameView.updateCardActionButtons(card));
     }
     schedulePlayabilityResync(playerToUpdate.id, 'pp-boost-state');
 }
@@ -3175,18 +3180,18 @@ export function handleHandUpdated(eventData) {
     });
 
     // Update the hand display
-    updateHandDisplay(playerToUpdate.id, playerToUpdate.hand);
+    gameView.updateHandDisplay(playerToUpdate.id, playerToUpdate.hand);
     prunePlayerPlayabilityCache(playerToUpdate.id);
     if (normalizePlayerId(playerToUpdate.id) === normalizePlayerId(gameState.localPlayerId)) {
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
         if (hasMissingHandPlayability(playerToUpdate.id)) {
             schedulePlayabilityResync(playerToUpdate.id, 'hand-updated-missing-cache');
         }
     }
 
     // Clear any mulligan selection state since hand was updated
-    if (typeof resetMulliganSelection === 'function' && playerToUpdate.id === gameState.localPlayerId) {
-        resetMulliganSelection();
+    if (typeof gameView.resetMulliganSelection === 'function' && playerToUpdate.id === gameState.localPlayerId) {
+        gameView.resetMulliganSelection();
     }
 }
 
@@ -3288,24 +3293,24 @@ export function handleCardInstanceUpdated(eventData) {
 
         updatedInstances.push(existingInstance);
 
-        refreshCardInstanceUi(existingInstance, handOwnersToRefresh, emblemOwnersToRefresh);
+        gameView.refreshCardInstanceUi(existingInstance, handOwnersToRefresh, emblemOwnersToRefresh);
     }
 
     for (const ownerId of handOwnersToRefresh) {
         const player = getPlayerState(ownerId);
         if (player) {
-            updateHandDisplay(player.id, player.hand);
+            gameView.updateHandDisplay(player.id, player.hand);
         }
     }
 
     for (const ownerId of emblemOwnersToRefresh) {
         const player = getPlayerState(ownerId);
         if (player) {
-            updateEmblemZone(player);
+            gameView.updateEmblemZone(player);
         }
     }
 
-    updatedInstances.forEach(instance => refreshBattleCardPreviewIfCurrent(instance));
+    updatedInstances.forEach(instance => gameView.refreshBattleCardPreviewIfCurrent(instance));
 }
 
 export function handleCardMoved(eventData) {
@@ -3386,12 +3391,12 @@ export function handleCardMoved(eventData) {
     touchedPlayerIds.forEach(playerId => prunePlayerPlayabilityCache(playerId));
 
     if (movedInstance) {
-        refreshBattleCardPreviewIfCurrent(movedInstance);
+        gameView.refreshBattleCardPreviewIfCurrent(movedInstance);
     }
 
     if (gameState.selectedAttackerUid && !findCardInstanceByUid(gameState.selectedAttackerUid)) {
         gameState.selectedAttackerUid = null;
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
     }
 }
 
@@ -3438,8 +3443,8 @@ export function handleCounterChanged(eventData) {
                 cardInstance.spellboost = newValue;
             }
 
-            refreshCardInstanceUi(cardInstance);
-            refreshBattleCardPreviewIfCurrent(cardInstance);
+            gameView.refreshCardInstanceUi(cardInstance);
+            gameView.refreshBattleCardPreviewIfCurrent(cardInstance);
         }
     }
 
@@ -3458,20 +3463,20 @@ export function handleCounterChanged(eventData) {
 
         if (normalizedCounter === 'bloodpool') {
             player.bloodPool = newValue;
-            updateBloodPoolDisplay(player.id, player.bloodPool);
+            gameView.updateBloodPoolDisplay(player.id, player.bloodPool);
         } else if (normalizedCounter === 'combo') {
             player.combo = newValue;
-            updateComboDisplay(player.id, player.combo);
+            gameView.updateComboDisplay(player.id, player.combo);
         } else if (normalizedCounter === 'rally') {
             player.rally = newValue;
-            updateRallyDisplay(player.id, player.rally);
+            gameView.updateRallyDisplay(player.id, player.rally);
         } else if (normalizedCounter === 'graveyard') {
             player.graveyardCount = newValue;
-            updateGraveyardCountDisplay(player.id, player.graveyardCount);
+            gameView.updateGraveyardCountDisplay(player.id, player.graveyardCount);
         }
 
         if (player.leaderCard) {
-            refreshBattleCardPreviewIfCurrent(player.leaderCard);
+            gameView.refreshBattleCardPreviewIfCurrent(player.leaderCard);
         }
 
         const relatedCards = [
@@ -3482,7 +3487,7 @@ export function handleCounterChanged(eventData) {
             ...(Array.isArray(player.extra) ? player.extra : []),
             ...(Array.isArray(player.emblem) ? player.emblem : [])
         ];
-        relatedCards.forEach(card => refreshBattleCardPreviewIfCurrent(card));
+        relatedCards.forEach(card => gameView.refreshBattleCardPreviewIfCurrent(card));
     }
 }
 
@@ -3499,7 +3504,7 @@ export function handleDeckUpdate(eventData) {
         // Use PascalCase: DeckCount
         playerToUpdate.deckCount = eventData.DeckCount; // PascalCase
         // renderGame(gameState); // Re-render after deck count update - REPLACED
-        updateDeckCountDisplay(playerToUpdate.id, playerToUpdate.deckCount); // Use specific UI update
+        gameView.updateDeckCountDisplay(playerToUpdate.id, playerToUpdate.deckCount); // Use specific UI update
     } else {
         // Use PascalCase: SourcePlayerId
         console.warn(`GM: DeckUpdate event received for invalid player: ${eventData.SourcePlayerId}`); // PascalCase
@@ -3535,9 +3540,9 @@ export function handleGraveyardUpdate(eventData) {
 
     // Directly call the UI update function with the correct player ID and the new count.
     // The UI function is responsible for determining if this is the 'local' or 'opponent' player.
-    updateGraveyardCountDisplay(updatedPlayerId, newServerCount);
+    gameView.updateGraveyardCountDisplay(updatedPlayerId, newServerCount);
     if (playerToUpdate.leaderCard) {
-        refreshBattleCardPreviewIfCurrent(playerToUpdate.leaderCard);
+        gameView.refreshBattleCardPreviewIfCurrent(playerToUpdate.leaderCard);
     }
 }
 
@@ -3593,8 +3598,8 @@ export function handleUnitEvolved(eventData) {
         const updatedUnit = findCardInstanceByUid(unitUid);
         if (updatedUnit) {
             // Re-render specifically the unit (EP display will be updated by separate EpUpdateEvent)
-            updateUnitDisplay(updatedUnit);
-            updateHealthDisplay(updatedUnit);
+            gameView.updateUnitDisplay(updatedUnit);
+            gameView.updateHealthDisplay(updatedUnit);
         }
     }
 }
@@ -3632,7 +3637,7 @@ export function handleStatChange(eventData) {
             unit.cost = newCost;
             unit.Cost = newCost;
         }
-        updateUnitCombatStats(unit);
+        gameView.updateUnitCombatStats(unit);
     } else {
         console.warn(`GM: StatChange event received for invalid unit ID: ${targetUid}`); // PascalCase
     }
@@ -3665,12 +3670,12 @@ function refreshAttackHighlightsIfNeeded() {
     const attackerInstance = findCardInstanceByUid(attackerUid);
     if (!attackerInstance) {
         gameState.selectedAttackerUid = null;
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
         return;
     }
-    clearSelectionHighlights();
-    highlightAttacker(attackerUid);
-    highlightTargets(attackerInstance);
+    gameView.clearSelectionHighlights();
+    gameView.highlightAttacker(attackerUid);
+    gameView.highlightTargets(attackerInstance);
 }
 
 export function handleKeywordAdded(eventData) {
@@ -3688,8 +3693,8 @@ export function handleKeywordAdded(eventData) {
     }
 
     updateCardKeywords(unit, keyword, true);
-    updateUnitDisplay(unit);
-    refreshBattleCardPreviewIfCurrent(unit);
+    gameView.updateUnitDisplay(unit);
+    gameView.refreshBattleCardPreviewIfCurrent(unit);
     refreshAttackHighlightsIfNeeded();
 }
 
@@ -3708,8 +3713,8 @@ export function handleKeywordRemoved(eventData) {
     }
 
     updateCardKeywords(unit, keyword, false);
-    updateUnitDisplay(unit);
-    refreshBattleCardPreviewIfCurrent(unit);
+    gameView.updateUnitDisplay(unit);
+    gameView.refreshBattleCardPreviewIfCurrent(unit);
     refreshAttackHighlightsIfNeeded();
 }
 
@@ -3760,7 +3765,7 @@ export function handleUnitDestroyed(eventData) {
         ?? unit.ArtDetail
         ?? '';
 
-    appendInMatchDestroyedCard({
+    gameView.appendInMatchDestroyedCard({
         ownerId,
         cardUid: unitUid,
         cardId,
@@ -3773,7 +3778,7 @@ export function handleUnitDestroyed(eventData) {
     });
 
     // Placeholder for destroy visual effects.
-    refreshBattleCardPreviewIfCurrent(unit);
+    gameView.refreshBattleCardPreviewIfCurrent(unit);
 }
 
 export function handleCardVanished(eventData) {
@@ -3787,7 +3792,7 @@ export function handleCardVanished(eventData) {
     const card = findCardInstanceByUid(eventData.CardUid);
     if (card) {
         // Placeholder for vanish visual effects.
-        refreshBattleCardPreviewIfCurrent(card);
+        gameView.refreshBattleCardPreviewIfCurrent(card);
     }
 }
 
@@ -3802,7 +3807,7 @@ export function handleCardReturned(eventData) {
     const returnedCard = findCardInstanceByUid(cardUid);
     if (returnedCard) {
         // Placeholder for return visual effects.
-        refreshBattleCardPreviewIfCurrent(returnedCard);
+        gameView.refreshBattleCardPreviewIfCurrent(returnedCard);
     }
 }
 
@@ -3851,7 +3856,7 @@ export function handleDamageDealt(eventData) {
         // 确定伤害数字应该显示在哪个UI元素上
         // 【修复】直接传递目标单位的UID给UI函数
         // showDamageNumber 函数现在能够智能地根据UID找到正确的DOM元素
-        showDamageNumber(target.uid, eventData.DamageAmount);
+        gameView.showDamageNumber(target.uid, eventData.DamageAmount);
     }
 }
 export function handleHealthChanged(eventData) {
@@ -3871,7 +3876,7 @@ export function handleHealthChanged(eventData) {
 
         // 【重构】调用统一的UI更新函数
         // 新的 updateHealthDisplay 函数能够智能处理主战者和场上单位
-        updateHealthDisplay(unit);
+        gameView.updateHealthDisplay(unit);
 
         // Log if health drops to 0, but let the server's UnitDestroyed event handle the actual removal
         if (unit.currentHealth <= 0) {
@@ -3897,7 +3902,7 @@ export function handleMulliganStarted(eventData) {
         console.error("GM Error: handleMulliganStarted could not find local player state for ID:", gameState.localPlayerId);
         return; // Exit if local player state is missing
     }
-    showMulliganInterface(gameState.localPlayerId, handArray); // Use specific UI update
+    gameView.showMulliganInterface(gameState.localPlayerId, handArray); // Use specific UI update
 }
 
 export function handlePlayerMulliganCompleted(eventData) {
@@ -3912,10 +3917,10 @@ export function handlePlayerMulliganCompleted(eventData) {
     if (player) {
         player.hasCompletedMulligan = true;
         // 状态更新应由完整的GameState同步，这里只调用UI更新
-        updateMulliganStatus(completedPlayerId, true);
+        gameView.updateMulliganStatus(completedPlayerId, true);
         selectDualControlMulliganSeat();
-        if (gameState.dualControl && gameState.phase === 'Mulligan' && typeof renderGame === "function") {
-            renderGame(gameState);
+        if (gameState.dualControl && gameState.phase === 'Mulligan' && typeof gameView.renderGame === "function") {
+            gameView.renderGame(gameState);
         }
     } else {
         console.warn(`GM: PlayerMulliganCompleted event received for unknown player ID: ${completedPlayerId}`);
@@ -3937,7 +3942,7 @@ export function handleHealApplied(eventData) {
     }
 
     if (eventData.HealAmount >= 0) {
-        showHealNumber(target.uid, eventData.HealAmount);
+        gameView.showHealNumber(target.uid, eventData.HealAmount);
     }
 }
 // --- NEW Refactored Event Handlers ---
@@ -3964,7 +3969,7 @@ export function handleCardPlayed(eventData) {
         ?? playedCard?.artDetail
         ?? '';
 
-    appendInMatchUsedCard({
+    gameView.appendInMatchUsedCard({
         ownerId: sourcePlayerId,
         cardUid: String(playedCard?.InstanceId ?? playedCard?.instanceId ?? '').trim(),
         cardId,
@@ -4009,7 +4014,7 @@ export function handleGameOver(eventData) {
     if (looksLikeGuid(maybeUserId)) {
         tryFetchMetaProgressionState(maybeUserId).catch(() => { });
     }
-    renderGame(gameState); // Render final game over state
+    gameView.renderGame(gameState); // Render final game over state
     refreshTurnTimerFromState();
     // Consider disabling all further interactions more forcefully
     // disablePlayerInteractions(); // REMOVED: Relying on existing logic per user preference
@@ -4023,7 +4028,7 @@ function appendSystemLog(message) {
     if (gameState.gameLog.length > GAME_LOG_LIMIT) {
         gameState.gameLog.shift();
     }
-    renderGameLog(gameState.gameLog);
+    gameView.renderGameLog(gameState.gameLog);
 }
 
 function looksLikeGuid(value) {
@@ -4083,11 +4088,11 @@ export function handleAttackStateUpdated(eventData) {
         unit.canAttack = eventData.CanAttack;
 
         // Trigger a UI update for the specific unit to reflect the change in its attack-readiness (e.g., remove glow)
-        updateUnitDisplay(unit);
+        gameView.updateUnitDisplay(unit);
         if (!unit.canAttack && gameState.selectedAttackerUid === unit.uid) {
             gameState.selectedAttackerUid = null;
         }
-        renderHighlights(gameState);
+        gameView.renderHighlights(gameState);
     } else {
         console.warn(`GM: AttackStateUpdated event received for invalid unit UID: ${eventData.TargetCardInstanceId}`);
     }
@@ -4109,8 +4114,8 @@ export function handleActStateUpdated(eventData) {
 
     unit.actsThisTurn = eventData.ActsThisTurn ?? unit.actsThisTurn ?? 0;
     unit.maxActsPerTurn = eventData.MaxActsPerTurn ?? unit.maxActsPerTurn ?? 1;
-    refreshCardActionControls(unit);
-    refreshBattleCardPreviewIfCurrent(unit);
+    gameView.refreshCardActionControls(unit);
+    gameView.refreshBattleCardPreviewIfCurrent(unit);
 }
 
 export function handleFusionStateUpdated(eventData) {
@@ -4129,8 +4134,8 @@ export function handleFusionStateUpdated(eventData) {
 
     unit.fusionsThisTurn = eventData.FusionsThisTurn ?? unit.fusionsThisTurn ?? 0;
     unit.maxFusionsPerTurn = eventData.MaxFusionsPerTurn ?? unit.maxFusionsPerTurn ?? 1;
-    refreshCardActionControls(unit);
-    refreshBattleCardPreviewIfCurrent(unit);
+    gameView.refreshCardActionControls(unit);
+    gameView.refreshBattleCardPreviewIfCurrent(unit);
 }
 
 export function handleEvolveStateUpdated(eventData) {
@@ -4147,8 +4152,8 @@ export function handleEvolveStateUpdated(eventData) {
 
         if (Array.isArray(playerToUpdate.field)) {
             playerToUpdate.field.forEach(card => {
-                updateCardActionButtons(card);
-                refreshBattleCardPreviewIfCurrent(card);
+                gameView.updateCardActionButtons(card);
+                gameView.refreshBattleCardPreviewIfCurrent(card);
             });
         }
     } else {
@@ -4168,8 +4173,8 @@ export function handleSuperEvolveStateUpdated(eventData) {
         playerToUpdate.canSuperEvolve = eventData.CanSuperEvolve ?? false;
         if (Array.isArray(playerToUpdate.field)) {
             playerToUpdate.field.forEach(card => {
-                updateCardActionButtons(card);
-                refreshBattleCardPreviewIfCurrent(card);
+                gameView.updateCardActionButtons(card);
+                gameView.refreshBattleCardPreviewIfCurrent(card);
             });
         }
     } else {
@@ -4207,9 +4212,9 @@ export function handlePlayerChoiceRequested(eventData) {
 
     // The primary role of this handler is to pass the choice request to the UI module.
     try {
-        if (showPlayerChoiceUI) {
+        if (gameView.showPlayerChoiceUI) {
             // Pass the nested choiceRequest object to the UI function.
-            showPlayerChoiceUI(choiceRequest);
+            gameView.showPlayerChoiceUI(choiceRequest);
         } else {
             console.error("GM Error: ui.js module does not have showPlayerChoiceUI function.");
         }
@@ -4232,8 +4237,8 @@ export function handleCardRevealed(eventData) {
 
     // Show a transient overlay; do not modify authoritative state.
     try {
-        if (showRevealOverlay) {
-            showRevealOverlay(revealedCard);
+        if (gameView.showRevealOverlay) {
+            gameView.showRevealOverlay(revealedCard);
         }
     } catch (error) {
         console.error("GM Error: Failed to show reveal overlay:", error);
@@ -4303,8 +4308,8 @@ export function handleAbilityTriggered(eventData) {
         : 'ally';
 
     try {
-        if (showAbilityTriggerToast) {
-            showAbilityTriggerToast({
+        if (gameView.showAbilityTriggerToast) {
+            gameView.showAbilityTriggerToast({
                 title: sourceCardName,
                 subtitle: abilityName && abilityName !== sourceCardName ? abilityName : '',
                 description: abilityDescription,
@@ -4335,8 +4340,8 @@ export function handleFusion(eventData) {
     }
 
     try {
-        if (showFusionAnimation) {
-            showFusionAnimation(sourcePlayerId, fusedIds);
+        if (gameView.showFusionAnimation) {
+            gameView.showFusionAnimation(sourcePlayerId, fusedIds);
         }
     } catch (error) {
         console.error("GM Error: Failed to show fusion animation:", error);
@@ -4440,7 +4445,7 @@ export function handleChatHistory(eventData) {
     }
 
     gameState.chatMessages = normalizedMessages;
-    replaceInMatchChatHistory(gameState.chatMessages);
+    gameView.replaceInMatchChatHistory(gameState.chatMessages);
 }
 
 export function handleMatchHistorySync(eventData) {
@@ -4452,7 +4457,7 @@ export function handleMatchHistorySync(eventData) {
         : (Array.isArray(eventData?.destroyedCards) ? eventData.destroyedCards : []);
     const gameId = String(eventData?.GameId ?? eventData?.gameId ?? gameState.gameId ?? '').trim();
 
-    replaceInMatchCardHistory({
+    gameView.replaceInMatchCardHistory({
         gameId,
         usedCards,
         destroyedCards
@@ -4471,7 +4476,7 @@ export function handleChatMessage(eventData) {
     }
 
     const shouldPlayBarrage = normalizedMessage.senderType !== 'system';
-    appendInMatchChatMessage(normalizedMessage, shouldPlayBarrage);
+    gameView.appendInMatchChatMessage(normalizedMessage, shouldPlayBarrage);
 }
 
 /**

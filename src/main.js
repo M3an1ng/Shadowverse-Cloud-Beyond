@@ -11,7 +11,7 @@ import { LogLevel } from "@microsoft/signalr"; // Added for Trace logging
 import { router } from './router.js'; // 导入路由系统
 import { clearUserSession, getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from './userSession.js';
 import {
-    gameState, initializeGame, initializeSpectator, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
+    gameState, bindGameView, initializeGame, initializeSpectator, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
     // Import specific event handlers instead of processGameEvent
     handleDeckUpdate, handleTurnStarted, handleTurnEnded, handlePpUpdate, handleEpUpdate, handleSepUpdate, handleHandUpdated,
     handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealApplied,
@@ -24,7 +24,18 @@ import {
     handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
-import { renderGame, setConnectionStatus, setOpponentConnectionStatus } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
+import {
+    renderGame, setConnectionStatus, setOpponentConnectionStatus, renderGameLog, showDamageNumber,
+    showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay,
+    updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay,
+    updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay,
+    refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets,
+    showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState,
+    updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi,
+    refreshCardActionControls, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
+    replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard,
+    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
+} from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 import { initDevConsole } from './devConsole.js'; // 开发者控制台
 import { ensureEnumLocalizations } from './enumLocalizationCache.js';
 import { getRouteNameFromHash, shouldReuseCachedHandshake } from './handshakePolicy.js';
@@ -59,6 +70,9 @@ import {
     QUEST_REWARD_CLAIMED_EVENT
 } from './questFeedback.js';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
+bindGameView({
+    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
+});
 initDevConsole();
 // import { endTurn } from './turnManager.js'; // Keep commented out
 // Old SignalR setup code removed. New setup will be added later.

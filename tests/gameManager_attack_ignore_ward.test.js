@@ -52,6 +52,8 @@ jest.mock('../src/userSession.js', () => ({
 }));
 
 const { gameState, selectAttackTarget, setSignalRConnection } = require('../src/gameManager.js');
+require('../src/gameManager.js').bindGameView(require('../src/ui.js'));
+
 
 describe('gameManager IgnoreWard attack targeting', () => {
     let invoke;

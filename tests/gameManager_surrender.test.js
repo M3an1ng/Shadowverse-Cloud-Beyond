@@ -57,6 +57,8 @@ const {
     setSignalRConnection,
     surrenderGame
 } = require('../src/gameManager.js');
+require('../src/gameManager.js').bindGameView(require('../src/ui.js'));
+
 
 describe('gameManager surrender', () => {
     beforeEach(() => {

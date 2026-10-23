@@ -58,6 +58,8 @@ const {
     handleHandPlayabilityUpdate,
     playCard
 } = require('../src/gameManager.js');
+require('../src/gameManager.js').bindGameView(require('../src/ui.js'));
+
 
 describe('gameManager alternate play field guard', () => {
     let connection;
