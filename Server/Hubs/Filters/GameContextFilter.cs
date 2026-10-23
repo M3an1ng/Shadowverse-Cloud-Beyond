@@ -101,7 +101,7 @@ namespace ShadowverseBeyond.Server.Hubs.Filters
             finally
             {
                 // Clear the context after the Hub method has finished executing.
-                _gameContextAccessor.GameContext = null;
+                context.Dispose();
                 _logger.LogDebug("GameContext cleared for GameId: {GameId}", gameId);
             }
         }

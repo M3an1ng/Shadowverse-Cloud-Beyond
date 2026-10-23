@@ -20,14 +20,13 @@ using ShadowverseBeyond.Server.Dtos.Enums;
 namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
-    /// Represents a pure, immutable context for game event and effect processing, which also manages its own lifetime
-    /// within the static GameServiceProvider. This class is designed to be used in a 'using' block to ensure
-    /// that the ambient context is correctly set and cleared.
+    /// Carries operation data and owns the ambient scope activated by its constructor.
+    /// Use the original in a using block; record copies carry data without owning its scope.
     /// </summary>
     [DslExposable("游戏上下文", Description = "代表当前游戏事件和效果处理的上下文环境")]
     public record GameContext : IDisposable
     {
-        private readonly IGameContextAccessor _accessor;
+        private readonly GameContextScope _ambientScope;
 
         // Core Services are now passed directly, not resolved via IServiceProvider
         public IServiceProvider ServiceProvider { get; } // Kept for resolving other services if needed
@@ -148,8 +147,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             EventHistory = new EventHistoryReader(serviceProvider.GetRequiredService<IEventHistoryService>(), currentGameState.GameId);
 
             // Set the ambient context upon creation.
-            _accessor = accessor;
-            _accessor.GameContext = this;
+            _ambientScope = accessor.Enter(this);
         }
 
         private static IReadOnlyList<CardInstance> ExtractCardTargets(IEnumerable<TargetInfo>? targets)
@@ -181,11 +179,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         }
 
         /// <summary>
-        /// Clears the ambient context from the GameServiceProvider.
+        /// Releases this context's scope and restores its active parent.
         /// </summary>
         public void Dispose()
         {
-            _accessor.GameContext = null;
+            // A with-copy shares the lease but did not activate it, so it cannot release the original.
+            if (ReferenceEquals(_ambientScope.Context, this))
+            {
+                _ambientScope.Dispose();
+            }
         }
     }
 }

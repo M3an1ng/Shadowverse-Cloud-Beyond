@@ -11,32 +11,36 @@ namespace ShadowverseBeyond.Server.Services
     /// </summary>
     public class GameContextAccessor : IGameContextAccessor
     {
-        private static readonly AsyncLocal<GameContextHolder> _gameContextCurrent = new();
+        private readonly AsyncLocal<GameContextScope?> _current = new();
 
         public GameContext? GameContext
         {
-            get => _gameContextCurrent.Value?.Context;
-            set
+            get
             {
-                var holder = _gameContextCurrent.Value;
-                if (holder != null)
+                for (var scope = _current.Value; scope != null; scope = scope.Previous)
                 {
-                    // Do not null out an existing holder.
-                    holder.Context = null;
+                    if (scope.Context is { } context)
+                    {
+                        return context;
+                    }
                 }
-
-                if (value != null)
-                {
-                    // Use an object indirection to hold the GameContext in the AsyncLocal,
-                    // so it can be cleared out without affecting other scopes.
-                    _gameContextCurrent.Value = new GameContextHolder { Context = value };
-                }
+                return null;
             }
         }
 
-        private class GameContextHolder
+        public GameContextScope Enter(GameContext context)
         {
-            public GameContext? Context;
+            var scope = new GameContextScope(this, context, _current.Value);
+            _current.Value = scope;
+            return scope;
+        }
+
+        internal void Release(GameContextScope scope)
+        {
+            if (ReferenceEquals(_current.Value, scope))
+            {
+                _current.Value = scope.Previous;
+            }
         }
     }
 }

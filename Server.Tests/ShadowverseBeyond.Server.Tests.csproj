@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Archive\**\*.cs" />
     <Compile Remove="**\artifacts\**\*.cs;**\.tmp_build\**\*.cs" />
     <None Remove="**\artifacts\**;**\.tmp_build\**" />
     <Content Remove="**\artifacts\**;**\.tmp_build\**" />

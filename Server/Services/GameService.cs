@@ -205,7 +205,7 @@ namespace ShadowverseBeyond.Server.Services
                                     var mapper = sp.GetRequiredService<IMapper>();
 
                                     _logger.LogWarning("[STATE_POLLUTION_TRACE] GameService: Creating GameContext for GameId: {GameId} with GameState HashCode: {HashCode}", gameId, gameState.GetHashCode());
-                                    var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, actionWrapper.PlayerId, cancellationToken, initialEvents[0]);
+                                    using var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, actionWrapper.PlayerId, cancellationToken, initialEvents[0]);
                                     var transactionService = sp.GetRequiredService<IGameActionTransactionService>();
                                     var transactionResult = await transactionService.ProcessTransactionAsync(gameContext, initialEvents);
 
@@ -302,7 +302,6 @@ namespace ShadowverseBeyond.Server.Services
                             // --- BUG-FIX: Clear the currently processing player ID here ---
                             // This ensures that even if the transaction fails or is paused, we are ready for the next action.
                             _currentlyProcessingPlayerActionId.TryUpdate(gameId, null, actionWrapper.PlayerId.ToString());
-                            gameContextAccessor.GameContext = null;
                         }
                     }
 
@@ -505,7 +504,7 @@ namespace ShadowverseBeyond.Server.Services
             // CancellationToken is not available here directly. For this temporary context,
             // it's acceptable to use CancellationToken.None as it's short-lived and doesn't perform awaitable operations.
             // However, the main context created in the loop WILL have the correct token.
-            var gameContext = new GameContext(
+            using var gameContext = new GameContext(
                 serviceProvider,
                 _mapper,
                 gameContextAccessor,

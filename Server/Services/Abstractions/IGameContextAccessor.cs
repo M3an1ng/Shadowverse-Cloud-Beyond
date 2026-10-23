@@ -10,8 +10,10 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     public interface IGameContextAccessor
     {
         /// <summary>
-        /// Gets or sets the current GameContext.
+        /// Gets the active context in this accessor's logical execution flow.
         /// </summary>
-        GameContext? GameContext { get; set; }
+        GameContext? GameContext { get; }
+
+        GameContextScope Enter(GameContext context);
     }
 }
