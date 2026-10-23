@@ -1911,7 +1911,7 @@ async function initializeApp() {
             
             // Always initialize dev console to ensure the global object exists,
             // but control visibility/enabled state via logic
-            initDevConsole(true, DEBUG_CONSOLE_AUTOSHOW);
+            initDevConsole(true, DEBUG_CONSOLE_AUTOSHOW, () => connection);
 
 
         } catch (error) {
@@ -4997,7 +4997,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize dev console early to bind global handlers
     try {
         // We pass true to ensure the instance is created, but visibility is controlled later
-        const consoleInstance = initDevConsole(true, false);
+        const consoleInstance = initDevConsole(true, false, () => connection);
         
         // Ensure window.devConsole points to the instance for the toggle button
         if (consoleInstance && !window.devConsole) {

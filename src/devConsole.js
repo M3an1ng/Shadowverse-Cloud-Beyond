@@ -8,13 +8,14 @@
 //
 
 import { gameState } from "./gameManager.js";
-import { connection } from "./main.js";
 import { getUserSession } from "./userSession.js";
 
 const TRACE_ENDPOINT = "/api/devtools/condition-trace";
 
 class DevConsole {
-  constructor(autoShow = false) {
+  constructor(getConnection, autoShow = false) {
+    // 入口持有连接；按需读取以跟随重连，不再反向导入整个启动模块。
+    this.getConnection = getConnection;
     this.isVisible = false;
     this.commandHistory = [];
     this.historyIndex = -1;
@@ -1323,6 +1324,7 @@ class DevConsole {
 
   // 出牌命令
   async playCard(args) {
+    const connection = this.getConnection();
     if (args.length < 1) {
       this.output("用法: play <cardUid> [targetUid]", "error");
       return;
@@ -1357,6 +1359,7 @@ class DevConsole {
 
   // 攻击命令
   async attack(args) {
+    const connection = this.getConnection();
     if (args.length < 2) {
       this.output("用法: attack <attackerUid> <targetUid>", "error");
       return;
@@ -1397,6 +1400,7 @@ class DevConsole {
 
   // 进化命令
   async evolve(args) {
+    const connection = this.getConnection();
     if (args.length < 1) {
       this.output("用法: evolve <unitUid>", "error");
       return;
@@ -1429,6 +1433,7 @@ class DevConsole {
 
   // 结束回合
   async endTurn() {
+    const connection = this.getConnection();
     try {
       if (connection && connection.state === "Connected") {
         // Generate unique request ID for idempotency
@@ -1445,6 +1450,7 @@ class DevConsole {
 
   // 调试指令统一入口（需要后端支持 ExecuteDebugCommand）
   async sendDebugCommand(commandName, ctx) {
+    const connection = this.getConnection();
     if (!ctx || !ctx.kv) {
       this.output("无效的命令参数", "error");
       return;
@@ -1532,6 +1538,7 @@ class DevConsole {
 
   // 检查连接状态并设置事件监听
   checkConnectionAndSetupEvents() {
+    const connection = this.getConnection();
     // 如果connection还未准备好，延迟重试
     if (!connection) {
       setTimeout(() => this.checkConnectionAndSetupEvents(), 1000);
@@ -1556,6 +1563,7 @@ class DevConsole {
   }
 
   attachConditionTraceListener() {
+    const connection = this.getConnection();
     if (!connection) {
       return;
     }
@@ -1589,6 +1597,7 @@ class DevConsole {
   }
 
   attachGameStateListener() {
+    const connection = this.getConnection();
     if (!connection) {
       return;
     }
@@ -1791,6 +1800,7 @@ class DevConsole {
 
   // Show event monitoring status
   showEventStatus() {
+    const connection = this.getConnection();
     this.output("事件监听状态:", "info");
     this.output(
       `监听状态: ${this.eventMonitoring ? "开启" : "关闭"}`,
@@ -1812,6 +1822,7 @@ class DevConsole {
 
   // 检查连接状态
   checkConnectionStatus() {
+    const connection = this.getConnection();
     this.output("=== SignalR连接状态检查 ===", "info");
 
     if (!connection) {
@@ -1839,6 +1850,7 @@ class DevConsole {
 
   // Toggle event monitoring
   toggleEventMonitoring(args) {
+    const connection = this.getConnection();
     if (args.length < 1) {
       this.output("用法: monitor <on|off>", "error");
       return;
@@ -1891,13 +1903,13 @@ class DevConsole {
 let devConsole = null;
 
 // 初始化开发者控制台
-export function initDevConsole(enable = false, autoShow = false) {
+export function initDevConsole(enable = false, autoShow = false, getConnection) {
   if (!enable) {
     return null;
   }
 
   if (!devConsole) {
-    devConsole = new DevConsole(autoShow);
+    devConsole = new DevConsole(getConnection, autoShow);
 
     // 添加到全局作用域以便在浏览器控制台中访问
     window.devConsole = devConsole;
