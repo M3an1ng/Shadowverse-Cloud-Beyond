@@ -1,6 +1,0 @@
-D:\workspace\Shadowverse-beyond\.tmp_build\tests_tribe_check\CoverletSourceRootsMapping_ShadowverseBeyond.Server.Tests
-D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_build\test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.csproj.AssemblyReference.cache
-D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_build\test_obj\Debug\net8.0\MvcTestingAppManifest.json
-D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_build\test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.GeneratedMSBuildEditorConfig.editorconfig
-D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_build\test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.csproj.CoreCompileInputs.cache
-D:\workspace\Shadowverse-beyond\Server.Tests\.tmp_build\test_obj\Debug\net8.0\ShadowverseBeyond.Server.Tests.sourcelink.json
