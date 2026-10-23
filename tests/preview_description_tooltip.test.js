@@ -58,7 +58,8 @@ describe('preview description tooltip', () => {
         setRect(anchor);
         document.body.appendChild(anchor);
 
-        await showPreviewDescriptionTooltip(anchor, 'keyword', '土之印', { cards: [] });
+        const options = { cards: [], openCardDetail: showCardDetailModal };
+        await showPreviewDescriptionTooltip(anchor, 'keyword', '土之印', options);
 
         const nestedDerivedToken = document.querySelector('.preview-description-tooltip [data-preview-token="derived"]');
         expect(nestedDerivedToken).not.toBeNull();
@@ -75,7 +76,7 @@ describe('preview description tooltip', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(resolveDerivedCardMatch).toHaveBeenCalledWith('大地之魔片', { cards: [] });
+        expect(resolveDerivedCardMatch).toHaveBeenCalledWith('大地之魔片', options);
         expect(showCardDetailModal).toHaveBeenCalledWith(
             expect.objectContaining({ id: 42, name: '大地之魔片' }),
             expect.objectContaining({
@@ -103,5 +104,17 @@ describe('preview description tooltip', () => {
         const tag = document.querySelector('.preview-description-tooltip .preview-tooltip-tag');
         expect(tag).not.toBeNull();
         expect(tag.textContent).toBe('牌组关键字');
+    });
+
+    test('uses the caller-owned navigation action without loading the detail component', async () => {
+        const openCardDetail = jest.fn();
+        const card = { id: 77, name: '衍生卡' };
+        resolveDerivedCardMatch.mockResolvedValue({ match: card });
+        const anchor = document.createElement('button');
+        setRect(anchor);
+        document.body.appendChild(anchor);
+        await showPreviewDescriptionTooltip(anchor, 'derived', '衍生卡', { openCardDetail });
+        expect(openCardDetail).toHaveBeenCalledWith(card, expect.objectContaining({ navigationMode: 'push' }));
+        expect(showCardDetailModal).not.toHaveBeenCalled();
     });
 });

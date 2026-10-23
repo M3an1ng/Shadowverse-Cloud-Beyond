@@ -595,6 +595,7 @@ export function showCardDetailModal(card, options = {}) {
         event.preventDefault();
         event.stopPropagation();
         const tooltipOptions = {
+            openCardDetail: showCardDetailModal,
             cards: modalOptions.cards,
             currentCardId,
             currentCardName: name

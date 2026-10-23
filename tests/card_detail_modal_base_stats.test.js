@@ -31,6 +31,7 @@ describe('showCardDetailModal', () => {
     });
 
     afterEach(() => {
+        document.querySelector('#card-detail-modal .close-btn')?.click();
         document.body.innerHTML = '';
     });
 
@@ -59,5 +60,25 @@ describe('showCardDetailModal', () => {
         expect(document.body.textContent).not.toContain('7');
         expect(document.body.textContent).not.toContain('9');
         expect(document.body.textContent).not.toContain('8');
+    });
+
+    test('description navigation receives the detail action and preserves the back stack', () => {
+        const { showPreviewDescriptionTooltip } = require('../src/previewDescriptionTooltip.js');
+        const original = { id: 1, name: '原卡', description: '' };
+        const derived = { id: 2, name: '衍生卡', description: '' };
+        const cards = [original, derived];
+        showCardDetailModal(original, { cards });
+        const token = document.createElement('button');
+        token.dataset.previewToken = 'derived';
+        token.dataset.previewValue = '衍生卡';
+        document.getElementById('card-detail-modal').appendChild(token);
+        token.click();
+        const options = showPreviewDescriptionTooltip.mock.calls.at(-1)[3];
+        expect(options.openCardDetail).toBe(showCardDetailModal);
+        expect(options.cards).toBe(cards);
+        options.openCardDetail(derived, { cards, navigationMode: 'push' });
+        expect(document.getElementById('card-detail-modal').textContent).toContain('衍生卡');
+        document.querySelector('#card-detail-modal .back-btn').click();
+        expect(document.getElementById('card-detail-modal').textContent).toContain('原卡');
     });
 });

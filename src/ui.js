@@ -5388,6 +5388,7 @@ function handleGameClick(event) {
             const currentCardId = previewRoot?.dataset?.previewCardId || null;
             const currentCardName = previewRoot?.dataset?.previewCardName || '';
             void showPreviewDescriptionTooltip(clickedPreviewToken, tokenType, tokenValue, {
+                openCardDetail: showCardDetailModal,
                 currentCardId,
                 currentCardName
             });

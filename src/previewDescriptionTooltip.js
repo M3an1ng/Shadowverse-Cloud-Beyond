@@ -1,6 +1,5 @@
 import { renderDescriptionHtml } from './descriptionParser.js';
 import { resolveKeywordInfo, resolveDerivedCardMatch } from './previewDescriptionLookup.js';
-import { showCardDetailModal } from './components/CardDetailMockup.js';
 
 let activeTooltip = null;
 let activeRequestId = 0;
@@ -226,7 +225,7 @@ export async function showPreviewDescriptionTooltip(anchorEl, tokenType, tokenVa
             }
             const { previewUrl, detailUrl } = resolveDerivedArtUrls(result.match);
             hidePreviewDescriptionTooltip();
-            showCardDetailModal(result.match, {
+            options.openCardDetail(result.match, {
                 previewUrl,
                 detailUrl,
                 cards: options.cards,

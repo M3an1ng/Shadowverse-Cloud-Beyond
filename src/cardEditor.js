@@ -779,6 +779,7 @@ class CardEditor {
             event.preventDefault();
             event.stopPropagation();
             void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, {
+                openCardDetail: showCardDetailModal,
                 cards: this.allCardsData,
                 currentCardId: this.currentCard?.id ?? this.currentCard?.Id ?? this.currentCard?.CardId ?? null,
                 currentCardName: this.currentCard?.name ?? this.currentCard?.Name ?? ''
