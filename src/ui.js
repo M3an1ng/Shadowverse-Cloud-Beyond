@@ -5398,7 +5398,9 @@ function handleGameClick(event) {
     if (clickedMatchHistoryRow) {
         event.preventDefault();
         event.stopPropagation();
-        void showMatchHistoryCardPreview(clickedMatchHistoryRow);
+        void showMatchHistoryCardPreview(clickedMatchHistoryRow).catch(error => {
+            console.error('UI: Failed to load match history card preview.', error);
+        });
         return;
     }
 

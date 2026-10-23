@@ -57,7 +57,8 @@ jest.mock('../src/ui/logPanel.js', () => ({
     appendInMatchUsedCard: jest.fn(),
     appendInMatchDestroyedCard: jest.fn(),
     clearInMatchUsedCardUiState: jest.fn(),
-    findLogCardInstanceByUid: jest.fn(() => null)
+    findLogCardInstanceByUid: jest.fn(() => null),
+    buildMatchHistoryPreviewCard: jest.fn()
 }));
 
 jest.mock('../src/ui/cardAnimationSystem.js', () => ({
@@ -114,5 +115,26 @@ describe('choice target rendering', () => {
     test('resolves visible card targets to card elements', () => {
         const targetElement = resolveRenderableTargetElement('card-1');
         expect(targetElement).toBe(document.querySelector('.card[data-uid="card-1"]'));
+    });
+
+    test('历史卡牌目录加载失败在点击边界记录错误，不产生未处理拒绝', async () => {
+        const { buildMatchHistoryPreviewCard } = require('../src/ui/logPanel.js');
+        const error = new Error('HTTP 503: Unavailable');
+        buildMatchHistoryPreviewCard.mockRejectedValueOnce(error);
+        const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            jest.isolateModules(() => require('../src/ui.js'));
+            const row = document.createElement('button');
+            row.className = 'match-history-card-row';
+            row.dataset.historyCardId = '42';
+            document.getElementById('game-container').appendChild(row);
+            row.click();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(buildMatchHistoryPreviewCard).toHaveBeenCalledWith(expect.objectContaining({ cardId: '42' }));
+            expect(errorLog).toHaveBeenCalledWith('UI: Failed to load match history card preview.', error);
+        } finally {
+            errorLog.mockRestore();
+        }
     });
 });

@@ -50,8 +50,10 @@ function buildAbilitiesByCard(abilities) {
     return map;
 }
 
-function normalizeAbilityCardId(ability) {
-    return normalizeId(ability?.cardId ?? ability?.CardId);
+function setAbilityDefinitions(abilities) {
+    abilityDataCache.abilities = abilities;
+    abilityDataCache.abilityIndex = buildAbilityIndex(abilities);
+    abilityDataCache.abilitiesByCard = buildAbilitiesByCard(abilities);
 }
 
 async function fetchCards() {
@@ -63,7 +65,10 @@ async function fetchCards() {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    if (!Array.isArray(data)) {
+        throw new TypeError('Card definitions response must be an array.');
+    }
+    return data;
 }
 
 async function fetchAbilities() {
@@ -72,7 +77,10 @@ async function fetchAbilities() {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    if (!Array.isArray(data)) {
+        throw new TypeError('Ability definitions response must be an array.');
+    }
+    return data;
 }
 
 export async function ensureCardDefinitions() {
@@ -80,21 +88,21 @@ export async function ensureCardDefinitions() {
         return abilityDataCache.cards;
     }
     if (!abilityDataCache.cardsPromise) {
-        abilityDataCache.cardsPromise = fetchCards()
+        const request = fetchCards()
             .then(cards => {
-                abilityDataCache.cards = cards;
-                abilityDataCache.cardIndex = buildCardIndex(cards);
+                // 失效会撤销请求的发布权，旧响应不能覆盖刷新后的目录。
+                if (abilityDataCache.cardsPromise === request) {
+                    abilityDataCache.cards = cards;
+                    abilityDataCache.cardIndex = buildCardIndex(cards);
+                }
                 return cards;
             })
-            .catch(error => {
-                console.warn('AbilityDataCache: failed to load cards', error);
-                abilityDataCache.cards = [];
-                abilityDataCache.cardIndex = new Map();
-                return [];
-            })
             .finally(() => {
-                abilityDataCache.cardsPromise = null;
+                if (abilityDataCache.cardsPromise === request) {
+                    abilityDataCache.cardsPromise = null;
+                }
             });
+        abilityDataCache.cardsPromise = request;
     }
     return await abilityDataCache.cardsPromise;
 }
@@ -104,23 +112,19 @@ export async function ensureAbilityDefinitions() {
         return abilityDataCache.abilities;
     }
     if (!abilityDataCache.abilitiesPromise) {
-        abilityDataCache.abilitiesPromise = fetchAbilities()
+        const request = fetchAbilities()
             .then(abilities => {
-                abilityDataCache.abilities = abilities;
-                abilityDataCache.abilityIndex = buildAbilityIndex(abilities);
-                abilityDataCache.abilitiesByCard = buildAbilitiesByCard(abilities);
+                if (abilityDataCache.abilitiesPromise === request) {
+                    setAbilityDefinitions(abilities);
+                }
                 return abilities;
             })
-            .catch(error => {
-                console.warn('AbilityDataCache: failed to load abilities', error);
-                abilityDataCache.abilities = [];
-                abilityDataCache.abilityIndex = new Map();
-                abilityDataCache.abilitiesByCard = new Map();
-                return [];
-            })
             .finally(() => {
-                abilityDataCache.abilitiesPromise = null;
+                if (abilityDataCache.abilitiesPromise === request) {
+                    abilityDataCache.abilitiesPromise = null;
+                }
             });
+        abilityDataCache.abilitiesPromise = request;
     }
     return await abilityDataCache.abilitiesPromise;
 }
@@ -170,7 +174,6 @@ export function upsertAbilityDataCacheEntry(ability) {
         return;
     }
 
-    const cardId = normalizeAbilityCardId(ability);
     if (!abilityDataCache.abilities) {
         return;
     }
@@ -180,13 +183,7 @@ export function upsertAbilityDataCacheEntry(ability) {
         return existingId !== abilityId;
     });
     nextAbilities.push(ability);
-    abilityDataCache.abilities = nextAbilities;
-    abilityDataCache.abilityIndex = buildAbilityIndex(nextAbilities);
-    abilityDataCache.abilitiesByCard = buildAbilitiesByCard(nextAbilities);
-
-    if (cardId != null && !abilityDataCache.abilitiesByCard.has(cardId)) {
-        abilityDataCache.abilitiesByCard.set(cardId, [ability]);
-    }
+    setAbilityDefinitions(nextAbilities);
 }
 
 export function removeAbilityDataCacheEntry(abilityId) {
@@ -204,9 +201,7 @@ export function removeAbilityDataCacheEntry(abilityId) {
         const existingId = normalizeId(existing?.id ?? existing?.Id);
         return existingId !== normalizedId;
     });
-    abilityDataCache.abilities = nextAbilities;
-    abilityDataCache.abilityIndex = buildAbilityIndex(nextAbilities);
-    abilityDataCache.abilitiesByCard = buildAbilitiesByCard(nextAbilities);
+    setAbilityDefinitions(nextAbilities);
 }
 
 export async function refreshAbilityDataCache() {
