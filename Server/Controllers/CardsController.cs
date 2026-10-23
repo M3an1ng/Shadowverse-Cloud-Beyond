@@ -590,12 +590,11 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
             var versionToken = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var targetExtension = ".webp";
-            var fileName = $"{kind}-{versionToken}{targetExtension}";
+            var fileName = $"{kind}-{versionToken}-{Guid.NewGuid():N}{targetExtension}";
             var filePath = Path.Combine(cardFolder, fileName);
             var newPath = $"/assets/cards/{id}/{fileName}";
 
             var existingPath = kind == "preview" ? card.ArtPreview : card.ArtDetail;
-            TryDeleteExistingArt(workspaceRoot, existingPath, newPath);
 
             try
             {
@@ -607,25 +606,51 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             }
             catch (UnknownImageFormatException)
             {
+                System.IO.File.Delete(filePath);
                 return BadRequest("Unsupported image content.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to convert {ArtKind} art to WebP for card {CardId}.", kind, id);
+                System.IO.File.Delete(filePath);
                 return StatusCode(StatusCodes.Status500InternalServerError, "Failed to process card art.");
             }
 
-            if (kind == "preview")
+            var previousUpdatedAt = card.UpdatedAt;
+            var previousUpdatedBy = card.UpdatedBy;
+            // Keep the previous file valid until the new reference has been persisted.
+            try
             {
-                card.ArtPreview = newPath;
+                if (kind == "preview")
+                {
+                    card.ArtPreview = newPath;
+                }
+                else
+                {
+                    card.ArtDetail = newPath;
+                }
+
+                await TouchCardMetadataAsync(card);
+                await _cardRepository.UpdateAsync(card);
             }
-            else
+            catch
             {
-                card.ArtDetail = newPath;
+                if (kind == "preview")
+                {
+                    card.ArtPreview = existingPath;
+                }
+                else
+                {
+                    card.ArtDetail = existingPath;
+                }
+                card.UpdatedAt = previousUpdatedAt;
+                card.UpdatedBy = previousUpdatedBy;
+                System.IO.File.Delete(filePath);
+                throw;
             }
 
-            await TouchCardMetadataAsync(card);
-            await _cardRepository.UpdateAsync(card);
+            // Notification errors are post-commit failures, not a reason to remove the saved image.
+            TryDeleteExistingArt(workspaceRoot, existingPath, newPath);
             await _gameService.NotifyCardDefinitionUpdatedAsync(id);
             var dto = _mapper.Map<CardDefinitionDto>(card);
             AppendDataRevisionHeader();
