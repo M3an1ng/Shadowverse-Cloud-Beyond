@@ -1052,96 +1052,70 @@
     }
 }
 
-/* --- Console Overlay --- */
-#dev-console {
+/* Frontend console: scoped styles do not affect the server log viewer. */
+#dev-console.frontend-console {
     position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 300px;
-    background-color: rgba(10, 10, 10, 0.95);
-    border-top: 1px solid var(--color-primary);
-    z-index: 9999;
+    inset: auto 1rem 1rem;
+    height: min(68vh, 720px);
+    z-index: 10000;
     display: flex;
     flex-direction: column;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    transform: translateY(100%);
-    transition: transform var(--transition-normal);
+    color: #e4eaf1;
+    background: #111820;
+    border: 1px solid #394655;
+    border-radius: 12px;
+    box-shadow: 0 16px 48px #050a1199;
+    font: 14px/1.5 var(--font-sans, system-ui, sans-serif);
 }
-
-#dev-console.open {
-    transform: translateY(0);
-}
-
-.console-header {
+#dev-console.frontend-console[hidden] { display: none; }
+.frontend-console__header, .frontend-console__toolbar, .frontend-console__footer {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: var(--space-2) var(--space-4);
-    background-color: var(--color-surface-highlight);
-    border-bottom: 1px solid var(--color-border);
+    gap: 12px;
+    padding: 12px 18px;
 }
-
-.console-title {
-    font-weight: bold;
-    color: var(--color-primary);
+.frontend-console__header { justify-content: space-between; border-bottom: 1px solid #2b3745; }
+.frontend-console__header h2 { margin: 0; font-size: 18px; font-weight: 600; color: #f4f7fb; }
+.frontend-console__header p { margin: 4px 0 0; color: #a8b5c4; font-size: 12px; }
+.frontend-console button, .frontend-console input, .frontend-console select {
+    box-sizing: border-box;
+    min-height: 40px;
+    border: 1px solid #435267;
+    border-radius: 6px;
+    background: #1a2532;
+    color: #e4eaf1;
+    padding: 7px 10px;
+    font: inherit;
 }
-
-.console-actions {
-    display: flex;
-    gap: var(--space-2);
-}
-
-.console-btn {
-    background: none;
-    border: none;
-    color: var(--color-secondary);
-    cursor: pointer;
-    font-size: var(--text-xs);
-}
-
-.console-btn:hover {
-    color: var(--color-text);
-}
-
-.console-output {
-    flex-grow: 1;
-    overflow-y: auto;
-    padding: var(--space-2);
-    color: #d4d4d4;
-    flex: 1;
-    min-height: 0;
-}
-
-.log-entry {
-    margin-bottom: 2px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 2px 0;
-}
-
-.log-info { color: #60a5fa; }
-.log-warn { color: #fbbf24; }
-.log-error { color: #ef4444; }
-.log-success { color: #34d399; }
-
-.console-input-area {
-    display: flex;
-    padding: var(--space-2);
-    border-top: 1px solid var(--color-border);
-    background-color: var(--color-surface);
-}
-
-.console-prompt {
-    color: var(--color-primary);
-    margin-right: var(--space-2);
-}
-
-#console-input {
-    flex-grow: 1;
-    background: transparent;
-    border: none;
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    outline: none;
+.frontend-console button { cursor: pointer; white-space: nowrap; }
+.frontend-console button:hover { background: #293b4f; border-color: #759cc4; }
+.frontend-console :is(button, input, select):focus-visible { outline: 2px solid #8ab9ea; outline-offset: 2px; }
+.frontend-console button[aria-pressed="true"] { color: #ffdc91; border-color: #b7954b; }
+.frontend-console__toolbar { flex-wrap: wrap; background: #151f2a; }
+.frontend-console__toolbar label { display: flex; align-items: center; gap: 8px; color: #b8c5d5; white-space: nowrap; }
+.frontend-console__search { flex: 1; min-width: 180px; }
+.frontend-console__search input { width: 100%; min-width: 0; }
+.frontend-console input::placeholder { color: #94a4b7; opacity: 1; }
+.frontend-console .frontend-console__follow { white-space: nowrap; }
+.frontend-console__follow input { min-height: 0; width: 16px; height: 16px; accent-color: #8ab9ea; }
+.frontend-console__list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.frontend-console__entry { display: grid; grid-template-columns: 76px 40px minmax(0, 1fr); gap: 12px; padding: 9px 18px; border-bottom: 1px solid #25303c; }
+.frontend-console__entry time, .frontend-console__entry pre { font: 13px/1.6 ui-monospace, Consolas, monospace; margin: 0; font-variant-numeric: tabular-nums; }
+.frontend-console__entry time { color: #9dacbf; }
+.frontend-console__entry pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.frontend-console__level { color: #a7c6e6; font-size: 12px; padding-top: 1px; }
+.frontend-console__entry[data-level="warn"] { background: #e7b9510b; }
+.frontend-console__entry[data-level="warn"] .frontend-console__level { color: #f2d187; }
+.frontend-console__entry[data-level="error"] { background: #f4877c0d; }
+.frontend-console__entry[data-level="error"] .frontend-console__level { color: #ffaca2; }
+.frontend-console__entry[data-level="debug"] .frontend-console__level { color: #bac0cb; }
+.frontend-console__empty { padding: 24px 18px; margin: 0; color: #a8b5c4; }
+.frontend-console__footer { justify-content: space-between; flex-wrap: wrap; border-top: 1px solid #2b3745; color: #9facbd; font-size: 12px; }
+@media (max-width: 600px) {
+    #dev-console.frontend-console { inset: auto 0 0; height: 82dvh; border-radius: 12px 12px 0 0; font-size: 14px; }
+    .frontend-console__header, .frontend-console__toolbar, .frontend-console__footer { padding: 10px 12px; gap: 8px; }
+    .frontend-console__search { flex-basis: 100%; order: -1; }
+    .frontend-console :is(button, select, input[type="search"]) { min-height: 44px; }
+    .frontend-console__entry { grid-template-columns: 70px 32px minmax(0, 1fr); gap: 6px; padding: 9px 12px; }
+    .frontend-console__footer span:last-child { display: none; }
 }

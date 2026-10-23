@@ -41,6 +41,7 @@
     "vite": "^6.3.5"
   },
   "jest": {
+    "testPathIgnorePatterns": ["/node_modules/", "/tests/archive/"],
     "testEnvironment": "jsdom",
     "setupFilesAfterEnv": [
       "<rootDir>/tests/jest.setup.js"

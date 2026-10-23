@@ -58,6 +58,8 @@ import {
     QUEST_PROGRESS_UPDATED_EVENT,
     QUEST_REWARD_CLAIMED_EVENT
 } from './questFeedback.js';
+// 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
+initDevConsole();
 // import { endTurn } from './turnManager.js'; // Keep commented out
 // Old SignalR setup code removed. New setup will be added later.
 // --- End SignalR Setup ---
@@ -212,20 +214,6 @@ let roomExitDecisionResolve = null;
 const LOBBY_HANDSHAKE_STORAGE_KEY = 'svb.lobby.handshake';
 const HEARTBEAT_INTERVAL_MS = 30000;
 const connectionHeartbeatTimers = new WeakMap();
-const DEBUG_FLAG = isDebugModeEnabled();
-let DEBUG_CONSOLE_ENABLED = DEBUG_FLAG;
-let DEBUG_CONSOLE_AUTOSHOW = false;
-
-function isDebugModeEnabled() {
-    try {
-        const fromQuery = new URLSearchParams(window.location.search).get('debug');
-        const fromStorage = getStoredValue('svb.debug') || getStoredValue('svb.debug.console');
-        return fromQuery === '1' || fromQuery === 'true' || fromStorage === 'true' || fromStorage === '1';
-    } catch (err) {
-        console.warn('DEBUG flag detection failed, defaulting to disabled.', err);
-        return false;
-    }
-}
 
 async function apiPostJson(url, body) {
     const response = await fetch(url, {
@@ -1905,13 +1893,6 @@ async function initializeApp() {
             // 7. Setup core event listeners (AFTER connection and UI are ready)
             setupEventListeners();
 
-            // 8. Initialize developer console
-            DEBUG_CONSOLE_ENABLED = DEBUG_FLAG || !!handshake.useAiFallback || !!handshake.dualControl; // 单人模式也强制开启
-            DEBUG_CONSOLE_AUTOSHOW = !!handshake.useAiFallback || !!handshake.dualControl;
-            
-            // Always initialize dev console to ensure the global object exists,
-            // but control visibility/enabled state via logic
-            initDevConsole(true, DEBUG_CONSOLE_AUTOSHOW, () => connection);
 
 
         } catch (error) {
@@ -4994,52 +4975,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.warn('MAIN: Failed to prefetch DeckEnvironment options.', error);
     });
     
-    // Initialize dev console early to bind global handlers
-    try {
-        // We pass true to ensure the instance is created, but visibility is controlled later
-        const consoleInstance = initDevConsole(true, false, () => connection);
-        
-        // Ensure window.devConsole points to the instance for the toggle button
-        if (consoleInstance && !window.devConsole) {
-            window.devConsole = consoleInstance;
-        }
-        
-        // Update console button state based on route
-        const updateConsoleButtonState = (route) => {
-            const btn = document.getElementById('dev-console-toggle');
-            if (!btn) return;
-
-            // Only enable in game route
-            if (route === 'game') {
-                btn.removeAttribute('disabled');
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            } else {
-                btn.setAttribute('disabled', 'true');
-                btn.style.opacity = '0.3';
-                btn.style.pointerEvents = 'none';
-                // Also hide console if leaving game
-                if (window.devConsole && window.devConsole.hide) {
-                    window.devConsole.hide();
-                }
-            }
-        };
-
-
-        // Hook into router
-        if (router) {
-            // Initial check
-            updateConsoleButtonState(router.getCurrentRoute());
-
-            // Listen for route changes
-            appendAfterRouteChangeHandler('dev-console-toggle-state', async (_oldRoute, newRoute) => {
-                updateConsoleButtonState(newRoute);
-            });
-        }
-    } catch (error) {
-        console.error('MAIN: Failed to initialize dev console:', error);
-    }
-
     try {
         setupMultiplayerUI();
     } catch (error) {
