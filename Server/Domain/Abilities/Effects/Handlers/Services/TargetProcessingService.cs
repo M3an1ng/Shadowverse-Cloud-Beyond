@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets; // For TargetId, TargetIdType
-using ShadowverseBeyond.Server.Domain.Abilities.Effects; // For GameStateActionResult, IndividualActionResult
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
@@ -46,6 +47,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services
             {
                 _logger.LogTrace("{EffectName}: Processing target: Type={TargetType}, ID={TargetId}",
                                  effectName, targetInfo.Type, targetInfo.InstanceId);
+
+                if (targetInfo.Type == TargetType.Card
+                    && targetInfo.Card != null
+                    && EffectTargetImmunityPolicy.IsImmuneTarget(targetInfo.Card, context))
+                {
+                    _logger.LogDebug(
+                        "{EffectName}: Skipping immune target {TargetId} for effect {EffectType}.",
+                        effectName,
+                        targetInfo.InstanceId,
+                        context.CurrentEffect?.Type);
+                    continue;
+                }
+
                 DomainOperationResult domainResult;
 
                 try

@@ -14,17 +14,20 @@ public class AuthController : ControllerBase
     private readonly ApplicationDbContext _db;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IGuestDeckMigrationService _guestDeckMigration;
+    private readonly IQuestProgressService _questProgressService;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         ApplicationDbContext db,
         IPasswordHasher passwordHasher,
         IGuestDeckMigrationService guestDeckMigration,
+        IQuestProgressService questProgressService,
         ILogger<AuthController> logger)
     {
         _db = db;
         _passwordHasher = passwordHasher;
         _guestDeckMigration = guestDeckMigration;
+        _questProgressService = questProgressService;
         _logger = logger;
     }
 
@@ -140,6 +143,13 @@ public class AuthController : ControllerBase
         user.LastLoginAt = DateTime.UtcNow;
         user.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
+        await _questProgressService.RecordActivityAsync(
+            user.Id,
+            QuestActivityType.Login,
+            "Login",
+            "login",
+            occurredAtUtc: user.LastLoginAt,
+            cancellationToken: cancellationToken);
 
         return Ok(new AuthResponse
         {

@@ -9,6 +9,7 @@ namespace ShadowverseBeyond.Server.Dtos
     {
         public string EffectKey { get; init; } = string.Empty;
         public string SourceCardName { get; init; } = string.Empty;
+        public string SourceCardArtPreview { get; init; } = string.Empty;
         public string SourceAbilityName { get; init; } = string.Empty;
     }
 }

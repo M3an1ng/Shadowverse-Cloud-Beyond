@@ -678,17 +678,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
         internal void ApplyTurnEnd()
         {
-            SetCounter(ComboCounterKey, 0);
-            IsPpBoostArmed = false;
         }
 
 
         public DomainOperationResult EndTurn()
         {
+            return new DomainOperationResult { Success = true };
+        }
+
+        public DomainOperationResult CleanupEndOfTurnState()
+        {
             var result = new DomainOperationResult();
             var oldCombo = Combo;
             var wasPpBoostArmed = IsPpBoostArmed;
-            ApplyTurnEnd();
+            SetCounter(ComboCounterKey, 0);
+            IsPpBoostArmed = false;
             var newCombo = Combo;
             if (newCombo != oldCombo)
             {
@@ -729,7 +733,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 throw new GameLogicException("Cannot replace more cards than are in hand.");
 
             var result = new DomainOperationResult();
-            var cardsToReplace = this.Hand.Where(c => cardUidsToReplace.Contains(c.InstanceId)).ToList();
+            var replacementSlots = this.Hand
+                .Select((card, index) => new { Card = card, Index = index })
+                .Where(slot => cardUidsToReplace.Contains(slot.Card.InstanceId))
+                .OrderBy(slot => slot.Index)
+                .ToList();
+            var cardsToReplace = replacementSlots.Select(slot => slot.Card).ToList();
 
             // Per user instruction, perform direct state mutation as Mulligan is a special case.
 
@@ -753,7 +762,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
                 var drawnCard = this.Deck[0];
                 this.Deck.RemoveAt(0);
-                this.Hand.Add(drawnCard);
+                var insertIndex = Math.Min(replacementSlots[i].Index, this.Hand.Count);
+                this.Hand.Insert(insertIndex, drawnCard);
                 drawnCard.CurrentZone = CardZone.Hand;
                 drawnCard.ZoneStayTurn = 0;
             }
@@ -1021,7 +1031,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             };
         }
 
-        public DomainOperationResult ShuffleCardsIntoDeck(List<CardInstance> cardInstancesToShuffle)
+        public DomainOperationResult ShuffleCardsIntoDeck(
+            List<CardInstance> cardInstancesToShuffle,
+            DeckInsertMode insertMode = DeckInsertMode.Random)
         {
             var result = new DomainOperationResult();
             if (cardInstancesToShuffle == null)
@@ -1032,6 +1044,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             var generatedExpectedMoveEvent = false;
+            var projectedDeckCount = Deck.Count;
             foreach (var cardInstance in cardInstancesToShuffle)
             {
                 if (cardInstance.CurrentZone == CardZone.Deck)
@@ -1039,8 +1052,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     continue;
                 }
 
-                var shuffleResult = MoveCard(cardInstance, CardZone.Deck, null, CardMoveReason.ShuffledIntoDeck);
-                generatedExpectedMoveEvent = generatedExpectedMoveEvent || HasMoveToZone(shuffleResult, CardZone.Deck);
+                var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount);
+                var shuffleResult = MoveCard(cardInstance, CardZone.Deck, insertIndex, CardMoveReason.ShuffledIntoDeck);
+                var movedToDeck = HasMoveToZone(shuffleResult, CardZone.Deck);
+                generatedExpectedMoveEvent = generatedExpectedMoveEvent || movedToDeck;
+                if (movedToDeck)
+                {
+                    projectedDeckCount++;
+                }
                 result.GeneratedEvents.AddRange(shuffleResult.GeneratedEvents);
             }
 
@@ -1122,7 +1141,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             CardInstance cardInHand,
             PlayMode playMode = PlayMode.Base,
             int? paidCost = null,
-            Guid? triggeredAbilityRuntimeId = null)
+            Guid? triggeredAbilityRuntimeId = null,
+            int? alternateCardDefinitionId = null)
         {
             var result = new DomainOperationResult();
             if (!this.Hand.Contains(cardInHand))
@@ -1153,11 +1173,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 cardInHand,
                 playMode,
                 effectiveCost,
-                triggeredAbilityRuntimeId: triggeredAbilityRuntimeId));
-            if (playMode == PlayMode.Enhance)
-            {
-                result.GeneratedEvents.Add(new EnhanceEvent(this, cardInHand, effectiveCost, triggeredAbilityRuntimeId));
-            }
+                triggeredAbilityRuntimeId: triggeredAbilityRuntimeId,
+                alternateCardDefinitionId: alternateCardDefinitionId));
             return result;
         }
 

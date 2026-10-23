@@ -1,5 +1,8 @@
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
-import { CARD_CATALOG_INVALIDATED_EVENT } from './dataChangeEvents.js';
+import {
+    CARD_CATALOG_INVALIDATED_EVENT,
+    isAbilityOnlyInvalidation
+} from './dataChangeEvents.js';
 
 const cardKeywordGlossary = {
     Storm: {
@@ -188,12 +191,23 @@ const abilityKeywordGlossary = {
     SuperEvolveEffect: {
         name: '超进化时',
         description: '消耗SEP使卡片超进化时，将发动能力。'
-    },
+    }
+};
+
+const deckKeywordGlossary = {
     UnlimitedDeck: {
         name: '无垠界域牌组',
         description: '由11张不同类型的卡片所组成的牌组。\n包含1张『裁丝银偶』、1张『哈比』、1张『断界人』、1张『静默甲胄』、1张『星之鲸』、1张『虚境的俯瞰』、1张『往生者』、1张『珀伽索斯』、1张『八元冢』、1张『比蒙』与1张『口袋银河』。'
-    },
+    }
 };
+
+const keywordSources = [
+    { kind: 'card', enumName: 'CardKeyword', glossary: cardKeywordGlossary },
+    { kind: 'ability', enumName: 'AbilityKeyword', glossary: abilityKeywordGlossary },
+    { kind: 'deck', enumName: 'DeckKeyword', glossary: deckKeywordGlossary }
+];
+
+const keywordSourceByKind = new Map(keywordSources.map(source => [source.kind, source]));
 
 const keywordNormalizationMap = new Map([
     ['馳', '驰'],
@@ -220,7 +234,10 @@ let keywordLabelPromise = null;
 
 let cardIndex = null;
 let cardIndexPromise = null;
-document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
+document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
+    if (isAbilityOnlyInvalidation(event?.detail || {})) {
+        return;
+    }
     cardIndex = null;
     cardIndexPromise = null;
 });
@@ -257,38 +274,33 @@ async function loadKeywordLabelLookup() {
 
     if (!keywordLabelPromise) {
         keywordLabelPromise = (async () => {
-            try {
-                const [cardKeywords, abilityKeywords] = await Promise.all([
-                    fetchEnumLocalization('CardKeyword'),
-                    fetchEnumLocalization('AbilityKeyword')
-                ]);
+            const labelLookup = new Map();
+            const normalizedLookup = new Map();
+            const addEntries = (source, entries) => {
+                Object.entries(entries || {}).forEach(([key, label]) => {
+                    if (!label || key === 'None') return;
+                    const trimmed = String(label).trim();
+                    if (!trimmed) return;
+                    const entry = { kind: source.kind, key, label: trimmed };
+                    labelLookup.set(trimmed, entry);
+                    const normalized = normalizeKeywordLabel(trimmed);
+                    if (!normalizedLookup.has(normalized)) {
+                        normalizedLookup.set(normalized, entry);
+                    }
+                });
+            };
 
-                const labelLookup = new Map();
-                const normalizedLookup = new Map();
-                const addEntries = (kind, entries) => {
-                    Object.entries(entries || {}).forEach(([key, label]) => {
-                        if (!label || key === 'None') return;
-                        const trimmed = String(label).trim();
-                        if (!trimmed) return;
-                        const entry = { kind, key, label: trimmed };
-                        labelLookup.set(trimmed, entry);
-                        const normalized = normalizeKeywordLabel(trimmed);
-                        if (!normalizedLookup.has(normalized)) {
-                            normalizedLookup.set(normalized, entry);
-                        }
-                    });
-                };
+            await Promise.all(keywordSources.map(async source => {
+                try {
+                    const entries = await fetchEnumLocalization(source.enumName);
+                    addEntries(source, entries);
+                } catch (error) {
+                    console.warn(`PreviewDescriptionLookup: Failed to load ${source.enumName} localization.`, error);
+                }
+            }));
 
-                addEntries('card', cardKeywords);
-                addEntries('ability', abilityKeywords);
-
-                keywordLabelLookup = labelLookup;
-                keywordLabelNormalizedLookup = normalizedLookup;
-            } catch (error) {
-                console.warn('PreviewDescriptionLookup: Failed to load keyword localization.', error);
-                keywordLabelLookup = new Map();
-                keywordLabelNormalizedLookup = new Map();
-            }
+            keywordLabelLookup = labelLookup;
+            keywordLabelNormalizedLookup = normalizedLookup;
 
             return {
                 labelLookup: keywordLabelLookup,
@@ -380,7 +392,7 @@ export async function resolveKeywordInfo(rawText) {
         return null;
     }
 
-    const glossary = entry.kind === 'card' ? cardKeywordGlossary : abilityKeywordGlossary;
+    const glossary = keywordSourceByKind.get(entry.kind)?.glossary || {};
     const info = glossary[entry.key];
     return {
         kind: entry.kind,
@@ -412,7 +424,7 @@ export async function resolveDerivedCardInfo(rawText, options = {}) {
 function parseDerivedId(rawText) {
     const text = String(rawText ?? '').trim();
     if (!text) return { name: '', id: null };
-    const match = text.match(/^(.*?)(?:\\s*)[（(](\\d+)[）)]$/);
+    const match = text.match(/^(.*?)(?:\s*)[（(](\d+)[）)]$/);
     if (!match) {
         return { name: text, id: null };
     }

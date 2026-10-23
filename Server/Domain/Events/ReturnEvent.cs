@@ -24,11 +24,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("返回的卡牌", "被返回的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? ReturnedCard => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("返回来源快照", "生成事件时记录的返回来源快照（若来源为卡牌）。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? ReturnSourceSnapshot { get; }
+        [GameEventParameter("返回来源快照", "提交返回事件时记录的返回来源快照（若来源为卡牌）。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? ReturnSourceSnapshot { get; private set; }
 
-        [GameEventParameter("返回目标快照", "生成事件时记录的返回目标快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? ReturnedCardSnapshot { get; }
+        [GameEventParameter("返回目标快照", "提交返回事件时记录的返回目标快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? ReturnedCardSnapshot { get; private set; }
 
         public bool ReturnApplied { get; private set; }
 
@@ -45,7 +45,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
-            ReturnedCardSnapshot = returnedCardSnapshot ?? TryCreateSnapshot(card);
+            ReturnedCardSnapshot = returnedCardSnapshot;
             ReturnSourceSnapshot = returnSourceSnapshot;
         }
 
@@ -60,7 +60,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
-            ReturnedCardSnapshot = returnedCardSnapshot ?? TryCreateSnapshot(card);
+            ReturnedCardSnapshot = returnedCardSnapshot;
             ReturnSourceSnapshot = returnSourceSnapshot;
         }
 
@@ -78,6 +78,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "ReturnEvent.Commit: player is null." };
             }
+
+            ReturnedCardSnapshot ??= CardSnapshotCapture.TryCapture(card);
+            ReturnSourceSnapshot ??= CardSnapshotCapture.TryCapture(Source?.Card);
 
             var result = new DomainOperationResult { Success = true };
             ReturnApplied = card.CurrentZone != CardZone.Hand && player.Hand.Count < GameConstants.Hand.MaxHandSize;
@@ -101,21 +104,5 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return $"{AnnouncementTokens.Card(card)}返回手牌。";
         }
 
-        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
-        {
-            if (card == null)
-            {
-                return null;
-            }
-
-            try
-            {
-                return CardInstanceSnapshot.From(card);
-            }
-            catch
-            {
-                return null;
-            }
-        }
     }
 }

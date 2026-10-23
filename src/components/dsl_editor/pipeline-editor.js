@@ -698,8 +698,10 @@ export function renderPipelineStageInlineEditor(editor, stage, container) {
         ? "Boolean"
         : slot === "countExpression"
             ? "Int32"
-            : slot === "sortExpression" || slot === "keyExpression"
+            : slot === "sortExpression"
                 ? "NonEntity"
+                : slot === "keyExpression"
+                    ? "ScalarOrScalarList"
                 : slot === "selectExpression"
                     ? "Object"
                     : null;

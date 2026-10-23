@@ -56,12 +56,12 @@ Write-Host "Starting backend server..." -ForegroundColor Yellow
 $backendJob = Start-Job -ScriptBlock {
     Set-Location $using:PWD
     Push-Location "Server"
-    dotnet run --urls "http://localhost:5000"
+    dotnet run --launch-profile http
 }
 
 # Wait for backend to start
 Start-Sleep -Seconds 5
-Write-Host "✓ Backend server started (http://localhost:5000)" -ForegroundColor Green
+Write-Host "✓ Backend server started (http://localhost:5100)" -ForegroundColor Green
 
 # Start frontend server  
 Write-Host "Starting frontend server..." -ForegroundColor Yellow
@@ -91,8 +91,8 @@ Write-Host ""
 Write-Host "🎮 Development environment is ready!" -ForegroundColor Green
 Write-Host "=" * 50 -ForegroundColor Gray
 Write-Host "Frontend: http://localhost:5173" -ForegroundColor Cyan
-Write-Host "Backend:  http://localhost:5000" -ForegroundColor Cyan
-Write-Host "API Docs: http://localhost:5000/swagger" -ForegroundColor Cyan
+Write-Host "Backend:  http://localhost:5100" -ForegroundColor Cyan
+Write-Host "API Docs: http://localhost:5100/swagger" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "💡 Tips:" -ForegroundColor Yellow
 Write-Host "- Press Ctrl+C to stop servers" -ForegroundColor White

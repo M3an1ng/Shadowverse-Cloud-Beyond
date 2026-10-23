@@ -15,8 +15,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         [ParameterMetadata("选择数量", UiControlType.NumberStepper, DefaultValue = 1, Min = 1, Description = "每次执行选择的分支数量。")]
         public int SelectionCount { get; set; } = 1;
 
-        [ParameterMetadata("可循环", UiControlType.Checkbox, DefaultValue = true, Description = "开启后会在末尾回绕继续选取。")]
-        public bool LoopSelection { get; set; } = true;
+        [ParameterMetadata("可循环", UiControlType.Checkbox, DefaultValue = false, Description = "开启后会在末尾回绕继续选取。")]
+        public bool LoopSelection { get; set; } = false;
 
         [ParameterMetadata("执行顺序", UiControlType.Dropdown, DefaultValue = SequenceOrder.Forward, Description = "可选依序或逆序。")]
         public SequenceOrder SelectionOrder { get; set; } = SequenceOrder.Forward;

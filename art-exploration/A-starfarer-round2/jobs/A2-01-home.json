@@ -1,0 +1,72 @@
+{
+  "id": "A2-01-home",
+  "prompt": "为幻想卡牌游戏设计一张完整的桌面横屏界面美术参考图，16:9，满幅单界面。不是网页、设备样机、拼贴或界面设计说明海报。关键中文短句清楚，场景和插画有绘画完成度，操作区域具有真实游戏的明确层级。\n\n系列美术方向：星界航行。延续参考图的蓝紫星空、古老天文仪器、远处悬空城、冷月光与微暖灯火；继承可信的纵深、细腻金属和安静的奇幻气氛，不复制旧导航布局。金属用在卡框、天文器物和很少的分隔节点，不用装饰包住每个字段。普通操作以字重、留白、深浅平面和细线区分，金属保持暗哑，蓝色高亮只指向当前选择。标题有优雅中文宋体气质，短标签与数据采用清晰现代中文黑体；不使用难辨识花体正文。星图弧线是低调的品牌母题，不是每页必备巨大圆环。功能工作面安静、平整，背景避开文字。\n\n同一卡牌规范：样例“星辰引路者”，成年银发女性星术师，深蓝白金服装，背景为星盘；卡牌费用3在左上蓝圆标，攻击2在左下蓝色锐角标，生命4在右下暗红盾形标。卡框为细窄古金属轮廓加精细星轨内纹，插画面积大，避免厚重金框和外围霓虹。凡显示这张卡，都保持人物、名称和3/2/4一致。它是系列的样例身份，不让其他卡都变成同一张人物图。场上简化卡牌保留相同角标语义。\n\n禁止视觉退化：不做满屏金框、框套框、每行一个发光容器；不使用手机氪金大厅、商店、货币、抽卡、通行证、活动广告。没有整屏泛蓝光、巨型关闭叉或无意义英文装饰段落。只表现一个合理的当前状态，不在同一张图重复绘制多个流程。\n\n本屏任务：\n参考图1只提供世界气质、材质光照和银发星术师卡牌身份，不提供待复刻布局。重新设计有剧情进度玩家的大厅，让人像回到一座真正的星界观测台，而不是打开后台仪表盘。\n构图：宽阔的观测台前景、偏中远景的浑天仪、深处的悬城与天河，保留一大片可读的场景空间。左侧是清晰的品牌与当前旅程标题，场景中的一道视线通向章节目的地；右侧是个人展示的星辰引路者卡牌，卡牌有精致物件感但明显小于场景。不要把场景切成多块海报。让四个主要去向以统一、疏朗的导航呈现，精简文字“旅程”“对战”“卡牌”“创作”，其下仅有细微当前项标识，不做四个大金属圆形按钮。品牌使用“SHADOWVERSE”与较小“WORLD BEYOND”。\n本屏主动作唯一突出：“继续旅程”，关联章节“第二章 · 星海彼岸”，短说明“前往失落的观测台”。“前往对战”是次级动作，不与主动作等大争抢。靠下以两项轻量内容丰富大厅：“战术挑战”“今日任务”，不用边框卡片墙。任务只显示“查看任务”，不编造奖励货币和倒计时。右侧展示卡牌下标“星辰引路者”，轻入口“更换展示”。账号与设置在上边缘为小型辅助项“用户”“设置”。导航、章节、展示、摘要有主次，避免所有信息围住画面中心。画面应具有原图那种让人想进入世界的吸引力，同时比原图更沉静、更从容。",
+  "refs": [
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/A-starfarer/A-01-home.png",
+      "role": "style"
+    }
+  ],
+  "job_id": "d89f97bf-7dcf-4e28-8848-ba3cf0656807",
+  "status": "succeeded",
+  "backend": "official-codex-mcp",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "auto"
+  },
+  "references": [
+    {
+      "role": "style",
+      "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66",
+      "width": 1536,
+      "height": 864
+    }
+  ],
+  "outputs": [
+    {
+      "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-d89f97bf-7dcf-4e28-8848-ba3cf0656807\\part-1\\source-1.png",
+      "source_size": [
+        1672,
+        941
+      ],
+      "source_format": "png",
+      "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-d89f97bf-7dcf-4e28-8848-ba3cf0656807\\part-1\\image-1.png",
+      "width": 1536,
+      "height": 864,
+      "format": "png",
+      "has_alpha": false,
+      "has_transparency": false,
+      "transforms": [
+        {
+          "operation": "resize",
+          "implementation": "local",
+          "from": "1672x941",
+          "to": "1536x864",
+          "mode": "contain",
+          "padding": "white"
+        },
+        {
+          "operation": "encode",
+          "implementation": "local",
+          "format": "png",
+          "quality": null
+        }
+      ],
+      "sha256": "8e4bf7b495cb68b4b625153696600bb6a4dc7a6e0c8ec9f0036e1bc08507842e"
+    }
+  ],
+  "upstream_metadata": {
+    "quality": "high",
+    "size": "1672x941",
+    "background": "opaque",
+    "output_format": "png",
+    "count": 1
+  },
+  "started_at": "2026-09-21T00:59:21.443Z",
+  "finished_at": "2026-09-21T01:02:27.545Z"
+}

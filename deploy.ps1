@@ -27,6 +27,12 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
+$pwaRootFiles = @(
+    "manifest.webmanifest",
+    "sw.js",
+    "pwa-icon-192.png",
+    "pwa-icon-512.png"
+)
 
 Write-Host "Shadowverse Beyond one-click deploy prep" -ForegroundColor Cyan
 Write-Host ("=" * 48) -ForegroundColor Gray
@@ -97,10 +103,26 @@ if (-not $SkipFrontend) {
         exit 1
     }
 
+    foreach ($file in $pwaRootFiles) {
+        $distFile = Join-Path "dist" $file
+        if (!(Test-Path $distFile)) {
+            Write-Host ("dist/" + $file + " not found after build") -ForegroundColor Red
+            exit 1
+        }
+    }
+
     if ((Test-Path "index.prod.html") -and -not $NoBackup) {
         Copy-Item "index.prod.html" ("index.prod.html.bak-" + $stamp) -Force
     }
     Copy-Item "dist\index.html" "index.prod.html" -Force
+
+    foreach ($file in $pwaRootFiles) {
+        $targetPath = Join-Path $root $file
+        if ((Test-Path $targetPath) -and -not $NoBackup) {
+            Copy-Item $targetPath ($targetPath + ".bak-" + $stamp) -Force
+        }
+        Copy-Item (Join-Path "dist" $file) $targetPath -Force
+    }
 
     $existingCardsPath = Join-Path $root "assets\cards"
     $preservedCardsPath = Join-Path $root ("cards.preserve-" + $stamp)
@@ -129,7 +151,7 @@ if (-not $SkipFrontend) {
         Write-Host "Restored assets/cards after frontend asset refresh" -ForegroundColor Green
     }
 
-    Write-Host "Frontend prepared at root index.html + assets/" -ForegroundColor Green
+    Write-Host "Frontend prepared at root index.prod.html + assets/ + PWA files" -ForegroundColor Green
 }
 
 if (-not $SkipBackend) {
@@ -154,7 +176,7 @@ if (-not $SkipBackend) {
 
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host ("- Upload the project root (or Server/" + $PublishDir + " + data + index.html/assets) to your server.") -ForegroundColor White
+Write-Host ("- Upload the project root (or Server/" + $PublishDir + " + data + index.prod.html/assets + manifest.webmanifest/sw.js/icons) to your server.") -ForegroundColor White
 Write-Host ("- Start server: dotnet Server/" + $PublishDir + "/ShadowverseBeyond.Server.dll --urls " + $Urls) -ForegroundColor White
 Write-Host "- Ensure port 5100 is open and WebSocket is enabled." -ForegroundColor White
 

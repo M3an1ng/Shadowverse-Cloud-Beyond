@@ -103,6 +103,17 @@ public class CardDefinition
     /// </summary>
     public string? ArtDetail { get; set; }
 
+    /// <summary>
+    /// 最近修改时间（UTC）
+    /// </summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// 最近修改人
+    /// </summary>
+    [StringLength(50)]
+    public string? UpdatedBy { get; set; }
+
     // Removed EffectsJson property - effects should be managed through the ability system
 
     /// <summary>

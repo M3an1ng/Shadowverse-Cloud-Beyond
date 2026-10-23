@@ -1,4 +1,5 @@
 ﻿using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 // Server/Services/GameService.cs
 //
@@ -38,7 +39,6 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // Action DTOs incl. DebugC
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions; // Added for IConditionFactory
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // Added for IEffectExecutor
-using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Auras;
 using ShadowverseBeyond.Server.Domain.Events; // Added for IEventProcessor and PlayCardEvent
 using ShadowverseBeyond.Server.Domain.Factories; // Added for ICardFactory
@@ -80,8 +80,6 @@ namespace ShadowverseBeyond.Server.Services
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
-        // Lock objects per game to prevent concurrent modification of a single game's state
-        private readonly ConcurrentDictionary<string, SemaphoreSlim> _gameCreationSemaphores = new();
         // --- Queue and Processing Loop Management ---
         private readonly ConcurrentDictionary<string, ConcurrentQueue<PlayerActionWrapper>> _playerActionQueues = new();
         // 【架构重构】移除传统事件队列，改为立即事件广播
@@ -91,6 +89,8 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _gameLoopCancellationTokens = new(); // Stores cancellation tokens for each loop
         private readonly ConcurrentDictionary<string, Timer> _turnTimers = new();
         private readonly ConcurrentDictionary<Guid, string> _trackedEntityGameIds = new();
+        private readonly ConcurrentDictionary<string, byte> _retiringGameIds = new();
+        private readonly object _gameLoopLock = new();
 
         // Dictionary to manage DI scopes for each game session
         // Flag to prevent re-entrant EndTurn processing for the same game - REMOVED by Roo
@@ -115,37 +115,30 @@ namespace ShadowverseBeyond.Server.Services
 
             _logger.LogDebug("[EnqueuePlayerActionAsync:{GameId}] Received action {ActionType} from Player {PlayerId} with ActionId {ActionId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId, actionWrapper.ActionId);
 
-            var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
-            actionQueue.Enqueue(actionWrapper);
-            _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Action {ActionType} enqueued. Queue size: {QueueSize}", gameId, actionWrapper.ActionType, actionQueue.Count);
-
-            // Fire-and-forget: The loop is started if not running, but the client does not wait for it.
-            if (!_gameProcessingLoops.TryGetValue(gameId, out var existingLoop) || existingLoop.IsCompleted || existingLoop.IsFaulted || existingLoop.IsCanceled)
+            lock (_gameLoopLock)
             {
-                object loopLock = _gameLoopCreationLocks.GetOrAdd(gameId, _ => new object());
-                lock (loopLock)
+                if (_retiringGameIds.ContainsKey(gameId) || !_gameStates.ContainsKey(gameId))
                 {
-                    if (!_gameProcessingLoops.TryGetValue(gameId, out existingLoop) || existingLoop.IsCompleted || existingLoop.IsFaulted || existingLoop.IsCanceled)
-                    {
-                        _logger.LogInformation("[EnqueuePlayerActionAsync:{GameId}] No active processing loop found. Starting a new one.", gameId);
-                        var cts = new CancellationTokenSource();
-                        _gameLoopCancellationTokens.AddOrUpdate(gameId, cts, (_, oldCts) => { oldCts.Dispose(); return cts; });
-                        var processingTask = Task.Run(() => GameProcessingLoopAsync(gameId, cts.Token), cts.Token);
-                        _gameProcessingLoops.AddOrUpdate(gameId, processingTask, (_, oldTask) => processingTask);
-                        _logger.LogInformation("[EnqueuePlayerActionAsync:{GameId}] New processing loop started.", gameId);
-                    }
+                    _logger.LogWarning("[EnqueuePlayerActionAsync:{GameId}] Action rejected because the game is no longer active.", gameId);
+                    return Task.CompletedTask;
+                }
+
+                var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
+                actionQueue.Enqueue(actionWrapper);
+                _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Action {ActionType} enqueued. Queue size: {QueueSize}", gameId, actionWrapper.ActionType, actionQueue.Count);
+
+                if (!_gameProcessingLoops.TryGetValue(gameId, out var existingLoop) || existingLoop.IsCompleted)
+                {
+                    _logger.LogInformation("[EnqueuePlayerActionAsync:{GameId}] No active processing loop found. Starting a new one.", gameId);
+                    var cts = new CancellationTokenSource();
+                    _gameLoopCancellationTokens[gameId] = cts;
+                    _gameProcessingLoops[gameId] = Task.Run(() => GameProcessingLoopAsync(gameId, cts));
                 }
             }
 
             return Task.CompletedTask;
         }
 
-        // Need a lock object dictionary for loop creation synchronization
-        private readonly ConcurrentDictionary<string, object> _gameLoopCreationLocks = new();
-        // Lock objects per game for general game state operations
-        private readonly ConcurrentDictionary<string, object> _gameLocks = new();
-        // Duplicate declaration removed by Roo.
-        // Update constructor signature
         private readonly IClientMethodMapper _clientMethodMapper; // Added field declaration
         // Inject IClientMethodMapper, IBuffManager, and IMapper
         // Removed the duplicate field declaration added previously.
@@ -169,98 +162,17 @@ namespace ShadowverseBeyond.Server.Services
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper));
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider));
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
+            _matchService.GameDetached += RetireDetachedGame;
             _firstPlayerSelector = firstPlayerSelector ?? throw new ArgumentNullException(nameof(firstPlayerSelector));
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
         }
 
 
-        /// <summary>
-        /// Ensures that the processing loop for the specified game is running.
-        /// If the loop is not running or has completed/faulted, it starts a new one.
-        /// </summary>
-        /// <param name="gameId">The ID of the game instance.</param>
-        private void EnsureProcessingLoopRunningAsync(string gameId)
-        {
-            // Check if a loop task already exists for this game
-            if (_gameProcessingLoops.TryGetValue(gameId, out var existingTask) && !existingTask.IsCompleted && !existingTask.IsFaulted && !existingTask.IsCanceled)
-            {
-                // Loop is already running fine
-                _logger.LogTrace("[GameService:{GameId}] Processing loop already running.", gameId);
-                return;
-            }
-
-            // If the task exists but is completed/faulted/canceled, remove it before starting a new one
-            if (existingTask != null)
-            {
-                _logger.LogWarning("[GameService:{GameId}] Previous processing loop found in state: {Status}. Removing before starting new loop.", gameId, existingTask.Status);
-                _gameProcessingLoops.TryRemove(gameId, out _);
-                // Also remove the corresponding cancellation token source if it exists
-                if (_gameLoopCancellationTokens.TryRemove(gameId, out var oldCts))
-                {
-                    oldCts.Dispose(); // Dispose the old token source
-                }
-            }
-
-            _logger.LogInformation("[GameService:{GameId}] Starting new processing loop.", gameId);
-
-            // Create a new cancellation token source for this loop
-            var cts = new CancellationTokenSource();
-            if (!_gameLoopCancellationTokens.TryAdd(gameId, cts))
-            {
-                // Handle potential race condition if another thread added it just now
-                _logger.LogWarning("[GameService:{GameId}] Failed to add CancellationTokenSource, possibly due to race condition. Loop might already be starting.", gameId);
-                cts.Dispose(); // Dispose the newly created cts as it won't be used
-                // Re-check if loop is running now
-                if (_gameProcessingLoops.TryGetValue(gameId, out existingTask) && !existingTask.IsCompleted)
-                {
-                    return; // Another thread started it successfully
-                }
-                else
-                {
-                    // If still not running, log an error or retry? For now, log error.
-                    _logger.LogError("[GameService:{GameId}] Race condition detected, but loop still not running after check. Loop start failed.", gameId);
-                    return; // Avoid starting the loop without a valid CTS entry
-                }
-            }
-
-            // Create and store the new processing loop task
-            var processingTask = Task.Run(() => GameProcessingLoopAsync(gameId, cts.Token));
-
-            // Try to add the task to the dictionary
-            if (!_gameProcessingLoops.TryAdd(gameId, processingTask))
-            {
-                // Handle potential race condition if another thread added the task just now
-                _logger.LogWarning("[GameService:{GameId}] Failed to add processing task, possibly due to race condition. Loop might already be running.", gameId);
-                // Clean up the cancellation token source we added
-                if (_gameLoopCancellationTokens.TryRemove(gameId, out var addedCts))
-                {
-                    addedCts.Cancel(); // Cancel the token associated with the task we didn't store
-                    addedCts.Dispose();
-                }
-                // The task processingTask will run but won't be tracked by us, which is not ideal.
-                // Consider more robust locking if this becomes an issue.
-            }
-            else
-            {
-                _logger.LogInformation("[GameService:{GameId}] Processing loop task created and stored.", gameId);
-                // Optional: Add continuation to handle task completion/faulting for cleanup
-                processingTask.ContinueWith(t =>
-                {
-                    _logger.LogWarning(t.Exception, "[GameService:{GameId}] Processing loop task completed with status: {Status}.", gameId, t.Status);
-                    // Clean up resources when the loop finishes or faults
-                    _gameProcessingLoops.TryRemove(gameId, out _);
-                    if (_gameLoopCancellationTokens.TryRemove(gameId, out var finalCts))
-                    {
-                        finalCts.Dispose();
-                    }
-                }, TaskContinuationOptions.ExecuteSynchronously); // Execute synchronously to ensure cleanup happens promptly
-            }
-        }
-
         // 【架构重构】游戏处理循环 - 使用效果队列架构
-        private async Task GameProcessingLoopAsync(string gameId, CancellationToken cancellationToken)
+        private async Task GameProcessingLoopAsync(string gameId, CancellationTokenSource loopCancellation)
         {
+            var cancellationToken = loopCancellation.Token;
             _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop started.", gameId);
             var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
 
@@ -396,6 +308,18 @@ namespace ShadowverseBeyond.Server.Services
 
                     if (!processedItem)
                     {
+                        lock (_gameLoopLock)
+                        {
+                            if (actionQueue.IsEmpty &&
+                                (_retiringGameIds.ContainsKey(gameId) ||
+                                 _gameStates.TryGetValue(gameId, out var currentState) && currentState.IsGameOver))
+                            {
+                                ReleaseProcessingLoop(gameId, loopCancellation);
+                                ReleaseDetachedGame(gameId);
+                                break;
+                            }
+                        }
+
                         await Task.Delay(50, cancellationToken);
                     }
                 }
@@ -411,12 +335,86 @@ namespace ShadowverseBeyond.Server.Services
             finally
             {
                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop finished.", gameId);
-                _gameProcessingLoops.TryRemove(gameId, out _);
-                if (_gameLoopCancellationTokens.TryRemove(gameId, out var cts))
+                lock (_gameLoopLock)
                 {
-                    cts.Dispose();
+                    ReleaseProcessingLoop(gameId, loopCancellation);
+                    if (_playerActionQueues.TryGetValue(gameId, out var remainingQueue) && !remainingQueue.IsEmpty)
+                    {
+                        var nextCancellation = new CancellationTokenSource();
+                        _gameLoopCancellationTokens[gameId] = nextCancellation;
+                        _gameProcessingLoops[gameId] = Task.Run(() => GameProcessingLoopAsync(gameId, nextCancellation));
+                    }
+                    ReleaseDetachedGame(gameId);
                 }
-                _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);
+                loopCancellation.Dispose();
+            }
+        }
+
+        private void RetireDetachedGame(string gameId)
+        {
+            GameState? gameState;
+            lock (_gameLoopLock)
+            {
+                _retiringGameIds[gameId] = 0;
+                gameState = _gameStates.TryGetValue(gameId, out var state) ? state : null;
+                if (!_gameProcessingLoops.ContainsKey(gameId))
+                {
+                    ReleaseDetachedGame(gameId);
+                }
+            }
+
+            if (gameState == null)
+            {
+                return;
+            }
+
+            foreach (var playerId in new[] { gameState.Player1.PlayerId, gameState.Player2.PlayerId })
+            {
+                var pending = _pendingActionService.GetPendingChoiceForPlayer(gameId, playerId);
+                if (pending != null)
+                {
+                    _pendingActionService.ForceResolveChoice(pending.Request.PendingChoiceId, PlayerChoiceResult.Cancelled);
+                }
+            }
+        }
+
+        private void ReleaseDetachedGame(string gameId)
+        {
+            if (!_retiringGameIds.ContainsKey(gameId) || _gameProcessingLoops.ContainsKey(gameId) ||
+                _playerActionQueues.TryGetValue(gameId, out var queue) && !queue.IsEmpty)
+            {
+                return;
+            }
+
+            StopTurnTimer(gameId);
+            _gameStates.TryRemove(gameId, out _);
+            _playerActionQueues.TryRemove(gameId, out _);
+            _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);
+            foreach (var tracked in _trackedEntityGameIds)
+            {
+                if (string.Equals(tracked.Value, gameId, StringComparison.OrdinalIgnoreCase))
+                {
+                    _trackedEntityGameIds.TryRemove(tracked.Key, out _);
+                }
+            }
+            _retiringGameIds.TryRemove(gameId, out _);
+        }
+
+        private void ReleaseProcessingLoop(string gameId, CancellationTokenSource loopCancellation)
+        {
+            if (!_gameLoopCancellationTokens.TryGetValue(gameId, out var currentCancellation)
+                || !ReferenceEquals(currentCancellation, loopCancellation))
+            {
+                return;
+            }
+
+            _gameProcessingLoops.TryRemove(gameId, out _);
+            _gameLoopCancellationTokens.TryRemove(gameId, out _);
+            _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);
+            if (_gameStates.TryGetValue(gameId, out var gameState) && gameState.IsGameOver &&
+                _playerActionQueues.TryGetValue(gameId, out var actionQueue) && actionQueue.IsEmpty)
+            {
+                _playerActionQueues.TryRemove(gameId, out _);
             }
         }
 
@@ -1335,8 +1333,19 @@ namespace ShadowverseBeyond.Server.Services
                         return result;
                     }
 
+                var selectedPlayDefinition = cardDefinition;
+                var selectedAbilityConfigs = abilityConfigs;
+                var usesAlternatePlay = modeResolution.SelectedMode is PlayMode.Accelerate or PlayMode.Crystalize
+                    && modeResolution.SelectedAlternateCardDefinitionId.HasValue;
+                if (modeResolution.SelectedAlternateCardDefinitionId.HasValue)
+                {
+                    selectedPlayDefinition = _gameDataProvider.GetCardDefinition(modeResolution.SelectedAlternateCardDefinitionId.Value)
+                        ?? cardDefinition;
+                    selectedAbilityConfigs = _gameDataProvider.GetAbilityConfigs(selectedPlayDefinition.Id);
+                }
+
                 // Field Space Check (followers and amulets both occupy field slots)
-                if (cardDefinition.Type == CardType.Follower || cardDefinition.Type == CardType.Amulet)
+                if (selectedPlayDefinition.Type == CardType.Follower || selectedPlayDefinition.Type == CardType.Amulet)
                 {
                     if (playerState.FieldOccupancyCount >= MaxBoardSize)
                     {
@@ -1348,7 +1357,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 // --- PrePlay Condition Checks ---
                 _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting PrePlay condition checks for Card {CardName} ({CardInstanceId}).", gameId, cardDefinition.Name, cardInstanceId);
-                var playTriggerConfigs = abilityConfigs
+                var playTriggerConfigs = selectedAbilityConfigs
                     .Where(ac => ac.Trigger.EventTypes.Contains(EventType.PlayCard))
                     .ToList();
 
@@ -1372,7 +1381,11 @@ namespace ShadowverseBeyond.Server.Services
                 // --- NEW: Target Availability Check (Non-Blocking) ---
                 _logger.LogDebug("[CheckPlayabilityCore:{GameId}] Starting Target Availability checks for Card {CardInstanceId}.", gameId, cardInstanceId);
 
-                var playCardAbilities = cardInHand.Abilities.Where(a => a.TriggerConfig.EventTypes.Contains(EventType.PlayCard));
+                var playCardAbilities = await ResolvePlayabilityPlayAbilitiesAsync(
+                    gameContext,
+                    cardInHand,
+                    selectedAbilityConfigs,
+                    usesAlternatePlay);
 
                 foreach (var ability in playCardAbilities)
                 {
@@ -1426,6 +1439,58 @@ namespace ShadowverseBeyond.Server.Services
 
             return result;
         }
+
+        private static async Task<List<IAbility>> ResolvePlayabilityPlayAbilitiesAsync(
+            GameContext gameContext,
+            CardInstance cardInHand,
+            List<AbilityConfig> abilityConfigs,
+            bool usesAlternatePlay)
+        {
+            if (!usesAlternatePlay)
+            {
+                return cardInHand.Abilities
+                    .Where(a => a.TriggerConfig.EventTypes.Contains(EventType.PlayCard))
+                    .Cast<IAbility>()
+                    .ToList();
+            }
+
+            if (abilityConfigs == null || abilityConfigs.Count == 0)
+            {
+                return new List<IAbility>();
+            }
+
+            var abilityFactory = gameContext.ServiceProvider.GetService<IAbilityFactory>();
+            if (abilityFactory == null)
+            {
+                return new List<IAbility>();
+            }
+
+            var abilities = abilityFactory
+                .CreateAbilities(cardInHand, abilityConfigs)
+                .Cast<IAbility>()
+                .ToList();
+            var player = gameContext.CurrentGameState.GetPlayerState(cardInHand.OwnerPlayerId);
+            if (player == null)
+            {
+                return abilities
+                    .Where(a => a.TriggerConfig.EventTypes.Contains(EventType.PlayCard))
+                    .ToList();
+            }
+
+            var playCardEvent = new PlayCardEvent(player, cardInHand);
+            var playAbilities = new List<IAbility>();
+            foreach (var ability in abilities)
+            {
+                if (ability.TriggerConfig.EventTypes.Contains(EventType.PlayCard)
+                    && await ability.CanTrigger(playCardEvent, gameContext))
+                {
+                    playAbilities.Add(ability);
+                }
+            }
+
+            return playAbilities;
+        }
+
         // Made private - core logic to be extracted for proactive updates
         private async Task<PlayabilityResultDto> CheckCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken)
         {
@@ -2082,7 +2147,14 @@ namespace ShadowverseBeyond.Server.Services
 
             if (_gameDataProvider.IsInitialized)
             {
-                await _gameDataProvider.RefreshCacheAsync();
+                if (_gameDataProvider is IIncrementalGameDataProvider incrementalProvider)
+                {
+                    await incrementalProvider.RefreshCardAsync(cardId);
+                }
+                else
+                {
+                    await _gameDataProvider.RefreshCacheAsync();
+                }
             }
 
             await using var scope = _serviceScopeFactory.CreateAsyncScope();
@@ -2381,12 +2453,6 @@ namespace ShadowverseBeyond.Server.Services
         private void TrackEntityOwnership(string gameId, IEnumerable<Guid> entityIds, string eventType)
         {
             var normalizedGameId = NormalizeGameId(gameId);
-            if (_trackedEntityGameIds.Count > 200_000)
-            {
-                _trackedEntityGameIds.Clear();
-                _logger.LogWarning("[GUARDRAIL] Entity ownership tracker exceeded capacity and was reset.");
-            }
-
             foreach (var entityId in entityIds)
             {
                 if (entityId == Guid.Empty)

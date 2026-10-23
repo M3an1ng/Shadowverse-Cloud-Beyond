@@ -217,7 +217,9 @@ namespace ShadowverseBeyond.Server.Services
             // This implementation is more complex as it requires iterating.
             // It's better if we can look up by player ID directly.
             // For now, let's find the first match.
-            var result = _pendingChoices.Values.FirstOrDefault(c => c.Request.RequestingPlayerId == playerId);
+            var result = _pendingChoices.Values.FirstOrDefault(c =>
+                c.Request.RequestingPlayerId == playerId &&
+                string.Equals(c.Request.GameId, gameId, StringComparison.OrdinalIgnoreCase));
 
             if (result != null)
             {

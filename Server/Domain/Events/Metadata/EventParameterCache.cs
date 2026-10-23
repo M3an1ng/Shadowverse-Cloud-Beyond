@@ -77,6 +77,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
                     attribute.DisplayName,
                     attribute.Description,
                     attribute.Scope,
+                    attribute.ShowInTriggerTips,
                     attribute.DslDisplayTypeName,
                     property.PropertyType,
                     getter,
@@ -190,6 +191,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
             string displayName,
             string description,
             GameEventParameterScope scope,
+            bool showInTriggerTips,
             string? dslDisplayTypeName,
             Type propertyType,
             Func<IGameEvent, object?> getter,
@@ -199,6 +201,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
             DisplayName = displayName;
             Description = description;
             Scope = scope;
+            ShowInTriggerTips = showInTriggerTips;
             DslDisplayTypeName = dslDisplayTypeName;
             PropertyType = propertyType;
             Getter = getter;
@@ -209,6 +212,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.Metadata
         public string DisplayName { get; }
         public string Description { get; }
         public GameEventParameterScope Scope { get; }
+        public bool ShowInTriggerTips { get; }
         public string? DslDisplayTypeName { get; }
         public Type PropertyType { get; }
         public Func<IGameEvent, object?> Getter { get; }

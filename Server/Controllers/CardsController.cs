@@ -47,14 +47,13 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
         private readonly IGameDataProvider _gameDataProvider;
         private readonly ITribeRegistry _tribeRegistry;
         private const string DataRevisionHeader = "X-Data-Revision";
-        private static readonly HashSet<string> AllowedArtExtensions = new(StringComparer.OrdinalIgnoreCase)
+        private const string EditorUserIdHeader = "X-Editor-UserId";
+        private static readonly HashSet<string> AllowedArtMimeTypes = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp"
+            "image/png",
+            "image/jpeg",
+            "image/webp"
         };
-
         public CardsController(
             ICardRepository cardRepository,
             ILogger<CardsController> logger,
@@ -78,6 +77,56 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
         private void AppendDataRevisionHeader()
         {
             Response.Headers[DataRevisionHeader] = _gameDataProvider.DataRevision.ToString();
+        }
+
+        private async Task<string?> ResolveEditorUsernameAsync(CancellationToken cancellationToken = default)
+        {
+            if (!Request.Headers.TryGetValue(EditorUserIdHeader, out var values))
+            {
+                return null;
+            }
+
+            var raw = values.FirstOrDefault();
+            if (!Guid.TryParse(raw, out var userId) || userId == Guid.Empty)
+            {
+                return null;
+            }
+
+            return await _db.Users
+                .AsNoTracking()
+                .Where(user => user.Id == userId && user.IsActive)
+                .Select(user => user.Username)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        private async Task TouchCardMetadataAsync(CardDefinition card, CancellationToken cancellationToken = default)
+        {
+            card.UpdatedAt = DateTime.UtcNow;
+            card.UpdatedBy = await ResolveEditorUsernameAsync(cancellationToken);
+        }
+
+        private object BuildCardMetadataResponse(CardDefinition card)
+        {
+            return new
+            {
+                cardId = card.Id,
+                cardUpdatedAt = card.UpdatedAt,
+                cardUpdatedBy = card.UpdatedBy
+            };
+        }
+
+        private async Task RefreshCardCacheAsync(params int[] cardIds)
+        {
+            if (_gameDataProvider is IIncrementalGameDataProvider incrementalProvider)
+            {
+                foreach (var cardId in cardIds.Where(id => id > 0).Distinct())
+                {
+                    await incrementalProvider.RefreshCardAsync(cardId);
+                }
+                return;
+            }
+
+            await _gameDataProvider.RefreshCacheAsync();
         }
 
         [HttpGet]
@@ -145,6 +194,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     entity.CardSetDefinition = setDefinition;
 
                 }
+                await TouchCardMetadataAsync(entity);
                 await _cardRepository.AddAsync(entity);
                 await _gameService.NotifyCardDefinitionUpdatedAsync(entity.Id);
                 var resultDto = _mapper.Map<CardDefinitionDto>(entity);
@@ -211,6 +261,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     updatedEntity.CardSetDefinitionId = existing.CardSetDefinitionId;
                     updatedEntity.CardSetDefinition = existing.CardSetDefinition;
                 }
+                await TouchCardMetadataAsync(updatedEntity);
                 await _cardRepository.UpdateAsync(updatedEntity);
 
                 await _gameService.NotifyCardDefinitionUpdatedAsync(id);
@@ -393,11 +444,20 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     card.AbilityIds.Add(abilityId);
                 }
 
+                await TouchCardMetadataAsync(card);
+
                 await _db.SaveChangesAsync();
-                await _gameDataProvider.RefreshCacheAsync();
+                await RefreshCardCacheAsync(oldCardId, cardId);
 
                 AppendDataRevisionHeader();
-                return Ok(new { message = "Ability linked", cardId, abilityId });
+                return Ok(new
+                {
+                    message = "Ability linked",
+                    cardId,
+                    abilityId,
+                    cardUpdatedAt = card.UpdatedAt,
+                    cardUpdatedBy = card.UpdatedBy
+                });
             }
             catch (Exception ex)
             {
@@ -428,11 +488,19 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 {
                     _db.CardAbilities.Remove(ability);
                 }
+                await TouchCardMetadataAsync(card);
                 await _db.SaveChangesAsync();
-                await _gameDataProvider.RefreshCacheAsync();
+                await RefreshCardCacheAsync(cardId);
 
                 AppendDataRevisionHeader();
-                return Ok(new { message = "Ability unlinked", cardId, abilityId });
+                return Ok(new
+                {
+                    message = "Ability unlinked",
+                    cardId,
+                    abilityId,
+                    cardUpdatedAt = card.UpdatedAt,
+                    cardUpdatedBy = card.UpdatedBy
+                });
             }
             catch (Exception ex)
             {
@@ -457,7 +525,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
                 _db.CardDefinitions.Remove(card);
                 await _db.SaveChangesAsync();
-                await _gameDataProvider.RefreshCacheAsync();
+                await RefreshCardCacheAsync(id);
 
                 AppendDataRevisionHeader();
                 return NoContent();
@@ -516,12 +584,6 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 return NotFound($"Card with ID {id} not found.");
             }
 
-            var extension = Path.GetExtension(file.FileName);
-            if (string.IsNullOrWhiteSpace(extension) || !AllowedArtExtensions.Contains(extension))
-            {
-                return BadRequest("Unsupported image type.");
-            }
-
             var workspaceRoot = GetWorkspaceRoot();
             var cardFolder = Path.Combine(workspaceRoot, "assets", "cards", id.ToString());
             Directory.CreateDirectory(cardFolder);
@@ -537,7 +599,11 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
 
             try
             {
-                await ConvertToWebpAsync(file, filePath);
+                var converted = await TryConvertToWebpAsync(file, filePath);
+                if (!converted)
+                {
+                    return BadRequest("Unsupported image content.");
+                }
             }
             catch (UnknownImageFormatException)
             {
@@ -558,6 +624,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 card.ArtDetail = newPath;
             }
 
+            await TouchCardMetadataAsync(card);
             await _cardRepository.UpdateAsync(card);
             await _gameService.NotifyCardDefinitionUpdatedAsync(id);
             var dto = _mapper.Map<CardDefinitionDto>(card);
@@ -565,15 +632,22 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             return Ok(dto);
         }
 
-        private static async Task ConvertToWebpAsync(IFormFile file, string outputPath)
+        private static async Task<bool> TryConvertToWebpAsync(IFormFile file, string outputPath)
         {
             await using var inputStream = file.OpenReadStream();
             using var image = await Image.LoadAsync(inputStream);
+            var mimeType = image.Metadata.DecodedImageFormat?.DefaultMimeType;
+            if (string.IsNullOrWhiteSpace(mimeType) || !AllowedArtMimeTypes.Contains(mimeType))
+            {
+                return false;
+            }
+
             var encoder = new WebpEncoder
             {
                 Quality = 82
             };
             await image.SaveAsWebpAsync(outputPath, encoder);
+            return true;
         }
 
         private string GetWorkspaceRoot()

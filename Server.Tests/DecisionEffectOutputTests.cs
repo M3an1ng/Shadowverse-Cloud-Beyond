@@ -12,6 +12,8 @@ using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -33,6 +35,53 @@ namespace ShadowverseBeyond.Server.Tests;
 
 public class DecisionEffectOutputTests
 {
+    [Fact]
+    public void SequenceEffectParams_DefaultLoopSelection_IsFalse()
+    {
+        var metadata = typeof(SequenceEffectParams)
+            .GetProperty(nameof(SequenceEffectParams.LoopSelection))!
+            .GetCustomAttributes(typeof(ParameterMetadataAttribute), inherit: false)
+            .Cast<ParameterMetadataAttribute>()
+            .Single();
+
+        Assert.False(new SequenceEffectParams().LoopSelection);
+        Assert.Equal(false, metadata.DefaultValue);
+    }
+
+    [Fact]
+    public void SequenceDecisionInput_DefaultsToNonLoopingSelection()
+    {
+        var services = BuildServices(new FixedChoicePendingActionService());
+        var serviceProvider = services.BuildServiceProvider();
+        var context = BuildContext(serviceProvider);
+        var ability = BuildSequenceAbility(context.SourceCard!);
+        var effect = new EffectConfig
+        {
+            Type = EffectType.Sequence,
+            Parameters = new Dictionary<string, ValueConfig>
+            {
+                ["abilityConfigs"] = new StaticValueConfig
+                {
+                    Value = new List<AbilityConfig>
+                    {
+                        new() { Name = "Branch A" },
+                        new() { Name = "Branch B" }
+                    }
+                },
+                ["selectionCount"] = new StaticValueConfig { Value = 1 }
+            }
+        };
+
+        var input = ability.PrepareDecisionInput(
+            context,
+            Guid.NewGuid(),
+            effectIndex: 0,
+            effect,
+            Ability.DecisionMode.Sequence);
+
+        Assert.False(input.LoopSelection);
+    }
+
     [Fact]
     public void RandomEvent_CommitsDecisionOutputs()
     {
@@ -125,6 +174,19 @@ public class DecisionEffectOutputTests
         services.AddSingleton<IAbilityFactory>(new FakeAbilityFactory(conditionFactory, targetFactory, targetSelectionService));
 
         return services;
+    }
+
+    private static Ability BuildSequenceAbility(CardInstance sourceCard)
+    {
+        var pendingActionService = new FixedChoicePendingActionService();
+        var conditionFactory = new NullConditionFactory();
+        var targetFactory = new NullTargetFactory();
+        var targetSelectionService = new TargetSelectionService(
+            NullLogger<TargetSelectionService>.Instance,
+            new NullQueryExecutor(),
+            pendingActionService);
+
+        return new Ability(new AbilityConfig(), conditionFactory, targetFactory, targetSelectionService, sourceCard);
     }
 
     private sealed class TestGameEvent : IGameEvent

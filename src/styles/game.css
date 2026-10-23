@@ -1604,6 +1604,149 @@
     border-color: rgba(248, 113, 113, 0.3);
 }
 
+.chat-message-emote {
+    width: 88px;
+    min-height: 88px;
+    margin-top: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-message-emote-img {
+    width: 88px;
+    height: 88px;
+    object-fit: contain;
+    display: block;
+}
+
+.chat-message-emote-fallback {
+    width: 88px;
+    height: 88px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.72);
+    color: rgba(203, 213, 225, 0.88);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    font-size: 12px;
+    line-height: 1.25;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+.chat-emote-panel {
+    height: 188px;
+    flex: 0 0 188px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.72);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-emote-panel[hidden] {
+    display: none;
+}
+
+.chat-emote-state {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    color: rgba(203, 213, 225, 0.86);
+    font-size: 12px;
+}
+
+.chat-emote-state.is-error {
+    color: rgba(252, 165, 165, 0.95);
+}
+
+.chat-emote-tabs {
+    flex: 0 0 38px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 5px 6px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.chat-emote-tab {
+    min-width: 44px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 6px;
+    background: rgba(30, 41, 59, 0.78);
+    color: rgba(226, 232, 240, 0.88);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.chat-emote-tab.is-active {
+    border-color: rgba(125, 211, 252, 0.65);
+    background: rgba(14, 116, 144, 0.36);
+    color: rgba(240, 249, 255, 0.98);
+}
+
+.chat-emote-grid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    grid-auto-rows: 44px;
+    gap: 8px;
+    padding: 8px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.chat-emote-item {
+    width: 44px;
+    height: 44px;
+    justify-self: center;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.36);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    color: rgba(226, 232, 240, 0.9);
+    font-size: 10px;
+    line-height: 1.15;
+    text-align: center;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.chat-emote-item:hover,
+.chat-emote-item:focus-visible {
+    border-color: rgba(134, 239, 172, 0.55);
+    background: rgba(21, 128, 61, 0.22);
+}
+
+.chat-emote-item:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.chat-emote-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
 .chat-input-form {
     display: flex;
     align-items: center;
@@ -1641,6 +1784,25 @@
     outline: none;
     border-color: rgba(125, 211, 252, 0.8);
     box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.45);
+}
+
+.chat-emote-btn {
+    width: 34px;
+    height: 30px;
+    flex: 0 0 34px;
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    border-radius: 6px;
+    background: rgba(30, 41, 59, 0.78);
+    color: rgba(226, 232, 240, 0.95);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.chat-emote-btn.is-active,
+.chat-emote-btn:hover {
+    border-color: rgba(250, 204, 21, 0.58);
+    background: rgba(113, 63, 18, 0.32);
 }
 
 .chat-send-btn {
@@ -1722,6 +1884,66 @@
 
 .chat-barrage-text {
     line-height: 1.25;
+}
+
+.chat-barrage-emote {
+    width: 46px;
+    height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-barrage-emote-img {
+    width: 46px;
+    height: 46px;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 1px 4px rgba(2, 6, 23, 0.88));
+}
+
+.chat-barrage-emote-fallback {
+    min-width: 46px;
+    max-width: 120px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.74);
+    color: rgba(241, 245, 249, 0.95);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 640px) {
+    .chat-emote-panel {
+        height: 204px;
+        flex-basis: 204px;
+    }
+
+    .chat-emote-btn {
+        width: 44px;
+        height: 34px;
+        flex-basis: 44px;
+    }
+
+    .chat-emote-tab {
+        min-width: 48px;
+        height: 32px;
+    }
+
+    .chat-emote-grid {
+        grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+        grid-auto-rows: 48px;
+    }
+
+    .chat-emote-item {
+        width: 48px;
+        height: 48px;
+    }
 }
 
 .log-entry {
@@ -1833,7 +2055,18 @@
     color: var(--color-primary);
     user-select: none;
     -webkit-user-select: none;
+    -webkit-user-drag: none;
+    user-drag: none;
 
+}
+
+#game-container img,
+#game-container .card,
+#game-container .card *,
+#game-container .card-back,
+#game-container .card-back * {
+    -webkit-user-drag: none;
+    user-drag: none;
 }
 
 .card-fade-enter {
@@ -2581,7 +2814,6 @@
     color: rgba(226, 232, 240, 0.8);
     letter-spacing: 0.03em;
     z-index: 24;
-    counter-reset: buff-line;
 }
 
 .battle-card-preview .buff-summary-total {
@@ -2594,24 +2826,48 @@
 .battle-card-preview .buff-summary-line {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     position: relative;
-    padding-left: 18px;
-    border-left: 1px dashed rgba(96, 165, 250, 0.35);
+    min-height: 22px;
+    padding: 0 0 4px;
     font-size: 10px;
     color: rgba(226, 232, 240, 0.68);
     letter-spacing: 0.05em;
-    counter-increment: buff-line;
 }
 
-.battle-card-preview .buff-summary-line::before {
-    content: counter(buff-line, decimal-leading-zero);
+.battle-card-preview .buff-summary-line:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.battle-card-preview .buff-summary-source-art {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    object-fit: cover;
+    object-position: center;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.14), rgba(0, 0, 0, 0.42));
+    box-shadow: 0 0 6px rgba(255, 214, 128, 0.22), inset 0 0 6px rgba(0, 0, 0, 0.35);
+}
+
+.battle-card-preview .buff-summary-source-art--fallback {
+    display: inline-block;
+    position: relative;
+}
+
+.battle-card-preview .buff-summary-source-art--fallback::after {
+    content: "";
     position: absolute;
-    left: 4px;
-    top: 0;
-    font-size: 9px;
-    color: rgba(148, 163, 184, 0.9);
-    font-family: var(--font-mono);
+    inset: 5px;
+    border-radius: 50%;
+    background: rgba(147, 197, 253, 0.45);
+}
+
+.battle-card-preview .buff-summary-ability {
+    min-width: 0;
+    color: rgba(226, 232, 240, 0.78);
 }
 
 .battle-card-preview .buff-summary-keywords {
@@ -3568,14 +3824,20 @@ body.attack-dragging {
 /* --- Damage Numbers --- */
 .damage-number {
     position: absolute;
-    color: var(--color-accent);
-    font-size: var(--text-2xl);
+    color: #ff4d4d;
+    font-size: calc(var(--text-2xl) * 1.18);
     font-weight: 900;
     font-family: var(--font-mono);
-    text-shadow: 2px 2px 0px black;
+    line-height: 1;
+    -webkit-text-stroke: 1px rgba(0, 0, 0, 0.9);
+    text-shadow:
+        0 2px 0 black,
+        0 0 10px rgba(255, 230, 138, 0.92),
+        0 0 18px rgba(255, 77, 77, 0.8);
+    filter: drop-shadow(0 0 8px rgba(255, 77, 77, 0.78));
     pointer-events: none;
-    z-index: 100;
-    animation: damage-animation 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    z-index: 240;
+    animation: damage-number-animation 1.25s cubic-bezier(0.18, 0.9, 0.22, 1) forwards;
 }
 
 .heal-number {
@@ -3588,6 +3850,33 @@ body.attack-dragging {
     pointer-events: none;
     z-index: 100;
     animation: damage-animation 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes damage-number-animation {
+    0% {
+        transform: translateY(4px) scale(0.55);
+        opacity: 0;
+    }
+
+    14% {
+        transform: translateY(-10px) scale(1.65);
+        opacity: 1;
+    }
+
+    28% {
+        transform: translateY(-18px) scale(1.12);
+        opacity: 1;
+    }
+
+    65% {
+        transform: translateY(-26px) scale(1.04);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateY(-42px) scale(0.96);
+        opacity: 0;
+    }
 }
 
 @keyframes damage-animation {

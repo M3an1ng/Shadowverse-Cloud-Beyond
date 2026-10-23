@@ -13,7 +13,13 @@ import { hydrateDescriptionReferences } from './previewDescriptionReferences.js'
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { getBlockingLoader } from './components/blockingLoader.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
-import { ensureAbilityData, refreshAbilityDataCache } from './abilityDataCache.js';
+import {
+    ensureAbilityData,
+    refreshAbilityDataCache,
+    upsertAbilityDataCacheEntry,
+    removeAbilityDataCacheEntry,
+    markAbilityDataCacheDirty
+} from './abilityDataCache.js';
 import { compareCardsForEditorAndDeck } from './cardListSort.js';
 import { compareCardSetDisplayOrder } from './cardSetDisplayOrder.js';
 import {
@@ -29,8 +35,12 @@ import {
 } from './deckEnvironmentOptions.js';
 import {
     CARD_CATALOG_INVALIDATED_EVENT,
+    isAbilityOnlyInvalidation,
     syncDataRevisionFromResponse
 } from './dataChangeEvents.js';
+import { getUserSession } from './userSession.js';
+
+const EDITOR_USER_ID_HEADER = 'X-Editor-UserId';
 
 function normalizeEnumName(value) {
     if (typeof value !== 'string') return value;
@@ -61,6 +71,60 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function buildEditorIdentityHeaders(headers = {}) {
+    const nextHeaders = { ...headers };
+    const session = getUserSession();
+    if (session?.userId) {
+        nextHeaders[EDITOR_USER_ID_HEADER] = session.userId;
+    }
+    return nextHeaders;
+}
+
+async function readErrorResponseMessage(response) {
+    const fallback = response?.statusText || 'Request failed';
+    if (!response || typeof response.text !== 'function') {
+        return fallback;
+    }
+
+    try {
+        const text = (await response.text()).trim();
+        if (!text) {
+            return fallback;
+        }
+
+        try {
+            const payload = JSON.parse(text);
+            return payload?.error
+                || payload?.message
+                || payload?.title
+                || payload?.detail
+                || text;
+        } catch (_) {
+            return text;
+        }
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function formatEditorMetaTimestamp(value) {
+    if (!value) return '';
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return '';
+    }
+
+    return new Intl.DateTimeFormat('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).format(parsed);
 }
 
 function equalsIgnoreCase(a, b) {
@@ -529,7 +593,10 @@ class CardEditor {
                 <!-- 中栏：编辑区 -->
                 <div class="editor-main tech-panel">
                     <div class="editor-header">
-                        <h3 id="editor-title" class="tech-header-large">等待选择卡牌</h3>
+                        <div class="editor-title-block">
+                            <h3 id="editor-title" class="tech-header-large">等待选择卡牌</h3>
+                            <div id="editor-meta" class="editor-meta tech-text-dim" hidden></div>
+                        </div>
                         <div class="editor-actions">
                             <button class="btn-tech btn-secondary" id="save-btn" disabled>保存</button>
                             <button class="btn-tech btn-secondary" id="save-as-btn" disabled>另存为</button>
@@ -904,6 +971,61 @@ class CardEditor {
         }
     }
 
+    updateEditorHeader(titleText) {
+        const editorTitle = this.container?.querySelector('#editor-title');
+        if (editorTitle && typeof titleText === 'string') {
+            editorTitle.textContent = titleText;
+        }
+
+        const metaEl = this.container?.querySelector('#editor-meta');
+        if (!metaEl) {
+            return;
+        }
+
+        if (this.editorMode !== 'card' || !this.currentCard || this.currentCard.isNew) {
+            metaEl.textContent = '';
+            metaEl.hidden = true;
+            return;
+        }
+
+        const updatedAt = this.currentCard.updatedAt ?? this.currentCard.UpdatedAt ?? '';
+        const updatedBy = String(this.currentCard.updatedBy ?? this.currentCard.UpdatedBy ?? '').trim();
+        const formattedTime = formatEditorMetaTimestamp(updatedAt);
+
+        if (!formattedTime && !updatedBy) {
+            metaEl.textContent = '';
+            metaEl.hidden = true;
+            return;
+        }
+
+        const parts = [];
+        if (formattedTime) {
+            parts.push(formattedTime);
+        }
+        if (updatedBy) {
+            parts.push(updatedBy);
+        }
+
+        metaEl.textContent = `最近修改：${parts.join(' · ')}`;
+        metaEl.hidden = false;
+    }
+
+    applyCardEditMetadata(source) {
+        if (!this.currentCard || !source) {
+            return;
+        }
+
+        const updatedAt = source.cardUpdatedAt ?? source.updatedAt ?? source.UpdatedAt ?? null;
+        const updatedBy = source.cardUpdatedBy ?? source.updatedBy ?? source.UpdatedBy ?? null;
+
+        if (updatedAt !== null && updatedAt !== undefined) {
+            this.currentCard.updatedAt = updatedAt;
+        }
+        if (updatedBy !== null && updatedBy !== undefined) {
+            this.currentCard.updatedBy = updatedBy;
+        }
+    }
+
     updateEmptyPreviewState(message = '等待载入数据', detail = '暂无数据') {
         const previewContainer = this.container?.querySelector('#card-preview');
         if (previewContainer) {
@@ -971,11 +1093,7 @@ class CardEditor {
         try {
             this.currentCard = await this.loadLeaderCard();
             this.editorMode = 'playerSettings';
-
-            const editorTitle = this.container?.querySelector('#editor-title');
-            if (editorTitle) {
-                editorTitle.textContent = '玩家设定';
-            }
+            this.updateEditorHeader('玩家设定');
 
             await this.renderEditorModeContent();
         } catch (error) {
@@ -1003,10 +1121,7 @@ class CardEditor {
         this.updateTabAvailability();
         this.switchTab('basic');
 
-        const editorTitle = this.container?.querySelector('#editor-title');
-        if (editorTitle) {
-            editorTitle.textContent = '等待选择卡牌';
-        }
+        this.updateEditorHeader('等待选择卡牌');
 
         this.updateEmptyPreviewState();
     }
@@ -1393,10 +1508,7 @@ class CardEditor {
         this.cardTab = 'basic';
         this.updateTabAvailability();
 
-        const editorTitle = this.container.querySelector('#editor-title');
-        if (editorTitle) {
-            editorTitle.textContent = '新建卡牌';
-        }
+        this.updateEditorHeader('新建卡牌');
 
         this.enableEditorButtons();
         await this.renderBasicInfoForm();
@@ -1479,6 +1591,8 @@ export function cleanupCardEditor(containerId = 'card-editor-container') {
     }
 }
 
+export { CardEditor };
+
 // 扩展CardEditor类的原型，添加新方法
 CardEditor.prototype.getCardIdKey = function(value) {
     if (value === undefined || value === null) return null;
@@ -1498,15 +1612,20 @@ CardEditor.prototype.getAbilityIdKey = function(value) {
     return String(value);
 };
 
-CardEditor.prototype.applyDataRevisionFromResponse = function(response) {
+CardEditor.prototype.applyDataRevisionFromResponse = function(response, detail = {}) {
     if (!response || !response.headers) return false;
     const revision = response.headers.get('X-Data-Revision');
     if (!revision) return false;
+    const hasIncrementalCardPatch = (Array.isArray(detail.changedCards) && detail.changedCards.length > 0)
+        || (Array.isArray(detail.deletedCardIds) && detail.deletedCardIds.length > 0);
+    const abilityOnly = isAbilityOnlyInvalidation(detail);
     let changed = false;
     if (this.dataRevision && this.dataRevision !== revision) {
-        this.clearDataCaches();
         this.dataRevision = revision;
-        this.queueCardListReload();
+        if (!hasIncrementalCardPatch && !abilityOnly) {
+            this.clearDataCaches();
+            this.queueCardListReload();
+        }
         changed = true;
     } else if (!this.dataRevision) {
         this.dataRevision = revision;
@@ -1515,7 +1634,8 @@ CardEditor.prototype.applyDataRevisionFromResponse = function(response) {
 
     syncDataRevisionFromResponse(response, {
         source: 'card-editor',
-        containerId: this.containerId
+        containerId: this.containerId,
+        ...detail
     });
     return changed;
 };
@@ -1528,6 +1648,9 @@ CardEditor.prototype.bindGlobalInvalidationListener = function() {
     this.cardCatalogInvalidationHandler = (event) => {
         const detail = event?.detail || {};
         if (detail.source === 'card-editor' && detail.containerId === this.containerId) {
+            return;
+        }
+        if (isAbilityOnlyInvalidation(detail)) {
             return;
         }
 
@@ -1576,6 +1699,40 @@ CardEditor.prototype.refreshAbilityDataCacheAfterSave = async function() {
     } catch (error) {
         console.warn('CardEditor: Failed to refresh ability data cache after save.', error);
     }
+};
+
+CardEditor.prototype.updateAbilityCachesAfterSave = function(ability, cardId) {
+    if (!ability) {
+        markAbilityDataCacheDirty();
+        return;
+    }
+
+    const abilityKey = this.getAbilityIdKey(ability?.id ?? ability?.Id);
+    if (abilityKey) {
+        this.abilityDetailCache.set(abilityKey, ability);
+    }
+
+    const resolvedCardId = cardId ?? ability?.cardId ?? ability?.CardId;
+    const cardKey = this.getCardIdKey(resolvedCardId);
+    if (cardKey && this.abilitiesByCardCache.has(cardKey)) {
+        const abilityId = ability?.id ?? ability?.Id;
+        const abilityIdKey = this.getAbilityIdKey(abilityId);
+        const cachedList = this.abilitiesByCardCache.get(cardKey) || [];
+        const nextList = cachedList.filter(existing => {
+            const existingKey = this.getAbilityIdKey(existing?.id ?? existing?.Id);
+            return existingKey !== abilityIdKey;
+        });
+        nextList.push(ability);
+        this.abilitiesByCardCache.set(cardKey, nextList);
+    }
+
+    upsertAbilityDataCacheEntry(ability);
+};
+
+CardEditor.prototype.removeAbilityFromCaches = function(abilityId, cardId) {
+    this.invalidateAbilityDetailCache(abilityId);
+    this.invalidateAbilitiesForCard(cardId);
+    removeAbilityDataCacheEntry(abilityId);
 };
 
 CardEditor.prototype.invalidateCardListCache = function() {
@@ -2571,15 +2728,21 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
 
         const response = await fetch(endpoint, {
             method: 'POST',
+            headers: buildEditorIdentityHeaders(),
             body: formData
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const message = await readErrorResponseMessage(response);
+            throw new Error(`HTTP ${response.status}: ${message}`);
         }
 
-        this.applyDataRevisionFromResponse(response);
         const updated = await response.json();
+        this.applyDataRevisionFromResponse(response, {
+            reason: 'card-art-updated',
+            changedCardIds: [updated?.id ?? updated?.CardId ?? updated?.Id ?? currentCardId],
+            changedCards: [updated]
+        });
         const updatedId = updated?.id ?? updated?.CardId ?? updated?.Id;
         if (updatedId != null) {
             const mergeCard = (list) => {
@@ -2597,6 +2760,7 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
         }
         this.artCacheBuster = Date.now();
         this.currentCard = this.convertApiCardToEditorFormat(updated);
+        this.updateEditorHeader(`编辑卡牌: ${this.currentCard.name}`);
         this.renderAssetsTab();
         if (this.layoutMode === 'test') {
             await this.renderBasicInfoForm();
@@ -3136,27 +3300,28 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
 
         const response = await fetch(url, {
             method,
-            headers: { 'Content-Type': 'application/json' },
+            headers: buildEditorIdentityHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(dto)
         });
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        this.applyDataRevisionFromResponse(response);
 
         const saved = await response.json();
         const savedId = saved?.id ?? saved?.cardId ?? saved?.CardId;
+        this.applyDataRevisionFromResponse(response, {
+            reason: isCreate ? 'card-created' : 'card-updated',
+            changedCardIds: savedId != null ? [savedId] : [],
+            changedCards: [saved]
+        });
 
         if (savedId != null) {
             this.currentCard = this.convertApiCardToEditorFormat(saved);
             this.currentCard.isNew = false;
             this.updateTabAvailability();
             this.upsertCardInCache(saved);
-            const editorTitle = this.container.querySelector('#editor-title');
-            if (editorTitle) {
-                editorTitle.textContent = `编辑卡牌: ${this.currentCard.name}`;
-            }
+            this.updateEditorHeader(`编辑卡牌: ${this.currentCard.name}`);
             await this.renderBasicInfoForm();
             this.updateCardPreview();
 
@@ -3204,14 +3369,16 @@ CardEditor.prototype.deleteCurrentCard = async function() {
         if (!response.ok && response.status !== 204) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        this.applyDataRevisionFromResponse(response);
         this.removeCardFromCache(deletingCardId);
+        this.applyDataRevisionFromResponse(response, {
+            reason: 'card-deleted',
+            deletedCardIds: deletingCardId != null ? [deletingCardId] : []
+        });
 
         this.currentCard = null;
         this.disableEditorButtons();
         this.updateTabAvailability();
-        const editorTitle = this.container.querySelector('#editor-title');
-        if (editorTitle) editorTitle.textContent = '等待选择卡牌';
+        this.updateEditorHeader('等待选择卡牌');
 
         const basicTab = this.container.querySelector('#basic-tab');
         if (basicTab) {
@@ -3359,10 +3526,7 @@ CardEditor.prototype.selectCard = async function(cardId) {
         this.updateTabAvailability();
 
         // 更新编辑器标题
-        const editorTitle = this.container.querySelector('#editor-title');
-        if (editorTitle) {
-            editorTitle.textContent = `编辑卡牌: ${this.currentCard.name}`;
-        }
+        this.updateEditorHeader(`编辑卡牌: ${this.currentCard.name}`);
 
         // 启用编辑器按钮
         this.enableEditorButtons();
@@ -3455,6 +3619,8 @@ CardEditor.prototype.convertApiCardToEditorFormat = function(apiCard) {
         description: (card.description ?? card.Description) ?? '',
         artPreview: (card.artPreview ?? card.ArtPreview) ?? null,
         artDetail: (card.artDetail ?? card.ArtDetail) ?? null,
+        updatedAt: (card.updatedAt ?? card.UpdatedAt ?? card.cardUpdatedAt) ?? null,
+        updatedBy: (card.updatedBy ?? card.UpdatedBy ?? card.cardUpdatedBy) ?? null,
         cost: (card.cost ?? card.Cost) ?? 0,
         attack: (card.attack ?? card.Attack) ?? 0,
         health: (card.health ?? card.Health) ?? 1,
@@ -4092,29 +4258,28 @@ try {
     // 调用后端API创建能力
     const response = await fetch('/api/abilities', {
         method: 'POST',
-        headers: {
+        headers: buildEditorIdentityHeaders({
             'Content-Type': 'application/json'
-        },
+        }),
         body: JSON.stringify(abilityData)
     });
 
     if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    this.applyDataRevisionFromResponse(response);
-
     const result = await response.json();
+    this.applyDataRevisionFromResponse(response, {
+        reason: 'ability-created',
+        changedCardIds: currentCardId != null ? [currentCardId] : []
+    });
+    this.applyCardEditMetadata(result);
+    this.updateEditorHeader(`编辑卡牌: ${this.currentCard?.name || ''}`);
 
-    this.invalidateAbilitiesForCard(currentCardId);
     this.invalidateAbilityLibraryCache();
-    const resultKey = this.getAbilityIdKey(result?.id ?? result?.Id);
-    if (resultKey) {
-        this.abilityDetailCache.set(resultKey, result);
-    }
+    this.updateAbilityCachesAfterSave(result, currentCardId);
 
     // 刷新能力列表
     await this.renderAbilitiesList();
-    await this.refreshAbilityDataCacheAfterSave();
     
     alert('能力添加成功！');
 
@@ -4766,25 +4931,24 @@ CardEditor.prototype.createNewAbility = async function() {
     // 调用后端API创建能力
     const response = await fetch('/api/abilities', {
         method: 'POST',
-        headers: {
+        headers: buildEditorIdentityHeaders({
             'Content-Type': 'application/json'
-        },
+        }),
         body: JSON.stringify(abilityConfig)
     });
 
     if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    this.applyDataRevisionFromResponse(response);
-
     const result = await response.json();
-    this.invalidateAbilitiesForCard(currentCardId);
+    this.applyDataRevisionFromResponse(response, {
+        reason: 'ability-created',
+        changedCardIds: currentCardId != null ? [currentCardId] : []
+    });
+    this.applyCardEditMetadata(result);
+    this.updateEditorHeader(`编辑卡牌: ${this.currentCard?.name || ''}`);
     this.invalidateAbilityLibraryCache();
-    const resultKey = this.getAbilityIdKey(result?.id ?? result?.Id);
-    if (resultKey) {
-        this.abilityDetailCache.set(resultKey, result);
-    }
-    await this.refreshAbilityDataCacheAfterSave();
+    this.updateAbilityCachesAfterSave(result, currentCardId);
 };
 
 CardEditor.prototype.linkExistingAbility = async function() {
@@ -4833,25 +4997,24 @@ CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
 
     const createRes = await fetch('/api/abilities', {
         method: 'POST',
-        headers: {
+        headers: buildEditorIdentityHeaders({
             'Content-Type': 'application/json'
-        },
+        }),
         body: JSON.stringify(abilityData)
     });
 
     if (!createRes.ok) {
         throw new Error(`HTTP ${createRes.status}: ${createRes.statusText}`);
     }
-    this.applyDataRevisionFromResponse(createRes);
-
     const created = await createRes.json();
-    this.invalidateAbilitiesForCard(currentCardId);
+    this.applyDataRevisionFromResponse(createRes, {
+        reason: 'ability-created',
+        changedCardIds: currentCardId != null ? [currentCardId] : []
+    });
+    this.applyCardEditMetadata(created);
+    this.updateEditorHeader(`编辑卡牌: ${this.currentCard?.name || ''}`);
     this.invalidateAbilityLibraryCache();
-    const createdKey = this.getAbilityIdKey(created?.id ?? created?.Id);
-    if (createdKey) {
-        this.abilityDetailCache.set(createdKey, created);
-    }
-    await this.refreshAbilityDataCacheAfterSave();
+    this.updateAbilityCachesAfterSave(created, currentCardId);
     return created;
 };
 
@@ -4900,16 +5063,22 @@ CardEditor.prototype.removeAbility = async function(abilityId) {
             const currentCardId = this.getCurrentCardId();
             // 调用后端API移除能力关联
             const response = await fetch(`/api/cards/${currentCardId}/abilities/${abilityId}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: buildEditorIdentityHeaders()
             });
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-            this.applyDataRevisionFromResponse(response);
+            const result = await response.json();
+            this.applyDataRevisionFromResponse(response, {
+                reason: 'ability-unlinked',
+                changedCardIds: currentCardId != null ? [currentCardId] : []
+            });
+            this.applyCardEditMetadata(result);
+            this.updateEditorHeader(`编辑卡牌: ${this.currentCard?.name || ''}`);
 
-            this.invalidateAbilitiesForCard(currentCardId);
-            this.invalidateAbilityDetailCache(abilityId);
+            this.removeAbilityFromCaches(abilityId, currentCardId);
             this.invalidateAbilityLibraryCache();
 
             // 刷新能力列表
@@ -5107,32 +5276,35 @@ CardEditor.prototype.saveAbilityChanges = async function(originalAbility, update
         // 调用后端API更新能力
         const response = await fetch(`/api/abilities/${originalAbility.id}`, {
             method: 'PUT',
-            headers: {
+            headers: buildEditorIdentityHeaders({
                 'Content-Type': 'application/json'
-            },
+            }),
             body: JSON.stringify(updatedConfig)
         });
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        this.applyDataRevisionFromResponse(response);
-
         const result = await response.json();
+        this.applyDataRevisionFromResponse(response, {
+            reason: 'ability-updated',
+            changedCardIds: [this.getCurrentCardId() ?? result?.cardId ?? originalAbility?.cardId].filter(value => value != null)
+        });
+        this.applyCardEditMetadata(result);
+        this.updateEditorHeader(`编辑卡牌: ${this.currentCard?.name || ''}`);
 
-        const abilityKey = this.getAbilityIdKey(originalAbility?.id ?? result?.id);
-        if (abilityKey) {
-            this.abilityDetailCache.set(abilityKey, result);
-        }
         const cardId = this.getCurrentCardId() ?? result?.cardId ?? originalAbility?.cardId;
-        if (cardId != null) {
-            this.invalidateAbilitiesForCard(cardId);
-        }
         this.invalidateAbilityLibraryCache();
+        this.updateAbilityCachesAfterSave({
+            ...originalAbility,
+            ...updatedConfig,
+            ...result,
+            id: result?.id ?? originalAbility?.id,
+            cardId: result?.cardId ?? cardId
+        }, cardId);
 
         // 刷新能力列表
         await this.renderAbilitiesList();
-        await this.refreshAbilityDataCacheAfterSave();
 
         alert('能力保存成功！');
 

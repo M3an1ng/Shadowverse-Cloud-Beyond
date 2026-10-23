@@ -57,6 +57,22 @@ public class UserQuest
     /// </summary>
     public DateTime ExpiresAt { get; set; }
 
+    /// <summary>
+    /// 任务周期键，如 2026-07-03、2026-W27 或 achievement
+    /// </summary>
+    [StringLength(32)]
+    public string PeriodKey { get; set; } = "legacy";
+
+    /// <summary>
+    /// 任务周期开始时间
+    /// </summary>
+    public DateTime PeriodStartUtc { get; set; } = DateTime.UtcNow.Date;
+
+    /// <summary>
+    /// 任务周期结束时间
+    /// </summary>
+    public DateTime PeriodEndUtc { get; set; } = DateTime.UtcNow.Date.AddDays(1);
+
     // 导航属性
     /// <summary>
     /// 关联的用户

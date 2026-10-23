@@ -15,7 +15,7 @@ namespace ShadowverseBeyond.Server.Services
     /// 游戏数据提供者实现，负责预加载和缓存核心静态游戏数据
     /// 采用单例模式，在应用启动时预加载所有数据到内存中
     /// </summary>
-    public class GameDataProvider : IGameDataProvider, IEnvironmentScopedGameDataProvider
+    public class GameDataProvider : IGameDataProvider, IEnvironmentScopedGameDataProvider, IIncrementalGameDataProvider
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<GameDataProvider> _logger;
@@ -294,6 +294,71 @@ namespace ShadowverseBeyond.Server.Services
             _logger.LogInformation("GameDataProvider缓存刷新完成");
         }
 
+        public async Task RefreshCardAsync(int cardId)
+        {
+            if (cardId < 0)
+            {
+                return;
+            }
+
+            _logger.LogInformation("开始增量刷新卡牌 {CardId} 的GameDataProvider缓存...", cardId);
+
+            var cardDefinition = await LoadCardDefinitionAsync(cardId);
+            var abilityConfigs = await LoadAbilityConfigsForCardAsync(cardId);
+            var current = Volatile.Read(ref _snapshot);
+
+            var cardDefinitions = new Dictionary<int, CardDefinition>(current.CardDefinitions);
+            if (cardDefinition == null)
+            {
+                cardDefinitions.Remove(cardId);
+            }
+            else
+            {
+                cardDefinitions[cardId] = cardDefinition;
+            }
+
+            var cards = cardDefinitions.Values.ToList();
+            var cardsByEnvironment = BuildCardDefinitionsByEnvironment(cards);
+            var abilityConfigsByCard = current.AbilityConfigsByCard.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Where(config => config.CardId != cardId).ToList());
+            abilityConfigsByCard.Remove(cardId);
+            if (abilityConfigs.Count > 0)
+            {
+                abilityConfigsByCard[cardId] = abilityConfigs;
+            }
+
+            var abilityConfigsById = new Dictionary<long, AbilityConfig>(current.AbilityConfigsById);
+            if (current.AbilityConfigsByCard.TryGetValue(cardId, out var oldAbilityConfigs))
+            {
+                foreach (var config in oldAbilityConfigs)
+                {
+                    abilityConfigsById.Remove(config.Id);
+                }
+            }
+            foreach (var config in abilityConfigs)
+            {
+                abilityConfigsById[config.Id] = config;
+            }
+
+            var snapshot = new CacheSnapshot(
+                cardDefinitions,
+                cards,
+                cardsByEnvironment,
+                abilityConfigsByCard,
+                abilityConfigsById,
+                current.BuffDefinitions);
+
+            Interlocked.Exchange(ref _snapshot, snapshot);
+            _isInitialized = true;
+            _dataRevision = Guid.NewGuid();
+            _lastInitialized = DateTime.UtcNow;
+
+            _logger.LogInformation("卡牌 {CardId} 的GameDataProvider缓存增量刷新完成，能力配置: {AbilityCount}",
+                cardId,
+                abilityConfigs.Count);
+        }
+
         /// <inheritdoc />
         public void ClearCache()
         {
@@ -397,6 +462,21 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        private async Task<CardDefinition?> LoadCardDefinitionAsync(int cardId)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var cardRepository = scope.ServiceProvider.GetRequiredService<ICardRepository>();
+                return await cardRepository.GetCardDefinitionByIdAsync(cardId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "加载卡牌定义 {CardId} 时发生错误", cardId);
+                throw;
+            }
+        }
+
         private sealed record AbilityConfigSnapshot(
             Dictionary<int, List<AbilityConfig>> ByCard,
             Dictionary<long, AbilityConfig> ById);
@@ -438,6 +518,21 @@ namespace ShadowverseBeyond.Server.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "加载能力配置时发生错误");
+                throw;
+            }
+        }
+
+        private async Task<List<AbilityConfig>> LoadAbilityConfigsForCardAsync(int cardId)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var abilityLoader = scope.ServiceProvider.GetRequiredService<AbilityLoader>();
+                return await abilityLoader.LoadAbilitiesForCardAsync(cardId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "加载卡牌 {CardId} 的能力配置时发生错误", cardId);
                 throw;
             }
         }

@@ -23,10 +23,303 @@
     position: relative;
 }
 
+.daily-quest-widget {
+    position: relative;
+}
+
+.daily-quest-toggle {
+    position: relative;
+}
+
+.daily-quest-toggle.is-progress-pulse {
+    animation: dailyQuestProgressPulse 0.52s ease-out;
+}
+
+.daily-quest-toggle.is-complete-pulse {
+    animation: dailyQuestCompletePulse 0.72s ease-out;
+}
+
+.daily-quest-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 237, 154, 0.98), rgba(245, 199, 75, 0.94));
+    color: rgba(47, 31, 6, 0.96);
+    font-family: var(--menu-font-mono);
+    font-size: 0.62rem;
+    line-height: 1;
+    box-shadow: 0 0 14px rgba(245, 199, 75, 0.32);
+    pointer-events: none;
+}
+
+.daily-quest-badge.is-visible {
+    display: inline-flex;
+}
+
+.daily-quest-toast {
+    position: absolute;
+    top: 45px;
+    right: 0;
+    min-width: 150px;
+    max-width: 220px;
+    padding: 7px 10px;
+    border: 1px solid rgba(0, 255, 204, 0.22);
+    background: rgba(10, 10, 10, 0.88);
+    color: rgba(232, 255, 250, 0.92);
+    font-family: var(--menu-font-tech);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    opacity: 0;
+    transform: translateY(5px);
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+    text-align: center;
+    z-index: 2;
+}
+
+.daily-quest-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
 .about-card-popup {
     width: 340px;
     padding: 18px;
     gap: 14px;
+}
+
+.daily-quest-card {
+    width: 360px;
+    max-width: min(360px, calc(100vw - 24px));
+    padding: 16px;
+    gap: 12px;
+}
+
+.daily-quest-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.daily-quest-kicker {
+    font-family: var(--menu-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(0, 255, 204, 0.72);
+}
+
+.daily-quest-title {
+    margin-top: 3px;
+    font-family: var(--menu-font-tech);
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.94);
+}
+
+.daily-quest-refresh {
+    min-height: 32px;
+    padding: 6px 9px;
+    font-size: 0.72rem;
+}
+
+.daily-quest-summary {
+    font-family: var(--menu-font-mono);
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: rgba(220, 232, 246, 0.78);
+    min-height: 1.45em;
+}
+
+.daily-quest-summary strong {
+    color: #f5cf6e;
+    font-weight: 700;
+}
+
+.daily-quest-summary.daily-quest-error-text {
+    color: rgba(255, 120, 120, 0.9);
+}
+
+.daily-quest-list {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    max-height: min(430px, calc(100vh - 160px));
+    overflow: auto;
+    padding-right: 2px;
+}
+
+.daily-quest-group {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.daily-quest-group-title {
+    font-family: var(--menu-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.46);
+}
+
+.daily-quest-row {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 9px;
+    align-items: center;
+    padding: 9px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.035);
+    border-radius: 6px;
+}
+
+.daily-quest-row.is-claimable {
+    border-color: rgba(245, 207, 110, 0.42);
+    background: rgba(245, 207, 110, 0.07);
+}
+
+.daily-quest-row.is-claimed {
+    opacity: 0.68;
+}
+
+.daily-quest-icon {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(0, 255, 204, 0.76);
+    background: rgba(0, 255, 204, 0.08);
+    border: 1px solid rgba(0, 255, 204, 0.18);
+    border-radius: 5px;
+}
+
+.daily-quest-row.is-claimable .daily-quest-icon {
+    color: #f5cf6e;
+    background: rgba(245, 207, 110, 0.09);
+    border-color: rgba(245, 207, 110, 0.24);
+}
+
+.daily-quest-icon svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+
+.daily-quest-main {
+    min-width: 0;
+}
+
+.daily-quest-row-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.daily-quest-name {
+    font-family: var(--menu-font-tech);
+    font-size: 0.86rem;
+    color: rgba(255, 255, 255, 0.92);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.daily-quest-reward {
+    flex: 0 0 auto;
+    font-family: var(--menu-font-mono);
+    font-size: 0.68rem;
+    color: #f5cf6e;
+    white-space: nowrap;
+}
+
+.daily-quest-desc {
+    margin-top: 3px;
+    font-family: var(--menu-font-mono);
+    font-size: 0.66rem;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.55);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.daily-quest-progress-line {
+    margin-top: 7px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.daily-quest-progress-track {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.daily-quest-progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: inherit;
+    background: var(--menu-accent-cyan);
+    transition: width 0.22s ease-out;
+}
+
+.daily-quest-row.is-claimable .daily-quest-progress-fill {
+    background: #f5cf6e;
+}
+
+.daily-quest-progress-text {
+    font-family: var(--menu-font-mono);
+    font-size: 0.66rem;
+    color: rgba(255, 255, 255, 0.68);
+    white-space: nowrap;
+}
+
+.daily-quest-claim {
+    min-width: 48px;
+    min-height: 34px;
+    padding: 6px 9px;
+    border-color: rgba(245, 207, 110, 0.46);
+    color: #ffed9a;
+}
+
+.daily-quest-status {
+    min-width: 48px;
+    font-family: var(--menu-font-mono);
+    font-size: 0.64rem;
+    color: rgba(255, 255, 255, 0.54);
+    text-align: right;
+}
+
+.daily-quest-empty,
+.daily-quest-error {
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.035);
+    border-radius: 6px;
+    font-family: var(--menu-font-mono);
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.68);
+}
+
+.daily-quest-error {
+    color: rgba(255, 120, 120, 0.9);
+    border-color: rgba(255, 120, 120, 0.22);
 }
 
 .about-card-header {
@@ -403,6 +696,14 @@
     pointer-events: auto;
 }
 
+.daily-quest-widget:hover .daily-quest-card,
+.daily-quest-card:hover,
+.daily-quest-card.active {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
 .about-widget:hover .about-card-popup {
     opacity: 1;
     transform: translateY(0);
@@ -410,6 +711,7 @@
 }
 
 body.topnav-hover-locked .user-widget:hover .user-card-popup:not(.active),
+body.topnav-hover-locked .daily-quest-widget:hover .daily-quest-card:not(.active),
 body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     opacity: 0;
     transform: translateY(-10px);
@@ -773,10 +1075,42 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     }
 }
 
+@keyframes dailyQuestProgressPulse {
+    0% {
+        box-shadow: 0 0 0 rgba(0, 255, 204, 0);
+    }
+
+    38% {
+        border-color: rgba(0, 255, 204, 0.58);
+        box-shadow: 0 0 18px rgba(0, 255, 204, 0.22);
+    }
+
+    100% {
+        box-shadow: 0 0 0 rgba(0, 255, 204, 0);
+    }
+}
+
+@keyframes dailyQuestCompletePulse {
+    0% {
+        box-shadow: 0 0 0 rgba(245, 207, 110, 0);
+    }
+
+    42% {
+        border-color: rgba(245, 207, 110, 0.74);
+        box-shadow: 0 0 22px rgba(245, 207, 110, 0.3);
+    }
+
+    100% {
+        box-shadow: 0 0 0 rgba(245, 207, 110, 0);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .user-resource-item.resource-coin.is-gain-pulse,
     .user-resource-item.resource-coin.is-gain-pulse::after,
-    .user-resource-item.resource-coin.is-gain-pulse .resource-icon-coin {
+    .user-resource-item.resource-coin.is-gain-pulse .resource-icon-coin,
+    .daily-quest-toggle.is-progress-pulse,
+    .daily-quest-toggle.is-complete-pulse {
         animation-duration: 0.01ms;
         animation-iteration-count: 1;
     }
@@ -784,11 +1118,44 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     .user-resource-item.resource-coin::after {
         transform: translateY(0) scale(1);
     }
+
+    .daily-quest-toast,
+    .daily-quest-progress-fill {
+        transition-duration: 0.01ms;
+    }
 }
 
 @media (max-width: 480px) {
     .user-header-resources {
         gap: 6px;
+    }
+
+    .daily-quest-card {
+        position: fixed;
+        top: 68px;
+        right: 12px;
+        width: calc(100vw - 24px);
+    }
+
+    .daily-quest-row {
+        grid-template-columns: 30px minmax(0, 1fr);
+    }
+
+    .daily-quest-row > .daily-quest-claim,
+    .daily-quest-row > .daily-quest-status {
+        grid-column: 2;
+        justify-self: end;
+    }
+
+    .daily-quest-row-head {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .daily-quest-name,
+    .daily-quest-desc {
+        white-space: normal;
     }
 }
 
@@ -2308,6 +2675,188 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     background: rgba(255, 255, 255, 0.12);
 }
 
+.mp-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.mp-spectate-room-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.mp-spectate-room-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mp-spectate-room-row .mp-btn {
+    flex: 0 0 auto;
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+.mp-spectate-start {
+    width: 100%;
+}
+
+.mp-room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 126px;
+    overflow: auto;
+    padding-right: 2px;
+}
+
+.mp-room-list-modal {
+    max-height: min(52vh, 420px);
+    padding-right: 4px;
+}
+
+.mp-room-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 280;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.mp-room-modal.is-open {
+    display: flex;
+}
+
+.mp-room-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.64);
+    backdrop-filter: blur(5px);
+}
+
+.mp-room-modal-card {
+    position: relative;
+    width: min(560px, calc(100vw - 28px));
+    max-height: calc(100vh - 48px);
+    padding: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    background: rgba(8, 10, 18, 0.96);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.62);
+    color: #fff;
+}
+
+.mp-room-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.mp-room-modal-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--menu-accent-cyan);
+    letter-spacing: 0.2em;
+}
+
+.mp-room-modal-title {
+    margin-top: 4px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1.2rem;
+    letter-spacing: 0.08em;
+}
+
+.mp-room-modal-close {
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.mp-room-modal-close:hover,
+.mp-room-modal-close:focus-visible {
+    border-color: rgba(0, 255, 204, 0.56);
+    background: rgba(0, 255, 204, 0.1);
+    outline: none;
+}
+
+.mp-room-item {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.24);
+    color: rgba(255, 255, 255, 0.88);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.mp-room-item:hover:not(:disabled),
+.mp-room-item:focus-visible {
+    border-color: rgba(0, 255, 204, 0.52);
+    background: rgba(0, 255, 204, 0.08);
+    outline: none;
+}
+
+.mp-room-item:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+}
+
+.mp-room-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mp-room-id {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+}
+
+.mp-room-status {
+    flex: 0 0 auto;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    color: var(--menu-accent-cyan);
+}
+
+.mp-room-item:disabled .mp-room-status {
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.mp-room-meta,
+.mp-room-empty {
+    margin-top: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.64);
+}
+
+.mp-room-empty {
+    margin-top: 0;
+    padding: 8px 0;
+}
+
 .mp-output {
     min-height: 38px;
     font-size: 0.85rem;
@@ -2456,6 +3005,11 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     gap: 6px;
 }
 
+.meta-quest.is-claimable {
+    border-color: rgba(245, 207, 110, 0.4);
+    background: rgba(245, 207, 110, 0.07);
+}
+
 .meta-quest-title {
     display: flex;
     justify-content: space-between;
@@ -2475,6 +3029,24 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.78rem;
     color: rgba(255, 255, 255, 0.8);
+}
+
+.meta-quest-progress-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.meta-quest-progress-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--menu-accent-cyan);
+}
+
+.meta-quest.is-claimable .meta-quest-progress-bar span {
+    background: #f5cf6e;
 }
 
 .meta-quest-actions {

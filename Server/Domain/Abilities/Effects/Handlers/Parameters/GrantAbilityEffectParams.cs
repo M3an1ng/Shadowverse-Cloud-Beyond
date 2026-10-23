@@ -7,14 +7,26 @@ using ShadowverseBeyond.Server.Domain.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
+    public enum GrantAbilitySourceMode
+    {
+        InlineConfigs = 0,
+        AbilityDefinitionIds = 1
+    }
+
     /// <summary>
     /// Parameters for the GrantAbility effect.
     /// </summary>
     [EffectMetadata("授予能力", "为目标授予配置的能力。", AbilityEditorCategories.TempStateId)]
     public class GrantAbilityEffectParams : BaseEffectParams
     {
+        [ParameterMetadata("能力来源模式", UiControlType.Dropdown, DefaultValue = GrantAbilitySourceMode.InlineConfigs, Description = "选择使用内联能力配置，或按能力定义ID在执行时查询能力配置。", EnumName = nameof(GrantAbilitySourceMode))]
+        public GrantAbilitySourceMode SourceMode { get; set; } = GrantAbilitySourceMode.InlineConfigs;
+
         [ParameterMetadata("能力列表", UiControlType.AbilityListEditor, Description = "要授予的能力配置列表。")]
         public List<AbilityConfig> AbilityConfigs { get; set; } = new();
+
+        [ParameterMetadata("能力ID列表", UiControlType.AbilityDefinitionPicker, Description = "按能力定义ID查询并授予的能力列表。")]
+        public List<long> AbilityDefinitionIds { get; set; } = new();
 
         [ParameterMetadata("持续时间", UiControlType.Dropdown, DefaultValue = DurationType.Permanent, Description = "授予能力的持续时间。")]
         public DurationType DurationType { get; set; } = DurationType.Permanent;

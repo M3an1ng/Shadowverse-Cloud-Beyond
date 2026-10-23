@@ -43,6 +43,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.Earthsigil, opt => opt.MapFrom(src => src.Earthsigil))
                 .ForMember(dest => dest.Counters, opt => opt.MapFrom(src => BuildCounterSnapshot(src)))
                 .ForMember(dest => dest.CounterDisplayNames, opt => opt.MapFrom(src => BuildCounterDisplayNameSnapshot(src)))
+                .ForMember(dest => dest.CounterSummaryEntries, opt => opt.MapFrom(src => BuildCounterSummaryEntries(src)))
 
                 // --- Base Stats (Mapping from direct properties) ---
                 .ForMember(dest => dest.Attack, opt => opt.MapFrom(src => src.BaseAttack))
@@ -173,6 +174,90 @@ namespace ShadowverseBeyond.Server.Mappings
             }
 
             return result;
+        }
+
+        private static List<CounterSummaryEntryDto> BuildCounterSummaryEntries(CardInstance cardInstance)
+        {
+            if (cardInstance == null)
+            {
+                return new List<CounterSummaryEntryDto>();
+            }
+
+            var entries = new List<CounterSummaryEntryDto>();
+            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var abilities = cardInstance.Abilities ?? new List<Ability>();
+
+            foreach (var ability in abilities)
+            {
+                var registrations = ability?.Config?.CounterRegistrations;
+                if (registrations == null || registrations.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var registration in registrations)
+                {
+                    if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                    {
+                        continue;
+                    }
+
+                    AddCounterSummaryEntry(
+                        entries,
+                        seenKeys,
+                        registration.Name,
+                        registration.DisplayName,
+                        cardInstance.GetCounter(registration.Name));
+                }
+            }
+
+            foreach (var pair in cardInstance.CounterMap)
+            {
+                AddCounterSummaryEntry(entries, seenKeys, pair.Key, pair.Key, pair.Value);
+            }
+
+            var fusedCount = Math.Max(0, cardInstance.FusedCards?.Count ?? 0);
+            if (fusedCount > 0)
+            {
+                AddCounterSummaryEntry(entries, seenKeys, FusionCountCounterKey, FusionCountDisplayName, fusedCount);
+            }
+
+            return entries;
+        }
+
+        private static void AddCounterSummaryEntry(
+            ICollection<CounterSummaryEntryDto> entries,
+            ISet<string> seenKeys,
+            string? rawKey,
+            string? rawLabel,
+            int rawValue)
+        {
+            if (string.IsNullOrWhiteSpace(rawKey))
+            {
+                return;
+            }
+
+            var key = rawKey.Trim();
+            if (!seenKeys.Add(key))
+            {
+                return;
+            }
+
+            var label = string.IsNullOrWhiteSpace(rawLabel)
+                ? key
+                : rawLabel.Trim();
+            var value = Math.Max(0, rawValue);
+            if (value == 0)
+            {
+                return;
+            }
+
+            entries.Add(new CounterSummaryEntryDto
+            {
+                Key = key,
+                Label = label,
+                Value = value
+            });
         }
 
         private static List<AbilityActionSummaryDto> BuildActionSummaries(CardInstance cardInstance, AbilityKeyword keyword)
@@ -322,6 +407,20 @@ namespace ShadowverseBeyond.Server.Mappings
                     sourceCardName = gameState.FindCardInstance(cachedSourceCardId)?.Name;
                 }
 
+                var sourceCardArtPreview = ability?.SourceCard?.CurrentDefinition?.ArtPreview;
+                if (string.IsNullOrWhiteSpace(sourceCardArtPreview) && ability?.SourceCardId is Guid artSourceCardId)
+                {
+                    sourceCardArtPreview = gameState.FindCardInstance(artSourceCardId)?.CurrentDefinition?.ArtPreview;
+                }
+                if (string.IsNullOrWhiteSpace(sourceCardArtPreview) && abilitySnapshot?.SourceCardId is Guid snapshotArtCardId)
+                {
+                    sourceCardArtPreview = gameState.FindCardInstance(snapshotArtCardId)?.CurrentDefinition?.ArtPreview;
+                }
+                if (string.IsNullOrWhiteSpace(sourceCardArtPreview) && sample.SourceCardInstanceId is Guid cachedArtSourceCardId)
+                {
+                    sourceCardArtPreview = gameState.FindCardInstance(cachedArtSourceCardId)?.CurrentDefinition?.ArtPreview;
+                }
+
                 var sourceAbilityName = ability?.Name ?? abilitySnapshot?.AbilityName ?? sample.SourceAbilityName;
 
                 if (string.IsNullOrWhiteSpace(sourceCardName) || string.IsNullOrWhiteSpace(sourceAbilityName))
@@ -343,6 +442,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 {
                     EffectKey = group.Key,
                     SourceCardName = sourceCardName,
+                    SourceCardArtPreview = sourceCardArtPreview ?? string.Empty,
                     SourceAbilityName = sourceAbilityName
                 });
 

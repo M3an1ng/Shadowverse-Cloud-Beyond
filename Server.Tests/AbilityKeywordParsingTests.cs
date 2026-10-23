@@ -41,5 +41,17 @@ namespace ShadowverseBeyond.Server.Tests
 
             Assert.Equal(7, config.GetKeywordValue(AbilityKeyword.Enhance));
         }
+
+        [Fact]
+        public void BroadcastOnTriggerFalse_DoesNotHideBuffDisplayByDefault()
+        {
+            var config = new AbilityConfig
+            {
+                BroadcastOnTrigger = false
+            };
+
+            Assert.False(config.BroadcastOnTrigger);
+            Assert.True(config.BuffDisplay);
+        }
     }
 }

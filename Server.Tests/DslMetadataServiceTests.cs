@@ -125,6 +125,34 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void BuildMetadata_Exposes_CurrentEnvironment_On_GameContext()
+        {
+            var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);
+            var service = new DslMetadataService(registry);
+
+            var metadata = service.GetDslMetadata();
+            Assert.NotNull(metadata);
+
+            var context = metadata.ContextObjects.FirstOrDefault(obj =>
+                string.Equals(obj.Name, "context", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(context);
+            Assert.Contains(context!.Properties, prop =>
+                string.Equals(prop.Name, "currentEnvironment", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(prop.TypeName, "DeckEnvironment", StringComparison.OrdinalIgnoreCase));
+
+            Assert.True(metadata.TypeMetadata.TryGetValue("GameContext", out var gameContextType));
+            Assert.NotNull(gameContextType);
+            Assert.Contains(gameContextType!.Properties, prop =>
+                string.Equals(prop.Name, "currentEnvironment", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(prop.TypeName, "DeckEnvironment", StringComparison.OrdinalIgnoreCase));
+
+            var deckEnvironmentEnum = metadata.EnumTypes.FirstOrDefault(enumType =>
+                string.Equals(enumType.Name, "DeckEnvironment", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(deckEnvironmentEnum);
+            Assert.Contains("Rotation", deckEnvironmentEnum!.Values);
+        }
+
+        [Fact]
         public void BuildMetadata_Exposes_CardInstance_EffectiveAbilities_Property()
         {
             var registry = new FunctionRegistry(NullLogger<FunctionRegistry>.Instance);

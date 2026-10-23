@@ -250,6 +250,7 @@ namespace ShadowverseBeyond.Server.Tests
         {
             public int GetEffectiveAttack(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
             public int GetEffectiveMaxHealth(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
+            public int GetRawEffectiveMaxHealth(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
             public int GetEffectiveCost(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
             public List<CardKeyword> GetEffectiveKeywords(CardInstance card, GameContext gameContext) => throw new NotImplementedException();
             public int GetEffectiveAbilityKeywordValue(CardInstance card, AbilityKeyword keyword, int baseValue, GameContext gameContext) => baseValue;

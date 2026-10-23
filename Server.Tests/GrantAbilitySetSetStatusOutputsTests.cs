@@ -20,6 +20,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
@@ -147,6 +148,57 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void GrantAbility_ByAbilityDefinitionIds_ResolvesConfigsAndGrantsAbility()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(1021, env.PlayerId);
+            var target = env.CreateCard(1022, env.PlayerId);
+
+            var grantedAbility = new AbilityConfig
+            {
+                Id = 1021001,
+                CardId = source.CurrentDefinitionId,
+                Name = "Granted By Definition Id",
+                Type = AbilityType.Triggered,
+                Trigger = new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { EventType.TurnStart },
+                    Timing = TriggerTiming.On
+                }
+            };
+            env.SetupAbilityConfig(grantedAbility.Id, grantedAbility);
+
+            using var context = env.CreateContext(source);
+
+            var parameters = new GrantAbilityEffectParams
+            {
+                SourceMode = GrantAbilitySourceMode.AbilityDefinitionIds,
+                AbilityDefinitionIds = new List<long> { grantedAbility.Id },
+                DurationType = DurationType.Permanent
+            };
+
+            var effectConfig = new EffectConfig { Type = EffectType.GrantAbility };
+            var effect = new Effect(
+                effectConfig,
+                env.PlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(target) },
+                parentAbilityId: null,
+                triggeredEventId: Guid.Empty,
+                sourceCardId: source.InstanceId);
+
+            var handler = new GrantAbilityEffectHandler(
+                NullLogger<GrantAbilityEffectHandler>.Instance,
+                new TargetProcessingService(NullLogger<TargetProcessingService>.Instance));
+
+            var applyResult = handler.Apply(effect, context, parameters);
+            Assert.True(applyResult.Success);
+
+            CommitGeneratedEvents(applyResult.GeneratedEvents, context);
+
+            Assert.Contains(target.Abilities, ability => ability.Name == "Granted By Definition Id");
+        }
+
+        [Fact]
         public void BuffDisplayFalse_HidesBuffSummariesButKeepsBuffEffect()
         {
             var env = TestEnvironment.Create();
@@ -197,6 +249,54 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void BuffSummary_IncludesSourceCardArtPreview()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(1111, env.PlayerId);
+            var target = env.CreateCard(1112, env.PlayerId);
+            using var ambientContext = env.CreateContext(source);
+
+            var abilityConfig = new AbilityConfig
+            {
+                Id = 1111001,
+                CardId = source.CurrentDefinitionId,
+                Name = "Visible Persistent Ability",
+                Type = AbilityType.Triggered,
+                Trigger = new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { EventType.TurnStart },
+                    Timing = TriggerTiming.On
+                }
+            };
+
+            var sourceAbility = Assert.Single(env.AbilityManager.CreateAbilitiesForCard(
+                source,
+                new List<AbilityConfig> { abilityConfig },
+                null,
+                env.GameState));
+
+            var effectContext = ambientContext with { SourceAbility = sourceAbility };
+            var statEvent = new StatChangedEvent(
+                targetCard: target,
+                attackModifier: 2,
+                healthModifier: null,
+                costModifier: null,
+                durationType: DurationType.Permanent,
+                durationParameter: 0);
+
+            var applyResult = statEvent.Commit(effectContext);
+            Assert.True(applyResult.Success);
+            CommitGeneratedEvents(applyResult.GeneratedEvents, effectContext);
+
+            var mapper = new MapperConfiguration(cfg => cfg.AddProfile(new CardInstanceProfile())).CreateMapper();
+            var dto = mapper.Map<CardInstanceDto>(target);
+
+            var summary = Assert.Single(dto.BuffSummaries);
+            Assert.Equal("Visible Persistent Ability", summary.SourceAbilityName);
+            Assert.Equal("/assets/cards/1111/preview.png", summary.SourceCardArtPreview);
+        }
+
+        [Fact]
         public void SetSetStatus_SetsStatsUsingSetLayer()
         {
             var env = TestEnvironment.Create();
@@ -234,6 +334,43 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(5, env.BuffService.GetEffectiveAttack(target, context));
             Assert.Equal(7, env.BuffService.GetEffectiveMaxHealth(target, context));
             Assert.Equal(1, env.BuffService.GetEffectiveCost(target, context));
+        }
+
+        [Fact]
+        public void ModifyAbilityKeyword_AdditiveBuff_ModifiesActCost()
+        {
+            var env = TestEnvironment.Create();
+            var source = env.CreateCard(2051, env.PlayerId);
+            var target = env.CreateCard(2052, env.PlayerId);
+
+            using var context = env.CreateContext(source);
+
+            var parameters = new ModifyAbilityKeywordEffectParams
+            {
+                Keyword = AbilityKeyword.Act,
+                ValueModifier = -1,
+                DurationType = DurationType.Permanent,
+                ModifierLayer = ModifierLayer.Additive
+            };
+
+            var effect = new Effect(
+                new EffectConfig { Type = EffectType.ModifyAbilityKeyword },
+                env.PlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(target) },
+                parentAbilityId: null,
+                triggeredEventId: Guid.Empty,
+                sourceCardId: source.InstanceId);
+
+            var handler = new ModifyAbilityKeywordEffectHandler(
+                NullLogger<ModifyAbilityKeywordEffectHandler>.Instance,
+                new TargetProcessingService(NullLogger<TargetProcessingService>.Instance));
+
+            var applyResult = handler.Apply(effect, context, parameters);
+
+            Assert.True(applyResult.Success);
+            CommitGeneratedEvents(applyResult.GeneratedEvents, context);
+
+            Assert.Equal(2, env.BuffService.GetEffectiveAbilityKeywordValue(target, AbilityKeyword.Act, 3, context));
         }
 
         [Fact]
@@ -482,6 +619,7 @@ namespace ShadowverseBeyond.Server.Tests
                     NullLogger<EffectExecutor>.Instance,
                     sp.GetRequiredService<IEffectHandlerRegistry>()));
                 services.AddSingleton<IValueSourceResolver>(valueSourceResolver);
+                services.AddSingleton<IGameDataProvider>(_gameDataProvider.Object);
                 services.AddSingleton(_mapper.Object);
 
                 ServiceProvider = services.BuildServiceProvider();
@@ -521,6 +659,12 @@ namespace ShadowverseBeyond.Server.Tests
                 return instance;
             }
 
+            public void SetupAbilityConfig(long abilityId, AbilityConfig abilityConfig)
+            {
+                _gameDataProvider.Setup(provider => provider.GetAbilityConfig(abilityId))
+                    .Returns(abilityConfig);
+            }
+
             private void InitializeLeaders(PlayerState player, PlayerState opponent)
             {
                 player.Leader = new CardInstance(Guid.NewGuid(), 900001, player.PlayerId)
@@ -542,6 +686,8 @@ namespace ShadowverseBeyond.Server.Tests
                     .Returns((int id) => new CardDefinition
                     {
                         Id = id,
+                        Name = $"Card_{id}",
+                        ArtPreview = $"/assets/cards/{id}/preview.png",
                         Attack = 1,
                         Health = 1,
                         Cost = 1,

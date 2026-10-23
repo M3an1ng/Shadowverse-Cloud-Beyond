@@ -171,7 +171,7 @@ export function isSemanticDictionaryType(typeName) {
 export function isSemanticBusinessObjectType(typeName) {
     const normalized = normalizeSemanticTypeName(typeName);
     if (!normalized) return false;
-    return ["PlayerState", "CardInstance", "CardDefinition", "EffectInstance", "EventInstance"].includes(normalized);
+    return ["PlayerState", "CardInstance", "CardDefinition", "Ability", "IAbility", "EffectInstance", "EventInstance"].includes(normalized);
 }
 
 export function isSemanticNumericType(typeName) {

@@ -153,7 +153,7 @@ namespace ShadowverseBeyond.Server.Services
                 };
 
                 var descriptor = EventParameterCache.GetDescriptor(eventType);
-                foreach (var parameter in descriptor.Parameters)
+                foreach (var parameter in descriptor.Parameters.Where(p => p.ShowInTriggerTips))
                 {
                     eventDto.Parameters.Add(new EventParameterMetadataDto
                     {

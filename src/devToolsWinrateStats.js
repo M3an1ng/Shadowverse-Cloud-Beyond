@@ -40,6 +40,22 @@ function pickValue(source, camelKey, pascalKey) {
     return null;
 }
 
+export function getWinrateDeckCode(payload) {
+    return String(pickValue(payload, "deckCode", "DeckCode") ?? "").trim();
+}
+
+export async function copyWinrateDeckCode(code, clipboard = globalThis.navigator?.clipboard) {
+    const normalizedCode = String(code ?? "").trim();
+    if (!normalizedCode) {
+        throw new Error("未获取到卡组代码。");
+    }
+    if (typeof clipboard?.writeText !== "function") {
+        throw new Error("当前浏览器不支持剪贴板写入。");
+    }
+
+    await clipboard.writeText(normalizedCode);
+}
+
 function toInt(value, fallback = 0) {
     const parsed = Number.parseInt(String(value ?? ""), 10);
     return Number.isFinite(parsed) ? parsed : fallback;
@@ -222,6 +238,7 @@ class DevToolsWinrateStats {
         this.deckStats = [];
         this.classStats = [];
         this.deckPreview = null;
+        this.activeDeckCode = "";
     }
 
     async init() {
@@ -258,7 +275,14 @@ class DevToolsWinrateStats {
         await this.loadEnvironmentOptions();
         this.deckPreview = createDeckPreviewModal({
             idPrefix: "devtools-winrate-deck-preview",
-            onExport: () => this.setMessage("当前看板预览暂不支持导出卡组代码。", true)
+            onClose: () => {
+                this.activeDeckCode = "";
+            },
+            onExport: () => {
+                copyWinrateDeckCode(this.activeDeckCode)
+                    .then(() => this.setMessage("卡组代码已复制。"))
+                    .catch(error => this.setMessage(`复制卡组代码失败：${error?.message || String(error)}`, true));
+            }
         });
 
         this.bindUI();
@@ -850,16 +874,19 @@ class DevToolsWinrateStats {
                 || DEFAULT_DECK_RULE
             );
             const deckRuleLabel = getDeckRuleLabel(deckRuleRaw);
+            const deckCode = getWinrateDeckCode(payload);
             const stats = this.findDeckStatsByHash(deckShapeHash);
+            this.activeDeckCode = deckCode;
             const opened = this.deckPreview.open({
                 titleText: `${deckClassLabel}卡组`,
                 metaText: `${deckClassLabel} | ${environmentLabel} | ${deckRuleLabel}`,
                 cards,
                 stats,
-                exportEnabled: false,
+                exportEnabled: Boolean(deckCode),
                 exportVisible: true
             });
             if (!opened) {
+                this.activeDeckCode = "";
                 this.setMessage("卡组预览界面不可用。", true);
                 return;
             }

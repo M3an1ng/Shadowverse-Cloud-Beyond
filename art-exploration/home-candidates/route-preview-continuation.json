@@ -1,0 +1,27 @@
+{
+  "selected_model": "image2",
+  "reason_codes": [
+    "forced_route"
+  ],
+  "scores": {
+    "image2": 0,
+    "banana2": 0,
+    "banana_pro": 0
+  },
+  "effective": {
+    "provider": "image2",
+    "operation": "generate",
+    "size": "1536x1024",
+    "quality": "medium",
+    "format": "png"
+  },
+  "adjustments": [],
+  "prompt_warnings": [],
+  "template_mode": "off",
+  "template_source": {},
+  "configured": {
+    "image2": true,
+    "banana2": true,
+    "banana_pro": true
+  }
+}

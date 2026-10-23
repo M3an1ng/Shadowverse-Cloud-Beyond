@@ -23,5 +23,33 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal(5, damageEvent.Damage);
             Assert.Null(error);
         }
+
+        [Fact]
+        public void EventParameterCache_KeepsHiddenBaseParametersAvailableForRuntime()
+        {
+            Assert.True(
+                EventParameterCache.TryGetBinding(typeof(DamageEvent), nameof(GameEventBase.CurrentPlayerId), out var binding));
+
+            Assert.Equal(nameof(GameEventBase.CurrentPlayerId), binding.PropertyName);
+            Assert.False(binding.ShowInTriggerTips);
+            Assert.Equal(GameEventParameterScope.Output, binding.Scope);
+        }
+
+        [Fact]
+        public void EventParameterCache_Exposes_CounterChanged_Computed_TargetAndSource()
+        {
+            var player = new PlayerState(Guid.NewGuid());
+            var card = new CardInstance(Guid.NewGuid(), 1, player.PlayerId);
+            var playerCounterEvent = new CounterChangedEvent(player, "combo", 0, 1);
+            var cardCounterEvent = new CounterChangedEvent(card, "spellboost", 1, 2);
+
+            Assert.True(EventParameterCache.TryGetBinding(typeof(CounterChangedEvent), "SourcePlayer", out var sourceBinding));
+            Assert.True(EventParameterCache.TryGetBinding(typeof(CounterChangedEvent), "TargetCard", out var targetBinding));
+
+            Assert.Equal(player, sourceBinding.Getter(playerCounterEvent));
+            Assert.Equal(card, targetBinding.Getter(cardCounterEvent));
+            Assert.Equal(GameEventParameterScope.Output, sourceBinding.Scope);
+            Assert.Equal(GameEventParameterScope.Output, targetBinding.Scope);
+        }
     }
 }

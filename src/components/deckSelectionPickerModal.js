@@ -2,7 +2,10 @@
 import { createDeckPreviewModal } from "./deckPreviewModal.js";
 import { loadCardDefinitions } from "../cardDefinitionsLoader.js";
 import { getDeckEnvironmentLabel, getDeckRuleLabel } from "../deckPresentation.js";
-import { CARD_CATALOG_INVALIDATED_EVENT } from "../dataChangeEvents.js";
+import {
+    CARD_CATALOG_INVALIDATED_EVENT,
+    isAbilityOnlyInvalidation
+} from "../dataChangeEvents.js";
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -87,7 +90,10 @@ function getDeckStats(deck) {
 let cardDefinitionsCache = null;
 let cardDefinitionsPromise = null;
 
-document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
+document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
+    if (isAbilityOnlyInvalidation(event?.detail || {})) {
+        return;
+    }
     cardDefinitionsCache = null;
     cardDefinitionsPromise = null;
 });

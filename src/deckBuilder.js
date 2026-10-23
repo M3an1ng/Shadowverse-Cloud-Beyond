@@ -55,6 +55,12 @@ import {
     resetDeckBuilderFilters
 } from './deckBuilderFilters.js';
 import { applyDeckBuilderFilterUiState } from './deckBuilderFilterUiState.js';
+import {
+    applyDeckBuilderCardCatalogPatch,
+    canApplyDeckBuilderCardCatalogPatch,
+    shouldSkipDeckBuilderCatalogReload
+} from './deckBuilderCardCatalogPatch.js';
+import { preloadCardArt } from './cardArtCache.js';
 
 const DEFAULT_DECK_RULE = 'standard';
 const DEFAULT_MAX_COPIES_PER_CARD = 3;
@@ -226,8 +232,8 @@ export async function initializeDeckBuilder() {
     }
 
     if (!cardCatalogInvalidationListenerBound) {
-        document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
-            void handleCardCatalogInvalidated();
+        document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
+            void handleCardCatalogInvalidated(event?.detail || {});
         });
         cardCatalogInvalidationListenerBound = true;
     }
@@ -416,7 +422,24 @@ function getKnownCardDefinition(cardDefinitionId) {
     return state.cardIndex.get(id) ?? state.rawCardIndex.get(id) ?? null;
 }
 
-async function handleCardCatalogInvalidated() {
+async function handleCardCatalogInvalidated(detail = {}) {
+    if (shouldSkipDeckBuilderCatalogReload(detail)) {
+        return;
+    }
+
+    if (canApplyDeckBuilderCardCatalogPatch(state, detail)) {
+        applyDeckBuilderCardCatalogPatch(state, detail);
+        if (state.currentDeck) {
+            renderDeckList();
+            renderLibrary();
+            renderManaCurve();
+            updateDeckStatusUI();
+            return;
+        }
+        renderDeckSelection();
+        return;
+    }
+
     try {
         await loadCards({ force: true });
     } catch (error) {
@@ -2079,6 +2102,12 @@ function renderLibrary(skipCapacitySync = false) {
 
     const startIndex = (state.pagination.currentPage - 1) * state.pagination.itemsPerPage;
     const paginatedCards = filteredCards.slice(startIndex, startIndex + state.pagination.itemsPerPage);
+    paginatedCards.forEach(card => {
+        const preview = card.artPreview ?? card.ArtPreview ?? '';
+        if (preview) {
+            void preloadCardArt(preview, { priority: 'low' }).catch(() => {});
+        }
+    });
 
     grid.innerHTML = paginatedCards.map(card => {
         const attack = card.attack ?? '-';
@@ -2170,6 +2199,12 @@ function renderDeckList() {
         }))
         .filter(item => item.card)
         .sort((a, b) => compareCardsForEditorAndDeck(a.card, b.card));
+    deckCards.forEach(item => {
+        const preview = item.card.artPreview ?? item.card.ArtPreview ?? '';
+        if (preview) {
+            void preloadCardArt(preview, { priority: 'low' }).catch(() => {});
+        }
+    });
 
     // Render as vertical cards (miniature) for horizontal scroll
     list.innerHTML = deckCards.map(item => {

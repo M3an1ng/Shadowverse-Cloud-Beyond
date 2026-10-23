@@ -67,6 +67,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 SummaryRootAbilityId = ability.SummaryRootAbilityId,
                 SequenceScopePathPrefix = ability.SequenceScopePathPrefix
             };
+            if (ability.DerivedDefinitionId.HasValue)
+            {
+                copy.AssignDerivedDefinitionId(ability.DerivedDefinitionId.Value);
+            }
 
             return copy;
         }

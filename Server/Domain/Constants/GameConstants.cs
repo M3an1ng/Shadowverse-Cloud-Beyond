@@ -287,6 +287,7 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             public const long EndTurnAbilityId = -4L;
             public const long MulliganAbilityId = -5L;
             public const long StartTurnAbilityId = -6L; // Example for a common system ability
+            public const long EarthSigilSystemAbilityId = -7L;
 
             // Add more system ability IDs as needed, ensuring they are unique.
             // Consider a scheme for ID generation or assignment if many system abilities are anticipated.

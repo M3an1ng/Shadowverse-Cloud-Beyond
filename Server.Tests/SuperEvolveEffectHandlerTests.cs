@@ -17,6 +17,8 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Effects;
+using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -74,7 +76,12 @@ namespace ShadowverseBeyond.Server.Tests
             player.MaxSuperEvolutionPoints = 1;
             player.CurrentSuperEvolutionPoints = 1;
 
-            var card = new CardInstance(Guid.NewGuid(), 1002, player1Id);
+            var card = new CardInstance(Guid.NewGuid(), 1002, player1Id)
+            {
+                CurrentZone = CardZone.Field
+            };
+            player.Field.Add(card);
+            gameState.RegisterCardInstance(card);
             var effectConfig = new EffectConfig { Type = EffectType.SuperEvolve };
             var effect = new Effect(effectConfig, player1Id, new[] { TargetInfo.ForCard(card) }.ToList(), null, Guid.NewGuid(), null);
             var parameters = new SuperEvolveEffectParams();

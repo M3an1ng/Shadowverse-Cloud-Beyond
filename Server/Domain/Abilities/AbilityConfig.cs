@@ -25,8 +25,6 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         private Dictionary<string, ValueConfig> _properties = new(StringComparer.OrdinalIgnoreCase);
         private bool _broadcastOnTrigger = true;
         private bool _buffDisplay = true;
-        [JsonIgnore]
-        private bool _buffDisplayExplicitlySet;
         [JsonIgnore] // This will be populated from the database entity's Id, not the JSON config.
         public long Id { get; set; }
         public int CardId { get; set; } // 添加 CardId 属性
@@ -37,6 +35,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public List<AbilityKeywordConfig> AbilityKeywords { get; set; } = new();
 
         public int? ActivateCost { get; set; }
+        public AlternatePlayConfig? AlternatePlay { get; set; }
         public AbilityType Type { get; set; }
         public TriggerConfig Trigger { get; set; } = new();
         /// <summary>
@@ -74,24 +73,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public bool BroadcastOnTrigger
         {
             get => _broadcastOnTrigger;
-            set
-            {
-                _broadcastOnTrigger = value;
-                if (!_buffDisplayExplicitlySet)
-                {
-                    _buffDisplay = value;
-                }
-            }
+            set => _broadcastOnTrigger = value;
         }
 
         public bool BuffDisplay
         {
             get => _buffDisplay;
-            set
-            {
-                _buffDisplay = value;
-                _buffDisplayExplicitlySet = true;
-            }
+            set => _buffDisplay = value;
         }
 
         public string Version { get; set; } = "1.0";
@@ -133,6 +121,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
         }
     } // End of AbilityConfig class
+
+    public class AlternatePlayConfig
+    {
+        public int PlayAsCardDefinitionId { get; set; }
+        public List<ConditionConfig> AvailabilityConditions { get; set; } = new();
+    }
 
     public class CounterRegistrationConfig
     {

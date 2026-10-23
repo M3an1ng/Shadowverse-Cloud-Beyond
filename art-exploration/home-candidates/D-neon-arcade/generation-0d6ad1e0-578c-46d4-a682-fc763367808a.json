@@ -1,0 +1,66 @@
+{
+  "style": "D-neon-arcade",
+  "job_id": "0d6ad1e0-578c-46d4-a682-fc763367808a",
+  "status": "succeeded",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "opaque"
+  },
+  "outputs": [
+    {
+      "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-0d6ad1e0-578c-46d4-a682-fc763367808a\\part-1\\source-1.png",
+      "source_size": [
+        1672,
+        941
+      ],
+      "source_format": "png",
+      "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-0d6ad1e0-578c-46d4-a682-fc763367808a\\part-1\\image-1.png",
+      "width": 1536,
+      "height": 864,
+      "format": "png",
+      "has_alpha": false,
+      "has_transparency": false,
+      "transforms": [
+        {
+          "operation": "resize",
+          "implementation": "local",
+          "from": "1672x941",
+          "to": "1536x864",
+          "mode": "contain",
+          "padding": "white"
+        },
+        {
+          "operation": "encode",
+          "implementation": "local",
+          "format": "png",
+          "quality": null
+        }
+      ],
+      "sha256": "596f10a47b507f0a0741b408b0915475e5f751ac32cbff04afa2c5590afb19d6"
+    }
+  ],
+  "upstream_metadata": {
+    "quality": "medium",
+    "size": "1672x941",
+    "background": "opaque",
+    "output_format": "png",
+    "count": 1
+  },
+  "started_at": "2026-09-20T20:21:57.073Z",
+  "finished_at": "2026-09-20T20:23:25.878Z",
+  "error_category": null,
+  "copy": {
+    "chunk_id": "ec7960",
+    "wall_time_seconds": 0.2934864,
+    "exit_code": 0,
+    "original_token_count": 0,
+    "output": ""
+  },
+  "saved_file": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/D-neon-arcade/D-01-home.png",
+  "saved_native": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/D-neon-arcade/D-01-home-native.png"
+}

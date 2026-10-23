@@ -4,14 +4,155 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShadowverseBeyond.Server.Controllers;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Services;
 using Xunit;
 
 namespace ShadowverseBeyond.Server.Tests;
 
 public sealed class DevToolsWinrateStatsControllerTests
 {
+    [Fact]
+    public async Task GetDeckComposition_StandardDeck_ReturnsDecodableDeckCode()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new ApplicationDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var userId = Guid.NewGuid();
+        db.Users.Add(new User
+        {
+            Id = userId,
+            Username = $"tester-{userId:N}",
+            Email = $"tester-{userId:N}@example.com",
+            PasswordHash = "hash"
+        });
+        db.CardDefinitions.Add(new CardDefinition
+        {
+            Id = 10001,
+            Name = "Test Follower",
+            Type = CardType.Follower,
+            Rarity = CardRarity.Bronze,
+            Class = CardClass.Forestcraft
+        });
+        db.GameParticipantStatsFacts.Add(new GameParticipantStatsFact
+        {
+            Id = Guid.NewGuid(),
+            GameId = "standard-deck-code",
+            PlayerId = userId,
+            IsWinner = true,
+            EndedAtUtc = DateTime.UtcNow,
+            DeckClass = CardClass.Forestcraft,
+            Environment = DeckEnvironment.Open,
+            Rule = DeckRule.Standard,
+            DeckShapeHash = "STANDARD_HASH",
+            InitialDeckCardCountsJson = "{\"10001\":40}",
+            DrawnCardIdsJson = "[]",
+            PlayedCardIdsJson = "[]",
+            IsOfficial = true
+        });
+        await db.SaveChangesAsync();
+
+        var controller = new DevToolsWinrateStatsController(db, new DeckCodeService(), NullLogger<DevToolsWinrateStatsController>.Instance);
+        var result = await controller.GetDeckComposition(
+            userId,
+            "STANDARD_HASH",
+            environment: "open",
+            deckRule: "standard",
+            cancellationToken: CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<DevToolsWinrateStatsController.DeckCompositionResponse>(ok.Value);
+        Assert.False(string.IsNullOrWhiteSpace(payload.DeckCode));
+
+        var deckCodeService = new DeckCodeService();
+        var decoded = deckCodeService.TryDecode(
+            payload.DeckCode!,
+            out var deckClass,
+            out var secondaryClass,
+            out var environment,
+            out var rule,
+            out List<DeckCardEntryDto> cards,
+            out var error);
+
+        Assert.True(decoded, error);
+        Assert.Equal(CardClass.Forestcraft, deckClass);
+        Assert.Null(secondaryClass);
+        Assert.Equal(DeckEnvironment.Open, environment);
+        Assert.Equal(DeckRule.Standard, rule);
+        var card = Assert.Single(cards);
+        Assert.Equal(10001, card.CardDefinitionId);
+        Assert.Equal(40, card.Count);
+    }
+
+    [Fact]
+    public async Task GetDeckComposition_DualClassDeck_DoesNotReturnDeckCode()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new ApplicationDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var userId = Guid.NewGuid();
+        db.Users.Add(new User
+        {
+            Id = userId,
+            Username = $"tester-{userId:N}",
+            Email = $"tester-{userId:N}@example.com",
+            PasswordHash = "hash"
+        });
+        db.CardDefinitions.Add(new CardDefinition
+        {
+            Id = 10001,
+            Name = "Test Follower",
+            Type = CardType.Follower,
+            Rarity = CardRarity.Bronze,
+            Class = CardClass.Forestcraft
+        });
+        db.GameParticipantStatsFacts.Add(new GameParticipantStatsFact
+        {
+            Id = Guid.NewGuid(),
+            GameId = "dual-class-no-code",
+            PlayerId = userId,
+            IsWinner = true,
+            EndedAtUtc = DateTime.UtcNow,
+            DeckClass = CardClass.Forestcraft,
+            Environment = DeckEnvironment.Open,
+            Rule = DeckRule.DualClass,
+            DeckShapeHash = "DUAL_HASH",
+            InitialDeckCardCountsJson = "{\"10001\":40}",
+            DrawnCardIdsJson = "[]",
+            PlayedCardIdsJson = "[]",
+            IsOfficial = true
+        });
+        await db.SaveChangesAsync();
+
+        var controller = new DevToolsWinrateStatsController(db, new DeckCodeService(), NullLogger<DevToolsWinrateStatsController>.Instance);
+        var result = await controller.GetDeckComposition(
+            userId,
+            "DUAL_HASH",
+            environment: "open",
+            deckRule: "dualClass",
+            cancellationToken: CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var payload = Assert.IsType<DevToolsWinrateStatsController.DeckCompositionResponse>(ok.Value);
+        Assert.Null(payload.DeckCode);
+    }
+
     [Fact]
     public async Task GetSummary_ReturnsSplitWinrateAndAverageTurnForDeckAndClass()
     {
@@ -75,7 +216,7 @@ public sealed class DevToolsWinrateStatsControllerTests
 
         await db.SaveChangesAsync();
 
-        var controller = new DevToolsWinrateStatsController(db, NullLogger<DevToolsWinrateStatsController>.Instance);
+        var controller = new DevToolsWinrateStatsController(db, new DeckCodeService(), NullLogger<DevToolsWinrateStatsController>.Instance);
         var result = await controller.GetSummary(userId, "open", top: 50, cancellationToken: CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -163,7 +304,7 @@ public sealed class DevToolsWinrateStatsControllerTests
 
         await db.SaveChangesAsync();
 
-        var controller = new DevToolsWinrateStatsController(db, NullLogger<DevToolsWinrateStatsController>.Instance);
+        var controller = new DevToolsWinrateStatsController(db, new DeckCodeService(), NullLogger<DevToolsWinrateStatsController>.Instance);
         var result = await controller.GetSummary(
             userId,
             environment: "open",

@@ -22,8 +22,8 @@
 
     <!-- defer 确保在 HTML 解析完成后执行脚本 -->
     <!-- type="module" 启用 ES Module 功能 -->
-  <script type="module" crossorigin src="/assets/index-BTOjb6Uj.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-D1sW6fEF.css">
+  <script type="module" crossorigin src="/assets/index-BIzNSwjS.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-piSXjdgC.css">
 </head>
 
 <body>
@@ -384,10 +384,13 @@
                         <p class="mp-card-desc">输入房间 GameId，实时观战正在进行的对战</p>
                         <div class="mp-field">
                             <label for="mp-spectate-game">GameId</label>
-                            <input id="mp-spectate-game" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                                autocomplete="off">
+                            <div class="mp-spectate-room-row">
+                                <input id="mp-spectate-game" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                                    autocomplete="off">
+                                <button id="mp-spectate-rooms-btn" class="mp-btn ghost" type="button">查看房间</button>
+                            </div>
                         </div>
-                        <button id="mp-spectate-btn" class="mp-btn primary">开始观战</button>
+                        <button id="mp-spectate-btn" class="mp-btn primary mp-spectate-start" type="button">开始观战</button>
                         <div id="mp-spectate-output" class="mp-output"></div>
                     </div>
 
@@ -414,6 +417,20 @@
                         <button id="mp-go-game" class="mp-btn primary">进入对战</button>
                         <button id="mp-back-btn" class="mp-btn ghost" data-route="navigation">← 返回主菜单</button>
                     </div>
+                </div>
+            </div>
+
+            <div id="mp-spectate-room-modal" class="mp-room-modal" aria-hidden="true">
+                <div class="mp-room-modal-backdrop" data-close-room-modal></div>
+                <div class="mp-room-modal-card" role="dialog" aria-modal="true" aria-labelledby="mp-room-modal-title">
+                    <div class="mp-room-modal-header">
+                        <div>
+                            <div class="mp-room-modal-kicker">SPECTATE</div>
+                            <div id="mp-room-modal-title" class="mp-room-modal-title">选择观战房间</div>
+                        </div>
+                        <button id="mp-room-modal-close" class="mp-room-modal-close" type="button" aria-label="关闭">×</button>
+                    </div>
+                    <div id="mp-spectate-room-list" class="mp-room-list mp-room-list-modal" aria-live="polite"></div>
                 </div>
             </div>
 
@@ -1281,7 +1298,7 @@
                             </div>
                             <div class="deck-preview-toolbar-stats" id="devtools-winrate-deck-preview-toolbar-stats"></div>
                             <div class="deck-preview-toolbar-actions">
-                                <button class="btn-secondary" id="devtools-winrate-deck-preview-export-btn" type="button">导出卡组代码</button>
+                                <button class="btn-secondary" id="devtools-winrate-deck-preview-export-btn" type="button">复制卡组代码</button>
                                 <button class="btn-secondary" id="devtools-winrate-deck-preview-close-btn" type="button" aria-label="关闭预览">关闭</button>
                             </div>
                         </div>

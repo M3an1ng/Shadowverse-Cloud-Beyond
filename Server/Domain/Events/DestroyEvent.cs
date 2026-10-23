@@ -25,11 +25,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("被破坏的卡牌", "被破坏的目标卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DestroyTarget => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("破坏来源快照", "生成事件时记录的破坏来源快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? DestroySourceSnapshot { get; }
+        [GameEventParameter("破坏来源快照", "提交破坏事件时记录的破坏来源快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? DestroySourceSnapshot { get; private set; }
 
-        [GameEventParameter("被破坏目标快照", "生成事件时记录的被破坏目标快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? DestroyTargetSnapshot { get; }
+        [GameEventParameter("被破坏目标快照", "提交破坏事件时记录的被破坏目标快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? DestroyTargetSnapshot { get; private set; }
 
         public DestroyEvent(
             CardInstance target,
@@ -44,8 +44,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Target.Add(TargetInfo.ForCard(target));
             Source = TargetInfo.ForCard(source);
             Reason = reason;
-            DestroyTargetSnapshot = destroyTargetSnapshot ?? TryCreateSnapshot(target);
-            DestroySourceSnapshot = destroySourceSnapshot ?? TryCreateSnapshot(source);
+            DestroyTargetSnapshot = destroyTargetSnapshot;
+            DestroySourceSnapshot = destroySourceSnapshot;
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -57,6 +57,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target or source card is null in DestroyEvent." };
             }
+
+            DestroyTargetSnapshot ??= CardSnapshotCapture.TryCapture(targetCard);
+            DestroySourceSnapshot ??= CardSnapshotCapture.TryCapture(sourceCard);
 
             if (!targetCard.CanBeDestroyed(context, Reason))
             {
@@ -96,23 +99,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         private static CardMoveReason ResolveMoveReason(EventReasonSource reason)
         {
             return CardMoveReason.Destroyed;
-        }
-
-        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
-        {
-            if (card == null)
-            {
-                return null;
-            }
-
-            try
-            {
-                return CardInstanceSnapshot.From(card);
-            }
-            catch
-            {
-                return null;
-            }
         }
 
         private void TryApplyAttackFlowLeaderPing(

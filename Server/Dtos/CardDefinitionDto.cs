@@ -58,6 +58,12 @@ namespace ShadowverseBeyond.Server.Dtos
         [JsonPropertyName("artDetail")]
         public string? ArtDetail { get; init; }
 
+        [JsonPropertyName("updatedAt")]
+        public DateTime? UpdatedAt { get; init; }
+
+        [JsonPropertyName("updatedBy")]
+        public string? UpdatedBy { get; init; }
+
         [JsonPropertyName("isCollectible")]
         public bool IsCollectible { get; init; } = true;
 

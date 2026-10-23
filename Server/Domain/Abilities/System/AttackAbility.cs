@@ -33,6 +33,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.System
         public IReadOnlyList<AbilityKeywordConfig> AbilityKeywords => SystemKeywords;
         public IReadOnlyList<AbilityKeyword> Keywords => Array.Empty<AbilityKeyword>();
         public string KeywordSummary => AbilityKeyword.None.ToString();
+        public AlternatePlayConfig? AlternatePlay => null;
         public AbilityType Type => AbilityType.Triggered;
 
         public TriggerConfig TriggerConfig

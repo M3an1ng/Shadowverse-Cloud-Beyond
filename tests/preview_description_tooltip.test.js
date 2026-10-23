@@ -84,4 +84,24 @@ describe('preview description tooltip', () => {
             })
         );
     });
+
+    test('renders deck keyword tag', async () => {
+        resolveKeywordInfo.mockResolvedValue({
+            kind: 'deck',
+            name: '无垠界域牌组',
+            description: '由11张不同类型的卡片所组成的牌组。'
+        });
+
+        const anchor = document.createElement('button');
+        anchor.dataset.previewToken = 'keyword';
+        anchor.dataset.previewValue = '无垠界域牌组';
+        setRect(anchor);
+        document.body.appendChild(anchor);
+
+        await showPreviewDescriptionTooltip(anchor, 'keyword', '无垠界域牌组', { cards: [] });
+
+        const tag = document.querySelector('.preview-description-tooltip .preview-tooltip-tag');
+        expect(tag).not.toBeNull();
+        expect(tag.textContent).toBe('牌组关键字');
+    });
 });

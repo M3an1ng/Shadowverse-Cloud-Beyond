@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
@@ -9,6 +12,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 {
@@ -29,7 +33,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         {
             const string effectName = "GrantAbilityEffect";
 
-            if (parameters.AbilityConfigs == null || parameters.AbilityConfigs.Count == 0)
+            if (!TryResolveAbilityConfigs(context, parameters, out var abilityConfigs, out var errorMessage))
+            {
+                return new GameStateActionResult { Success = false, ErrorMessage = errorMessage };
+            }
+
+            if (abilityConfigs.Count == 0)
             {
                 return new GameStateActionResult { Success = true };
             }
@@ -46,7 +55,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     var result = new DomainOperationResult { Success = true };
                     result.GeneratedEvents.Add(new GrantAbilityEvent(
-                        parameters.AbilityConfigs,
+                        abilityConfigs,
                         targetInfo.Card,
                         context.SourceCard,
                         parameters.DurationType,
@@ -70,6 +79,54 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             }
 
             return serviceResult;
+        }
+
+        private static bool TryResolveAbilityConfigs(
+            GameContext context,
+            GrantAbilityEffectParams parameters,
+            out List<AbilityConfig> abilityConfigs,
+            out string? errorMessage)
+        {
+            abilityConfigs = new List<AbilityConfig>();
+            errorMessage = null;
+
+            if (parameters.SourceMode == GrantAbilitySourceMode.InlineConfigs)
+            {
+                abilityConfigs = parameters.AbilityConfigs ?? new List<AbilityConfig>();
+                return true;
+            }
+
+            if (parameters.SourceMode != GrantAbilitySourceMode.AbilityDefinitionIds)
+            {
+                errorMessage = $"Unsupported grant ability source mode: {parameters.SourceMode}.";
+                return false;
+            }
+
+            if (parameters.AbilityDefinitionIds == null || parameters.AbilityDefinitionIds.Count == 0)
+            {
+                return true;
+            }
+
+            var dataProvider = context.ServiceProvider.GetService<IGameDataProvider>();
+            if (dataProvider == null)
+            {
+                errorMessage = "GrantAbility effect requires IGameDataProvider when using ability definition IDs.";
+                return false;
+            }
+
+            foreach (var abilityId in parameters.AbilityDefinitionIds)
+            {
+                var config = dataProvider.GetAbilityConfig(abilityId);
+                if (config == null)
+                {
+                    errorMessage = $"GrantAbility effect could not find ability definition {abilityId}.";
+                    return false;
+                }
+
+                abilityConfigs.Add(config);
+            }
+
+            return true;
         }
 
         private static string? BuildEffectKey(Effect effect)

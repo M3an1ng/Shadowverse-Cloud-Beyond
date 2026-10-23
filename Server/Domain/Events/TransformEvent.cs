@@ -31,10 +31,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("变形的卡牌", "发生变形的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? TransformingCard => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("变形来源快照", "生成事件时记录的变形来源快照。", Scope = GameEventParameterScope.Input)]
+        [GameEventParameter("变形来源快照", "生成变形事件时记录的变形来源快照。", Scope = GameEventParameterScope.Output)]
         public CardInstanceSnapshot? TransformSourceSnapshot { get; }
 
-        [GameEventParameter("变形目标快照", "生成事件时记录的变形目标快照。", Scope = GameEventParameterScope.Input)]
+        [GameEventParameter("变形目标快照", "生成变形事件时记录的变形目标快照。", Scope = GameEventParameterScope.Output)]
         public CardInstanceSnapshot? TransformingCardSnapshot { get; }
 
         internal bool CopySourceState { get; }
@@ -51,11 +51,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (sourceCard != null)
             {
                 Source = TargetInfo.ForCard(sourceCard);
-                TransformSourceSnapshot = CardInstanceSnapshot.From(sourceCard);
+                TransformSourceSnapshot = CardSnapshotCapture.Capture(sourceCard);
             }
 
             Target.Add(TargetInfo.ForCard(transformedCard));
-            TransformingCardSnapshot = CardInstanceSnapshot.From(transformedCard);
+            TransformingCardSnapshot = CardSnapshotCapture.Capture(transformedCard);
             NewCardDefinitionId = transformedCard.BaseDefinitionId;
         }
 
@@ -68,11 +68,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (sourceCard != null)
             {
                 Source = TargetInfo.ForCard(sourceCard);
-                TransformSourceSnapshot = CardInstanceSnapshot.From(sourceCard);
+                TransformSourceSnapshot = CardSnapshotCapture.Capture(sourceCard);
             }
 
             Target.Add(TargetInfo.ForCard(targetCard));
-            TransformingCardSnapshot = CardInstanceSnapshot.From(targetCard);
+            TransformingCardSnapshot = CardSnapshotCapture.Capture(targetCard);
             NewCardDefinitionId = newDefinitionId;
         }
 
@@ -83,10 +83,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             : base(EventType.Transform, eventId, timestamp)
         {
             Source = TargetInfo.ForCard(copySourceCard);
-            TransformSourceSnapshot = CardInstanceSnapshot.From(copySourceCard);
+            TransformSourceSnapshot = CardSnapshotCapture.Capture(copySourceCard);
 
             Target.Add(TargetInfo.ForCard(targetCard));
-            TransformingCardSnapshot = CardInstanceSnapshot.From(targetCard);
+            TransformingCardSnapshot = CardSnapshotCapture.Capture(targetCard);
             NewCardDefinitionId = copySourceCard.CurrentDefinitionId;
             CopySourceState = true;
             CopySourceStateSnapshot = copySourceCard.CaptureRuntimeStateSnapshot();

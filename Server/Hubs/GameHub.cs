@@ -51,14 +51,17 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly IMapper _mapper; // Added for Entity to DTO mapping
         private readonly IMatchService _matchService; // Added for lobby validation
         private readonly IGameChatService _gameChatService;
+        private readonly IEmoteCatalogService _emoteCatalogService;
         private readonly IMatchHistoryProjectionService _matchHistoryProjectionService;
         private readonly ICommittedEventJournal _eventJournal;
         private readonly ISnapshotStore _snapshotStore;
         private readonly ReplayOptions _replayOptions;
         private readonly IRecordedEventMapper _recordedEventMapper;
+        private readonly ISpectatorQuestProgressRecorder _spectatorQuestProgressRecorder;
         private static readonly TimeSpan DisconnectGracePeriod = TimeSpan.FromSeconds(GameConstants.Network.DefaultConnectionTimeoutSeconds);
         private const string DisconnectCachePrefix = "PendingDisconnect";
         private static readonly ConcurrentDictionary<string, CancellationTokenSource> _disconnectTimeouts = new();
+        private static readonly PlayerConnectionTracker _playerConnections = new();
 
         /// <summary>
         /// Initializes a new instance of the GameHub class.
@@ -76,10 +79,12 @@ namespace ShadowverseBeyond.Server.Hubs
             IMapper mapper,
             IMatchService matchService,
             IGameChatService gameChatService,
+            IEmoteCatalogService emoteCatalogService,
             IMatchHistoryProjectionService matchHistoryProjectionService,
             ICommittedEventJournal eventJournal,
             ISnapshotStore snapshotStore,
             IRecordedEventMapper recordedEventMapper,
+            ISpectatorQuestProgressRecorder spectatorQuestProgressRecorder,
             IOptions<ReplayOptions> replayOptions) // Added mapper parameter
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
@@ -89,10 +94,12 @@ namespace ShadowverseBeyond.Server.Hubs
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
             _gameChatService = gameChatService ?? throw new ArgumentNullException(nameof(gameChatService));
+            _emoteCatalogService = emoteCatalogService ?? throw new ArgumentNullException(nameof(emoteCatalogService));
             _matchHistoryProjectionService = matchHistoryProjectionService ?? throw new ArgumentNullException(nameof(matchHistoryProjectionService));
             _eventJournal = eventJournal ?? throw new ArgumentNullException(nameof(eventJournal));
             _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
             _recordedEventMapper = recordedEventMapper ?? throw new ArgumentNullException(nameof(recordedEventMapper));
+            _spectatorQuestProgressRecorder = spectatorQuestProgressRecorder ?? throw new ArgumentNullException(nameof(spectatorQuestProgressRecorder));
             _replayOptions = replayOptions.Value;
             _logger.LogInformation("<<<<< GameHub INSTANCE CREATED >>>>>"); // Existing log
         }
@@ -858,7 +865,31 @@ namespace ShadowverseBeyond.Server.Hubs
                 return;
             }
 
-            if (!_gameChatService.TryNormalizeContent(actionDto?.Content, out var normalizedContent, out var validationError))
+            var requestedMessageType = NormalizeChatMessageType(actionDto?.MessageType);
+            if (requestedMessageType == null)
+            {
+                await Clients.Caller.ReceiveError("聊天发送失败：不支持的消息类型。");
+                return;
+            }
+
+            var normalizedContent = string.Empty;
+            string? emoteId = null;
+            string? emoteName = null;
+            string? emoteUrl = null;
+            if (requestedMessageType == "emote")
+            {
+                if (!_emoteCatalogService.TryResolveEmote(actionDto?.EmoteId?.Trim(), out var emote))
+                {
+                    await Clients.Caller.ReceiveError("聊天发送失败：表情不存在或已移除。");
+                    return;
+                }
+
+                emoteId = emote!.Id;
+                emoteName = emote.Name;
+                emoteUrl = emote.Url;
+                normalizedContent = emote.Name;
+            }
+            else if (!_gameChatService.TryNormalizeContent(actionDto?.Content, out normalizedContent, out var validationError))
             {
                 await Clients.Caller.ReceiveError($"聊天发送失败：{validationError}");
                 return;
@@ -881,13 +912,38 @@ namespace ShadowverseBeyond.Server.Hubs
                 SenderId = senderId,
                 SenderName = senderName,
                 SenderAvatarUrl = senderAvatarUrl,
+                MessageType = requestedMessageType,
                 Content = normalizedContent,
+                EmoteId = emoteId,
+                EmoteName = emoteName,
+                EmoteUrl = emoteUrl,
                 SentAtUtc = nowUtc,
                 ClientMessageId = string.IsNullOrWhiteSpace(actionDto?.ClientMessageId) ? null : actionDto.ClientMessageId.Trim()
             };
 
             _gameChatService.AppendMessage(message);
             await Clients.Group(SignalRGroupNames.Game(roomId)).ChatMessage(message);
+        }
+
+        private static string? NormalizeChatMessageType(string? messageType)
+        {
+            if (string.IsNullOrWhiteSpace(messageType))
+            {
+                return "text";
+            }
+
+            var normalized = messageType.Trim();
+            if (string.Equals(normalized, "text", StringComparison.OrdinalIgnoreCase))
+            {
+                return "text";
+            }
+
+            if (string.Equals(normalized, "emote", StringComparison.OrdinalIgnoreCase))
+            {
+                return "emote";
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -991,8 +1047,9 @@ namespace ShadowverseBeyond.Server.Hubs
                 var spectatorDisplayName = NormalizeChatDisplayName(
                     httpContext.Request.Query["spectatorName"].ToString(),
                     BuildSpectatorFallbackDisplayName());
+                var spectatorUserId = httpContext.Request.Query["spectatorUserId"].ToString();
                 var spectatorParticipantId = NormalizeChatParticipantId(
-                    httpContext.Request.Query["spectatorUserId"].ToString(),
+                    spectatorUserId,
                 Context.ConnectionId);
                 var spectatorAvatarUrl = NormalizeChatAvatarUrl(
                     httpContext.Request.Query["spectatorAvatar"].ToString());
@@ -1052,6 +1109,18 @@ namespace ShadowverseBeyond.Server.Hubs
                     await Clients.Caller.ReceiveError("服务器错误：加载观战初始状态失败。");
                     Context.Abort();
                     return;
+                }
+
+                try
+                {
+                    await _spectatorQuestProgressRecorder.RecordSpectateAsync(
+                        spectatorUserId,
+                        activeGameIdStr,
+                        Context.ConnectionAborted);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to record spectator quest progress. RoomId={RoomId}, GameId={GameId}", roomIdStr, activeGameIdStr);
                 }
 
                 await base.OnConnectedAsync();
@@ -1114,6 +1183,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
             if (hasActiveGameId)
             {
+                _playerConnections.Register(activeGameIdForPlayer, playerGuid, Context.ConnectionId);
                 var hadPendingDisconnect = CancelDisconnectTimeout(activeGameIdForPlayer, playerGuid);
                 await NotifyPlayerConnectionStatusAsync(roomIdStr, playerGuid, true, hadPendingDisconnect ? "Reconnect" : "Connected");
                 _gameService.MarkPlayerReconnected(activeGameIdForPlayer.ToString("D"), playerGuid);
@@ -1188,6 +1258,48 @@ namespace ShadowverseBeyond.Server.Hubs
             await base.OnConnectedAsync();
         }
 
+        /// <summary>
+        /// Client heartbeat that keeps an authenticated participant's room alive.
+        /// </summary>
+        public async Task Heartbeat()
+        {
+            var roomId = GetRoomIdFromContext();
+            var (_, playerIdStr) = await GetGamePlayerInfoFromContextAsync();
+
+            if (string.IsNullOrWhiteSpace(roomId) ||
+                string.IsNullOrWhiteSpace(playerIdStr) ||
+                !Guid.TryParse(playerIdStr, out var playerId))
+            {
+                _logger.LogWarning(
+                    "Heartbeat ignored because room or player context could not be resolved. ConnectionId={ConnectionId}, RoomId={RoomId}, PlayerId={PlayerId}",
+                    Context.ConnectionId,
+                    roomId ?? string.Empty,
+                    playerIdStr ?? string.Empty);
+                return;
+            }
+
+            var result = _matchService.RefreshExpiration(roomId, playerId);
+            if (result.Success)
+            {
+                return;
+            }
+
+            if (result.Error == MatchOperationError.Expired || result.Error == MatchOperationError.AlreadyClosed)
+            {
+                var reason = result.Room?.ClosedReason ?? result.Message ?? "房间已关闭。";
+                await Clients.Caller.ReceiveError($"ROOM_CLOSED:{reason}");
+                Context.Abort();
+                return;
+            }
+
+            _logger.LogWarning(
+                "Heartbeat failed for ConnectionId={ConnectionId}, RoomId={RoomId}, PlayerId={PlayerId}, Error={Error}",
+                Context.ConnectionId,
+                roomId,
+                playerIdStr,
+                result.Error);
+        }
+
 
         /// <summary>
         /// Called when a client disconnects from the Hub.
@@ -1227,6 +1339,18 @@ namespace ShadowverseBeyond.Server.Hubs
                     {
                         var playerGroupName = SignalRGroupNames.Player(roomId, playerGuid);
                         await Groups.RemoveFromGroupAsync(Context.ConnectionId, playerGroupName);
+                        var stillConnected = gameId != Guid.Empty &&
+                            _playerConnections.Unregister(gameId, playerGuid, Context.ConnectionId);
+                        if (stillConnected)
+                        {
+                            _logger.LogInformation(
+                                "ConnectionId {ConnectionId} removed for Player {PlayerId}, but another connection is still active. Disconnect timeout not scheduled.",
+                                Context.ConnectionId,
+                                playerGuid);
+                            await base.OnDisconnectedAsync(exception);
+                            return;
+                        }
+
                         await NotifyPlayerConnectionStatusAsync(roomId, playerGuid, false, "Disconnect");
                         if (gameId != Guid.Empty)
                         {
@@ -1273,6 +1397,15 @@ namespace ShadowverseBeyond.Server.Hubs
 
         private void ScheduleDisconnectTimeout(Guid gameId, Guid playerId)
         {
+            if (_playerConnections.IsConnected(gameId, playerId))
+            {
+                _logger.LogInformation(
+                    "Disconnect timeout not scheduled because Player {PlayerId} already has an active connection. GameId={GameId}",
+                    playerId,
+                    gameId);
+                return;
+            }
+
             var cacheKey = GetDisconnectCacheKey(gameId, playerId);
             var cts = new CancellationTokenSource();
             _disconnectTimeouts.AddOrUpdate(
@@ -1313,6 +1446,15 @@ namespace ShadowverseBeyond.Server.Hubs
                 try
                 {
                     _logger.LogInformation("Disconnect timeout elapsed. Enqueuing disconnect action. GameId={GameId} PlayerId={PlayerId}", gameId, playerId);
+                    if (_playerConnections.IsConnected(gameId, playerId))
+                    {
+                        _logger.LogInformation(
+                            "Disconnect timeout ignored because Player {PlayerId} reconnected before timeout resolution. GameId={GameId}",
+                            playerId,
+                            gameId);
+                        return;
+                    }
+
                     var gameState = _gameService.GetGameState(gameId.ToString());
                     if (gameState == null || gameState.IsGameOver)
                     {

@@ -44,12 +44,25 @@ public class CardCommunityControllerTests
     }
 
     [Fact]
-    public async Task Vote_ClickSameButtonTwice_ShouldCancelVote_AndGrantRewardOnce()
+    public async Task Vote_ClickSameButtonTwice_ShouldCancelVote_AndProgressQuestOnce()
     {
         await using var harness = await CardCommunityHarness.CreateAsync();
         var userId = Guid.NewGuid();
         harness.Db.Users.Add(BuildUser(userId, "alice"));
         harness.Db.CardDefinitions.Add(BuildCard(1001, "Card A"));
+        harness.Db.QuestDefinitions.Add(new QuestDefinition
+        {
+            Id = 201,
+            Name = "Vote once",
+            Description = "Vote on one card",
+            Type = QuestType.CollectCards,
+            ActivityType = QuestActivityType.Vote,
+            Category = QuestCategory.Daily,
+            TargetValue = 1,
+            CoinReward = 80,
+            DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+            IsActive = true
+        });
         await harness.Db.SaveChangesAsync();
 
         var first = await harness.Controller.Vote(1001, new CardCommunityController.VoteCardRequest
@@ -62,9 +75,11 @@ public class CardCommunityControllerTests
         Assert.Equal(1, firstPayload.UpvoteCount);
         Assert.Equal(0, firstPayload.DownvoteCount);
         Assert.Equal("up", firstPayload.UserVote);
-        Assert.True(firstPayload.RewardGranted);
-        Assert.Equal(10, firstPayload.RewardCoins);
-        Assert.Equal(1010, firstPayload.CurrentCoins);
+        Assert.False(firstPayload.RewardGranted);
+        Assert.Equal(0, firstPayload.RewardCoins);
+        Assert.Null(firstPayload.CurrentCoins);
+        Assert.NotNull(firstPayload.QuestProgress);
+        Assert.Single(firstPayload.QuestProgress!.CompletedQuestIds);
 
         var second = await harness.Controller.Vote(1001, new CardCommunityController.VoteCardRequest
         {
@@ -78,13 +93,12 @@ public class CardCommunityControllerTests
         Assert.Null(secondPayload.UserVote);
         Assert.False(secondPayload.RewardGranted);
         Assert.Equal(0, secondPayload.RewardCoins);
-        Assert.Equal(1010, secondPayload.CurrentCoins);
+        Assert.Null(secondPayload.CurrentCoins);
 
         var transactions = await harness.Db.CoinTransactions
             .Where(item => item.UserId == userId)
             .ToListAsync();
-        Assert.Single(transactions);
-        Assert.Equal(CoinTransactionType.CardCommunityFirstVote, transactions[0].Type);
+        Assert.Empty(transactions);
     }
 
     [Fact]
@@ -111,16 +125,16 @@ public class CardCommunityControllerTests
         var changedPayload = Assert.IsType<CardCommunityController.CardVoteSummaryDto>(changedOk.Value);
         Assert.Equal("down", changedPayload.UserVote);
         Assert.False(changedPayload.RewardGranted);
-        Assert.Equal(1010, changedPayload.CurrentCoins);
+        Assert.Null(changedPayload.CurrentCoins);
 
         var transactions = await harness.Db.CoinTransactions
             .Where(item => item.UserId == userId)
             .ToListAsync();
-        Assert.Single(transactions);
+        Assert.Empty(transactions);
     }
 
     [Fact]
-    public async Task Comment_CreateDeleteAndRecreate_ShouldOnlyGrantRewardOnce()
+    public async Task Comment_CreateDeleteAndRecreate_ShouldProgressQuestWithoutDirectCoins()
     {
         await using var harness = await CardCommunityHarness.CreateAsync();
         var ownerUserId = Guid.NewGuid();
@@ -129,6 +143,19 @@ public class CardCommunityControllerTests
             BuildUser(ownerUserId, "owner"),
             BuildUser(otherUserId, "other"));
         harness.Db.CardDefinitions.Add(BuildCard(1002, "Card B"));
+        harness.Db.QuestDefinitions.Add(new QuestDefinition
+        {
+            Id = 202,
+            Name = "Comment once",
+            Description = "Comment on one card",
+            Type = QuestType.CollectCards,
+            ActivityType = QuestActivityType.Comment,
+            Category = QuestCategory.Daily,
+            TargetValue = 1,
+            CoinReward = 100,
+            DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+            IsActive = true
+        });
         await harness.Db.SaveChangesAsync();
 
         var created = await harness.Controller.CreateComment(1002, new CardCommunityController.CreateCardCommentRequest
@@ -138,9 +165,11 @@ public class CardCommunityControllerTests
         });
         var createdResult = Assert.IsType<CreatedAtActionResult>(created.Result);
         var createdComment = Assert.IsType<CardCommunityController.CardCommentDto>(createdResult.Value);
-        Assert.True(createdComment.RewardGranted);
-        Assert.Equal(50, createdComment.RewardCoins);
-        Assert.Equal(1050, createdComment.CurrentCoins);
+        Assert.False(createdComment.RewardGranted);
+        Assert.Equal(0, createdComment.RewardCoins);
+        Assert.Null(createdComment.CurrentCoins);
+        Assert.NotNull(createdComment.QuestProgress);
+        Assert.Single(createdComment.QuestProgress!.CompletedQuestIds);
 
         var forbiddenDelete = await harness.Controller.DeleteComment(1002, createdComment.Id, otherUserId);
         Assert.IsType<ForbidResult>(forbiddenDelete);
@@ -157,13 +186,12 @@ public class CardCommunityControllerTests
         var recreatedComment = Assert.IsType<CardCommunityController.CardCommentDto>(recreatedResult.Value);
         Assert.False(recreatedComment.RewardGranted);
         Assert.Equal(0, recreatedComment.RewardCoins);
-        Assert.Equal(1050, recreatedComment.CurrentCoins);
+        Assert.Null(recreatedComment.CurrentCoins);
 
         var transactions = await harness.Db.CoinTransactions
             .Where(item => item.UserId == ownerUserId)
             .ToListAsync();
-        Assert.Single(transactions);
-        Assert.Equal(CoinTransactionType.CardCommunityFirstComment, transactions[0].Type);
+        Assert.Empty(transactions);
     }
 
     [Fact]
@@ -263,19 +291,21 @@ public class CardCommunityControllerTests
     }
 
     [Fact]
-    public async Task CreateComment_WhenRewardGrantFails_ShouldRollbackComment()
+    public async Task CreateComment_WhenQuestProgressFails_ShouldRollbackComment()
     {
-        var economyMock = new Mock<IEconomyService>();
-        economyMock
-            .Setup(item => item.AddCoinsAsync(
+        var questProgressMock = new Mock<IQuestProgressService>();
+        questProgressMock
+            .Setup(item => item.RecordActivityAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<QuestActivityType>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
                 It.IsAny<int>(),
-                It.IsAny<CoinTransactionType>(),
-                It.IsAny<string?>(),
-                It.IsAny<string?>()))
-            .ReturnsAsync(false);
+                It.IsAny<DateTime?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("quest progress failed"));
 
-        await using var harness = await CardCommunityHarness.CreateAsync(economyMock.Object);
+        await using var harness = await CardCommunityHarness.CreateAsync(questProgressService: questProgressMock.Object);
         var user = BuildUser(Guid.NewGuid(), "owner");
         harness.Db.Users.Add(user);
         harness.Db.CardDefinitions.Add(BuildCard(1007, "Card G"));
@@ -289,19 +319,21 @@ public class CardCommunityControllerTests
     }
 
     [Fact]
-    public async Task Vote_WhenRewardGrantFails_ShouldRollbackVote()
+    public async Task Vote_WhenQuestProgressFails_ShouldRollbackVote()
     {
-        var economyMock = new Mock<IEconomyService>();
-        economyMock
-            .Setup(item => item.AddCoinsAsync(
+        var questProgressMock = new Mock<IQuestProgressService>();
+        questProgressMock
+            .Setup(item => item.RecordActivityAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<QuestActivityType>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
                 It.IsAny<int>(),
-                It.IsAny<CoinTransactionType>(),
-                It.IsAny<string?>(),
-                It.IsAny<string?>()))
-            .ReturnsAsync(false);
+                It.IsAny<DateTime?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("quest progress failed"));
 
-        await using var harness = await CardCommunityHarness.CreateAsync(economyMock.Object);
+        await using var harness = await CardCommunityHarness.CreateAsync(questProgressService: questProgressMock.Object);
         var user = BuildUser(Guid.NewGuid(), "owner");
         harness.Db.Users.Add(user);
         harness.Db.CardDefinitions.Add(BuildCard(1008, "Card H"));
@@ -330,8 +362,8 @@ public class CardCommunityControllerTests
         });
         var commentOk = Assert.IsType<CreatedAtActionResult>(comment.Result);
         var commentPayload = Assert.IsType<CardCommunityController.CardCommentDto>(commentOk.Value);
-        Assert.True(commentPayload.RewardGranted);
-        Assert.Equal(1050, commentPayload.CurrentCoins);
+        Assert.False(commentPayload.RewardGranted);
+        Assert.Null(commentPayload.CurrentCoins);
 
         var vote = await harness.Controller.Vote(1009, new CardCommunityController.VoteCardRequest
         {
@@ -340,14 +372,12 @@ public class CardCommunityControllerTests
         });
         var voteOk = Assert.IsType<OkObjectResult>(vote.Result);
         var votePayload = Assert.IsType<CardCommunityController.CardVoteSummaryDto>(voteOk.Value);
-        Assert.True(votePayload.RewardGranted);
-        Assert.Equal(10, votePayload.RewardCoins);
-        Assert.Equal(1060, votePayload.CurrentCoins);
+        Assert.False(votePayload.RewardGranted);
+        Assert.Equal(0, votePayload.RewardCoins);
+        Assert.Null(votePayload.CurrentCoins);
 
         var history = await harness.EconomyService.GetCoinHistoryAsync(userId, 1, 10);
-        Assert.Equal(2, history.Count);
-        Assert.Contains(history, item => item.Type == CoinTransactionType.CardCommunityFirstComment && item.TypeDisplayName == "卡牌社区首次评论奖励");
-        Assert.Contains(history, item => item.Type == CoinTransactionType.CardCommunityFirstVote && item.TypeDisplayName == "卡牌社区首次投票奖励");
+        Assert.Empty(history);
     }
 
     private sealed class CardCommunityHarness : IAsyncDisposable
@@ -373,7 +403,9 @@ public class CardCommunityControllerTests
         public CardCommunityService CommunityService { get; }
         public IEconomyService EconomyService { get; }
 
-        public static async Task<CardCommunityHarness> CreateAsync(IEconomyService? economyService = null)
+        public static async Task<CardCommunityHarness> CreateAsync(
+            IEconomyService? economyService = null,
+            IQuestProgressService? questProgressService = null)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -388,10 +420,14 @@ public class CardCommunityControllerTests
             var transactionService = new TransactionService(db, NullLogger<TransactionService>.Instance);
             var resolvedEconomyService = economyService
                 ?? new EconomyService(db, NullLogger<EconomyService>.Instance, transactionService);
+            var resolvedQuestProgressService = questProgressService ?? new QuestProgressService(
+                db,
+                transactionService,
+                NullLogger<QuestProgressService>.Instance);
             var communityService = new CardCommunityService(
                 db,
                 transactionService,
-                resolvedEconomyService,
+                resolvedQuestProgressService,
                 NullLogger<CardCommunityService>.Instance);
             var controller = new CardCommunityController(db, communityService);
 

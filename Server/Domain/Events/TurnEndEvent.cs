@@ -9,7 +9,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
 {
     /// <summary>
     /// System lifecycle event: end of a player's turn.
-    /// Implements ICommittableEvent; Commit executes turn-end cleanup.
+    /// Implements ICommittableEvent; boundary cleanup is scheduled separately
+    /// after turn-end triggered abilities and effects finish.
     /// </summary>
     [GameEventMetadata("回合结束", "当一个玩家的回合结束时触发。", EventType.TurnEnd)]
     public class TurnEndEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
@@ -30,7 +31,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "TurnEndEvent.Commit: Source player is null." };
             }
 
-            // Delegate to PlayerState.EndTurn which generates turn-end factual events and resets counters.
             return EndingPlayer.EndTurn();
         }
 

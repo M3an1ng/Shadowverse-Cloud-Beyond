@@ -310,6 +310,13 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         SetCost = 113,
 
         /// <summary>
+        /// 调整能力关键字数值 - 修改启动、增强等能力关键字的数值
+        /// ✅ 已实现：基于Buff系统的AbilityKeywordBuffEffect
+        /// </summary>
+        [Description("调整能力关键字")]
+        ModifyAbilityKeyword = 153,
+
+        /// <summary>
         /// 增加PP上限 - 永久增加玩家PP上限（类似炉石的水晶）
         /// ✅ 已实现：ModifyPPMaxEffectHandler
         /// </summary>
@@ -409,6 +416,12 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         /// </summary>
         [Description("土之秘术")]
         EarthRite = 138,
+
+        /// <summary>
+        /// 土之印结算 - 初始化土之印计数并合并战场上的土之印。
+        /// </summary>
+        [Description("土之印结算")]
+        SettleEarthSigil = 152,
 
         /// <summary>
         /// 死灵术 - 消耗墓场计数

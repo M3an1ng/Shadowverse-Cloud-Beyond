@@ -32,9 +32,19 @@ public class QuestDefinition
     public QuestType Type { get; set; }
 
     /// <summary>
+    /// 推进任务进度的用户行为类型
+    /// </summary>
+    public QuestActivityType ActivityType { get; set; } = QuestActivityType.PlayMatch;
+
+    /// <summary>
     /// 任务分类
     /// </summary>
     public QuestCategory Category { get; set; }
+
+    /// <summary>
+    /// 任务进度去重策略
+    /// </summary>
+    public QuestDeduplicationPolicy DeduplicationPolicy { get; set; } = QuestDeduplicationPolicy.None;
 
     /// <summary>
     /// 目标值 (如进行3场对战、使用10张法术牌等)
@@ -192,6 +202,63 @@ public enum QuestType
     /// 每日登录 (如"连续登录3天")
     /// </summary>
     LoginDaily = 10
+}
+
+/// <summary>
+/// 推进任务进度的用户行为类型
+/// </summary>
+public enum QuestActivityType
+{
+    /// <summary>
+    /// 参与对战
+    /// </summary>
+    PlayMatch = 1,
+
+    /// <summary>
+    /// 赢得对战
+    /// </summary>
+    WinMatch = 2,
+
+    /// <summary>
+    /// 发表评论
+    /// </summary>
+    Comment = 3,
+
+    /// <summary>
+    /// 点赞或点踩
+    /// </summary>
+    Vote = 4,
+
+    /// <summary>
+    /// 登录
+    /// </summary>
+    Login = 5,
+
+    /// <summary>
+    /// 观战
+    /// </summary>
+    SpectateMatch = 6
+}
+
+/// <summary>
+/// 任务进度去重策略
+/// </summary>
+public enum QuestDeduplicationPolicy
+{
+    /// <summary>
+    /// 每次有效行为都增加进度
+    /// </summary>
+    None = 0,
+
+    /// <summary>
+    /// 同一周期内同一来源实体只计一次
+    /// </summary>
+    PerSourceEntityPerPeriod = 1,
+
+    /// <summary>
+    /// 同一周期只计一次
+    /// </summary>
+    OncePerPeriod = 2
 }
 
 /// <summary>

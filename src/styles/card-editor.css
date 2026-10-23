@@ -167,6 +167,33 @@
     min-height: 0; /* Critical for flex scrolling */
 }
 
+.editor-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+}
+
+.editor-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.editor-meta {
+    font-size: 0.78rem;
+    letter-spacing: 0.03em;
+    color: #7a7a7a;
+}
+
+.editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+}
+
 .editor-content {
     flex: 1;
     overflow: hidden;

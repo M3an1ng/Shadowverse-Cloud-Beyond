@@ -56,6 +56,8 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         BanEvolve = 23,
         [Description("土之印")]
         EarthSigil = 24,
+        [Description("免疫其他卡牌能力")]
+        EffectImmune = 25,
     }
 
     public enum AbilityKeyword
@@ -100,8 +102,8 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         Accelerate = 118,
         [Description("结晶")]
         Crystalize = 119,
-        [Description("漫游")]
-        Travel = 120,
+        [Description("发现")]
+        Discover = 120,
         [Description("间奏")]
         Intromezzo = 121,
         [Description("狂乱")]
@@ -116,6 +118,8 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         SuperEvolveEffect = 126,
         [Description("融合")]
         Fusion = 127,
+        [Description("瞬念召唤")]
+        Invoke = 128,
 
     }
 

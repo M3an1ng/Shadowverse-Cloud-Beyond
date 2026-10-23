@@ -18,6 +18,30 @@ describe('counter summary entries', () => {
         return '';
     };
 
+    test('uses server ordered summary entries before object key sorting fallback', () => {
+        const entries = buildCounterSummaryEntries({
+            summaryEntries: [
+                { key: 'water', label: '水', value: 1 },
+                { key: 'zero', label: '零', value: 0 },
+                { key: 'amber', label: '琥珀', value: 2 }
+            ],
+            localCounterMap: {
+                amber: 2,
+                water: 1
+            },
+            localLabelMap: {
+                amber: '琥珀',
+                water: '水'
+            },
+            resolveLabel
+        });
+
+        expect(entries).toEqual([
+            { key: 'water', label: '水', value: 1 },
+            { key: 'amber', label: '琥珀', value: 2 }
+        ]);
+    });
+
     test('shows referenced owner counters for ordinary cards and keeps zero values', () => {
         const entries = buildCounterSummaryEntries({
             localCounterMap: {

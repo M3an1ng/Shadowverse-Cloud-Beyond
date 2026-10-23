@@ -6,6 +6,7 @@
 //
 
 import { MetadataDrivenComponent } from './MetadataDrivenComponent.js';
+import { ConditionConfigEditor } from './ConditionConfigEditor.js';
 import { EffectConfigEditor } from './EffectConfigEditor.js';
 import { ValueConfigEditor } from './ValueConfigEditor.js';
 import { ensureEnumLocalization } from '../enumLocalizationCache.js';
@@ -22,11 +23,13 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         this.container = null;
         this.options = {};
         this.abilityListHelper = new EffectConfigEditor();
+        this.conditionHelper = new ConditionConfigEditor();
     }
 
     async render(container, buffConfigs = [], onChange = () => {}, options = {}) {
         await this.initialize();
         await this.abilityListHelper.initialize();
+        await this.conditionHelper.initialize();
 
         this.container = container;
         this.onChange = onChange;
@@ -249,15 +252,32 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         durationTypeControl.appendChild(durationTypeSelect);
         section.appendChild(this.createFormGroup(this.createParameterLabel('持续时间'), durationTypeControl));
 
-        const durationParameterControl = document.createElement('div');
-        durationParameterControl.className = 'parameter-control';
-        const durationParameterEditor = this.createValueConfigEditorControl(
-            buff.durationParameter,
-            (value) => this.updateBuffConfig(index, { durationParameter: value }),
-            { parameterType: 'Int32', parameterLabel: '持续参数', placeholderValue: 0 }
-        );
-        durationParameterControl.appendChild(durationParameterEditor);
-        section.appendChild(this.createValueConfigFormGroup(null, durationParameterControl));
+        if (this.normalizeDurationType(buff.durationType) === 'ConditionalRemoval') {
+            const removeConditionContainer = document.createElement('div');
+            removeConditionContainer.className = 'parameter-control';
+            this.conditionHelper.render(
+                removeConditionContainer,
+                buff.removeCondition ? [buff.removeCondition] : [],
+                (conditions) => this.updateBuffConfig(index, { removeCondition: Array.isArray(conditions) && conditions[0] ? conditions[0] : null }),
+                {
+                    title: '移除条件',
+                    intro: '当条件成立时移除该状态。',
+                    addLabel: '设置移除条件',
+                    hideHelp: true
+                }
+            );
+            section.appendChild(this.createFormGroup(this.createParameterLabel('移除条件'), removeConditionContainer));
+        } else {
+            const durationParameterControl = document.createElement('div');
+            durationParameterControl.className = 'parameter-control';
+            const durationParameterEditor = this.createValueConfigEditorControl(
+                buff.durationParameter,
+                (value) => this.updateBuffConfig(index, { durationParameter: value }),
+                { parameterType: 'Int32', parameterLabel: '持续参数', placeholderValue: 0 }
+            );
+            durationParameterControl.appendChild(durationParameterEditor);
+            section.appendChild(this.createValueConfigFormGroup(null, durationParameterControl));
+        }
 
         container.appendChild(section);
         return container;
@@ -1070,6 +1090,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             key: raw.key ?? raw.Key ?? '',
             durationType: raw.durationType ?? raw.DurationType ?? 'Permanent',
             durationParameter: raw.durationParameter ?? raw.DurationParameter ?? 0,
+            removeCondition: raw.removeCondition ?? raw.RemoveCondition ?? null,
             canStack: raw.canStack ?? raw.CanStack ?? false,
             statModifiers,
             keywordModifiers,
@@ -1088,6 +1109,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             key: '',
             durationType: 'Permanent',
             durationParameter: 0,
+            removeCondition: null,
             canStack: false,
             statModifiers: [],
             keywordModifiers: [],
@@ -1308,7 +1330,9 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
 
         const previousType = this.getBuffType(previous);
         const nextType = this.getBuffType(next);
-        const shouldRefreshNode = previousType !== nextType;
+        const previousDurationType = this.normalizeDurationType(previous.durationType);
+        const nextDurationType = this.normalizeDurationType(next.durationType);
+        const shouldRefreshNode = previousType !== nextType || previousDurationType !== nextDurationType;
 
         if (shouldRefreshNode) {
             this.updateBuffNode(index);
@@ -1324,6 +1348,10 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         if (list) {
             this.renderBuffConfigList(list);
         }
+    }
+
+    normalizeDurationType(value) {
+        return this.abilityListHelper.normalizeDurationType(value);
     }
 
     updateBuffNode(index) {

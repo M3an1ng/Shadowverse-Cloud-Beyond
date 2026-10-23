@@ -416,6 +416,177 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
             logger.LogInformation("Backfilled card set links for {Count} card definitions.", cardsToUpdate.Count);
         }
 
+        private static async Task EnsureQuestDefinitionsAsync(ApplicationDbContext context, ILogger logger)
+        {
+            var seeds = new List<QuestDefinition>
+            {
+                new()
+                {
+                    Id = 10001,
+                    Name = "每日对战",
+                    Description = "完成 1 场官方对战",
+                    Type = QuestType.PlayGames,
+                    ActivityType = QuestActivityType.PlayMatch,
+                    Category = QuestCategory.Daily,
+                    TargetValue = 1,
+                    CoinReward = 50,
+                    RefreshIntervalHours = 24,
+                    DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                    IsActive = true
+                },
+                new()
+                {
+                    Id = 10002,
+                    Name = "每日胜利",
+                    Description = "赢得 1 场官方对战",
+                    Type = QuestType.WinGames,
+                    ActivityType = QuestActivityType.WinMatch,
+                    Category = QuestCategory.Daily,
+                    TargetValue = 1,
+                    CoinReward = 80,
+                    RefreshIntervalHours = 24,
+                    DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                    IsActive = true
+                },
+                new()
+                {
+                    Id = 10003,
+                    Name = "每日评论",
+                    Description = "评论 1 张卡牌",
+                    Type = QuestType.CollectCards,
+                    ActivityType = QuestActivityType.Comment,
+                    Category = QuestCategory.Daily,
+                    TargetValue = 1,
+                    CoinReward = 50,
+                    RefreshIntervalHours = 24,
+                    DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                    IsActive = true
+                },
+                new()
+                {
+                    Id = 10004,
+                    Name = "每日投票",
+                    Description = "为 3 张不同卡牌点赞或点踩",
+                    Type = QuestType.CollectCards,
+                    ActivityType = QuestActivityType.Vote,
+                    Category = QuestCategory.Daily,
+                    TargetValue = 3,
+                    CoinReward = 80,
+                    RefreshIntervalHours = 24,
+                    DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                    IsActive = true
+                },
+                new()
+                {
+                    Id = 10005,
+                    Name = "每日登录",
+                    Description = "登录游戏 1 次",
+                    Type = QuestType.LoginDaily,
+                    ActivityType = QuestActivityType.Login,
+                    Category = QuestCategory.Daily,
+                    TargetValue = 1,
+                    CoinReward = 30,
+                    RefreshIntervalHours = 24,
+                    DeduplicationPolicy = QuestDeduplicationPolicy.OncePerPeriod,
+                    IsActive = true
+                },
+                new()
+                {
+                    Id = 10006,
+                    Name = "每日观战",
+                    Description = "观战 1 场对局",
+                    Type = QuestType.PlayGames,
+                    ActivityType = QuestActivityType.SpectateMatch,
+                    Category = QuestCategory.Daily,
+                    TargetValue = 1,
+                    CoinReward = 50,
+                    RefreshIntervalHours = 24,
+                    DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                    IsActive = true
+                }
+            };
+
+            var existing = await context.QuestDefinitions.ToListAsync();
+            var existingById = existing.ToDictionary(definition => definition.Id);
+            var existingNames = new HashSet<string>(existing.Select(definition => definition.Name), StringComparer.OrdinalIgnoreCase);
+            var added = 0;
+            var updated = 0;
+
+            foreach (var seed in seeds)
+            {
+                existingById.TryGetValue(seed.Id, out var definition);
+                definition ??= existing.FirstOrDefault(item =>
+                    string.Equals(item.Name, seed.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (definition != null)
+                {
+                    if (ApplyQuestSeedMapping(definition, seed))
+                    {
+                        updated++;
+                    }
+                    continue;
+                }
+
+                if (existingNames.Add(seed.Name))
+                {
+                    context.QuestDefinitions.Add(seed);
+                    added++;
+                }
+            }
+
+            foreach (var definition in existing)
+            {
+                var mapped = MapQuestActivity(definition.Type);
+                if (definition.ActivityType != mapped.ActivityType || definition.DeduplicationPolicy == QuestDeduplicationPolicy.None)
+                {
+                    definition.ActivityType = mapped.ActivityType;
+                    definition.DeduplicationPolicy = mapped.DeduplicationPolicy;
+                    updated++;
+                }
+            }
+
+            if (added > 0 || updated > 0)
+            {
+                await context.SaveChangesAsync();
+                logger.LogInformation("Ensured quest definitions. Added={Added}, Updated={Updated}.", added, updated);
+            }
+        }
+
+        private static bool ApplyQuestSeedMapping(QuestDefinition target, QuestDefinition seed)
+        {
+            var changed = false;
+            if (target.ActivityType != seed.ActivityType)
+            {
+                target.ActivityType = seed.ActivityType;
+                changed = true;
+            }
+
+            if (target.DeduplicationPolicy != seed.DeduplicationPolicy)
+            {
+                target.DeduplicationPolicy = seed.DeduplicationPolicy;
+                changed = true;
+            }
+
+            if (target.RefreshIntervalHours <= 0)
+            {
+                target.RefreshIntervalHours = seed.RefreshIntervalHours;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static (QuestActivityType ActivityType, QuestDeduplicationPolicy DeduplicationPolicy) MapQuestActivity(QuestType type)
+        {
+            return type switch
+            {
+                QuestType.WinGames => (QuestActivityType.WinMatch, QuestDeduplicationPolicy.PerSourceEntityPerPeriod),
+                QuestType.LoginDaily => (QuestActivityType.Login, QuestDeduplicationPolicy.OncePerPeriod),
+                QuestType.CollectCards => (QuestActivityType.Vote, QuestDeduplicationPolicy.PerSourceEntityPerPeriod),
+                _ => (QuestActivityType.PlayMatch, QuestDeduplicationPolicy.PerSourceEntityPerPeriod)
+            };
+        }
+
         // Changed signature to accept WebApplication for easier service/environment access
         public static async Task SeedDatabaseAsync(WebApplication app)
         {
@@ -655,6 +826,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     }
 
                     await EnsureTribeDefinitionsAsync(context, tribeRegistry, logger);
+                    await EnsureQuestDefinitionsAsync(context, logger);
                     await NormalizeCardArtPathsAsync(context, workspaceRoot, logger);
                 }
                 catch (JsonException jsonEx)

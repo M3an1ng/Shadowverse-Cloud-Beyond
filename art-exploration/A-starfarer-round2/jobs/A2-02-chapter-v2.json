@@ -1,0 +1,82 @@
+{
+  "id": "A2-02-chapter-v2",
+  "prompt": "为幻想卡牌游戏设计一张完整的桌面横屏界面美术参考图，16:9，满幅单界面。不是网页、设备样机、拼贴或界面设计说明海报。关键中文短句清楚，场景和插画有绘画完成度，操作区域具有真实游戏的明确层级。\n\n系列美术方向：星界航行。延续参考图的蓝紫星空、古老天文仪器、远处悬空城、冷月光与微暖灯火；继承可信的纵深、细腻金属和安静的奇幻气氛，不复制旧导航布局。金属用在卡框、天文器物和很少的分隔节点，不用装饰包住每个字段。普通操作以字重、留白、深浅平面和细线区分，金属保持暗哑，蓝色高亮只指向当前选择。标题有优雅中文宋体气质，短标签与数据采用清晰现代中文黑体；不使用难辨识花体正文。星图弧线是低调的品牌母题，不是每页必备巨大圆环。功能工作面安静、平整，背景避开文字。\n\n同一卡牌规范：样例“星辰引路者”，成年银发女性星术师，深蓝白金服装，背景为星盘；卡牌费用3在左上蓝圆标，攻击2在左下蓝色锐角标，生命4在右下暗红盾形标。卡框为细窄古金属轮廓加精细星轨内纹，插画面积大，避免厚重金框和外围霓虹。凡显示这张卡，都保持人物、名称和3/2/4一致。它是系列的样例身份，不让其他卡都变成同一张人物图。场上简化卡牌保留相同角标语义。\n\n禁止视觉退化：不做满屏金框、框套框、每行一个发光容器；不使用手机氪金大厅、商店、货币、抽卡、通行证、活动广告。没有整屏泛蓝光、巨型关闭叉或无意义英文装饰段落。只表现一个合理的当前状态，不在同一张图重复绘制多个流程。\n\n本屏任务：\n参考图1是本轮大厅，仅提供星界世界、光色、字形与导航语言；参考图2是第一版章节总览，只提供章节状态与入口语义，不继承它的观测台视角和布局。这是针对已发现问题的第二版：第一版与大厅共享了太多前景。本次彻底移开大厅书桌、地板、拱窗、银发站立人物、猫和望远镜，重新设计章节视图的空间组织。\n\n绘制同一幻想世界的“星界航路”章节总览，一张完整16:9游戏界面。镜头已经离开建筑，悬浮在云海上空，以高处斜俯瞰视角看远近悬空岛与连成航路的星光；不是站在观测台栏杆后看同一片风景。近景是一个很有体积感、带断裂环形石拱和遗迹建筑的当前目的地岛屿，远处已走过的岛屿逐渐隐入蓝紫星海。冷月光铺在石材上，城堡窗灯只占少量。岛屿形成清楚的路线关系，不均匀排成四个按钮；星轨是细线，不是耀眼激光。\n\n顶部统一轻量导航“旅程”“对战”“卡牌”“创作”，旅程为当前，辅助“用户”“设置”克制。左上短返回项“返回大厅”；内容小页签“剧情战役”“战术挑战”，剧情战役选中。画面大部分用于可探索的航路场景。把当前章节信息组织成底部偏左的一块无装饰外框的安静浮动文字底面，避免再次出现整个左侧长文本列：标题“第二章 · 星海彼岸”，简介“穿过星门，寻找失落的观测台。”，主要动作“继续章节”，采用尺寸克制的深蓝实心按钮与清晰白字，没有宝石外壳和霓虹。旁边以小字显示“上次停留：观测台入口”。\n\n地图中的“序章”“第一章”各标“已完成”；当前的“第二章”标“进行中”；远处灰淡岛屿“第三章 · 未开放”，有简单锁形语义，没有可开始按钮。地图标记使用简洁文字、点与细引线，不用四个金属牌匾。删去多余旁白、英文诗句、巨大品牌LOGO、任务奖励。关键文字下面有适量局部遮光以确保对比。与大厅的关系来自同一世界与同一导航，不来自同一机位的背景复制。",
+  "refs": [
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-round2/images/A2-01-home.png",
+      "role": "style"
+    },
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/A-starfarer/A-01-home.png",
+      "role": "reference"
+    }
+  ],
+  "job_id": "535ecc6d-fb94-46d7-b5a2-d91972b0da7f",
+  "status": "succeeded",
+  "backend": "official-codex-mcp",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "auto"
+  },
+  "references": [
+    {
+      "role": "style",
+      "sha256": "8e4bf7b495cb68b4b625153696600bb6a4dc7a6e0c8ec9f0036e1bc08507842e",
+      "width": 1536,
+      "height": 864
+    },
+    {
+      "role": "reference",
+      "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66",
+      "width": 1536,
+      "height": 864
+    }
+  ],
+  "outputs": [
+    {
+      "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-535ecc6d-fb94-46d7-b5a2-d91972b0da7f\\part-1\\source-1.png",
+      "source_size": [
+        1672,
+        941
+      ],
+      "source_format": "png",
+      "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-535ecc6d-fb94-46d7-b5a2-d91972b0da7f\\part-1\\image-1.png",
+      "width": 1536,
+      "height": 864,
+      "format": "png",
+      "has_alpha": false,
+      "has_transparency": false,
+      "transforms": [
+        {
+          "operation": "resize",
+          "implementation": "local",
+          "from": "1672x941",
+          "to": "1536x864",
+          "mode": "contain",
+          "padding": "white"
+        },
+        {
+          "operation": "encode",
+          "implementation": "local",
+          "format": "png",
+          "quality": null
+        }
+      ],
+      "sha256": "b6065d54cf422f975df4fbc66d53956e14f7196ba3827b93778ea12fffaa8092"
+    }
+  ],
+  "upstream_metadata": {
+    "quality": "medium",
+    "size": "1672x941",
+    "background": "opaque",
+    "output_format": "png",
+    "count": 1
+  },
+  "started_at": "2026-09-21T01:33:01.465Z",
+  "finished_at": "2026-09-21T01:36:10.146Z"
+}

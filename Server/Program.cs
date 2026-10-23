@@ -45,6 +45,7 @@ using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
+using ShadowverseBeyond.Server.Infrastructure.Uploads;
 
 // REMOVED: Static Serilog configuration block (Lines 23-39)
 try // Wrap application startup in try-finally to ensure logs are flushed
@@ -53,6 +54,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     var builder = WebApplication.CreateBuilder(args);
     var isDevelopment = builder.Environment.IsDevelopment();
+    var multipartTempDirectory = MultipartTempDirectory.EnsureConfigured(builder.Environment.ContentRootPath);
+    Log.Information("Configured ASP.NET Core multipart temp directory: {MultipartTempDirectory}", multipartTempDirectory);
 
     // Log stream buffer + sink for dev-tools viewer
     builder.Services.AddSingleton<LogStreamBuffer>();
@@ -236,6 +239,10 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IClientMethodMapper."); // Added Log
     builder.Services.AddSingleton<IGameChatService, InMemoryGameChatService>();
     Log.Information("Registered IGameChatService (in-memory).");
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.Configure<EmoteCatalogOptions>(builder.Configuration.GetSection("Emotes"));
+    builder.Services.AddSingleton<IEmoteCatalogService, EmoteCatalogService>();
+    Log.Information("Registered IEmoteCatalogService.");
     builder.Services.AddSingleton<IMatchHistoryProjectionService, EventHistoryMatchHistoryProjectionService>();
     Log.Information("Registered IMatchHistoryProjectionService.");
     builder.Services.AddScoped<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
@@ -252,6 +259,10 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register Economy Service
     builder.Services.AddScoped<IEconomyService, EconomyService>(); // Register the economy service
     Log.Information("Registered IEconomyService."); // Added Log
+    builder.Services.AddScoped<IQuestProgressService, QuestProgressService>();
+    Log.Information("Registered IQuestProgressService.");
+    builder.Services.AddScoped<ISpectatorQuestProgressRecorder, SpectatorQuestProgressRecorder>();
+    Log.Information("Registered ISpectatorQuestProgressRecorder.");
     builder.Services.AddScoped<ICardCommunityService, CardCommunityService>();
     Log.Information("Registered ICardCommunityService.");
     builder.Services.AddScoped<IOfficialMatchEvaluator, OfficialMatchEvaluator>();
@@ -333,6 +344,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     // Register Game Action Transaction Service
     builder.Services.AddScoped<IGameActionTransactionService, GameActionTransactionService>();
     Log.Information("Registered IGameActionTransactionService as Scoped.");
+    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.GameFlow.ITurnBoundaryCleanupService, ShadowverseBeyond.Server.Domain.GameFlow.TurnBoundaryCleanupService>();
 
     // Register Effect UI Metadata Service
     builder.Services.AddSingleton<IEffectUIMetadataService, EffectUIMetadataService>();
@@ -399,6 +411,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered AbilityFactory and AbilityManager as Singleton.");
 
     // Register System Abilities as IAbility
+    builder.Services.AddSingleton<IAbility, ShadowverseBeyond.Server.Domain.Abilities.System.EarthSigilSystemAbility>();
     // builder.Services.AddSingleton<IAbility, EvolveAbility>(); // Temporarily disabled after refactoring the evolve flow
     // Register MulliganAbility's dependency to be injected into its constructor
     Log.Information("Registered System Abilities (EndTurn, PlayCard, Attack, Evolve, Mulligan) and their dependencies as Singleton.");

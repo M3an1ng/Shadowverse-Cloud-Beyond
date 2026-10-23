@@ -3,6 +3,8 @@
 // 相关文档:
 // - 多人联机方案A: 内存房间 + JoinCode/Token
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -312,6 +314,17 @@ namespace ShadowverseBeyond.Server.Controllers
             return MapResult(result, includeTokens: true);
         }
 
+        [HttpGet]
+        [ProducesResponseType(typeof(MatchRoomListResponse), StatusCodes.Status200OK)]
+        public ActionResult<MatchRoomListResponse> List()
+        {
+            var rooms = _matchService.ListCurrentRooms()
+                .Select(ToListItemResponse)
+                .ToList();
+
+            return Ok(new MatchRoomListResponse { Items = rooms });
+        }
+
         private ActionResult<MatchResponse>? ValidateSeatRequest(SeatRequest request)
         {
             if (request == null)
@@ -431,6 +444,29 @@ namespace ShadowverseBeyond.Server.Controllers
             return response;
         }
 
+        private static MatchRoomListItemResponse ToListItemResponse(MatchRoom room)
+        {
+            return new MatchRoomListItemResponse
+            {
+                RoomId = room.RoomId,
+                ActiveGameId = room.ActiveGameId,
+                Status = room.Status.ToString(),
+                HostReady = room.HostReady,
+                GuestReady = room.GuestReady,
+                HasGuest = room.GuestPlayerId.HasValue,
+                UseAiFallback = room.UseAiFallback,
+                Round = room.Round,
+                CreatedAt = room.CreatedAt,
+                ExpiresAt = room.ExpiresAt,
+                RequiredEnvironment = room.HostDeckSelection?.HasSelection == true
+                    ? room.HostDeckSelection.Environment ?? DeckEnvironment.Rotation
+                    : null,
+                RequiredRule = room.HostDeckSelection?.HasSelection == true
+                    ? room.HostDeckSelection.Rule ?? DeckRule.Standard
+                    : null
+            };
+        }
+
         // --- Request/Response DTOs ---
         public class CreateMatchRequest
         {
@@ -480,6 +516,27 @@ namespace ShadowverseBeyond.Server.Controllers
             public bool GuestReady { get; set; }
             public bool UseAiFallback { get; set; }
             public string? ClosedReason { get; set; }
+            public DeckEnvironment? RequiredEnvironment { get; set; }
+            public DeckRule? RequiredRule { get; set; }
+        }
+
+        public class MatchRoomListResponse
+        {
+            public List<MatchRoomListItemResponse> Items { get; set; } = new();
+        }
+
+        public class MatchRoomListItemResponse
+        {
+            public string RoomId { get; set; } = string.Empty;
+            public string? ActiveGameId { get; set; }
+            public string Status { get; set; } = string.Empty;
+            public bool HostReady { get; set; }
+            public bool GuestReady { get; set; }
+            public bool HasGuest { get; set; }
+            public bool UseAiFallback { get; set; }
+            public int Round { get; set; }
+            public DateTime CreatedAt { get; set; }
+            public DateTime ExpiresAt { get; set; }
             public DeckEnvironment? RequiredEnvironment { get; set; }
             public DeckRule? RequiredRule { get; set; }
         }

@@ -27,6 +27,33 @@ function normalizePlayerId(value) {
     return String(value ?? '').trim().toLowerCase();
 }
 
+function syncCounterSummaryEntries(target, key, value) {
+    const entries = target?.counterSummaryEntries ?? target?.CounterSummaryEntries;
+    if (!Array.isArray(entries)) {
+        return;
+    }
+
+    const lowerKey = String(key ?? '').trim().toLowerCase();
+    if (!lowerKey) {
+        return;
+    }
+
+    for (const entry of entries) {
+        const entryKey = String(entry?.key ?? entry?.Key ?? '').trim().toLowerCase();
+        if (entryKey !== lowerKey) {
+            continue;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(entry, 'value')) {
+            entry.value = value;
+        }
+        if (Object.prototype.hasOwnProperty.call(entry, 'Value')) {
+            entry.Value = value;
+        }
+        return;
+    }
+}
+
 // 核心游戏状态 (可导出或通过函数访问)
 export let gameState = {
     players: [], // 存储 Player 实例
@@ -507,6 +534,8 @@ function normalizePlayModeValue(value) {
         const normalized = value.trim().toLowerCase();
         if (normalized === 'base') return 0;
         if (normalized === 'enhance') return 1;
+        if (normalized === 'accelerate') return 2;
+        if (normalized === 'crystalize') return 3;
         return normalized;
     }
     if (typeof value === 'number') {
@@ -518,6 +547,26 @@ function normalizePlayModeValue(value) {
 function isEnhanceMode(value) {
     const normalized = normalizePlayModeValue(value);
     return normalized === 1 || normalized === 'enhance';
+}
+
+function isAccelerateMode(value) {
+    const normalized = normalizePlayModeValue(value);
+    return normalized === 2 || normalized === 'accelerate';
+}
+
+function isCrystalizeMode(value) {
+    const normalized = normalizePlayModeValue(value);
+    return normalized === 3 || normalized === 'crystalize';
+}
+
+function shouldSelectedPlayOccupyField(cardInstance, selectedPlayMode) {
+    if (isAccelerateMode(selectedPlayMode)) {
+        return false;
+    }
+    if (isCrystalizeMode(selectedPlayMode)) {
+        return true;
+    }
+    return cardInstance.type === "Follower" || cardInstance.type === "Amulet";
 }
 
 function resolvePlayModeSelection(playModes, preferredMode) {
@@ -1163,7 +1212,7 @@ export async function playCard(cardUid, targetUid = null) {
     }
 
     // Follower/Amulet specific checks before invoking server
-    if (cardInstance.type === "Follower" || cardInstance.type === "Amulet") {
+    if (shouldSelectedPlayOccupyField(cardInstance, selectedPlayMode)) {
         // Use MAX_FIELD_SIZE constant defined at the top of the file
         if (playerState.field.length >= MAX_FIELD_SIZE) {
             console.warn(
@@ -1215,7 +1264,7 @@ export async function playCard(cardUid, targetUid = null) {
         if (selectedPlayMode !== null && selectedPlayMode !== undefined) {
             actionDto.PlayMode = selectedPlayMode;
             actionDto.PaidCost = effectiveCost;
-            if (isEnhanceMode(selectedPlayMode) && selectedAbilityRuntimeId) {
+            if ((isEnhanceMode(selectedPlayMode) || isAccelerateMode(selectedPlayMode) || isCrystalizeMode(selectedPlayMode)) && selectedAbilityRuntimeId) {
                 actionDto.AbilityRuntimeId = selectedAbilityRuntimeId;
             }
         }
@@ -1390,6 +1439,7 @@ export async function selectAttackTarget(targetUid) {
 
     const attackerCannotAttackLeader = cardHasKeyword(attackerInstance, "CannotAttackLeader");
     const attackerCannotAttackFollower = cardHasKeyword(attackerInstance, "CannotAttackFollower");
+    const attackerIgnoresWard = cardHasKeyword(attackerInstance, "IgnoreWard");
     const targetIsFollower =
         targetInstance.type === "Follower" ||
         targetInstance.type === "Follower_Evolved";
@@ -1420,7 +1470,7 @@ export async function selectAttackTarget(targetUid) {
     );
 
     // If opponent has Ward, enforce targeting rules
-    if (opponentHasWard) {
+    if (opponentHasWard && !attackerIgnoresWard) {
         const targetHasWard = hasEffectiveWard(targetInstance);
 
         // Valid targets when opponent has Ward: Only followers that also have Ward
@@ -1433,9 +1483,8 @@ export async function selectAttackTarget(targetUid) {
         }
         // If target is a follower with Ward, the check passes.
     }
-    // If opponent does NOT have Ward, any valid target (follower or leader, respecting other rules) is fine.
-    else if (targetIsLeader) {
-        // If target is the leader and there's no Ward, check Rush/Storm rules
+    // If Ward does not restrict this attacker, any valid target is fine, respecting leader attack rules.
+    if (targetIsLeader) {
         const hasStorm = cardHasKeyword(attackerInstance, "Storm");
         const attackerZoneStayTurn = attackerInstance.zoneStayTurn ?? attackerInstance.ZoneStayTurn ?? 0;
         const isSummoningSick = attackerZoneStayTurn === 0;
@@ -2039,6 +2088,28 @@ export async function endTurnRequest() {
     }
 }
 
+export async function surrenderGame() {
+    if (gameState.isSpectator) {
+        return { ok: false, error: '观战模式：不能投降。' };
+    }
+    if (gameState.gameOver) {
+        return { ok: false, error: '游戏已经结束。' };
+    }
+
+    const connection = getActiveConnection();
+    if (!connection || connection.state !== "Connected") {
+        return { ok: false, error: '连接已断开，无法投降。' };
+    }
+
+    try {
+        await connection.invoke("Surrender", generateRequestId());
+        return { ok: true };
+    } catch (err) {
+        const errorMessage = err?.message || '服务器通信错误';
+        return { ok: false, error: errorMessage };
+    }
+}
+
 /**
  * Sends in-match chat message through SignalR.
  * @param {string} content
@@ -2059,6 +2130,40 @@ export async function sendChatMessage(content) {
     const actionDto = {
         ClientMessageId: clientMessageId,
         Content: normalizedContent
+    };
+
+    try {
+        pendingChatClientMessageIds.add(clientMessageId);
+        await connection.invoke("SendChatMessage", actionDto);
+        return { ok: true };
+    } catch (err) {
+        pendingChatClientMessageIds.delete(clientMessageId);
+        const errorMessage = err?.message || '服务器通信错误';
+        return { ok: false, error: errorMessage };
+    }
+}
+
+/**
+ * Sends an in-match emote message through the existing chat SignalR method.
+ * @param {string} emoteId
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function sendEmoteMessage(emoteId) {
+    const normalizedEmoteId = String(emoteId ?? '').trim();
+    if (!normalizedEmoteId) {
+        return { ok: false, error: '表情不存在或已移除。' };
+    }
+
+    const connection = getActiveConnection();
+    if (!connection || connection.state !== "Connected") {
+        return { ok: false, error: '连接已断开，无法发送表情。' };
+    }
+
+    const clientMessageId = generateRequestId();
+    const actionDto = {
+        ClientMessageId: clientMessageId,
+        MessageType: 'emote',
+        EmoteId: normalizedEmoteId
     };
 
     try {
@@ -2256,6 +2361,10 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.counterDisplayNames = (rawCounterDisplayNames && typeof rawCounterDisplayNames === 'object')
         ? { ...rawCounterDisplayNames }
         : {};
+    const rawCounterSummaryEntries = playerDto.CounterSummaryEntries ?? playerDto.counterSummaryEntries;
+    playerInstance.counterSummaryEntries = Array.isArray(rawCounterSummaryEntries)
+        ? rawCounterSummaryEntries.map(entry => ({ ...entry }))
+        : [];
 
     const readCounter = (key, fallback = 0) => {
         const normalizedKey = String(key ?? '').trim().toLowerCase();
@@ -3321,6 +3430,7 @@ export function handleCounterChanged(eventData) {
                 cardInstance.counters = {};
             }
             cardInstance.counters[counterName] = newValue;
+            syncCounterSummaryEntries(cardInstance, counterName, newValue);
 
             if (normalizedCounter === 'earthsigil') {
                 cardInstance.earthsigil = newValue;
@@ -3344,6 +3454,7 @@ export function handleCounterChanged(eventData) {
             player.counters = {};
         }
         player.counters[counterName] = newValue;
+        syncCounterSummaryEntries(player, counterName, newValue);
 
         if (normalizedCounter === 'bloodpool') {
             player.bloodPool = newValue;
@@ -3418,6 +3529,7 @@ export function handleGraveyardUpdate(eventData) {
         playerToUpdate.counters = {};
     }
     playerToUpdate.counters.graveyard = newServerCount;
+    syncCounterSummaryEntries(playerToUpdate, 'graveyard', newServerCount);
 
     // Log the update for clarity.
 
@@ -4247,8 +4359,19 @@ function normalizeChatMessageDto(rawMessage) {
     const senderId = String(rawMessage.SenderId ?? rawMessage.senderId ?? '').trim();
     const senderNameFallback = senderType === 'spectator' ? '观战者' : (senderType === 'system' ? '系统' : '玩家');
     const senderName = String(rawMessage.SenderName ?? rawMessage.senderName ?? senderNameFallback).trim() || senderNameFallback;
-    const content = String(rawMessage.Content ?? rawMessage.content ?? '').trim();
-    if (!content) {
+    const messageTypeRaw = String(rawMessage.MessageType ?? rawMessage.messageType ?? 'text').trim().toLowerCase();
+    const messageType = messageTypeRaw === 'emote' ? 'emote' : 'text';
+    const emoteId = String(rawMessage.EmoteId ?? rawMessage.emoteId ?? '').trim();
+    const emoteName = String(rawMessage.EmoteName ?? rawMessage.emoteName ?? '').trim();
+    const emoteUrl = String(rawMessage.EmoteUrl ?? rawMessage.emoteUrl ?? '').trim();
+    const rawContent = String(rawMessage.Content ?? rawMessage.content ?? '').trim();
+    const content = messageType === 'emote'
+        ? (rawContent || emoteName || emoteId)
+        : rawContent;
+    if (messageType === 'text' && !content) {
+        return null;
+    }
+    if (messageType === 'emote' && (!emoteId || !emoteUrl)) {
         return null;
     }
 
@@ -4274,7 +4397,11 @@ function normalizeChatMessageDto(rawMessage) {
         senderId,
         senderName,
         senderAvatarUrl: String(rawMessage.SenderAvatarUrl ?? rawMessage.senderAvatarUrl ?? '').trim(),
+        messageType,
         content,
+        emoteId: messageType === 'emote' ? emoteId : '',
+        emoteName: messageType === 'emote' ? (emoteName || content) : '',
+        emoteUrl: messageType === 'emote' ? emoteUrl : '',
         sentAtUtc,
         clientMessageId,
         isSelf

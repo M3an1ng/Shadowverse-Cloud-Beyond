@@ -3,6 +3,11 @@ import { hydrateDescriptionReferences } from '../previewDescriptionReferences.js
 import { ensureEnumLocalizations, getCachedEnumLabel } from '../enumLocalizationCache.js';
 import { showPreviewDescriptionTooltip } from '../previewDescriptionTooltip.js';
 import { getUserSession } from '../userSession.js';
+import {
+    buildActivityQuestMessage,
+    extractQuestProgress,
+    QUEST_PROGRESS_UPDATED_EVENT
+} from '../questFeedback.js';
 import cardAttackIconUrl from '../icon/utx_ic_card_attack.png';
 import cardHealthIconUrl from '../icon/utx_ic_card_health.png';
 import cardCostIconUrl from '../icon/utx_ic_card_cost.png';
@@ -10,10 +15,7 @@ import cardCostIconUrl from '../icon/utx_ic_card_cost.png';
 const MODAL_ID = 'card-detail-modal';
 const IMAGE_MODAL_ID = 'card-detail-image-modal';
 const COMMENT_MAX_LENGTH = 500;
-const COMMUNITY_COINS_UPDATED_EVENT = 'svb:economy-coins-updated';
 const COMMUNITY_TIME_ZONE = 'Etc/GMT-8';
-const COMMUNITY_REWARD_ANIMATION_MS = 1600;
-const COMMUNITY_REWARD_DEBUG_FREEZE = false;
 const DETAIL_NAVIGATION_RESET = 'reset';
 const DETAIL_NAVIGATION_PUSH = 'push';
 const DETAIL_NAVIGATION_REPLACE = 'replace';
@@ -237,105 +239,17 @@ function resolveCommunityValue(source, keys, fallback = null) {
     return fallback;
 }
 
-function normalizeCommunityCoins(rawValue) {
-    const parsed = Number.parseInt(String(rawValue ?? ''), 10);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function extractCommunityReward(payload) {
-    const rewardGranted = Boolean(resolveCommunityValue(payload, ['rewardGranted', 'RewardGranted'], false));
-    const rewardCoins = Number(resolveCommunityValue(payload, ['rewardCoins', 'RewardCoins'], 0)) || 0;
-    const currentCoins = normalizeCommunityCoins(resolveCommunityValue(payload, ['currentCoins', 'CurrentCoins'], null));
-    return { rewardGranted, rewardCoins, currentCoins };
-}
-
-function emitCommunityCoinsUpdated(userId, currentCoins) {
-    if (!userId || !Number.isFinite(currentCoins) || typeof document === 'undefined') {
+function emitQuestProgressUpdated(userId, questProgress) {
+    if (!userId || !questProgress || typeof document === 'undefined') {
         return;
     }
 
-    document.dispatchEvent(new CustomEvent(COMMUNITY_COINS_UPDATED_EVENT, {
+    document.dispatchEvent(new CustomEvent(QUEST_PROGRESS_UPDATED_EVENT, {
         detail: {
             userId: String(userId),
-            coins: currentCoins
+            questProgress
         }
     }));
-}
-
-function buildCommunitySuccessMessage(baseMessage, rewardState) {
-    if (!rewardState?.rewardGranted || rewardState.rewardCoins <= 0) {
-        return baseMessage;
-    }
-
-    return `${baseMessage} 首次奖励 +${rewardState.rewardCoins} 金币。`;
-}
-
-function buildCommunityRewardTitle(rewardKind) {
-    if (rewardKind === 'comment') {
-        return '首次评论奖励';
-    }
-    if (rewardKind === 'vote') {
-        return '首次赞踩奖励';
-    }
-    return '互动奖励';
-}
-
-function playCommunityRewardAnimation(rewardLayerEl, sourceEl, rewardState, rewardKind) {
-    if (!rewardLayerEl || !sourceEl || !rewardState?.rewardGranted || rewardState.rewardCoins <= 0) {
-        return;
-    }
-
-    const layerRect = rewardLayerEl.getBoundingClientRect();
-    const sourceRect = sourceEl.getBoundingClientRect();
-    if (layerRect.width <= 0 || layerRect.height <= 0 || sourceRect.width <= 0 || sourceRect.height <= 0) {
-        return;
-    }
-
-    rewardLayerEl.querySelectorAll('.card-community-reward-burst').forEach((node) => node.remove());
-
-    const burstEl = document.createElement('div');
-    burstEl.className = 'card-community-reward-burst';
-    burstEl.setAttribute('aria-hidden', 'true');
-    burstEl.style.left = `${sourceRect.left + (sourceRect.width / 2) - layerRect.left}px`;
-    burstEl.style.top = `${sourceRect.top + Math.min(sourceRect.height * 0.45, 28) - layerRect.top}px`;
-    burstEl.innerHTML = `
-        <div class="card-community-reward-halo"></div>
-        <div class="card-community-reward-coins">
-            <span class="card-community-reward-coin coin-1"></span>
-            <span class="card-community-reward-coin coin-2"></span>
-            <span class="card-community-reward-coin coin-3"></span>
-            <span class="card-community-reward-coin coin-4"></span>
-            <span class="card-community-reward-coin coin-5"></span>
-        </div>
-        <div class="card-community-reward-panel">
-            <div class="card-community-reward-amount">+${escapeHtml(String(rewardState.rewardCoins))} 金币</div>
-            <div class="card-community-reward-title">${escapeHtml(buildCommunityRewardTitle(rewardKind))}</div>
-        </div>
-    `;
-
-    rewardLayerEl.appendChild(burstEl);
-    rewardLayerEl.classList.toggle('is-debug-freeze', COMMUNITY_REWARD_DEBUG_FREEZE);
-    sourceEl.classList.remove('is-reward-flash');
-    void sourceEl.offsetWidth;
-    sourceEl.classList.add('is-reward-flash');
-
-    requestAnimationFrame(() => {
-        burstEl.classList.add('is-visible');
-        if (COMMUNITY_REWARD_DEBUG_FREEZE) {
-            burstEl.classList.add('is-debug-freeze');
-        }
-    });
-
-    if (COMMUNITY_REWARD_DEBUG_FREEZE) {
-        return;
-    }
-
-    window.setTimeout(() => {
-        sourceEl.classList.remove('is-reward-flash');
-        if (burstEl.isConnected) {
-            burstEl.remove();
-        }
-    }, COMMUNITY_REWARD_ANIMATION_MS);
 }
 
 async function fetchCardCommunity(cardId, userId) {
@@ -918,12 +832,11 @@ export function showCardDetailModal(card, options = {}) {
         }
 
         if (createPayload && overlay.isConnected) {
-            const rewardState = extractCommunityReward(createPayload);
-            emitCommunityCoinsUpdated(userId, rewardState.currentCoins);
-            playCommunityRewardAnimation(rewardLayerEl, submitBtn, rewardState, 'comment');
+            const questProgress = extractQuestProgress(createPayload);
+            emitQuestProgressUpdated(userId, questProgress);
             const reloaded = await loadCommunity();
             if (overlay.isConnected && reloaded) {
-                setCommunityStatus(buildCommunitySuccessMessage('评论已发布。', rewardState));
+                setCommunityStatus(buildActivityQuestMessage('评论已发布。', questProgress));
             }
         }
     });
@@ -943,15 +856,9 @@ export function showCardDetailModal(card, options = {}) {
         }
 
         if (votePayload && overlay.isConnected) {
-            const rewardState = extractCommunityReward(votePayload);
-            emitCommunityCoinsUpdated(userId, rewardState.currentCoins);
-            playCommunityRewardAnimation(
-                rewardLayerEl,
-                voteType === 'down' ? voteDownBtn : voteUpBtn,
-                rewardState,
-                'vote'
-            );
-            const successMessage = buildCommunitySuccessMessage('投票已更新。', rewardState);
+            const questProgress = extractQuestProgress(votePayload);
+            emitQuestProgressUpdated(userId, questProgress);
+            const successMessage = buildActivityQuestMessage('投票已更新。', questProgress);
             if (isSidebarOpen) {
                 const reloaded = await loadCommunity();
                 if (overlay.isConnected && reloaded) {

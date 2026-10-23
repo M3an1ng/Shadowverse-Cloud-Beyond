@@ -39,6 +39,8 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public Dictionary<string, int> Counters { get; set; } = new();
         [JsonPropertyName("counterDisplayNames")]
         public Dictionary<string, string> CounterDisplayNames { get; set; } = new();
+        [JsonPropertyName("counterSummaryEntries")]
+        public List<CounterSummaryEntryDto> CounterSummaryEntries { get; set; } = new();
 
         // Leader Info
         // public int LeaderHealth { get; set; } // Removed: Use LeaderCard.CurrentHealth

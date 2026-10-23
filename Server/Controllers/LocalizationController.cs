@@ -95,6 +95,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "CardActionUsageType", typeof(CardActionUsageType) },
                 { "PlayMode", typeof(PlayMode) },
                 { "DeckEnvironment", typeof(DeckEnvironment) },
+                { "DeckKeyword", typeof(DeckKeyword) },
                 { "RemoveAbilityMode", typeof(RemoveAbilityMode) },
                 { "SequenceOrder", typeof(SequenceOrder) },
                 { "DeckInsertMode", typeof(DeckInsertMode) },

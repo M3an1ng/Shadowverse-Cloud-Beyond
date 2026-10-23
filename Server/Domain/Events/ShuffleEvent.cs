@@ -24,11 +24,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("目标玩家", "接收卡牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public ShuffleEvent(PlayerState player, List<CardInstance> cards, EventReasonSource reason = EventReasonSource.Ability, Guid? eventId = null, DateTime? timestamp = null)
+        [GameEventParameter("牌库插入方式", "卡牌洗回牌库时使用的插入方式。")]
+        public DeckInsertMode InsertMode { get; }
+
+        public ShuffleEvent(
+            PlayerState player,
+            List<CardInstance> cards,
+            EventReasonSource reason = EventReasonSource.Ability,
+            Guid? eventId = null,
+            DateTime? timestamp = null,
+            DeckInsertMode insertMode = DeckInsertMode.Random)
             : base(EventType.Shuffle, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Reason = reason;
+            InsertMode = insertMode;
 
             foreach (var card in cards ?? new List<CardInstance>())
             {
@@ -44,7 +54,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "ShuffleEvent.Commit: target player is null." };
             }
 
-            return player.ShuffleCardsIntoDeck(ShuffledCards);
+            return player.ShuffleCardsIntoDeck(ShuffledCards, InsertMode);
         }
 
         public string GetAnnouncement(GameState gameState)

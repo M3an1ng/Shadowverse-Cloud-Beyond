@@ -105,13 +105,13 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
-        public void EndTurn_clears_unused_armed_boost_without_spending_a_use()
+        public void CleanupEndOfTurnState_clears_unused_armed_boost_without_spending_a_use()
         {
             using var context = CreateContext(out var player, out var opponent);
             player.PpBoostUsesAvailable = 1;
             player.IsPpBoostArmed = true;
 
-            var result = player.EndTurn();
+            var result = player.CleanupEndOfTurnState();
 
             Assert.True(result.Success, result.ErrorMessage);
             Assert.False(player.IsPpBoostArmed);

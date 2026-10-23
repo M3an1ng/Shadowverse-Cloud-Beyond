@@ -2,6 +2,13 @@ export const CARD_CATALOG_INVALIDATED_EVENT = 'svb:card-catalog-invalidated';
 export const DECK_VALIDATION_RULES_UPDATED_EVENT = 'svb:deck-validation-rules-updated';
 
 const DATA_REVISION_HEADER = 'X-Data-Revision';
+const ABILITY_ONLY_REASONS = new Set([
+    'ability-created',
+    'ability-updated',
+    'ability-deleted',
+    'ability-linked',
+    'ability-unlinked'
+]);
 
 let latestDataRevision = null;
 
@@ -29,6 +36,11 @@ export function notifyDeckValidationRulesUpdated(detail = {}) {
     document.dispatchEvent(new CustomEvent(DECK_VALIDATION_RULES_UPDATED_EVENT, {
         detail: buildEventDetail(detail)
     }));
+}
+
+export function isAbilityOnlyInvalidation(detail = {}) {
+    const reason = String(detail?.reason ?? '').trim().toLowerCase();
+    return ABILITY_ONLY_REASONS.has(reason);
 }
 
 export function syncDataRevisionFromResponse(response, detail = {}) {

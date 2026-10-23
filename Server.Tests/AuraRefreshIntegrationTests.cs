@@ -9,8 +9,11 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Buffs;
+using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services;
@@ -38,8 +41,8 @@ namespace ShadowverseBeyond.Server.Tests
             var target = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Hand);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
-            var ability = harness.RegisterAbility(source, "AuraSourceMove", targets, null, new List<AuraConfig> { auraConfig });
+            var auraConfig = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraSourceMove", targets, null, new List<AuraConfig> { auraConfig }, EventType.CardMoved);
 
             Assert.Empty(harness.GameState.BuffManager.GetBuffsForCard(target.InstanceId));
 
@@ -64,8 +67,8 @@ namespace ShadowverseBeyond.Server.Tests
             var target = harness.CreateCard(FollowerDefinitionId, harness.Player1, CardZone.Field);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.Transform }, TriggerTiming.After);
-            var ability = harness.RegisterAbility(source, "AuraSourceTransform", targets, null, new List<AuraConfig> { auraConfig });
+            var auraConfig = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraSourceTransform", targets, null, new List<AuraConfig> { auraConfig }, EventType.Transform);
 
             Assert.Empty(harness.GameState.BuffManager.GetBuffsForCard(target.InstanceId));
 
@@ -84,8 +87,8 @@ namespace ShadowverseBeyond.Server.Tests
             var target = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Hand);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
-            var ability = harness.RegisterAbility(source, "AuraSourceLeave", targets, null, new List<AuraConfig> { auraConfig });
+            var auraConfig = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraSourceLeave", targets, null, new List<AuraConfig> { auraConfig }, EventType.CardMoved);
 
             var enterResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -108,8 +111,8 @@ namespace ShadowverseBeyond.Server.Tests
             var target = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Hand);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved, EventType.SilenceApplied }, TriggerTiming.After);
-            var ability = harness.RegisterAbility(source, "AuraSourceSilence", targets, null, new List<AuraConfig> { auraConfig });
+            var auraConfig = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraSourceSilence", targets, null, new List<AuraConfig> { auraConfig }, EventType.CardMoved, EventType.SilenceApplied);
 
             var enterResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -135,10 +138,10 @@ namespace ShadowverseBeyond.Server.Tests
             var target = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Hand);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
+            var auraConfig = BuildAuraConfig();
 
-            var abilityOne = harness.RegisterAbility(sourceOne, "AuraSourceStackOne", targets, null, new List<AuraConfig> { auraConfig });
-            var abilityTwo = harness.RegisterAbility(sourceTwo, "AuraSourceStackTwo", targets, null, new List<AuraConfig> { auraConfig });
+            harness.RegisterAbility(sourceOne, "AuraSourceStackOne", targets, null, new List<AuraConfig> { auraConfig }, EventType.CardMoved);
+            harness.RegisterAbility(sourceTwo, "AuraSourceStackTwo", targets, null, new List<AuraConfig> { auraConfig }, EventType.CardMoved);
 
             var enterResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -159,8 +162,8 @@ namespace ShadowverseBeyond.Server.Tests
             var dummy = harness.CreateCard(FollowerDefinitionId, harness.Player1, CardZone.Field);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.BuffApplied }, TriggerTiming.After, canStack: true);
-            var ability = harness.RegisterAbility(source, "AuraSourceLoopGuard", targets, null, new List<AuraConfig> { auraConfig });
+            var auraConfig = BuildAuraConfig(canStack: true);
+            harness.RegisterAbility(source, "AuraSourceLoopGuard", targets, null, new List<AuraConfig> { auraConfig }, EventType.BuffApplied);
 
             await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -187,9 +190,9 @@ namespace ShadowverseBeyond.Server.Tests
             var follower = harness.CreateCard(FollowerDefinitionId, harness.Player1, CardZone.Field);
 
             var targets = BuildAmuletTargets();
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
+            var auraConfig = BuildAuraConfig();
 
-            var ability = harness.RegisterAbility(source, "AuraConfigDefaultTargets", targets, null, new List<AuraConfig> { auraConfig });
+            harness.RegisterAbility(source, "AuraConfigDefaultTargets", targets, null, new List<AuraConfig> { auraConfig }, EventType.CardMoved);
 
             var enterResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -201,26 +204,17 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
-        public async Task AuraConfig_overrides_targets_and_conditions()
+        public async Task Aura_uses_ability_targets_and_conditions()
         {
             using var harness = new AuraTestHarness();
             var source = harness.CreateCard(SourceDefinitionId, harness.Player1, CardZone.Field);
             var amulet = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Field);
             var follower = harness.CreateCard(FollowerDefinitionId, harness.Player1, CardZone.Hand);
 
-            var abilityTargets = BuildAmuletTargets();
-            var abilityConditions = new List<ConditionConfig>
-            {
-                ConditionConfig.FromExpression("false")
-            };
-
-            var overrideTargets = BuildFollowerTargets();
-            var overrideConditions = new List<ConditionConfig>
-            {
-                ConditionConfig.FromExpression("true")
-            };
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
-            var ability = harness.RegisterAbility(source, "AuraConfigOverrides", abilityTargets, abilityConditions, new List<AuraConfig> { auraConfig });
+            var abilityConditions = new List<ConditionConfig> { ConditionConfig.FromExpression("true") };
+            var auraConfig = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraAbilityTargets", BuildFollowerTargets(), abilityConditions,
+                new List<AuraConfig> { auraConfig }, EventType.CardMoved);
 
             var enterResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -238,8 +232,10 @@ namespace ShadowverseBeyond.Server.Tests
             var source = harness.CreateCard(SourceDefinitionId, harness.Player1, CardZone.Field);
             var target = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Hand);
 
-            var auraConfig = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
-            var ability = harness.RegisterAbility(source, "AuraConfigConditionGate", BuildAmuletTargets(), null, new List<AuraConfig> { auraConfig });
+            var auraConfig = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraConditionFalse", BuildAmuletTargets(),
+                new List<ConditionConfig> { ConditionConfig.FromExpression("false") },
+                new List<AuraConfig> { auraConfig }, EventType.CardMoved);
 
             var enterResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -248,9 +244,10 @@ namespace ShadowverseBeyond.Server.Tests
 
             Assert.Empty(harness.GameState.BuffManager.GetBuffsForCard(target.InstanceId));
 
-            var enabledAura = BuildAuraConfig(new[] { EventType.CardMoved }, TriggerTiming.After);
-            enabledAura.Name = "AuraConfigConditionGateEnabled";
-            var abilityWithAura = harness.RegisterAbility(source, "AuraConfigConditionGate", BuildAmuletTargets(), null, new List<AuraConfig> { enabledAura });
+            var enabledAura = BuildAuraConfig();
+            harness.RegisterAbility(source, "AuraConditionTrue", BuildAmuletTargets(),
+                new List<ConditionConfig> { ConditionConfig.FromExpression("true") },
+                new List<AuraConfig> { enabledAura }, EventType.CardMoved);
 
             var leaveResult = await harness.TransactionService.ProcessTransactionAsync(
                 harness.Context,
@@ -294,14 +291,64 @@ namespace ShadowverseBeyond.Server.Tests
 
             var ability = harness.RegisterAbility(source, "AuraActionUsage", BuildFollowerTargets(), null, new List<AuraConfig> { auraConfig });
 
-            var registerResult = harness.RegisterAura(auraConfig, ability, source);
-            Assert.True(registerResult.Success);
-            await harness.ApplyGeneratedEventsAsync(registerResult);
+            var refreshResult = await harness.AbilityManager.ProcessSingleAbilityAsync(
+                ability,
+                harness.Context with { SourceCard = source },
+                false,
+                false);
+            Assert.True(refreshResult.IsSuccess, refreshResult.ErrorMessage);
+            Assert.Contains(refreshResult.GeneratedEvents, gameEvent => gameEvent is BuffAppliedEvent);
+            var applyResult = await harness.TransactionService.ProcessTransactionAsync(
+                harness.Context,
+                refreshResult.GeneratedEvents);
+            Assert.True(applyResult.IsSuccess);
 
             Assert.Equal(2, target.MaxAttacksPerTurn);
         }
 
-        private static AuraConfig BuildAuraConfig(IEnumerable<EventType> eventTypes, TriggerTiming timing, bool canStack = false)
+        [Fact]
+        public async Task Aura_refresh_in_effect_context_keeps_effect_immune_target()
+        {
+            using var harness = new AuraTestHarness();
+            var source = harness.CreateCard(AmuletDefinitionId, harness.Player1, CardZone.Field);
+            var target = harness.CreateCard(FollowerDefinitionId, harness.Player1, CardZone.Field);
+
+            var immuneBuff = new Buff(
+                Guid.Empty,
+                target.InstanceId,
+                harness.Player1.TurnNumber,
+                new List<IBuffEffect>
+                {
+                    new KeywordBuffEffect(new List<CardKeyword> { CardKeyword.EffectImmune })
+                });
+            harness.GameState.BuffManager.RegisterBuffInstance(immuneBuff, harness.GameState);
+            harness.Context.BuffService.RefreshDerivedStateCache(harness.Context, "test_effect_immune_aura_refresh");
+
+            var auraConfig = BuildAuraConfig();
+            var ability = harness.RegisterAbility(source, "AuraEffectImmuneRefresh", BuildFollowerTargets(), null,
+                new List<AuraConfig> { auraConfig }, EventType.EffectCompleted);
+            var currentEffect = new Effect(
+                new EffectConfig { Type = EffectType.Destroy },
+                harness.Player1.PlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(target) },
+                null,
+                Guid.NewGuid(),
+                source.InstanceId);
+            var effectContext = harness.Context with
+            {
+                SourceCard = source,
+                SourceAbility = ability,
+                CurrentEffect = currentEffect
+            };
+
+            var result = await harness.AbilityManager.ProcessSingleAbilityAsync(ability, effectContext, false, false);
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.Contains(result.GeneratedEvents.OfType<BuffAppliedEvent>(), gameEvent =>
+                gameEvent.AppliedBuff.TargetCardInstanceId == target.InstanceId);
+        }
+
+        private static AuraConfig BuildAuraConfig(bool canStack = false)
         {
             return new AuraConfig
             {
@@ -433,7 +480,8 @@ namespace ShadowverseBeyond.Server.Tests
                 string name,
                 Dictionary<string, TargetConfig>? targets = null,
                 List<ConditionConfig>? conditions = null,
-                List<AuraConfig>? auras = null)
+                List<AuraConfig>? auras = null,
+                params EventType[] eventTypes)
             {
                 var config = new AbilityConfig
                 {
@@ -442,7 +490,12 @@ namespace ShadowverseBeyond.Server.Tests
                     Name = name,
                     Description = string.Empty,
                     Type = AbilityType.Continuous,
-                    Trigger = new TriggerConfig(),
+                    Trigger = new TriggerConfig
+                    {
+                        EventTypes = eventTypes.ToList(),
+                        Timing = TriggerTiming.After,
+                        ValidZones = new List<CardZone> { CardZone.Field }
+                    },
                     Targets = targets ?? new Dictionary<string, TargetConfig>(),
                     Conditions = conditions ?? new List<ConditionConfig>(),
                     Auras = auras ?? new List<AuraConfig>()
@@ -450,22 +503,6 @@ namespace ShadowverseBeyond.Server.Tests
 
                 var abilities = AbilityManager.CreateAbilitiesForCard(sourceCard, new List<AbilityConfig> { config });
                 return abilities.Single();
-            }
-
-            public DomainOperationResult RegisterAura(AuraConfig auraConfig, Ability ability, CardInstance sourceCard, int auraIndex = 0)
-            {
-                var auraContext = Context with { SourceCard = sourceCard, SourceAbility = ability };
-                return AuraManager.RegisterAura(auraConfig, ability, auraContext, auraIndex);
-            }
-
-            public async Task ApplyGeneratedEventsAsync(DomainOperationResult result)
-            {
-                if (result.GeneratedEvents.Count == 0)
-                {
-                    return;
-                }
-
-                await TransactionService.ProcessTransactionAsync(Context, result.GeneratedEvents);
             }
 
             public void Dispose()

@@ -495,7 +495,7 @@ export class DslEditor extends MetadataDrivenComponent {
             }
 
             if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
-                this.slotExpectedType = 'NonEntity';
+                this.slotExpectedType = 'ScalarOrScalarList';
                 const sourceReturnType = this.getSemanticNodeType(parentNode.source);
                 setSelfContext(sourceReturnType, parentNode.source);
                 restoreContext();
@@ -724,7 +724,7 @@ export class DslEditor extends MetadataDrivenComponent {
         }
 
         if (parentNode.type === 'listDistinct' && slot === 'keyExpression') {
-            return 'NonEntity';
+            return 'ScalarOrScalarList';
         }
         if (parentNode.type === 'listSelect' && slot === 'selectExpression') {
             return 'Object';
@@ -903,7 +903,7 @@ export class DslEditor extends MetadataDrivenComponent {
                 const isCollection = this.isCollectionType(result.actualType);
                 const isDictionary = typeof this.isDictionaryType === "function" && this.isDictionaryType(result.actualType);
                 if (isEntity || isCollection || isDictionary) {
-                    result.expectedType = 'NonEntity';
+                    result.expectedType = 'ScalarOrScalarList';
                 }
             }
         } else if (node.parent && node.parent.type === 'listSelect') {
@@ -3858,6 +3858,19 @@ export class DslEditor extends MetadataDrivenComponent {
         if (!a || !e) {
             return false; // 如果任一类型为空，则不兼容
         }
+        if (e === 'ScalarOrScalarList') {
+            if (this.isDictionaryType(a) || this.isBusinessObjectType(a)) {
+                return false;
+            }
+            if (this.isCollectionType(a)) {
+                const innerType = this.getCollectionInnerType(a);
+                if (!innerType) {
+                    return false;
+                }
+                return !this.isDictionaryType(innerType) && !this.isBusinessObjectType(innerType) && !this.isCollectionType(innerType);
+            }
+            return true;
+        }
         if (e === 'Object') {
             return true; // Object 作为通配类型
         }
@@ -3923,6 +3936,8 @@ export class DslEditor extends MetadataDrivenComponent {
             'PlayerState',      // 玩家状态
             'CardInstance',     // 卡牌实例
             'CardDefinition',   // 卡牌定义
+            'Ability',          // 能力实例
+            'IAbility',         // 能力接口
             'EffectInstance',   // 效果实例
             'EventInstance'     // 事件实例
         ];

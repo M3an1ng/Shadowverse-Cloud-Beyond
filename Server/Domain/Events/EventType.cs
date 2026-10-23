@@ -143,6 +143,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         [Description("阶段切换")]
         PhaseTransition,
+        /// <summary>
+        /// 回合边界清理阶段触发。
+        /// </summary>
+        [Description("回合边界清理")]
+        TurnBoundaryCleanup,
 
         // --- 资源相关事件 ---
         /// <summary>
@@ -438,6 +443,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         [Description("爆能")]
         Enhance,
+
+        /// <summary>
+        /// 玩家以 Accelerate（激奏）模式打出卡牌时触发。
+        /// </summary>
+        [Description("激奏")]
+        Accelerate,
+
+        /// <summary>
+        /// 玩家以 Crystalize（结晶）模式打出卡牌时触发。
+        /// </summary>
+        [Description("结晶")]
+        Crystalize,
 
         /// <summary>
         /// 一张卡牌成功发动了 Fusion（融合）能力（用于触发 Fusion 能力）。

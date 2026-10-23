@@ -1,0 +1,82 @@
+{
+  "id": "A2-03-codex",
+  "prompt": "为幻想卡牌游戏设计一张完整的桌面横屏界面美术参考图，16:9，满幅单界面。不是网页、设备样机、拼贴或界面设计说明海报。关键中文短句清楚，场景和插画有绘画完成度，操作区域具有真实游戏的明确层级。\n\n系列美术方向：星界航行。延续参考图的蓝紫星空、古老天文仪器、远处悬空城、冷月光与微暖灯火；继承可信的纵深、细腻金属和安静的奇幻气氛，不复制旧导航布局。金属用在卡框、天文器物和很少的分隔节点，不用装饰包住每个字段。普通操作以字重、留白、深浅平面和细线区分，金属保持暗哑，蓝色高亮只指向当前选择。标题有优雅中文宋体气质，短标签与数据采用清晰现代中文黑体；不使用难辨识花体正文。星图弧线是低调的品牌母题，不是每页必备巨大圆环。功能工作面安静、平整，背景避开文字。\n\n同一卡牌规范：样例“星辰引路者”，成年银发女性星术师，深蓝白金服装，背景为星盘；卡牌费用3在左上蓝圆标，攻击2在左下蓝色锐角标，生命4在右下暗红盾形标。卡框为细窄古金属轮廓加精细星轨内纹，插画面积大，避免厚重金框和外围霓虹。凡显示这张卡，都保持人物、名称和3/2/4一致。它是系列的样例身份，不让其他卡都变成同一张人物图。场上简化卡牌保留相同角标语义。\n\n禁止视觉退化：不做满屏金框、框套框、每行一个发光容器；不使用手机氪金大厅、商店、货币、抽卡、通行证、活动广告。没有整屏泛蓝光、巨型关闭叉或无意义英文装饰段落。只表现一个合理的当前状态，不在同一张图重复绘制多个流程。\n\n本屏任务：\n参考图1为本轮大厅，继承安静界面材质和文字层级；参考图2为原A首页，以右侧银发星术师作为同一卡牌身份和费用/攻击/生命标记来源。它们不是本屏布局模板。\n绘制“卡牌图鉴”的单张卡详情鉴赏状态。顶部仍是旅程、对战、卡牌、创作，当前卡牌；轻量面包屑“卡牌 / 图鉴 / 星辰引路者”，短返回项“返回图鉴”。采用画廊式非对称构图：左半到中间是一张大而完整、竖直不倾斜的星辰引路者实卡，插画清晰、3/2/4角标明显；背后仅有模糊的观测台侧厅、暗石材和柔光，不重复整个大厅。右侧宽裕的纯净深墨蓝文字平面直接融入背景，无整块金色外框，文字逐级展开。\n明确标题“星辰引路者”，属性“随从”“费用 3”“攻击 2”“生命 4”。能力样例精确短句“入场曲：抽1张牌。” 下方关键词“入场曲”，说明“进入战场时触发。” 次级资料“卡包：星界序章”，较小斜体感引语“星辰指引的，不只是终点。”\n三个语义不同动作：“收藏”用书签轮廓图标，“设为大厅展示”是次级文字操作，“加入牌组”是主动作。主动作旁的辅助说明“选择牌组后进入待保存构筑”。没有已拥有、价格、合成、分解、库存数量。大图旁可有轻入口“查看插画”，不把卡牌框架完全去掉。卡牌插画与正文共同占据主体，留白足够，像珍贵艺术收藏的目录，而不是充值商城。",
+  "refs": [
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-round2/images/A2-01-home.png",
+      "role": "style"
+    },
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/A-starfarer/A-01-home.png",
+      "role": "reference"
+    }
+  ],
+  "job_id": "850fc106-a334-4cad-b52b-fea247295972",
+  "status": "succeeded",
+  "backend": "official-codex-mcp",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "auto"
+  },
+  "references": [
+    {
+      "role": "style",
+      "sha256": "8e4bf7b495cb68b4b625153696600bb6a4dc7a6e0c8ec9f0036e1bc08507842e",
+      "width": 1536,
+      "height": 864
+    },
+    {
+      "role": "reference",
+      "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66",
+      "width": 1536,
+      "height": 864
+    }
+  ],
+  "outputs": [
+    {
+      "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-850fc106-a334-4cad-b52b-fea247295972\\part-1\\source-1.png",
+      "source_size": [
+        1672,
+        941
+      ],
+      "source_format": "png",
+      "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-850fc106-a334-4cad-b52b-fea247295972\\part-1\\image-1.png",
+      "width": 1536,
+      "height": 864,
+      "format": "png",
+      "has_alpha": false,
+      "has_transparency": false,
+      "transforms": [
+        {
+          "operation": "resize",
+          "implementation": "local",
+          "from": "1672x941",
+          "to": "1536x864",
+          "mode": "contain",
+          "padding": "white"
+        },
+        {
+          "operation": "encode",
+          "implementation": "local",
+          "format": "png",
+          "quality": null
+        }
+      ],
+      "sha256": "8679335446224fef5446454bedf731eaa120a2686d3af083a98f69ed3f277de3"
+    }
+  ],
+  "upstream_metadata": {
+    "quality": "medium",
+    "size": "1672x941",
+    "background": "opaque",
+    "output_format": "png",
+    "count": 1
+  },
+  "started_at": "2026-09-21T01:08:11.867Z",
+  "finished_at": "2026-09-21T01:10:26.842Z"
+}

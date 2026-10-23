@@ -13,17 +13,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     {
         public bool IsSuccess { get; set; }
         public bool IsCancelled { get; set; }
+        public bool ShouldEmitAbilityTriggeredEvent { get; set; }
         public List<Effect> Effects { get; set; } = new();
         public List<IGameEvent> GeneratedEvents { get; set; } = new();
         public string? ErrorMessage { get; set; }
 
-        public static AbilityProcessResult Success(List<Effect> effects, List<IGameEvent>? generatedEvents = null)
+        public static AbilityProcessResult Success(
+            List<Effect> effects,
+            List<IGameEvent>? generatedEvents = null,
+            bool? shouldEmitAbilityTriggeredEvent = null)
         {
             return new AbilityProcessResult
             {
                 IsSuccess = true,
                 Effects = effects,
-                GeneratedEvents = generatedEvents ?? new List<IGameEvent>()
+                GeneratedEvents = generatedEvents ?? new List<IGameEvent>(),
+                ShouldEmitAbilityTriggeredEvent = shouldEmitAbilityTriggeredEvent ?? effects.Count > 0
             };
         }
 

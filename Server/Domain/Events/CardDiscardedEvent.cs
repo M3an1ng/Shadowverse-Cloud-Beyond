@@ -44,5 +44,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var moveResult = player.MoveCardToGraveyard(card, CardMoveReason.Discarded);
             return moveResult;
         }
+
+        public string GetAnnouncement(GameState gameState)
+        {
+            var player = DiscardingPlayer;
+            if (player == null)
+            {
+                return string.Empty;
+            }
+
+            return $"{AnnouncementTokens.Player(player)}舍弃了 {AnnouncementTokens.Number(1)} 张手牌。";
+        }
+
     }
 }

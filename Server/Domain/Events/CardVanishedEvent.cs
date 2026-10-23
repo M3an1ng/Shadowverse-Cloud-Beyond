@@ -28,11 +28,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("消失的卡牌", "被消失的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? VanishedCard => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("消失来源快照", "生成事件时记录的消失来源快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? VanishSourceSnapshot { get; }
+        [GameEventParameter("消失来源快照", "提交消失事件时记录的消失来源快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? VanishSourceSnapshot { get; private set; }
 
-        [GameEventParameter("消失目标快照", "生成事件时记录的消失目标快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? VanishedCardSnapshot { get; }
+        [GameEventParameter("消失目标快照", "提交消失事件时记录的消失目标快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? VanishedCardSnapshot { get; private set; }
 
         public CardVanishedEvent(
             CardInstance card,
@@ -48,10 +48,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             if (sourceCard != null)
             {
                 Source = TargetInfo.ForCard(sourceCard);
-                VanishSourceSnapshot = vanishSourceSnapshot ?? TryCreateSnapshot(sourceCard);
             }
             Target.Add(TargetInfo.ForCard(card));
-            VanishedCardSnapshot = vanishedCardSnapshot ?? TryCreateSnapshot(card);
+            VanishedCardSnapshot = vanishedCardSnapshot;
+            VanishSourceSnapshot = vanishSourceSnapshot;
             OriginalZone = originalZone;
             VanishReason = vanishReason;
         }
@@ -68,6 +68,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = $"CardVanishedEvent.Commit: owner {card.OwnerPlayerId} not found." };
             }
+
+            VanishedCardSnapshot ??= CardSnapshotCapture.TryCapture(card);
+            VanishSourceSnapshot ??= CardSnapshotCapture.TryCapture(VanishSource);
 
             // Vanish is represented as moving the card into the removed-from-game zone.
             // Important: Commit MUST NOT call a method that enqueues another CardVanishedEvent to avoid recursion.
@@ -87,21 +90,5 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return $"{AnnouncementTokens.Card(card)}消失了。";
         }
 
-        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
-        {
-            if (card == null)
-            {
-                return null;
-            }
-
-            try
-            {
-                return CardInstanceSnapshot.From(card);
-            }
-            catch
-            {
-                return null;
-            }
-        }
     }
 }

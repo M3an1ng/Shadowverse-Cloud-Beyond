@@ -12,6 +12,7 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.GameFlow;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Services;
@@ -297,6 +298,64 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void BoundaryCleanup_EndOfTurn_CollectsBuffExpiryEvents()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var buff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Attack, 1, ModifierLayer.Additive) },
+                durationType: DurationType.EndOfTurn,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(buff, gameState);
+
+            using (context)
+            {
+                var cleanup = new TurnBoundaryCleanupService(context.BuffService);
+
+                var events = cleanup.CollectCleanupEvents(context, TurnBoundaryCleanupTiming.TurnEnd, gameState.Player1);
+
+                var removedEvent = Assert.Single(events.OfType<BuffRemovedEvent>());
+                Assert.Equal(buff.Id, removedEvent.RemovedBuff.Id);
+                Assert.Equal("duration_end_of_turn", removedEvent.RemovalReason);
+            }
+        }
+
+        [Fact]
+        public void BoundaryCleanup_StartOfTurn_CollectsBuffExpiryEvents()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var buff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Attack, 1, ModifierLayer.Additive) },
+                durationType: DurationType.StartOfTurn,
+                durationParameter: null,
+                currentTurn: 1);
+            buffManager.RegisterBuffInstance(buff, gameState);
+
+            using (context)
+            {
+                var cleanup = new TurnBoundaryCleanupService(context.BuffService);
+
+                var events = cleanup.CollectCleanupEvents(context, TurnBoundaryCleanupTiming.TurnStart, gameState.Player1);
+
+                var removedEvent = Assert.Single(events.OfType<BuffRemovedEvent>());
+                Assert.Equal(buff.Id, removedEvent.RemovedBuff.Id);
+                Assert.Equal("duration_start_of_turn", removedEvent.RemovalReason);
+            }
+        }
+
+        [Fact]
         public void BuffRemovedEvent_ClampsCurrentHealthAfterHealthBuffRemoval()
         {
             var buffManager = new TestBuffManager();
@@ -319,7 +378,7 @@ namespace ShadowverseBeyond.Server.Tests
                 card.Damage = 1;
                 var oldCurrent = Math.Max(0, oldMaxHealth - card.Damage);
 
-                var removeEvent = new BuffRemovedEvent(healthBuff, null, null, "test_remove");
+                var removeEvent = new BuffRemovedEvent(healthBuff, card, null, "test_remove");
                 var result = removeEvent.Commit(context);
                 Assert.True(result.Success);
 
@@ -328,6 +387,242 @@ namespace ShadowverseBeyond.Server.Tests
 
                 Assert.Equal(card.BaseHealth, newMaxHealth);
                 Assert.Equal(Math.Min(oldCurrent, newMaxHealth), newCurrent);
+            }
+        }
+
+        [Fact]
+        public void BuffRemovedEvent_PreservesFollowerAtOneHealthWhenRemainingHealthBuffsLeaveRawMaxHealthAtZero()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var lethalDebuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Health, -card.BaseHealth, ModifierLayer.Additive) },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            var expiringHealthBuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Health, 1, ModifierLayer.Additive) },
+                durationType: DurationType.EndOfTurn,
+                durationParameter: null,
+                currentTurn: 1);
+
+            buffManager.RegisterBuffInstance(lethalDebuff, gameState);
+            buffManager.RegisterBuffInstance(expiringHealthBuff, gameState);
+
+            using (context)
+            {
+                Assert.Equal(1, context.BuffService.GetEffectiveMaxHealth(card, context));
+
+                var removeEvent = new BuffRemovedEvent(expiringHealthBuff, card, null, "duration_end_of_turn");
+                var result = removeEvent.Commit(context);
+
+                Assert.True(result.Success);
+                Assert.Empty(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+                Assert.Equal(1, context.BuffService.GetEffectiveMaxHealth(card, context));
+                Assert.Equal(1, card.CurrentHealth);
+                Assert.Equal(0, card.Damage);
+                Assert.Equal(1, card.HealthFloorFromBuffRemoval);
+            }
+        }
+
+        [Fact]
+        public void BuffRemovedEvent_PreservesFollowerAtOneHealthWhenRemainingHealthBuffsLeaveRawMaxHealthBelowZero()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            var lethalDebuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Health, -(card.BaseHealth + 1), ModifierLayer.Additive) },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            var expiringHealthBuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Health, 2, ModifierLayer.Additive) },
+                durationType: DurationType.EndOfTurn,
+                durationParameter: null,
+                currentTurn: 1);
+
+            buffManager.RegisterBuffInstance(lethalDebuff, gameState);
+            buffManager.RegisterBuffInstance(expiringHealthBuff, gameState);
+
+            using (context)
+            {
+                Assert.Equal(1, context.BuffService.GetEffectiveMaxHealth(card, context));
+
+                var removeEvent = new BuffRemovedEvent(expiringHealthBuff, card, null, "duration_end_of_turn");
+                var result = removeEvent.Commit(context);
+
+                Assert.True(result.Success);
+                Assert.Empty(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+                Assert.Equal(1, context.BuffService.GetEffectiveMaxHealth(card, context));
+                Assert.Equal(1, card.CurrentHealth);
+                Assert.Equal(0, card.Damage);
+                Assert.Equal(1, card.HealthFloorFromBuffRemoval);
+            }
+        }
+
+        [Fact]
+        public void StatChangedEvent_HealthReductionStillDestroysFollower()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, _) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                var statChanged = new StatChangedEvent(
+                    targetCard: card,
+                    attackModifier: null,
+                    healthModifier: -card.BaseHealth,
+                    costModifier: null,
+                    modifierLayer: ModifierLayer.Additive);
+
+                var result = statChanged.Commit(context);
+
+                Assert.True(result.Success);
+                var leaveField = Assert.Single(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+                Assert.Equal(LeaveFieldKind.Destroy, leaveField.RequestedKind);
+                Assert.Equal(EventReasonSource.System, leaveField.ReasonSource);
+                Assert.Equal(0, card.HealthFloorFromBuffRemoval);
+            }
+        }
+
+        [Fact]
+        public void StatChangedEvent_HealthReductionDestroysFollowerWithExistingBuffRemovalFloor()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                ApplyBuffRemovalHealthFloor(context, buffManager, buffFactory, gameState, card);
+                Assert.Equal(1, card.HealthFloorFromBuffRemoval);
+
+                var statChanged = new StatChangedEvent(
+                    targetCard: card,
+                    attackModifier: null,
+                    healthModifier: -1,
+                    costModifier: null,
+                    modifierLayer: ModifierLayer.Additive);
+
+                var result = statChanged.Commit(context);
+
+                Assert.True(result.Success);
+                var leaveField = Assert.Single(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+                Assert.Equal(LeaveFieldKind.Destroy, leaveField.RequestedKind);
+                Assert.Equal(EventReasonSource.System, leaveField.ReasonSource);
+            }
+        }
+
+        [Fact]
+        public void DamageEvent_DestroysFollowerWithExistingBuffRemovalFloor()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                ApplyBuffRemovalHealthFloor(context, buffManager, buffFactory, gameState, card);
+                Assert.Equal(1, card.CurrentHealth);
+
+                var damageEvent = new DamageEvent(card, 1, card, DamageKind.Ability);
+                var result = damageEvent.Commit(context);
+
+                Assert.True(result.Success);
+                var leaveField = Assert.Single(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+                Assert.Equal(LeaveFieldKind.Destroy, leaveField.RequestedKind);
+            }
+        }
+
+        [Fact]
+        public void BuffService_ClearsBuffRemovalHealthFloorWhenRawMaxHealthBecomesPositive()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                ApplyBuffRemovalHealthFloor(context, buffManager, buffFactory, gameState, card);
+                Assert.Equal(1, card.HealthFloorFromBuffRemoval);
+
+                var recoveryBuff = buffFactory.CreateSystemStatBuff(
+                    target: card,
+                    statModifications: new List<StatModification> { new(StatType.Health, 2, ModifierLayer.Additive) },
+                    durationType: DurationType.Permanent,
+                    durationParameter: null,
+                    currentTurn: 1);
+                buffManager.RegisterBuffInstance(recoveryBuff, gameState);
+                context.BuffService.InvalidateDerivedState(gameState, card.InstanceId);
+
+                Assert.Equal(2, context.BuffService.GetEffectiveMaxHealth(card, context));
+                Assert.Equal(0, card.HealthFloorFromBuffRemoval);
+            }
+        }
+
+        [Fact]
+        public void CardInstance_ResetToDefinitionState_ClearsBuffRemovalHealthFloor()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, card) = CreateGameState(buffManager);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                ApplyBuffRemovalHealthFloor(context, buffManager, buffFactory, gameState, card);
+                Assert.Equal(1, card.HealthFloorFromBuffRemoval);
+
+                card.ResetToDefinitionState();
+
+                Assert.Equal(0, card.HealthFloorFromBuffRemoval);
+                Assert.Equal(0, card.Damage);
+            }
+        }
+
+        [Fact]
+        public void CardInstance_CopyRuntimeStateFrom_DoesNotCopyBuffRemovalHealthFloor()
+        {
+            var buffManager = new TestBuffManager();
+            var evaluator = new CountingBuffEvaluator(true);
+
+            var (gameState, _, source) = CreateGameState(buffManager);
+            var target = new CardInstance(Guid.NewGuid(), 1002, gameState.Player1.PlayerId) { CurrentZone = CardZone.Field };
+            gameState.Player1.Field.Add(target);
+            gameState.RegisterCardInstance(target);
+            var (context, buffFactory) = CreateContext(gameState, buffManager, evaluator);
+
+            using (context)
+            {
+                ApplyBuffRemovalHealthFloor(context, buffManager, buffFactory, gameState, source);
+                Assert.Equal(1, source.HealthFloorFromBuffRemoval);
+
+                target.CopyRuntimeStateFrom(source);
+
+                Assert.Equal(0, target.HealthFloorFromBuffRemoval);
+                Assert.Equal(source.Damage, target.Damage);
             }
         }
 
@@ -647,6 +942,8 @@ namespace ShadowverseBeyond.Server.Tests
 
         private static (GameState GameState, Guid Player1Id, CardInstance Card) CreateGameState(TestBuffManager buffManager)
         {
+            SetTestGameDataProvider();
+
             var player1Id = Guid.NewGuid();
             var player2Id = Guid.NewGuid();
             var player1 = new PlayerState(player1Id) { IsFirst = true };
@@ -668,6 +965,62 @@ namespace ShadowverseBeyond.Server.Tests
             gameState.RegisterCardInstance(card);
 
             return (gameState, player1Id, card);
+        }
+
+        private static void SetTestGameDataProvider()
+        {
+            var mockProvider = new Mock<IGameDataProvider>();
+            mockProvider.SetupGet(provider => provider.IsInitialized).Returns(true);
+            mockProvider.Setup(provider => provider.GetCardDefinition(1001)).Returns(new CardDefinition
+            {
+                Id = 1001,
+                Name = "TestFollower",
+                Type = CardType.Follower,
+                Attack = 1,
+                Health = 1
+            });
+            mockProvider.Setup(provider => provider.GetCardDefinition(1002)).Returns(new CardDefinition
+            {
+                Id = 1002,
+                Name = "TestFollower2",
+                Type = CardType.Follower,
+                Attack = 1,
+                Health = 1
+            });
+            mockProvider.Setup(provider => provider.GetAbilityConfigs(It.IsAny<int>())).Returns(new List<AbilityConfig>());
+            GameDataProvider.SetInstanceForTesting(mockProvider.Object);
+        }
+
+        private static void ApplyBuffRemovalHealthFloor(
+            GameContext context,
+            TestBuffManager buffManager,
+            BuffFactory buffFactory,
+            GameState gameState,
+            CardInstance card)
+        {
+            var lethalDebuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Health, -card.BaseHealth, ModifierLayer.Additive) },
+                durationType: DurationType.Permanent,
+                durationParameter: null,
+                currentTurn: 1);
+            var expiringHealthBuff = buffFactory.CreateSystemStatBuff(
+                target: card,
+                statModifications: new List<StatModification> { new(StatType.Health, 1, ModifierLayer.Additive) },
+                durationType: DurationType.EndOfTurn,
+                durationParameter: null,
+                currentTurn: 1);
+
+            buffManager.RegisterBuffInstance(lethalDebuff, gameState);
+            buffManager.RegisterBuffInstance(expiringHealthBuff, gameState);
+            context.BuffService.InvalidateDerivedState(gameState, card.InstanceId);
+
+            var result = new BuffRemovedEvent(expiringHealthBuff, card, null, "duration_end_of_turn").Commit(context);
+
+            Assert.True(result.Success);
+            Assert.Empty(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+            Assert.Equal(1, context.BuffService.GetEffectiveMaxHealth(card, context));
+            Assert.Equal(1, card.CurrentHealth);
         }
 
         private static (GameContext Context, BuffFactory BuffFactory) CreateContext(

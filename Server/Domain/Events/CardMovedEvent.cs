@@ -34,10 +34,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("移动来源", "导致本次移动的来源卡牌。", DslDisplayTypeName = "事件源")]
         public CardInstance? MoveSource => Source?.Card;
 
-        [GameEventParameter("移动来源快照", "生成事件时记录的移动来源快照。", Scope = GameEventParameterScope.Input)]
+        [GameEventParameter("移动来源快照", "生成移动事件时记录的移动来源快照。", Scope = GameEventParameterScope.Output)]
         public CardInstanceSnapshot? MoveSourceSnapshot { get; }
 
-        [GameEventParameter("移动卡牌快照", "生成事件时记录的卡牌快照。", Scope = GameEventParameterScope.Input)]
+        [GameEventParameter("移动卡牌快照", "生成移动事件时记录的卡牌快照。", Scope = GameEventParameterScope.Output)]
         public CardInstanceSnapshot? MovedCardSnapshot { get; }
 
         [GameEventParameter("移动原因", "卡牌移动到目标区域的原因。")]
@@ -66,8 +66,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Target.Add(TargetInfo.ForCard(card));
             var effectiveMoveSource = moveSourceCard ?? card;
             Source = TargetInfo.ForCard(effectiveMoveSource);
-            MoveSourceSnapshot = CardInstanceSnapshot.From(effectiveMoveSource);
-            MovedCardSnapshot = CardInstanceSnapshot.From(card);
+            MoveSourceSnapshot = CardSnapshotCapture.Capture(effectiveMoveSource);
+            MovedCardSnapshot = CardSnapshotCapture.Capture(card);
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -128,16 +128,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             card.SetLastMoveReason(effectiveMoveReason);
 
-            if (effectiveToZone == CardZone.Field && card.HasKeyword(CardKeyword.EarthSigil))
-            {
-                var earthSigilResult = ApplyEarthSigilRules(owner, card);
-                if (!earthSigilResult.Success)
-                {
-                    return earthSigilResult;
-                }
-                result.GeneratedEvents.AddRange(earthSigilResult.GeneratedEvents);
-            }
-
             if (effectiveToZone == CardZone.Field
                 && effectiveMoveReason == CardMoveReason.Summoned
                 && card.CardType == CardType.Follower)
@@ -168,43 +158,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 result.GeneratedEvents.Add(new GraveyardUpdatedEvent(owner, owner.GraveyardCount));
 
             result.Success = true;
-            return result;
-        }
-
-        private static DomainOperationResult ApplyEarthSigilRules(PlayerState owner, CardInstance enteringCard)
-        {
-            var result = new DomainOperationResult { Success = true };
-            var earthSigils = owner.Field
-                .Where(card => card.HasKeyword(CardKeyword.EarthSigil))
-                .ToList();
-
-            if (earthSigils.Count == 0)
-            {
-                return result;
-            }
-
-            if (enteringCard.GetCounter(CardInstance.EarthsigilCounterKey) == 0)
-            {
-                enteringCard.SetCounter(CardInstance.EarthsigilCounterKey, 1);
-            }
-
-            if (earthSigils.Count == 1)
-            {
-                return result;
-            }
-
-            var total = earthSigils.Sum(card => card.GetCounter(CardInstance.EarthsigilCounterKey));
-            enteringCard.SetCounter(CardInstance.EarthsigilCounterKey, total);
-
-            foreach (var other in earthSigils.Where(card => card.InstanceId != enteringCard.InstanceId))
-            {
-                result.GeneratedEvents.Add(new LeaveFieldEvent(
-                    other,
-                    LeaveFieldKind.Vanish,
-                    EventReasonSource.System,
-                    enteringCard));
-            }
-
             return result;
         }
 

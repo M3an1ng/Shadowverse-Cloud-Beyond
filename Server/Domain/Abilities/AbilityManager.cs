@@ -1034,6 +1034,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                            && auraConfigs.Any(a => a != null && a.IsEnabled);
             var runsEffects = !isAuraAbility;
 
+            if (runsAura)
+            {
+                context = context with { IsAuraRefresh = true };
+            }
+
             // The partialResult logic is now removed. The process is always "start or continue".
             // The state is held within the Target objects themselves.
 
@@ -1119,11 +1124,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             // 4. If resolution is complete, create the effects.
             List<Effect> effects = new();
+            var shouldEmitAbilityTriggeredEvent = false;
             if (runsEffects && abilityConditionsPassed)
             {
                 try
                 {
                     effects = await ability.CreateEffectsAsync(context, targetResult);
+                    shouldEmitAbilityTriggeredEvent = true;
                 }
                 catch (GameLogicException ex)
                 {
@@ -1192,7 +1199,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 ability.KeywordSummary, ability.RuntimeId, effects.Count);
 
 
-            return AbilityProcessResult.Success(effects, auraEvents);
+            return AbilityProcessResult.Success(effects, auraEvents, shouldEmitAbilityTriggeredEvent);
         }
 
         private static bool ShouldEmitAbilityTriggeredEvent(IAbility ability, GameContext context)

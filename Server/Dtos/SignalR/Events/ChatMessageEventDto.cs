@@ -13,7 +13,11 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         public string SenderId { get; set; } = string.Empty;
         public string SenderName { get; set; } = string.Empty;
         public string SenderAvatarUrl { get; set; } = string.Empty;
+        public string MessageType { get; set; } = "text";
         public string Content { get; set; } = string.Empty;
+        public string? EmoteId { get; set; }
+        public string? EmoteName { get; set; }
+        public string? EmoteUrl { get; set; }
         public DateTime SentAtUtc { get; set; } = DateTime.UtcNow;
         public string? ClientMessageId { get; set; }
     }

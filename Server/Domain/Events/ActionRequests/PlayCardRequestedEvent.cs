@@ -8,6 +8,7 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
@@ -73,14 +74,14 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return result;
             }
 
-            Ability? selectedAbility = null;
+            IAbility? selectedAbility = null;
             if (ActionDto.AbilityRuntimeId.HasValue && ActionDto.AbilityRuntimeId.Value != Guid.Empty)
             {
-                selectedAbility = cardToPlay.Abilities.FirstOrDefault(a => a.RuntimeId == ActionDto.AbilityRuntimeId.Value);
+                selectedAbility = ResolveEffectiveAbility(cardToPlay, context, ActionDto.AbilityRuntimeId.Value);
                 if (selectedAbility == null)
                 {
                     result.Success = false;
-                    result.ErrorMessage = "Selected ability not found on the card.";
+                    result.ErrorMessage = "Selected ability is not effective on the card.";
                     return result;
                 }
             }
@@ -105,8 +106,41 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             if (selectedAbility == null && selectedMode.Value == PlayMode.Enhance && modeResolution.SelectedAbilityRuntimeId.HasValue)
             {
                 var selectedRuntimeId = modeResolution.SelectedAbilityRuntimeId.Value;
-                selectedAbility = cardToPlay.Abilities.FirstOrDefault(a => a.RuntimeId == selectedRuntimeId)
-                    ?? context.AbilityManager.GetAbilityByRuntimeId(selectedRuntimeId) as Ability;
+                selectedAbility = ResolveEffectiveAbility(cardToPlay, context, selectedRuntimeId);
+            }
+
+            if (selectedMode.Value is PlayMode.Accelerate or PlayMode.Crystalize)
+            {
+                if (selectedMode.Value != modeResolution.SelectedMode)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Selected alternate play mode does not match the required priority.";
+                    return result;
+                }
+
+                if (!modeResolution.SelectedAbilityRuntimeId.HasValue)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Selected alternate play ability could not be resolved.";
+                    return result;
+                }
+
+                if (ActionDto.AbilityRuntimeId.HasValue
+                    && ActionDto.AbilityRuntimeId.Value != Guid.Empty
+                    && ActionDto.AbilityRuntimeId.Value != modeResolution.SelectedAbilityRuntimeId.Value)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Selected alternate play ability does not match the required priority.";
+                    return result;
+                }
+
+                selectedAbility = ResolveEffectiveAbility(cardToPlay, context, modeResolution.SelectedAbilityRuntimeId.Value);
+                if (selectedAbility == null)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Selected alternate play ability could not be resolved.";
+                    return result;
+                }
             }
 
             var selectedAvailability = modeResolution.Modes.FirstOrDefault(m => m.Mode == selectedMode.Value);
@@ -166,6 +200,29 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 paidCost = enhanceCost;
                 expectedCost = enhanceCost;
             }
+
+            int? alternateCardDefinitionId = null;
+            if (selectedMode.Value is PlayMode.Accelerate or PlayMode.Crystalize)
+            {
+                var expectedKeyword = selectedMode.Value == PlayMode.Accelerate
+                    ? AbilityKeyword.Accelerate
+                    : AbilityKeyword.Crystalize;
+                if (selectedAbility == null || !selectedAbility.HasKeyword(expectedKeyword))
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Selected ability does not provide {selectedMode.Value}.";
+                    return result;
+                }
+
+                alternateCardDefinitionId = modeResolution.SelectedAlternateCardDefinitionId
+                    ?? selectedAbility.AlternatePlay?.PlayAsCardDefinitionId;
+                if (!alternateCardDefinitionId.HasValue || alternateCardDefinitionId.Value <= 0)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Selected {selectedMode.Value} ability does not provide a replacement card definition.";
+                    return result;
+                }
+            }
             if (paidCost != expectedCost)
             {
                 result.Success = false;
@@ -182,7 +239,18 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 cardToPlay,
                 selectedMode.Value,
                 paidCost,
-                selectedMode.Value == PlayMode.Enhance ? selectedAbility?.RuntimeId : null);
+                selectedMode.Value is PlayMode.Enhance or PlayMode.Accelerate or PlayMode.Crystalize
+                    ? selectedAbility?.RuntimeId
+                    : null,
+                alternateCardDefinitionId);
+        }
+
+        private static IAbility? ResolveEffectiveAbility(CardInstance card, GameContext context, Guid runtimeId)
+        {
+            var effectiveAbility = context.AbilityManager
+                .GetEffectiveAbilitiesForCard(card.InstanceId, context)
+                .FirstOrDefault(ability => ability.RuntimeId == runtimeId);
+            return effectiveAbility ?? context.AbilityManager.GetAbilityByRuntimeId(runtimeId);
         }
     }
 }

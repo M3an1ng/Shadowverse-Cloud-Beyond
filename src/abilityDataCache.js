@@ -1,4 +1,7 @@
-import { CARD_CATALOG_INVALIDATED_EVENT } from './dataChangeEvents.js';
+import {
+    CARD_CATALOG_INVALIDATED_EVENT,
+    isAbilityOnlyInvalidation
+} from './dataChangeEvents.js';
 
 const abilityDataCache = {
     cards: null,
@@ -45,6 +48,10 @@ function buildAbilitiesByCard(abilities) {
         map.set(cardId, list);
     });
     return map;
+}
+
+function normalizeAbilityCardId(ability) {
+    return normalizeId(ability?.cardId ?? ability?.CardId);
 }
 
 async function fetchCards() {
@@ -149,12 +156,68 @@ export function clearAbilityDataCache() {
     abilityDataCache.abilitiesPromise = null;
 }
 
+export function markAbilityDataCacheDirty() {
+    abilityDataCache.abilities = null;
+    abilityDataCache.abilityIndex = new Map();
+    abilityDataCache.abilitiesByCard = new Map();
+    abilityDataCache.abilitiesPromise = null;
+}
+
+export function upsertAbilityDataCacheEntry(ability) {
+    const abilityId = normalizeId(ability?.id ?? ability?.Id);
+    if (abilityId == null) {
+        markAbilityDataCacheDirty();
+        return;
+    }
+
+    const cardId = normalizeAbilityCardId(ability);
+    if (!abilityDataCache.abilities) {
+        return;
+    }
+
+    const nextAbilities = abilityDataCache.abilities.filter(existing => {
+        const existingId = normalizeId(existing?.id ?? existing?.Id);
+        return existingId !== abilityId;
+    });
+    nextAbilities.push(ability);
+    abilityDataCache.abilities = nextAbilities;
+    abilityDataCache.abilityIndex = buildAbilityIndex(nextAbilities);
+    abilityDataCache.abilitiesByCard = buildAbilitiesByCard(nextAbilities);
+
+    if (cardId != null && !abilityDataCache.abilitiesByCard.has(cardId)) {
+        abilityDataCache.abilitiesByCard.set(cardId, [ability]);
+    }
+}
+
+export function removeAbilityDataCacheEntry(abilityId) {
+    const normalizedId = normalizeId(abilityId);
+    if (normalizedId == null) {
+        markAbilityDataCacheDirty();
+        return;
+    }
+
+    if (!abilityDataCache.abilities) {
+        return;
+    }
+
+    const nextAbilities = abilityDataCache.abilities.filter(existing => {
+        const existingId = normalizeId(existing?.id ?? existing?.Id);
+        return existingId !== normalizedId;
+    });
+    abilityDataCache.abilities = nextAbilities;
+    abilityDataCache.abilityIndex = buildAbilityIndex(nextAbilities);
+    abilityDataCache.abilitiesByCard = buildAbilitiesByCard(nextAbilities);
+}
+
 export async function refreshAbilityDataCache() {
     clearAbilityDataCache();
     return await ensureAbilityData();
 }
 
-document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, () => {
+document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
+    if (isAbilityOnlyInvalidation(event?.detail || {})) {
+        return;
+    }
     abilityDataCache.cards = null;
     abilityDataCache.cardIndex = new Map();
     abilityDataCache.cardsPromise = null;

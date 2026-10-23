@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Services;
 
@@ -41,12 +42,19 @@ public partial class EconomyService
                     .ToListAsync();
 
                 bool anyCompleted = false;
+                var period = QuestProgressService.ResolvePeriodForDefinition(DateTime.UtcNow, QuestCategory.Daily, 24);
 
                 foreach (var definition in questDefinitions)
                 {
+                    period = QuestProgressService.ResolvePeriodForDefinition(
+                        DateTime.UtcNow,
+                        definition.Category,
+                        definition.RefreshIntervalHours);
                     var userQuest = await _context.UserQuests
                         .Include(uq => uq.QuestDefinition)
-                        .FirstOrDefaultAsync(uq => uq.UserId == userId && uq.QuestDefinitionId == definition.Id);
+                        .FirstOrDefaultAsync(uq => uq.UserId == userId
+                            && uq.QuestDefinitionId == definition.Id
+                            && uq.PeriodKey == period.Key);
 
                     if (userQuest == null)
                     {
@@ -59,7 +67,10 @@ public partial class EconomyService
                             IsCompleted = false,
                             IsRewardClaimed = false,
                             AssignedAt = DateTime.UtcNow,
-                            ExpiresAt = DateTime.UtcNow.AddHours(definition.RefreshIntervalHours),
+                            ExpiresAt = period.EndUtc,
+                            PeriodKey = period.Key,
+                            PeriodStartUtc = period.StartUtc,
+                            PeriodEndUtc = period.EndUtc,
                             QuestDefinition = definition
                         };
                         _context.UserQuests.Add(userQuest);
@@ -130,11 +141,14 @@ public partial class EconomyService
                 if (!success)
                 {
                     _logger.LogWarning("领取任务奖励发放金币失败: UserId={UserId}, UserQuestId={UserQuestId}", userId, userQuestId);
-                    return null;
+                    throw new InvalidOperationException(
+                        $"Failed to grant quest reward coins for user quest {userQuestId}.");
                 }
 
                 _logger.LogInformation("用户领取任务奖励: UserId={UserId}, UserQuestId={UserQuestId}, Reward={Reward}",
                     userId, userQuestId, coinReward);
+
+                var currentCoins = (await GetOrCreateUserEconomyAsync(userId)).Coins;
 
                 return new QuestRewardClaimDto
                 {
@@ -142,6 +156,7 @@ public partial class EconomyService
                     UserQuestId = userQuest.Id,
                     QuestDefinitionId = userQuest.QuestDefinitionId,
                     CoinReward = coinReward,
+                    CurrentCoins = currentCoins,
                     ClaimedAtUtc = userQuest.RewardClaimedAt ?? DateTime.UtcNow
                 };
             });

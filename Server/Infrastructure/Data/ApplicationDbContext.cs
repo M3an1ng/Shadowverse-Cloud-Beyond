@@ -152,6 +152,11 @@ public class ApplicationDbContext : DbContext
   public DbSet<UserQuest> UserQuests { get; set; } = null!;
 
   /// <summary>
+  /// Gets or sets the DbSet for QuestProgressEvent entities. Represents the QuestProgressEvents table.
+  /// </summary>
+  public DbSet<QuestProgressEvent> QuestProgressEvents { get; set; } = null!;
+
+  /// <summary>
   /// Gets or sets the DbSet for UserRanking entities. Represents the UserRankings table.
   /// </summary>
   public DbSet<UserRanking> UserRankings { get; set; } = null!;
@@ -276,6 +281,9 @@ public class ApplicationDbContext : DbContext
             .WithMany(set => set.CardDefinitions)
             .HasForeignKey(e => e.CardSetDefinitionId)
             .OnDelete(DeleteBehavior.SetNull);
+
+      entity.Property(e => e.UpdatedBy)
+        .HasMaxLength(50);
 
     });
   }
@@ -524,6 +532,14 @@ public class ApplicationDbContext : DbContext
       entity.ToTable("QuestDefinitions");
       entity.HasKey(e => e.Id);
 
+      entity.Property(e => e.ActivityType)
+            .HasConversion<int>()
+            .HasDefaultValue(QuestActivityType.PlayMatch);
+
+      entity.Property(e => e.DeduplicationPolicy)
+            .HasConversion<int>()
+            .HasDefaultValue(QuestDeduplicationPolicy.None);
+
       entity.Property(e => e.Name).HasMaxLength(100).IsRequired();
       entity.Property(e => e.Description).HasMaxLength(500).IsRequired();
     });
@@ -536,7 +552,12 @@ public class ApplicationDbContext : DbContext
       entity.HasIndex(e => e.UserId);
       entity.HasIndex(e => e.QuestDefinitionId);
       entity.HasIndex(e => e.ExpiresAt);
-      entity.HasIndex(e => new { e.UserId, e.QuestDefinitionId }).IsUnique();
+      entity.HasIndex(e => new { e.UserId, e.QuestDefinitionId, e.PeriodKey }).IsUnique();
+
+      entity.Property(e => e.PeriodKey)
+            .HasMaxLength(32)
+            .HasDefaultValue("legacy")
+            .IsRequired();
 
       // 配置与User的多对一关系
       entity.HasOne(e => e.User)
@@ -549,6 +570,50 @@ public class ApplicationDbContext : DbContext
                 .WithMany(qd => qd.UserQuests)
                 .HasForeignKey(e => e.QuestDefinitionId)
                 .OnDelete(DeleteBehavior.Restrict);
+    });
+
+    // 配置QuestProgressEvent实体
+    modelBuilder.Entity<QuestProgressEvent>(entity =>
+    {
+      entity.ToTable("QuestProgressEvents");
+      entity.HasKey(e => e.Id);
+      entity.HasIndex(e => e.UserId);
+      entity.HasIndex(e => e.QuestDefinitionId);
+      entity.HasIndex(e => e.CreatedAtUtc);
+      entity.HasIndex(e => new
+      {
+        e.UserId,
+        e.QuestDefinitionId,
+        e.PeriodKey,
+        e.SourceEntityType,
+        e.SourceEntityId
+      }).IsUnique();
+
+      entity.Property(e => e.ActivityType)
+            .HasConversion<int>()
+            .IsRequired();
+
+      entity.Property(e => e.PeriodKey)
+            .HasMaxLength(32)
+            .IsRequired();
+
+      entity.Property(e => e.SourceEntityType)
+            .HasMaxLength(32)
+            .IsRequired();
+
+      entity.Property(e => e.SourceEntityId)
+            .HasMaxLength(100)
+            .IsRequired();
+
+      entity.HasOne(e => e.User)
+            .WithMany()
+            .HasForeignKey(e => e.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+      entity.HasOne(e => e.QuestDefinition)
+            .WithMany()
+            .HasForeignKey(e => e.QuestDefinitionId)
+            .OnDelete(DeleteBehavior.Restrict);
     });
 
     // 配置UserRanking实体

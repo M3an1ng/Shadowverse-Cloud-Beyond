@@ -28,5 +28,9 @@ export function shouldDeferRoomLeaveForDecision(fromRoute, toRoute, handshake, o
 
     // Once a match is already over, leaving the game page should immediately
     // release the room seat instead of keeping a deferred reconnect decision.
+    if (options.surrenderSubmitted === true) {
+        return false;
+    }
+
     return options.gameOver !== true;
 }

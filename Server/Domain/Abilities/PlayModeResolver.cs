@@ -16,6 +16,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public PlayMode? SelectedMode { get; }
         public int? SelectedCost { get; }
         public Guid? SelectedAbilityRuntimeId { get; }
+        public int? SelectedAlternateCardDefinitionId { get; }
         public string? DefaultFailureReason { get; }
 
         public bool HasAvailableMode => Modes.Any(m => m.IsAvailable);
@@ -25,12 +26,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             PlayMode? selectedMode,
             int? selectedCost,
             Guid? selectedAbilityRuntimeId,
+            int? selectedAlternateCardDefinitionId,
             string? defaultFailureReason)
         {
             Modes = modes;
             SelectedMode = selectedMode;
             SelectedCost = selectedCost;
             SelectedAbilityRuntimeId = selectedAbilityRuntimeId;
+            SelectedAlternateCardDefinitionId = selectedAlternateCardDefinitionId;
             DefaultFailureReason = defaultFailureReason;
         }
     }
@@ -86,17 +89,164 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 });
             }
 
-            var selectedMode = SelectMode(modes);
-            var selectedCost = selectedMode.HasValue
+            Guid? selectedAlternateAbilityRuntimeId = null;
+            PlayMode? selectedAlternateMode = null;
+            int? selectedAlternateCost = null;
+            int? selectedAlternateCardDefinitionId = null;
+            if (currentPp < baseCost)
+            {
+                var alternateResolution = ResolveAlternatePlay(card, context, currentPp);
+                modes.AddRange(alternateResolution.Modes);
+                selectedAlternateAbilityRuntimeId = alternateResolution.SelectedAbilityRuntimeId;
+                selectedAlternateMode = alternateResolution.SelectedMode;
+                selectedAlternateCost = alternateResolution.SelectedCost;
+                selectedAlternateCardDefinitionId = alternateResolution.SelectedAlternateCardDefinitionId;
+            }
+
+            var selectedMode = selectedAlternateMode ?? SelectMode(modes, currentPp < baseCost);
+            var selectedCost = selectedAlternateCost ?? (selectedMode.HasValue
                 ? modes.First(m => m.Mode == selectedMode.Value).EffectiveCost
-                : (int?)null;
+                : (int?)null);
             var selectedAbilityRuntimeId = selectedMode == PlayMode.Enhance
                 ? selectedEnhanceAbilityRuntimeId
-                : null;
+                : selectedMode is PlayMode.Accelerate or PlayMode.Crystalize
+                    ? selectedAlternateAbilityRuntimeId
+                    : null;
+            var selectedAlternateDefinitionId = selectedMode is PlayMode.Accelerate or PlayMode.Crystalize
+                ? selectedAlternateCardDefinitionId
+                : (int?)null;
 
             var defaultFailureReason = selectedMode == null ? SelectFailureReason(modes) : null;
 
-            return new PlayModeResolution(modes, selectedMode, selectedCost, selectedAbilityRuntimeId, defaultFailureReason);
+            return new PlayModeResolution(
+                modes,
+                selectedMode,
+                selectedCost,
+                selectedAbilityRuntimeId,
+                selectedAlternateDefinitionId,
+                defaultFailureReason);
+        }
+
+        private sealed class AlternatePlayResolution
+        {
+            public List<PlayModeAvailabilityDto> Modes { get; } = new();
+            public PlayMode? SelectedMode { get; set; }
+            public int? SelectedCost { get; set; }
+            public Guid? SelectedAbilityRuntimeId { get; set; }
+            public int? SelectedAlternateCardDefinitionId { get; set; }
+        }
+
+        private sealed record AlternatePlayCandidate(
+            PlayMode Mode,
+            AbilityKeyword Keyword,
+            int Cost,
+            Guid RuntimeId,
+            int PlayAsCardDefinitionId,
+            int Order);
+
+        private static AlternatePlayResolution ResolveAlternatePlay(
+            CardInstance card,
+            GameContext context,
+            int currentPp)
+        {
+            var resolution = new AlternatePlayResolution();
+            var abilities = context.AbilityManager?
+                .GetEffectiveAbilitiesForCard(card.InstanceId, context)
+                .ToList() ?? new List<IAbility>();
+
+            if (abilities.Count == 0)
+            {
+                return resolution;
+            }
+
+            var candidates = new List<AlternatePlayCandidate>();
+            for (var index = 0; index < abilities.Count; index++)
+            {
+                var ability = abilities[index];
+                if (ability == null)
+                {
+                    continue;
+                }
+
+                foreach (var keywordConfig in ability.AbilityKeywords)
+                {
+                    var keyword = keywordConfig.Keyword;
+                    if (!ability.HasKeyword(keyword))
+                    {
+                        continue;
+                    }
+
+                    if (keyword is not (AbilityKeyword.Accelerate or AbilityKeyword.Crystalize))
+                    {
+                        continue;
+                    }
+
+                    var playAsCardDefinitionId = ability.AlternatePlay?.PlayAsCardDefinitionId ?? 0;
+                    if (playAsCardDefinitionId <= 0)
+                    {
+                        continue;
+                    }
+
+                    var cost = GetAlternatePlayCostForAbility(card, keywordConfig, keyword, context);
+                    if (cost <= 0)
+                    {
+                        continue;
+                    }
+
+                    candidates.Add(new AlternatePlayCandidate(
+                        ToPlayMode(keyword),
+                        keyword,
+                        cost,
+                        ability.RuntimeId,
+                        playAsCardDefinitionId,
+                        index));
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                return resolution;
+            }
+
+            foreach (var group in candidates.GroupBy(c => c.Mode))
+            {
+                var minCost = group.Min(c => c.Cost);
+                var selectedForMode = group
+                    .Where(c => c.Cost <= currentPp)
+                    .OrderByDescending(c => c.Cost)
+                    .ThenBy(c => c.Order)
+                    .FirstOrDefault();
+
+                var available = selectedForMode != null;
+                var effectiveCost = selectedForMode?.Cost ?? minCost;
+                var reason = available
+                    ? string.Empty
+                    : $"Not enough PP for {group.Key} (need {minCost}, have {currentPp}).";
+
+                resolution.Modes.Add(new PlayModeAvailabilityDto
+                {
+                    Mode = group.Key,
+                    EffectiveCost = effectiveCost,
+                    IsAvailable = available,
+                    Reason = reason
+                });
+            }
+
+            var selected = candidates
+                .Where(c => c.Cost <= currentPp)
+                .OrderByDescending(c => c.Cost)
+                .ThenBy(c => c.Order)
+                .FirstOrDefault();
+
+            if (selected != null)
+            {
+                resolution.SelectedMode = selected.Mode;
+                resolution.SelectedCost = selected.Cost;
+                resolution.SelectedAbilityRuntimeId = selected.RuntimeId;
+                resolution.SelectedAlternateCardDefinitionId = selected.PlayAsCardDefinitionId;
+            }
+
+            return resolution;
         }
 
         private static (int? SelectedCost, int? MinCost, Guid? SelectedAbilityRuntimeId) ResolveEnhanceCost(
@@ -148,8 +298,21 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             return (null, minCost, null);
         }
 
-        private static PlayMode? SelectMode(IReadOnlyList<PlayModeAvailabilityDto> modes)
+        private static PlayMode? SelectMode(IReadOnlyList<PlayModeAvailabilityDto> modes, bool baseUnavailable)
         {
+            if (baseUnavailable)
+            {
+                var selectedAlternate = modes
+                    .Where(m => (m.Mode == PlayMode.Accelerate || m.Mode == PlayMode.Crystalize) && m.IsAvailable)
+                    .OrderByDescending(m => m.EffectiveCost)
+                    .FirstOrDefault();
+
+                if (selectedAlternate != null)
+                {
+                    return selectedAlternate.Mode;
+                }
+            }
+
             foreach (var mode in PriorityOrder)
             {
                 var availability = modes.FirstOrDefault(m => m.Mode == mode);
@@ -160,6 +323,19 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             }
 
             return null;
+        }
+
+        private static PlayMode ToPlayMode(AbilityKeyword keyword)
+            => keyword == AbilityKeyword.Accelerate ? PlayMode.Accelerate : PlayMode.Crystalize;
+
+        private static int GetAlternatePlayCostForAbility(
+            CardInstance card,
+            AbilityKeywordConfig keywordConfig,
+            AbilityKeyword keyword,
+            GameContext context)
+        {
+            var baseValue = keywordConfig.Value ?? 0;
+            return context.BuffService.GetEffectiveAbilityKeywordValue(card, keyword, baseValue, context);
         }
 
         private static string? SelectFailureReason(IReadOnlyList<PlayModeAvailabilityDto> modes)

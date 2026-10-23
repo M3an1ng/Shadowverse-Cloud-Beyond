@@ -1,0 +1,9 @@
+{
+  "id": "A2-06-create",
+  "job_id": "4f8656d2-44e9-4492-9c15-0b1f55508a2f",
+  "status": "failed",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "outputs": [],
+  "error_summary": "Model at capacity after local adapter model-list refresh failure. No completed raster.",
+  "retry": "One same-model retry, same prompt and references."
+}

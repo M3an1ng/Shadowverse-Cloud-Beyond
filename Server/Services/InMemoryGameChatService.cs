@@ -163,7 +163,11 @@ namespace ShadowverseBeyond.Server.Services
                 SenderId = message.SenderId,
                 SenderName = message.SenderName,
                 SenderAvatarUrl = message.SenderAvatarUrl,
+                MessageType = message.MessageType,
                 Content = message.Content,
+                EmoteId = message.EmoteId,
+                EmoteName = message.EmoteName,
+                EmoteUrl = message.EmoteUrl,
                 SentAtUtc = message.SentAtUtc,
                 ClientMessageId = message.ClientMessageId
             };

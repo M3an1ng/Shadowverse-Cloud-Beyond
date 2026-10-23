@@ -1,0 +1,4 @@
+interface:
+  display_name: "Combat Motion Web Animation"
+  short_description: "Reference-to-implementation workflow for combat web motion"
+  default_prompt: "Use $combat-motion-web-animation to turn combat animation references into a browser implementation and QA workflow."

@@ -61,6 +61,9 @@ public class CardInstanceAttackTargetingTests
             .Returns<CardInstance, GameContext>((card, _) => card.BaseHealth <= 0 ? 20 : card.BaseHealth);
         buffService.Setup(service => service.GetEffectiveCost(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
             .Returns<CardInstance, GameContext>((card, _) => card.BaseCost);
+        buffService.Setup(service => service.GetEffectiveActionUsageLimit(
+                It.IsAny<CardInstance>(), It.IsAny<CardActionUsageType>(), It.IsAny<GameContext>()))
+            .Returns<CardInstance, CardActionUsageType, GameContext>((card, actionType, _) => card.GetBaseActionUsageLimit(actionType));
         buffService.Setup(service => service.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
             .Returns<CardInstance, GameContext>((card, _) => GetKeywords(card, attackerKeywords));
         services.AddSingleton(buffService.Object);

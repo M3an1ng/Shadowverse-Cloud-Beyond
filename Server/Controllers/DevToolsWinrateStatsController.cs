@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using System.Data;
 using System.Globalization;
 using System.Text.Json;
@@ -17,13 +19,16 @@ public class DevToolsWinrateStatsController : ControllerBase
     private const int MaxTop = 2000;
 
     private readonly ApplicationDbContext _db;
+    private readonly IDeckCodeService _deckCodeService;
     private readonly ILogger<DevToolsWinrateStatsController> _logger;
 
     public DevToolsWinrateStatsController(
         ApplicationDbContext db,
+        IDeckCodeService deckCodeService,
         ILogger<DevToolsWinrateStatsController> logger)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
+        _deckCodeService = deckCodeService ?? throw new ArgumentNullException(nameof(deckCodeService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -382,7 +387,19 @@ public class DevToolsWinrateStatsController : ControllerBase
             Environment = targetEnvironment.ToString(),
             Rule = targetDeckRule.ToString(),
             TotalCount = cards.Sum(item => item.Count),
-            Cards = cards
+            Cards = cards,
+            DeckCode = targetDeckRule == DeckRule.Standard
+                ? _deckCodeService.Encode(
+                    fact.DeckClass,
+                    secondaryClass: null,
+                    targetEnvironment,
+                    targetDeckRule,
+                    deckCounts.Select(pair => new DeckCardEntryDto
+                    {
+                        CardDefinitionId = pair.Key,
+                        Count = pair.Value
+                    }).ToList())
+                : null
         };
 
         _logger.LogDebug(
@@ -844,6 +861,7 @@ public class DevToolsWinrateStatsController : ControllerBase
         public string Environment { get; set; } = DeckEnvironment.Rotation.ToString();
         public string Rule { get; set; } = DeckRule.Standard.ToString();
         public int TotalCount { get; set; }
+        public string? DeckCode { get; set; }
         public List<DeckCompositionCard> Cards { get; set; } = new();
     }
 

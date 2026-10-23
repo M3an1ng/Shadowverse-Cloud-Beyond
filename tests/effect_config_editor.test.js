@@ -169,6 +169,100 @@ describe('EffectConfigEditor (decision trigger inheritance)', () => {
   });
 });
 
+describe('EffectConfigEditor (conditional removal visibility)', () => {
+  test('shows RemoveCondition and hides DurationParameter when DurationType is ConditionalRemoval', () => {
+    const editor = new EffectConfigEditor();
+    const effectMeta = {
+      effectTypeName: 'ModifyStatus',
+      displayName: '调整属性',
+      parameters: [
+        {
+          propertyName: 'DurationType',
+          displayName: '持续时间',
+          controlType: 'Dropdown',
+          typeName: 'DurationType',
+          enumName: 'DurationType',
+        },
+        {
+          propertyName: 'DurationParameter',
+          displayName: '持续参数',
+          controlType: 'NumberStepper',
+          typeName: 'Int32',
+        },
+        {
+          propertyName: 'RemoveCondition',
+          displayName: '移除条件',
+          controlType: 'TextArea',
+          typeName: 'ConditionConfig',
+        },
+      ],
+    };
+
+    const previousParams = {
+      DurationType: 'Permanent',
+      DurationParameter: 1,
+      RemoveCondition: null,
+    };
+    const nextParams = {
+      DurationType: 'ConditionalRemoval',
+      DurationParameter: 1,
+      RemoveCondition: { expression: 'test.remove', isEnabled: true },
+    };
+
+    const permanentContext = {
+      hasDurationType: true,
+      durationType: 'Permanent',
+    };
+    const conditionalContext = {
+      hasDurationType: true,
+      durationType: 'ConditionalRemoval',
+    };
+
+    expect(editor.shouldRenderEffectParameter(effectMeta.parameters[1], permanentContext)).toBe(true);
+    expect(editor.shouldRenderEffectParameter(effectMeta.parameters[2], permanentContext)).toBe(false);
+
+    expect(editor.shouldRenderEffectParameter(effectMeta.parameters[1], conditionalContext)).toBe(false);
+    expect(editor.shouldRenderEffectParameter(effectMeta.parameters[2], conditionalContext)).toBe(true);
+
+    expect(editor.shouldRefreshParameterPanel(effectMeta, previousParams, nextParams)).toBe(true);
+  });
+});
+
+describe('EffectConfigEditor (grant ability list type selection)', () => {
+  test('new granted ability can choose persistent ability mode before opening the editor', async () => {
+    const editor = new EffectConfigEditor();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+
+    const opened = [];
+    editor.openGrantAbilityEditorModal = jest.fn(async (_baseAbility, options) => {
+      opened.push(options);
+      return { name: '持续光环', type: 'Continuous', auras: [] };
+    });
+
+    const updates = [];
+    editor.renderAbilityListEditor(container, [], (value) => updates.push(value), {
+      effectTypeName: 'GrantAbility'
+    });
+
+    container.querySelector('.grant-ability-list-actions .btn-primary').click();
+
+    const typeModal = await waitFor(() => document.getElementById('grant-ability-type-modal'));
+    expect(typeModal).toBeTruthy();
+
+    typeModal.querySelector('button[data-mode="aura"]').click();
+    await waitFor(() => opened.length === 1);
+
+    expect(editor.openGrantAbilityEditorModal).toHaveBeenCalledTimes(1);
+    expect(opened[0]).toEqual(expect.objectContaining({ mode: 'aura' }));
+    expect(updates.at(-1)).toEqual([
+      expect.objectContaining({ name: '持续光环', type: 'Continuous' })
+    ]);
+
+    container.remove();
+  });
+});
+
 describe('AbilityEditor (decision trigger inheritance)', () => {
   test('buildFinalConfig uses the latest parent trigger for decision branches even if branches were saved with stale triggers', () => {
     const editor = new AbilityEditor();

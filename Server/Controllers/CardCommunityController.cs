@@ -305,6 +305,7 @@ public class CardCommunityController : ControllerBase
         public bool RewardGranted { get; set; }
         public int RewardCoins { get; set; }
         public int? CurrentCoins { get; set; }
+        public QuestProgressDto? QuestProgress { get; set; }
     }
 
     public class CardCommunityResponse : CardVoteSummaryDto
@@ -338,5 +339,14 @@ public class CardCommunityController : ControllerBase
         public bool RewardGranted { get; set; }
         public int RewardCoins { get; set; }
         public int? CurrentCoins { get; set; }
+        public QuestProgressDto? QuestProgress { get; set; }
+    }
+
+    public class QuestProgressDto
+    {
+        public List<Guid> UpdatedQuestIds { get; set; } = new();
+        public List<Guid> CompletedQuestIds { get; set; } = new();
+        public int ClaimableCount { get; set; }
+        public bool IgnoredAsDuplicate { get; set; }
     }
 }

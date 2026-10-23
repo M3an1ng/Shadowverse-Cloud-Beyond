@@ -1,0 +1,43 @@
+{
+  "id": "16",
+  "name": "观战房间选择",
+  "job_id": "345f4a73-7a68-4ad8-a0f5-f20444d29c11",
+  "status": "failed",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "opaque"
+  },
+  "references": [
+    {
+      "role": "style",
+      "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66",
+      "width": 1536,
+      "height": 864
+    },
+    {
+      "role": "layout",
+      "sha256": "9f02e0918b9bd8c3f96519a7cb7ea8f879007bbea89cc56906b9d67801543832",
+      "width": 1536,
+      "height": 864
+    }
+  ],
+  "reference_inputs": [
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-full/images/A-01-home.png",
+      "role": "style"
+    },
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-full/images/A-03-multiplayer-v2.png",
+      "role": "layout"
+    }
+  ],
+  "outputs": [],
+  "started_at": "2026-09-20T22:10:47.848Z",
+  "finished_at": "2026-09-20T22:11:33.257Z",
+  "error_category": "model_capacity"
+}

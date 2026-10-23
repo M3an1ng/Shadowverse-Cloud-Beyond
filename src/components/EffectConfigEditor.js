@@ -375,6 +375,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const hasSearchMode = this.hasEffectParameter(effectMeta, 'UseSearchMode');
         const hasCardSourceMode = this.hasEffectParameter(effectMeta, 'CardSourceMode');
         const hasRemoveMode = this.hasEffectParameter(effectMeta, 'RemoveMode');
+        const hasDurationType = this.hasEffectParameter(effectMeta, 'DurationType');
         const hasModifierLayer = this.hasEffectParameter(effectMeta, 'ModifierLayer');
         const hasTriggerAbilityMode = this.hasEffectParameter(effectMeta, 'TriggerMode');
         const useSearchMode = hasSearchMode
@@ -385,6 +386,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             : null;
         const removeMode = hasRemoveMode
             ? this.normalizeRemoveAbilityMode(this.getEffectParameterValue(parameters, effectMeta, 'RemoveMode'))
+            : null;
+        const durationType = hasDurationType
+            ? this.normalizeDurationType(this.getEffectParameterValue(parameters, effectMeta, 'DurationType'))
             : null;
         const modifierLayer = hasModifierLayer
             ? this.normalizeModifierLayer(this.getEffectParameterValue(parameters, effectMeta, 'ModifierLayer'))
@@ -399,6 +403,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             cardSourceMode,
             hasRemoveMode,
             removeMode,
+            hasDurationType,
+            durationType,
             hasModifierLayer,
             modifierLayer,
             hasTriggerAbilityMode,
@@ -2440,7 +2446,13 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             };
 
             const handleAdd = async () => {
-                const created = await this.openGrantAbilityEditorModal(null, getDecisionEditorOptions(null));
+                const mode = await this.openGrantAbilityTypeModal();
+                if (!mode) return;
+                const editorOptions = {
+                    ...(getDecisionEditorOptions(null) || {}),
+                    mode
+                };
+                const created = await this.openGrantAbilityEditorModal(null, editorOptions);
                 if (!created) return;
                 syncValue([...state.items, created]);
             };
@@ -2796,7 +2808,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             return this.normalizeAbilityConfigForList(fallback);
         }
 
-    formatAbilityTriggerName(ability, fallbackTrigger = null) {
+        formatAbilityTriggerName(ability, fallbackTrigger = null) {
         const trigger = fallbackTrigger
             ? this.mergeInheritedTriggerFields(ability?.trigger ?? ability?.Trigger, fallbackTrigger)
             : (ability?.trigger ?? ability?.Trigger ?? null);
@@ -2809,6 +2821,62 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 return '触发: 未配置';
             }
             return `触发: ${events.join(' / ')}`;
+        }
+
+        async openGrantAbilityTypeModal() {
+            return await new Promise((resolve) => {
+                const overlay = document.createElement('div');
+                overlay.className = 'modal-overlay grant-ability-type-overlay';
+                overlay.id = 'grant-ability-type-modal';
+
+                const modal = document.createElement('div');
+                modal.className = 'modal-container ability-edit-container ability-type-modal';
+
+                const header = document.createElement('div');
+                header.className = 'modal-header';
+                header.innerHTML = '<h3>选择能力类型</h3>';
+
+                const closeBtn = document.createElement('button');
+                closeBtn.className = 'modal-close-btn';
+                closeBtn.type = 'button';
+                closeBtn.setAttribute('aria-label', '关闭');
+                closeBtn.textContent = '×';
+                header.appendChild(closeBtn);
+
+                const content = document.createElement('div');
+                content.className = 'modal-content';
+                content.innerHTML = `
+                    <div class="ability-mode-selector">
+                        <div class="btn-group-row">
+                            <button type="button" class="btn-option" data-mode="effect">触发式能力</button>
+                            <button type="button" class="btn-option" data-mode="aura">持久式能力</button>
+                        </div>
+                    </div>
+                `;
+
+                modal.appendChild(header);
+                modal.appendChild(content);
+                overlay.appendChild(modal);
+                document.body.appendChild(overlay);
+
+                const finish = (mode) => {
+                    overlay.remove();
+                    resolve(mode);
+                };
+
+                closeBtn.addEventListener('click', () => finish(null));
+                overlay.addEventListener('click', (event) => {
+                    if (event.target === overlay) {
+                        finish(null);
+                    }
+                });
+
+                content.addEventListener('click', (event) => {
+                    const button = event.target.closest('button[data-mode]');
+                    if (!button) return;
+                    finish(button.dataset.mode || null);
+                });
+            });
         }
 
         async openGrantAbilityEditorModal(baseAbility, editorOptions = null) {
@@ -3482,6 +3550,39 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         return 'Additive';
     }
 
+    normalizeDurationType(value) {
+        if (value == null || value === '') return 'Permanent';
+        if (typeof value === 'number') {
+            return this.mapDurationTypeValue(value);
+        }
+        const raw = String(value).trim();
+        if (raw === '') return 'Permanent';
+        if (/^\d+$/.test(raw)) {
+            return this.mapDurationTypeValue(Number(raw));
+        }
+        const lowered = raw.toLowerCase();
+        if (lowered === 'permanent') return 'Permanent';
+        if (lowered === 'endofturn') return 'EndOfTurn';
+        if (lowered === 'startofturn') return 'StartOfTurn';
+        if (lowered === 'ownerturnstart') return 'OwnerTurnStart';
+        if (lowered === 'ownerturnend') return 'OwnerTurnEnd';
+        if (lowered === 'opponentturnstart') return 'OpponentTurnStart';
+        if (lowered === 'opponentturnend') return 'OpponentTurnEnd';
+        if (lowered === 'conditionalremoval') return 'ConditionalRemoval';
+        return raw;
+    }
+
+    mapDurationTypeValue(value) {
+        if (value === 1) return 'EndOfTurn';
+        if (value === 2) return 'StartOfTurn';
+        if (value === 3) return 'OwnerTurnStart';
+        if (value === 4) return 'OwnerTurnEnd';
+        if (value === 5) return 'OpponentTurnStart';
+        if (value === 6) return 'OpponentTurnEnd';
+        if (value === 7) return 'ConditionalRemoval';
+        return 'Permanent';
+    }
+
     shouldRenderEffectParameter(paramMeta, context) {
         const paramName = this.getEffectParameterName(paramMeta);
         if (!paramName) return true;
@@ -3506,6 +3607,11 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             if (normalized === 'abilitykeyword') return context.removeMode === 'Keyword';
         }
 
+        if (context?.hasDurationType) {
+            if (normalized === 'durationparameter') return context.durationType !== 'ConditionalRemoval';
+            if (normalized === 'removecondition') return context.durationType === 'ConditionalRemoval';
+        }
+
         if (context?.hasTriggerAbilityMode) {
             if (normalized === 'abilitykeyword') return context.triggerAbilityMode === 'ByKeyword';
             if (normalized === 'abilitydefinitionids') return context.triggerAbilityMode === 'ByAbilityDefinitionId';
@@ -3520,6 +3626,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const hasSearchMode = this.hasEffectParameter(effectMeta, 'UseSearchMode');
         const hasCardSourceMode = this.hasEffectParameter(effectMeta, 'CardSourceMode');
         const hasRemoveMode = this.hasEffectParameter(effectMeta, 'RemoveMode');
+        const hasDurationType = this.hasEffectParameter(effectMeta, 'DurationType');
         const hasModifierLayer = this.hasEffectParameter(effectMeta, 'ModifierLayer');
         const hasTriggerMode = this.hasEffectParameter(effectMeta, 'TriggerMode');
 
@@ -3539,6 +3646,12 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             const prevMode = this.normalizeRemoveAbilityMode(this.getEffectParameterValue(previousParams, effectMeta, 'RemoveMode'));
             const nextMode = this.normalizeRemoveAbilityMode(this.getEffectParameterValue(nextParams, effectMeta, 'RemoveMode'));
             if (prevMode !== nextMode) return true;
+        }
+
+        if (hasDurationType) {
+            const prevDurationType = this.normalizeDurationType(this.getEffectParameterValue(previousParams, effectMeta, 'DurationType'));
+            const nextDurationType = this.normalizeDurationType(this.getEffectParameterValue(nextParams, effectMeta, 'DurationType'));
+            if (prevDurationType !== nextDurationType) return true;
         }
 
         if (hasModifierLayer) {

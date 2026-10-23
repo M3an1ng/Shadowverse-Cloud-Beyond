@@ -111,15 +111,24 @@ class Router {
         };
 
         // 监听导航按钮点击
-        document.addEventListener('click', (event) => {
+        document.addEventListener('click', async (event) => {
             const routeButton = event.target.closest('[data-route]');
             if (routeButton) {
                 event.preventDefault();
                 const route = routeButton.dataset.route;
-                if (shouldConfirmBattleExit(this.currentRoute, route, routeButton)) {
+                const battleExitState = typeof window.__svbGetBattleExitState === 'function'
+                    ? window.__svbGetBattleExitState()
+                    : null;
+                if (shouldConfirmBattleExit(this.currentRoute, route, routeButton, battleExitState)) {
                     const confirmed = window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE);
                     if (!confirmed) {
                         return;
+                    }
+                    if (typeof window.__svbHandleConfirmedBattleExit === 'function') {
+                        const handled = await window.__svbHandleConfirmedBattleExit();
+                        if (!handled) {
+                            return;
+                        }
                     }
                 }
                 navigateSafely(route);
@@ -127,16 +136,28 @@ class Router {
         });
 
         // 监听浏览器前进后退
-        window.addEventListener('popstate', (event) => {
+        window.addEventListener('popstate', async (event) => {
             const route = event.state?.route || 'navigation';
             if (route === this.currentRoute) {
                 return;
             }
-            if (isLeavingBattleRoute(this.currentRoute, route)) {
+            const battleExitState = typeof window.__svbGetBattleExitState === 'function'
+                ? window.__svbGetBattleExitState()
+                : null;
+            if (isLeavingBattleRoute(this.currentRoute, route) && shouldConfirmBattleExit(this.currentRoute, route, {
+                classList: { contains: () => true }
+            }, battleExitState)) {
                 const confirmed = window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE);
                 if (!confirmed) {
                     window.history.go(1);
                     return;
+                }
+                if (typeof window.__svbHandleConfirmedBattleExit === 'function') {
+                    const handled = await window.__svbHandleConfirmedBattleExit();
+                    if (!handled) {
+                        window.history.go(1);
+                        return;
+                    }
                 }
             }
             navigateSafely(route, false, () => {
@@ -154,6 +175,9 @@ class Router {
         if (!this.routes.has(route)) {
             console.error(`Router: Unknown route "${route}"`);
             return false;
+        }
+        if (route === this.currentRoute) {
+            return true;
         }
 
         // 执行路由前钩子

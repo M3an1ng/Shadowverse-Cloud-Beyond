@@ -8,26 +8,19 @@ namespace ShadowverseBeyond.Server.Services;
 
 public sealed class CardCommunityService : ICardCommunityService
 {
-    private const int FirstVoteRewardCoins = 10;
-    private const int FirstCommentRewardCoins = 50;
-    private const string FirstVoteRewardPrefix = "card-community:first-vote:";
-    private const string FirstCommentRewardPrefix = "card-community:first-comment:";
-
     private readonly ApplicationDbContext _db;
     private readonly ITransactionService _transactionService;
-    private readonly IEconomyService _economyService;
-    private readonly ILogger<CardCommunityService> _logger;
+    private readonly IQuestProgressService _questProgressService;
 
     public CardCommunityService(
         ApplicationDbContext db,
         ITransactionService transactionService,
-        IEconomyService economyService,
+        IQuestProgressService questProgressService,
         ILogger<CardCommunityService> logger)
     {
         _db = db;
         _transactionService = transactionService;
-        _economyService = economyService;
-        _logger = logger;
+        _questProgressService = questProgressService;
     }
 
     public async Task<CardCommunityController.CardCommentDto> CreateCommentAsync(
@@ -47,18 +40,21 @@ public sealed class CardCommunityService : ICardCommunityService
             UpdatedAt = now
         };
 
-        RewardGrantResult reward = RewardGrantResult.None;
+        QuestProgressResult questProgress = new()
+        {
+            UserId = user.Id,
+            ActivityType = QuestActivityType.Comment
+        };
         await _transactionService.ExecuteInTransactionAsync(async () =>
         {
             _db.CardComments.Add(entity);
-            reward = await TryGrantRewardAsync(
+            questProgress = await _questProgressService.RecordActivityAsync(
                 user.Id,
-                cardId,
-                CoinTransactionType.CardCommunityFirstComment,
-                FirstCommentRewardCoins,
-                BuildFirstCommentRewardEntityId(cardId),
-                "卡牌社区首次评论奖励",
-                cancellationToken);
+                QuestActivityType.Comment,
+                "Card",
+                cardId.ToString(),
+                occurredAtUtc: now,
+                cancellationToken: cancellationToken);
         });
 
         return new CardCommunityController.CardCommentDto
@@ -72,9 +68,10 @@ public sealed class CardCommunityService : ICardCommunityService
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
             CanDelete = true,
-            RewardGranted = reward.Granted,
-            RewardCoins = reward.Coins,
-            CurrentCoins = await GetCurrentCoinsAsync(user.Id, cancellationToken)
+            RewardGranted = false,
+            RewardCoins = 0,
+            CurrentCoins = null,
+            QuestProgress = ToQuestProgressDto(questProgress)
         };
     }
 
@@ -84,7 +81,11 @@ public sealed class CardCommunityService : ICardCommunityService
         CardVoteType voteType,
         CancellationToken cancellationToken = default)
     {
-        RewardGrantResult reward = RewardGrantResult.None;
+        QuestProgressResult questProgress = new()
+        {
+            UserId = user.Id,
+            ActivityType = QuestActivityType.Vote
+        };
         await _transactionService.ExecuteInTransactionAsync(async () =>
         {
             var entity = await _db.CardVotes
@@ -105,14 +106,12 @@ public sealed class CardCommunityService : ICardCommunityService
                     UpdatedAt = DateTime.UtcNow
                 });
 
-                reward = await TryGrantRewardAsync(
+                questProgress = await _questProgressService.RecordActivityAsync(
                     user.Id,
-                    cardId,
-                    CoinTransactionType.CardCommunityFirstVote,
-                    FirstVoteRewardCoins,
-                    BuildFirstVoteRewardEntityId(cardId),
-                    "卡牌社区首次投票奖励",
-                    cancellationToken);
+                    QuestActivityType.Vote,
+                    "Card",
+                    cardId.ToString(),
+                    cancellationToken: cancellationToken);
                 return;
             }
 
@@ -134,74 +133,22 @@ public sealed class CardCommunityService : ICardCommunityService
             UpvoteCount = voteStats.UpvoteCount,
             DownvoteCount = voteStats.DownvoteCount,
             UserVote = voteStats.UserVote,
-            RewardGranted = reward.Granted,
-            RewardCoins = reward.Coins,
-            CurrentCoins = await GetCurrentCoinsAsync(user.Id, cancellationToken)
+            RewardGranted = false,
+            RewardCoins = 0,
+            CurrentCoins = null,
+            QuestProgress = ToQuestProgressDto(questProgress)
         };
     }
 
-    private async Task<RewardGrantResult> TryGrantRewardAsync(
-        Guid userId,
-        int cardId,
-        CoinTransactionType rewardType,
-        int rewardCoins,
-        string relatedEntityId,
-        string description,
-        CancellationToken cancellationToken)
+    private static CardCommunityController.QuestProgressDto ToQuestProgressDto(QuestProgressResult result)
     {
-        if (await HasRewardGrantAsync(userId, rewardType, relatedEntityId, cancellationToken))
+        return new CardCommunityController.QuestProgressDto
         {
-            return RewardGrantResult.None;
-        }
-
-        var granted = await _economyService.AddCoinsAsync(
-            userId,
-            rewardCoins,
-            rewardType,
-            description,
-            relatedEntityId);
-
-        if (!granted)
-        {
-            if (await HasRewardGrantAsync(userId, rewardType, relatedEntityId, cancellationToken))
-            {
-                _logger.LogInformation(
-                    "Card community reward already granted concurrently. UserId={UserId} CardId={CardId} RewardType={RewardType}",
-                    userId,
-                    cardId,
-                    rewardType);
-                return RewardGrantResult.None;
-            }
-
-            throw new InvalidOperationException(
-                $"Failed to persist reward {rewardType} for user {userId} on card {cardId}.");
-        }
-
-        return new RewardGrantResult(true, rewardCoins);
-    }
-
-    private Task<bool> HasRewardGrantAsync(
-        Guid userId,
-        CoinTransactionType rewardType,
-        string relatedEntityId,
-        CancellationToken cancellationToken)
-    {
-        return _db.CoinTransactions
-            .AsNoTracking()
-            .AnyAsync(
-                transaction => transaction.UserId == userId
-                    && transaction.Type == rewardType
-                    && transaction.RelatedEntityId == relatedEntityId,
-                cancellationToken);
-    }
-
-    private async Task<int> GetCurrentCoinsAsync(Guid userId, CancellationToken cancellationToken)
-    {
-        return await _db.UserEconomies
-            .AsNoTracking()
-            .Where(item => item.UserId == userId)
-            .Select(item => item.Coins)
-            .FirstOrDefaultAsync(cancellationToken);
+            UpdatedQuestIds = result.UpdatedQuestIds,
+            CompletedQuestIds = result.CompletedQuestIds,
+            ClaimableCount = result.CompletedQuestIds.Count,
+            IgnoredAsDuplicate = result.IgnoredAsDuplicate
+        };
     }
 
     private async Task<(int UpvoteCount, int DownvoteCount, string? UserVote)> BuildVoteStatsAsync(
@@ -231,14 +178,5 @@ public sealed class CardCommunityService : ICardCommunityService
             CardVoteType.Downvote => "down",
             _ => null
         };
-    }
-
-    private static string BuildFirstVoteRewardEntityId(int cardId) => $"{FirstVoteRewardPrefix}{cardId}";
-
-    private static string BuildFirstCommentRewardEntityId(int cardId) => $"{FirstCommentRewardPrefix}{cardId}";
-
-    private readonly record struct RewardGrantResult(bool Granted, int Coins)
-    {
-        public static RewardGrantResult None => new(false, 0);
     }
 }

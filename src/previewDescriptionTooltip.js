@@ -124,6 +124,12 @@ function buildLoadingHtml(label) {
     `;
 }
 
+const keywordKindLabels = {
+    card: '卡牌关键字',
+    ability: '能力关键字',
+    deck: '牌组关键字'
+};
+
 function buildKeywordHtml(info, rawLabel) {
     if (!info) {
         return `
@@ -133,7 +139,7 @@ function buildKeywordHtml(info, rawLabel) {
             <div class="preview-tooltip-body">暂无关键词说明。</div>
         `;
     }
-    const kindLabel = info.kind === 'card' ? '卡牌关键字' : '能力关键字';
+    const kindLabel = keywordKindLabels[info.kind] || '关键词';
     const description = info.description ? renderDescriptionHtml(info.description) : '暂无关键词说明。';
     return `
         <div class="preview-tooltip-header">

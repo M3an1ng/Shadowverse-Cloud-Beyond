@@ -2,6 +2,7 @@ using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
+using ShadowverseBeyond.Server.Domain.GameFlow;
 using ShadowverseBeyond.Server.Domain.Metadata;
 
 namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
@@ -69,6 +70,9 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             // Generate the two events that represent the full turn transition
             var turnEndEvent = new TurnEndEvent(currentPlayerState);
             result.GeneratedEvents.Add(turnEndEvent);
+            result.GeneratedEvents.Add(new TurnBoundaryCleanupEvent(
+                currentPlayerState,
+                TurnBoundaryCleanupTiming.TurnEnd));
             var turnStartTransitionResult = nextPlayerState.BuildTurnStartTransitionEvents();
             result.GeneratedEvents.AddRange(turnStartTransitionResult.GeneratedEvents);
             result.Success = true;

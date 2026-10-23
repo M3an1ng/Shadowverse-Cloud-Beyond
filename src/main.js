@@ -1,4 +1,4 @@
-// src/main.js - 主入口模块
+﻿// src/main.js - 主入口模块
 //
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
@@ -20,7 +20,7 @@ import {
     handleActStateUpdated, handleFusionStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
     handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
-    handleChatHistory, handleChatMessage, handleMatchHistorySync,
+    handleChatHistory, handleChatMessage, handleMatchHistorySync, surrenderGame,
     handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
@@ -51,6 +51,13 @@ import {
 import { filterUiVisibleDecks } from './deckRuleAvailability.js';
 import { DECK_VALIDATION_RULES_UPDATED_EVENT } from './dataChangeEvents.js';
 import { initializeBattleCustomization } from './battleCustomization.js';
+import { normalizeMatchRoomList } from './matchRoomBrowser.js';
+import { createLobbyNotificationSoundPlayer } from './lobbyNotificationSound.js';
+import { createGuestJoinSoundTracker } from './multiplayerRoomSoundPolicy.js';
+import {
+    QUEST_PROGRESS_UPDATED_EVENT,
+    QUEST_REWARD_CLAIMED_EVENT
+} from './questFeedback.js';
 // import { endTurn } from './turnManager.js'; // Keep commented out
 // Old SignalR setup code removed. New setup will be added later.
 // --- End SignalR Setup ---
@@ -159,6 +166,32 @@ function isValidGuid(str) {
     return guidRegex.test(str);
 }
 
+function stopConnectionHeartbeat(conn) {
+    if (!conn) return;
+
+    const timerId = connectionHeartbeatTimers.get(conn);
+    if (timerId) {
+        window.clearInterval(timerId);
+        connectionHeartbeatTimers.delete(conn);
+    }
+}
+
+function startConnectionHeartbeat(conn, label) {
+    if (!conn || connectionHeartbeatTimers.has(conn)) return;
+
+    const timerId = window.setInterval(() => {
+        if (conn.state !== signalR.HubConnectionState.Connected) {
+            return;
+        }
+
+        conn.invoke("Heartbeat").catch(err => {
+            console.warn(`MAIN: ${label} heartbeat failed.`, err);
+        });
+    }, HEARTBEAT_INTERVAL_MS);
+
+    connectionHeartbeatTimers.set(conn, timerId);
+}
+
 let isInitializing = false;
 const HUB_URL = "/gamehub"; // Use relative URL, assumes same origin or proxy configured
 let connection = null; // Module-level variable for SignalR connection - Moved here
@@ -172,10 +205,13 @@ let lobbyHandshake = null; // { gameId, playerId, token, joinCode?, role, useAiF
 let pendingHandshake = null; // Set by multiplayer UI before initialization
 let pendingRouteTransition = null; // { fromRoute, toRoute }
 let pendingRoomExitDecision = null; // { sourceRoute, targetRoute, gameId }
+let confirmedBattleExitSurrender = false;
 let roomExitDecisionModalEl = null;
 let roomExitDecisionPromise = null;
 let roomExitDecisionResolve = null;
 const LOBBY_HANDSHAKE_STORAGE_KEY = 'svb.lobby.handshake';
+const HEARTBEAT_INTERVAL_MS = 30000;
+const connectionHeartbeatTimers = new WeakMap();
 const DEBUG_FLAG = isDebugModeEnabled();
 let DEBUG_CONSOLE_ENABLED = DEBUG_FLAG;
 let DEBUG_CONSOLE_AUTOSHOW = false;
@@ -932,6 +968,25 @@ function shouldWarnBeforeUnload() {
     return !!getActiveNonAiRoomHandshake();
 }
 
+async function handleConfirmedBattleExit() {
+    const result = await surrenderGame();
+    if (!result?.ok) {
+        alert(`投降失败：${result?.error || '未知错误'}`);
+        return false;
+    }
+
+    confirmedBattleExitSurrender = true;
+    return true;
+}
+
+function registerBattleExitHooks() {
+    window.__svbGetBattleExitState = () => ({
+        phase: gameState.phase ?? gameState.gamePhase ?? '',
+        gameOver: gameState.gameOver === true
+    });
+    window.__svbHandleConfirmedBattleExit = handleConfirmedBattleExit;
+}
+
 function registerBeforeUnloadGuard() {
     if (window.__svbBeforeUnloadGuardRegistered === true) {
         return;
@@ -994,6 +1049,10 @@ async function startMatch(gameId, playerId, token) {
 
 async function getMatch(gameId) {
     return await apiGetJson(`/api/match/${encodeURIComponent(gameId)}`);
+}
+
+async function listMatches() {
+    return await apiGetJson("/api/match");
 }
 
 async function leaveMatch(gameId, playerId, token) {
@@ -1063,6 +1122,10 @@ async function setupSignalRConnection(gameId, playerId, token, initialStateGate,
             state: connection.state
         });
         await connection.start();
+        startConnectionHeartbeat(connection, 'game');
+        connection.invoke("Heartbeat").catch(err => {
+            console.warn("MAIN: game heartbeat refresh failed after connect.", err);
+        });
         logPerfDebug('signalr-game', 'connection started', {
             connectionId,
             state: connection.state
@@ -1093,9 +1156,21 @@ async function setupActionSignalRConnection(gameId, playerId, token) {
         .build();
 
     registerActionSignalREventHandlers(guestConnection);
+    const trackedGuestConnection = guestConnection;
+    trackedGuestConnection.onclose(() => {
+        stopConnectionHeartbeat(trackedGuestConnection);
+        if (guestConnection === trackedGuestConnection) {
+            guestConnection = null;
+            setGuestSignalRConnection(null);
+        }
+    });
 
     try {
         await guestConnection.start();
+        startConnectionHeartbeat(guestConnection, 'guest');
+        guestConnection.invoke("Heartbeat").catch(err => {
+            console.warn("MAIN: guest heartbeat refresh failed after connect.", err);
+        });
         return guestConnection;
     } catch (err) {
         console.error("MAIN: Guest SignalR Connection Failed: ", err);
@@ -1496,6 +1571,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 
     // --- Connection Lifecycle Handlers ---
     conn.onclose((error) => {
+        stopConnectionHeartbeat(conn);
         logPerfDebug('signalr-game', 'connection closed', {
             connectionId,
             state: conn.state,
@@ -1901,6 +1977,7 @@ let mpPollTimerId = null;
 let suppressMultiplayerLeaveOnce = false;
 let mpLastCopied = { value: null, at: 0 };
 const MP_COPY_STICKY_MS = 0;
+const mpNotificationSoundPlayer = createLobbyNotificationSoundPlayer();
 
 function stopMultiplayerPolling() {
     if (mpPollTimerId) {
@@ -1951,7 +2028,11 @@ function setupMultiplayerUI() {
     const inputJoinGame = document.getElementById('mp-join-game');
     const inputJoinCode = document.getElementById('mp-join-code');
     const btnSpectate = document.getElementById('mp-spectate-btn');
+    const btnSpectateRooms = document.getElementById('mp-spectate-rooms-btn');
     const inputSpectateGame = document.getElementById('mp-spectate-game');
+    const spectateRoomModal = document.getElementById('mp-spectate-room-modal');
+    const spectateRoomModalClose = document.getElementById('mp-room-modal-close');
+    const spectateRoomList = document.getElementById('mp-spectate-room-list');
     const outSpectate = document.getElementById('mp-spectate-output');
     const deckSelectBtn = document.getElementById('mp-deck-select-btn');
 
@@ -2038,6 +2119,110 @@ function setupMultiplayerUI() {
         if (!outDeck) return;
         outDeck.textContent = text || '';
         outDeck.style.color = isError ? '#ff4f00' : 'rgba(255,255,255,0.85)';
+    };
+
+    const clearSpectateRoomList = () => {
+        if (!spectateRoomList) return;
+        spectateRoomList.replaceChildren();
+    };
+
+    const openSpectateRoomModal = () => {
+        if (!spectateRoomModal) return;
+        spectateRoomModal.classList.add('is-open');
+        spectateRoomModal.setAttribute('aria-hidden', 'false');
+        spectateRoomModalClose?.focus?.();
+    };
+
+    const closeSpectateRoomModal = () => {
+        if (!spectateRoomModal) return;
+        spectateRoomModal.classList.remove('is-open');
+        spectateRoomModal.setAttribute('aria-hidden', 'true');
+        btnSpectateRooms?.focus?.();
+    };
+
+    spectateRoomModal?.addEventListener('click', (event) => {
+        if (event.target?.closest?.('[data-close-room-modal]')) {
+            closeSpectateRoomModal();
+        }
+    });
+
+    spectateRoomModalClose?.addEventListener('click', closeSpectateRoomModal);
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && spectateRoomModal?.classList?.contains('is-open')) {
+            closeSpectateRoomModal();
+        }
+    });
+
+    const buildSpectateRoomMeta = (room) => {
+        const parts = [];
+        if (room.round) {
+            parts.push(`第 ${room.round} 局`);
+        }
+        parts.push(room.hasGuest || room.useAiFallback ? '对手已就位' : '等待对手');
+        if (room.requiredEnvironment) {
+            parts.push(getDeckEnvironmentLabel(room.requiredEnvironment));
+        }
+        if (room.requiredRule) {
+            parts.push(getDeckRuleLabel(room.requiredRule));
+        }
+        return parts.join(' · ');
+    };
+
+    const renderSpectateRoomList = (rooms) => {
+        if (!spectateRoomList) return;
+        spectateRoomList.replaceChildren();
+
+        if (!rooms.length) {
+            const empty = document.createElement('div');
+            empty.className = 'mp-room-empty';
+            empty.textContent = '暂无当前房间。';
+            spectateRoomList.appendChild(empty);
+            return;
+        }
+
+        rooms.forEach(room => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'mp-room-item';
+            item.disabled = !room.canSpectate;
+            item.title = room.canSpectate ? '点击填入房间号' : '房间未开始，暂不可观战';
+
+            const main = document.createElement('div');
+            main.className = 'mp-room-main';
+
+            const id = document.createElement('span');
+            id.className = 'mp-room-id';
+            id.textContent = room.roomId;
+
+            const status = document.createElement('span');
+            status.className = 'mp-room-status';
+            status.textContent = room.statusLabel;
+
+            main.append(id, status);
+            item.appendChild(main);
+
+            const metaText = buildSpectateRoomMeta(room);
+            if (metaText) {
+                const meta = document.createElement('div');
+                meta.className = 'mp-room-meta';
+                meta.textContent = metaText;
+                item.appendChild(meta);
+            }
+
+            if (room.canSpectate) {
+                item.addEventListener('click', () => {
+                    if (inputSpectateGame) {
+                        inputSpectateGame.value = room.roomId;
+                        inputSpectateGame.focus();
+                    }
+                    setOutput(outSpectate, `已选择房间：${room.roomId}`);
+                    closeSpectateRoomModal();
+                });
+            }
+
+            spectateRoomList.appendChild(item);
+        });
     };
 
     const roomDeckSyncState = {
@@ -2217,6 +2402,7 @@ function setupMultiplayerUI() {
 
     bindButton(btnCreateHost, async () => {
         if (!outCreate) return;
+        mpNotificationSoundPlayer.unlock();
         const deckId = await getSelectedMultiplayerDeckId();
         if (!deckId) {
             setDeckOutput('请先选择卡组。', true);
@@ -2236,12 +2422,16 @@ function setupMultiplayerUI() {
             setOutput(outCreate, `房间已创建，等待对手加入。<br>${formatHandshakeOutput(handshake)}`);
 
             stopMultiplayerPolling();
+            const guestJoinSoundTracker = createGuestJoinSoundTracker({
+                playGuestJoined: () => mpNotificationSoundPlayer.playGuestJoined()
+            });
             mpPollTimerId = setInterval(async () => {
                 try {
                     const room = await getMatch(handshake.gameId);
                     updateMultiplayerFormatFromRoom(room);
                     const status = room.status;
                     const guestJoined = !!room.guestPlayerId;
+                    guestJoinSoundTracker.observe(room);
                     if (status === "Closed") {
                         stopMultiplayerPolling();
                         const reason = room.closedReason || "房间已关闭。";
@@ -2441,6 +2631,38 @@ function setupMultiplayerUI() {
                 alert(`无法进入对战：${err.message}`);
             }
         })();
+    });
+
+    bindButton(btnSpectateRooms, async () => {
+        if (!outSpectate) return;
+
+        try {
+            if (btnSpectateRooms) {
+                btnSpectateRooms.disabled = true;
+            }
+            setOutput(outSpectate, '加载房间状态中...');
+            openSpectateRoomModal();
+
+            const payload = await listMatches();
+            const rooms = normalizeMatchRoomList(payload);
+            renderSpectateRoomList(rooms);
+
+            const spectatableCount = rooms.filter(room => room.canSpectate).length;
+            if (spectatableCount > 0) {
+                setOutput(outSpectate, `找到 ${spectatableCount} 个正在对战的房间，点击房间即可填入。`);
+            } else if (rooms.length > 0) {
+                setOutput(outSpectate, '当前尚无正在对战的房间。', true);
+            } else {
+                setOutput(outSpectate, '当前没有可显示的房间。', true);
+            }
+        } catch (err) {
+            clearSpectateRoomList();
+            setOutput(outSpectate, `加载房间失败：${err?.message || String(err)}`, true);
+        } finally {
+            if (btnSpectateRooms) {
+                btnSpectateRooms.disabled = false;
+            }
+        }
     });
 
     bindButton(btnSpectate, async () => {
@@ -2670,6 +2892,7 @@ function setupUserInfoUI() {
     const toggle = document.getElementById('user-info-toggle');
     const card = document.getElementById('user-info-card');
     const aboutCard = document.getElementById('about-card');
+    const dailyQuestCard = document.getElementById('daily-quest-card');
     const devConsoleToggle = document.getElementById('dev-console-toggle');
     const nameEl = document.getElementById('user-info-name');
     const roleEl = document.getElementById('user-info-role');
@@ -2779,7 +3002,6 @@ function setupUserInfoUI() {
 
     let economyRequest = null;
     let winStatsRequest = null;
-    const COMMUNITY_COINS_UPDATED_EVENT = 'svb:economy-coins-updated';
     const economyCache = {
         userId: null,
         coins: null,
@@ -3164,6 +3386,11 @@ function setupUserInfoUI() {
             aboutCard.classList.remove('active');
             aboutCard.setAttribute('aria-hidden', 'true');
         }
+        if (open && dailyQuestCard) {
+            dailyQuestCard.classList.remove('active');
+            dailyQuestCard.setAttribute('aria-hidden', 'true');
+            document.getElementById('daily-quest-toggle')?.setAttribute('aria-expanded', 'false');
+        }
         if (!open) {
             resetIdRow(idEl?.dataset.fullId || idEl?.textContent || "-");
         } else {
@@ -3178,7 +3405,7 @@ function setupUserInfoUI() {
     document.addEventListener(USER_SESSION_CHANGED_EVENT, () => {
         applySession();
     });
-    document.addEventListener(COMMUNITY_COINS_UPDATED_EVENT, (event) => {
+    document.addEventListener(QUEST_REWARD_CLAIMED_EVENT, (event) => {
         const detail = event?.detail;
         const userId = String(detail?.userId ?? '').trim();
         const coins = Number.parseInt(String(detail?.coins ?? ''), 10);
@@ -3640,6 +3867,308 @@ function syncTopNavHoverLock() {
     document.body.classList.toggle('topnav-hover-locked', hasPinnedCard);
 }
 
+function setupDailyQuestUI() {
+    const widget = document.getElementById('daily-quest-widget');
+    const toggle = document.getElementById('daily-quest-toggle');
+    const badge = document.getElementById('daily-quest-badge');
+    const toast = document.getElementById('daily-quest-toast');
+    const card = document.getElementById('daily-quest-card');
+    const refreshBtn = document.getElementById('daily-quest-refresh');
+    const summaryEl = document.getElementById('daily-quest-summary');
+    const listEl = document.getElementById('daily-quest-list');
+
+    if (!widget || !toggle || !badge || !card || !refreshBtn || !summaryEl || !listEl) return;
+
+    let stateRequest = null;
+    let toastTimer = null;
+
+    const pickValue = (source, camelKey, pascalKey, fallback = null) => {
+        if (!source || typeof source !== 'object') return fallback;
+        if (source[camelKey] !== undefined && source[camelKey] !== null) return source[camelKey];
+        if (source[pascalKey] !== undefined && source[pascalKey] !== null) return source[pascalKey];
+        return fallback;
+    };
+
+    const escapeHtml = (value) => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const toSafeInt = (value, fallback = 0) => {
+        const parsed = Number.parseInt(String(value ?? ''), 10);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const isQuestClaimable = (quest) =>
+        !!pickValue(quest, 'isCompleted', 'IsCompleted', false) &&
+        !pickValue(quest, 'isRewardClaimed', 'IsRewardClaimed', false) &&
+        !pickValue(quest, 'isExpired', 'IsExpired', false);
+
+    const setBadge = (claimableCount) => {
+        const count = Math.max(0, toSafeInt(claimableCount, 0));
+        badge.textContent = count > 9 ? '9+' : String(count);
+        badge.classList.toggle('is-visible', count > 0);
+        toggle.setAttribute('aria-label', count > 0 ? `日常任务，${count} 个奖励可领取` : '日常任务');
+    };
+
+    const showToast = (message) => {
+        if (!toast || !message) return;
+        toast.textContent = message;
+        toast.classList.add('is-visible');
+        if (toastTimer) {
+            window.clearTimeout(toastTimer);
+        }
+        toastTimer = window.setTimeout(() => {
+            toast.classList.remove('is-visible');
+            toastTimer = null;
+        }, 1500);
+    };
+
+    const pulseToggle = (completed) => {
+        const className = completed ? 'is-complete-pulse' : 'is-progress-pulse';
+        toggle.classList.remove('is-progress-pulse', 'is-complete-pulse');
+        void toggle.offsetWidth;
+        toggle.classList.add(className);
+        window.setTimeout(() => {
+            toggle.classList.remove(className);
+        }, completed ? 760 : 560);
+    };
+
+    const setSummary = (html, isError = false) => {
+        summaryEl.innerHTML = html;
+        summaryEl.classList.toggle('daily-quest-error-text', isError);
+    };
+
+    const renderEmpty = (message, isError = false) => {
+        listEl.innerHTML = `<div class="${isError ? 'daily-quest-error' : 'daily-quest-empty'}">${escapeHtml(message)}</div>`;
+    };
+
+    const getQuestStatus = (quest) => {
+        if (pickValue(quest, 'isExpired', 'IsExpired', false)) return '已过期';
+        if (pickValue(quest, 'isRewardClaimed', 'IsRewardClaimed', false)) return '已领取';
+        if (pickValue(quest, 'isCompleted', 'IsCompleted', false)) return '已完成';
+        return '';
+    };
+
+    const getQuestIconPath = (quest) => {
+        const typeText = `${pickValue(quest, 'typeDisplayName', 'TypeDisplayName', '')} ${pickValue(quest, 'name', 'Name', '')}`;
+        if (typeText.includes('评论')) {
+            return 'M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v7A2.5 2.5 0 0 1 17.5 15H9l-5 4V5.5z';
+        }
+        if (typeText.includes('登录')) {
+            return 'M10 3h9v18h-9v-2h7V5h-7V3zm1.4 5.6L14.8 12l-3.4 3.4L10 14l1-1H4v-2h7l-1-1 1.4-1.4z';
+        }
+        if (typeText.includes('观战')) {
+            return 'M12 5c5 0 8.5 4.2 9.6 7-1.1 2.8-4.6 7-9.6 7s-8.5-4.2-9.6-7C3.5 9.2 7 5 12 5zm0 3.5A3.5 3.5 0 1 0 12 15a3.5 3.5 0 0 0 0-7z';
+        }
+        if (typeText.includes('胜') || typeText.includes('对战')) {
+            return 'M7 4h10v3h3v3a5 5 0 0 1-5 5h-.2A5.5 5.5 0 0 1 13 17.7V20h3v2H8v-2h3v-2.3A5.5 5.5 0 0 1 9.2 15H9a5 5 0 0 1-5-5V7h3V4zm10 5V7h-1v5.6A3 3 0 0 0 17 9zM7 7H6v2a3 3 0 0 0 1 2.2V7z';
+        }
+        return 'M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm1 4h8V5H8v2zm1 4.7 1.3 1.3 3.7-3.7 1.4 1.4-5.1 5.1L7.6 13l1.4-1.3z';
+    };
+
+    const renderQuestRow = (quest) => {
+        const id = String(pickValue(quest, 'id', 'Id', '') || '');
+        const name = String(pickValue(quest, 'name', 'Name', '任务') || '任务');
+        const description = String(pickValue(quest, 'description', 'Description', '') || '');
+        const currentProgress = Math.max(0, toSafeInt(pickValue(quest, 'currentProgress', 'CurrentProgress', 0), 0));
+        const targetValue = Math.max(0, toSafeInt(pickValue(quest, 'targetValue', 'TargetValue', 0), 0));
+        const coinReward = Math.max(0, toSafeInt(pickValue(quest, 'coinReward', 'CoinReward', 0), 0));
+        const percent = targetValue > 0 ? Math.min(100, Math.round((currentProgress / targetValue) * 100)) : 0;
+        const canClaim = isQuestClaimable(quest);
+        const isClaimed = !!pickValue(quest, 'isRewardClaimed', 'IsRewardClaimed', false);
+        const status = getQuestStatus(quest);
+
+        return `
+            <div class="daily-quest-row ${canClaim ? 'is-claimable' : ''} ${isClaimed ? 'is-claimed' : ''}">
+                <div class="daily-quest-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="${getQuestIconPath(quest)}"></path></svg>
+                </div>
+                <div class="daily-quest-main">
+                    <div class="daily-quest-row-head">
+                        <div class="daily-quest-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+                        <div class="daily-quest-reward">+${coinReward} 金币</div>
+                    </div>
+                    <div class="daily-quest-desc">${escapeHtml(description || status || '活动任务')}</div>
+                    <div class="daily-quest-progress-line">
+                        <div class="daily-quest-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${targetValue}" aria-valuenow="${currentProgress}">
+                            <div class="daily-quest-progress-fill" style="width: ${percent}%"></div>
+                        </div>
+                        <div class="daily-quest-progress-text">${currentProgress}/${targetValue}</div>
+                    </div>
+                </div>
+                ${canClaim
+                    ? `<button class="meta-btn daily-quest-claim" type="button" data-quest-id="${escapeHtml(id)}">领取</button>`
+                    : `<div class="daily-quest-status">${escapeHtml(status)}</div>`}
+            </div>
+        `;
+    };
+
+    const renderQuestGroup = (title, quests) => {
+        if (!quests.length) return '';
+        return `
+            <div class="daily-quest-group">
+                <div class="daily-quest-group-title">${escapeHtml(title)}</div>
+                ${quests.map(renderQuestRow).join('')}
+            </div>
+        `;
+    };
+
+    const renderQuests = (quests, claimableCount) => {
+        const list = Array.isArray(quests) ? quests : [];
+        if (list.length === 0) {
+            renderEmpty('暂无可显示任务');
+            return;
+        }
+
+        const claimable = list.filter(isQuestClaimable);
+        const claimed = list.filter(quest => pickValue(quest, 'isRewardClaimed', 'IsRewardClaimed', false));
+        const inProgress = list.filter(quest => !isQuestClaimable(quest) && !pickValue(quest, 'isRewardClaimed', 'IsRewardClaimed', false));
+        const completedCount = list.filter(quest => pickValue(quest, 'isCompleted', 'IsCompleted', false)).length;
+        const resetAt = list
+            .map(quest => new Date(pickValue(quest, 'expiresAt', 'ExpiresAt', '')))
+            .filter(date => !Number.isNaN(date.getTime()))
+            .sort((a, b) => a.getTime() - b.getTime())[0];
+        const resetText = resetAt
+            ? resetAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+            : '--:--';
+
+        setSummary(`今日 ${completedCount}/${list.length} · <strong>可领取 ${Math.max(0, toSafeInt(claimableCount, claimable.length))}</strong> · 重置 ${resetText}`);
+        listEl.innerHTML = [
+            renderQuestGroup('可领取', claimable),
+            renderQuestGroup('进行中', inProgress),
+            renderQuestGroup('已领取', claimed)
+        ].join('');
+    };
+
+    const refresh = async (force = false) => {
+        const session = getUserSession();
+        if (session.mode !== 'user' || !session.userId) {
+            setBadge(0);
+            setSummary('登录后查看任务进度');
+            renderEmpty('请先登录账号');
+            return;
+        }
+
+        if (stateRequest && !force) {
+            await stateRequest;
+            return;
+        }
+
+        refreshBtn.disabled = true;
+        setSummary('加载中...');
+        stateRequest = (async () => {
+            try {
+                const state = await apiGetJson(`/api/economy/state/${session.userId}`);
+                const quests = Array.isArray(state?.quests) ? state.quests : [];
+                const claimableCount = toSafeInt(pickValue(state, 'claimableQuestCount', 'ClaimableQuestCount', 0), quests.filter(isQuestClaimable).length);
+                setBadge(claimableCount);
+                renderQuests(quests, claimableCount);
+            } catch (err) {
+                setBadge(0);
+                setSummary('任务加载失败', true);
+                renderEmpty(`加载失败：${err?.message || String(err)}`, true);
+            } finally {
+                refreshBtn.disabled = false;
+                stateRequest = null;
+            }
+        })();
+
+        await stateRequest;
+    };
+
+    const setOpen = (open) => {
+        card.classList.toggle('active', open);
+        card.setAttribute('aria-hidden', open ? 'false' : 'true');
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            document.querySelectorAll('.top-nav-bar .user-card-popup.active').forEach((item) => {
+                if (item !== card) {
+                    item.classList.remove('active');
+                    item.setAttribute('aria-hidden', 'true');
+                }
+            });
+            refresh(false).catch(() => { });
+        }
+        syncTopNavHoverLock();
+    };
+
+    toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setOpen(!card.classList.contains('active'));
+    });
+
+    refreshBtn.addEventListener('click', () => {
+        refresh(true).catch(() => { });
+    });
+
+    listEl.addEventListener('click', async (event) => {
+        const target = event.target;
+        const btn = target instanceof Element ? target.closest('button[data-quest-id]') : null;
+        const questId = btn?.getAttribute('data-quest-id');
+        const session = getUserSession();
+        if (!btn || !questId || session.mode !== 'user' || !session.userId) return;
+
+        btn.disabled = true;
+        btn.textContent = '领取中';
+        try {
+            const payload = await apiPostJson(`/api/economy/quests/${session.userId}/${questId}/claim`, {});
+            const currentCoins = toSafeInt(pickValue(payload, 'currentCoins', 'CurrentCoins', null), -1);
+            const coinReward = Math.max(0, toSafeInt(pickValue(payload, 'coinReward', 'CoinReward', 0), 0));
+            if (currentCoins >= 0) {
+                document.dispatchEvent(new CustomEvent(QUEST_REWARD_CLAIMED_EVENT, {
+                    detail: {
+                        userId: session.userId,
+                        coins: currentCoins,
+                        gain: coinReward
+                    }
+                }));
+            }
+            showToast(`已领取 +${coinReward} 金币`);
+        } catch (err) {
+            showToast(`领取失败：${err?.message || String(err)}`);
+        } finally {
+            await refresh(true);
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!card.classList.contains('active')) return;
+        const target = event.target;
+        if (target instanceof Element && (card.contains(target) || toggle.contains(target))) {
+            return;
+        }
+        setOpen(false);
+    });
+
+    document.addEventListener(USER_SESSION_CHANGED_EVENT, () => {
+        refresh(true).catch(() => { });
+    });
+
+    document.addEventListener(QUEST_PROGRESS_UPDATED_EVENT, (event) => {
+        const detail = event?.detail;
+        const session = getUserSession();
+        if (session.mode !== 'user' || !session.userId || String(detail?.userId ?? '') !== session.userId) {
+            return;
+        }
+
+        const progress = detail?.questProgress;
+        const completed = Array.isArray(progress?.completedQuestIds) && progress.completedQuestIds.length > 0;
+        const updated = Array.isArray(progress?.updatedQuestIds) && progress.updatedQuestIds.length > 0;
+        if (!completed && !updated) {
+            return;
+        }
+
+        pulseToggle(completed);
+        showToast(completed ? '任务完成，可领取奖励' : '任务进度 +1');
+        refresh(true).catch(() => { });
+    });
+
+    refresh(false).catch(() => { });
+}
+
 async function loadAboutChangelog() {
     const list = document.getElementById('about-changelog');
     const versionEl = document.getElementById('about-card-version');
@@ -3733,6 +4262,7 @@ function setupAboutUI() {
     const toggle = document.getElementById('about-toggle');
     const card = document.getElementById('about-card');
     const userCard = document.getElementById('user-info-card');
+    const dailyQuestCard = document.getElementById('daily-quest-card');
     const devConsoleToggle = document.getElementById('dev-console-toggle');
     if (!toggle || !card) return;
 
@@ -3742,6 +4272,11 @@ function setupAboutUI() {
         if (open && userCard) {
             userCard.classList.remove('active');
             userCard.setAttribute('aria-hidden', 'true');
+        }
+        if (open && dailyQuestCard) {
+            dailyQuestCard.classList.remove('active');
+            dailyQuestCard.setAttribute('aria-hidden', 'true');
+            document.getElementById('daily-quest-toggle')?.setAttribute('aria-expanded', 'false');
         }
         syncTopNavHoverLock();
     };
@@ -4196,6 +4731,13 @@ function setupMetaProgressionUI() {
         summaryEl.style.color = isError ? 'rgba(255, 79, 0, 0.9)' : 'rgba(255, 255, 255, 0.85)';
     };
 
+    const escapeHtml = (value) => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
     const resolveDefaultUserId = () => {
         const cached = loadCachedHandshake();
         if (cached?.playerId && isValidGuid(cached.playerId)) return cached.playerId;
@@ -4219,18 +4761,23 @@ function setupMetaProgressionUI() {
 
         for (const quest of list) {
             const canClaim = !!quest?.isCompleted && !quest?.isRewardClaimed && !quest?.isExpired;
-            const progressText = `${quest?.currentProgress ?? 0}/${quest?.targetValue ?? 0} · +${quest?.coinReward ?? 0} coins`;
-            const statusText = quest?.statusDescription ?? '';
+            const current = Number.parseInt(String(quest?.currentProgress ?? 0), 10) || 0;
+            const target = Number.parseInt(String(quest?.targetValue ?? 0), 10) || 0;
+            const percent = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
+            const progressText = `${current}/${target} · +${quest?.coinReward ?? 0} 金币`;
+            const statusText = canClaim ? '可领取' : (quest?.statusDescription ?? '');
 
             const wrapper = document.createElement('div');
-            wrapper.className = 'meta-quest';
+            wrapper.className = `meta-quest ${canClaim ? 'is-claimable' : ''}`;
             wrapper.innerHTML = `
                 <div class="meta-quest-title">
-                    <div>${quest?.name ?? 'Quest'}</div>
-                    <small>${quest?.typeDisplayName ?? ''}</small>
+                    <div>${escapeHtml(quest?.name ?? 'Quest')}</div>
+                    <small>${escapeHtml(statusText || quest?.typeDisplayName || '')}</small>
                 </div>
-                <div class="meta-quest-progress">${progressText}</div>
-                <div class="meta-quest-progress">${statusText}</div>
+                <div class="meta-quest-progress">${escapeHtml(progressText)}</div>
+                <div class="meta-quest-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${target}" aria-valuenow="${current}">
+                    <span style="width: ${percent}%"></span>
+                </div>
                 <div class="meta-quest-actions">
                     <button class="meta-btn meta-quest-claim" type="button" data-quest-id="${quest?.id ?? ''}" ${canClaim ? '' : 'disabled'}>
                         领取
@@ -4260,8 +4807,9 @@ function setupMetaProgressionUI() {
             const rankName = rank?.rankName ?? '青铜';
             const rankPoints = rank?.rankPoints ?? 0;
             const canClaimDaily = !!rank?.canClaimDailyReward;
+            const claimableQuestCount = Number.parseInt(String(state?.claimableQuestCount ?? 0), 10) || 0;
 
-            setSummary(`Coins: ${coins} · Rank: ${rankName} (${rankPoints}) · Daily: ${canClaimDaily ? '可领取' : '已领取'}`);
+            setSummary(`金币 ${coins} · 段位 ${rankName} (${rankPoints}) · 可领取任务 ${claimableQuestCount} · 每日 ${canClaimDaily ? '可领取' : '已领取'}`);
             btnClaimDaily.disabled = !canClaimDaily;
             renderQuests(userId, state?.quests);
         } catch (err) {
@@ -4296,7 +4844,18 @@ function setupMetaProgressionUI() {
 
         btn.setAttribute('disabled', 'disabled');
         try {
-            await apiPostJson(`/api/economy/quests/${userId}/${questId}/claim`, {});
+            const payload = await apiPostJson(`/api/economy/quests/${userId}/${questId}/claim`, {});
+            const currentCoins = Number.parseInt(String(payload?.currentCoins ?? payload?.CurrentCoins ?? ''), 10);
+            const coinReward = Number.parseInt(String(payload?.coinReward ?? payload?.CoinReward ?? 0), 10) || 0;
+            if (Number.isFinite(currentCoins) && currentCoins >= 0) {
+                document.dispatchEvent(new CustomEvent(QUEST_REWARD_CLAIMED_EVENT, {
+                    detail: {
+                        userId,
+                        coins: currentCoins,
+                        gain: coinReward
+                    }
+                }));
+            }
         } catch (err) {
             setSummary(`领取失败：${err?.message || String(err)}`, true);
         } finally {
@@ -4356,10 +4915,15 @@ document.addEventListener('cleanupGame', () => {
         pendingRouteTransition?.fromRoute,
         pendingRouteTransition?.toRoute,
         handshake,
-        { gameOver: gameState.gameOver === true }
+        {
+            gameOver: gameState.gameOver === true,
+            surrenderSubmitted: confirmedBattleExitSurrender === true
+        }
     );
     if (shouldDeferLeave) {
         rememberPendingRoomExitDecision();
+    } else if (confirmedBattleExitSurrender === true) {
+        clearCachedHandshake();
     } else {
         // Best-effort: if this is a PVP room, explicitly close it so the opponent can be notified.
         leaveCurrentPvpRoom("cleanupGame").catch(() => { });
@@ -4375,12 +4939,15 @@ document.addEventListener('cleanupGame', () => {
             console.error('MAIN: Error stopping guest SignalR connection:', err);
         });
     }
+    stopConnectionHeartbeat(connection);
+    stopConnectionHeartbeat(guestConnection);
     connection = null;
     guestConnection = null;
     initialStateReceived = false;
     resetTransientConnectionUiState();
     clearTransientMatchQueryParams();
     // clearCachedHandshake() is called inside leaveCurrentPvpRoom (or directly for VS-AI)
+    confirmedBattleExitSurrender = false;
     window.gameInitialized = false;
 });
 
@@ -4408,6 +4975,8 @@ document.addEventListener('cleanupMultiplayer', () => {
     }
 
     stopMultiplayerPolling();
+    stopConnectionHeartbeat(connection);
+    stopConnectionHeartbeat(guestConnection);
 });
 
 document.addEventListener('requestReconnect', () => {
@@ -4513,6 +5082,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
+        setupDailyQuestUI();
+    } catch (error) {
+        console.error('MAIN: Failed to initialize daily quest UI:', error);
+    }
+
+    try {
         setupAboutUI();
     } catch (error) {
         console.error('MAIN: Failed to initialize about UI:', error);
@@ -4555,6 +5130,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupMenuStarrySky();
     } catch (error) {
         console.error('MAIN: Failed to initialize menu starry sky:', error);
+    }
+
+    try {
+        registerBattleExitHooks();
+    } catch (error) {
+        console.error('MAIN: Failed to register battle exit hooks:', error);
     }
 
     try {

@@ -52,7 +52,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     };
                 }
 
-                result.GeneratedEvents.Add(new ShuffleEvent(owner, group.ToList(), EventReasonSource.Ability));
+                result.GeneratedEvents.Add(new ShuffleEvent(
+                    owner,
+                    group.ToList(),
+                    EventReasonSource.Ability,
+                    insertMode: parameters.InsertMode));
             }
 
             return result;

@@ -8,6 +8,7 @@ using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Query;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
@@ -576,6 +577,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 }
 
                 var card = targetInfo.Card;
+                if (EffectTargetImmunityPolicy.IsImmuneTarget(card, context))
+                {
+                    return false;
+                }
+
                 var isOpponentCard = card.OwnerPlayerId != abilityOwnerId;
                 if (enforceSpellWard && applyChoiceRestrictions && isOpponentCard && hasActiveSpellWard && !activeSpellWardFollowerIds.Contains(card.InstanceId))
                 {

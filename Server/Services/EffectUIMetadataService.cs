@@ -24,7 +24,8 @@ namespace ShadowverseBeyond.Server.Services
             // EffectType.EarthRite,
             // EffectType.Necromancy,
             // EffectType.Sacrifice
-            EffectType.SetStatus
+            EffectType.SetStatus,
+            EffectType.AddAura
         };
         private static readonly IReadOnlyDictionary<EffectType, string> EffectCategoryMap = new Dictionary<EffectType, string>
         {

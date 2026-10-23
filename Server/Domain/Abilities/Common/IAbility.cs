@@ -50,6 +50,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Common
         string KeywordSummary { get; }
 
         /// <summary>
+        /// Gets alternate play metadata for Accelerate/Crystalize-style declaration abilities.
+        /// </summary>
+        AlternatePlayConfig? AlternatePlay { get; }
+
+        /// <summary>
         /// Checks whether this ability includes a specific keyword.
         /// </summary>
         bool HasKeyword(AbilityKeyword keyword);

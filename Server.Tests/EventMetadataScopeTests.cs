@@ -55,16 +55,69 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
-        public void DamageEvent_includes_base_current_player_snapshot_parameters()
+        public void DamageEvent_hides_base_snapshot_parameters_from_trigger_tips()
         {
             var svc = new EventMetadataService(NullLogger<EventMetadataService>.Instance);
             var damage = svc.GetAllEventMetadata().First(m => m.EventType == EventType.Damage);
 
-            var currentPlayerId = Assert.Single(damage.Parameters.Where(p => p.PropertyName == nameof(GameEventBase.CurrentPlayerId)));
-            var currentPlayerTurnNumber = Assert.Single(damage.Parameters.Where(p => p.PropertyName == nameof(GameEventBase.CurrentPlayerTurnNumber)));
+            Assert.DoesNotContain(damage.Parameters, p => p.PropertyName == nameof(GameEventBase.CurrentPlayerId));
+            Assert.DoesNotContain(damage.Parameters, p => p.PropertyName == nameof(GameEventBase.CurrentPlayerTurnNumber));
+            Assert.DoesNotContain(damage.Parameters, p => p.PropertyName == nameof(GameEventBase.SourceAbilityRuntimeId));
+            Assert.DoesNotContain(damage.Parameters, p => p.PropertyName == nameof(GameEventBase.SourceAbilityDefinitionId));
+            Assert.DoesNotContain(damage.Parameters, p => p.PropertyName == nameof(GameEventBase.SourceAbilityKeywords));
+        }
 
-            Assert.Equal(GameEventParameterScope.Input, currentPlayerId.Scope);
-            Assert.Equal(GameEventParameterScope.Input, currentPlayerTurnNumber.Scope);
+        [Fact]
+        public void CounterChangedEvent_exposes_calculated_source_and_target_parameters()
+        {
+            var svc = new EventMetadataService(NullLogger<EventMetadataService>.Instance);
+            var counterChanged = svc.GetAllEventMetadata().First(m => m.EventType == EventType.CounterChanged);
+
+            var sourcePlayer = counterChanged.Parameters.First(p => p.PropertyName == "SourcePlayer");
+            Assert.Equal(GameEventParameterScope.Output, sourcePlayer.Scope);
+            Assert.Equal("事件源", sourcePlayer.DslDisplayTypeName);
+
+            var targetCard = counterChanged.Parameters.First(p => p.PropertyName == "TargetCard");
+            Assert.Equal(GameEventParameterScope.Output, targetCard.Scope);
+            Assert.Equal("事件目标", targetCard.DslDisplayTypeName);
+        }
+
+        [Fact]
+        public void Snapshot_parameters_are_outputs()
+        {
+            var svc = new EventMetadataService(NullLogger<EventMetadataService>.Instance);
+
+            AssertSnapshotOutput(EventType.LeaveField, "LeaveTargetSnapshot");
+            AssertSnapshotOutput(EventType.LeaveField, "LeaveSourceSnapshot");
+            AssertSnapshotOutput(EventType.Destroy, "DestroyTargetSnapshot");
+            AssertSnapshotOutput(EventType.Destroy, "DestroySourceSnapshot");
+            AssertSnapshotOutput(EventType.Vanish, "VanishedCardSnapshot");
+            AssertSnapshotOutput(EventType.Vanish, "VanishSourceSnapshot");
+            AssertSnapshotOutput(EventType.Return, "ReturnedCardSnapshot");
+            AssertSnapshotOutput(EventType.Return, "ReturnSourceSnapshot");
+            AssertSnapshotOutput(EventType.Tuck, "TuckedCardSnapshot");
+            AssertSnapshotOutput(EventType.Tuck, "TuckSourceSnapshot");
+            AssertSnapshotOutput(EventType.CardMoved, "MovedCardSnapshot");
+            AssertSnapshotOutput(EventType.CardMoved, "MoveSourceSnapshot");
+            AssertSnapshotOutput(EventType.Transform, "TransformingCardSnapshot");
+            AssertSnapshotOutput(EventType.Transform, "TransformSourceSnapshot");
+
+            void AssertSnapshotOutput(EventType eventType, string propertyName)
+            {
+                var metadata = svc.GetAllEventMetadata().First(m => m.EventType == eventType);
+                var parameter = metadata.Parameters.First(p => p.PropertyName == propertyName);
+                Assert.Equal(GameEventParameterScope.Output, parameter.Scope);
+            }
+        }
+
+        [Fact]
+        public void EffectCompleted_generated_card_snapshots_remain_input()
+        {
+            var svc = new EventMetadataService(NullLogger<EventMetadataService>.Instance);
+            var effectCompleted = svc.GetAllEventMetadata().First(m => m.EventType == EventType.EffectCompleted);
+
+            var snapshots = effectCompleted.Parameters.First(p => p.PropertyName == "GeneratedCardSnapshots");
+            Assert.Equal(GameEventParameterScope.Input, snapshots.Scope);
         }
     }
 }

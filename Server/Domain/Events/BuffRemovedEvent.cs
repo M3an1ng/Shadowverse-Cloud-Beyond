@@ -181,9 +181,20 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             if (affectsHealth && targetCard != null && (targetCard.IsFollower || targetCard.IsLeader))
             {
-                var newMaxHealth = context.BuffService.GetEffectiveMaxHealth(targetCard, context);
-                var cappedCurrentHealth = Math.Min(previousCurrentHealth, newMaxHealth);
-                targetCard.Damage = Math.Max(0, newMaxHealth - cappedCurrentHealth);
+                var rawMaxHealth = context.BuffService.GetRawEffectiveMaxHealth(targetCard, context);
+                if (targetCard.IsFollower && rawMaxHealth <= 0)
+                {
+                    targetCard.SetHealthFloorFromBuffRemoval(1);
+                    context.BuffService.InvalidateDerivedState(context.CurrentGameState, removedBuff.TargetCardInstanceId);
+                    var flooredMaxHealth = context.BuffService.GetEffectiveMaxHealth(targetCard, context);
+                    targetCard.Damage = Math.Max(0, flooredMaxHealth - 1);
+                }
+                else
+                {
+                    var newMaxHealth = context.BuffService.GetEffectiveMaxHealth(targetCard, context);
+                    var cappedCurrentHealth = Math.Min(previousCurrentHealth, newMaxHealth);
+                    targetCard.Damage = Math.Max(0, newMaxHealth - cappedCurrentHealth);
+                }
             }
 
             if (abilityRuntimeIds.Count > 0)

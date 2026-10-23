@@ -1,0 +1,84 @@
+{
+  "id": "07",
+  "name": "系统设置／开发工具",
+  "job_id": "582b4e1d-ff95-49fc-a338-8a106a75f459",
+  "status": "succeeded",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "opaque"
+  },
+  "references": [
+    {
+      "role": "style",
+      "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66",
+      "width": 1536,
+      "height": 864
+    },
+    {
+      "role": "style",
+      "sha256": "f4cd3ac9e649054e02903ad40d1d5eea0d0ecaf697ca73252bcf340f9bb01c1c",
+      "width": 1536,
+      "height": 864
+    }
+  ],
+  "reference_inputs": [
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-full/images/A-01-home.png",
+      "role": "style"
+    },
+    {
+      "path": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-full/images/A-06-deck-builder.png",
+      "role": "style"
+    }
+  ],
+  "outputs": [
+    {
+      "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-582b4e1d-ff95-49fc-a338-8a106a75f459\\part-1\\source-1.png",
+      "source_size": [
+        1672,
+        941
+      ],
+      "source_format": "png",
+      "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-582b4e1d-ff95-49fc-a338-8a106a75f459\\part-1\\image-1.png",
+      "width": 1536,
+      "height": 864,
+      "format": "png",
+      "has_alpha": false,
+      "has_transparency": false,
+      "transforms": [
+        {
+          "operation": "resize",
+          "implementation": "local",
+          "from": "1672x941",
+          "to": "1536x864",
+          "mode": "contain",
+          "padding": "white"
+        },
+        {
+          "operation": "encode",
+          "implementation": "local",
+          "format": "png",
+          "quality": null
+        }
+      ],
+      "sha256": "a71bf209db46da287a91e53ba4e4b9e6822c776e05f4552da4351586991b697c"
+    }
+  ],
+  "upstream_metadata": {
+    "quality": "medium",
+    "size": "1672x941",
+    "background": "opaque",
+    "output_format": "png",
+    "count": 1
+  },
+  "started_at": "2026-09-20T21:52:55.584Z",
+  "finished_at": "2026-09-20T21:54:41.833Z",
+  "error_category": null,
+  "copy_exit": 0,
+  "file": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/A-starfarer-full/images/A-07-tools.png"
+}

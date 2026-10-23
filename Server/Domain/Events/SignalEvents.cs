@@ -492,8 +492,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("计数器变化", "当卡牌或玩家的计数器发生变化时触发的事件。", EventType.CounterChanged)]
     public class CounterChangedEvent : GameEventBase
     {
+        [GameEventParameter("被更新的玩家", "计数器被更新的玩家。", Scope = GameEventParameterScope.Input, DslDisplayTypeName = "事件源")]
+        public PlayerState? SourcePlayer => Source?.Player;
+
+        [GameEventParameter("被更新的目标卡牌", "计数器被更新的目标卡牌。", Scope = GameEventParameterScope.Input, DslDisplayTypeName = "事件目标")]
+        public CardInstance? TargetCard => Source?.Card;
+
+        [GameEventParameter("被更新的变量名", "更新计数器的名称。", Scope = GameEventParameterScope.Input)]
         public string CounterName { get; }
+        [GameEventParameter("旧值", "旧的计数器的数值。", Scope = GameEventParameterScope.Input)]
         public int OldValue { get; }
+        [GameEventParameter("新值", "新的计数器的数值。", Scope = GameEventParameterScope.Input)]
         public int NewValue { get; }
 
         public CounterChangedEvent(PlayerState player, string counterName, int oldValue, int newValue, Guid? eventId = null, DateTime? timestamp = null)
@@ -587,6 +596,68 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public EnhanceEvent(PlayerState player, CardInstance card, int paidCost, Guid? triggeredAbilityRuntimeId = null, Guid? eventId = null, DateTime? timestamp = null)
             : base(EventType.Enhance, eventId, timestamp)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            Target.Add(TargetInfo.ForCard(card));
+            PaidCost = paidCost;
+            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when a card is played using Accelerate mode.
+    /// </summary>
+    [GameEventMetadata(
+        "激奏",
+        "当玩家以激奏方式打出卡牌时触发的事件。",
+        EventType.Accelerate)]
+    public class AccelerateEvent : GameEventBase
+    {
+        [GameEventParameter("出牌玩家", "发动激奏的玩家。", DslDisplayTypeName = "事件源")]
+        public PlayerState? PlayPlayer => Source?.Player;
+
+        [GameEventParameter("激奏卡牌", "以激奏方式打出的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? PlayedCard => Target.FirstOrDefault()?.Card;
+
+        [GameEventParameter("支付费用", "本次激奏实际消耗的费用。")]
+        public int PaidCost { get; }
+
+        [GameEventParameter("触发能力ID", "本次激奏所对应的能力运行时ID。")]
+        public Guid? TriggeredAbilityRuntimeId { get; }
+
+        public AccelerateEvent(PlayerState player, CardInstance card, int paidCost, Guid? triggeredAbilityRuntimeId = null, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Accelerate, eventId, timestamp)
+        {
+            Source = TargetInfo.ForPlayer(player);
+            Target.Add(TargetInfo.ForCard(card));
+            PaidCost = paidCost;
+            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
+        }
+    }
+
+    /// <summary>
+    /// Event triggered when a card is played using Crystalize mode.
+    /// </summary>
+    [GameEventMetadata(
+        "结晶",
+        "当玩家以结晶方式打出卡牌时触发的事件。",
+        EventType.Crystalize)]
+    public class CrystalizeEvent : GameEventBase
+    {
+        [GameEventParameter("出牌玩家", "发动结晶的玩家。", DslDisplayTypeName = "事件源")]
+        public PlayerState? PlayPlayer => Source?.Player;
+
+        [GameEventParameter("结晶卡牌", "以结晶方式打出的卡牌。", DslDisplayTypeName = "事件目标")]
+        public CardInstance? PlayedCard => Target.FirstOrDefault()?.Card;
+
+        [GameEventParameter("支付费用", "本次结晶实际消耗的费用。")]
+        public int PaidCost { get; }
+
+        [GameEventParameter("触发能力ID", "本次结晶所对应的能力运行时ID。")]
+        public Guid? TriggeredAbilityRuntimeId { get; }
+
+        public CrystalizeEvent(PlayerState player, CardInstance card, int paidCost, Guid? triggeredAbilityRuntimeId = null, Guid? eventId = null, DateTime? timestamp = null)
+            : base(EventType.Crystalize, eventId, timestamp)
         {
             Source = TargetInfo.ForPlayer(player);
             Target.Add(TargetInfo.ForCard(card));

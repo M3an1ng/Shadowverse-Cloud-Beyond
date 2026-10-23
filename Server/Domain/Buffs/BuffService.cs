@@ -25,6 +25,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         {
             public long RefreshCycleId { get; init; }
             public int Attack { get; init; }
+            public int RawMaxHealth { get; init; }
             public int MaxHealth { get; init; }
             public int Cost { get; init; }
             public bool WasSilenced { get; init; }
@@ -60,6 +61,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         {
             var derived = GetDerivedState(card, gameContext);
             return derived.MaxHealth;
+        }
+
+        public int GetRawEffectiveMaxHealth(CardInstance card, GameContext gameContext)
+        {
+            var derived = GetDerivedState(card, gameContext);
+            return derived.RawMaxHealth;
         }
 
         public int GetEffectiveCost(CardInstance card, GameContext gameContext)
@@ -219,10 +226,24 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 }
             }
 
+            var rawMaxHealth = maxHealth;
+            if (card.IsFollower && card.HealthFloorFromBuffRemoval > 0)
+            {
+                if (rawMaxHealth > 0)
+                {
+                    card.ClearHealthFloorFromBuffRemoval();
+                }
+                else
+                {
+                    maxHealth = Math.Max(rawMaxHealth, card.HealthFloorFromBuffRemoval);
+                }
+            }
+
             return new DerivedStateCacheEntry
             {
                 RefreshCycleId = refreshCycleId,
                 Attack = attack,
+                RawMaxHealth = rawMaxHealth,
                 MaxHealth = maxHealth,
                 Cost = cost,
                 WasSilenced = card.IsSilenced,

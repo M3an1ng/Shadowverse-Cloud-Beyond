@@ -33,6 +33,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <returns>The effective maximum health value.</returns>
         int GetEffectiveMaxHealth(CardInstance card, GameContext gameContext);
 
+        int GetRawEffectiveMaxHealth(CardInstance card, GameContext gameContext);
+
         /// <summary>
         /// Calculates the effective cost of a card instance.
         /// </summary>

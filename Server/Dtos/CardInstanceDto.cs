@@ -82,6 +82,12 @@ namespace ShadowverseBeyond.Server.Dtos
         public Dictionary<string, string> CounterDisplayNames { get; set; } = new();
 
         /// <summary>
+        /// Ordered counter entries for preview display.
+        /// </summary>
+        [JsonPropertyName("counterSummaryEntries")]
+        public List<CounterSummaryEntryDto> CounterSummaryEntries { get; set; } = new();
+
+        /// <summary>
         /// Base attack value (from CardDefinition).
         /// </summary>
         public int Attack { get; init; }
@@ -336,5 +342,17 @@ namespace ShadowverseBeyond.Server.Dtos
             get => this.CurrentHealth; // Map to CurrentHealth for consistency in field state
             set => this.CurrentHealth = value; // Allow setting CurrentHealth via interface
         }
+    }
+
+    public record CounterSummaryEntryDto
+    {
+        [JsonPropertyName("key")]
+        public string Key { get; init; } = string.Empty;
+
+        [JsonPropertyName("label")]
+        public string Label { get; init; } = string.Empty;
+
+        [JsonPropertyName("value")]
+        public int Value { get; init; }
     }
 }

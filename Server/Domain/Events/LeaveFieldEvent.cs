@@ -35,11 +35,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("离场目标", "需要离场的目标卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? LeaveTarget => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("离场来源快照", "生成事件时记录的来源快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? LeaveSourceSnapshot { get; }
+        [GameEventParameter("离场来源快照", "提交离场事件时记录的来源快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? LeaveSourceSnapshot { get; private set; }
 
-        [GameEventParameter("离场目标快照", "生成事件时记录的目标快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? LeaveTargetSnapshot { get; }
+        [GameEventParameter("离场目标快照", "提交离场事件时记录的目标快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? LeaveTargetSnapshot { get; private set; }
+
+        [GameEventParameter("牌库插入方式", "当离场路由为置入牌库时使用的插入方式。", Scope = GameEventParameterScope.Input)]
+        public DeckInsertMode DeckInsertMode { get; }
 
         public LeaveFieldEvent(
             CardInstance targetCard,
@@ -49,21 +52,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
             CardZone? originalZone = null,
             DelayConfig? delayConfig = null,
             Guid? eventId = null,
-            DateTime? timestamp = null)
+            DateTime? timestamp = null,
+            DeckInsertMode deckInsertMode = DeckInsertMode.Random)
             : base(EventType.LeaveField, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(targetCard));
-            LeaveTargetSnapshot = TryCreateSnapshot(targetCard);
 
             if (sourceCard != null)
             {
                 Source = TargetInfo.ForCard(sourceCard);
-                LeaveSourceSnapshot = TryCreateSnapshot(sourceCard);
             }
 
             RequestedKind = requestedKind;
             ReasonSource = reasonSource;
             OriginalZone = originalZone ?? targetCard.CurrentZone;
+            DeckInsertMode = deckInsertMode;
             ConfigureDelay(delayConfig ?? DelayConfig.Disabled);
         }
 
@@ -81,6 +84,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 return new DomainOperationResult { Success = true };
             }
+
+            LeaveTargetSnapshot = CardSnapshotCapture.TryCapture(targetCard);
+            LeaveSourceSnapshot = CardSnapshotCapture.TryCapture(LeaveSource);
 
             RoutedKind = ResolveRoutedKind(context, targetCard);
             var routedEvent = CreateRoutedEvent(context, targetCard, RoutedKind);
@@ -151,7 +157,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     targetCard,
                     ReasonSource,
                     tuckedCardSnapshot: LeaveTargetSnapshot,
-                    tuckSourceSnapshot: LeaveSourceSnapshot),
+                    tuckSourceSnapshot: LeaveSourceSnapshot,
+                    insertMode: DeckInsertMode),
                 _ => null
             };
         }
@@ -179,21 +186,5 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return keywords.Contains(CardKeyword.VanishResist);
         }
 
-        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
-        {
-            if (card == null)
-            {
-                return null;
-            }
-
-            try
-            {
-                return CardInstanceSnapshot.From(card);
-            }
-            catch
-            {
-                return null;
-            }
-        }
     }
 }

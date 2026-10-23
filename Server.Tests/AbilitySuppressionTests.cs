@@ -235,7 +235,7 @@ namespace ShadowverseBeyond.Server.Tests
 
             var suppression = new AbilitySuppressionBuffEffect(RemoveAbilityMode.Id, new[] { 202L });
             var buff = new Buff(Guid.Empty, card.InstanceId, 1, new List<IBuffEffect> { suppression });
-            var evt = new BuffRemovedEvent(buff, null, null);
+            var evt = new BuffRemovedEvent(buff, card, null);
 
             using var context = BuildContext(serviceProvider, gameState, playerId);
             var result = evt.Commit(context);

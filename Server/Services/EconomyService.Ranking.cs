@@ -30,6 +30,7 @@ public partial class EconomyService
                 UserId = userId,
                 Rank = null,
                 Quests = new List<UserQuestDto>(),
+                ClaimableQuestCount = 0,
                 ClassStats = new List<UserClassWinStatsDto>()
             };
         }
@@ -66,6 +67,7 @@ public partial class EconomyService
             UserId = userId,
             Rank = rank,
             Quests = quests,
+            ClaimableQuestCount = quests.Count(quest => quest.IsCompleted && !quest.IsRewardClaimed),
             ClassStats = classStats
         };
     }

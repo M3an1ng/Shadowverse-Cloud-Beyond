@@ -19,6 +19,7 @@ namespace ShadowverseBeyond.Server.Controllers
         private readonly ILogger<AbilitiesController> _logger;
         private readonly IGameDataProvider _gameDataProvider;
         private const string DataRevisionHeader = "X-Data-Revision";
+        private const string EditorUserIdHeader = "X-Editor-UserId";
 
         public AbilitiesController(
             ApplicationDbContext context,
@@ -33,6 +34,50 @@ namespace ShadowverseBeyond.Server.Controllers
         private void AppendDataRevisionHeader()
         {
             Response.Headers[DataRevisionHeader] = _gameDataProvider.DataRevision.ToString();
+        }
+
+        private async Task<string?> ResolveEditorUsernameAsync(CancellationToken cancellationToken = default)
+        {
+            if (!Request.Headers.TryGetValue(EditorUserIdHeader, out var values))
+            {
+                return null;
+            }
+
+            var raw = values.FirstOrDefault();
+            if (!Guid.TryParse(raw, out var userId) || userId == Guid.Empty)
+            {
+                return null;
+            }
+
+            return await _context.Users
+                .AsNoTracking()
+                .Where(user => user.Id == userId && user.IsActive)
+                .Select(user => user.Username)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        private async Task<CardDefinition?> TouchCardMetadataAsync(int cardId, CancellationToken cancellationToken = default)
+        {
+            var cardDefinition = await _context.CardDefinitions.FirstOrDefaultAsync(card => card.Id == cardId, cancellationToken);
+            if (cardDefinition == null)
+            {
+                return null;
+            }
+
+            cardDefinition.UpdatedAt = DateTime.UtcNow;
+            cardDefinition.UpdatedBy = await ResolveEditorUsernameAsync(cancellationToken);
+            return cardDefinition;
+        }
+
+        private async Task RefreshCardCacheAsync(int cardId)
+        {
+            if (_gameDataProvider is IIncrementalGameDataProvider incrementalProvider)
+            {
+                await incrementalProvider.RefreshCardAsync(cardId);
+                return;
+            }
+
+            await _gameDataProvider.RefreshCacheAsync();
         }
 
         public sealed class AbilityCountRequest
@@ -240,13 +285,21 @@ namespace ShadowverseBeyond.Server.Controllers
                 }
 
                 cardAbility.UpdateTimestamp();
+                var cardDefinition = await TouchCardMetadataAsync(cardAbility.CardId);
 
                 await _context.SaveChangesAsync();
-                await _gameDataProvider.RefreshCacheAsync();
+                await RefreshCardCacheAsync(cardAbility.CardId);
 
                 _logger.LogInformation("Ability {AbilityId} updated successfully", id);
                 AppendDataRevisionHeader();
-                return Ok(new { message = "Ability updated", id });
+                return Ok(new
+                {
+                    message = "Ability updated",
+                    id,
+                    cardId = cardAbility.CardId,
+                    cardUpdatedAt = cardDefinition?.UpdatedAt,
+                    cardUpdatedBy = cardDefinition?.UpdatedBy
+                });
             }
             catch (Exception ex)
             {
@@ -324,6 +377,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 };
 
                 _context.CardAbilities.Add(entity);
+                await TouchCardMetadataAsync(cardId);
                 await _context.SaveChangesAsync();
 
                 if (!cardDefinition.AbilityIds.Contains(entity.Id))
@@ -331,7 +385,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     cardDefinition.AbilityIds.Add(entity.Id);
                     await _context.SaveChangesAsync();
                 }
-                await _gameDataProvider.RefreshCacheAsync();
+                await RefreshCardCacheAsync(cardId);
 
                 var createdKeywords = ExtractAbilityKeywords(entity.JsonConfig);
                 var created = new
@@ -344,7 +398,9 @@ namespace ShadowverseBeyond.Server.Controllers
                     priority = entity.Priority,
                     isActive = entity.IsActive,
                     cardId = entity.CardId,
-                    jsonConfig = entity.JsonConfig
+                    jsonConfig = entity.JsonConfig,
+                    cardUpdatedAt = cardDefinition.UpdatedAt,
+                    cardUpdatedBy = cardDefinition.UpdatedBy
                 };
 
                 _logger.LogInformation("New ability created with ID: {AbilityId}", entity.Id);

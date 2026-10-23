@@ -1,0 +1,97 @@
+[
+  {
+    "style": "A-starfarer",
+    "file": "D:\\workspace\\Shadowverse-Cloud-Beyond\\art-exploration\\home-candidates\\A-starfarer\\A-01-home.png",
+    "size": [
+      1536,
+      864
+    ],
+    "native_size": [
+      1672,
+      941
+    ],
+    "format": "PNG",
+    "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66",
+    "nonblank_stddev": 61.05,
+    "model": "gpt-image-2.5-sunburst",
+    "copied_image_hash_matches": true,
+    "prompt_matches_submitted_brief": true,
+    "visual_review": "completed_with_documented_issues"
+  },
+  {
+    "style": "B-moonlit-codex",
+    "file": "D:\\workspace\\Shadowverse-Cloud-Beyond\\art-exploration\\home-candidates\\B-moonlit-codex\\B-01-home.png",
+    "size": [
+      1536,
+      864
+    ],
+    "native_size": [
+      1672,
+      941
+    ],
+    "format": "PNG",
+    "sha256": "00ee821c0ccdf45a87f110da13b08e345c29d2291885c265c6d1616dda3f08b5",
+    "nonblank_stddev": 62.63,
+    "model": "gpt-image-2.5-sunburst",
+    "copied_image_hash_matches": true,
+    "prompt_matches_submitted_brief": true,
+    "visual_review": "completed_with_documented_issues"
+  },
+  {
+    "style": "C-armored-arena",
+    "file": "D:\\workspace\\Shadowverse-Cloud-Beyond\\art-exploration\\home-candidates\\C-armored-arena\\C-01-home.png",
+    "size": [
+      1536,
+      864
+    ],
+    "native_size": [
+      1672,
+      941
+    ],
+    "format": "PNG",
+    "sha256": "7d1e0b1d2b8d55bd5a2aaa82d9a3035bc2846c7171d57443de48b2067743596f",
+    "nonblank_stddev": 62.72,
+    "model": "gpt-image-2.5-sunburst",
+    "copied_image_hash_matches": true,
+    "prompt_matches_submitted_brief": true,
+    "visual_review": "completed_with_documented_issues"
+  },
+  {
+    "style": "D-neon-arcade",
+    "file": "D:\\workspace\\Shadowverse-Cloud-Beyond\\art-exploration\\home-candidates\\D-neon-arcade\\D-01-home.png",
+    "size": [
+      1536,
+      864
+    ],
+    "native_size": [
+      1672,
+      941
+    ],
+    "format": "PNG",
+    "sha256": "596f10a47b507f0a0741b408b0915475e5f751ac32cbff04afa2c5590afb19d6",
+    "nonblank_stddev": 72.68,
+    "model": "gpt-image-2.5-sunburst",
+    "copied_image_hash_matches": true,
+    "prompt_matches_submitted_brief": true,
+    "visual_review": "completed_with_documented_issues"
+  },
+  {
+    "style": "E-astral-archive",
+    "file": "D:\\workspace\\Shadowverse-Cloud-Beyond\\art-exploration\\home-candidates\\E-astral-archive\\E-01-home.png",
+    "size": [
+      1536,
+      864
+    ],
+    "native_size": [
+      1672,
+      941
+    ],
+    "format": "PNG",
+    "sha256": "6d3a6903f779fa2d4af3013ea7afb83aeaa22608c6fbfea71c8637e29b2224bc",
+    "nonblank_stddev": 72.75,
+    "model": "gpt-image-2.5-sunburst",
+    "copied_image_hash_matches": true,
+    "prompt_matches_submitted_brief": true,
+    "visual_review": "completed_with_documented_issues"
+  }
+]

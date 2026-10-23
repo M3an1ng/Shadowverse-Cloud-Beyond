@@ -40,8 +40,83 @@ public sealed class MetaProgressionServiceCoinPolicyTests
             .ToListAsync();
 
         Assert.Equal(2, transactions.Count);
-        Assert.Contains(transactions, t => t.UserId == user1 && t.Amount == 100);
-        Assert.Contains(transactions, t => t.UserId == user2 && t.Amount == 50);
+        Assert.Contains(transactions, t => t.UserId == user1 && t.Type == CoinTransactionType.GameWin && t.Amount > 0);
+        Assert.Contains(transactions, t => t.UserId == user2 && t.Type == CoinTransactionType.GameLoss && t.Amount > 0);
+    }
+
+    [Fact]
+    public async Task ApplyPostCommitAsync_OfficialMatch_GrantsDirectCoinsAndCompletesMatchQuestsWithoutClaiming()
+    {
+        await using var harness = await MetaProgressionHarness.CreateAsync();
+        var winnerId = harness.AddUser("winner");
+        var loserId = harness.AddUser("loser");
+        harness.Db.QuestDefinitions.AddRange(
+            new QuestDefinition
+            {
+                Id = 301,
+                Name = "Play official match",
+                Description = "Play one official match",
+                Type = QuestType.PlayGames,
+                ActivityType = QuestActivityType.PlayMatch,
+                Category = QuestCategory.Daily,
+                TargetValue = 1,
+                CoinReward = 500,
+                DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                IsActive = true
+            },
+            new QuestDefinition
+            {
+                Id = 302,
+                Name = "Win official match",
+                Description = "Win one official match",
+                Type = QuestType.WinGames,
+                ActivityType = QuestActivityType.WinMatch,
+                Category = QuestCategory.Daily,
+                TargetValue = 1,
+                CoinReward = 700,
+                DeduplicationPolicy = QuestDeduplicationPolicy.PerSourceEntityPerPeriod,
+                IsActive = true
+            });
+        await harness.SaveChangesAsync();
+
+        var gameId = Guid.NewGuid().ToString();
+        var gameState = harness.CreateGameState(
+            gameId: gameId,
+            player1Id: winnerId,
+            player2Id: loserId,
+            player2IsAi: false,
+            player1InitialDeckCount: GameConstants.Cards.MaxDeckSize,
+            player2InitialDeckCount: GameConstants.Cards.MaxDeckSize);
+
+        await harness.ApplyAsync(gameState, winnerId: winnerId, loserId: loserId, reason: null);
+
+        var directCoinTransactions = await harness.Db.CoinTransactions
+            .Where(item => item.UserId == winnerId || item.UserId == loserId)
+            .ToListAsync();
+        Assert.Equal(2, directCoinTransactions.Count);
+        Assert.Contains(directCoinTransactions, item => item.UserId == winnerId && item.Type == CoinTransactionType.GameWin);
+        Assert.Contains(directCoinTransactions, item => item.UserId == loserId && item.Type == CoinTransactionType.GameLoss);
+        Assert.DoesNotContain(directCoinTransactions, item => item.Type == CoinTransactionType.QuestCompletion);
+
+        var quests = await harness.Db.UserQuests
+            .Where(item => item.UserId == winnerId || item.UserId == loserId)
+            .ToListAsync();
+        Assert.Equal(3, quests.Count);
+        Assert.All(quests, quest =>
+        {
+            Assert.True(quest.IsCompleted);
+            Assert.False(quest.IsRewardClaimed);
+        });
+        Assert.Equal(2, quests.Count(item => item.UserId == winnerId));
+        Assert.Single(quests.Where(item => item.UserId == loserId));
+
+        var progressEvents = await harness.Db.QuestProgressEvents.ToListAsync();
+        Assert.Equal(3, progressEvents.Count);
+        Assert.All(progressEvents, item =>
+        {
+            Assert.Equal("Match", item.SourceEntityType);
+            Assert.Equal(gameId, item.SourceEntityId);
+        });
     }
 
     [Fact]
@@ -152,12 +227,14 @@ public sealed class MetaProgressionServiceCoinPolicyTests
 
             var transactionService = new TransactionService(db, NullLogger<TransactionService>.Instance);
             var economyService = new EconomyService(db, NullLogger<EconomyService>.Instance, transactionService);
+            var questProgressService = new QuestProgressService(db, transactionService, NullLogger<QuestProgressService>.Instance);
             var officialMatchEvaluator = new OfficialMatchEvaluator(db);
             var service = new MetaProgressionService(
                 db,
                 economyService,
                 transactionService,
                 officialMatchEvaluator,
+                questProgressService,
                 NullLogger<MetaProgressionService>.Instance);
 
             var services = new ServiceCollection();

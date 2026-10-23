@@ -823,7 +823,7 @@ async function restoreFromStorage() {
 
     state.restorePromise = (async () => {
         const backgroundRecord = await battleCustomizationStorage.getAsset(BATTLE_CUSTOMIZATION_ASSET_KEYS.background);
-        await applyBackgroundRecord(backgroundRecord);
+        await applyBackgroundRecord(backgroundRecord, { removeBroken: false });
     })();
 
     try {

@@ -59,6 +59,13 @@ import {
 import { createCardAnimationSystem } from './ui/cardAnimationSystem.js';
 import { buildCounterSummaryEntries, PLAYER_SYSTEM_COUNTER_KEYS } from './counterSummary.js';
 import { getUserSession } from './userSession.js';
+import { preventNativeGameDrag } from './nativeGameDragGuard.js';
+import {
+    applyCardArtBackground as applyArtBackground,
+    deferCardArtQueue,
+    preloadCardArt as preloadArt,
+    resolveArtUrl
+} from './cardArtCache.js';
 import badgeWardUrl from './badge/Ward.png';
 import badgeBaneUrl from './badge/Bane.png';
 import badgeDrainUrl from './badge/Drain.png';
@@ -75,14 +82,6 @@ export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEp
 
 let mulliganSelectedUids = new Set();
 const EMBLEM_SLOT_COUNT = 5;
-const cardArtLoadPromises = new Map();
-const queuedCardArtTasks = new Map();
-const pendingCardArtTasks = [];
-const CARD_ART_RETRY_COUNT = 2;
-const CARD_ART_RETRY_DELAY_MS = 120;
-const CARD_ART_PRELOAD_CONCURRENCY = 2;
-const CARD_ART_PRELOAD_IDLE_TIMEOUT_MS = 180;
-const CARD_ART_PRELOAD_DRAG_DEFER_MS = 220;
 const CARD_MOVE_EPSILON = 0.5;
 const CARD_MOVE_OPACITY = '0.82';
 const CARD_ENTER_TRANSITION_MS = 220;
@@ -105,16 +104,7 @@ const HAND_DRAG_SNAP_BACK_MS = 190;
 const TRANSIENT_VISUAL_ROOT_ID = 'game-transient-visual-root';
 const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-enter-overlay, .card-fade-exit-overlay, .fusion-float-card, .damage-number, .heal-number, .hand-drag-ghost, .hand-play-drop-lane, .attack-drag-leader-zone, #fusion-burst-root, #reveal-overlay-root';
 const transientVisualTimeoutIds = new Set();
-const CARD_ART_PRIORITY_RANK = Object.freeze({
-    high: 0,
-    normal: 1,
-    low: 2
-});
 let suppressGameClickUntil = 0;
-let activeCardArtLoadCount = 0;
-let cardArtQueueDeferredUntilMs = 0;
-let cardArtQueueIdleHandle = null;
-let cardArtQueueTimerId = null;
 const attackDragState = {
     pointerId: null,
     isPending: false,
@@ -234,103 +224,6 @@ function logUiPerfDebug(scope, message, details = null) {
     const debugState = getUiPerfDebugState();
     if (!debugState.enabled) return;
     console.info(buildDebugLogLine(scope, message, details));
-}
-
-function getCardArtPriorityRank(priority = 'normal') {
-    return CARD_ART_PRIORITY_RANK[priority] ?? CARD_ART_PRIORITY_RANK.normal;
-}
-
-function clearScheduledCardArtQueueDrain() {
-    if (cardArtQueueIdleHandle !== null && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
-        window.cancelIdleCallback(cardArtQueueIdleHandle);
-    }
-    if (cardArtQueueTimerId !== null && typeof window !== 'undefined') {
-        window.clearTimeout(cardArtQueueTimerId);
-    }
-    cardArtQueueIdleHandle = null;
-    cardArtQueueTimerId = null;
-}
-
-function deferCardArtQueue(durationMs = CARD_ART_PRELOAD_DRAG_DEFER_MS) {
-    const safeDuration = Math.max(0, Number(durationMs) || 0);
-    if (safeDuration <= 0) return;
-    cardArtQueueDeferredUntilMs = Math.max(cardArtQueueDeferredUntilMs, getUiNowMs() + safeDuration);
-    scheduleCardArtQueueDrain({ preferIdle: false, delayMs: safeDuration });
-}
-
-function queueCardArtTask(task) {
-    const nextRank = getCardArtPriorityRank(task?.priority);
-    const existingIndex = pendingCardArtTasks.findIndex(candidate => candidate?.url === task?.url);
-    if (existingIndex >= 0) {
-        const [existingTask] = pendingCardArtTasks.splice(existingIndex, 1);
-        task = existingTask;
-    }
-
-    let insertIndex = pendingCardArtTasks.length;
-    for (let index = 0; index < pendingCardArtTasks.length; index += 1) {
-        const candidateRank = getCardArtPriorityRank(pendingCardArtTasks[index]?.priority);
-        if (nextRank < candidateRank) {
-            insertIndex = index;
-            break;
-        }
-    }
-    pendingCardArtTasks.splice(insertIndex, 0, task);
-}
-
-function drainCardArtQueue() {
-    clearScheduledCardArtQueueDrain();
-
-    if (typeof document !== 'undefined' && document.body?.classList?.contains('hand-card-dragging')) {
-        scheduleCardArtQueueDrain({ preferIdle: false, delayMs: CARD_ART_PRELOAD_DRAG_DEFER_MS });
-        return;
-    }
-
-    const deferredRemainingMs = cardArtQueueDeferredUntilMs - getUiNowMs();
-    if (deferredRemainingMs > 0) {
-        scheduleCardArtQueueDrain({ preferIdle: false, delayMs: deferredRemainingMs });
-        return;
-    }
-
-    while (activeCardArtLoadCount < CARD_ART_PRELOAD_CONCURRENCY && pendingCardArtTasks.length > 0) {
-        const task = pendingCardArtTasks.shift();
-        if (!task) continue;
-
-        activeCardArtLoadCount += 1;
-        const completeTask = () => {
-            activeCardArtLoadCount = Math.max(0, activeCardArtLoadCount - 1);
-            if (pendingCardArtTasks.length > 0) {
-                scheduleCardArtQueueDrain();
-            }
-        };
-
-        loadCardArtUrl(task.url)
-            .then(task.resolve)
-            .catch(task.reject)
-            .finally(completeTask);
-    }
-}
-
-function scheduleCardArtQueueDrain({ preferIdle = true, delayMs = 0 } = {}) {
-    clearScheduledCardArtQueueDrain();
-
-    const safeDelayMs = Math.max(0, Math.ceil(Number(delayMs) || 0));
-    const runDrain = () => drainCardArtQueue();
-
-    if (safeDelayMs > 0) {
-        cardArtQueueTimerId = window.setTimeout(runDrain, safeDelayMs);
-        return;
-    }
-
-    if (
-        preferIdle
-        && typeof window !== 'undefined'
-        && typeof window.requestIdleCallback === 'function'
-    ) {
-        cardArtQueueIdleHandle = window.requestIdleCallback(runDrain, { timeout: CARD_ART_PRELOAD_IDLE_TIMEOUT_MS });
-        return;
-    }
-
-    cardArtQueueTimerId = window.setTimeout(runDrain, 0);
 }
 
 function runTrackedVisualTimeout(callback, delayMs) {
@@ -1227,137 +1120,6 @@ function activateAttackDragIfNeeded() {
     updateAttackDragLeaderZoneLayout();
     updateAttackDragLeaderZoneState();
     updateAttackDragLine();
-}
-
-function normalizeArtPath(rawPath) {
-    if (rawPath === null || rawPath === undefined) return '';
-
-    const trimmed = String(rawPath).trim();
-    if (!trimmed) return '';
-
-    if (/^(https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:')) {
-        return trimmed;
-    }
-
-    let normalized = trimmed.replace(/\\/g, '/');
-    if (!normalized.startsWith('/')) {
-        if (normalized.startsWith('assets/')) {
-            normalized = `/${normalized}`;
-        } else if (!normalized.startsWith('./') && !normalized.startsWith('../')) {
-            normalized = `/${normalized}`;
-        }
-    }
-
-    return normalized;
-}
-
-function resolveArtUrl(rawPath) {
-    const normalized = normalizeArtPath(rawPath);
-    if (!normalized) return '';
-    return encodeURI(normalized).replace(/'/g, '%27');
-}
-
-function withRetryQuery(url, attempt) {
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}r=${Date.now()}_${attempt}`;
-}
-
-async function probeImage(url) {
-    await new Promise((resolve, reject) => {
-        const image = new Image();
-        image.decoding = 'async';
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error(`Image load failed: ${url}`));
-        image.src = url;
-    });
-}
-
-async function loadCardArtUrl(url) {
-    for (let attempt = 0; attempt <= CARD_ART_RETRY_COUNT; attempt++) {
-        const targetUrl = attempt === 0 ? url : withRetryQuery(url, attempt);
-        try {
-            await probeImage(targetUrl);
-            return url;
-        } catch (error) {
-            if (attempt >= CARD_ART_RETRY_COUNT) {
-                throw error;
-            }
-            await delay(CARD_ART_RETRY_DELAY_MS * (attempt + 1));
-        }
-    }
-    return url;
-}
-
-function preloadArt(rawPath, options = {}) {
-    const url = resolveArtUrl(rawPath);
-    if (!url) {
-        return Promise.resolve('');
-    }
-
-    const existing = cardArtLoadPromises.get(url);
-    if (existing) {
-        const queuedTask = queuedCardArtTasks.get(url);
-        if (queuedTask && getCardArtPriorityRank(options?.priority) < getCardArtPriorityRank(queuedTask.priority)) {
-            queuedTask.priority = options.priority;
-            queueCardArtTask(queuedTask);
-            scheduleCardArtQueueDrain({ preferIdle: options?.priority !== 'high' });
-        }
-        return existing;
-    }
-
-    let resolveLoad;
-    let rejectLoad;
-    const loadPromise = new Promise((resolve, reject) => {
-        resolveLoad = resolve;
-        rejectLoad = reject;
-    });
-
-    const guardedPromise = loadPromise.catch(error => {
-        cardArtLoadPromises.delete(url);
-        queuedCardArtTasks.delete(url);
-        throw error;
-    });
-
-    cardArtLoadPromises.set(url, guardedPromise);
-    queuedCardArtTasks.set(url, {
-        url,
-        priority: options?.priority ?? 'normal',
-        resolve: loadedUrl => {
-            queuedCardArtTasks.delete(url);
-            resolveLoad(loadedUrl);
-        },
-        reject: error => {
-            queuedCardArtTasks.delete(url);
-            rejectLoad(error);
-        }
-    });
-    queueCardArtTask(queuedCardArtTasks.get(url));
-    scheduleCardArtQueueDrain({ preferIdle: options?.priority !== 'high' });
-    return guardedPromise;
-}
-
-function applyArtBackground(artEl, rawPath, options = {}) {
-    if (!artEl) return;
-    const resolvedUrl = resolveArtUrl(rawPath);
-    artEl.dataset.artUrl = resolvedUrl;
-
-    if (!resolvedUrl) {
-        artEl.style.backgroundImage = '';
-        artEl.classList.remove('has-art');
-        return;
-    }
-
-    void preloadArt(rawPath, options)
-        .then(loadedUrl => {
-            if (artEl.dataset.artUrl !== loadedUrl) return;
-            artEl.style.backgroundImage = `url('${loadedUrl}')`;
-            artEl.classList.add('has-art');
-        })
-        .catch(() => {
-            if (artEl.dataset.artUrl !== resolvedUrl) return;
-            artEl.style.backgroundImage = '';
-            artEl.classList.remove('has-art');
-        });
 }
 
 function resetMulliganSelection() {
@@ -3275,6 +3037,16 @@ function isEnhanceModeValue(value) {
     return false;
 }
 
+function isBasePlayModeValue(value) {
+    if (value === null || value === undefined) return true;
+    if (value === 0) return true;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === '' || normalized === 'base';
+    }
+    return false;
+}
+
 function resolveCardCostDisplay(cardInstance, context) {
     const baseCostRaw = context === 'field'
         ? (cardInstance.cost ?? cardInstance.Cost ?? cardInstance.currentCost ?? cardInstance.CurrentCost)
@@ -3288,15 +3060,11 @@ function resolveCardCostDisplay(cardInstance, context) {
         const ownerPlayerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId ?? gameState.localPlayerId;
         const playabilityInfo = cardUid ? getPlayabilityForCard(cardUid, ownerPlayerId) : null;
         const selectedCost = playabilityInfo?.selectedPlayCost;
-        if (
-            playabilityInfo
-            && isEnhanceModeValue(playabilityInfo.selectedPlayMode)
-            && Number.isFinite(selectedCost)
-        ) {
+        if (playabilityInfo && !isBasePlayModeValue(playabilityInfo.selectedPlayMode) && Number.isFinite(selectedCost)) {
             displayCost = selectedCost;
             // Show Enhance visuals whenever Enhance mode is selected, even when
             // base cost equals enhance cost.
-            enhanceActive = true;
+            enhanceActive = isEnhanceModeValue(playabilityInfo.selectedPlayMode);
         }
     }
 
@@ -4142,6 +3910,7 @@ function resolveCounterSummarySource(cardInstance) {
         const ownerLabelMap = ownerPlayer.counterDisplayNames ?? ownerPlayer.CounterDisplayNames ?? {};
         const ownerCounterMap = ownerPlayer.counters ?? ownerPlayer.Counters ?? {};
         return {
+            summaryEntries: ownerPlayer.counterSummaryEntries ?? ownerPlayer.CounterSummaryEntries ?? [],
             localCounterMap: null,
             localLabelMap: null,
             ownerCounterMap,
@@ -4149,12 +3918,14 @@ function resolveCounterSummarySource(cardInstance) {
             ownerReferenceKeys: Object.keys(ownerLabelMap),
             includeOwnerCounters: true,
             hideOwnerSystemKeys: true,
+            showZeroSummaryEntries: true,
             showZeroOwnerEntries: true
         };
     }
 
     const localLabelMap = cardInstance.counterDisplayNames ?? cardInstance.CounterDisplayNames ?? {};
     return {
+        summaryEntries: cardInstance.counterSummaryEntries ?? cardInstance.CounterSummaryEntries ?? [],
         localCounterMap: cardInstance.counters ?? cardInstance.Counters ?? cardInstance.counterMap ?? cardInstance.CounterMap,
         localLabelMap,
         ownerCounterMap: ownerPlayer?.counters ?? ownerPlayer?.Counters ?? null,
@@ -4162,6 +3933,7 @@ function resolveCounterSummarySource(cardInstance) {
         ownerReferenceKeys: Object.keys(localLabelMap),
         includeOwnerCounters: !!ownerPlayer,
         hideOwnerSystemKeys: false,
+        showZeroSummaryEntries: false,
         showZeroOwnerEntries: true
     };
 }
@@ -4251,11 +4023,18 @@ function getBuffSummaryHtml(cardInstance) {
         ? summaries
             .map(summary => {
                 const sourceCardName = summary?.sourceCardName ?? summary?.SourceCardName;
+                const sourceCardArtPreview = summary?.sourceCardArtPreview ?? summary?.SourceCardArtPreview;
                 const sourceAbilityName = summary?.sourceAbilityName ?? summary?.SourceAbilityName;
                 if (!sourceCardName || !sourceAbilityName) {
                     return '';
                 }
-                return `<div class="buff-summary-line">${sourceCardName} - ${sourceAbilityName}</div>`;
+                const sourceCardLabel = escapeAttributeValue(sourceCardName);
+                const sourceCardArtUrl = resolveArtUrl(sourceCardArtPreview);
+                const sourceCardThumb = sourceCardArtUrl
+                    ? `<img class="buff-summary-source-art" src="${sourceCardArtUrl}" alt="${sourceCardLabel}" title="${sourceCardLabel}" loading="lazy" decoding="async">`
+                    : `<span class="buff-summary-source-art buff-summary-source-art--fallback" title="${sourceCardLabel}" aria-label="${sourceCardLabel}"></span>`;
+
+                return `<div class="buff-summary-line">${sourceCardThumb}<span class="buff-summary-ability">${escapeAttributeValue(sourceAbilityName)}</span></div>`;
             })
             .filter(Boolean)
             .join('')
@@ -4313,7 +4092,7 @@ function buildBattlePreviewHtml(cardInstance) {
     const tribeText = tribeList
         .map(item => (item ?? '').toString().trim())
         .filter(Boolean)
-        .join('路');
+        .join('·');
     const rawCountdown = cardInstance.countdown
         ?? cardInstance.CurrentCountdown
         ?? cardInstance.currentCountdown
@@ -5451,6 +5230,7 @@ function setupGlobalEventListeners() {
     }
     // 先移除旧监听器，防止重复添加 (如果 initializeUI 可能被多次调用)
     gameContainerEl.removeEventListener('click', handleGameClick);
+    gameContainerEl.removeEventListener('dragstart', preventNativeGameDrag, true);
     gameContainerEl.removeEventListener('pointerdown', handleHandDragPointerDown);
     gameContainerEl.removeEventListener('pointerdown', handleAttackDragPointerDown);
     window.removeEventListener('pointermove', handleHandDragPointerMove);
@@ -5460,6 +5240,7 @@ function setupGlobalEventListeners() {
     window.removeEventListener('pointerup', handleAttackDragPointerUp);
     window.removeEventListener('pointercancel', handleAttackDragPointerCancel);
     gameContainerEl.addEventListener('click', handleGameClick);
+    gameContainerEl.addEventListener('dragstart', preventNativeGameDrag, true);
     gameContainerEl.addEventListener('pointerdown', handleHandDragPointerDown);
     gameContainerEl.addEventListener('pointerdown', handleAttackDragPointerDown);
     window.addEventListener('pointermove', handleHandDragPointerMove);

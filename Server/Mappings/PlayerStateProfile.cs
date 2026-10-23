@@ -33,6 +33,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.BloodPool, opt => opt.MapFrom(src => src.BloodPool))
                 .ForMember(dest => dest.Counters, opt => opt.MapFrom(src => BuildCounterSnapshot(src)))
                 .ForMember(dest => dest.CounterDisplayNames, opt => opt.MapFrom(src => BuildCounterDisplayNameSnapshot(src)))
+                .ForMember(dest => dest.CounterSummaryEntries, opt => opt.MapFrom(src => BuildCounterSummaryEntries(src)))
                 .ForMember(dest => dest.LeaderCard, opt => opt.MapFrom(src => src.Leader))
                 // Field 已不再包含主战者；这里保留防御性过滤，避免遗留状态误入前端。
                 .ForMember(dest => dest.Field, opt => opt.MapFrom(src => src.Field.Where(card => card == null || !card.IsLeader)))
@@ -122,6 +123,88 @@ namespace ShadowverseBeyond.Server.Mappings
             }
 
             return result;
+        }
+
+        private static List<CounterSummaryEntryDto> BuildCounterSummaryEntries(PlayerState playerState)
+        {
+            var entries = new List<CounterSummaryEntryDto>();
+            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (playerState == null)
+            {
+                return entries;
+            }
+
+            AddCounterSummaryEntry(entries, seenKeys, PlayerState.ComboCounterKey, "连击数", playerState.Combo);
+            AddCounterSummaryEntry(entries, seenKeys, PlayerState.GraveyardCounterKey, "墓场数", playerState.GraveyardCount);
+            AddCounterSummaryEntry(entries, seenKeys, PlayerState.BloodPoolCounterKey, "血池", playerState.BloodPool);
+            AddCounterSummaryEntry(entries, seenKeys, PlayerState.RallyCounterKey, "连携数", playerState.Rally);
+
+            foreach (var card in EnumeratePlayerCards(playerState))
+            {
+                var abilities = card?.Abilities;
+                if (abilities == null || abilities.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var ability in abilities)
+                {
+                    var registrations = ability?.Config?.PlayerCounterRegistrations;
+                    if (registrations == null || registrations.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    foreach (var registration in registrations)
+                    {
+                        if (registration == null || string.IsNullOrWhiteSpace(registration.Name))
+                        {
+                            continue;
+                        }
+
+                        AddCounterSummaryEntry(
+                            entries,
+                            seenKeys,
+                            registration.Name,
+                            registration.DisplayName,
+                            playerState.GetCounter(registration.Name));
+                    }
+                }
+            }
+
+            foreach (var pair in playerState.CounterMap)
+            {
+                AddCounterSummaryEntry(entries, seenKeys, pair.Key, pair.Key, pair.Value);
+            }
+
+            return entries;
+        }
+
+        private static void AddCounterSummaryEntry(
+            ICollection<CounterSummaryEntryDto> entries,
+            ISet<string> seenKeys,
+            string? rawKey,
+            string? rawLabel,
+            int rawValue)
+        {
+            if (string.IsNullOrWhiteSpace(rawKey))
+            {
+                return;
+            }
+
+            var key = rawKey.Trim();
+            if (!seenKeys.Add(key))
+            {
+                return;
+            }
+
+            entries.Add(new CounterSummaryEntryDto
+            {
+                Key = key,
+                Label = string.IsNullOrWhiteSpace(rawLabel) ? key : rawLabel.Trim(),
+                Value = Math.Max(0, rawValue)
+            });
         }
 
         private static IEnumerable<CardInstance> EnumeratePlayerCards(PlayerState playerState)

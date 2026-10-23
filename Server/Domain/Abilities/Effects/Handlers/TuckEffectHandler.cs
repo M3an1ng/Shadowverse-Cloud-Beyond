@@ -57,7 +57,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                         targetInfo.Card!,
                         LeaveFieldKind.Tuck,
                         EventReasonSource.Ability,
-                        ctx.SourceCard));
+                        ctx.SourceCard,
+                        deckInsertMode: parameters.InsertMode));
                     return result;
                 };
 

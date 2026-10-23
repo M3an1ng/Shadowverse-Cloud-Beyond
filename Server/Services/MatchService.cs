@@ -4,6 +4,8 @@
 // - 多人联机方案A: 内存房间 + JoinCode/Token
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -18,6 +20,7 @@ namespace ShadowverseBeyond.Server.Services
     /// </summary>
     public class MatchService : IMatchService
     {
+        public event Action<string>? GameDetached;
         private readonly ConcurrentDictionary<string, MatchRoom> _rooms = new();
         private readonly ConcurrentDictionary<string, string> _gameToRoom = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, object> _locks = new();
@@ -36,6 +39,7 @@ namespace ShadowverseBeyond.Server.Services
 
             var roomId = Guid.NewGuid().ToString("D");
             var hostId = hostPlayerId ?? Guid.NewGuid();
+            var roomTtl = ttl.HasValue && ttl.Value > TimeSpan.Zero ? ttl.Value : _defaultTtl;
             var room = new MatchRoom
             {
                 RoomId = roomId,
@@ -43,8 +47,9 @@ namespace ShadowverseBeyond.Server.Services
                 JoinCode = GenerateJoinCode(),
                 HostToken = GenerateToken(),
                 UseAiFallback = useAiFallback,
+                RoomTtl = roomTtl,
                 CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.Add(ttl ?? _defaultTtl),
+                ExpiresAt = DateTime.UtcNow.Add(roomTtl),
                 ActiveGameId = null,
                 Round = 0
             };
@@ -93,7 +98,7 @@ namespace ShadowverseBeyond.Server.Services
                     room.GuestPlayerId.Value == requestedGuestId.Value)
                 {
                     room.GuestToken ??= GenerateToken();
-                    room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
+                    room.ExpiresAt = DateTime.UtcNow.Add(GetRoomTtl(room));
                     _logger.LogInformation("[MatchService] Guest {GuestId} rejoined room {RoomId}.", requestedGuestId.Value, roomId);
                     return MatchOperationResult.Ok(Clone(room));
                 }
@@ -115,7 +120,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
                 room.GuestPlayerId = guestId;
                 room.GuestToken = GenerateToken();
-                room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
+                room.ExpiresAt = DateTime.UtcNow.Add(GetRoomTtl(room));
                 room.Status = MatchStatus.Waiting;
 
                 _logger.LogInformation("[MatchService] Player {GuestId} joined room {RoomId}", guestId, roomId);
@@ -256,7 +261,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
                 {
-                    _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                    DetachGame(room.ActiveGameId);
                 }
 
                 var activeGameId = Guid.NewGuid().ToString("D");
@@ -264,7 +269,7 @@ namespace ShadowverseBeyond.Server.Services
                 room.Round = Math.Max(1, room.Round + 1);
                 _gameToRoom[activeGameId] = room.RoomId;
                 room.Status = MatchStatus.Started;
-                room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
+                room.ExpiresAt = DateTime.UtcNow.Add(GetRoomTtl(room));
 
                 _logger.LogInformation("[MatchService] Room {RoomId} started by {PlayerId}. ActiveGameId={GameId} Round={Round}",
                     roomId,
@@ -289,6 +294,18 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return MatchOperationResult.Ok(Clone(room));
+        }
+
+        public IReadOnlyList<MatchRoom> ListCurrentRooms()
+        {
+            CleanupExpired();
+
+            return _rooms.Values
+                .Where(room => room.Status != MatchStatus.Closed && !IsExpired(room))
+                .OrderByDescending(room => room.Status == MatchStatus.Started)
+                .ThenByDescending(room => room.CreatedAt)
+                .Select(Clone)
+                .ToList();
         }
 
         public MatchOperationResult ValidateConnection(string roomId, Guid playerId, string token)
@@ -322,6 +339,36 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return MatchOperationResult.Ok(Clone(room));
+        }
+
+        public MatchOperationResult RefreshExpiration(string roomId, Guid playerId)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+            {
+                return MatchOperationResult.Fail(MatchOperationError.NotFound, "房间不存在。");
+            }
+
+            lock (GetLock(roomId))
+            {
+                if (IsExpired(room))
+                {
+                    CloseInternal(roomId, "房间已过期");
+                    return MatchOperationResult.Fail(MatchOperationError.Expired, "房间已过期。");
+                }
+
+                if (room.Status == MatchStatus.Closed)
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.AlreadyClosed, room.ClosedReason ?? "房间已关闭。", Clone(room));
+                }
+
+                if (!IsParticipant(room, playerId))
+                {
+                    return MatchOperationResult.Fail(MatchOperationError.NotParticipant, "玩家不在房间内。");
+                }
+
+                room.ExpiresAt = DateTime.UtcNow.Add(GetRoomTtl(room));
+                return MatchOperationResult.Ok(Clone(room));
+            }
         }
 
         public MatchOperationResult GetByGameId(string gameId)
@@ -384,7 +431,7 @@ namespace ShadowverseBeyond.Server.Services
                 // Guest leaves: keep room alive and release guest seat for future joins.
                 if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
                 {
-                    _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                    DetachGame(room.ActiveGameId);
                 }
 
                 room.ActiveGameId = null;
@@ -394,7 +441,7 @@ namespace ShadowverseBeyond.Server.Services
                 room.HostReady = false;
                 room.GuestDeckSelection = new MatchDeckSelection();
                 room.Status = MatchStatus.Waiting;
-                room.ExpiresAt = DateTime.UtcNow.Add(_defaultTtl);
+                room.ExpiresAt = DateTime.UtcNow.Add(GetRoomTtl(room));
                 room.ClosedReason = null;
 
                 _logger.LogInformation("[MatchService] Guest {PlayerId} left room {RoomId}. Seat released for rejoin.", playerId, roomId);
@@ -420,7 +467,7 @@ namespace ShadowverseBeyond.Server.Services
                         _locks.TryRemove(kvp.Key, out _);
                         if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
                         {
-                            _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                            DetachGame(room.ActiveGameId);
                         }
                     }
                     else
@@ -442,7 +489,7 @@ namespace ShadowverseBeyond.Server.Services
             {
                 if (!string.IsNullOrWhiteSpace(room.ActiveGameId))
                 {
-                    _gameToRoom.TryRemove(room.ActiveGameId, out _);
+                    DetachGame(room.ActiveGameId);
                 }
 
                 room.Status = MatchStatus.Closed;
@@ -454,7 +501,20 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        private void DetachGame(string gameId)
+        {
+            if (_gameToRoom.TryRemove(gameId, out _))
+            {
+                GameDetached?.Invoke(gameId);
+            }
+        }
+
         private static bool IsExpired(MatchRoom room) => DateTime.UtcNow > room.ExpiresAt;
+
+        private TimeSpan GetRoomTtl(MatchRoom room)
+        {
+            return room.RoomTtl > TimeSpan.Zero ? room.RoomTtl : _defaultTtl;
+        }
 
         private object GetLock(string roomId) => _locks.GetOrAdd(roomId, _ => new object());
 
@@ -564,6 +624,7 @@ namespace ShadowverseBeyond.Server.Services
                 HostReady = source.HostReady,
                 GuestReady = source.GuestReady,
                 UseAiFallback = source.UseAiFallback,
+                RoomTtl = source.RoomTtl,
                 CreatedAt = source.CreatedAt,
                 ExpiresAt = source.ExpiresAt,
                 ClosedReason = source.ClosedReason,

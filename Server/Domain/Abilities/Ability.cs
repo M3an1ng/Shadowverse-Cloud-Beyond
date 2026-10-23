@@ -50,17 +50,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <summary>
         /// 静态配置引用
         /// </summary>
+        [DslExposable("能力配置", Description = "该能力的配置数据（授予能力时挂载）")]
         public AbilityConfig Config { get; }
 
         // RuntimeId is part of IAbility
         [DslExposable("能力ID", Description = "该能力的运行时标识符")]
         public Guid RuntimeId { get; } // Already exists, ensure it's initialized (done in constructor)
 
+        private long? _derivedDefinitionId;
+
         /// <summary>
         /// Gets the definition ID of the ability, linking to its static configuration.
         /// </summary>
         [DslExposable("静态ID", Description = "该能力的定义ID")]
-        public long DefinitionId => Config.Id; // Implement DefinitionId
+        public long DefinitionId => Config.Id > 0 ? Config.Id : _derivedDefinitionId ?? Config.Id; // Implement DefinitionId
 
         /// <summary>
         /// 能力名称
@@ -97,6 +100,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         public string KeywordSummary => AbilityKeywords.Count == 0
             ? AbilityKeyword.None.ToString()
             : string.Join(", ", AbilityKeywords.Select(k => k.ToString()));
+
+        public AlternatePlayConfig? AlternatePlay => Config.AlternatePlay;
 
         /// <summary>
         /// 能力类型
@@ -235,6 +240,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         {
             public List<Effect> Effects { get; init; } = new();
             public List<IGameEvent> GeneratedEvents { get; init; } = new();
+            public bool ShouldEmitAbilityTriggeredEvent { get; init; }
         }
 
         internal sealed record DecisionOptionSnapshot(Guid Id, AbilityConfig Config, int Index);
@@ -585,6 +591,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 : reason;
         }
 
+        internal void AssignDerivedDefinitionId(long definitionId)
+        {
+            if (definitionId >= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(definitionId), "Derived ability definition ids must be negative.");
+            }
+
+            _derivedDefinitionId = definitionId;
+        }
+
+        internal long? DerivedDefinitionId => _derivedDefinitionId;
+
         internal DecisionInput PrepareDecisionInput(
             GameContext context,
             Guid triggeringEventId,
@@ -631,7 +649,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var weights = mode == DecisionMode.Random
                 ? ResolveWeights(effectConfig, "weights", optionIds.Count, context, valueResolver)
                 : new List<double>();
-            var loopSelection = mode == DecisionMode.Sequence && ResolveBooleanParameter(effectConfig, "loopSelection", true, context, valueResolver);
+            var loopSelection = mode == DecisionMode.Sequence && ResolveBooleanParameter(effectConfig, "loopSelection", false, context, valueResolver);
             var selectionOrder = mode == DecisionMode.Sequence
                 ? ResolveSequenceOrder(effectConfig, "selectionOrder", SequenceOrder.Forward, context, valueResolver)
                 : SequenceOrder.Forward;
@@ -1013,30 +1031,35 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         internal void CachePreflightPrimaryAbilityResult(
             Guid triggeringEventId,
             IReadOnlyList<Effect> effects,
-            IReadOnlyList<IGameEvent> generatedEvents)
+            IReadOnlyList<IGameEvent> generatedEvents,
+            bool shouldEmitAbilityTriggeredEvent)
         {
             _preflightPrimaryAbilityStates[triggeringEventId] = new PreflightPrimaryAbilityState
             {
                 Effects = effects?.ToList() ?? new List<Effect>(),
-                GeneratedEvents = generatedEvents?.ToList() ?? new List<IGameEvent>()
+                GeneratedEvents = generatedEvents?.ToList() ?? new List<IGameEvent>(),
+                ShouldEmitAbilityTriggeredEvent = shouldEmitAbilityTriggeredEvent
             };
         }
 
         internal bool TryConsumePreflightPrimaryAbilityResult(
             Guid triggeringEventId,
             out IReadOnlyList<Effect> effects,
-            out IReadOnlyList<IGameEvent> generatedEvents)
+            out IReadOnlyList<IGameEvent> generatedEvents,
+            out bool shouldEmitAbilityTriggeredEvent)
         {
             if (_preflightPrimaryAbilityStates.TryGetValue(triggeringEventId, out var state))
             {
                 _preflightPrimaryAbilityStates.Remove(triggeringEventId);
                 effects = state.Effects;
                 generatedEvents = state.GeneratedEvents;
+                shouldEmitAbilityTriggeredEvent = state.ShouldEmitAbilityTriggeredEvent;
                 return true;
             }
 
             effects = Array.Empty<Effect>();
             generatedEvents = Array.Empty<IGameEvent>();
+            shouldEmitAbilityTriggeredEvent = false;
             return false;
         }
 
@@ -1135,7 +1158,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             string key,
             out ValueConfig value)
         {
-            return parameters.TryGetValue(key, out value);
+            if (parameters.TryGetValue(key, out value!))
+            {
+                return true;
+            }
+
+            foreach (var entry in parameters)
+            {
+                if (string.Equals(entry.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = entry.Value;
+                    return true;
+                }
+            }
+
+            value = null!;
+            return false;
         }
 
         private static bool CoerceToBool(object? value, bool fallback)

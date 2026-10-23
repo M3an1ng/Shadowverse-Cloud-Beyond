@@ -99,5 +99,33 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Equal("hello-b", gameBMessages[0].Content);
             Assert.Equal("msg-20", gameAMessages.First().Content);
         }
+
+        [Fact]
+        public void AppendMessage_ShouldPreserveEmoteFieldsInHistory()
+        {
+            var service = new InMemoryGameChatService(NullLogger<InMemoryGameChatService>.Instance);
+
+            service.AppendMessage(new ChatMessageEventDto
+            {
+                MessageId = Guid.NewGuid(),
+                GameId = "game-a",
+                SenderType = ChatSenderType.Player,
+                SenderId = "p1",
+                SenderName = "玩家1",
+                MessageType = "emote",
+                Content = "smile",
+                EmoteId = "default/smile.png",
+                EmoteName = "smile",
+                EmoteUrl = "/assets/emotes/default/smile.png",
+                SentAtUtc = DateTime.UtcNow
+            });
+
+            var message = Assert.Single(service.GetRecentMessages("game-a", 10));
+
+            Assert.Equal("emote", message.MessageType);
+            Assert.Equal("default/smile.png", message.EmoteId);
+            Assert.Equal("smile", message.EmoteName);
+            Assert.Equal("/assets/emotes/default/smile.png", message.EmoteUrl);
+        }
     }
 }

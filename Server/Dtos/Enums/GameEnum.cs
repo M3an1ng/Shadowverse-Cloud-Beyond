@@ -84,7 +84,19 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         /// Play the card using its Enhance cost.
         /// </summary>
         [Description("爆能")]
-        Enhance
+        Enhance,
+
+        /// <summary>
+        /// Play the card as an Accelerate spell.
+        /// </summary>
+        [Description("激奏")]
+        Accelerate,
+
+        /// <summary>
+        /// Play the card as a Crystalize amulet.
+        /// </summary>
+        [Description("结晶")]
+        Crystalize
     }
 
 
@@ -164,6 +176,8 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         Unlimited = 1,
         [Description("开放")]
         Open = 2,
+        [Description("编选")]
+        Compile = 3,
     }
 
     /// <summary>
@@ -175,6 +189,15 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         Standard = 0,
         [Description("混合职业")]
         DualClass = 1
+    }
+
+    /// <summary>
+    /// Represents deck-construction terms that can appear in card preview text.
+    /// </summary>
+    public enum DeckKeyword
+    {
+        [Description("无垠界域牌组")]
+        UnlimitedDeck = 1
     }
 
     /// <summary>

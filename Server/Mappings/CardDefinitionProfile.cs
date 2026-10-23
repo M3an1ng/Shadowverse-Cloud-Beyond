@@ -26,7 +26,9 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.CardSetDefinitionId, opt => opt.MapFrom(src => src.CardSetDefinitionId))
                 .ForMember(dest => dest.CardSetCode, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.SetCode : null))
                 .ForMember(dest => dest.CardSetAbbr, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.Abbreviation : null))
-                .ForMember(dest => dest.CardSetEnvironment, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.Environments : null));
+                .ForMember(dest => dest.CardSetEnvironment, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.Environments : null))
+                .ForMember(dest => dest.UpdatedAt, opt => opt.MapFrom(src => src.UpdatedAt))
+                .ForMember(dest => dest.UpdatedBy, opt => opt.MapFrom(src => src.UpdatedBy));
 
             // Properties with matching names and types are mapped automatically by convention:
             // Name, Type, Rarity, CardSet, Cost, Attack, Health, Description

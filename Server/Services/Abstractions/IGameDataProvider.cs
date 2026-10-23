@@ -91,6 +91,14 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     }
 
     /// <summary>
+    /// 支持按卡牌粒度刷新静态游戏数据缓存，避免编辑单个能力时重建全量快照。
+    /// </summary>
+    public interface IIncrementalGameDataProvider
+    {
+        Task RefreshCardAsync(int cardId);
+    }
+
+    /// <summary>
     /// 缓存统计信息
     /// </summary>
     public class CacheStatistics

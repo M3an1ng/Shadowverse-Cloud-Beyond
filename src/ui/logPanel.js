@@ -1,7 +1,8 @@
 ﻿// src/ui/logPanel.js
-import { gameState, findCardInstanceByUid, sendChatMessage } from '../gameManager.js';
+import { gameState, findCardInstanceByUid, sendChatMessage, sendEmoteMessage } from '../gameManager.js';
 import { ensureCardDefinitions, getAbilityDataSnapshot } from '../abilityDataCache.js';
 import { getUserSession } from '../userSession.js';
+import { hasUsableEmotes, loadEmoteCatalog } from '../emoteCatalog.js';
 
 function normalizeArtPath(rawPath) {
     if (rawPath === null || rawPath === undefined) return '';
@@ -87,6 +88,11 @@ const spectatorAliasBySenderKey = new Map();
 let chatSendStatus = '';
 let chatSendStatusTone = 'neutral';
 let isChatSending = false;
+let isEmotePanelOpen = false;
+let emoteCatalogLoadState = 'idle';
+let emoteCatalog = null;
+let selectedEmotePackId = '';
+let isEmoteSending = false;
 const chatBarrageQueue = [];
 const chatBarrageActiveLanes = new Set();
 
@@ -153,8 +159,51 @@ function clearChatSendStatus() {
     chatSendStatusTone = 'neutral';
 }
 
+function closeEmotePanel() {
+    isEmotePanelOpen = false;
+    isEmoteSending = false;
+}
+
+function getFirstEmotePackId(catalog) {
+    const pack = Array.isArray(catalog?.packs)
+        ? catalog.packs.find(candidate => Array.isArray(candidate?.items) && candidate.items.length > 0)
+        : null;
+    return String(pack?.id || '').trim();
+}
+
+function getSelectedEmotePack() {
+    const packs = Array.isArray(emoteCatalog?.packs) ? emoteCatalog.packs : [];
+    return packs.find(pack => pack?.id === selectedEmotePackId)
+        || packs.find(pack => Array.isArray(pack?.items) && pack.items.length > 0)
+        || null;
+}
+
+function ensureEmoteCatalogLoaded() {
+    if (emoteCatalogLoadState !== 'idle') return;
+    emoteCatalogLoadState = 'loading';
+    void loadEmoteCatalog().then(result => {
+        if (result?.ok) {
+            emoteCatalog = result.catalog;
+            emoteCatalogLoadState = hasUsableEmotes(emoteCatalog) ? 'ready' : 'empty';
+            selectedEmotePackId = selectedEmotePackId || getFirstEmotePackId(emoteCatalog);
+        } else {
+            emoteCatalog = null;
+            emoteCatalogLoadState = 'failed';
+            setChatSendStatus(result?.error || '表情清单加载失败。', 'error');
+        }
+        renderGameLog(getLatestGameLogs());
+    });
+}
+
+function isEmoteChatMessage(message) {
+    return String(message?.messageType || '').toLowerCase() === 'emote';
+}
+
 function getChatMessageClasses(message) {
     const classes = ['chat-message-entry'];
+    if (isEmoteChatMessage(message)) {
+        classes.push('is-emote');
+    }
     if (message?.senderType === 'system') {
         classes.push('is-system');
     } else if (message?.senderType === 'spectator') {
@@ -165,6 +214,126 @@ function getChatMessageClasses(message) {
         classes.push('is-opponent');
     }
     return classes.join(' ');
+}
+
+function createEmoteImageView(message, imageClassName, fallbackClassName) {
+    const wrapper = document.createElement('div');
+    wrapper.className = fallbackClassName.includes('barrage')
+        ? 'chat-barrage-emote'
+        : 'chat-message-emote';
+
+    const label = String(message?.emoteName || message?.content || message?.emoteId || '表情').trim();
+    const image = document.createElement('img');
+    image.className = imageClassName;
+    image.src = String(message?.emoteUrl || '').trim();
+    image.alt = label;
+    image.loading = 'lazy';
+    image.onerror = () => {
+        wrapper.innerHTML = '';
+        const fallback = document.createElement('span');
+        fallback.className = fallbackClassName;
+        fallback.textContent = label;
+        wrapper.appendChild(fallback);
+    };
+    wrapper.appendChild(image);
+    return wrapper;
+}
+
+function renderEmotePanel(panel) {
+    if (!panel) return;
+    panel.hidden = !isEmotePanelOpen;
+    panel.innerHTML = '';
+    if (!isEmotePanelOpen) return;
+
+    if (emoteCatalogLoadState === 'idle' || emoteCatalogLoadState === 'loading') {
+        const state = document.createElement('div');
+        state.className = 'chat-emote-state';
+        state.textContent = '加载中...';
+        panel.appendChild(state);
+        return;
+    }
+
+    if (emoteCatalogLoadState === 'failed') {
+        const state = document.createElement('div');
+        state.className = 'chat-emote-state is-error';
+        state.textContent = '表情加载失败';
+        panel.appendChild(state);
+        return;
+    }
+
+    if (emoteCatalogLoadState === 'empty' || !hasUsableEmotes(emoteCatalog)) {
+        const state = document.createElement('div');
+        state.className = 'chat-emote-state';
+        state.textContent = '暂无表情';
+        panel.appendChild(state);
+        return;
+    }
+
+    const packs = emoteCatalog.packs.filter(pack => Array.isArray(pack?.items) && pack.items.length > 0);
+    if (!packs.some(pack => pack.id === selectedEmotePackId)) {
+        selectedEmotePackId = getFirstEmotePackId(emoteCatalog);
+    }
+
+    const tabs = document.createElement('div');
+    tabs.className = 'chat-emote-tabs';
+    packs.forEach(pack => {
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'chat-emote-tab';
+        tab.classList.toggle('is-active', pack.id === selectedEmotePackId);
+        tab.textContent = pack.name || pack.id;
+        tab.onclick = () => {
+            selectedEmotePackId = pack.id;
+            renderGameLog(getLatestGameLogs());
+        };
+        tabs.appendChild(tab);
+    });
+
+    const grid = document.createElement('div');
+    grid.className = 'chat-emote-grid';
+    const selectedPack = getSelectedEmotePack();
+    (selectedPack?.items || []).forEach(item => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'chat-emote-item';
+        button.disabled = isEmoteSending;
+        button.title = item.name || item.id;
+        button.onclick = async () => {
+            if (isEmoteSending) return;
+            isEmoteSending = true;
+            setChatSendStatus('发送中...', 'neutral');
+            renderGameLog(getLatestGameLogs());
+
+            const result = await sendEmoteMessage(item.id);
+            isEmoteSending = false;
+            if (!result?.ok) {
+                setChatSendStatus(result?.error || '表情发送失败。', 'error');
+            } else {
+                setChatSendStatus('已发送', 'success');
+                window.setTimeout(() => {
+                    if (chatSendStatusTone === 'success') {
+                        clearChatSendStatus();
+                        renderGameLog(getLatestGameLogs());
+                    }
+                }, 1400);
+            }
+            renderGameLog(getLatestGameLogs());
+        };
+
+        const image = document.createElement('img');
+        image.src = item.url;
+        image.alt = item.name || item.id;
+        image.loading = 'lazy';
+        image.onerror = () => {
+            button.classList.add('is-broken');
+            button.textContent = item.name || '表情';
+        };
+        button.appendChild(image);
+        grid.appendChild(button);
+    });
+
+    panel.appendChild(tabs);
+    panel.appendChild(grid);
 }
 
 function isGenericChatPlayerName(name) {
@@ -454,8 +623,17 @@ function ensureChatPanelStructure(chatContent) {
         chatContent.appendChild(status);
     }
 
+    let emotePanel = chatContent.querySelector('.chat-emote-panel');
+    if (!emotePanel) {
+        emotePanel = document.createElement('div');
+        emotePanel.className = 'chat-emote-panel';
+        emotePanel.hidden = true;
+        chatContent.appendChild(emotePanel);
+    }
+
     let form = chatContent.querySelector('.chat-input-form');
     let input = chatContent.querySelector('#game-chat-input');
+    let emoteButton = chatContent.querySelector('.chat-emote-btn');
     let sendButton = chatContent.querySelector('.chat-send-btn');
     if (!form || !input) {
         form = document.createElement('form');
@@ -481,6 +659,21 @@ function ensureChatPanelStructure(chatContent) {
         sendButton.type = 'submit';
         sendButton.className = 'chat-send-btn';
         sendButton.textContent = '发送';
+
+        emoteButton = document.createElement('button');
+        emoteButton.type = 'button';
+        emoteButton.className = 'chat-emote-btn';
+        emoteButton.textContent = '☺';
+        emoteButton.title = '表情';
+        emoteButton.setAttribute('aria-label', '表情');
+        emoteButton.addEventListener('click', () => {
+            if (!isActiveChatTab()) return;
+            isEmotePanelOpen = !isEmotePanelOpen;
+            if (isEmotePanelOpen) {
+                ensureEmoteCatalogLoaded();
+            }
+            renderGameLog(getLatestGameLogs());
+        });
 
         form.addEventListener('submit', async event => {
             event.preventDefault();
@@ -520,12 +713,13 @@ function ensureChatPanelStructure(chatContent) {
             }, 1400);
         });
 
+        form.appendChild(emoteButton);
         form.appendChild(input);
         form.appendChild(sendButton);
         chatContent.appendChild(form);
     }
 
-    return { messageList, status, input, sendButton };
+    return { messageList, status, emotePanel, input, emoteButton, sendButton };
 }
 
 function renderActiveChatPanel(chatContent) {
@@ -537,7 +731,9 @@ function renderActiveChatPanel(chatContent) {
         structure.messageList.innerHTML = '';
         structure.messageList.scrollTop = 0;
         structure.status.textContent = '';
+        closeEmotePanel();
         structure.input.value = '';
+        renderEmotePanel(structure.emotePanel);
         syncTopShadowMask(structure.messageList, chatContent);
         return;
     }
@@ -548,6 +744,11 @@ function renderActiveChatPanel(chatContent) {
     if (structure.sendButton) {
         structure.sendButton.disabled = isChatSending;
     }
+    if (structure.emoteButton) {
+        structure.emoteButton.classList.toggle('is-active', isEmotePanelOpen);
+        structure.emoteButton.disabled = isChatSending;
+    }
+    renderEmotePanel(structure.emotePanel);
 
     const previousScrollTop = structure.messageList.scrollTop;
     const wasNearBottom = isLogNearBottom(structure.messageList);
@@ -598,9 +799,13 @@ function renderActiveChatPanel(chatContent) {
             time.className = 'chat-message-time';
             time.textContent = formatChatTimestamp(message.sentAtUtc || Date.now());
 
-            const text = document.createElement('div');
-            text.className = 'chat-message-text';
-            text.textContent = message.content || '';
+            const content = isEmoteChatMessage(message)
+                ? createEmoteImageView(message, 'chat-message-emote-img', 'chat-message-emote-fallback')
+                : document.createElement('div');
+            if (!isEmoteChatMessage(message)) {
+                content.className = 'chat-message-text';
+                content.textContent = message.content || '';
+            }
 
             meta.appendChild(avatar);
             meta.appendChild(author);
@@ -609,7 +814,7 @@ function renderActiveChatPanel(chatContent) {
             }
             meta.appendChild(time);
             row.appendChild(meta);
-            row.appendChild(text);
+            row.appendChild(content);
             structure.messageList.appendChild(row);
         });
     }
@@ -1367,8 +1572,16 @@ function syncLogPanelView(logContent, chatContent, historyContent) {
 
 function normalizeInMatchChatMessage(message) {
     if (!message || typeof message !== 'object') return null;
-    const content = String(message.content || '').trim();
-    if (!content) return null;
+    const messageTypeRaw = String(message.messageType || '').trim().toLowerCase();
+    const messageType = messageTypeRaw === 'emote' ? 'emote' : 'text';
+    const emoteId = String(message.emoteId || '').trim();
+    const emoteName = String(message.emoteName || '').trim();
+    const emoteUrl = String(message.emoteUrl || '').trim();
+    const content = messageType === 'emote'
+        ? (String(message.content || '').trim() || emoteName || emoteId)
+        : String(message.content || '').trim();
+    if (messageType === 'text' && !content) return null;
+    if (messageType === 'emote' && (!emoteId || !emoteUrl)) return null;
 
     const senderTypeRaw = String(message.senderType || '').trim().toLowerCase();
     const senderType = senderTypeRaw === 'spectator'
@@ -1383,7 +1596,11 @@ function normalizeInMatchChatMessage(message) {
         senderId: String(message.senderId || '').trim(),
         senderName: String(message.senderName || '').trim(),
         senderAvatarUrl: String(message.senderAvatarUrl || message.SenderAvatarUrl || '').trim(),
+        messageType,
         content,
+        emoteId: messageType === 'emote' ? emoteId : '',
+        emoteName: messageType === 'emote' ? (emoteName || content) : '',
+        emoteUrl: messageType === 'emote' ? emoteUrl : '',
         sentAtUtc: String(message.sentAtUtc || '').trim(),
         clientMessageId: String(message.clientMessageId || '').trim(),
         isSelf: Boolean(message.isSelf)
@@ -1509,12 +1726,16 @@ function playSingleChatBarrage(message, laneIndex = 0) {
             avatar.textContent = avatarInfo.fallbackText;
         }
 
-        const text = document.createElement('span');
-        text.className = 'chat-barrage-text';
-        text.textContent = message.content || '';
+        const content = isEmoteChatMessage(message)
+            ? createEmoteImageView(message, 'chat-barrage-emote-img', 'chat-barrage-emote-fallback')
+            : document.createElement('span');
+        if (!isEmoteChatMessage(message)) {
+            content.className = 'chat-barrage-text';
+            content.textContent = message.content || '';
+        }
 
         item.appendChild(avatar);
-        item.appendChild(text);
+        item.appendChild(content);
         const laneTop = CHAT_BARRAGE_LANE_TOPS[Math.max(0, Math.min(laneIndex, CHAT_BARRAGE_LANE_TOPS.length - 1))] ?? 0;
         item.style.top = `${laneTop}px`;
         root.appendChild(item);
@@ -1710,6 +1931,7 @@ export function clearInMatchChatUiState() {
     logPanelChatDraft = '';
     clearChatSendStatus();
     isChatSending = false;
+    closeEmotePanel();
     clearChatBarrageUi();
     const chatContainer = document.getElementById('game-chat-content');
     if (chatContainer) {
@@ -1913,7 +2135,8 @@ function resolveCardToken(rawToken) {
         };
     }
 
-    const resolvedName = normalizeLogName(card.name || card.Name || '未知卡牌');
+    const snapshotName = normalizeLogName(name);
+    const resolvedName = snapshotName || normalizeLogName(card.name || card.Name || '未知卡牌');
     return {
         text: formatCardTokenText(resolvedName),
         className: `log-token log-token-card ${sideClass}`.trim(),

@@ -1,5 +1,9 @@
 import { DslEditor } from "../components/DslEditor.js";
-import { createFunctionCallNode, createValueNode } from "../components/dsl_editor/core.js";
+import {
+    createFunctionCallNode,
+    createListDistinctNode,
+    createValueNode
+} from "../components/dsl_editor/core.js";
 
 function createEditor() {
     const editor = new DslEditor();
@@ -131,5 +135,62 @@ describe("DslEditor main expression state", () => {
         expect(editor.workspaceAST?.toExpression?.()).toBe("find(context.owner.field, (2)).cardType");
         expect(editor.astRoot?.metadata?.isDynamicMemberAccess).toBe(true);
         expect(editor.astRoot?.returnType).toBe("CardType");
+    });
+
+    test("distinct key accepts scalar list without type mismatch", () => {
+        const editor = createEditor();
+        const sourceNode = createValueNode("context.owner.field", "List<CardInstance>", {
+            type: "property",
+            fullPath: "context.owner.field",
+            displayName: "战场"
+        });
+        const keyNode = createValueNode("self.AbilityKeywords", "List<AbilityKeyword>", {
+            type: "property",
+            fullPath: "self.AbilityKeywords",
+            displayName: "效果关键字"
+        });
+        const distinctNode = createListDistinctNode(sourceNode);
+        distinctNode.setKeyExpression(keyNode);
+
+        const expectedType = editor.getExpectedTypeForSlot(distinctNode, "keyExpression");
+        const typeMatch = editor.calculateNodeTypeMatch(keyNode);
+        const typeIssue = editor.getPipelineStageTypeIssue({
+            type: "distinct",
+            node: distinctNode
+        });
+
+        expect(expectedType).toBe("ScalarOrScalarList");
+        expect(typeMatch.expectedType).toBe("ScalarOrScalarList");
+        expect(typeMatch.isTypeMatch).toBe(true);
+        expect(typeIssue).toBeNull();
+    });
+
+    test("distinct key keeps rejecting entity list", () => {
+        const editor = createEditor();
+        const sourceNode = createValueNode("context.owner.field", "List<CardInstance>", {
+            type: "property",
+            fullPath: "context.owner.field",
+            displayName: "战场"
+        });
+        const keyNode = createValueNode("self.EffectiveAbilities", "List<Ability>", {
+            type: "property",
+            fullPath: "self.EffectiveAbilities",
+            displayName: "当前有效能力"
+        });
+        const distinctNode = createListDistinctNode(sourceNode);
+        distinctNode.setKeyExpression(keyNode);
+
+        const typeMatch = editor.calculateNodeTypeMatch(keyNode);
+        const typeIssue = editor.getPipelineStageTypeIssue({
+            type: "distinct",
+            node: distinctNode
+        });
+
+        expect(typeMatch.expectedType).toBe("ScalarOrScalarList");
+        expect(typeMatch.isTypeMatch).toBe(false);
+        expect(typeIssue).toMatchObject({
+            expectedType: "ScalarOrScalarList",
+            actualType: "List<Ability>"
+        });
     });
 });

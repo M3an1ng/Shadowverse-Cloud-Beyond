@@ -1,0 +1,469 @@
+{
+  "backend": "official-codex-mcp",
+  "completed": 5,
+  "planned": 5,
+  "attempts": [
+    {
+      "style": "B-moonlit-codex",
+      "job_id": "fb5872e5-bf37-4fe9-b0d4-d3397bf2da4e",
+      "status": "failed",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "high",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [],
+      "error_category": "model_capacity",
+      "started_at": "2026-09-20T19:17:18.407Z",
+      "finished_at": "2026-09-20T19:18:25.037Z"
+    },
+    {
+      "style": "A-starfarer",
+      "job_id": "afa3c6c9-7f39-4758-99ea-ebf90f9f8628",
+      "status": "succeeded",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-afa3c6c9-7f39-4758-99ea-ebf90f9f8628\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-afa3c6c9-7f39-4758-99ea-ebf90f9f8628\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "3fa287df379993a7c6b2817b8aa7ae8a9c0562cd65f44fe24c9a8157d9547b66"
+        }
+      ],
+      "error_category": null,
+      "started_at": "2026-09-20T19:18:30.970Z",
+      "finished_at": "2026-09-20T19:21:28.407Z"
+    },
+    {
+      "style": "B-moonlit-codex",
+      "job_id": "35936ade-b9d5-41f2-89f3-f3aeca7edada",
+      "status": "failed",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [],
+      "error_category": "model_capacity",
+      "started_at": "2026-09-20T19:21:34.050Z",
+      "finished_at": "2026-09-20T19:22:24.234Z"
+    },
+    {
+      "style": "B-moonlit-codex",
+      "job_id": "823f75d2-e449-480b-adb2-433ab465cc1a",
+      "status": "succeeded",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-823f75d2-e449-480b-adb2-433ab465cc1a\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-823f75d2-e449-480b-adb2-433ab465cc1a\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "00ee821c0ccdf45a87f110da13b08e345c29d2291885c265c6d1616dda3f08b5"
+        }
+      ],
+      "upstream_metadata": {
+        "quality": "medium",
+        "size": "1672x941",
+        "background": "opaque",
+        "output_format": "png",
+        "count": 1
+      },
+      "started_at": "2026-09-20T20:10:04.168Z",
+      "finished_at": "2026-09-20T20:16:41.534Z",
+      "error_category": null,
+      "saved_file": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/B-moonlit-codex/B-01-home.png",
+      "saved_native": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/B-moonlit-codex/B-01-home-native.png"
+    },
+    {
+      "style": "C-armored-arena",
+      "job_id": "7e1aa24d-83ca-4d2f-9cce-0ebb3fbedaa4",
+      "status": "failed",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [],
+      "upstream_metadata": null,
+      "started_at": "2026-09-20T20:16:44.135Z",
+      "finished_at": "2026-09-20T20:17:02.151Z",
+      "error_category": "model_capacity"
+    },
+    {
+      "style": "C-armored-arena",
+      "job_id": "a931c0d0-0fde-4ae3-bae2-4f766dc94415",
+      "status": "failed",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-a931c0d0-0fde-4ae3-bae2-4f766dc94415\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-a931c0d0-0fde-4ae3-bae2-4f766dc94415\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "6dc3c0cfc3d4588ed78a0bec168aeba4fac8a83b0b75bd2e1bff60c93362acfa"
+        }
+      ],
+      "upstream_metadata": {
+        "quality": "medium",
+        "size": "1672x941",
+        "background": "opaque",
+        "output_format": "png",
+        "count": 1
+      },
+      "started_at": "2026-09-20T20:18:07.824Z",
+      "finished_at": "2026-09-20T20:21:18.384Z",
+      "error_category": "model_capacity"
+    },
+    {
+      "style": "D-neon-arcade",
+      "job_id": "0d6ad1e0-578c-46d4-a682-fc763367808a",
+      "status": "succeeded",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-0d6ad1e0-578c-46d4-a682-fc763367808a\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-0d6ad1e0-578c-46d4-a682-fc763367808a\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "596f10a47b507f0a0741b408b0915475e5f751ac32cbff04afa2c5590afb19d6"
+        }
+      ],
+      "upstream_metadata": {
+        "quality": "medium",
+        "size": "1672x941",
+        "background": "opaque",
+        "output_format": "png",
+        "count": 1
+      },
+      "started_at": "2026-09-20T20:21:57.073Z",
+      "finished_at": "2026-09-20T20:23:25.878Z",
+      "error_category": null,
+      "saved_file": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/D-neon-arcade/D-01-home.png",
+      "saved_native": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/D-neon-arcade/D-01-home-native.png"
+    },
+    {
+      "style": "E-astral-archive",
+      "job_id": "fb7cbcc3-b6ad-45cf-bdb9-727cfac8ff98",
+      "status": "failed",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-fb7cbcc3-b6ad-45cf-bdb9-727cfac8ff98\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-fb7cbcc3-b6ad-45cf-bdb9-727cfac8ff98\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "b10d7d68ae5d058f7a5027f6079784fa92fb6d483c4517459c56c14e8563e2ff"
+        }
+      ],
+      "upstream_metadata": {
+        "quality": "medium",
+        "size": "1672x941",
+        "background": "opaque",
+        "output_format": "png",
+        "count": 1
+      },
+      "started_at": "2026-09-20T20:23:27.869Z",
+      "finished_at": "2026-09-20T20:25:08.883Z",
+      "error_category": "model_capacity"
+    },
+    {
+      "style": "E-astral-archive",
+      "job_id": "7485eaef-5afc-46f9-a930-926fd1d8132f",
+      "status": "succeeded",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-7485eaef-5afc-46f9-a930-926fd1d8132f\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-7485eaef-5afc-46f9-a930-926fd1d8132f\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "6d3a6903f779fa2d4af3013ea7afb83aeaa22608c6fbfea71c8637e29b2224bc"
+        }
+      ],
+      "upstream_metadata": {
+        "quality": "medium",
+        "size": "1672x941",
+        "background": "opaque",
+        "output_format": "png",
+        "count": 1
+      },
+      "started_at": "2026-09-20T20:25:53.051Z",
+      "finished_at": "2026-09-20T20:27:52.862Z",
+      "error_category": null,
+      "saved_file": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/E-astral-archive/E-01-home.png",
+      "saved_native": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/E-astral-archive/E-01-home-native.png"
+    },
+    {
+      "style": "C-armored-arena",
+      "job_id": "c3cdfe3c-fa9f-42da-bba2-1ad6662a7d8b",
+      "status": "succeeded",
+      "requested_model": "gpt-image-2.5-sunburst",
+      "controls": {
+        "resize_mode": "contain",
+        "quality": "auto",
+        "n": 1,
+        "output_format": "png",
+        "size": "1536x864",
+        "background": "opaque"
+      },
+      "outputs": [
+        {
+          "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-c3cdfe3c-fa9f-42da-bba2-1ad6662a7d8b\\part-1\\source-1.png",
+          "source_size": [
+            1672,
+            941
+          ],
+          "source_format": "png",
+          "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-c3cdfe3c-fa9f-42da-bba2-1ad6662a7d8b\\part-1\\image-1.png",
+          "width": 1536,
+          "height": 864,
+          "format": "png",
+          "has_alpha": false,
+          "has_transparency": false,
+          "transforms": [
+            {
+              "operation": "resize",
+              "implementation": "local",
+              "from": "1672x941",
+              "to": "1536x864",
+              "mode": "contain",
+              "padding": "white"
+            },
+            {
+              "operation": "encode",
+              "implementation": "local",
+              "format": "png",
+              "quality": null
+            }
+          ],
+          "sha256": "7d1e0b1d2b8d55bd5a2aaa82d9a3035bc2846c7171d57443de48b2067743596f"
+        }
+      ],
+      "upstream_metadata": {
+        "quality": "medium",
+        "size": "1672x941",
+        "background": "opaque",
+        "output_format": "png",
+        "count": 1
+      },
+      "started_at": "2026-09-20T20:27:53.740Z",
+      "finished_at": "2026-09-20T20:29:16.754Z",
+      "error_category": null,
+      "saved_file": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/C-armored-arena/C-01-home.png",
+      "saved_native": "D:/workspace/Shadowverse-Cloud-Beyond/art-exploration/home-candidates/C-armored-arena/C-01-home-native.png"
+    }
+  ],
+  "candidate_status": {
+    "A": "user_accepted_as_candidate",
+    "B": "awaiting_user_selection",
+    "C": "awaiting_user_selection",
+    "D": "awaiting_user_selection",
+    "E": "awaiting_user_selection"
+  }
+}

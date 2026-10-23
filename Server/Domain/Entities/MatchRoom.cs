@@ -54,6 +54,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public bool HostReady { get; set; }
         public bool GuestReady { get; set; }
         public bool UseAiFallback { get; init; }
+        /// <summary>
+        /// 房间活动时长，用于创建后和心跳续期时恢复 ExpiresAt。
+        /// </summary>
+        public TimeSpan RoomTtl { get; set; } = TimeSpan.FromMinutes(30);
         public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
         public DateTime ExpiresAt { get; set; }
         public string? ClosedReason { get; set; }

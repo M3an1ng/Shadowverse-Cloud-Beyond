@@ -62,6 +62,23 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void Commit_CapturesSnapshotAtCommitTime()
+        {
+            var effectiveAttack = 2;
+            SetTestGameDataProvider();
+            var services = CreateServiceProvider(_ => effectiveAttack);
+            var gameState = CreateGameStateWithLeaders(out var attacker, out var defender);
+            using var context = CreateContext(services, gameState, gameState.Player1.PlayerId, attackFlow: null);
+            var destroyEvent = new DestroyEvent(defender, attacker, EventReasonSource.System);
+
+            effectiveAttack = 0;
+            var result = destroyEvent.Commit(context);
+
+            Assert.True(result.Success);
+            Assert.Equal(0, destroyEvent.DestroyTargetSnapshot?.CurrentAttack);
+        }
+
+        [Fact]
         public void Commit_WhenSameTargetDestroyedTwiceInSameFlow_DealsLeaderPingOnce()
         {
             SetTestGameDataProvider();
@@ -81,7 +98,7 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Empty(second.GeneratedEvents.OfType<DamageEvent>());
         }
 
-        private static ServiceProvider CreateServiceProvider()
+        private static ServiceProvider CreateServiceProvider(Func<CardInstance, int>? getEffectiveAttack = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
@@ -92,7 +109,7 @@ namespace ShadowverseBeyond.Server.Tests
                 .Returns(new List<CardKeyword>());
             buffServiceMock
                 .Setup(service => service.GetEffectiveAttack(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
-                .Returns<CardInstance, GameContext>((card, _) => card.BaseAttack);
+                .Returns<CardInstance, GameContext>((card, _) => getEffectiveAttack?.Invoke(card) ?? card.BaseAttack);
             buffServiceMock
                 .Setup(service => service.GetEffectiveMaxHealth(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns<CardInstance, GameContext>((card, _) => card.BaseHealth);

@@ -81,19 +81,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("事件目标", Description = "事件的目标列表（玩家或卡牌）")]
         public List<TargetInfo> Target { get; protected set; } = new();
 
-        [GameEventParameter("当前玩家ID", "事件进入处理时的当前玩家ID。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("当前玩家ID", "事件进入处理时的当前玩家ID。", Scope = GameEventParameterScope.Output, ShowInTriggerTips = false)]
         public Guid? CurrentPlayerId { get; private set; }
 
-        [GameEventParameter("当前玩家回合数", "事件进入处理时当前玩家的回合数。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("当前玩家回合数", "事件进入处理时当前玩家的回合数。", Scope = GameEventParameterScope.Output, ShowInTriggerTips = false)]
         public int CurrentPlayerTurnNumber { get; private set; }
 
-        [GameEventParameter("来源能力运行时ID", "事件生成时记录的来源能力运行时ID。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("来源能力运行时ID", "事件生成时记录的来源能力运行时ID。", Scope = GameEventParameterScope.Output, ShowInTriggerTips = false)]
         public Guid? SourceAbilityRuntimeId { get; private set; }
 
-        [GameEventParameter("来源能力定义ID", "事件生成时记录的来源能力定义ID。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("来源能力定义ID", "事件生成时记录的来源能力定义ID。", Scope = GameEventParameterScope.Output, ShowInTriggerTips = false)]
         public long? SourceAbilityDefinitionId { get; private set; }
 
-        [GameEventParameter("来源能力关键字", "事件生成时记录的来源能力关键字列表。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("来源能力关键字", "事件生成时记录的来源能力关键字列表。", Scope = GameEventParameterScope.Output, ShowInTriggerTips = false)]
         public IReadOnlyList<AbilityKeyword> SourceAbilityKeywords { get; private set; } = Array.Empty<AbilityKeyword>();
 
         protected GameEventBase(EventType eventType, Guid? eventId = null, DateTime? timestamp = null)

@@ -95,6 +95,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = true };
             }
 
+            if (modifications.Any(modification => modification.Stat == StatType.Health)
+                && card.HealthFloorFromBuffRemoval > 0)
+            {
+                card.ClearHealthFloorFromBuffRemoval();
+                context.BuffService.InvalidateDerivedState(context.CurrentGameState, card.InstanceId);
+            }
+
             var healthPreview = PreviewHealthChange(card, context);
             var result = context.BuffService.ApplyStatBuff(
                 context: context,

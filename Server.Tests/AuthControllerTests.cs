@@ -34,6 +34,25 @@ public class AuthControllerTests
         }
     }
 
+    private sealed class NoopQuestProgressService : IQuestProgressService
+    {
+        public Task<QuestProgressResult> RecordActivityAsync(
+            Guid userId,
+            QuestActivityType activityType,
+            string sourceEntityType,
+            string sourceEntityId,
+            int increment = 1,
+            DateTime? occurredAtUtc = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new QuestProgressResult
+            {
+                UserId = userId,
+                ActivityType = activityType
+            });
+        }
+    }
+
     [Fact]
     public async Task Register_CreatesUserAndMigratesGuestDecks()
     {
@@ -44,7 +63,7 @@ public class AuthControllerTests
         {
             Result = new GuestDeckMigrationResult(2, 0)
         };
-        var controller = new AuthController(db, hasher, migration, NullLogger<AuthController>.Instance);
+        var controller = new AuthController(db, hasher, migration, new NoopQuestProgressService(), NullLogger<AuthController>.Instance);
 
         var guestId = Guid.NewGuid();
         var request = new AuthController.RegisterRequest
@@ -91,7 +110,7 @@ public class AuthControllerTests
         });
         await db.SaveChangesAsync();
 
-        var controller = new AuthController(db, hasher, migration, NullLogger<AuthController>.Instance);
+        var controller = new AuthController(db, hasher, migration, new NoopQuestProgressService(), NullLogger<AuthController>.Instance);
 
         var request = new AuthController.LoginRequest
         {
@@ -107,5 +126,60 @@ public class AuthControllerTests
         Assert.Equal("tester", payload.Username);
         Assert.Equal("Player", payload.Role);
         Assert.Equal(10, payload.PermissionLevel);
+    }
+
+    [Fact]
+    public async Task Login_RecordsDailyLoginQuestProgressWithoutDirectCoins()
+    {
+        var dbName = $"auth-login-quest-{Guid.NewGuid()}";
+        await using var db = CreateDbContext(dbName);
+        var hasher = new Pbkdf2PasswordHasher();
+        var migration = new StubGuestDeckMigrationService();
+        var transactionService = new TransactionService(db, NullLogger<TransactionService>.Instance);
+        var questProgressService = new QuestProgressService(db, transactionService, NullLogger<QuestProgressService>.Instance);
+        var userId = Guid.NewGuid();
+        db.Users.Add(new User
+        {
+            Id = userId,
+            Username = "quest-login",
+            Email = "quest-login@local.invalid",
+            PasswordHash = hasher.HashPassword("secret123"),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            IsActive = true
+        });
+        db.QuestDefinitions.Add(new QuestDefinition
+        {
+            Id = 401,
+            Name = "Daily login",
+            Description = "Log in once",
+            Type = QuestType.LoginDaily,
+            ActivityType = QuestActivityType.Login,
+            Category = QuestCategory.Daily,
+            TargetValue = 1,
+            CoinReward = 50,
+            DeduplicationPolicy = QuestDeduplicationPolicy.OncePerPeriod,
+            IsActive = true
+        });
+        await db.SaveChangesAsync();
+
+        var controller = new AuthController(
+            db,
+            hasher,
+            migration,
+            questProgressService,
+            NullLogger<AuthController>.Instance);
+
+        var result = await controller.Login(new AuthController.LoginRequest
+        {
+            Username = "quest-login",
+            Password = "secret123"
+        }, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        var quest = await db.UserQuests.SingleAsync(item => item.UserId == userId);
+        Assert.True(quest.IsCompleted);
+        Assert.False(quest.IsRewardClaimed);
+        Assert.Empty(await db.CoinTransactions.Where(item => item.UserId == userId).ToListAsync());
     }
 }

@@ -143,6 +143,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         public int Damage = 0;
 
+        public int HealthFloorFromBuffRemoval { get; private set; } = 0;
+
         [DslExposable("当前生命值", Description = "卡牌当前的生命值")]
         public int CurrentHealth => MaxHealth - Damage;
 
@@ -353,13 +355,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var context = GameServiceProvider.CurrentGameContext;
             if (context?.AbilityManager != null)
             {
-                return context.AbilityManager
-                    .GetEffectiveAbilitiesForCard(InstanceId, context)
+                var abilities = context.AbilityManager.GetEffectiveAbilitiesForCard(InstanceId, context)
+                    ?? Enumerable.Empty<IAbility>();
+                return abilities
                     .OfType<Ability>()
                     .ToList();
             }
 
-            return Abilities;
+            return Abilities ?? Array.Empty<Ability>();
         }
 
         /// <summary>
@@ -1046,6 +1049,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void CopyRuntimeStateFrom(CardRuntimeStateSnapshot source)
         {
             Damage = source.Damage;
+            HealthFloorFromBuffRemoval = 0;
             IsEvolved = source.IsEvolved;
             IsSuperEvolved = source.IsSuperEvolved;
             CurrentCountdown = source.CurrentCountdown;
@@ -1089,6 +1093,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void ResetToDefinitionState()
         {
             Damage = 0;
+            HealthFloorFromBuffRemoval = 0;
             IsEvolved = false;
             IsSuperEvolved = false;
             IsSilenced = false;
@@ -1106,6 +1111,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             var baseDef = GameDataProvider.Instance?.GetCardDefinition(BaseDefinitionId);
             InitializeCountdown(baseDef);
+        }
+
+        internal void SetHealthFloorFromBuffRemoval(int floor)
+        {
+            HealthFloorFromBuffRemoval = Math.Max(0, floor);
+        }
+
+        internal void ClearHealthFloorFromBuffRemoval()
+        {
+            HealthFloorFromBuffRemoval = 0;
         }
 
         // internal void CapturePreResetSnapshot()
@@ -1468,7 +1483,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
             result.GeneratedEvents.AddRange(auraResult.GeneratedEvents);
 
-            abilityManager.UnregisterCardAbilities(this.InstanceId);
+            var currentAbilities = abilityManager.GetAbilitiesForCard(this.InstanceId)
+                ?? Enumerable.Empty<IAbility>();
+            foreach (var ability in currentAbilities
+                .OfType<Ability>()
+                .ToList())
+            {
+                ability.InvalidateQueuedEffects("transform");
+            }
+
+            abilityManager.UnregisterCardAbilities(this.InstanceId, "transform");
 
             // 2. Perform the transformation and reset runtime state to the new definition baseline.
             this.BaseDefinitionId = newDefinition.Id;

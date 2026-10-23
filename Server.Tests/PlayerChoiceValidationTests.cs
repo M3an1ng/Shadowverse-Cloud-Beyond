@@ -14,6 +14,7 @@ using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -24,6 +25,37 @@ namespace ShadowverseBeyond.Server.Tests
 {
     public class PlayerChoiceValidationTests
     {
+        [Fact]
+        public async Task GetPendingChoiceForPlayer_IsolatesGamesForSamePlayer()
+        {
+            var playerId = Guid.NewGuid();
+            var gameService = new Mock<IGameService>();
+            var clients = new Mock<IHubClients<IGameClient>>();
+            clients.Setup(c => c.Group(It.IsAny<string>())).Returns(Mock.Of<IGameClient>());
+            var hubContext = new Mock<IHubContext<GameHub, IGameClient>>();
+            hubContext.SetupGet(h => h.Clients).Returns(clients.Object);
+            using var services = new ServiceCollection()
+                .AddSingleton<IGameService>(gameService.Object)
+                .BuildServiceProvider();
+            var pending = new PendingActionService(
+                hubContext.Object,
+                NullLogger<PendingActionService>.Instance,
+                services,
+                new MapperConfiguration(_ => { }).CreateMapper());
+            var firstRequest = new PlayerChoiceRequest { PendingChoiceId = Guid.NewGuid(), RequestingPlayerId = playerId };
+            var secondRequest = new PlayerChoiceRequest { PendingChoiceId = Guid.NewGuid(), RequestingPlayerId = playerId };
+
+            var firstWait = pending.WaitForPlayerChoiceAsync("first-game", firstRequest, CancellationToken.None);
+            var secondWait = pending.WaitForPlayerChoiceAsync("second-game", secondRequest, CancellationToken.None);
+
+            Assert.Same(firstRequest, pending.GetPendingChoiceForPlayer("first-game", playerId)?.Request);
+            Assert.Same(secondRequest, pending.GetPendingChoiceForPlayer("second-game", playerId)?.Request);
+            Assert.Null(pending.GetPendingChoiceForPlayer("other-game", playerId));
+            pending.ForceResolveChoice(firstRequest.PendingChoiceId, PlayerChoiceResult.Cancelled);
+            pending.ForceResolveChoice(secondRequest.PendingChoiceId, PlayerChoiceResult.Cancelled);
+            await Task.WhenAll(firstWait, secondWait);
+        }
+
         [Fact]
         public async Task CompletePlayerChoice_rejects_invalid_selection_and_does_not_clear_pending_choice()
         {

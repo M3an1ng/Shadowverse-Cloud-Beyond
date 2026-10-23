@@ -101,9 +101,375 @@ namespace ShadowverseBeyond.Server.Tests
             );
         }
 
+        [Fact]
+        public async Task ProcessTransactionAsync_AccelerateReplacementSpellRequiredTarget_UsesReplacementPreflightAbility()
+        {
+            const int originalDefinitionId = 91001;
+            const int replacementDefinitionId = 91002;
+
+            var harness = CreateAlternatePlayPreflightHarness(
+                "alternate-preflight-target",
+                originalDefinitionId,
+                replacementDefinitionId,
+                cancelChoice: false);
+
+            var request = new PlayCardRequestedEvent(
+                harness.Player.PlayerId,
+                new PlayCardActionDto
+                {
+                    CardUid = harness.SourceCard.InstanceId,
+                    PlayMode = PlayMode.Accelerate
+                });
+
+            var result = await _transactionService.ProcessTransactionAsync(
+                harness.GameContext,
+                new List<IGameEvent> { request });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.False(result.IsCancelled);
+            Assert.NotNull(harness.CapturedChoiceRequest);
+            Assert.Contains(harness.TargetCard.InstanceId, harness.CapturedChoiceRequest!.SelectableTargetIds);
+            Assert.True(harness.ProcessedReplacementAbility);
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_AccelerateReplacementSpellTargetCancelled_LeavesOriginalCardInHandAndDoesNotSpendPp()
+        {
+            const int originalDefinitionId = 91011;
+            const int replacementDefinitionId = 91012;
+
+            var harness = CreateAlternatePlayPreflightHarness(
+                "alternate-preflight-cancel",
+                originalDefinitionId,
+                replacementDefinitionId,
+                cancelChoice: true);
+
+            var startingPp = harness.Player.CurrentPlayPoints;
+            var request = new PlayCardRequestedEvent(
+                harness.Player.PlayerId,
+                new PlayCardActionDto
+                {
+                    CardUid = harness.SourceCard.InstanceId,
+                    PlayMode = PlayMode.Accelerate
+                });
+
+            var result = await _transactionService.ProcessTransactionAsync(
+                harness.GameContext,
+                new List<IGameEvent> { request });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.True(result.IsCancelled);
+            Assert.Equal(startingPp, harness.Player.CurrentPlayPoints);
+            Assert.Contains(harness.SourceCard, harness.Player.Hand);
+            Assert.Equal(originalDefinitionId, harness.SourceCard.CurrentDefinitionId);
+            Assert.Equal(CardZone.Hand, harness.SourceCard.CurrentZone);
+            Assert.True(harness.ProcessedReplacementAbility);
+            var choiceCountAfterCancel = harness.ChoiceRequestCount;
+
+            harness.Player.CurrentPlayPoints = 5;
+            var baseRequest = new PlayCardRequestedEvent(
+                harness.Player.PlayerId,
+                new PlayCardActionDto
+                {
+                    CardUid = harness.SourceCard.InstanceId,
+                    PlayMode = PlayMode.Base
+                });
+
+            var baseResult = await _transactionService.ProcessTransactionAsync(
+                harness.GameContext,
+                new List<IGameEvent> { baseRequest });
+
+            Assert.True(baseResult.IsSuccess, baseResult.ErrorMessage);
+            Assert.False(baseResult.IsCancelled);
+            Assert.Equal(choiceCountAfterCancel, harness.ChoiceRequestCount);
+        }
+
+        private AlternatePlayPreflightHarness CreateAlternatePlayPreflightHarness(
+            string gameId,
+            int originalDefinitionId,
+            int replacementDefinitionId,
+            bool cancelChoice)
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            var buffService = CreateDefaultBuffService();
+            buffService.Setup(s => s.GetEffectiveCost(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, GameContext _) => card.BaseCost);
+            buffService.Setup(s => s.GetEffectiveAbilityKeywordValue(
+                    It.IsAny<CardInstance>(),
+                    It.IsAny<AbilityKeyword>(),
+                    It.IsAny<int>(),
+                    It.IsAny<GameContext>()))
+                .Returns((CardInstance _, AbilityKeyword _, int baseValue, GameContext _) => baseValue);
+            buffService.Setup(s => s.RemoveAllBuffs(
+                    It.IsAny<Guid>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Func<Buff, bool>?>()))
+                .Returns(new DomainOperationResult { Success = true });
+            services.AddSingleton<IBuffService>(buffService.Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            services.AddSingleton<IValueSourceResolver, NullValueSourceResolver>();
+
+            var queryExecutorMock = new Mock<IQueryExecutor>();
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                queryExecutorMock.Object,
+                _mockPendingActionService.Object);
+            services.AddSingleton<IQueryExecutor>(queryExecutorMock.Object);
+            var targetFactory = new TargetFactory(targetSelectionService, NullLogger<Target>.Instance);
+            var abilityFactory = new TestAbilityFactory(new NullConditionFactory(), targetFactory, targetSelectionService);
+
+            var originalDefinition = new CardDefinition
+            {
+                Id = originalDefinitionId,
+                Name = "Original Alternate Follower",
+                Type = CardType.Follower,
+                Cost = 5,
+                Attack = 3,
+                Health = 3
+            };
+            var replacementDefinition = new CardDefinition
+            {
+                Id = replacementDefinitionId,
+                Name = "Replacement Accelerate Spell",
+                Type = CardType.Spell,
+                Cost = 2
+            };
+            var dataProvider = new Mock<IGameDataProvider>();
+            dataProvider.Setup(p => p.GetCardDefinition(originalDefinitionId)).Returns(originalDefinition);
+            dataProvider.Setup(p => p.GetCardDefinition(replacementDefinitionId)).Returns(replacementDefinition);
+            dataProvider.Setup(p => p.GetAbilityConfigs(originalDefinitionId)).Returns(new List<AbilityConfig>());
+
+            var replacementAbilityConfig = new AbilityConfig
+            {
+                Name = "accelerate-replacement-target",
+                Trigger = TriggerConfig.OnEventInAllZones(EventType.PlayCard),
+                Targets = new Dictionary<string, TargetConfig>
+                {
+                    ["target"] = new()
+                    {
+                        Query = new QueryConfig { SourcePoolExpression = "stub" },
+                        RequireValidTarget = true,
+                        PlayerChoiceOptions = new PlayerChoiceConfig
+                        {
+                            IsRequired = true,
+                            MinCount = 1,
+                            MaxCount = 1
+                        }
+                    }
+                },
+                Effects = new List<EffectConfig>
+                {
+                    new() { Type = EffectType.Destroy }
+                }
+            };
+            dataProvider.Setup(p => p.GetAbilityConfigs(replacementDefinitionId))
+                .Returns(new List<AbilityConfig> { replacementAbilityConfig });
+            services.AddSingleton(dataProvider.Object);
+            services.AddSingleton<IAbilityFactory>(abilityFactory);
+            var serviceProvider = services.BuildServiceProvider();
+            GameDataProvider.SetInstanceForTesting(dataProvider.Object);
+
+            var player = new PlayerState(Guid.NewGuid())
+            {
+                MaxPlayPoints = 2,
+                CurrentPlayPoints = 2
+            };
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState(gameId, player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), originalDefinitionId, player.PlayerId)
+            {
+                CurrentZone = CardZone.Hand
+            };
+            player.Hand.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var targetCard = new CardInstance(Guid.NewGuid(), 92001, opponent.PlayerId)
+            {
+                CurrentZone = CardZone.Field
+            };
+            opponent.Field.Add(targetCard);
+            gameState.RegisterCardInstance(targetCard);
+            dataProvider.Setup(p => p.GetCardDefinition(92001)).Returns(new CardDefinition
+            {
+                Id = 92001,
+                Name = "Target Follower",
+                Type = CardType.Follower,
+                Cost = 1,
+                Attack = 1,
+                Health = 3
+            });
+
+            var declarationAbilityConfig = new AbilityConfig
+            {
+                Name = "accelerate-declaration",
+                AbilityKeywords = new List<AbilityKeywordConfig>
+                {
+                    new() { Keyword = AbilityKeyword.Accelerate, Value = 2 }
+                },
+                AlternatePlay = new AlternatePlayConfig
+                {
+                    PlayAsCardDefinitionId = replacementDefinitionId
+                }
+            };
+            var declarationAbility = new Ability(
+                declarationAbilityConfig,
+                new NullConditionFactory(),
+                new NullTargetFactory(),
+                targetSelectionService,
+                sourceCard);
+
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            var gameContext = new GameContext(
+                serviceProvider,
+                Mock.Of<IMapper>(),
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                sourceCard: sourceCard);
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            queryExecutorMock
+                .Setup(q => q.ExecuteQuery(
+                    It.IsAny<QueryConfig>(),
+                    It.IsAny<GameContext>(),
+                    It.IsAny<Dictionary<string, List<TargetInfo>>?>()))
+                .Returns(new QueryResult
+                {
+                    Success = true,
+                    Results = new List<object> { targetCard }
+                });
+
+            PlayerChoiceRequest? capturedChoiceRequest = null;
+            var choiceRequestCount = 0;
+            _mockPendingActionService
+                .Setup(s => s.WaitForPlayerChoiceAsync(It.IsAny<string>(), It.IsAny<PlayerChoiceRequest>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string _, PlayerChoiceRequest choiceRequest, CancellationToken __) =>
+                {
+                    choiceRequestCount++;
+                    capturedChoiceRequest = choiceRequest;
+                    return new PlayerChoiceResult
+                    {
+                        WasCancelled = cancelChoice,
+                        ChosenTargetIds = cancelChoice
+                            ? new List<Guid>()
+                            : new List<Guid> { targetCard.InstanceId }
+                    };
+                });
+
+            var processedReplacementAbility = false;
+            _mockAbilityManager
+                .Setup(m => m.GetEffectiveAbilitiesForCard(sourceCard.InstanceId, It.IsAny<GameContext>()))
+                .Returns(new List<IAbility> { declarationAbility });
+            _mockAbilityManager
+                .Setup(m => m.GetAbilitiesForCard(sourceCard.InstanceId))
+                .Returns(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.CreateAbilitiesForCard(
+                    sourceCard,
+                    It.IsAny<List<AbilityConfig>>(),
+                    null,
+                    gameState))
+                .Returns(new List<Ability>());
+            _mockAbilityManager
+                .Setup(m => m.GetAbilityByRuntimeId(declarationAbility.RuntimeId))
+                .Returns(declarationAbility);
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(
+                    It.Is<IAbility>(ability => ability.Name == "accelerate-replacement-target"),
+                    It.IsAny<GameContext>(),
+                    true,
+                    false,
+                    false))
+                .Returns<IAbility, GameContext, bool, bool, bool>(async (ability, context, _, _, _) =>
+                {
+                    processedReplacementAbility = true;
+                    var concreteAbility = Assert.IsType<Ability>(ability);
+                    var targetResult = await concreteAbility.ResolveTargetsAsync(context, true);
+                    if (targetResult.WasCancelled)
+                    {
+                        return AbilityProcessResult.Cancelled("cancelled");
+                    }
+
+                    if (targetResult.Status != ResolutionStatus.Completed)
+                    {
+                        return AbilityProcessResult.Failure(targetResult.ErrorMessage ?? "target resolution failed");
+                    }
+
+                    var effects = await concreteAbility.CreateEffectsAsync(context, targetResult);
+                    return AbilityProcessResult.Success(effects);
+                });
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(
+                    It.Is<IAbility>(ability => ability.Name == "accelerate-replacement-target"),
+                    It.IsAny<GameContext>(),
+                    false,
+                    It.IsAny<bool>(),
+                    It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect>()));
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(It.IsAny<Effect>(), It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult { Success = true });
+
+            return new AlternatePlayPreflightHarness(
+                player,
+                sourceCard,
+                targetCard,
+                gameContext,
+                () => capturedChoiceRequest,
+                () => choiceRequestCount,
+                () => processedReplacementAbility);
+        }
+
+        private sealed class AlternatePlayPreflightHarness
+        {
+            private readonly Func<PlayerChoiceRequest?> _getCapturedChoiceRequest;
+            private readonly Func<bool> _getProcessedReplacementAbility;
+
+            public AlternatePlayPreflightHarness(
+                PlayerState player,
+                CardInstance sourceCard,
+                CardInstance targetCard,
+                GameContext gameContext,
+                Func<PlayerChoiceRequest?> getCapturedChoiceRequest,
+                Func<int> getChoiceRequestCount,
+                Func<bool> getProcessedReplacementAbility)
+            {
+                Player = player;
+                SourceCard = sourceCard;
+                TargetCard = targetCard;
+                GameContext = gameContext;
+                _getCapturedChoiceRequest = getCapturedChoiceRequest;
+                _getChoiceRequestCount = getChoiceRequestCount;
+                _getProcessedReplacementAbility = getProcessedReplacementAbility;
+            }
+
+            public PlayerState Player { get; }
+            public CardInstance SourceCard { get; }
+            public CardInstance TargetCard { get; }
+            public GameContext GameContext { get; }
+            public PlayerChoiceRequest? CapturedChoiceRequest => _getCapturedChoiceRequest();
+            public int ChoiceRequestCount => _getChoiceRequestCount();
+            public bool ProcessedReplacementAbility => _getProcessedReplacementAbility();
+            private readonly Func<int> _getChoiceRequestCount;
+        }
+
         private static Mock<IBuffService> CreateDefaultBuffService()
         {
             var buffService = new Mock<IBuffService>();
+            buffService.Setup(s => s.GetEffectiveActionUsageLimit(It.IsAny<CardInstance>(), It.IsAny<CardActionUsageType>(), It.IsAny<GameContext>()))
+                .Returns((CardInstance card, CardActionUsageType actionType, GameContext _) => card.GetBaseActionUsageLimit(actionType));
             buffService.Setup(s => s.GetEffectiveMaxHealth(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns(10);
             buffService.Setup(s => s.GetEffectiveAttack(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
@@ -593,11 +959,162 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public async Task ProcessTransactionAsync_SkipsRemainingQueuedEffects_WhenSourceCardTransforms()
+        {
+            const int transformedDefinitionId = 910001;
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+
+            var mockDataProvider = new Mock<IGameDataProvider>();
+            mockDataProvider.SetupGet(p => p.IsInitialized).Returns(true);
+            mockDataProvider.Setup(p => p.GetCardDefinition(transformedDefinitionId))
+                .Returns(new CardDefinition
+                {
+                    Id = transformedDefinitionId,
+                    Name = "Transformed Source",
+                    Type = CardType.Follower,
+                    Attack = 2,
+                    Health = 2,
+                    Cost = 1,
+                    Description = "test"
+                });
+            mockDataProvider.Setup(p => p.GetAbilityConfigs(transformedDefinitionId))
+                .Returns(new List<AbilityConfig>());
+            services.AddSingleton(mockDataProvider.Object);
+
+            var serviceProvider = services.BuildServiceProvider();
+            GameDataProvider.SetInstanceForTesting(mockDataProvider.Object);
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("transform-queued-effect", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId)
+            {
+                CurrentZone = CardZone.Field,
+                ZoneStayTurn = 1
+            };
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var initialEvent = new ImmediateTestEvent();
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            using var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                initialEvent,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.ContextAccessor.GameContext = gameContext;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var conditionFactory = new Mock<IConditionFactory>();
+            var targetFactory = new Mock<ITargetFactory>();
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new Mock<IQueryExecutor>().Object,
+                _mockPendingActionService.Object);
+            var abilityConfig = new AbilityConfig
+            {
+                Id = 9201,
+                Name = "TransformingAbility",
+                Trigger = new TriggerConfig
+                {
+                    EventTypes = new List<EventType> { initialEvent.EventType },
+                    Timing = TriggerTiming.On,
+                    RevalidateZoneBeforeExecution = false
+                }
+            };
+            var ability = new Ability(abilityConfig, conditionFactory.Object, targetFactory.Object, targetSelectionService, sourceCard);
+
+            var transformEffect = new Effect(
+                new EffectConfig { Type = EffectType.Transform },
+                player.PlayerId,
+                null,
+                ability.RuntimeId,
+                initialEvent.EventId,
+                sourceCard.InstanceId)
+            {
+                SourceAbility = ability,
+                SourceAbilityStateVersion = ability.QueuedEffectStateVersion
+            };
+
+            var followUpEffect = new Effect(
+                new EffectConfig { Type = EffectType.Draw },
+                player.PlayerId,
+                null,
+                ability.RuntimeId,
+                initialEvent.EventId,
+                sourceCard.InstanceId)
+            {
+                SourceAbility = ability,
+                SourceAbilityStateVersion = ability.QueuedEffectStateVersion
+            };
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(initialEvent, It.IsAny<GameContext>(), TriggerTiming.On))
+                .ReturnsAsync(new List<IAbility> { ability });
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(ability, It.IsAny<GameContext>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect> { transformEffect, followUpEffect }));
+            _mockAbilityManager
+                .Setup(m => m.GetAbilitiesForCard(sourceCard.InstanceId))
+                .Returns(new List<IAbility> { ability });
+            _mockAbilityManager
+                .Setup(m => m.GetEffectiveAbilitiesForCard(sourceCard.InstanceId, It.IsAny<GameContext>()))
+                .Returns(new List<IAbility> { ability });
+            _mockAbilityManager
+                .Setup(m => m.UnregisterCardAbilities(sourceCard.InstanceId, It.IsAny<string>()));
+            _mockAbilityManager
+                .Setup(m => m.CreateAbilitiesForCard(sourceCard, It.IsAny<List<AbilityConfig>>(), null, gameState))
+                .Returns(new List<Ability>());
+
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(transformEffect, It.IsAny<GameContext>()))
+                .Returns((Effect _, GameContext context) =>
+                {
+                    var transformEvent = new TransformEvent(sourceCard, transformedDefinitionId, sourceCard);
+                    return new GameStateActionResult
+                    {
+                        Success = true,
+                        GeneratedEvents = new List<IGameEvent> { transformEvent }
+                    };
+                });
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(followUpEffect, It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult { Success = true });
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.Equal(transformedDefinitionId, sourceCard.BaseDefinitionId);
+            _mockEffectExecutor.Verify(e => e.ExecuteEffect(followUpEffect, It.IsAny<GameContext>()), Times.Never);
+        }
+
+        [Fact]
         public async Task ProcessTransactionAsync_EvolveTriggerWithBlockExecutionOnly_ShouldNotAbortEvolution()
         {
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IAbilityManager>(_mockAbilityManager.Object);
             var buffService = CreateDefaultBuffService();
             buffService
                 .Setup(s => s.ApplyStatBuff(
@@ -804,7 +1321,7 @@ namespace ShadowverseBeyond.Server.Tests
 
             var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
 
-            Assert.True(result.IsSuccess);
+            Assert.True(result.IsSuccess, result.ErrorMessage);
             historyServiceMock.Verify(
                 s => s.StoreEventAsync(gameState.GameId, It.Is<IGameEvent>(e => e.EventId == initialEvent.EventId)),
                 Times.AtLeastOnce);
@@ -883,7 +1400,7 @@ namespace ShadowverseBeyond.Server.Tests
                 replayOptions);
             var result = await transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
 
-            Assert.True(result.IsSuccess);
+            Assert.True(result.IsSuccess, result.ErrorMessage);
             Assert.Equal(player.PlayerId, initialEvent.CurrentPlayerId);
             Assert.Equal(5, initialEvent.CurrentPlayerTurnNumber);
 
@@ -1147,6 +1664,94 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Contains(sentDtos, dto => dto is LogEventDto log && log.EventId == initialEvent.EventId);
             Assert.DoesNotContain(sentDtos, dto => dto is LogEventDto log && log.EventId == crashingEvent.EventId);
             Assert.Contains(sentDtos, dto => dto is LogEventDto log && log.EventType == "TransactionFailed");
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_WhenGameEndAlreadyResolved_DoesNotProcessLaterGameEnd()
+        {
+            const int leaderDefinitionId = 900001;
+            const int sourceDefinitionId = 900002;
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            var serviceProvider = services.BuildServiceProvider();
+
+            var mockDataProvider = new Mock<IGameDataProvider>();
+            mockDataProvider.SetupGet(provider => provider.IsInitialized).Returns(true);
+            mockDataProvider.Setup(provider => provider.GetCardDefinition(It.IsAny<int>()))
+                .Returns((int id) => id == leaderDefinitionId
+                    ? new CardDefinition
+                    {
+                        Id = leaderDefinitionId,
+                        Name = "Leader",
+                        Type = CardType.Leader,
+                        Attack = 0,
+                        Health = 10
+                    }
+                    : new CardDefinition
+                    {
+                        Id = id,
+                        Name = id == sourceDefinitionId ? "Source" : $"Card_{id}",
+                        Type = CardType.Follower,
+                        Attack = 1,
+                        Health = 1
+                    });
+            mockDataProvider.Setup(provider => provider.GetAbilityConfigs(It.IsAny<int>()))
+                .Returns(new List<AbilityConfig>());
+            GameDataProvider.SetInstanceForTesting(mockDataProvider.Object);
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("double-game-end", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), sourceDefinitionId, player.PlayerId) { CurrentZone = CardZone.Field };
+            var playerLeader = new CardInstance(Guid.NewGuid(), leaderDefinitionId, player.PlayerId) { CurrentZone = CardZone.Field, Damage = 9 };
+            var opponentLeader = new CardInstance(Guid.NewGuid(), leaderDefinitionId, opponent.PlayerId) { CurrentZone = CardZone.Field, Damage = 9 };
+            player.Leader = playerLeader;
+            opponent.Leader = opponentLeader;
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+            gameState.RegisterCardInstance(playerLeader);
+            gameState.RegisterCardInstance(opponentLeader);
+
+            var firstLethalDamage = new DamageEvent(opponentLeader, 1, sourceCard, DamageKind.Ability);
+            var laterLethalDamage = new DamageEvent(playerLeader, 1, sourceCard, DamageKind.Ability);
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            using var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                firstLethalDamage,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.ContextAccessor.GameContext = gameContext;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            _mockAbilityManager
+                .Setup(manager => manager.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+
+            var result = await _transactionService.ProcessTransactionAsync(
+                gameContext,
+                new IGameEvent[] { firstLethalDamage, laterLethalDamage });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            var gameEnd = Assert.Single(result.ProcessedEvents.OfType<GameEndEvent>());
+            Assert.Equal(player.PlayerId, gameEnd.WinnerId);
+            Assert.Equal(opponent.PlayerId, gameEnd.LoserId);
+            Assert.Equal(player.PlayerId, gameState.WinnerId);
         }
 
         [Fact]
@@ -2764,6 +3369,268 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public async Task ProcessTransactionAsync_PreflightPrimaryAbilityWithFailedConditions_DoesNotEmitAbilityTriggeredEvent()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            services.AddSingleton<IValueSourceResolver, NullValueSourceResolver>();
+            var conditionFactory = new NullConditionFactory();
+            var targetFactory = new NullTargetFactory();
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new NullQueryExecutor(),
+                _mockPendingActionService.Object);
+            services.AddSingleton(targetSelectionService);
+            services.AddSingleton<IAbilityFactory>(new TestAbilityFactory(conditionFactory, targetFactory, targetSelectionService));
+            var serviceProvider = services.BuildServiceProvider();
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("preflight-failed-conditions", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId) { CurrentZone = CardZone.Field };
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var initialEvent = new ImmediatePlayerActionTestEvent(sourceCard);
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                initialEvent,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var chainedAbilityTemplate = new AbilityConfig
+            {
+                Name = "ChainTarget",
+                Trigger = new TriggerConfig(),
+                Targets = new Dictionary<string, TargetConfig>
+                {
+                    ["target"] = new TargetConfig
+                    {
+                        Query = new QueryConfig(),
+                        PlayerChoiceOptions = new PlayerChoiceConfig
+                        {
+                            IsRequired = true,
+                            MinCount = 1,
+                            MaxCount = 1
+                        }
+                    }
+                }
+            };
+
+            var primaryEffectConfig = new EffectConfig
+            {
+                Type = EffectType.Shuffle,
+                ChainedAbilities = new List<AbilityConfig> { chainedAbilityTemplate }
+            };
+            var primaryAbilityConfig = new AbilityConfig
+            {
+                Name = "PrimaryWithFailedPreflight",
+                Effects = new List<EffectConfig> { primaryEffectConfig },
+                Trigger = new TriggerConfig()
+            };
+            var primaryAbility = new Ability(primaryAbilityConfig, conditionFactory, targetFactory, targetSelectionService, sourceCard);
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(initialEvent, It.IsAny<GameContext>(), TriggerTiming.On))
+                .ReturnsAsync(new List<IAbility> { primaryAbility });
+
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(primaryAbility, It.IsAny<GameContext>(), true, false, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect>()));
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(primaryAbility, It.IsAny<GameContext>(), false, true, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect>()));
+
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(It.IsAny<Effect>(), It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult { Success = true });
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.DoesNotContain(result.ProcessedEvents, e => e is AbilityTriggeredEvent);
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_SkipsChainedAbility_WhenSourceCardTransforms()
+        {
+            const int transformedDefinitionId = 910002;
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IBuffService>(CreateDefaultBuffService().Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            services.AddSingleton<IValueSourceResolver, NullValueSourceResolver>();
+
+            var mockDataProvider = new Mock<IGameDataProvider>();
+            mockDataProvider.SetupGet(p => p.IsInitialized).Returns(true);
+            mockDataProvider.Setup(p => p.GetCardDefinition(transformedDefinitionId))
+                .Returns(new CardDefinition
+                {
+                    Id = transformedDefinitionId,
+                    Name = "Transformed Source",
+                    Type = CardType.Follower,
+                    Attack = 2,
+                    Health = 2,
+                    Cost = 1,
+                    Description = "test"
+                });
+            mockDataProvider.Setup(p => p.GetAbilityConfigs(transformedDefinitionId))
+                .Returns(new List<AbilityConfig>());
+            services.AddSingleton(mockDataProvider.Object);
+
+            var conditionFactory = new NullConditionFactory();
+            var targetFactory = new NullTargetFactory();
+            var targetSelectionService = new TargetSelectionService(
+                NullLogger<TargetSelectionService>.Instance,
+                new NullQueryExecutor(),
+                _mockPendingActionService.Object);
+            services.AddSingleton(targetSelectionService);
+            services.AddSingleton<IAbilityFactory>(new TestAbilityFactory(conditionFactory, targetFactory, targetSelectionService));
+
+            var serviceProvider = services.BuildServiceProvider();
+            GameDataProvider.SetInstanceForTesting(mockDataProvider.Object);
+
+            var player = new PlayerState(Guid.NewGuid());
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("transform-chain-effect", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId)
+            {
+                CurrentZone = CardZone.Field,
+                ZoneStayTurn = 1
+            };
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var initialEvent = new ImmediatePlayerActionTestEvent(sourceCard);
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default,
+                initialEvent,
+                sourceCard);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.ContextAccessor.GameContext = gameContext;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var primaryChainedAbilityTemplate = new AbilityConfig
+            {
+                Name = "ChainAfterTransform",
+                Effects = new List<EffectConfig>(),
+                Trigger = new TriggerConfig()
+            };
+            var primaryEffectConfig = new EffectConfig
+            {
+                Type = EffectType.Shuffle,
+                ChainedAbilities = new List<AbilityConfig> { primaryChainedAbilityTemplate }
+            };
+            var primaryAbilityConfig = new AbilityConfig
+            {
+                Name = "TransformingPrimary",
+                Effects = new List<EffectConfig> { primaryEffectConfig },
+                Trigger = new TriggerConfig()
+            };
+            var primaryAbility = new Ability(primaryAbilityConfig, conditionFactory, targetFactory, targetSelectionService, sourceCard);
+            var primaryEffect = new Effect(
+                primaryEffectConfig,
+                player.PlayerId,
+                new List<TargetInfo>(),
+                primaryAbility.RuntimeId,
+                initialEvent.EventId,
+                sourceCard.InstanceId)
+            {
+                SourceAbility = primaryAbility,
+                SourceAbilityStateVersion = primaryAbility.QueuedEffectStateVersion
+            };
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(initialEvent, It.IsAny<GameContext>(), TriggerTiming.On))
+                .ReturnsAsync(new List<IAbility> { primaryAbility });
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(primaryAbility, It.IsAny<GameContext>(), false, true, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect> { primaryEffect }));
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(
+                    It.Is<IAbility>(ability => ability is Ability && ((Ability)ability).Config.Name == "ChainAfterTransform"),
+                    It.IsAny<GameContext>(),
+                    false,
+                    true,
+                    It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect>()));
+            _mockAbilityManager
+                .Setup(m => m.GetEffectiveAbilitiesForCard(sourceCard.InstanceId, It.IsAny<GameContext>()))
+                .Returns(new List<IAbility> { primaryAbility });
+            _mockAbilityManager
+                .Setup(m => m.GetAbilitiesForCard(sourceCard.InstanceId))
+                .Returns(new List<IAbility> { primaryAbility });
+            _mockAbilityManager
+                .Setup(m => m.UnregisterCardAbilities(sourceCard.InstanceId, It.IsAny<string>()));
+            _mockAbilityManager
+                .Setup(m => m.CreateAbilitiesForCard(sourceCard, It.IsAny<List<AbilityConfig>>(), null, gameState))
+                .Returns(new List<Ability>());
+
+            _mockEffectExecutor
+                .Setup(e => e.ExecuteEffect(primaryEffect, It.IsAny<GameContext>()))
+                .Returns((Effect _, GameContext context) =>
+                {
+                    var transformEvent = new TransformEvent(sourceCard, transformedDefinitionId, sourceCard);
+                    return new GameStateActionResult
+                    {
+                        Success = true,
+                        GeneratedEvents = new List<IGameEvent> { transformEvent }
+                    };
+                });
+
+            var result = await _transactionService.ProcessTransactionAsync(gameContext, new List<IGameEvent> { initialEvent });
+
+            Assert.True(result.IsSuccess, result.ErrorMessage);
+            Assert.Equal(transformedDefinitionId, sourceCard.BaseDefinitionId);
+            _mockAbilityManager.Verify(
+                m => m.ProcessSingleAbilityAsync(
+                    It.Is<IAbility>(ability => ability is Ability && ((Ability)ability).Config.Name == "ChainAfterTransform"),
+                    It.IsAny<GameContext>(),
+                    false,
+                    true,
+                    It.IsAny<bool>()),
+                Times.Never);
+        }
+
+        [Fact]
         public async Task ProcessTransactionAsync_DecisionAbilityGeneratedEvents_AreProcessed()
         {
             var services = new ServiceCollection();
@@ -4084,6 +4951,7 @@ namespace ShadowverseBeyond.Server.Tests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            services.AddSingleton<IAbilityManager>(_mockAbilityManager.Object);
             var buffService = CreateDefaultBuffService();
             buffService
                 .Setup(s => s.CollectEndOfTurnExpiryEvents(It.IsAny<GameContext>()))
@@ -4176,12 +5044,126 @@ namespace ShadowverseBeyond.Server.Tests
             }
 
             var drawIndex = processedOrder.IndexOf(EventType.Draw);
+            var cleanupIndex = processedOrder.IndexOf(EventType.TurnBoundaryCleanup);
             var ppMaxIndex = processedOrder.IndexOf(EventType.PpMaxUpdated);
             var ppIndex = processedOrder.IndexOf(EventType.PpUpdated);
+            var turnStartIndex = processedOrder.IndexOf(EventType.TurnStart);
 
             Assert.True(drawIndex >= 0, "Expected a Draw event generated by turn-end triggered effects.");
+            Assert.True(cleanupIndex > drawIndex, "TurnBoundaryCleanup should be processed after turn-end triggered effects.");
             Assert.True(ppMaxIndex > drawIndex, "PpMaxUpdated should be processed after turn-end triggered effects.");
             Assert.True(ppIndex > drawIndex, "PpUpdated should be processed after turn-end triggered effects.");
+            Assert.True(ppMaxIndex > cleanupIndex, "PpMaxUpdated should be processed after end-of-turn cleanup.");
+            Assert.True(ppIndex > cleanupIndex, "PpUpdated should be processed after end-of-turn cleanup.");
+            Assert.True(turnStartIndex > cleanupIndex, "TurnStart should be processed after end-of-turn cleanup.");
+        }
+
+        [Fact]
+        public async Task ProcessTransactionAsync_TurnEndDeferredTargets_ResolveBeforeComboCleanup()
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
+            var buffService = CreateDefaultBuffService();
+            buffService
+                .Setup(s => s.CollectEndOfTurnExpiryEvents(It.IsAny<GameContext>()))
+                .Returns(Array.Empty<BuffRemovedEvent>());
+            buffService
+                .Setup(s => s.CollectStartOfTurnExpiryEvents(It.IsAny<GameContext>(), It.IsAny<PlayerState>()))
+                .Returns(Array.Empty<BuffRemovedEvent>());
+            buffService
+                .Setup(s => s.RefreshDerivedStateCache(It.IsAny<GameContext>(), It.IsAny<string>()));
+            services.AddSingleton<IBuffService>(buffService.Object);
+            services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
+            var serviceProvider = services.BuildServiceProvider();
+
+            var player = new PlayerState(Guid.NewGuid()) { Combo = 3 };
+            var opponent = new PlayerState(Guid.NewGuid());
+            var gameState = new GameState("test-game", player, opponent, player.PlayerId)
+            {
+                AbilityManager = _mockAbilityManager.Object,
+                BuffManager = new Mock<IBuffManager>().Object
+            };
+            gameState.Phase = GamePhase.Main;
+
+            var sourceCard = new CardInstance(Guid.NewGuid(), 1, player.PlayerId) { CurrentZone = CardZone.Field };
+            player.Field.Add(sourceCard);
+            gameState.RegisterCardInstance(sourceCard);
+
+            var ability = new Mock<IAbility>();
+            var abilityRuntimeId = Guid.NewGuid();
+            ability.SetupGet(a => a.RuntimeId).Returns(abilityRuntimeId);
+            ability.SetupGet(a => a.DefinitionId).Returns(1002);
+            ability.SetupGet(a => a.SourceCard).Returns(sourceCard);
+            ability.SetupGet(a => a.AbilityKeywords).Returns(Array.Empty<AbilityKeywordConfig>());
+            ability.SetupGet(a => a.Keywords).Returns(Array.Empty<AbilityKeyword>());
+            ability.SetupGet(a => a.KeywordSummary).Returns(AbilityKeyword.None.ToString());
+            ability.SetupGet(a => a.TriggerConfig).Returns(new TriggerConfig { Timing = TriggerTiming.On });
+            ability.SetupGet(a => a.Targets).Returns(new List<Target>());
+
+            var effect = new Effect(
+                new EffectConfig { Type = EffectType.Vanish },
+                player.PlayerId,
+                new List<TargetInfo>(),
+                abilityRuntimeId,
+                Guid.Empty,
+                sourceCard.InstanceId)
+            {
+                ResolveTargetsOnExecution = true,
+                SourceAbility = ability.Object
+            };
+
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.IsAny<IGameEvent>(), It.IsAny<GameContext>(), It.IsAny<TriggerTiming>()))
+                .ReturnsAsync(new List<IAbility>());
+            _mockAbilityManager
+                .Setup(m => m.GetTriggeredAbilitiesAsync(It.Is<IGameEvent>(e => e is TurnEndEvent), It.IsAny<GameContext>(), TriggerTiming.On))
+                .ReturnsAsync(new List<IAbility> { ability.Object });
+            _mockAbilityManager
+                .Setup(m => m.ProcessSingleAbilityAsync(ability.Object, It.IsAny<GameContext>(), false, true, It.IsAny<bool>()))
+                .ReturnsAsync(AbilityProcessResult.Success(new List<Effect> { effect }));
+            _mockAbilityManager
+                .Setup(m => m.GetEffectiveAbilitiesForCard(It.IsAny<Guid>(), It.IsAny<GameContext>()))
+                .Returns(new List<IAbility>());
+
+            var observedComboDuringDeferredResolution = -1;
+            ability
+                .Setup(a => a.ResolveTargetsAsync(It.IsAny<GameContext>(), false))
+                .Callback<GameContext, bool>((ctx, _) => observedComboDuringDeferredResolution = ctx.Owner.Combo)
+                .ReturnsAsync(new TargetResolutionResult
+                {
+                    Status = ResolutionStatus.Completed,
+                    ResolvedTargets = new Dictionary<string, List<TargetInfo>>()
+                });
+
+            _mockEffectExecutor
+                .Setup(executor => executor.ExecuteEffect(effect, It.IsAny<GameContext>()))
+                .Returns(new GameStateActionResult { Success = true });
+
+            var mapper = new Mock<IMapper>();
+            var accessor = serviceProvider.GetRequiredService<IGameContextAccessor>();
+            using var gameContext = new GameContext(
+                serviceProvider,
+                mapper.Object,
+                accessor,
+                gameState,
+                player.PlayerId,
+                default);
+
+            GameServiceProvider.ContextAccessor = accessor;
+            GameServiceProvider.Logger = NullLogger.Instance;
+
+            var result = await _transactionService.ProcessTransactionAsync(
+                gameContext,
+                new List<IGameEvent> { new EndTurnRequestedEvent(player.PlayerId) });
+
+            if (!result.IsSuccess)
+            {
+                throw new Xunit.Sdk.XunitException(
+                    $"Transaction failed. Error='{result.ErrorMessage ?? "<null>"}'. Processed={result.ProcessedEvents.Count}.");
+            }
+
+            Assert.Equal(3, observedComboDuringDeferredResolution);
         }
 
         [Fact]
@@ -4896,7 +5878,7 @@ namespace ShadowverseBeyond.Server.Tests
 
             var result = await _transactionService.ProcessTransactionAsync(gameContext, new[] { attackRequest });
 
-            Assert.True(result.IsSuccess);
+            Assert.True(result.IsSuccess, result.ErrorMessage);
             Assert.Empty(result.ProcessedEvents.OfType<DamageEvent>());
         }
 
@@ -4978,7 +5960,7 @@ namespace ShadowverseBeyond.Server.Tests
 
             var result = await _transactionService.ProcessTransactionAsync(gameContext, new[] { attackRequest });
 
-            Assert.True(result.IsSuccess);
+            Assert.True(result.IsSuccess, result.ErrorMessage);
             Assert.Empty(result.ProcessedEvents.OfType<DamageEvent>());
             Assert.Equal(CardZone.Field, defender.CurrentZone);
         }
@@ -5082,7 +6064,7 @@ namespace ShadowverseBeyond.Server.Tests
 
             var result = await _transactionService.ProcessTransactionAsync(gameContext, new[] { attackRequest });
 
-            Assert.True(result.IsSuccess);
+            Assert.True(result.IsSuccess, result.ErrorMessage);
             Assert.Empty(result.ProcessedEvents.OfType<DamageEvent>());
             Assert.Equal(transformedDefinitionId, defender.BaseDefinitionId);
             Assert.Equal(CardZone.Field, defender.CurrentZone);

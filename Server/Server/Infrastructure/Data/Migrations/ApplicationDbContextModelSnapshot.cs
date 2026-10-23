@@ -282,6 +282,13 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CardSetDefinitionId");
@@ -766,6 +773,11 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("ActivityType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1);
+
                     b.Property<int>("Category")
                         .HasColumnType("INTEGER");
 
@@ -774,6 +786,11 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("DeduplicationPolicy")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
 
                     b.Property<string>("Description")
                         .IsRequired()
@@ -803,6 +820,56 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("QuestDefinitions", (string)null);
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.QuestProgressEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActivityType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Increment")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PeriodKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("QuestDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceEntityId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceEntityType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("QuestDefinitionId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "QuestDefinitionId", "PeriodKey", "SourceEntityType", "SourceEntityId")
+                        .IsUnique();
+
+                    b.ToTable("QuestProgressEvents", (string)null);
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TribeDefinition", b =>
@@ -1194,6 +1261,19 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsRewardClaimed")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime>("PeriodEndUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PeriodKey")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("legacy");
+
+                    b.Property<DateTime>("PeriodStartUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("QuestDefinitionId")
                         .HasColumnType("INTEGER");
 
@@ -1211,7 +1291,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.HasIndex("UserId", "QuestDefinitionId")
+                    b.HasIndex("UserId", "QuestDefinitionId", "PeriodKey")
                         .IsUnique();
 
                     b.ToTable("UserQuests", (string)null);
@@ -1579,6 +1659,25 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.QuestProgressEvent", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.QuestDefinition", "QuestDefinition")
+                        .WithMany()
+                        .HasForeignKey("QuestDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("QuestDefinition");
 
                     b.Navigation("User");
                 });

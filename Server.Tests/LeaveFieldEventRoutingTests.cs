@@ -3,13 +3,20 @@ using System.Collections.Generic;
 using System.Linq;
 using AutoMapper;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
+using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Services;
@@ -90,6 +97,21 @@ namespace ShadowverseBeyond.Server.Tests
         }
 
         [Fact]
+        public void LeaveField_DestroyRoute_CapturesSnapshotAtCommitTime()
+        {
+            var effectiveAttack = 2;
+            using var fixture = CreateFixture(_ => [], getEffectiveAttack: _ => effectiveAttack);
+            var evt = new LeaveFieldEvent(fixture.Target, LeaveFieldKind.Destroy, EventReasonSource.System, fixture.Source);
+
+            effectiveAttack = 0;
+            var routeResult = evt.Commit(fixture.Context);
+
+            var destroyEvent = Assert.Single(routeResult.GeneratedEvents.OfType<DestroyEvent>());
+            Assert.Equal(0, evt.LeaveTargetSnapshot?.CurrentAttack);
+            Assert.Equal(0, destroyEvent.DestroyTargetSnapshot?.CurrentAttack);
+        }
+
+        [Fact]
         public void LeaveField_VanishRoute_LegacyCommitStillEmitsCardMovedToRemoved()
         {
             using var fixture = CreateFixture(_ => []);
@@ -101,6 +123,25 @@ namespace ShadowverseBeyond.Server.Tests
 
             Assert.True(vanishCommit.Success);
             Assert.Contains(vanishCommit.GeneratedEvents, e => e is CardMovedEvent moved && moved.ToZone == CardZone.Removed);
+        }
+
+        [Fact]
+        public void RoutedLeaveEvents_CaptureFallbackSnapshotsAtCommitTime()
+        {
+            var effectiveAttack = 2;
+            using var fixture = CreateFixture(_ => [], getEffectiveAttack: _ => effectiveAttack);
+            var vanish = new CardVanishedEvent(fixture.Target, CardZone.Field, EventReasonSource.System, fixture.Source);
+            var returnEvent = new ReturnEvent(fixture.Target, EventReasonSource.Ability);
+            var tuck = new TuckEvent(fixture.Target, EventReasonSource.Ability);
+
+            effectiveAttack = 0;
+
+            Assert.True(vanish.Commit(fixture.Context).Success);
+            Assert.True(returnEvent.Commit(fixture.Context).Success);
+            Assert.True(tuck.Commit(fixture.Context).Success);
+            Assert.Equal(0, vanish.VanishedCardSnapshot?.CurrentAttack);
+            Assert.Equal(0, returnEvent.ReturnedCardSnapshot?.CurrentAttack);
+            Assert.Equal(0, tuck.TuckedCardSnapshot?.CurrentAttack);
         }
 
         [Fact]
@@ -123,7 +164,56 @@ namespace ShadowverseBeyond.Server.Tests
             Assert.Contains(tuckCommit.GeneratedEvents, e => e is AddCardToDeckEvent);
         }
 
-        private static TestFixture CreateFixture(Func<CardInstance, List<CardKeyword>> keywordProvider)
+        [Fact]
+        public void LeaveField_TuckRoute_UsesConfiguredDeckInsertMode()
+        {
+            using var fixture = CreateFixture(_ => []);
+            var evt = new LeaveFieldEvent(
+                fixture.Target,
+                LeaveFieldKind.Tuck,
+                EventReasonSource.Ability,
+                fixture.Source,
+                deckInsertMode: DeckInsertMode.Bottom);
+
+            var routeResult = evt.Commit(fixture.Context);
+            var tuckEvent = Assert.Single(routeResult.GeneratedEvents.OfType<TuckEvent>());
+            var tuckCommit = tuckEvent.Commit(fixture.Context);
+
+            Assert.True(tuckCommit.Success);
+            var addDeckEvent = Assert.Single(tuckCommit.GeneratedEvents.OfType<AddCardToDeckEvent>());
+            Assert.Equal(DeckInsertMode.Bottom, addDeckEvent.InsertMode);
+        }
+
+        [Fact]
+        public void TuckEffect_UsesConfiguredDeckInsertMode()
+        {
+            using var fixture = CreateFixture(_ => []);
+            var processor = new PassthroughTargetProcessingService();
+            var handler = new TuckEffectHandler(NullLogger<TuckEffectHandler>.Instance, processor);
+            var effectConfig = new EffectConfig { Type = EffectType.Tuck };
+            var effect = new Effect(
+                effectConfig,
+                fixture.Source.OwnerPlayerId,
+                new List<TargetInfo> { TargetInfo.ForCard(fixture.Target) },
+                null,
+                Guid.NewGuid(),
+                null);
+            var parameters = new TuckEffectParams { InsertMode = DeckInsertMode.Top };
+
+            var result = handler.Apply(effect, fixture.Context, parameters);
+
+            Assert.True(result.Success);
+            var leaveFieldEvent = Assert.Single(result.GeneratedEvents.OfType<LeaveFieldEvent>());
+            var routeResult = leaveFieldEvent.Commit(fixture.Context);
+            var tuckEvent = Assert.Single(routeResult.GeneratedEvents.OfType<TuckEvent>());
+            var tuckCommit = tuckEvent.Commit(fixture.Context);
+            var addDeckEvent = Assert.Single(tuckCommit.GeneratedEvents.OfType<AddCardToDeckEvent>());
+            Assert.Equal(DeckInsertMode.Top, addDeckEvent.InsertMode);
+        }
+
+        private static TestFixture CreateFixture(
+            Func<CardInstance, List<CardKeyword>> keywordProvider,
+            Func<CardInstance, int>? getEffectiveAttack = null)
         {
             SetTestGameDataProvider();
 
@@ -131,7 +221,7 @@ namespace ShadowverseBeyond.Server.Tests
             services.AddLogging();
             services.AddSingleton<IGameContextAccessor, GameContextAccessor>();
             services.AddSingleton<IEventHistoryService, InMemoryEventHistoryService>();
-            services.AddSingleton<IBuffService>(CreateBuffService(keywordProvider).Object);
+            services.AddSingleton<IBuffService>(CreateBuffService(keywordProvider, getEffectiveAttack).Object);
             var serviceProvider = services.BuildServiceProvider();
 
             var player = new PlayerState(Guid.NewGuid());
@@ -196,13 +286,15 @@ namespace ShadowverseBeyond.Server.Tests
             GameDataProvider.SetInstanceForTesting(mockProvider.Object);
         }
 
-        private static Mock<IBuffService> CreateBuffService(Func<CardInstance, List<CardKeyword>> keywordProvider)
+        private static Mock<IBuffService> CreateBuffService(
+            Func<CardInstance, List<CardKeyword>> keywordProvider,
+            Func<CardInstance, int>? getEffectiveAttack)
         {
             var buffService = new Mock<IBuffService>();
             buffService.Setup(service => service.GetEffectiveMaxHealth(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns(10);
             buffService.Setup(service => service.GetEffectiveAttack(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
-                .Returns(2);
+                .Returns((CardInstance card, GameContext _) => getEffectiveAttack?.Invoke(card) ?? 2);
             buffService.Setup(service => service.GetEffectiveCost(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
                 .Returns(0);
             buffService.Setup(service => service.GetEffectiveKeywords(It.IsAny<CardInstance>(), It.IsAny<GameContext>()))
@@ -226,6 +318,32 @@ namespace ShadowverseBeyond.Server.Tests
             public void Dispose()
             {
                 Context.Dispose();
+            }
+        }
+
+        private sealed class PassthroughTargetProcessingService : ITargetProcessingService
+        {
+            public GameStateActionResult ProcessTargets(
+                GameContext context,
+                IReadOnlyList<TargetInfo> targets,
+                Func<TargetInfo, GameContext, DomainOperationResult> action,
+                string effectName)
+            {
+                var result = new GameStateActionResult { Success = true };
+                foreach (var target in targets)
+                {
+                    var actionResult = action(target, context);
+                    if (!actionResult.Success)
+                    {
+                        result.Success = false;
+                        result.ErrorMessage = actionResult.ErrorMessage;
+                        return result;
+                    }
+
+                    result.GeneratedEvents.AddRange(actionResult.GeneratedEvents);
+                }
+
+                return result;
             }
         }
     }

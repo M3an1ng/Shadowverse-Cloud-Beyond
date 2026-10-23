@@ -1,0 +1,57 @@
+{
+  "style": "E-astral-archive",
+  "job_id": "fb7cbcc3-b6ad-45cf-bdb9-727cfac8ff98",
+  "status": "failed",
+  "requested_model": "gpt-image-2.5-sunburst",
+  "controls": {
+    "resize_mode": "contain",
+    "quality": "auto",
+    "n": 1,
+    "output_format": "png",
+    "size": "1536x864",
+    "background": "opaque"
+  },
+  "outputs": [
+    {
+      "source_file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-fb7cbcc3-b6ad-45cf-bdb9-727cfac8ff98\\part-1\\source-1.png",
+      "source_size": [
+        1672,
+        941
+      ],
+      "source_format": "png",
+      "file": "E:\\CodexData\\.codex-official\\generated_images\\mcp-fb7cbcc3-b6ad-45cf-bdb9-727cfac8ff98\\part-1\\image-1.png",
+      "width": 1536,
+      "height": 864,
+      "format": "png",
+      "has_alpha": false,
+      "has_transparency": false,
+      "transforms": [
+        {
+          "operation": "resize",
+          "implementation": "local",
+          "from": "1672x941",
+          "to": "1536x864",
+          "mode": "contain",
+          "padding": "white"
+        },
+        {
+          "operation": "encode",
+          "implementation": "local",
+          "format": "png",
+          "quality": null
+        }
+      ],
+      "sha256": "b10d7d68ae5d058f7a5027f6079784fa92fb6d483c4517459c56c14e8563e2ff"
+    }
+  ],
+  "upstream_metadata": {
+    "quality": "medium",
+    "size": "1672x941",
+    "background": "opaque",
+    "output_format": "png",
+    "count": 1
+  },
+  "started_at": "2026-09-20T20:23:27.869Z",
+  "finished_at": "2026-09-20T20:25:08.883Z",
+  "error_category": "model_capacity"
+}

@@ -23,11 +23,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("置入的卡牌", "被置入牌库的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? TuckedCard => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("置入来源快照", "生成事件时记录的置入来源快照（若来源为卡牌）。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? TuckSourceSnapshot { get; }
+        [GameEventParameter("置入来源快照", "提交置入事件时记录的置入来源快照（若来源为卡牌）。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? TuckSourceSnapshot { get; private set; }
 
-        [GameEventParameter("置入目标快照", "生成事件时记录的置入目标快照。", Scope = GameEventParameterScope.Input)]
-        public CardInstanceSnapshot? TuckedCardSnapshot { get; }
+        [GameEventParameter("置入目标快照", "提交置入事件时记录的置入目标快照。", Scope = GameEventParameterScope.Output)]
+        public CardInstanceSnapshot? TuckedCardSnapshot { get; private set; }
+
+        [GameEventParameter("牌库插入方式", "卡牌置入牌库时使用的插入方式。")]
+        public DeckInsertMode InsertMode { get; }
 
         public TuckEvent(
             CardInstance card,
@@ -35,12 +38,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Guid? eventId = null,
             DateTime? timestamp = null,
             CardInstanceSnapshot? tuckedCardSnapshot = null,
-            CardInstanceSnapshot? tuckSourceSnapshot = null)
+            CardInstanceSnapshot? tuckSourceSnapshot = null,
+            DeckInsertMode insertMode = DeckInsertMode.Random)
             : base(EventType.Tuck, eventId, timestamp)
         {
             Target.Add(TargetInfo.ForCard(card));
             Reason = reason;
-            TuckedCardSnapshot = tuckedCardSnapshot ?? TryCreateSnapshot(card);
+            InsertMode = insertMode;
+            TuckedCardSnapshot = tuckedCardSnapshot;
             TuckSourceSnapshot = tuckSourceSnapshot;
         }
 
@@ -58,8 +63,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = $"TuckEvent.Commit: owner {card.OwnerPlayerId} not found." };
             }
 
+            TuckedCardSnapshot ??= CardSnapshotCapture.TryCapture(card);
+            TuckSourceSnapshot ??= CardSnapshotCapture.TryCapture(Source?.Card);
+
             var result = new DomainOperationResult { Success = true };
-            result.GeneratedEvents.Add(new AddCardToDeckEvent(owner, new List<CardInstance> { card }));
+            result.GeneratedEvents.Add(new AddCardToDeckEvent(owner, new List<CardInstance> { card }, InsertMode));
             return result;
         }
 
@@ -75,21 +83,5 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return $"{AnnouncementTokens.Card(card)}被置入牌库。";
         }
 
-        private static CardInstanceSnapshot? TryCreateSnapshot(CardInstance? card)
-        {
-            if (card == null)
-            {
-                return null;
-            }
-
-            try
-            {
-                return CardInstanceSnapshot.From(card);
-            }
-            catch
-            {
-                return null;
-            }
-        }
     }
 }

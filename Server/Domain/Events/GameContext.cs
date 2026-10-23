@@ -15,6 +15,7 @@ using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Events.Services;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -44,6 +45,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
         // Contextual Data
         [DslExposable("当前游戏状态", Description = "当前游戏的完整状态")]
         public GameState CurrentGameState { get; }
+
+        [DslExposable("当前对战环境", Description = "当前对局双方共同使用的构筑环境")]
+        public DeckEnvironment CurrentEnvironment => CurrentGameState.GetRequiredUniqueEnvironment();
 
         public Guid RequestingPlayerId { get; }
 

@@ -21,6 +21,7 @@ public sealed class MetaProgressionService : IMetaProgressionService
     private readonly IEconomyService _economyService;
     private readonly ITransactionService _transactionService;
     private readonly IOfficialMatchEvaluator _officialMatchEvaluator;
+    private readonly IQuestProgressService _questProgressService;
     private readonly ILogger<MetaProgressionService> _logger;
 
     public MetaProgressionService(
@@ -28,12 +29,14 @@ public sealed class MetaProgressionService : IMetaProgressionService
         IEconomyService economyService,
         ITransactionService transactionService,
         IOfficialMatchEvaluator officialMatchEvaluator,
+        IQuestProgressService questProgressService,
         ILogger<MetaProgressionService> logger)
     {
         _db = db;
         _economyService = economyService;
         _transactionService = transactionService;
         _officialMatchEvaluator = officialMatchEvaluator;
+        _questProgressService = questProgressService;
         _logger = logger;
     }
 
@@ -190,11 +193,22 @@ public sealed class MetaProgressionService : IMetaProgressionService
                     nonOfficialReason ?? "Unknown");
             }
 
-            // MVP quest progression from game result.
-            await _economyService.UpdateQuestProgressAsync(userId, QuestType.PlayGames, increment: 1);
+            await _questProgressService.RecordActivityAsync(
+                userId,
+                QuestActivityType.PlayMatch,
+                "Match",
+                gameId,
+                occurredAtUtc: now,
+                cancellationToken: cancellationToken);
             if (isWin)
             {
-                await _economyService.UpdateQuestProgressAsync(userId, QuestType.WinGames, increment: 1);
+                await _questProgressService.RecordActivityAsync(
+                    userId,
+                    QuestActivityType.WinMatch,
+                    "Match",
+                    gameId,
+                    occurredAtUtc: now,
+                    cancellationToken: cancellationToken);
             }
 
             _logger.LogInformation(
