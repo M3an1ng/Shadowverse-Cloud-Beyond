@@ -44,30 +44,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>能力配置列表</returns>
         public async Task<List<AbilityConfig>> LoadAbilitiesForCardAsync(int cardId)
         {
-            if (_context == null)
-            {
-                // In a real application, you'd want more robust error handling.
-                return [];
-            }
+            var cardAbilities = await _context.Set<AbilityDefinition>()
+                .Where(ca => ca.CardId == cardId && ca.IsActive)
+                .OrderBy(ca => ca.Priority)
+                .ToListAsync();
 
-            try
-            {
-                var cardAbilities = await _context.Set<AbilityDefinition>()
-                    .Where(ca => ca.CardId == cardId && ca.IsActive)
-                    .OrderBy(ca => ca.Priority)
-                    .ToListAsync();
-
-                var configs = new List<AbilityConfig>();
-
-                ProcessCardAbilities(cardAbilities, configs);
-
-                return configs;
-            }
-            catch (Exception)
-            {
-                // In a real application, you'd want more robust error handling.
-                return [];
-            }
+            var configs = new List<AbilityConfig>();
+            ProcessCardAbilities(cardAbilities, configs);
+            return configs;
         }
 
         /// <summary>
@@ -108,31 +92,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// <returns>所有能力配置列表</returns>
         public async Task<List<AbilityConfig>> LoadAllAbilitiesAsync()
         {
-            if (_context == null)
-            {
-                // In a real application, you'd want more robust error handling.
-                return [];
-            }
+            var cardAbilities = await _context.Set<AbilityDefinition>()
+                .Where(ca => ca.IsActive)
+                .OrderBy(ca => ca.CardId)
+                .ThenBy(ca => ca.Priority)
+                .ToListAsync();
 
-            try
-            {
-                var cardAbilities = await _context.Set<AbilityDefinition>()
-                    .Where(ca => ca.IsActive)
-                    .OrderBy(ca => ca.CardId)
-                    .ThenBy(ca => ca.Priority)
-                    .ToListAsync();
-
-                var configs = new List<AbilityConfig>();
-
-                ProcessCardAbilities(cardAbilities, configs);
-
-                return configs;
-            }
-            catch (Exception)
-            {
-                // In a real application, you'd want more robust error handling.
-                return [];
-            }
+            var configs = new List<AbilityConfig>();
+            ProcessCardAbilities(cardAbilities, configs);
+            return configs;
         }
 
         /// <summary>

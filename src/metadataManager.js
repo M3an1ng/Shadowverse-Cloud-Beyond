@@ -30,50 +30,66 @@ export class MetadataManager {
             return await this.loadPromise;
         }
 
-        this.loadPromise = this.loadMetadata();
-        return await this.loadPromise;
+        return await this.loadMetadata();
     }
 
     /**
      * 从后端加载元数据
      */
     async loadMetadata() {
-        try {
-            
+        const request = (async () => {
             const response = await fetch('/api/AbilityEditorMetadata');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
 
-            this.metadata = await response.json();
-            this.isLoaded = true;
-            
-            
-            // 验证元数据结构
-            this.validateMetadata();
-            
-            return this.metadata;
-        } catch (error) {
-            console.error('MetadataManager: Failed to load metadata:', error);
-            throw new Error(`无法加载元数据: ${error.message}`);
-        }
+            const metadata = await response.json();
+            this.validateMetadata(metadata);
+            return metadata;
+        })()
+            .then(metadata => {
+                // 重载或清理会撤销旧请求的发布权，不取消原调用者的结果。
+                if (this.loadPromise === request) {
+                    this.metadata = metadata;
+                    this.isLoaded = true;
+                }
+                return metadata;
+            })
+            .catch(error => {
+                console.error('MetadataManager: Failed to load metadata:', error);
+                throw new Error(`无法加载元数据: ${error.message}`);
+            })
+            .finally(() => {
+                if (this.loadPromise === request) {
+                    this.loadPromise = null;
+                }
+            });
+        this.loadPromise = request;
+        return await request;
     }
 
     /**
      * 验证元数据结构
      */
-    validateMetadata() {
-        if (!this.metadata) {
-            throw new Error('元数据为空');
+    validateMetadata(metadata) {
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+            throw new TypeError('元数据必须是对象');
         }
 
         const requiredFields = ['effects', 'events', 'dsl', 'queryOperations'];
         for (const field of requiredFields) {
-            if (!(field in this.metadata)) {
-                console.warn(`MetadataManager: Missing field "${field}" in metadata`);
+            if (!(field in metadata)) {
+                throw new Error(`元数据缺少字段: ${field}`);
             }
         }
-
+        for (const field of ['effects', 'events', 'queryOperations']) {
+            if (!Array.isArray(metadata[field])) {
+                throw new TypeError(`元数据字段 ${field} 必须是数组`);
+            }
+        }
+        if (!metadata.dsl || typeof metadata.dsl !== 'object' || Array.isArray(metadata.dsl)) {
+            throw new TypeError('元数据字段 dsl 必须是对象');
+        }
     }
 
     /**

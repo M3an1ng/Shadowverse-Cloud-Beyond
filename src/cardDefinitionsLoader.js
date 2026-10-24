@@ -46,12 +46,13 @@ export async function loadCardDefinitions(options = {}) {
         throw await createHttpError(response);
     }
 
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+        throw new TypeError('Card definitions response must be an array.');
+    }
     if (typeof onResponse === 'function') {
         onResponse(response);
     }
-
-    const payload = await response.json();
-    const cards = Array.isArray(payload) ? payload : [];
-    writeCache(setCached, cards);
-    return cards;
+    writeCache(setCached, payload);
+    return payload;
 }

@@ -44,8 +44,9 @@ namespace ShadowverseBeyond.Server.Services
                 new Dictionary<DeckEnvironment, IReadOnlyList<CardDefinition>>(),
                 new Dictionary<int, List<AbilityConfig>>(),
                 new Dictionary<long, AbilityConfig>(),
-                new Dictionary<string, BuffDefinition>());
+                new Dictionary<string, BuffDefinition>()) { DataRevision = Guid.Empty };
 
+            public Guid DataRevision { get; init; } = Guid.NewGuid();
             public Dictionary<int, CardDefinition> CardDefinitions { get; }
             public IReadOnlyList<CardDefinition> Cards { get; }
             public IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> CardDefinitionsByEnvironment { get; }
@@ -55,14 +56,14 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         private CacheSnapshot _snapshot = CacheSnapshot.Empty;
-        private Guid _dataRevision = Guid.Empty;
+        private readonly object _publicationLock = new();
+        private int _cacheGeneration;
 
         // 静态实例，用于全局访问
         public static IGameDataProvider Instance { get; private set; } = null!;
 
         // 缓存状态
-        private volatile bool _isInitialized = false;
-        private readonly SemaphoreSlim _initializationLock = new(1, 1);
+        private readonly SemaphoreSlim _refreshLock = new(1, 1);
         private DateTime _lastInitialized = DateTime.MinValue;
         private TimeSpan _initializationDuration = TimeSpan.Zero;
 
@@ -70,8 +71,8 @@ namespace ShadowverseBeyond.Server.Services
         private int _cacheHitCount = 0;
         private int _cacheMissCount = 0;
 
-        public bool IsInitialized => _isInitialized;
-        public Guid DataRevision => _dataRevision;
+        public bool IsInitialized => DataRevision != Guid.Empty;
+        public Guid DataRevision => Volatile.Read(ref _snapshot).DataRevision;
 
         public GameDataProvider(
             IServiceScopeFactory scopeFactory,
@@ -95,22 +96,18 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public async Task InitializeAsync()
         {
-            if (_isInitialized) return;
+            if (IsInitialized) return;
 
-            await _initializationLock.WaitAsync();
+            var generation = Volatile.Read(ref _cacheGeneration);
+            await _refreshLock.WaitAsync();
             try
             {
-                if (_isInitialized) return;
+                if (IsInitialized) return;
 
                 var startTime = DateTime.UtcNow;
 
                 var snapshot = await BuildSnapshotAsync();
-                Interlocked.Exchange(ref _snapshot, snapshot);
-
-                _isInitialized = true;
-                _dataRevision = Guid.NewGuid();
-                _lastInitialized = DateTime.UtcNow;
-                _initializationDuration = DateTime.UtcNow - startTime;
+                PublishSnapshot(snapshot, generation, DateTime.UtcNow - startTime);
 
                 _logger.LogInformation("GameDataProvider缓存初始化完成，耗时: {Duration}ms，" +
                     "卡牌定义: {CardCount}，能力配置: {AbilityCount}，Buff定义: {BuffCount}",
@@ -126,7 +123,7 @@ namespace ShadowverseBeyond.Server.Services
             }
             finally
             {
-                _initializationLock.Release();
+                _refreshLock.Release();
             }
         }
 
@@ -143,7 +140,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public CardDefinition? GetCardDefinition(int cardId)
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，无法获取卡牌定义 {CardId}", cardId);
                 Interlocked.Increment(ref _cacheMissCount);
@@ -168,7 +165,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public IReadOnlyDictionary<int, CardDefinition> GetAllCardDefinitions()
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，返回空字典");
                 return new Dictionary<int, CardDefinition>();
@@ -183,7 +180,7 @@ namespace ShadowverseBeyond.Server.Services
 
         public IReadOnlyCollection<CardDefinition> GetCardDefinitionsForEnvironment(DeckEnvironment environment)
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，无法获取环境卡池 {Environment}", environment);
                 return Array.Empty<CardDefinition>();
@@ -201,7 +198,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public List<AbilityConfig> GetAbilityConfigs(int cardId)
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，无法获取能力配置 {CardId}", cardId);
                 Interlocked.Increment(ref _cacheMissCount);
@@ -222,7 +219,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public AbilityConfig? GetAbilityConfig(long abilityId)
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，无法获取能力配置 {AbilityId}", abilityId);
                 Interlocked.Increment(ref _cacheMissCount);
@@ -244,7 +241,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public IReadOnlyDictionary<int, List<AbilityConfig>> GetAllAbilityConfigs()
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，返回空字典");
                 return new Dictionary<int, List<AbilityConfig>>();
@@ -259,7 +256,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public BuffDefinition? GetBuffDefinition(string buffId)
         {
-            if (!_isInitialized)
+            if (!IsInitialized)
             {
                 _logger.LogWarning("GameDataProvider未初始化，无法获取Buff定义 {BuffId}", buffId);
                 Interlocked.Increment(ref _cacheMissCount);
@@ -281,17 +278,20 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public async Task RefreshCacheAsync()
         {
-            _logger.LogInformation("开始刷新GameDataProvider缓存...");
-
-            var startTime = DateTime.UtcNow;
-            var snapshot = await BuildSnapshotAsync();
-            Interlocked.Exchange(ref _snapshot, snapshot);
-            _isInitialized = true;
-            _dataRevision = Guid.NewGuid();
-            _lastInitialized = DateTime.UtcNow;
-            _initializationDuration = DateTime.UtcNow - startTime;
-
-            _logger.LogInformation("GameDataProvider缓存刷新完成");
+            var generation = Volatile.Read(ref _cacheGeneration);
+            await _refreshLock.WaitAsync();
+            try
+            {
+                _logger.LogInformation("开始刷新GameDataProvider缓存...");
+                var startTime = DateTime.UtcNow;
+                var snapshot = await BuildSnapshotAsync();
+                PublishSnapshot(snapshot, generation, DateTime.UtcNow - startTime);
+                _logger.LogInformation("GameDataProvider缓存刷新完成");
+            }
+            finally
+            {
+                _refreshLock.Release();
+            }
         }
 
         public async Task RefreshCardAsync(int cardId)
@@ -301,75 +301,97 @@ namespace ShadowverseBeyond.Server.Services
                 return;
             }
 
-            _logger.LogInformation("开始增量刷新卡牌 {CardId} 的GameDataProvider缓存...", cardId);
-
-            var cardDefinition = await LoadCardDefinitionAsync(cardId);
-            var abilityConfigs = await LoadAbilityConfigsForCardAsync(cardId);
-            var current = Volatile.Read(ref _snapshot);
-
-            var cardDefinitions = new Dictionary<int, CardDefinition>(current.CardDefinitions);
-            if (cardDefinition == null)
+            var generation = Volatile.Read(ref _cacheGeneration);
+            await _refreshLock.WaitAsync();
+            try
             {
-                cardDefinitions.Remove(cardId);
-            }
-            else
-            {
-                cardDefinitions[cardId] = cardDefinition;
-            }
+                _logger.LogInformation("开始增量刷新卡牌 {CardId} 的GameDataProvider缓存...", cardId);
 
-            var cards = cardDefinitions.Values.ToList();
-            var cardsByEnvironment = BuildCardDefinitionsByEnvironment(cards);
-            var abilityConfigsByCard = current.AbilityConfigsByCard.ToDictionary(
-                pair => pair.Key,
-                pair => pair.Value.Where(config => config.CardId != cardId).ToList());
-            abilityConfigsByCard.Remove(cardId);
-            if (abilityConfigs.Count > 0)
-            {
-                abilityConfigsByCard[cardId] = abilityConfigs;
-            }
+                var cardDefinition = await LoadCardDefinitionAsync(cardId);
+                var abilityConfigs = await LoadAbilityConfigsForCardAsync(cardId);
+                var current = Volatile.Read(ref _snapshot);
 
-            var abilityConfigsById = new Dictionary<long, AbilityConfig>(current.AbilityConfigsById);
-            if (current.AbilityConfigsByCard.TryGetValue(cardId, out var oldAbilityConfigs))
-            {
-                foreach (var config in oldAbilityConfigs)
+                var cardDefinitions = new Dictionary<int, CardDefinition>(current.CardDefinitions);
+                if (cardDefinition == null)
                 {
-                    abilityConfigsById.Remove(config.Id);
+                    cardDefinitions.Remove(cardId);
                 }
+                else
+                {
+                    cardDefinitions[cardId] = cardDefinition;
+                }
+
+                var cards = cardDefinitions.Values.ToList();
+                var cardsByEnvironment = BuildCardDefinitionsByEnvironment(cards);
+                var abilityConfigsByCard = new Dictionary<int, List<AbilityConfig>>(current.AbilityConfigsByCard);
+                abilityConfigsByCard.Remove(cardId);
+                if (abilityConfigs.Count > 0)
+                {
+                    abilityConfigsByCard[cardId] = abilityConfigs;
+                }
+
+                var abilityConfigsById = new Dictionary<long, AbilityConfig>(current.AbilityConfigsById);
+                if (current.AbilityConfigsByCard.TryGetValue(cardId, out var oldAbilityConfigs))
+                {
+                    foreach (var config in oldAbilityConfigs)
+                    {
+                        abilityConfigsById.Remove(config.Id);
+                    }
+                }
+                foreach (var config in abilityConfigs)
+                {
+                    abilityConfigsById[config.Id] = config;
+                }
+
+                var snapshot = new CacheSnapshot(
+                    cardDefinitions,
+                    cards,
+                    cardsByEnvironment,
+                    abilityConfigsByCard,
+                    abilityConfigsById,
+                    current.BuffDefinitions);
+
+                PublishSnapshot(snapshot, generation, _initializationDuration);
+
+                _logger.LogInformation("卡牌 {CardId} 的GameDataProvider缓存增量刷新完成，能力配置: {AbilityCount}",
+                    cardId,
+                    abilityConfigs.Count);
             }
-            foreach (var config in abilityConfigs)
+            finally
             {
-                abilityConfigsById[config.Id] = config;
+                _refreshLock.Release();
             }
-
-            var snapshot = new CacheSnapshot(
-                cardDefinitions,
-                cards,
-                cardsByEnvironment,
-                abilityConfigsByCard,
-                abilityConfigsById,
-                current.BuffDefinitions);
-
-            Interlocked.Exchange(ref _snapshot, snapshot);
-            _isInitialized = true;
-            _dataRevision = Guid.NewGuid();
-            _lastInitialized = DateTime.UtcNow;
-
-            _logger.LogInformation("卡牌 {CardId} 的GameDataProvider缓存增量刷新完成，能力配置: {AbilityCount}",
-                cardId,
-                abilityConfigs.Count);
         }
 
         /// <inheritdoc />
         public void ClearCache()
         {
-            Interlocked.Exchange(ref _snapshot, CacheSnapshot.Empty);
-            _isInitialized = false;
-            _dataRevision = Guid.Empty;
-
-            _cacheHitCount = 0;
-            _cacheMissCount = 0;
+            lock (_publicationLock)
+            {
+                // 清理同时撤销已经开始或排队的加载，防止旧结果重新发布。
+                _cacheGeneration++;
+                Interlocked.Exchange(ref _snapshot, CacheSnapshot.Empty);
+                _cacheHitCount = 0;
+                _cacheMissCount = 0;
+            }
 
             _logger.LogDebug("GameDataProvider缓存已清除");
+        }
+
+        private void PublishSnapshot(CacheSnapshot snapshot, int generation, TimeSpan initializationDuration)
+        {
+            lock (_publicationLock)
+            {
+                if (generation != _cacheGeneration)
+                {
+                    throw new OperationCanceledException("Cache load was invalidated by ClearCache.");
+                }
+
+                _lastInitialized = DateTime.UtcNow;
+                _initializationDuration = initializationDuration;
+                // 数据和修订标识属于同一快照，读者不再观察到分离的发布状态。
+                Interlocked.Exchange(ref _snapshot, snapshot);
+            }
         }
 
         /// <inheritdoc />
