@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Infrastructure.Persistence.Entities;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Diagnostics;
@@ -196,30 +197,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
 
         private static RecordedCommittedEventDto Map(ReplayEventRecord record)
         {
-            Guid[] targets;
-            try
-            {
-                targets = string.IsNullOrWhiteSpace(record.TargetIdsJson)
-                    ? Array.Empty<Guid>()
-                    : JsonSerializer.Deserialize<Guid[]>(record.TargetIdsJson) ?? Array.Empty<Guid>();
-            }
-            catch
-            {
-                targets = Array.Empty<Guid>();
-            }
-
-            IReadOnlyList<RecordedClientDtoEnvelopeDto> dtos;
-            try
-            {
-                dtos = string.IsNullOrWhiteSpace(record.DtosJson)
-                    ? Array.Empty<RecordedClientDtoEnvelopeDto>()
-                    : JsonSerializer.Deserialize<RecordedClientDtoEnvelopeDto[]>(record.DtosJson) ??
-                      Array.Empty<RecordedClientDtoEnvelopeDto>();
-            }
-            catch
-            {
-                dtos = Array.Empty<RecordedClientDtoEnvelopeDto>();
-            }
+            var targets = DeserializeTargetIds(record);
+            var dtos = DeserializeClientDtos(record);
 
             return new RecordedCommittedEventDto(
                 record.Seq,
@@ -234,6 +213,58 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                 targets,
                 dtos,
                 record.RawEventJson);
+        }
+
+        private static Guid[] DeserializeTargetIds(ReplayEventRecord record)
+        {
+            if (string.IsNullOrWhiteSpace(record.TargetIdsJson)) return Array.Empty<Guid>();
+
+            try
+            {
+                return JsonSerializer.Deserialize<Guid[]>(record.TargetIdsJson) ??
+                       throw new JsonException("JSON value is null.");
+            }
+            catch (JsonException ex)
+            {
+                throw CreateParseException(record, nameof(record.TargetIdsJson), ex);
+            }
+        }
+
+        private static IReadOnlyList<RecordedClientDtoEnvelopeDto> DeserializeClientDtos(ReplayEventRecord record)
+        {
+            if (string.IsNullOrWhiteSpace(record.DtosJson)) return Array.Empty<RecordedClientDtoEnvelopeDto>();
+
+            try
+            {
+                var dtos = JsonSerializer.Deserialize<RecordedClientDtoEnvelopeDto[]>(record.DtosJson) ??
+                           throw new JsonException("JSON value is null.");
+
+                for (var i = 0; i < dtos.Length; i++)
+                {
+                    if (dtos[i] == null ||
+                        string.IsNullOrWhiteSpace(dtos[i].Type) ||
+                        string.IsNullOrWhiteSpace(dtos[i].Json))
+                    {
+                        throw new JsonException($"Envelope at index {i} is missing Type or Json.");
+                    }
+                }
+
+                return dtos;
+            }
+            catch (JsonException ex)
+            {
+                throw CreateParseException(record, nameof(record.DtosJson), ex);
+            }
+        }
+
+        private static InvalidDataException CreateParseException(
+            ReplayEventRecord record,
+            string fieldName,
+            JsonException innerException)
+        {
+            return new InvalidDataException(
+                $"Replay record parse failed. GameId={record.GameId}, Seq={record.Seq}, EventId={record.EventId}, Field={fieldName}.",
+                innerException);
         }
 
         private static string GetServerBuild()
