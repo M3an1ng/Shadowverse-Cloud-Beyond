@@ -306,20 +306,39 @@ public class UsersController : ControllerBase
         var avatarFolder = Path.Combine(workspaceRoot, "assets", "avatars", userId.ToString());
         Directory.CreateDirectory(avatarFolder);
 
-        var fileName = $"avatar{extension.ToLowerInvariant()}";
+        // A failed copy must not overwrite the currently published avatar.
+        var fileName = $"avatar-{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
         var filePath = Path.Combine(avatarFolder, fileName);
         var newPath = $"/assets/avatars/{userId}/{fileName}";
 
-        TryDeleteExistingAvatar(workspaceRoot, user.AvatarUrl, newPath);
+        var existingPath = user.AvatarUrl;
 
-        await using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+        try
         {
+            await using var stream = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             await file.CopyToAsync(stream, cancellationToken);
         }
+        catch
+        {
+            System.IO.File.Delete(filePath);
+            throw;
+        }
 
-        user.AvatarUrl = newPath;
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        var previousUpdatedAt = user.UpdatedAt;
+        try
+        {
+            user.AvatarUrl = newPath;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            user.AvatarUrl = existingPath;
+            user.UpdatedAt = previousUpdatedAt;
+            System.IO.File.Delete(filePath);
+            throw;
+        }
+        TryDeleteExistingAvatar(workspaceRoot, existingPath, newPath);
 
         return Ok(new AvatarUploadResponse
         {
