@@ -105,12 +105,12 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         /// <param name="gameId">The ID of the game.</param>
         /// <param name="actionWrapper">The player action to enqueue.</param>
-        public Task EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper actionWrapper)
+        public Task<bool> EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper actionWrapper)
         {
             if (string.IsNullOrEmpty(gameId) || actionWrapper == null)
             {
                 _logger.LogWarning("[EnqueuePlayerActionAsync] Invalid arguments: gameId or actionWrapper is null/empty.");
-                return Task.CompletedTask;
+                return Task.FromResult(false);
             }
 
             _logger.LogDebug("[EnqueuePlayerActionAsync:{GameId}] Received action {ActionType} from Player {PlayerId} with ActionId {ActionId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId, actionWrapper.ActionId);
@@ -120,7 +120,7 @@ namespace ShadowverseBeyond.Server.Services
                 if (_retiringGameIds.ContainsKey(gameId) || !_gameStates.ContainsKey(gameId))
                 {
                     _logger.LogWarning("[EnqueuePlayerActionAsync:{GameId}] Action rejected because the game is no longer active.", gameId);
-                    return Task.CompletedTask;
+                    return Task.FromResult(false);
                 }
 
                 var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
@@ -136,7 +136,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         private readonly IClientMethodMapper _clientMethodMapper; // Added field declaration

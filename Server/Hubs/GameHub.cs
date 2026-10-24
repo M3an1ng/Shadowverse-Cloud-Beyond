@@ -61,6 +61,7 @@ namespace ShadowverseBeyond.Server.Hubs
         private static readonly TimeSpan DisconnectGracePeriod = TimeSpan.FromSeconds(GameConstants.Network.DefaultConnectionTimeoutSeconds);
         private const string DisconnectCachePrefix = "PendingDisconnect";
         private static readonly ConcurrentDictionary<string, CancellationTokenSource> _disconnectTimeouts = new();
+        private static readonly SemaphoreSlim _requestAdmissionLock = new(1, 1);
         private static readonly PlayerConnectionTracker _playerConnections = new();
 
         /// <summary>
@@ -171,29 +172,11 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <param name="requestId">A unique identifier for this specific request, used for idempotency.</param> // Added param doc
         public async Task EndTurn(string requestId) // Added requestId parameter
         {
-            // --- ADDED DEBUG LOGGING ---
-            _logger.LogInformation("HUB_DEBUG: Entering EndTurn method. Received Request ID type: {Type}, Value: '{Value}'", requestId?.GetType().Name ?? "null", requestId ?? "null");
-            if (string.IsNullOrEmpty(requestId))
+            if (string.IsNullOrWhiteSpace(requestId))
             {
-                _logger.LogError("HUB_CRITICAL: EndTurn method entered BUT requestId is NULL or EMPTY. Argument binding likely failed!");
-                // We might still get the InvalidDataException before this point if binding fails severely.
+                _logger.LogWarning("EndTurn called with null/empty requestId. ConnectionId={ConnectionId}", Context.ConnectionId);
+                return;
             }
-            // --- END ADDED DEBUG LOGGING ---
-
-            // Idempotency Check
-            var cacheKey = $"EndTurnRequest_{requestId}";
-            if (_memoryCache.TryGetValue(cacheKey, out _))
-            {
-                _logger.LogWarning("Duplicate EndTurn request received with ID: {RequestId}. Ignoring.", requestId);
-                // Optional: Send a specific message back? For now, just ignore.
-                // await Clients.Caller.ReceiveError($"Duplicate request ignored: {requestId}");
-                return; // Already processed this request
-            }
-
-            // Mark this request ID as processed. Set expiration (e.g., 1 minute)
-            var cacheEntryOptions = new MemoryCacheEntryOptions()
-                .SetAbsoluteExpiration(TimeSpan.FromMinutes(1)); // Adjust expiration as needed
-            _memoryCache.Set(cacheKey, true, cacheEntryOptions);
 
             _logger.LogInformation("<<<<< GameHub.EndTurn() METHOD ENTERED - RequestId: {RequestId}, ConnectionId: {ConnectionId} >>>>>", requestId, Context.ConnectionId);
 
@@ -220,7 +203,10 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, requestId);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                if (!await TryEnqueueClientRequestAsync(gameId, requestId, wrapper))
+                {
+                    return;
+                }
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued EndTurn action (RequestId: {RequestId}) in Game {GameId}.",
                     playerId, gameId, requestId);
@@ -367,20 +353,11 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <param name="requestId">A unique identifier for this specific request, used for idempotency.</param>
         public async Task Surrender(string requestId)
         {
-            if (string.IsNullOrEmpty(requestId))
+            if (string.IsNullOrWhiteSpace(requestId))
             {
                 _logger.LogWarning("Surrender called with null/empty requestId. ConnectionId={ConnectionId}", Context.ConnectionId);
                 return;
             }
-
-            var cacheKey = $"SurrenderRequest_{requestId}";
-            if (_memoryCache.TryGetValue(cacheKey, out _))
-            {
-                _logger.LogWarning("Duplicate Surrender request received with ID: {RequestId}. Ignoring.", requestId);
-                return;
-            }
-
-            _memoryCache.Set(cacheKey, true, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(1)));
 
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
             if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
@@ -401,7 +378,10 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing Surrender action (RequestId: {RequestId}).",
                     playerId, gameId, requestId);
 
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                if (!await TryEnqueueClientRequestAsync(gameId, requestId, wrapper))
+                {
+                    return;
+                }
             }
             catch (GameLogicException ex)
             {
@@ -412,6 +392,35 @@ namespace ShadowverseBeyond.Server.Hubs
             {
                 _logger.LogError(ex, "Unexpected error processing Surrender for Player {PlayerId} in Game {GameId}", playerId, gameId);
                 await Clients.Caller.ReceiveError("An unexpected server error occurred while surrendering.");
+            }
+        }
+
+        private async Task<bool> TryEnqueueClientRequestAsync(Guid gameId, string requestId, PlayerActionWrapper action)
+        {
+            var cacheKey = (gameId, action.PlayerId, action.ActionType, requestId);
+
+            // Hub 实例按调用创建；检查、入队和标记必须跨实例串行，避免并发重复入队。
+            await _requestAdmissionLock.WaitAsync();
+            try
+            {
+                if (_memoryCache.TryGetValue(cacheKey, out _))
+                {
+                    return false;
+                }
+
+                if (!await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), action))
+                {
+                    _logger.LogWarning("Action {ActionType} rejected before admission for Player {PlayerId} in Game {GameId}.",
+                        action.ActionType, action.PlayerId, gameId);
+                    return false;
+                }
+
+                _memoryCache.Set(cacheKey, true, TimeSpan.FromMinutes(1));
+                return true;
+            }
+            finally
+            {
+                _requestAdmissionLock.Release();
             }
         }
 

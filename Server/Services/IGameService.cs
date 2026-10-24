@@ -58,8 +58,8 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         /// <param name="gameId">The ID of the game instance.</param>
         /// <param name="action">The wrapper object containing action details.</param>
-        /// <returns>A task representing the asynchronous operation of enqueuing.</returns>
-        Task EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper action);
+        /// <returns>True when the action was admitted to the queue; false when the request or game is invalid.</returns>
+        Task<bool> EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper action);
 
         /// <summary>
         /// Handles the submission of a player's target choice, bypassing the main action queue.
