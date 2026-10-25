@@ -262,7 +262,11 @@ class Router {
         try {
             // 动态导入牌组编辑器模块
             const deckBuilderModule = await import('./deckBuilder.js');
-            await deckBuilderModule.initializeDeckBuilder();
+            await deckBuilderModule.initializeDeckBuilder({
+                getCurrentRoute: () => this.getCurrentRoute(),
+                getBeforeRouteChange: () => this.beforeRouteChange,
+                setBeforeRouteChange: callback => this.setBeforeRouteChange(callback)
+            });
         } catch (error) {
             console.error('Router: Failed to initialize deck builder:', error);
 

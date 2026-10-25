@@ -3,7 +3,6 @@
 // Implements the Deck Builder UI and logic.
 // Follows the "Aetherial Architect" aesthetic.
 
-import { router } from './router.js';
 import { getDeckOwnerQuery } from './userSession.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
 import { createDeckPreviewModal } from './components/deckPreviewModal.js';
@@ -147,6 +146,7 @@ const deckBattleReadyCache = new Map();
 const deckBattleReadyInFlight = new Map();
 let deckBuilderRouteGuardInstalled = false;
 let previousDeckBuilderRouteGuard = null;
+let routeAccess = null;
 let nextPendingDeckCreationRequestId = 1;
 
 function notifyDeckListUpdated(reason) {
@@ -217,7 +217,8 @@ let cardCatalogInvalidationListenerBound = false;
 
 // --- Initialization ---
 
-export async function initializeDeckBuilder() {
+export async function initializeDeckBuilder(routeCapabilities) {
+    routeAccess = routeCapabilities;
     container = document.getElementById('deck-builder-container');
     if (!container) {
         throw new Error("DeckBuilder: Container not found!");
@@ -580,7 +581,7 @@ function clearCurrentDeckState() {
 }
 
 function getCurrentRouteName() {
-    return typeof router?.getCurrentRoute === 'function' ? router.getCurrentRoute() : '';
+    return routeAccess.getCurrentRoute();
 }
 
 function beginPendingNewDeckCreation() {
@@ -742,12 +743,12 @@ async function handleDeckEditorExit({ renderSelectionOnComplete = true } = {}) {
 }
 
 function ensureDeckBuilderRouteGuard() {
-    if (deckBuilderRouteGuardInstalled || !router || typeof router.setBeforeRouteChange !== 'function') {
+    if (deckBuilderRouteGuardInstalled) {
         return;
     }
 
-    previousDeckBuilderRouteGuard = router.beforeRouteChange;
-    router.setBeforeRouteChange(async (oldRoute, newRoute, routeButton) => {
+    previousDeckBuilderRouteGuard = routeAccess.getBeforeRouteChange();
+    routeAccess.setBeforeRouteChange(async (oldRoute, newRoute, routeButton) => {
         if (typeof previousDeckBuilderRouteGuard === 'function') {
             const shouldContinue = await previousDeckBuilderRouteGuard(oldRoute, newRoute, routeButton);
             if (!shouldContinue) {
