@@ -352,16 +352,6 @@ public class UsersController : ControllerBase
         return user != null && user.IsActive && user.Role == UserRole.Admin;
     }
 
-    private static int ResolvePermissionLevel(UserRole role)
-    {
-        return role switch
-        {
-            UserRole.Admin => 100,
-            UserRole.Player => 10,
-            _ => 0
-        };
-    }
-
     private static bool TryParseManageableRole(string? rawRole, out UserRole role, out string? errorMessage)
     {
         role = UserRole.Player;
@@ -373,7 +363,7 @@ public class UsersController : ControllerBase
             return false;
         }
 
-        if (!Enum.TryParse<UserRole>(rawRole.Trim(), ignoreCase: true, out role))
+        if (!Enum.TryParse<UserRole>(rawRole.Trim(), ignoreCase: true, out role) || !Enum.IsDefined(role))
         {
             errorMessage = "Unsupported role.";
             return false;
@@ -395,7 +385,7 @@ public class UsersController : ControllerBase
             UserId = user.Id,
             Username = user.Username,
             Role = user.Role.ToString(),
-            PermissionLevel = ResolvePermissionLevel(user.Role),
+            PermissionLevel = UserRolePermissions.GetPermissionLevel(user.Role),
             Coins = coins,
             IsActive = user.IsActive,
             CreatedAt = user.CreatedAt,

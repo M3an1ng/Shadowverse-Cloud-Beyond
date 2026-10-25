@@ -1,4 +1,4 @@
-﻿// File: Server/Domain/Entities/CardInstance.cs
+// File: Server/Domain/Entities/CardInstance.cs
 //
 // 相关文档:
 // - 数据库设计: 文档/04-数据库设计/01-实体关系图.md
@@ -104,16 +104,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Future enhancement: Calculate as BaseCost + buff modifications.
         /// </summary>
         [DslExposable("当前费用", Description = "卡牌当前的费用（包含效果修正）")]
-        public int CurrentCost
-        {
-            get
-            {
-                var context = GameServiceProvider.CurrentGameContext;
-                return context == null
-                    ? Math.Max(0, BaseCost)
-                    : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveCost(this, context));
-            }
-        }
+        public int CurrentCost => GetCurrentCost(GameServiceProvider.CurrentGameContext);
+
+        public int GetCurrentCost(GameContext? context) => context == null
+            ? Math.Max(0, BaseCost)
+            : Math.Max(0, context.BuffService.GetEffectiveCost(this, context));
 
         /// <summary>
         /// Base attack from CardDefinition (before any buffs or effects).
@@ -126,16 +121,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Future enhancement: Calculate as BaseAttack + buff modifications.
         /// </summary>
         [DslExposable("当前攻击力", Description = "卡牌当前的攻击力（包含效果修正）")]
-        public int CurrentAttack
-        {
-            get
-            {
-                var context = GameServiceProvider.CurrentGameContext;
-                return context == null
-                    ? Math.Max(0, BaseAttack)
-                    : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveAttack(this, context));
-            }
-        }
+        public int CurrentAttack => GetCurrentAttack(GameServiceProvider.CurrentGameContext);
+
+        public int GetCurrentAttack(GameContext? context) => context == null
+            ? Math.Max(0, BaseAttack)
+            : Math.Max(0, context.BuffService.GetEffectiveAttack(this, context));
 
         /// <summary>
         /// Current health value (for units/leaders).
@@ -157,16 +147,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Maximum health value (for units/leaders).
         /// </summary>
         [DslExposable("最大生命值", Description = "卡牌的最大生命值（包含效果修正）")]
-        public int MaxHealth
-        {
-            get
-            {
-                var context = GameServiceProvider.CurrentGameContext;
-                return context == null
-                    ? Math.Max(0, BaseHealth)
-                    : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveMaxHealth(this, context));
-            }
-        }
+        public int MaxHealth => GetMaxHealth(GameServiceProvider.CurrentGameContext);
+
+        public int GetMaxHealth(GameContext? context) => context == null
+            ? Math.Max(0, BaseHealth)
+            : Math.Max(0, context.BuffService.GetEffectiveMaxHealth(this, context));
 
 
         /// <summary>
@@ -185,16 +170,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Note: This does not include keywords from buffs. The BuffService is responsible for the final list.
         /// </summary>
         [DslExposable("关键字", Description = "卡牌当前拥有的关键字列表")]
-        public List<CardKeyword> Keywords
-        {
-            get
-            {
-                var context = GameServiceProvider.CurrentGameContext;
-                return context == null
-                    ? BaseKeywords
-                    : GameServiceProvider.BuffService.GetEffectiveKeywords(this, context);
-            }
-        }
+        public List<CardKeyword> Keywords => GetKeywords(GameServiceProvider.CurrentGameContext);
+
+        public List<CardKeyword> GetKeywords(GameContext? context) => context == null
+            ? BaseKeywords
+            : context.BuffService.GetEffectiveKeywords(this, context);
 
         /// <summary>
         /// Gets the effect keywords aggregated from this card's abilities (deduplicated).
@@ -244,10 +224,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// Whether this card can attack this turn.
         /// </summary>
         [DslExposable("可以攻击", Description = "该卡牌本回合是否可以攻击")]
-        public bool CanAttack =>
-            !HasKeyword(CardKeyword.Shackle) &&
-            (HasKeyword(CardKeyword.Rush) || HasKeyword(CardKeyword.Storm) || IsEvolved || ZoneStayTurn > 0) &&
-            HasRemainingActionUsage(CardActionUsageType.Attack);
+        public bool CanAttack => CanAttackIn(GameServiceProvider.CurrentGameContext);
+
+        public bool CanAttackIn(GameContext? context)
+        {
+            var keywords = GetKeywords(context);
+            return !keywords.Contains(CardKeyword.Shackle) &&
+                (keywords.Contains(CardKeyword.Rush) || keywords.Contains(CardKeyword.Storm) || IsEvolved || ZoneStayTurn > 0) &&
+                GetActionUsageCount(CardActionUsageType.Attack) < GetActionUsageLimit(CardActionUsageType.Attack, context);
+        }
 
         /// <summary>
         /// Whether this card is silenced (loses all abilities and keywords but retains stat modifications).
@@ -315,12 +300,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         }
 
         public int GetActionUsageLimit(CardActionUsageType actionType)
-        {
-            var context = GameServiceProvider.CurrentGameContext;
-            return context == null
-                ? GetBaseActionUsageLimit(actionType)
-                : Math.Max(0, GameServiceProvider.BuffService.GetEffectiveActionUsageLimit(this, actionType, context));
-        }
+            => GetActionUsageLimit(actionType, GameServiceProvider.CurrentGameContext);
+
+        public int GetActionUsageLimit(CardActionUsageType actionType, GameContext? context) => context == null
+            ? GetBaseActionUsageLimit(actionType)
+            : Math.Max(0, context.BuffService.GetEffectiveActionUsageLimit(this, actionType, context));
 
         public bool HasRemainingActionUsage(CardActionUsageType actionType)
             => GetActionUsageCount(actionType) < GetActionUsageLimit(actionType);

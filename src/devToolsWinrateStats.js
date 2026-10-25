@@ -33,11 +33,66 @@ const DEFAULT_SORT = {
     class: { key: "winRate", direction: "desc", type: "number" }
 };
 
+const AGGREGATE_COUNTS = ["totalGames", "totalWins", "goingFirstGames", "goingFirstWins", "goingSecondGames", "goingSecondWins"];
+const AGGREGATE_RATES = ["winRate", "goingFirstWinRate", "goingSecondWinRate"];
+const STAT_ROW_FIELDS = {
+    cardStats: {
+        positive: ["cardDefinitionId"],
+        counts: ["deckGames", "deckWins", "drawnGames", "drawnWins", "playedGames", "playedWins"],
+        rates: ["deckWinRate", "drawnWinRate", "playedWinRate"],
+        text: ["cardName"]
+    },
+    deckStats: { counts: AGGREGATE_COUNTS, rates: AGGREGATE_RATES, text: ["deckShapeHash", "deckClass"], averages: ["averageEndTurn", "goingFirstAverageEndTurn", "goingSecondAverageEndTurn"], dates: ["updatedAtUtc"] },
+    classStats: { counts: AGGREGATE_COUNTS, rates: AGGREGATE_RATES, text: ["deckClass"], averages: ["averageEndTurn", "goingFirstAverageEndTurn", "goingSecondAverageEndTurn"], dates: ["updatedAtUtc"] },
+    cards: { positive: ["cardDefinitionId", "count"], counts: ["cost"], text: ["name", "type", "rarity"] }
+};
+
 function pickValue(source, camelKey, pascalKey) {
     if (!source || typeof source !== "object") return null;
     if (source[camelKey] != null) return source[camelKey];
     if (source[pascalKey] != null) return source[pascalKey];
     return null;
+}
+
+
+async function readStatsResponse(response) {
+    if (!response.ok) {
+        const text = await response.text();
+        const contentType = response.headers.get("content-type") || "";
+        const payload = contentType.includes("application/json") ? JSON.parse(text) : null;
+        const message = payload?.message || payload?.Message || text || `HTTP ${response.status}`;
+        throw new Error(message);
+    }
+    return response.json();
+}
+
+function readStatsRows(payload, camelKey, pascalKey) {
+    const rows = pickValue(payload, camelKey, pascalKey);
+    if (!Array.isArray(rows)) {
+        throw new TypeError(`统计响应中的 ${camelKey} 必须为数组。`);
+    }
+    const contract = STAT_ROW_FIELDS[camelKey];
+    rows.forEach((row, index) => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+            throw new TypeError(`${camelKey}[${index}] 必须为统计对象。`);
+        }
+        for (const [kind, fields] of Object.entries(contract)) {
+            for (const field of fields) {
+                const value = pickValue(row, field, field[0].toUpperCase() + field.slice(1));
+                const valid = kind === "text"
+                    ? typeof value === "string" && value.trim().length > 0
+                    : kind === "dates"
+                        ? typeof value === "string" && !Number.isNaN(Date.parse(value))
+                        : kind === "averages"
+                            ? value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0)
+                            : kind === "rates"
+                                ? typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
+                                : Number.isSafeInteger(value) && value >= (kind === "positive" ? 1 : 0);
+                if (!valid) throw new TypeError(`${camelKey}[${index}].${field} 无效。`);
+            }
+        }
+    });
+    return rows;
 }
 
 export function getWinrateDeckCode(payload) {
@@ -181,16 +236,8 @@ function parseTimestamp(value) {
     return date.getTime();
 }
 
-function normalizeRate(rawRate, wins, games) {
-    const totalGames = toInt(games, 0);
-    if (totalGames <= 0) return 0;
-
-    const rate = toNumber(rawRate, NaN);
-    if (Number.isFinite(rate)) {
-        return Math.round(rate * 100) / 100;
-    }
-
-    return Math.round((toInt(wins, 0) / totalGames) * 10000) / 100;
+function normalizeRate(rate, games) {
+    return games === 0 ? 0 : Math.round(rate * 100) / 100;
 }
 
 function formatRate(rate, games) {
@@ -239,6 +286,8 @@ class DevToolsWinrateStats {
         this.classStats = [];
         this.deckPreview = null;
         this.activeDeckCode = "";
+        this.summaryRequest = null;
+        this.deckRequest = null;
     }
 
     async init() {
@@ -467,6 +516,8 @@ class DevToolsWinrateStats {
 
 
         const sessionHandler = () => {
+            this.closeDeckPreview();
+            this.cancelSummaryRequest();
             if (this.isModalOpen) {
                 void this.refreshSummary(true);
             }
@@ -544,8 +595,9 @@ class DevToolsWinrateStats {
     }
 
     closeModal() {
-        if (!this.modalEl) return;
+        this.cancelSummaryRequest();
         this.closeDeckPreview();
+        if (!this.modalEl) return;
         this.modalEl.classList.remove("active");
         this.modalEl.setAttribute("aria-hidden", "true");
         this.isModalOpen = false;
@@ -701,58 +753,58 @@ class DevToolsWinrateStats {
     }
 
     normalizeCardStats(items) {
-        return (Array.isArray(items) ? items : []).map((item) => {
-            const cardDefinitionId = toInt(pickValue(item, "cardDefinitionId", "CardDefinitionId"), 0);
-            const cardName = String(pickValue(item, "cardName", "CardName") || `卡牌 #${cardDefinitionId}`);
-            const deckGames = toInt(pickValue(item, "deckGames", "DeckGames"), 0);
-            const deckWins = toInt(pickValue(item, "deckWins", "DeckWins"), 0);
-            const drawnGames = toInt(pickValue(item, "drawnGames", "DrawnGames"), 0);
-            const drawnWins = toInt(pickValue(item, "drawnWins", "DrawnWins"), 0);
-            const playedGames = toInt(pickValue(item, "playedGames", "PlayedGames"), 0);
-            const playedWins = toInt(pickValue(item, "playedWins", "PlayedWins"), 0);
+        return items.map((item) => {
+            const cardDefinitionId = pickValue(item, "cardDefinitionId", "CardDefinitionId");
+            const cardName = pickValue(item, "cardName", "CardName");
+            const deckGames = pickValue(item, "deckGames", "DeckGames");
+            const deckWins = pickValue(item, "deckWins", "DeckWins");
+            const drawnGames = pickValue(item, "drawnGames", "DrawnGames");
+            const drawnWins = pickValue(item, "drawnWins", "DrawnWins");
+            const playedGames = pickValue(item, "playedGames", "PlayedGames");
+            const playedWins = pickValue(item, "playedWins", "PlayedWins");
 
             return {
                 cardDefinitionId,
                 cardName,
                 deckGames,
                 deckWins,
-                deckWinRate: normalizeRate(pickValue(item, "deckWinRate", "DeckWinRate"), deckWins, deckGames),
+                deckWinRate: normalizeRate(pickValue(item, "deckWinRate", "DeckWinRate"), deckGames),
                 drawnGames,
                 drawnWins,
-                drawnWinRate: normalizeRate(pickValue(item, "drawnWinRate", "DrawnWinRate"), drawnWins, drawnGames),
+                drawnWinRate: normalizeRate(pickValue(item, "drawnWinRate", "DrawnWinRate"), drawnGames),
                 playedGames,
                 playedWins,
-                playedWinRate: normalizeRate(pickValue(item, "playedWinRate", "PlayedWinRate"), playedWins, playedGames)
+                playedWinRate: normalizeRate(pickValue(item, "playedWinRate", "PlayedWinRate"), playedGames)
             };
         });
     }
 
     normalizeDeckStats(items) {
-        return (Array.isArray(items) ? items : []).map((item) => {
-            const totalGames = toInt(pickValue(item, "totalGames", "TotalGames"), 0);
-            const totalWins = toInt(pickValue(item, "totalWins", "TotalWins"), 0);
-            const goingFirstGames = toInt(pickValue(item, "goingFirstGames", "GoingFirstGames"), 0);
-            const goingFirstWins = toInt(pickValue(item, "goingFirstWins", "GoingFirstWins"), 0);
-            const goingSecondGames = toInt(pickValue(item, "goingSecondGames", "GoingSecondGames"), 0);
-            const goingSecondWins = toInt(pickValue(item, "goingSecondWins", "GoingSecondWins"), 0);
+        return items.map((item) => {
+            const totalGames = pickValue(item, "totalGames", "TotalGames");
+            const totalWins = pickValue(item, "totalWins", "TotalWins");
+            const goingFirstGames = pickValue(item, "goingFirstGames", "GoingFirstGames");
+            const goingFirstWins = pickValue(item, "goingFirstWins", "GoingFirstWins");
+            const goingSecondGames = pickValue(item, "goingSecondGames", "GoingSecondGames");
+            const goingSecondWins = pickValue(item, "goingSecondWins", "GoingSecondWins");
             const updatedAt = pickValue(item, "updatedAtUtc", "UpdatedAtUtc");
             const averageEndTurn = toNullableNumber(pickValue(item, "averageEndTurn", "AverageEndTurn"));
             const goingFirstAverageEndTurn = toNullableNumber(pickValue(item, "goingFirstAverageEndTurn", "GoingFirstAverageEndTurn"));
             const goingSecondAverageEndTurn = toNullableNumber(pickValue(item, "goingSecondAverageEndTurn", "GoingSecondAverageEndTurn"));
 
             return {
-                deckShapeHash: String(pickValue(item, "deckShapeHash", "DeckShapeHash") || "-"),
-                deckClassRaw: String(pickValue(item, "deckClass", "DeckClass") || ""),
+                deckShapeHash: pickValue(item, "deckShapeHash", "DeckShapeHash"),
+                deckClassRaw: pickValue(item, "deckClass", "DeckClass"),
                 deckClass: getClassLabel(pickValue(item, "deckClass", "DeckClass")),
                 totalGames,
                 totalWins,
-                winRate: normalizeRate(pickValue(item, "winRate", "WinRate"), totalWins, totalGames),
+                winRate: normalizeRate(pickValue(item, "winRate", "WinRate"), totalGames),
                 goingFirstGames,
                 goingFirstWins,
-                goingFirstWinRate: normalizeRate(pickValue(item, "goingFirstWinRate", "GoingFirstWinRate"), goingFirstWins, goingFirstGames),
+                goingFirstWinRate: normalizeRate(pickValue(item, "goingFirstWinRate", "GoingFirstWinRate"), goingFirstGames),
                 goingSecondGames,
                 goingSecondWins,
-                goingSecondWinRate: normalizeRate(pickValue(item, "goingSecondWinRate", "GoingSecondWinRate"), goingSecondWins, goingSecondGames),
+                goingSecondWinRate: normalizeRate(pickValue(item, "goingSecondWinRate", "GoingSecondWinRate"), goingSecondGames),
                 averageEndTurn,
                 goingFirstAverageEndTurn,
                 goingSecondAverageEndTurn,
@@ -763,27 +815,27 @@ class DevToolsWinrateStats {
     }
 
     normalizeClassStats(items) {
-        return (Array.isArray(items) ? items : []).map((item) => {
-            const totalGames = toInt(pickValue(item, "totalGames", "TotalGames"), 0);
-            const totalWins = toInt(pickValue(item, "totalWins", "TotalWins"), 0);
-            const goingFirstGames = toInt(pickValue(item, "goingFirstGames", "GoingFirstGames"), 0);
-            const goingFirstWins = toInt(pickValue(item, "goingFirstWins", "GoingFirstWins"), 0);
-            const goingSecondGames = toInt(pickValue(item, "goingSecondGames", "GoingSecondGames"), 0);
-            const goingSecondWins = toInt(pickValue(item, "goingSecondWins", "GoingSecondWins"), 0);
+        return items.map((item) => {
+            const totalGames = pickValue(item, "totalGames", "TotalGames");
+            const totalWins = pickValue(item, "totalWins", "TotalWins");
+            const goingFirstGames = pickValue(item, "goingFirstGames", "GoingFirstGames");
+            const goingFirstWins = pickValue(item, "goingFirstWins", "GoingFirstWins");
+            const goingSecondGames = pickValue(item, "goingSecondGames", "GoingSecondGames");
+            const goingSecondWins = pickValue(item, "goingSecondWins", "GoingSecondWins");
             const updatedAt = pickValue(item, "updatedAtUtc", "UpdatedAtUtc");
-            const deckClassRaw = String(pickValue(item, "deckClass", "DeckClass") || "");
+            const deckClassRaw = pickValue(item, "deckClass", "DeckClass");
             return {
                 deckClassRaw,
                 deckClass: getClassLabel(deckClassRaw),
                 totalGames,
                 totalWins,
-                winRate: normalizeRate(pickValue(item, "winRate", "WinRate"), totalWins, totalGames),
+                winRate: normalizeRate(pickValue(item, "winRate", "WinRate"), totalGames),
                 goingFirstGames,
                 goingFirstWins,
-                goingFirstWinRate: normalizeRate(pickValue(item, "goingFirstWinRate", "GoingFirstWinRate"), goingFirstWins, goingFirstGames),
+                goingFirstWinRate: normalizeRate(pickValue(item, "goingFirstWinRate", "GoingFirstWinRate"), goingFirstGames),
                 goingSecondGames,
                 goingSecondWins,
-                goingSecondWinRate: normalizeRate(pickValue(item, "goingSecondWinRate", "GoingSecondWinRate"), goingSecondWins, goingSecondGames),
+                goingSecondWinRate: normalizeRate(pickValue(item, "goingSecondWinRate", "GoingSecondWinRate"), goingSecondGames),
                 averageEndTurn: toNullableNumber(pickValue(item, "averageEndTurn", "AverageEndTurn")),
                 goingFirstAverageEndTurn: toNullableNumber(pickValue(item, "goingFirstAverageEndTurn", "GoingFirstAverageEndTurn")),
                 goingSecondAverageEndTurn: toNullableNumber(pickValue(item, "goingSecondAverageEndTurn", "GoingSecondAverageEndTurn")),
@@ -794,13 +846,13 @@ class DevToolsWinrateStats {
     }
 
     normalizeDeckCompositionCards(items) {
-        return (Array.isArray(items) ? items : []).map((item) => {
-            const cardDefinitionId = toInt(pickValue(item, "cardDefinitionId", "CardDefinitionId"), 0);
-            const count = toInt(pickValue(item, "count", "Count"), 0);
-            const cost = toInt(pickValue(item, "cost", "Cost"), 0);
-            const name = String(pickValue(item, "name", "Name") || `卡牌 #${cardDefinitionId}`);
-            const type = String(pickValue(item, "type", "Type") || "未知");
-            const rarity = String(pickValue(item, "rarity", "Rarity") || "");
+        return items.map((item) => {
+            const cardDefinitionId = pickValue(item, "cardDefinitionId", "CardDefinitionId");
+            const count = pickValue(item, "count", "Count");
+            const cost = pickValue(item, "cost", "Cost");
+            const name = pickValue(item, "name", "Name");
+            const type = pickValue(item, "type", "Type");
+            const rarity = pickValue(item, "rarity", "Rarity");
             const artPreview = String(pickValue(item, "artPreview", "ArtPreview") || "");
             return {
                 cardDefinitionId,
@@ -811,7 +863,7 @@ class DevToolsWinrateStats {
                 rarity,
                 artPreview
             };
-        }).filter((item) => item.cardDefinitionId > 0 && item.count > 0);
+        });
     }
 
     findDeckStatsByHash(deckShapeHash) {
@@ -820,7 +872,7 @@ class DevToolsWinrateStats {
         return this.deckStats.find((item) =>
             String(item.deckShapeHash ?? "").trim().toUpperCase() === targetHash) ?? null;
     }
-    async fetchDeckCompositionByHash(deckShapeHash) {
+    async fetchDeckCompositionByHash(deckShapeHash, signal) {
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) {
             throw new Error("请先登录后再查看卡组构筑。");
@@ -834,32 +886,26 @@ class DevToolsWinrateStats {
         params.set("deckRule", selectedDeckRule);
         params.set("deckShapeHash", deckShapeHash);
 
-        const response = await fetch(`${DECK_COMPOSITION_ENDPOINT}?${params.toString()}`, { method: "GET" });
-        let payload = null;
-        try {
-            payload = await response.json();
-        } catch (err) {
-            // ignore parse errors
-        }
-
-        if (!response.ok) {
-            const message = payload?.message || payload?.Message || response.statusText;
-            throw new Error(message || `HTTP ${response.status}`);
-        }
+        const response = await fetch(`${DECK_COMPOSITION_ENDPOINT}?${params.toString()}`, { method: "GET", signal });
+        const payload = await readStatsResponse(response);
 
         return payload;
     }
 
     async openDeckPreviewByHash(deckShapeHash, fallbackDeckClass = "未知职业") {
+        this.closeDeckPreview();
         if (!this.deckPreview?.isAvailable()) {
             this.setMessage("卡组预览界面不可用。", true);
             return;
         }
 
+        const request = new AbortController();
+        this.deckRequest = request;
         try {
             this.setMessage("正在加载卡组构筑...");
-            const payload = await this.fetchDeckCompositionByHash(deckShapeHash);
-            const cardsRaw = pickValue(payload, "cards", "Cards");
+            const payload = await this.fetchDeckCompositionByHash(deckShapeHash, request.signal);
+            if (this.deckRequest !== request) return;
+            const cardsRaw = readStatsRows(payload, "cards", "Cards");
             const cards = this.normalizeDeckCompositionCards(cardsRaw);
 
             const deckClassRaw = String(pickValue(payload, "deckClass", "DeckClass") || fallbackDeckClass || "");
@@ -893,16 +939,30 @@ class DevToolsWinrateStats {
             const totalCount = cards.reduce((sum, item) => sum + toInt(item.count, 0), 0);
             this.setMessage(`卡组构筑已加载：${totalCount} 张卡牌。`);
         } catch (error) {
+            if (this.deckRequest !== request) return;
             this.setMessage(`加载卡组构筑失败：${error?.message || String(error)}`, true);
+        } finally {
+            if (this.deckRequest === request) this.deckRequest = null;
         }
     }
 
     closeDeckPreview() {
+        this.deckRequest?.abort();
+        this.deckRequest = null;
+        this.activeDeckCode = "";
         this.deckPreview?.close();
+    }
+
+    cancelSummaryRequest() {
+        this.summaryRequest?.abort();
+        this.summaryRequest = null;
+        this.setBusy(false);
     }
 
     async refreshSummary(force = false) {
         if (!this.isModalOpen && !force) return;
+        this.cancelSummaryRequest();
+        this.closeDeckPreview();
 
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) {
@@ -956,25 +1016,18 @@ class DevToolsWinrateStats {
             params.set("endDate", endDateUtc);
         }
 
+        const request = new AbortController();
+        this.summaryRequest = request;
         this.setBusy(true);
         this.setMessage("正在加载胜率统计...");
         try {
-            const response = await fetch(`${SUMMARY_ENDPOINT}?${params.toString()}`, { method: "GET" });
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (err) {
-                // ignore parse errors
-            }
+            const response = await fetch(`${SUMMARY_ENDPOINT}?${params.toString()}`, { method: "GET", signal: request.signal });
+            const payload = await readStatsResponse(response);
+            if (this.summaryRequest !== request) return;
 
-            if (!response.ok) {
-                const message = payload?.message || payload?.Message || response.statusText;
-                throw new Error(message || `HTTP ${response.status}`);
-            }
-
-            const cardStatsRaw = pickValue(payload, "cardStats", "CardStats");
-            const deckStatsRaw = pickValue(payload, "deckStats", "DeckStats");
-            const classStatsRaw = pickValue(payload, "classStats", "ClassStats");
+            const cardStatsRaw = readStatsRows(payload, "cardStats", "CardStats");
+            const deckStatsRaw = readStatsRows(payload, "deckStats", "DeckStats");
+            const classStatsRaw = readStatsRows(payload, "classStats", "ClassStats");
             const generatedAt = formatTimestamp(pickValue(payload, "generatedAtUtc", "GeneratedAtUtc"));
 
             this.cardStats = this.normalizeCardStats(cardStatsRaw);
@@ -990,6 +1043,7 @@ class DevToolsWinrateStats {
             this.updateSortIndicators();
             this.setMessage(`已加载：卡牌 ${this.cardStats.length} 行，卡组 ${this.deckStats.length} 行，职业 ${this.classStats.length} 行。`);
         } catch (error) {
+            if (this.summaryRequest !== request) return;
             this.cardStats = [];
             this.deckStats = [];
             this.classStats = [];
@@ -1000,7 +1054,10 @@ class DevToolsWinrateStats {
             if (this.generatedAtEl) this.generatedAtEl.textContent = "-";
             this.setMessage(`加载失败：${error?.message || String(error)}`, true);
         } finally {
-            this.setBusy(false);
+            if (this.summaryRequest === request) {
+                this.summaryRequest = null;
+                this.setBusy(false);
+            }
         }
     }
 

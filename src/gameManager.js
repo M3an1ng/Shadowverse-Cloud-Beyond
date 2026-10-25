@@ -60,42 +60,48 @@ function syncCounterSummaryEntries(target, key, value) {
 }
 
 // 核心游戏状态 (可导出或通过函数访问)
-export let gameState = {
-    players: [], // 存储 Player 实例
-    currentPlayerId: null,
-    turnNumber: 0,
-    // 'Mulligan', 'TurnStart', 'Main', 'Battle', 'TurnEnd', 'GameOver'
-    gameId: null, // Unique ID for the current game session
-    localPlayerId: null, // ID of the player using this client instance
-    gamePhase: "Initializing",
-    activePlayer: null, // 对当前玩家实例的引用
-    opponentPlayer: null, // 对对手玩家实例的引用
-    gameOver: false,
-    winner: null,
-    selectedCardUid: null, // 手牌中选中的卡 (用于出牌或查看详情)
-    selectedAttackerUid: null, // 战场上选中的攻击者
-    player1MulliganComplete: false, // Player 1 mulligan status
-    player2MulliganComplete: false, // Player 2 mulligan status
-    // 稍后可能添加: eventLog, effectQueue 等
-    lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
-    playabilityCache: {}, // Cache for hand playability { [playerId]: { [cardUid]: PlayabilityResultDto } }
-    actPlayabilityCache: {}, // Cache for Act playability results { [playerId]: { [cardUid]: ActPlayabilityResultDto } }
-    playabilityUpdateClock: {
-        hand: {},
-        act: {}
-    },
-    gameLog: [], // Local rolling log for UI display
-    chatMessages: [], // Room chat history shown in chat panel
-    isSpectator: false, // Spectator mode disables actions
-    turnTimeoutSeconds: 0,
-    turnStartedAtUtc: null,
-    turnEndsAtUtc: null,
-    dualControl: false,
-    dualControlSeatIds: {
-        hostPlayerId: null,
-        guestPlayerId: null
-    }
-};
+function createInitialGameState() {
+    return {
+        players: [], // 存储 Player 实例
+        currentPlayerId: null,
+        turnNumber: 0,
+        // 'Mulligan', 'TurnStart', 'Main', 'Battle', 'TurnEnd', 'GameOver'
+        gameId: null, // Unique ID for the current game session
+        localPlayerId: null, // ID of the player using this client instance
+        gamePhase: "Initializing",
+        phase: "Initializing",
+        isEndingTurn: false,
+        activePlayer: null, // 对当前玩家实例的引用
+        opponentPlayer: null, // 对对手玩家实例的引用
+        gameOver: false,
+        winner: null,
+        selectedCardUid: null, // 手牌中选中的卡 (用于出牌或查看详情)
+        selectedAttackerUid: null, // 战场上选中的攻击者
+        player1MulliganComplete: false, // Player 1 mulligan status
+        player2MulliganComplete: false, // Player 2 mulligan status
+        // 稍后可能添加: eventLog, effectQueue 等
+        lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
+        playabilityCache: {}, // Cache for hand playability { [playerId]: { [cardUid]: PlayabilityResultDto } }
+        actPlayabilityCache: {}, // Cache for Act playability results { [playerId]: { [cardUid]: ActPlayabilityResultDto } }
+        playabilityUpdateClock: {
+            hand: {},
+            act: {}
+        },
+        gameLog: [], // Local rolling log for UI display
+        chatMessages: [], // Room chat history shown in chat panel
+        isSpectator: false, // Spectator mode disables actions
+        turnTimeoutSeconds: 0,
+        turnStartedAtUtc: null,
+        turnEndsAtUtc: null,
+        dualControl: false,
+        dualControlSeatIds: {
+            hostPlayerId: null,
+            guestPlayerId: null
+        }
+    };
+}
+
+export const gameState = createInitialGameState();
 
 let turnTimerIntervalId = null;
 let turnTimerEndsAtMs = null;
@@ -617,6 +623,10 @@ export function setSignalRConnection(connection) {
     // This function now only sets the connection object for use by action-sending functions (e.g., playCard, endTurnRequest).
     // All event listeners are now registered in main.js's registerSignalREventHandlers.
     signalRConnection = connection || null;
+    if (!signalRConnection) {
+        stopTurnTimer();
+        gameView.updateTurnTimerDisplay(0, 0, false);
+    }
 }
 export function setGuestSignalRConnection(connection) {
     signalRGuestConnection = connection || null;
@@ -791,13 +801,31 @@ function selectDualControlMulliganSeat() {
     gameView.resetMulliganSelection();
 }
 
+function resetGameSessionState() {
+    stopTurnTimer();
+    resetPlayabilityResyncState();
+    resetPlayCardRequestLocks();
+    lastHandledChoiceRequestKey = null;
+    pendingChatClientMessageIds.clear();
+    // 保留状态对象本身，读者不会继续持有上一局的容器。
+    Object.assign(gameState, createInitialGameState());
+    gameView.updateTurnTimerDisplay(0, 0, false);
+    gameView.renderGameLog(gameState.gameLog);
+    gameView.clearInMatchChatUiState();
+    gameView.clearInMatchUsedCardUiState();
+}
+
+export function clearGameSession() {
+    signalRConnection = null;
+    signalRGuestConnection = null;
+    resetGameSessionState();
+}
+
 export function initializeGame(idOfGame, idOfPlayer, options = {}) {
-    // ADDED export
-    // Reset or initialize a minimal local state structure if needed.
-    // Primarily, store the IDs for context.
-    gameState.gameId = idOfGame; // Use properties added earlier
-    gameState.localPlayerId = idOfPlayer; // Use properties added earlier
-    gameState.isSpectator = false;
+    resetGameSessionState();
+    gameState.gameId = idOfGame;
+    gameState.localPlayerId = idOfPlayer;
+    gameState.phase = gameState.gamePhase = 'Connecting';
     gameState.dualControl = options.dualControl === true;
     gameState.dualControlSeatIds = {
         hostPlayerId: options.hostPlayerId || idOfPlayer || null,
@@ -806,62 +834,26 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     if (!gameState.dualControl) {
         signalRGuestConnection = null;
     }
-
-    // Clear out potentially stale complex objects from previous local games
-    gameState.players = []; // Server will populate this via ReceiveGameState
-    gameState.activePlayer = null;
-    gameState.opponentPlayer = null;
-    gameState.turnNumber = 0;
-    gameState.phase = "Connecting"; // Indicate waiting for server state
-    gameState.gameOver = false;
-    gameState.winner = null;
-    gameState.selectedCardUid = null;
-    gameState.selectedAttackerUid = null;
-    gameState.playabilityCache = {};
-    gameState.actPlayabilityCache = {};
-    gameState.playabilityUpdateClock = { hand: {}, act: {} };
-    resetPlayabilityResyncState();
-    resetPlayCardRequestLocks();
-    gameState.gameLog = []; // Reset log on new session
-    gameState.chatMessages = [];
-    pendingChatClientMessageIds.clear();
-    gameView.renderGameLog(gameState.gameLog);
-    gameView.clearInMatchChatUiState();
-    gameView.clearInMatchUsedCardUiState();
-
-} // Closing brace for initializeGame
+}
 
 export function initializeSpectator(gameId) {
+    resetGameSessionState();
     gameState.gameId = gameId;
-    gameState.localPlayerId = null;
     gameState.isSpectator = true;
-    gameState.dualControl = false;
-    gameState.dualControlSeatIds = {
-        hostPlayerId: null,
-        guestPlayerId: null
-    };
+    gameState.phase = gameState.gamePhase = 'Connecting';
     signalRGuestConnection = null;
+}
 
-    gameState.players = [];
-    gameState.activePlayer = null;
-    gameState.opponentPlayer = null;
-    gameState.turnNumber = 0;
-    gameState.phase = "Connecting";
-    gameState.gameOver = false;
-    gameState.winner = null;
-    gameState.selectedCardUid = null;
-    gameState.selectedAttackerUid = null;
-    gameState.playabilityCache = {};
-    gameState.actPlayabilityCache = {};
-    gameState.playabilityUpdateClock = { hand: {}, act: {} };
-    resetPlayabilityResyncState();
-    resetPlayCardRequestLocks();
-    gameState.gameLog = [];
-    gameState.chatMessages = [];
-    pendingChatClientMessageIds.clear();
-    gameView.renderGameLog(gameState.gameLog);
-    gameView.clearInMatchChatUiState();
-    gameView.clearInMatchUsedCardUiState();
+export function selectHandCard(cardUid) {
+    gameState.selectedCardUid = String(cardUid ?? '').trim() || null;
+    return gameState.selectedCardUid;
+}
+
+export function switchSpectatorPerspective() {
+    if (!gameState.isSpectator || gameState.players.length < 2) return;
+    gameState.localPlayerId = gameState.players.find(player => player.id !== gameState.localPlayerId).id;
+    gameView.clearSelectionHighlights();
+    gameView.renderGame(gameState);
 }
 
 // --- Game Log Helpers ---

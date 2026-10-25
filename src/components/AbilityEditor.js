@@ -85,6 +85,8 @@ export class AbilityEditor extends MetadataDrivenComponent {
      * 标准化能力配置对象
      */
     normalizeAbility(ability) {
+        // 编辑草稿独立持有 JSON 配置，取消编辑不能改动调用者的嵌套内容。
+        ability = JSON.parse(JSON.stringify(ability));
         const auraConfig = this.normalizeAuraConfig(ability);
         const rawTrigger = ability.trigger || ability.Trigger || {};
         const broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
@@ -1008,34 +1010,6 @@ export class AbilityEditor extends MetadataDrivenComponent {
         container.appendChild(wrapper);
     }
 
-    /**
-     * 创建切换开关 (Toggle Switch)
-     */
-    createToggleSwitch(checked, onChange, labelText) {
-        const wrapper = document.createElement('label');
-        wrapper.className = 'toggle-switch-wrapper';
-        
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        input.addEventListener('change', (e) => onChange(e.target.checked));
-        
-        const slider = document.createElement('span');
-        slider.className = 'toggle-slider';
-        
-        const label = document.createElement('span');
-        label.className = 'toggle-label';
-        label.textContent = labelText;
-        
-        wrapper.appendChild(input);
-        wrapper.appendChild(slider);
-        wrapper.appendChild(label);
-        
-        return wrapper;
-    }
-
-    // ... (保留原有的辅助方法: updateAbility, loadAbilityTagOptions, buildFinalConfig, cleanup) ...
-    
     updateAbility(updates) {
         const nextAbility = { ...this.ability, ...updates };
         if (Object.prototype.hasOwnProperty.call(updates || {}, 'trigger')
@@ -1053,10 +1027,6 @@ export class AbilityEditor extends MetadataDrivenComponent {
         }
 
         const effects = Array.isArray(ability.effects) ? ability.effects : [];
-        if (!this.effectEditor?.synchronizeDecisionBranchTriggers) {
-            return { ...ability, effects };
-        }
-
         return {
             ...ability,
             effects: this.effectEditor.synchronizeDecisionBranchTriggers(effects, ability.trigger)
@@ -1273,18 +1243,11 @@ export class AbilityEditor extends MetadataDrivenComponent {
             playerCounterRegistrations
         };
         const cleanedAbility = this.stripUiFields(finalAbility);
-        const normalizedEffects = this.effectEditor?.synchronizeDecisionBranchTriggers
-            ? this.effectEditor.synchronizeDecisionBranchTriggers(cleanedAbility.effects, cleanedAbility.trigger)
-            : cleanedAbility.effects;
-        cleanedAbility.effects = normalizedEffects;
-        const finalizedEffects = this.effectEditor?.buildEffectsForSave
-            ? this.effectEditor.buildEffectsForSave(cleanedAbility.effects, this.metadata)
-            : cleanedAbility.effects;
+        cleanedAbility.effects = this.effectEditor.synchronizeDecisionBranchTriggers(cleanedAbility.effects, cleanedAbility.trigger);
+        const finalizedEffects = this.effectEditor.buildEffectsForSave(cleanedAbility.effects, this.metadata);
         const isAuraMode = this.isAuraMode();
         const auraConfig = this.ability?.auraConfig || {};
-        const finalizedBuffConfigs = this.statusEditor?.buildBuffConfigsForSave
-            ? this.statusEditor.buildBuffConfigsForSave(auraConfig.buffConfigs || [])
-            : (auraConfig.buffConfigs || []);
+        const finalizedBuffConfigs = this.statusEditor.buildBuffConfigsForSave(auraConfig.buffConfigs || []);
         const auraPayload = {
             name: auraConfig.name || cleanedAbility.name || '',
             isEnabled: auraConfig.isEnabled !== false,

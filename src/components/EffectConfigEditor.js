@@ -150,7 +150,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         const headerActions = document.createElement('div');
         headerActions.className = 'header-actions';
 
-        const toggle = this.createToggleSwitch(
+        const toggle = this.createAccordionToggleSwitch(
             isEnabled,
             (checked) => {
                 this.updateEffect(index, { isEnabled: checked });
@@ -166,7 +166,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 }
             },
             '',
-            { compact: true }
+            { compact: true, ariaLabel: '启用效果' }
         );
         toggle.title = isEnabled ? '点击禁用效果' : '点击启用效果';
 
@@ -1218,7 +1218,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             editorSection.style.display = 'none';
         }
 
-        const toggle = this.createToggleSwitch(
+        const toggle = this.createAccordionToggleSwitch(
             hasCondition,
             (checked) => {
                 if (!checked) {
@@ -1716,12 +1716,6 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                         this.cardDefinitionIndex = new Map(this.cardDefinitionCache.map(entry => [entry.id, entry]));
                         return this.cardDefinitionCache;
                     })
-                    .catch(error => {
-                        console.warn('EffectConfigEditor: failed to load card definitions', error);
-                        this.cardDefinitionCache = [];
-                        this.cardDefinitionIndex = new Map();
-                        return [];
-                    })
                     .finally(() => {
                         this.cardDefinitionPromise = null;
                     });
@@ -1768,12 +1762,6 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                         this.abilityDefinitionCache = this.normalizeAbilityDefinitions(data.abilities);
                         this.abilityDefinitionIndex = new Map(this.abilityDefinitionCache.map(entry => [entry.id, entry]));
                         return this.abilityDefinitionCache;
-                    })
-                    .catch(error => {
-                        console.warn('EffectConfigEditor: failed to load ability definitions', error);
-                        this.abilityDefinitionCache = [];
-                        this.abilityDefinitionIndex = new Map();
-                        return [];
                     })
                     .finally(() => {
                         this.abilityDefinitionPromise = null;
@@ -1915,6 +1903,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             renderList();
             void this.loadAbilityDefinitions().then(() => {
                 renderList();
+            }).catch(error => {
+                console.error('EffectConfigEditor: failed to load ability definitions', error);
+                this.showError(`加载能力失败: ${error.message}`, listWrap);
             });
 
             wrapper.appendChild(inputRow);
@@ -2041,11 +2032,30 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             renderList();
             void this.loadCardDefinitions().then(() => {
                 renderList();
+            }).catch(error => {
+                console.error('EffectConfigEditor: failed to load card definitions', error);
+                this.showError(`加载卡牌失败: ${error.message}`, listWrap);
             });
 
             wrapper.appendChild(inputRow);
             wrapper.appendChild(listWrap);
             container.appendChild(wrapper);
+        }
+
+        renderDefinitionPickerCardSummary(entry, tags) {
+            const cost = Number.isFinite(entry.cost) ? entry.cost : 0;
+            return `
+                <div class="ability-copy-card-main">
+                    <span class="ability-copy-card-name tech-text-bold">${entry.name}</span>
+                    <span class="ability-copy-card-id tech-text-dim">#${entry.id}</span>
+                </div>
+                <div class="ability-copy-card-meta">
+                    <span class="tech-badge">COST ${cost}</span>
+                    ${entry.cardType ? `<span class="tech-tag">${entry.cardType}</span>` : ''}
+                    ${entry.cardClass ? `<span class="tech-tag">${entry.cardClass}</span>` : ''}
+                    ${tags.map(tag => `<span class="tech-tag">${tag}</span>`).join('')}
+                </div>
+            `;
         }
 
         async openAbilityDefinitionPickerModal(selectedIds = [], options = {}) {
@@ -2192,15 +2202,15 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                     const start = (currentPage - 1) * pageSize;
                     const pageEntries = filteredEntries.slice(start, start + pageSize);
                     const totalAbilityCount = filteredEntries.reduce((sum, entry) => {
-                        const abilities = abilitiesByCard.get(entry.cardId);
+                        const abilities = abilitiesByCard.get(entry.id);
                         return sum + (Array.isArray(abilities) ? abilities.length : 0);
                     }, 0);
 
                     listEl.innerHTML = pageEntries.map(entry => {
-                        const abilities = abilitiesByCard.get(entry.cardId) || [];
-                        const isExpanded = expandedCards.has(entry.cardId);
+                        const abilities = abilitiesByCard.get(entry.id) || [];
+                        const isExpanded = expandedCards.has(entry.id);
                         const abilityCount = abilities.length;
-                        const costLabel = Number.isFinite(entry.cardCost) ? entry.cardCost : 0;
+                        const costLabel = Number.isFinite(entry.cost) ? entry.cost : 0;
                         const bodyHtml = isExpanded
                             ? (abilityCount === 0
                                 ? `<div class="abilities-placeholder"><p>暂无可用能力</p></div>`
@@ -2208,18 +2218,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                             : '';
 
                         return `
-                            <div class="ability-copy-card${isExpanded ? ' expanded' : ''}" data-card-id="${entry.cardId}">
+                            <div class="ability-copy-card${isExpanded ? ' expanded' : ''}" data-card-id="${entry.id}">
                                 <button type="button" class="ability-copy-card-header" aria-expanded="${isExpanded}">
-                                    <div class="ability-copy-card-main">
-                                        <span class="ability-copy-card-name tech-text-bold">${entry.cardName}</span>
-                                        <span class="ability-copy-card-id tech-text-dim">#${entry.cardId}</span>
-                                    </div>
-                                    <div class="ability-copy-card-meta">
-                                        <span class="tech-badge">COST ${costLabel}</span>
-                                        ${entry.cardType ? `<span class="tech-tag">${entry.cardType}</span>` : ''}
-                                        ${entry.cardClass ? `<span class="tech-tag">${entry.cardClass}</span>` : ''}
-                                        <span class="tech-tag">ABILITIES ${abilityCount}</span>
-                                    </div>
+                                    ${this.renderDefinitionPickerCardSummary(entry, [`ABILITIES ${abilityCount}`])}
                                     <span class="ability-copy-card-toggle" aria-hidden="true">></span>
                                 </button>
                                 <div class="ability-copy-card-body">
@@ -2276,7 +2277,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                     if (!term) {
                         filteredEntries = [...cardEntries];
                     } else {
-                        filteredEntries = cardEntries.filter(entry => entry.cardSearchText.includes(term));
+                        filteredEntries = cardEntries.filter(entry => entry.searchText.includes(term));
                     }
                     currentPage = 1;
                     renderList();
@@ -2298,41 +2299,14 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                         });
 
                         cardEntries = cards
-                            .map(card => {
-                                const cardId = Number(card.id);
-                                if (!Number.isFinite(cardId) || !abilitiesByCard.has(cardId)) {
-                                    return null;
-                                }
-                                const cardName = card.name || `Card ${cardId}`;
-                                const cardCost = Number(card.cost ?? 0);
-                                const cardType = card.cardType || '';
-                                const cardClass = card.cardClass || '';
-                                const cardRarity = card.rarity || '';
-                                const abilityNames = (abilitiesByCard.get(cardId) || [])
-                                    .map(item => item.name)
-                                    .join(' ');
-                                const cardSearchText = [
-                                    cardName,
-                                    cardId,
-                                    cardCost,
-                                    cardType,
-                                    cardClass,
-                                    cardRarity,
-                                    abilityNames
-                                ].join(' ').toLowerCase();
-
-                                return {
-                                    cardId,
-                                    cardName,
-                                    cardCost,
-                                    cardType,
-                                    cardClass,
-                                    cardRarity,
-                                    cardSearchText
-                                };
-                            })
-                            .filter(Boolean)
-                            .sort((a, b) => String(a.cardName).localeCompare(String(b.cardName), undefined, { numeric: true, sensitivity: 'base' }));
+                            .filter(card => abilitiesByCard.has(card.id))
+                            .map(card => ({
+                                ...card,
+                                searchText: [card.name, card.id, card.cost, card.cardType, card.cardClass,
+                                    card.rarity, abilitiesByCard.get(card.id).map(ability => ability.name).join(' ')]
+                                    .join(' ').toLowerCase()
+                            }))
+                            .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
 
                         applyFilter('');
                     } catch (error) {
@@ -2462,9 +2436,14 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             });
 
             copyBtn.addEventListener('click', async () => {
-                const copied = await this.openAbilityConfigPickerModal();
-                if (!copied) return;
-                syncValue([...state.items, copied]);
+                try {
+                    const copied = await this.openAbilityConfigPickerModal();
+                    if (!copied) return;
+                    syncValue([...state.items, copied]);
+                } catch (error) {
+                    console.error('EffectConfigEditor: failed to copy ability', error);
+                    alert(`复制能力失败: ${error.message}`);
+                }
             });
 
             const moveItem = (from, to) => {
@@ -2581,31 +2560,17 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         }
 
         normalizeAbilityListValue(raw) {
-            let didNormalize = false;
-            let value = raw;
-
             const unwrapped = this.unwrapStaticValueConfig(raw);
-            if (unwrapped.ok) {
-                value = unwrapped.value;
+            let value = unwrapped.ok ? unwrapped.value : raw;
+            let didNormalize = unwrapped.ok;
+            if (value == null) return { items: [], didNormalize };
+            if (typeof value === 'string') {
+                value = JSON.parse(value);
                 didNormalize = true;
             }
-
-            if (typeof value === 'string') {
-                try {
-                    const parsed = JSON.parse(value);
-                    if (Array.isArray(parsed)) {
-                        return { items: parsed.filter(Boolean), didNormalize: true };
-                    }
-                } catch (error) {
-                    return { items: [], didNormalize: true };
-                }
-                return { items: [], didNormalize: true };
-            }
-
             if (!Array.isArray(value)) {
-                return { items: [], didNormalize };
+                throw new TypeError('能力列表必须是数组');
             }
-
             return { items: value.filter(Boolean), didNormalize };
         }
 
@@ -2658,12 +2623,11 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         parseAbilityConfigFromSource(ability) {
             const raw = ability?.jsonConfig ?? ability?.JsonConfig ?? null;
             if (!raw) return null;
-            try {
-                return typeof raw === 'string' ? JSON.parse(raw) : raw;
-            } catch (error) {
-                console.warn('EffectConfigEditor: failed to parse ability jsonConfig', error);
-                return null;
+            const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new TypeError('能力 JSON 配置必须是对象');
             }
+            return parsed;
         }
 
         normalizeAbilityConfigFromSource(ability, parsedConfig) {
@@ -2684,28 +2648,20 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         }
 
         async fetchAbilityDetailById(abilityId) {
-            if (!abilityId) return null;
-            try {
-                const response = await fetch(`/api/abilities/${abilityId}`);
-                if (!response.ok) return null;
-                return await response.json();
-            } catch (error) {
-                console.warn('EffectConfigEditor: failed to fetch ability detail', error);
-                return null;
+            const response = await fetch(`/api/abilities/${abilityId}`);
+            if (!response.ok) {
+                throw new Error(`加载能力 #${abilityId} 失败 (HTTP ${response.status})`);
             }
+            const detail = await response.json();
+            if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
+                throw new TypeError('能力详情必须是对象');
+            }
+            return detail;
         }
 
         async buildAbilityConfigFromAbilityId(abilityId) {
-            if (!abilityId) return null;
             const detail = await this.fetchAbilityDetailById(abilityId);
-            const parsed = this.parseAbilityConfigFromSource(detail);
-            if (detail || parsed) {
-                return this.normalizeAbilityConfigFromSource(detail, parsed);
-            }
-
-            const fallback = this.abilityDefinitionIndex?.get?.(abilityId);
-            if (!fallback) return null;
-            return this.normalizeAbilityConfigFromSource(fallback, this.parseAbilityConfigFromSource(fallback));
+            return this.normalizeAbilityConfigFromSource(detail, this.parseAbilityConfigFromSource(detail));
         }
 
         async openAbilityConfigPickerModal() {
@@ -2772,15 +2728,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         extractAbilityConfigFromEditor(finalConfig) {
             if (!finalConfig || typeof finalConfig !== 'object') return null;
 
-            const rawConfig = finalConfig.jsonConfig ?? null;
-            if (rawConfig) {
-                try {
-                    const parsed = typeof rawConfig === 'string' ? JSON.parse(rawConfig) : rawConfig;
-                    return this.normalizeAbilityConfigForList(parsed);
-                } catch (error) {
-                    console.warn('EffectConfigEditor: failed to parse ability jsonConfig', error);
-                }
-            }
+            const parsed = this.parseAbilityConfigFromSource(finalConfig);
+            if (parsed) return this.normalizeAbilityConfigForList(parsed);
 
             const fallback = {
                 name: finalConfig.name ?? '',
@@ -3078,20 +3027,10 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
                     listEl.innerHTML = pageEntries.map(entry => {
                         const isSelected = selectedSet.has(entry.id);
-                        const costLabel = Number.isFinite(entry.cost) ? entry.cost : 0;
                         return `
                             <div class="ability-copy-card${isSelected ? ' selected' : ''}" data-card-id="${entry.id}">
                                 <button type="button" class="ability-copy-card-header" aria-pressed="${isSelected}">
-                                    <div class="ability-copy-card-main">
-                                        <span class="ability-copy-card-name tech-text-bold">${entry.name}</span>
-                                        <span class="ability-copy-card-id tech-text-dim">#${entry.id}</span>
-                                    </div>
-                                    <div class="ability-copy-card-meta">
-                                        <span class="tech-badge">COST ${costLabel}</span>
-                                        ${entry.cardType ? `<span class="tech-tag">${entry.cardType}</span>` : ''}
-                                        ${entry.cardClass ? `<span class="tech-tag">${entry.cardClass}</span>` : ''}
-                                        ${entry.rarity ? `<span class="tech-tag">${entry.rarity}</span>` : ''}
-                                    </div>
+                                    ${this.renderDefinitionPickerCardSummary(entry, entry.rarity ? [entry.rarity] : [])}
                                 </button>
                             </div>
                         `;
@@ -5068,37 +5007,5 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         }
     }
 
-    createToggleSwitch(checked, onChange, labelText, options = {}) {
-        const wrapper = document.createElement('label');
-        wrapper.className = 'toggle-switch-wrapper';
-        if (options.compact) {
-            wrapper.classList.add('compact');
-        }
-        wrapper.addEventListener('click', (e) => e.stopPropagation());
 
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        input.setAttribute('aria-label', labelText || '启用效果');
-        input.addEventListener('click', (e) => e.stopPropagation());
-        input.addEventListener('change', (e) => {
-            e.stopPropagation();
-            onChange(e.target.checked);
-        });
-
-        const slider = document.createElement('span');
-        slider.className = 'toggle-slider';
-
-        wrapper.appendChild(input);
-        wrapper.appendChild(slider);
-
-        if (labelText) {
-            const label = document.createElement('span');
-            label.className = 'toggle-label';
-            label.textContent = labelText;
-            wrapper.appendChild(label);
-        }
-
-        return wrapper;
-    }
 }

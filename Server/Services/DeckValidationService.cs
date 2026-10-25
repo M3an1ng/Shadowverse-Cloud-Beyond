@@ -26,27 +26,9 @@ public class DeckValidationService : IDeckValidationService
         bool requireComplete,
         CancellationToken cancellationToken)
     {
-        if (!Enum.IsDefined(rule))
+        if (!TryResolveSecondaryClass(primaryClass, rule, secondaryClass, out secondaryClass, out var formatError, requireComplete))
         {
-            return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck rule is invalid.");
-        }
-
-        if (rule != DeckRule.Standard && rule != DeckRule.DualClass)
-        {
-            return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck rule is not supported.");
-        }
-
-        if (requireComplete && rule == DeckRule.DualClass)
-        {
-            if (!secondaryClass.HasValue)
-            {
-                return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Secondary class is required for dual-class rule.");
-            }
-
-            if (secondaryClass.Value == primaryClass)
-            {
-                return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Primary class and secondary class must be different in dual-class rule.");
-            }
+            return DeckOperationResult<List<DeckCardEntryDto>>.Fail(formatError!);
         }
 
         if (cards == null || cards.Count == 0)
@@ -218,4 +200,57 @@ public class DeckValidationService : IDeckValidationService
 
         return DeckOperationResult<List<DeckCardEntryDto>>.Ok(normalized);
     }
+    internal static bool TryResolveSecondaryClass(
+        CardClass primaryClass,
+        DeckRule rule,
+        CardClass? requestedSecondaryClass,
+        out CardClass? resolvedSecondaryClass,
+        out string? error,
+        bool requireComplete = true)
+    {
+        resolvedSecondaryClass = null;
+        error = null;
+
+        if (!Enum.IsDefined(rule))
+        {
+            error = "Deck rule is invalid.";
+            return false;
+        }
+
+        if (rule == DeckRule.Standard)
+        {
+            return true;
+        }
+
+        if (rule != DeckRule.DualClass)
+        {
+            error = "Deck rule is not supported.";
+            return false;
+        }
+
+        if (!requireComplete)
+        {
+            if (requestedSecondaryClass.HasValue && requestedSecondaryClass.Value != primaryClass)
+            {
+                resolvedSecondaryClass = requestedSecondaryClass.Value;
+            }
+            return true;
+        }
+
+        if (!requestedSecondaryClass.HasValue)
+        {
+            error = "Secondary class is required for dual-class rule.";
+            return false;
+        }
+
+        if (requestedSecondaryClass.Value == primaryClass)
+        {
+            error = "Primary class and secondary class must be different in dual-class rule.";
+            return false;
+        }
+
+        resolvedSecondaryClass = requestedSecondaryClass.Value;
+        return true;
+    }
+
 }

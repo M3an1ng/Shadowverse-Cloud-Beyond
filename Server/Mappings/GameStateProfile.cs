@@ -1,28 +1,16 @@
 using AutoMapper;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
-using System.Collections.Generic; // Required for List
+using ShadowverseBeyond.Server.Services;
 
-namespace ShadowverseBeyond.Server.Mappings
+namespace ShadowverseBeyond.Server.Mappings;
+
+public class GameStateProfile : Profile
 {
-    /// <summary>
-    /// Configures AutoMapper profiles for mapping between GameState entities and DTOs.
-    /// </summary>
-    public class GameStateProfile : Profile
+    public GameStateProfile()
     {
-        public GameStateProfile()
-        {
-            CreateMap<GameState, GameStateDto>()
-                // Map Status enum to GameStatus enum (different names)
-                .ForMember(dest => dest.GameStatus, opt => opt.MapFrom(src => src.Status))
-                // Combine Player1 and Player2 into the Players list
-                .ForMember(dest => dest.Players, opt => opt.MapFrom(src => new List<PlayerState> { src.Player1, src.Player2 }));
-            // AutoMapper will use PlayerStateProfile for the items in the list.
-
-            // Properties with matching names and types are mapped automatically:
-            // GameId, CurrentPlayerId, Phase, FirstPlayerId, IsGameOver, WinnerId, GameMessage
-
-            // 【架构重构】GameState不再有TurnNumber属性，回合数由PlayerState.TurnNumber管理
-        }
+        // Existing event/AI callers keep IMapper; the explicit projection owns all runtime fields.
+        CreateMap<GameState, GameStateDto>()
+            .ConvertUsing(source => source == null ? null! : GameStateProjection.Create(source, GameServiceProvider.CurrentGameContext));
     }
 }

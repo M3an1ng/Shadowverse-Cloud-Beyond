@@ -28,12 +28,18 @@ public partial class EconomyService
 
                 var totalReward = userDailyReward.ClaimDailyReward();
 
-                await AddCoinsAsync(
+                var coinsAdded = await AddCoinsAsync(
                     userId,
                     totalReward,
                     CoinTransactionType.DailyLoginBonus,
                     $"每日登录奖励 (连续{userDailyReward.ConsecutiveDays}天)",
                     relatedEntityId: userDailyReward.LastClaimedAt.Date.ToString("yyyy-MM-dd"));
+
+                if (!coinsAdded)
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to grant daily reward coins for user {userId}.");
+                }
 
                 _logger.LogInformation("用户领取每日奖励: UserId={UserId}, Reward={Reward}, Streak={Streak}",
                     userId, totalReward, userDailyReward.ConsecutiveDays);
@@ -44,7 +50,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "领取每日奖励失败: UserId={UserId}", userId);
-            return null;
+            throw;
         }
     }
 
@@ -55,8 +61,11 @@ public partial class EconomyService
             return false;
         }
 
-        var userDailyReward = await GetOrCreateUserDailyRewardAsync(userId);
-        return userDailyReward.CanClaimDailyReward();
+        return await _transactionService.ExecuteInTransactionAsync(async () =>
+        {
+            var userDailyReward = await GetOrCreateUserDailyRewardAsync(userId);
+            return userDailyReward.CanClaimDailyReward();
+        });
     }
 
     #endregion

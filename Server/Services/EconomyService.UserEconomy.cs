@@ -11,19 +11,11 @@ public partial class EconomyService
     {
         if (!await UserExistsAsync(userId))
         {
-            _logger.LogWarning("[Economy] Skip creating UserEconomy for missing user. UserId={UserId}", userId);
-            return new UserEconomy
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                Coins = 0,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+            throw new InvalidOperationException($"Cannot create economy for missing user {userId}.");
         }
 
-        var userEconomy = await _context.UserEconomies
-            .FirstOrDefaultAsync(ue => ue.UserId == userId);
+        var userEconomy = _context.UserEconomies.Local.FirstOrDefault(ue => ue.UserId == userId)
+            ?? await _context.UserEconomies.FirstOrDefaultAsync(ue => ue.UserId == userId);
 
         if (userEconomy == null)
         {
@@ -38,7 +30,11 @@ public partial class EconomyService
             };
 
             _context.UserEconomies.Add(userEconomy);
-            await _context.SaveChangesAsync();
+            // 外层事务统一保存，避免初始化时提前写入领奖或结算的其他待保存状态。
+            if (!_transactionService.IsInTransaction())
+            {
+                await _context.SaveChangesAsync();
+            }
 
             _logger.LogInformation("创建新用户经济信息: UserId={UserId}", userId);
         }
@@ -61,7 +57,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "初始化用户经济信息失败: UserId={UserId}", userId);
-            return false;
+            throw;
         }
     }
 

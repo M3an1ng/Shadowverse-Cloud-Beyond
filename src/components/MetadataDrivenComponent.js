@@ -286,6 +286,42 @@ export class MetadataDrivenComponent {
         return container;
     }
 
+    createToggleSwitch(checked, onChange, labelText) {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'toggle-switch-wrapper';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        input.addEventListener('change', (e) => onChange(e.target.checked));
+
+        const slider = document.createElement('span');
+        slider.className = 'toggle-slider';
+
+        const label = document.createElement('span');
+        label.className = 'toggle-label';
+        label.textContent = labelText;
+
+        wrapper.appendChild(input);
+        wrapper.appendChild(slider);
+        wrapper.appendChild(label);
+
+        return wrapper;
+    }
+
+    createAccordionToggleSwitch(checked, onChange, labelText, options = {}) {
+        const wrapper = this.createToggleSwitch(checked, onChange, labelText);
+        if (options.compact) wrapper.classList.add('compact');
+        if (!labelText) wrapper.querySelector('.toggle-label').remove();
+        const input = wrapper.querySelector('input');
+        input.setAttribute('aria-label', labelText || options.ariaLabel || '切换');
+        // 手风琴开关不能触发标题的展开/折叠操作。
+        wrapper.addEventListener('click', event => event.stopPropagation());
+        input.addEventListener('click', event => event.stopPropagation());
+        input.addEventListener('change', event => event.stopPropagation());
+        return wrapper;
+    }
+
     /**
      * 创建表单组
      * @param {string} label - 标签文本

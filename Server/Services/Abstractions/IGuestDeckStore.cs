@@ -7,9 +7,8 @@ public interface IGuestDeckStore
 {
     IReadOnlyList<GuestDeckRecord> List(Guid guestId);
     GuestDeckRecord? Get(Guid guestId, Guid deckId);
-    GuestDeckRecord Create(Guid guestId, string name, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule);
-    bool Rename(Guid guestId, Guid deckId, string name);
-    bool SaveCards(Guid guestId, Guid deckId, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule, IReadOnlyList<DeckCardEntryDto> cards);
+    GuestDeckRecord Create(Guid guestId, string name, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule, IReadOnlyList<DeckCardEntryDto>? cards = null);
+    GuestDeckRecord? Update(Guid guestId, GuestDeckRecord deck);
     bool Delete(Guid guestId, Guid deckId);
     void Clear(Guid guestId);
 }

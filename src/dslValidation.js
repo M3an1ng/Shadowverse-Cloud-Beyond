@@ -1,6 +1,6 @@
 import { DslEditor } from "./components/DslEditor.js";
 import { validateAST, getSemanticNodeType as getCoreSemanticNodeType } from "./components/dsl_editor/core.js";
-import { refreshCompleteness, refreshValueNodeReturnTypes } from "./components/dsl_editor/ast-normalize.js";
+import { normalizeLoadedAst } from "./components/dsl_editor/ast-normalize.js";
 import { requestParseAstApi } from "./components/dsl_editor/services/parse.js";
 
 export async function validateDslExpression(metadata, expression, options = {}) {
@@ -49,10 +49,7 @@ export async function validateDslExpression(metadata, expression, options = {}) 
     editor.workspaceAST = mapped;
     editor.astRoot = mapped;
     try {
-        editor.maintainASTRelationships(mapped);
-        refreshValueNodeReturnTypes(editor, mapped);
-        refreshCompleteness(mapped);
-        editor.maintainASTRelationships(mapped);
+        normalizeLoadedAst(editor, mapped);
     } catch (e) {
         return {
             ast: null,

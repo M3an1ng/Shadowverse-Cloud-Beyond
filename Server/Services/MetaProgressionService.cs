@@ -174,15 +174,22 @@ public sealed class MetaProgressionService : IMetaProgressionService
             profile.UpdateGameStats(isWin, gameDuration: durationSeconds);
 
             // Rank + coin rewards (uses the same transaction when already in one).
-            await _economyService.UpdateUserRankAsync(userId, isWin);
+            if (!await _economyService.UpdateUserRankAsync(userId, isWin))
+            {
+                throw new InvalidOperationException($"Failed to update rank for settlement {gameId}, user {userId}.");
+            }
             if (rewardCoins > 0)
             {
-                await _economyService.AddCoinsAsync(
+                var coinsAdded = await _economyService.AddCoinsAsync(
                     userId,
                     rewardCoins,
                     isWin ? CoinTransactionType.GameWin : CoinTransactionType.GameLoss,
                     description: isWin ? $"对局胜利奖励: {gameId}" : $"对局参与奖励: {gameId}",
                     relatedEntityId: gameId);
+                if (!coinsAdded)
+                {
+                    throw new InvalidOperationException($"Failed to grant coins for settlement {gameId}, user {userId}.");
+                }
             }
             else
             {

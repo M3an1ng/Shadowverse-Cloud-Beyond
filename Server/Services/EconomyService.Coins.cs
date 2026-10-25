@@ -61,7 +61,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "添加金币失败: UserId={UserId}, Amount={Amount}", userId, amount);
-            return false;
+            throw;
         }
     }
 
@@ -113,7 +113,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "扣除金币失败: UserId={UserId}, Amount={Amount}", userId, amount);
-            return false;
+            throw;
         }
     }
 

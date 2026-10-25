@@ -220,8 +220,7 @@ let cardCatalogInvalidationListenerBound = false;
 export async function initializeDeckBuilder() {
     container = document.getElementById('deck-builder-container');
     if (!container) {
-        console.error("DeckBuilder: Container not found!");
-        return;
+        throw new Error("DeckBuilder: Container not found!");
     }
 
     if (!deckValidationRulesListenerBound) {
@@ -243,9 +242,12 @@ export async function initializeDeckBuilder() {
     try {
         await loadEnvironmentOptions();
         await bootstrapDecks();
-        await Promise.all([loadDecks(), loadCards()]);
+        const outcomes = await Promise.allSettled([loadDecks(), loadCards()]);
+        const failures = outcomes.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
+        if (failures.length) throw new AggregateError(failures, "牌组或卡牌加载失败。");
     } catch (error) {
         console.error("DeckBuilder: Failed to load data:", error);
+        throw error;
     }
 
     renderDeckSelection();
@@ -284,18 +286,14 @@ async function handleDeckValidationRulesUpdated() {
 
 async function bootstrapDecks() {
     const query = getDeckOwnerQuery();
-    try {
-        await apiPostJson(`/api/decks/bootstrap?${query}`, {});
-    } catch (error) {
-        console.warn("DeckBuilder: Bootstrap failed.", error);
-    }
+    await apiPostJson(`/api/decks/bootstrap?${query}`, {});
 }
 
 async function loadDecks() {
     const query = getDeckOwnerQuery();
     const decks = await apiGetJson(`/api/decks?${query}`);
-    const normalizedDecks = Array.isArray(decks)
-        ? decks.map(deck => {
+    if (!Array.isArray(decks)) throw new TypeError("Deck list response must be an array.");
+    const normalizedDecks = decks.map(deck => {
             const deckClass = deck.class ?? deck.Class;
             const deckRule = deck.rule ?? deck.Rule;
             const deckSecondaryClass = deck.secondaryClass ?? deck.SecondaryClass;
@@ -306,8 +304,7 @@ async function loadDecks() {
                 rule: normalizeDeckRule(deckRule),
                 secondaryClass: resolveSecondaryClass(deckRule, deckClass, deckSecondaryClass)
             };
-        })
-        : [];
+        });
     const visibleDecks = filterUiVisibleDecks(normalizedDecks);
     pruneDeckBattleReadyCache(visibleDecks);
     state.decks = await attachBattleReadyState(visibleDecks);
@@ -399,17 +396,15 @@ async function loadCards(options = {}) {
             state.rawCardsCache = cardsFromApi;
         }
     });
-    const filtered = Array.isArray(cards)
-        ? cards.filter(card => {
+    const filtered = cards.filter(card => {
             const collectible = card?.isCollectible ?? card?.IsCollectible;
             if (collectible !== true) return false;
             const rarity = normalizeEnumValue(card?.rarity ?? card?.Rarity ?? '');
             if (rarity === 'special') return false;
             return Number(card?.id ?? card?.Id) > 0 && String(card?.type ?? card?.Type ?? '').toLowerCase() !== 'leader';
-        })
-        : [];
+        });
 
-    state.rawCardIndex = new Map((Array.isArray(cards) ? cards : []).map(card => [Number(card?.id ?? card?.Id), card]));
+    state.rawCardIndex = new Map(cards.map(card => [Number(card?.id ?? card?.Id), card]));
     state.availableCards = filtered;
     state.cardIndex = new Map(filtered.map(card => [Number(card?.id ?? card?.Id), card]));
 }
@@ -752,9 +747,9 @@ function ensureDeckBuilderRouteGuard() {
     }
 
     previousDeckBuilderRouteGuard = router.beforeRouteChange;
-    router.setBeforeRouteChange(async (oldRoute, newRoute) => {
+    router.setBeforeRouteChange(async (oldRoute, newRoute, routeButton) => {
         if (typeof previousDeckBuilderRouteGuard === 'function') {
-            const shouldContinue = await previousDeckBuilderRouteGuard(oldRoute, newRoute);
+            const shouldContinue = await previousDeckBuilderRouteGuard(oldRoute, newRoute, routeButton);
             if (!shouldContinue) {
                 return false;
             }

@@ -1,5 +1,3 @@
-﻿using System.Collections.Concurrent;
-using System.Linq;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -8,26 +6,29 @@ namespace ShadowverseBeyond.Server.Services;
 
 public class GuestDeckStore : IGuestDeckStore
 {
-    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, GuestDeckRecord>> _store = new();
+    private readonly Dictionary<Guid, Dictionary<Guid, GuestDeckRecord>> _store = new();
 
     public IReadOnlyList<GuestDeckRecord> List(Guid guestId)
     {
-        return _store.TryGetValue(guestId, out var decks)
-            ? decks.Values.OrderByDescending(deck => deck.UpdatedAt).ToList()
-            : new List<GuestDeckRecord>();
+        lock (_store)
+        {
+            return _store.TryGetValue(guestId, out var decks)
+                ? decks.Values.OrderByDescending(deck => deck.UpdatedAt).Select(Snapshot).ToList()
+                : new List<GuestDeckRecord>();
+        }
     }
 
     public GuestDeckRecord? Get(Guid guestId, Guid deckId)
     {
-        if (_store.TryGetValue(guestId, out var decks) && decks.TryGetValue(deckId, out var deck))
+        lock (_store)
         {
-            return deck;
+            return _store.TryGetValue(guestId, out var decks) && decks.TryGetValue(deckId, out var deck)
+                ? Snapshot(deck)
+                : null;
         }
-
-        return null;
     }
 
-    public GuestDeckRecord Create(Guid guestId, string name, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule)
+    public GuestDeckRecord Create(Guid guestId, string name, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule, IReadOnlyList<DeckCardEntryDto>? cards = null)
     {
         var deck = new GuestDeckRecord
         {
@@ -38,65 +39,53 @@ public class GuestDeckStore : IGuestDeckStore
             Environment = environment,
             Rule = rule,
             UpdatedAt = DateTime.UtcNow,
-            Cards = new List<DeckCardEntryDto>()
+            Cards = cards?.ToList() ?? new List<DeckCardEntryDto>()
         };
 
-        var decks = _store.GetOrAdd(guestId, _ => new ConcurrentDictionary<Guid, GuestDeckRecord>());
-        decks[deck.DeckId] = deck;
-        return deck;
+        lock (_store)
+        {
+            if (!_store.TryGetValue(guestId, out var decks))
+            {
+                decks = new Dictionary<Guid, GuestDeckRecord>();
+                _store.Add(guestId, decks);
+            }
+
+            decks.Add(deck.DeckId, deck);
+            return Snapshot(deck);
+        }
     }
 
-    public bool Rename(Guid guestId, Guid deckId, string name)
+    public GuestDeckRecord? Update(Guid guestId, GuestDeckRecord deck)
     {
-        if (_store.TryGetValue(guestId, out var decks) && decks.TryGetValue(deckId, out var deck))
+        lock (_store)
         {
-            decks[deckId] = deck with { Name = name, UpdatedAt = DateTime.UtcNow };
-            return true;
-        }
-
-        return false;
-    }
-
-    public bool SaveCards(Guid guestId, Guid deckId, CardClass deckClass, CardClass? secondaryClass, DeckEnvironment environment, DeckRule rule, IReadOnlyList<DeckCardEntryDto> cards)
-    {
-        if (_store.TryGetValue(guestId, out var decks) && decks.TryGetValue(deckId, out var deck))
-        {
-            var clonedCards = cards.Select(card => new DeckCardEntryDto
+            if (!_store.TryGetValue(guestId, out var decks) || !decks.ContainsKey(deck.DeckId))
             {
-                CardDefinitionId = card.CardDefinitionId,
-                Count = card.Count
-            }).ToList();
+                return null;
+            }
 
-            decks[deckId] = deck with
-            {
-                Class = deckClass,
-                SecondaryClass = secondaryClass,
-                Environment = environment,
-                Rule = rule,
-                Cards = clonedCards,
-                UpdatedAt = DateTime.UtcNow
-            };
-            return true;
+            var updated = Snapshot(deck with { UpdatedAt = DateTime.UtcNow });
+            decks[deck.DeckId] = updated;
+            return Snapshot(updated);
         }
-
-        return false;
     }
 
     public bool Delete(Guid guestId, Guid deckId)
     {
-        if (_store.TryGetValue(guestId, out var decks))
+        lock (_store)
         {
-            return decks.TryRemove(deckId, out _);
+            return _store.TryGetValue(guestId, out var decks) && decks.Remove(deckId);
         }
-
-        return false;
     }
 
     public void Clear(Guid guestId)
     {
-        _store.TryRemove(guestId, out _);
+        lock (_store)
+        {
+            _store.Remove(guestId);
+        }
     }
+
+    // DTO entries have init-only scalar fields; copying the mutable list isolates each snapshot.
+    private static GuestDeckRecord Snapshot(GuestDeckRecord deck) => deck with { Cards = deck.Cards.ToList() };
 }
-
-
-

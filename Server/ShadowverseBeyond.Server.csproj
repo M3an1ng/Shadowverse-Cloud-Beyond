@@ -43,6 +43,37 @@
     <Compile Remove="obj_codex\**\*.cs;obj_codex2\**\*.cs;obj_tmp\**\*.cs;bin_codex\**\*.cs;bin_codex2\**\*.cs;bin_tmp\**\*.cs;Server\**\*.cs;Server.Tests\**\*.cs;publish\**\*.cs;artifacts\**\*.cs;.tmp_build\**\*.cs" />
   </ItemGroup>
 
+  <!-- Restore the original schema migration chain only. Keep copied source trees,
+       their model snapshot and the replay-data reset migration excluded. -->
+  <ItemGroup>
+    <Compile Include="Server\Infrastructure\Data\Migrations\20250720091023_InitialCreate.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20250720091023_InitialCreate.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251213212816_FixMetaProgressionRelations.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251213212816_FixMetaProgressionRelations.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251214160048_AddGameSettlements.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251214160048_AddGameSettlements.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251214161047_AddGameSessionUniqueIndex.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251214161047_AddGameSessionUniqueIndex.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251214163057_AddMetaProgressionIdempotencyIndexes.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251214163057_AddMetaProgressionIdempotencyIndexes.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251222120000_AddAbilityDslFavorites.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251222120000_AddAbilityDslFavorites.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251226090000_RemoveAbilityTagFromCardAbilities.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20251226090000_RemoveAbilityTagFromCardAbilities.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260105134121_AddCountdownToCardDefinitions.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260105134121_AddCountdownToCardDefinitions.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122132617_UpdateCardPackEnvironmentsList.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122132617_UpdateCardPackEnvironmentsList.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122194500_AddCardPackMetadataAndLinks.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122194500_AddCardPackMetadataAndLinks.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122210000_CleanupCardPackEnvironmentColumn.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122210000_CleanupCardPackEnvironmentColumn.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122221426_AddCardSetDefinitions.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260122221426_AddCardSetDefinitions.Designer.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260123074319_RemoveCardDefinitionPackLink.cs" />
+    <Compile Include="Server\Infrastructure\Data\Migrations\20260123074319_RemoveCardDefinitionPackLink.Designer.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Remove="publish\**" />
     <None Remove="publish\**" />

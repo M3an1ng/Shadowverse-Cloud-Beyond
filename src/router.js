@@ -3,11 +3,7 @@
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
 //
-import {
-    BATTLE_EXIT_CONFIRM_MESSAGE,
-    isLeavingBattleRoute,
-    shouldConfirmBattleExit
-} from './battleExitConfirmPolicy.js';
+
 
 /**
  * 简单的单页应用路由管理器
@@ -16,9 +12,11 @@ import {
 class Router {
     constructor() {
         this.currentRoute = 'navigation';
+        this.failedRoute = null;
         this.routes = new Map();
         this.beforeRouteChange = null;
         this.afterRouteChange = null;
+        this.pendingNavigation = Promise.resolve();
 
         // 初始化路由配置
         this.initializeRoutes();
@@ -41,8 +39,8 @@ class Router {
         this.routes.set('game', {
             element: document.getElementById('game-page'),
             title: '游戏对战 - 影之诗 星云',
-            init: this.initGamePage.bind(this),
-            cleanup: this.cleanupGamePage.bind(this)
+            init: null,
+            cleanup: null
         });
 
         this.routes.set('singleplayer', {
@@ -70,7 +68,7 @@ class Router {
             element: document.getElementById('navigation-page'), // reuse navigation container for now
             title: '多人对战 - 影之诗 星云',
             init: this.initMultiplayer.bind(this),
-            cleanup: this.cleanupMultiplayer.bind(this)
+            cleanup: null
         });
 
         this.routes.set('dev-tools', {
@@ -100,12 +98,13 @@ class Router {
      * 绑定事件监听器
      */
     bindEventListeners() {
-        const navigateSafely = (route, pushState = true, onBlocked = null) => {
-            this.navigateTo(route, pushState).then((navigated) => {
+        const navigateSafely = (route, pushState = true, onBlocked = null, routeButton = null) => {
+            this.navigateTo(route, pushState, routeButton).then((navigated) => {
                 if (navigated === false && typeof onBlocked === 'function') {
                     onBlocked();
                 }
             }).catch((error) => {
+                if (onBlocked) onBlocked();
                 console.error(`Router: Navigation to "${route}" failed:`, error);
             });
         };
@@ -116,22 +115,7 @@ class Router {
             if (routeButton) {
                 event.preventDefault();
                 const route = routeButton.dataset.route;
-                const battleExitState = typeof window.__svbGetBattleExitState === 'function'
-                    ? window.__svbGetBattleExitState()
-                    : null;
-                if (shouldConfirmBattleExit(this.currentRoute, route, routeButton, battleExitState)) {
-                    const confirmed = window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE);
-                    if (!confirmed) {
-                        return;
-                    }
-                    if (typeof window.__svbHandleConfirmedBattleExit === 'function') {
-                        const handled = await window.__svbHandleConfirmedBattleExit();
-                        if (!handled) {
-                            return;
-                        }
-                    }
-                }
-                navigateSafely(route);
+                navigateSafely(route, true, null, routeButton);
             }
         });
 
@@ -141,28 +125,9 @@ class Router {
             if (route === this.currentRoute) {
                 return;
             }
-            const battleExitState = typeof window.__svbGetBattleExitState === 'function'
-                ? window.__svbGetBattleExitState()
-                : null;
-            if (isLeavingBattleRoute(this.currentRoute, route) && shouldConfirmBattleExit(this.currentRoute, route, {
-                classList: { contains: () => true }
-            }, battleExitState)) {
-                const confirmed = window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE);
-                if (!confirmed) {
-                    window.history.go(1);
-                    return;
-                }
-                if (typeof window.__svbHandleConfirmedBattleExit === 'function') {
-                    const handled = await window.__svbHandleConfirmedBattleExit();
-                    if (!handled) {
-                        window.history.go(1);
-                        return;
-                    }
-                }
-            }
             navigateSafely(route, false, () => {
                 window.history.pushState({ route: this.currentRoute }, '', `#${this.currentRoute}`);
-            }); // 不推送历史记录
+            }, { classList: { contains: className => className === 'back-nav-btn' } }); // 不推送历史记录
         });
     }
 
@@ -171,102 +136,82 @@ class Router {
      * @param {string} route - 路由名称
      * @param {boolean} pushState - 是否推送到浏览器历史记录
      */
-    async navigateTo(route, pushState = true) {
-        if (!this.routes.has(route)) {
-            console.error(`Router: Unknown route "${route}"`);
-            return false;
-        }
-        if (route === this.currentRoute) {
-            return true;
-        }
-
-        // 执行路由前钩子
-        if (this.beforeRouteChange) {
-            const shouldContinue = await this.beforeRouteChange(this.currentRoute, route);
-            if (!shouldContinue) {
+    async navigateTo(route, pushState = true, routeButton = null) {
+        const previousNavigation = this.pendingNavigation;
+        let releaseNavigation;
+        this.pendingNavigation = new Promise(resolve => { releaseNavigation = resolve; });
+        let oldRoute;
+        try {
+            // 页面初始化、清理和连接释放属于同一次切换；后续切换必须等待。
+            await previousNavigation;
+            if (!this.routes.has(route)) {
+                console.error(`Router: Unknown route "${route}"`);
                 return false;
             }
+            if (route === this.currentRoute && this.failedRoute !== route) return true;
+            oldRoute = this.currentRoute;
+            if (this.beforeRouteChange && !await this.beforeRouteChange(oldRoute, route, routeButton)) {
+                return false;
+            }
+            const currentRouteConfig = this.routes.get(oldRoute);
+            const newRouteConfig = this.routes.get(route);
+            try {
+                if (currentRouteConfig?.cleanup) await currentRouteConfig.cleanup();
+            } catch (error) {
+                this.showRouteFailure(oldRoute, error, route);
+                throw error;
+            }
+            currentRouteConfig?.element?.querySelector('[data-route-failure]')?.remove();
+            currentRouteConfig?.element?.classList.remove('active');
+            newRouteConfig.element?.classList.add('active');
+            if (newRouteConfig.title) document.title = newRouteConfig.title;
+            try {
+                if (newRouteConfig.init) await newRouteConfig.init();
+            } catch (error) {
+                let failure = error;
+                try {
+                    if (newRouteConfig.cleanup) await newRouteConfig.cleanup();
+                } catch (cleanupError) {
+                    failure = new AggregateError([error, cleanupError], '页面初始化和清理均失败。');
+                }
+                this.showRouteFailure(route, failure, route);
+                if (pushState) window.history.pushState({ route }, '', `#${route}`);
+                throw failure;
+            }
+            this.currentRoute = route;
+            this.failedRoute = null;
+            if (pushState) window.history.pushState({ route }, '', `#${route}`);
+        } finally {
+            releaseNavigation();
         }
-
-        // 清理当前页面
-        const currentRouteConfig = this.routes.get(this.currentRoute);
-        if (currentRouteConfig?.cleanup) {
-            await currentRouteConfig.cleanup();
-        }
-
-        // 隐藏当前页面
-        if (currentRouteConfig?.element) {
-            currentRouteConfig.element.classList.remove('active');
-        }
-
-        // 显示新页面
-        const newRouteConfig = this.routes.get(route);
-        if (newRouteConfig?.element) {
-            newRouteConfig.element.classList.add('active');
-        }
-
-        // 更新页面标题
-        if (newRouteConfig?.title) {
-            document.title = newRouteConfig.title;
-        }
-
-        // 初始化新页面
-        if (newRouteConfig?.init) {
-            await newRouteConfig.init();
-        }
-
-        // 更新当前路由
-        const oldRoute = this.currentRoute;
-        this.currentRoute = route;
-
-        // 更新浏览器历史记录
-        if (pushState) {
-            window.history.pushState({ route }, '', `#${route}`);
-        }
-
-        // 执行路由后钩子
-        if (this.afterRouteChange) {
-            await this.afterRouteChange(oldRoute, route);
-        }
-
+        // 后置钩子允许“返回对战”发起下一次导航，不能占住切换锁。
+        if (this.afterRouteChange) await this.afterRouteChange(oldRoute, route);
         return true;
     }
 
-    /**
-     * 初始化游戏页面
-     */
-    async initGamePage() {
-
-        // 动态导入游戏相关模块
-        try {
-            // 这里可以延迟加载游戏模块
-            // const gameModule = await import('./gameManager.js');
-
-            // 如果游戏还未初始化，则初始化
-            if (window.gameInitialized !== true) {
-                // 触发游戏初始化
-                const event = new CustomEvent('initializeGame');
-                document.dispatchEvent(event);
-            }
-        } catch (error) {
-            console.error('Router: Failed to initialize game page:', error);
-        }
+    showRouteFailure(route, error, retryRoute) {
+        const config = this.routes.get(route);
+        this.currentRoute = route;
+        this.failedRoute = route;
+        config.element?.querySelector('[data-route-failure]')?.remove();
+        const panel = document.createElement('section');
+        panel.className = 'error-message';
+        panel.dataset.routeFailure = route;
+        panel.setAttribute('role', 'alert');
+        const message = document.createElement('p');
+        message.textContent = `页面切换失败：${error.message}`;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.dataset.route = retryRoute;
+        retry.textContent = '重试';
+        panel.append(message, retry);
+        config.element?.prepend(panel);
+        config.element?.classList.add('active');
+        document.title = `${config.title || document.title}（加载失败）`;
     }
 
-    /**
-     * 清理游戏页面
-     */
-    async cleanupGamePage() {
-
-        // 这里可以清理游戏相关资源
-        // 例如断开SignalR连接等
-        try {
-            // 触发游戏清理事件
-            const event = new CustomEvent('cleanupGame');
-            document.dispatchEvent(event);
-        } catch (error) {
-            console.error('Router: Failed to cleanup game page:', error);
-        }
+    setRouteLifecycle(route, lifecycle) {
+        Object.assign(this.routes.get(route), lifecycle);
     }
 
     /**
@@ -292,6 +237,7 @@ class Router {
                     </div>
                 `;
             }
+            throw error;
         }
     }
 
@@ -303,6 +249,7 @@ class Router {
             }
         } catch (error) {
             console.error('Router: Failed to cleanup card editor:', error);
+            throw error;
         }
     }
 
@@ -330,6 +277,7 @@ class Router {
                     </div>
                 `;
             }
+            throw error;
         }
     }
 
@@ -341,16 +289,6 @@ class Router {
         const panel = document.getElementById('multiplayer-panel');
         if (panel) {
             panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-    }
-
-    async cleanupMultiplayer() {
-        document.body.classList.remove('show-multiplayer');
-        try {
-            const event = new CustomEvent('cleanupMultiplayer');
-            document.dispatchEvent(event);
-        } catch (error) {
-            console.error('Router: Failed to cleanup multiplayer:', error);
         }
     }
 
@@ -382,15 +320,18 @@ class Router {
                 import('./devToolsCopyLimitPolicies.js'),
                 import('./devToolsCardSetEnvironmentMembership.js')
             ]);
-            await Promise.all([
+            const outcomes = await Promise.allSettled([
                 logModule.initializeDevToolsLogViewer(),
                 userModule.initializeDevToolsUserManagement(),
                 winrateModule.initializeDevToolsWinrateStats(),
                 copyLimitModule.initializeDevToolsCopyLimitPolicies(),
                 cardSetEnvModule.initializeDevToolsCardSetEnvironmentMembership()
             ]);
+            const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
+            if (failures.length) throw new AggregateError(failures, '开发工具生命周期未完成。');
         } catch (error) {
             console.error('Router: Failed to initialize dev tools:', error);
+            throw error;
         }
     }
 
@@ -403,15 +344,18 @@ class Router {
                 import('./devToolsCopyLimitPolicies.js'),
                 import('./devToolsCardSetEnvironmentMembership.js')
             ]);
-            await Promise.all([
+            const outcomes = await Promise.allSettled([
                 logModule.cleanupDevToolsLogViewer(),
                 userModule.cleanupDevToolsUserManagement(),
                 winrateModule.cleanupDevToolsWinrateStats(),
                 copyLimitModule.cleanupDevToolsCopyLimitPolicies(),
                 cardSetEnvModule.cleanupDevToolsCardSetEnvironmentMembership()
             ]);
+            const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
+            if (failures.length) throw new AggregateError(failures, '开发工具生命周期未完成。');
         } catch (error) {
             console.error('Router: Failed to cleanup dev tools:', error);
+            throw error;
         }
     }
 
@@ -422,6 +366,7 @@ class Router {
             await module.initializeDevToolsMatchLab();
         } catch (error) {
             console.error('Router: Failed to initialize match lab:', error);
+            throw error;
         }
     }
 
@@ -431,6 +376,7 @@ class Router {
             await module.cleanupDevToolsMatchLab();
         } catch (error) {
             console.error('Router: Failed to cleanup match lab:', error);
+            throw error;
         }
     }
 
@@ -448,6 +394,7 @@ class Router {
             }
         } catch (error) {
             console.error('Router: Failed to initialize DSL Editor V2:', error);
+            throw error;
         }
     }
 
@@ -477,7 +424,9 @@ export const router = new Router();
 window.testMetadataAPI = async function () {
     try {
         const response = await fetch('/api/AbilityEditorMetadata');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
+        console.info('元数据API响应:', data);
         alert('API测试成功！请查看控制台输出。');
     } catch (error) {
         console.error('API测试失败:', error);
@@ -485,25 +434,15 @@ window.testMetadataAPI = async function () {
     }
 };
 
-window.openDataViewer = function () {
-    alert('数据库查看器功能正在开发中...');
-};
+
 
 // 初始化路由
-const initRouter = () => {
+export function initializeRouter() {
 
     // 根据URL hash确定初始路由
     const hash = window.location.hash.slice(1);
 
     const initialRoute = hash && router.routes.has(hash) ? hash : 'navigation';
 
-    router.navigateTo(initialRoute, false).catch((error) => {
-        console.error(`Router: Failed to initialize route "${initialRoute}".`, error);
-    });
-};
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initRouter);
-} else {
-    initRouter();
+    return router.navigateTo(initialRoute, false);
 }

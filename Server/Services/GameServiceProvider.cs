@@ -40,25 +40,13 @@ namespace ShadowverseBeyond.Server.Services
         {
             get
             {
-                Logger?.LogTrace("ServiceProvider getter invoked.");
-                if (ContextAccessor == null)
-                {
-                    Logger?.LogError("ServiceProvider getter: ContextAccessor is NULL.");
-                    throw new InvalidOperationException("GameServiceProvider.ContextAccessor has not been initialized.");
-                }
-                if (ContextAccessor.GameContext == null)
-                {
-                    Logger?.LogError("ServiceProvider getter: ContextAccessor.GameContext is NULL.");
-                }
-
-                var serviceProvider = ContextAccessor?.GameContext?.ServiceProvider;
-                if (serviceProvider == null)
-                {
-                    throw new InvalidOperationException(
-                        "Cannot access services because the GameContext has not been set for the current scope. " +
-                        "Ensure that the operation is running within a GameContextFilter (for Hub requests) " +
-                        "or a manually created scope (for background tasks).");
-                }
+                var accessor = ContextAccessor ?? throw new InvalidOperationException(
+                    "GameServiceProvider.ContextAccessor has not been initialized.");
+                var context = accessor.GameContext ?? throw new InvalidOperationException(
+                    "Cannot access services because the GameContext has not been set for the current scope. " +
+                    "Ensure that the operation is running within a GameContextFilter (for Hub requests) " +
+                    "or a manually created scope (for background tasks).");
+                var serviceProvider = context.ServiceProvider;
                 return serviceProvider;
             }
         }

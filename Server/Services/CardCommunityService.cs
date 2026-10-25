@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using ShadowverseBeyond.Server.Controllers;
+using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -23,7 +23,7 @@ public sealed class CardCommunityService : ICardCommunityService
         _questProgressService = questProgressService;
     }
 
-    public async Task<CardCommunityController.CardCommentDto> CreateCommentAsync(
+    public async Task<CardCommentDto> CreateCommentAsync(
         int cardId,
         User user,
         string content,
@@ -57,7 +57,7 @@ public sealed class CardCommunityService : ICardCommunityService
                 cancellationToken: cancellationToken);
         });
 
-        return new CardCommunityController.CardCommentDto
+        return new CardCommentDto
         {
             Id = entity.Id,
             CardDefinitionId = entity.CardDefinitionId,
@@ -75,7 +75,7 @@ public sealed class CardCommunityService : ICardCommunityService
         };
     }
 
-    public async Task<CardCommunityController.CardVoteSummaryDto> VoteAsync(
+    public async Task<CardVoteSummaryDto> VoteAsync(
         int cardId,
         User user,
         CardVoteType voteType,
@@ -126,23 +126,14 @@ public sealed class CardCommunityService : ICardCommunityService
             entity.UpdatedAt = DateTime.UtcNow;
         });
 
-        var voteStats = await BuildVoteStatsAsync(cardId, user.Id, cancellationToken);
-        return new CardCommunityController.CardVoteSummaryDto
-        {
-            CardDefinitionId = cardId,
-            UpvoteCount = voteStats.UpvoteCount,
-            DownvoteCount = voteStats.DownvoteCount,
-            UserVote = voteStats.UserVote,
-            RewardGranted = false,
-            RewardCoins = 0,
-            CurrentCoins = null,
-            QuestProgress = ToQuestProgressDto(questProgress)
-        };
+        var summary = await GetVoteSummaryAsync(cardId, user.Id, cancellationToken);
+        summary.QuestProgress = ToQuestProgressDto(questProgress);
+        return summary;
     }
 
-    private static CardCommunityController.QuestProgressDto ToQuestProgressDto(QuestProgressResult result)
+    private static QuestProgressDto ToQuestProgressDto(QuestProgressResult result)
     {
-        return new CardCommunityController.QuestProgressDto
+        return new QuestProgressDto
         {
             UpdatedQuestIds = result.UpdatedQuestIds,
             CompletedQuestIds = result.CompletedQuestIds,
@@ -151,10 +142,10 @@ public sealed class CardCommunityService : ICardCommunityService
         };
     }
 
-    private async Task<(int UpvoteCount, int DownvoteCount, string? UserVote)> BuildVoteStatsAsync(
+    public async Task<CardVoteSummaryDto> GetVoteSummaryAsync(
         int cardId,
         Guid userId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
         var upvoteCount = await _db.CardVotes.CountAsync(
             vote => vote.CardDefinitionId == cardId && vote.VoteType == CardVoteType.Upvote,
@@ -167,16 +158,12 @@ public sealed class CardCommunityService : ICardCommunityService
             .Select(vote => (CardVoteType?)vote.VoteType)
             .FirstOrDefaultAsync(cancellationToken);
 
-        return (upvoteCount, downvoteCount, ToVoteLabel(userVoteType));
-    }
-
-    private static string? ToVoteLabel(CardVoteType? voteType)
-    {
-        return voteType switch
+        return new CardVoteSummaryDto
         {
-            CardVoteType.Upvote => "up",
-            CardVoteType.Downvote => "down",
-            _ => null
+            CardDefinitionId = cardId,
+            UpvoteCount = upvoteCount,
+            DownvoteCount = downvoteCount,
+            UserVote = userVoteType.HasValue ? CardVoteLabels.ToLabel(userVoteType.Value) : null
         };
     }
 }

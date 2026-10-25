@@ -7,11 +7,11 @@
 //
 // 导入核心模块
 import * as signalR from "@microsoft/signalr";
-import { LogLevel } from "@microsoft/signalr"; // Added for Trace logging
-import { router } from './router.js'; // 导入路由系统
+import { router, initializeRouter } from './router.js';
+import { BATTLE_EXIT_CONFIRM_MESSAGE, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
 import { clearUserSession, getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from './userSession.js';
 import {
-    gameState, bindGameView, initializeGame, initializeSpectator, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
+    gameState, bindGameView, initializeGame, initializeSpectator, clearGameSession, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
     // Import specific event handlers instead of processGameEvent
     handleDeckUpdate, handleTurnStarted, handleTurnEnded, handlePpUpdate, handleEpUpdate, handleSepUpdate, handleHandUpdated,
     handleGraveyardUpdate, handleAttackDeclared, handleUnitDestroyed, handleDamageDealt, handleHealApplied,
@@ -209,14 +209,14 @@ function startConnectionHeartbeat(conn, label) {
 }
 
 let isInitializing = false;
+let gameInitialized = false;
+let gamePageSession = 0;
 const HUB_URL = "/gamehub"; // Use relative URL, assumes same origin or proxy configured
 let connection = null; // Module-level variable for SignalR connection - Moved here
 let guestConnection = null;
 let initialStateReceived = false; // Flag to track if initial state has been handled
 let forceFullStateOnNextReceive = false;
 let reconnectInProgress = false;
-let manualReconnectInProgress = false;
-let suppressNextConnectionCloseAlert = false;
 let lobbyHandshake = null; // { gameId, playerId, token, joinCode?, role, useAiFallback?, dualControl?, hostPlayerId?, hostToken?, guestPlayerId?, guestToken? }
 let pendingHandshake = null; // Set by multiplayer UI before initialization
 let pendingRouteTransition = null; // { fromRoute, toRoute }
@@ -765,7 +765,6 @@ function clearTransientMatchQueryParams() {
 
 function resetTransientConnectionUiState() {
     reconnectInProgress = false;
-    manualReconnectInProgress = false;
     setConnectionStatus('connected');
     setOpponentConnectionStatus(true);
 }
@@ -879,44 +878,32 @@ async function handlePendingRoomExitDecisionOnNavigation() {
 }
 
 function appendAfterRouteChangeHandler(handlerName, callback) {
-    if (!router || typeof router.setAfterRouteChange !== 'function' || typeof callback !== 'function') {
-        return false;
-    }
-
     const previousAfter = router.afterRouteChange;
     router.setAfterRouteChange(async (oldRoute, newRoute) => {
-        if (typeof previousAfter === 'function') {
-            try {
-                await previousAfter(oldRoute, newRoute);
-            } catch (err) {
-                console.error(`MAIN: afterRouteChange chain failed before "${handlerName}".`, err);
-            }
-        }
-
+        if (previousAfter) await previousAfter(oldRoute, newRoute);
         try {
             await callback(oldRoute, newRoute);
-        } catch (err) {
-            console.error(`MAIN: afterRouteChange handler "${handlerName}" failed.`, err);
+        } catch (error) {
+            throw new Error(`路由后置处理失败：${handlerName}`, { cause: error });
         }
     });
-
     return true;
 }
 
 function registerRoomExitDecisionRouteHooks() {
-    if (!router || typeof router.setBeforeRouteChange !== 'function') {
-        return;
-    }
-
     const originalBefore = router.beforeRouteChange;
-    router.setBeforeRouteChange(async (oldRoute, newRoute) => {
+    router.setBeforeRouteChange(async (oldRoute, newRoute, routeButton) => {
         if (typeof originalBefore === 'function') {
-            const shouldContinue = await originalBefore(oldRoute, newRoute);
+            const shouldContinue = await originalBefore(oldRoute, newRoute, routeButton);
             if (!shouldContinue) {
                 return false;
             }
         }
 
+        if (shouldConfirmBattleExit(oldRoute, newRoute, routeButton, gameState)) {
+            if (!window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE)) return false;
+            if (!await handleConfirmedBattleExit()) return false;
+        }
         pendingRouteTransition = {
             fromRoute: oldRoute || '',
             toRoute: newRoute || ''
@@ -935,27 +922,27 @@ function registerRoomExitDecisionRouteHooks() {
     });
 }
 
+async function disconnectGameConnections() {
+    const previousConnections = [connection, guestConnection];
+    // 先撤销所有权；stop 的回调及已排队事件不能再改动当前页面。
+    connection = null;
+    guestConnection = null;
+    setSignalRConnection(null);
+    setGuestSignalRConnection(null);
+    const stopped = await Promise.allSettled(previousConnections.map(async conn => {
+        stopConnectionHeartbeat(conn);
+        if (conn && conn.state !== signalR.HubConnectionState.Disconnected) {
+            await conn.stop();
+        }
+    }));
+    const failures = stopped.filter(item => item.status === 'rejected').map(item => item.reason);
+    if (failures.length) throw new AggregateError(failures, '对战连接未能完整关闭');
+}
+
 async function handleStateHydrationFailure(statusMessage = '重连失败') {
     reconnectInProgress = false;
     setConnectionStatus('disconnected', statusMessage);
-
-    const activeConnection = connection;
-    if (!activeConnection || activeConnection.state === signalR.HubConnectionState.Disconnected) {
-        return;
-    }
-
-    suppressNextConnectionCloseAlert = true;
-    try {
-        await activeConnection.stop();
-    } catch (err) {
-        suppressNextConnectionCloseAlert = false;
-        console.warn("MAIN: Failed to stop connection after hydration failure.", err);
-    } finally {
-        if (connection === activeConnection) {
-            connection = null;
-            setSignalRConnection(null);
-        }
-    }
+    await disconnectGameConnections();
 }
 
 function shouldWarnBeforeUnload() {
@@ -981,20 +968,7 @@ async function handleConfirmedBattleExit() {
     return true;
 }
 
-function registerBattleExitHooks() {
-    window.__svbGetBattleExitState = () => ({
-        phase: gameState.phase ?? gameState.gamePhase ?? '',
-        gameOver: gameState.gameOver === true
-    });
-    window.__svbHandleConfirmedBattleExit = handleConfirmedBattleExit;
-}
-
 function registerBeforeUnloadGuard() {
-    if (window.__svbBeforeUnloadGuardRegistered === true) {
-        return;
-    }
-    window.__svbBeforeUnloadGuardRegistered = true;
-
     window.addEventListener('beforeunload', (event) => {
         if (!shouldWarnBeforeUnload()) {
             return;
@@ -1068,15 +1042,10 @@ async function leaveCurrentPvpRoom(reasonForLog) {
         return;
     }
 
-    // Clear local state first to avoid stale handshake reuse during navigation.
     const { gameId, playerId, token } = handshake;
+    // 路由会等待退出结果；失败时保留房间信息，让错误可见且仍可重试退出。
+    await leaveMatch(gameId, playerId, token);
     clearCachedHandshake();
-
-    try {
-        await leaveMatch(gameId, playerId, token);
-    } catch (err) {
-        console.warn("MAIN: Leave match failed (best-effort).", err);
-    }
 }
 
 // --- SignalR Connection Logic ---
@@ -1090,10 +1059,9 @@ async function leaveCurrentPvpRoom(reasonForLog) {
  * @returns {Promise<signalR.HubConnection>} A promise that resolves with the connection object, or rejects on failure.
  */
 async function setupSignalRConnection(gameId, playerId, token, initialStateGate, options = {}) { // ADDED token parameter
-    if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
-        console.warn("MAIN: SignalR connection already exists and is not disconnected. Stopping existing one.");
-        await connection.stop();
-    }
+    const pageSession = gamePageSession;
+    await disconnectGameConnections();
+    if (pageSession !== gamePageSession) throw new Error('页面已退出，对战连接已取消');
 
     // Reset initial-state gate for every new connection/session
     if (!options.skipInitialReset) {
@@ -1102,13 +1070,14 @@ async function setupSignalRConnection(gameId, playerId, token, initialStateGate,
 
     const hubUrlWithParams = `${HUB_URL}?gameId=${encodeURIComponent(gameId)}&playerId=${encodeURIComponent(playerId)}&token=${encodeURIComponent(token)}`;
 
-    connection = new signalR.HubConnectionBuilder()
+    const conn = new signalR.HubConnectionBuilder()
         .withUrl(hubUrlWithParams)
         .withAutomaticReconnect()
         .configureLogging(signalR.LogLevel.Trace) // Changed level to Trace
         .build();
+    connection = conn;
 
-    const connectionId = getConnectionDebugId(connection, 'game');
+    const connectionId = getConnectionDebugId(conn, 'game');
     logPerfDebug('signalr-game', 'connection created', {
         connectionId,
         gameId,
@@ -1116,49 +1085,56 @@ async function setupSignalRConnection(gameId, playerId, token, initialStateGate,
         skipInitialReset: options.skipInitialReset === true
     });
 
-    registerSignalREventHandlers(connection, initialStateGate); // Pass resolver down
+    registerSignalREventHandlers(conn, initialStateGate); // Pass resolver down
 
     try {
         logPerfDebug('signalr-game', 'starting connection', {
             connectionId,
-            state: connection.state
+            state: conn.state
         });
-        await connection.start();
-        startConnectionHeartbeat(connection, 'game');
-        connection.invoke("Heartbeat").catch(err => {
+        await conn.start();
+        if (connection !== conn) throw new Error('对战连接已被替换或关闭');
+        startConnectionHeartbeat(conn, 'game');
+        conn.invoke("Heartbeat").catch(err => {
             console.warn("MAIN: game heartbeat refresh failed after connect.", err);
         });
         logPerfDebug('signalr-game', 'connection started', {
             connectionId,
-            state: connection.state
+            state: conn.state
         });
-        return connection;
+        return conn;
     } catch (err) {
         console.error("MAIN: SignalR Connection Failed: ", err);
         alert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`); // Use alert instead of displayError
-        connection = null;
+        if (connection === conn) {
+            connection = null;
+            setSignalRConnection(null);
+        }
         throw err;
     }
 }
 
 async function setupActionSignalRConnection(gameId, playerId, token) {
+    const pageSession = gamePageSession;
     if (!playerId || !token) return null;
 
-    if (guestConnection && guestConnection.state !== signalR.HubConnectionState.Disconnected) {
-        console.warn("MAIN: Guest SignalR connection already exists and is not disconnected. Stopping existing one.");
-        await guestConnection.stop();
-    }
+    const previous = guestConnection;
+    guestConnection = null;
+    setGuestSignalRConnection(null);
+    stopConnectionHeartbeat(previous);
+    if (previous && previous.state !== signalR.HubConnectionState.Disconnected) await previous.stop();
+    if (pageSession !== gamePageSession) throw new Error('页面已退出，副席位连接已取消');
 
     const hubUrlWithParams = `${HUB_URL}?gameId=${encodeURIComponent(gameId)}&playerId=${encodeURIComponent(playerId)}&token=${encodeURIComponent(token)}`;
 
-    guestConnection = new signalR.HubConnectionBuilder()
+    const trackedGuestConnection = new signalR.HubConnectionBuilder()
         .withUrl(hubUrlWithParams)
         .withAutomaticReconnect()
         .configureLogging(signalR.LogLevel.Warning)
         .build();
 
-    registerActionSignalREventHandlers(guestConnection);
-    const trackedGuestConnection = guestConnection;
+    guestConnection = trackedGuestConnection;
+    registerActionSignalREventHandlers(trackedGuestConnection);
     trackedGuestConnection.onclose(() => {
         stopConnectionHeartbeat(trackedGuestConnection);
         if (guestConnection === trackedGuestConnection) {
@@ -1168,46 +1144,41 @@ async function setupActionSignalRConnection(gameId, playerId, token) {
     });
 
     try {
-        await guestConnection.start();
-        startConnectionHeartbeat(guestConnection, 'guest');
-        guestConnection.invoke("Heartbeat").catch(err => {
+        await trackedGuestConnection.start();
+        if (guestConnection !== trackedGuestConnection) throw new Error('副席位连接已被替换或关闭');
+        startConnectionHeartbeat(trackedGuestConnection, 'guest');
+        trackedGuestConnection.invoke("Heartbeat").catch(err => {
             console.warn("MAIN: guest heartbeat refresh failed after connect.", err);
         });
-        return guestConnection;
+        return trackedGuestConnection;
     } catch (err) {
         console.error("MAIN: Guest SignalR Connection Failed: ", err);
-        guestConnection = null;
+        if (guestConnection === trackedGuestConnection) {
+            guestConnection = null;
+            setGuestSignalRConnection(null);
+        }
         throw err;
     }
 }
 
 function registerActionSignalREventHandlers(conn) {
-    if (!conn) return;
-
+    const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
+        if (guestConnection === conn) handler(...args);
+    });
     let lastChoiceRequestKey = null;
-    const wirePlayerScopedEvent = (eventName, handler) => {
-        conn.on(eventName, (eventData) => {
-            try {
-                handler(eventData);
-            } catch (err) {
-                console.error(`MAIN: Action-connection handler failed for ${eventName}:`, err);
-            }
-        });
-    };
-
     // Keep this list aligned with gameplay interaction handlers in registerSignalREventHandlers.
-    wirePlayerScopedEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
-    wirePlayerScopedEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
-    wirePlayerScopedEvent("AttackStateUpdated", handleAttackStateUpdated);
-    wirePlayerScopedEvent("ActStateUpdated", handleActStateUpdated);
-    wirePlayerScopedEvent("FusionStateUpdated", handleFusionStateUpdated);
-    wirePlayerScopedEvent("EvolveStateUpdated", handleEvolveStateUpdated);
-    wirePlayerScopedEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
-    wirePlayerScopedEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
+    onCurrentEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
+    onCurrentEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
+    onCurrentEvent("AttackStateUpdated", handleAttackStateUpdated);
+    onCurrentEvent("ActStateUpdated", handleActStateUpdated);
+    onCurrentEvent("FusionStateUpdated", handleFusionStateUpdated);
+    onCurrentEvent("EvolveStateUpdated", handleEvolveStateUpdated);
+    onCurrentEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
+    onCurrentEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
 
     // Dual-control guest connection must receive player-scoped choice events,
     // otherwise the selected seat cannot submit a decision and the game stalls.
-    wirePlayerScopedEvent("PlayerChoiceRequested", (eventData) => {
+    onCurrentEvent("PlayerChoiceRequested", (eventData) => {
         const choiceRequest = eventData?.ChoiceRequest;
         const pendingChoiceId = choiceRequest?.PendingChoiceId;
         const sourceAbilityRuntimeId = choiceRequest?.SourceAbilityRuntimeId;
@@ -1223,7 +1194,7 @@ function registerActionSignalREventHandlers(conn) {
         handlePlayerChoiceRequested(eventData);
     });
 
-    conn.on("ReceiveError", (errorMessage) => {
+    onCurrentEvent("ReceiveError", (errorMessage) => {
         const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
         console.error("MAIN: Received Error from Server (action connection):", message);
 
@@ -1231,11 +1202,9 @@ function registerActionSignalREventHandlers(conn) {
             const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
             alert(reason);
             clearCachedHandshake();
-            try {
-                router.navigateTo('navigation');
-            } catch (err) {
-                // ignore navigation errors during teardown
-            }
+            void router.navigateTo('navigation').catch(error => {
+                console.error('MAIN: 退出已关闭房间失败。', error);
+            });
             return;
         }
 
@@ -1244,10 +1213,9 @@ function registerActionSignalREventHandlers(conn) {
 }
 
 async function setupSpectatorSignalRConnection(gameId, initialStateGate, options = {}) {
-    if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
-        console.warn("MAIN: SignalR connection already exists and is not disconnected. Stopping existing one.");
-        await connection.stop();
-    }
+    const pageSession = gamePageSession;
+    await disconnectGameConnections();
+    if (pageSession !== gamePageSession) throw new Error('页面已退出，对战连接已取消');
 
     if (!options.skipInitialReset) {
         initialStateReceived = false;
@@ -1280,36 +1248,41 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
 
     const hubUrlWithParams = `${HUB_URL}?${query.toString()}`;
 
-    connection = new signalR.HubConnectionBuilder()
+    const conn = new signalR.HubConnectionBuilder()
         .withUrl(hubUrlWithParams)
         .withAutomaticReconnect()
         .configureLogging(signalR.LogLevel.Trace)
         .build();
+    connection = conn;
 
-    const connectionId = getConnectionDebugId(connection, 'spectator');
+    const connectionId = getConnectionDebugId(conn, 'spectator');
     logPerfDebug('signalr-game', 'spectator connection created', {
         connectionId,
         gameId,
         skipInitialReset: options.skipInitialReset === true
     });
 
-    registerSignalREventHandlers(connection, initialStateGate);
+    registerSignalREventHandlers(conn, initialStateGate);
 
     try {
         logPerfDebug('signalr-game', 'starting spectator connection', {
             connectionId,
-            state: connection.state
+            state: conn.state
         });
-        await connection.start();
+        await conn.start();
+        if (connection !== conn) throw new Error('对战连接已被替换或关闭');
         logPerfDebug('signalr-game', 'spectator connection started', {
             connectionId,
-            state: connection.state
+            state: conn.state
         });
-        return connection;
+        return conn;
     } catch (err) {
         console.error("MAIN: SignalR Connection Failed (spectate): ", err);
         alert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`);
-        connection = null;
+        if (connection === conn) {
+            connection = null;
+            setSignalRConnection(null);
+        }
         throw err;
     }
 }
@@ -1319,6 +1292,9 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
  * @param {signalR.HubConnection} conn - The SignalR connection instance.
  */
 function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolver as parameter
+    const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
+        if (connection === conn) handler(...args);
+    });
     const connectionId = getConnectionDebugId(conn, 'game');
     const EVENT_STREAM_NAMES = [
         "TurnStarted",
@@ -1394,7 +1370,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     });
 
     const wireEvent = (eventName, handler, logMapper) => {
-        conn.on(eventName, (eventData) => {
+        onCurrentEvent(eventName, (eventData) => {
             logEventReceipt(eventName, eventData);
             if (EVENT_STREAM_NAMES.includes(eventName)) {
                 const payloadForLog = typeof logMapper === 'function' ? logMapper(eventData) : eventData;
@@ -1408,7 +1384,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 
     // Handler for full game state updates (e.g., on connect/reconnect)
     // --- MODIFIED FOR M6 ---
-    conn.on("ReceiveGameState", (receivedGameState) => {
+    onCurrentEvent("ReceiveGameState", (receivedGameState) => {
         const timestamp = new Date().toISOString();
         logEventReceipt('ReceiveGameState', receivedGameState, {
             initialStateReceived,
@@ -1443,12 +1419,12 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
                 setConnectionStatus('connected');
                 const hydrationSucceeded = updateFullGameState(receivedGameState); // Directly update the game state and UI
                 if (hydrationSucceeded === false) {
-                    void handleStateHydrationFailure('重连失败');
+                    void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
                     return;
                 }
             } catch (error) { // Catch for outer try (Line 98)
                 console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
-                void handleStateHydrationFailure('重连失败');
+                void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
                 alert("处理游戏状态更新时出错！");
             } // Closes outer catch
         } else {
@@ -1475,7 +1451,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("SepMaxUpdate", handleSepMaxUpdate);
     wireEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
 
-    // Removed conn.on("HandUpdate", ...) block as it's deprecated
+    // Removed onCurrentEvent("HandUpdate", ...) block as it's deprecated
     wireEvent("GraveyardUpdate", handleGraveyardUpdate);
     wireEvent("EmblemUpdated", handleEmblemUpdated);
     wireEvent("CardPlayed", handleCardPlayed);
@@ -1515,20 +1491,20 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("ChatMessage", handleChatMessage);
     wireEvent("MatchHistorySync", handleMatchHistorySync);
     // Generic log entries (for events without specific DTO)
-    conn.on("LogEvent", (eventData) => {
+    onCurrentEvent("LogEvent", (eventData) => {
         appendGameLog("LogEvent", eventData);
     });
 
     // [COMPATIBILITY FIX] Add a handler for the obsolete 'receivegameevent' to suppress warnings.
     // The server should be updated to stop sending this event.
-    conn.on("receivegameevent", (eventData) => {
+    onCurrentEvent("receivegameevent", (eventData) => {
         console.warn("[DEPRECATED] Received obsolete 'receivegameevent'. Server should be updated to use specific event handlers. Data:", eventData);
     });
 
     // The generic ReceiveGameEvent handler is implicitly removed by replacing this whole block.
 
     // Handler for server-side errors
-    conn.on("ReceiveError", (errorMessage) => {
+    onCurrentEvent("ReceiveError", (errorMessage) => {
         const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
         console.error("MAIN: Received Error from Server:", message);
 
@@ -1536,11 +1512,9 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
             alert(reason);
             clearCachedHandshake();
-            try {
-                router.navigateTo('navigation');
-            } catch (err) {
-                // ignore navigation errors during teardown
-            }
+            void router.navigateTo('navigation').catch(error => {
+                console.error('MAIN: 退出已关闭房间失败。', error);
+            });
             return;
         }
 
@@ -1553,7 +1527,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         alert(`操作失败: ${message}`); // Use alert instead of displayError
     });
 
-    conn.on("PlayerConnectionStatusUpdated", (eventData) => {
+    onCurrentEvent("PlayerConnectionStatusUpdated", (eventData) => {
         logEventReceipt('PlayerConnectionStatusUpdated', eventData);
         const playerId = eventData?.PlayerId || eventData?.playerId;
         const isConnected = eventData?.IsConnected ?? eventData?.isConnected;
@@ -1567,31 +1541,20 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     });
 
     // Handler for when the server requests the client to select target(s)
-    conn.on("RequestTargetSelection", (request) => {
+    onCurrentEvent("RequestTargetSelection", (request) => {
         // Removed call to showTargetSelection, which is not exported/used.
     });
 
     // --- Connection Lifecycle Handlers ---
     conn.onclose((error) => {
         stopConnectionHeartbeat(conn);
+        if (connection !== conn) return;
         logPerfDebug('signalr-game', 'connection closed', {
             connectionId,
             state: conn.state,
             error: error ? { message: error.message, name: error.name } : null
         });
         console.error(`MAIN: SignalR Connection Closed. Error: "${error}". State: ${conn.state}.`);
-        if (manualReconnectInProgress) {
-            connection = null;
-            setSignalRConnection(null);
-            return;
-        }
-        if (suppressNextConnectionCloseAlert) {
-            suppressNextConnectionCloseAlert = false;
-            connection = null;
-            reconnectInProgress = false;
-            setSignalRConnection(null);
-            return;
-        }
         alert("与服务器连接已断开。" + (error ? ` 原因: ${error.message}` : "")); // Use alert instead of displayError
         // Automatic reconnect is enabled, but we might want to disable UI elements here.
         connection = null; // Clear the connection variable
@@ -1601,6 +1564,8 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     });
 
     conn.onreconnecting((error) => {
+        if (connection !== conn) return;
+        setSignalRConnection(null);
         logPerfDebug('signalr-game', 'connection reconnecting', {
             connectionId,
             state: conn.state,
@@ -1614,6 +1579,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     });
 
     conn.onreconnected((connectionId) => {
+        if (connection !== conn) return;
         logPerfDebug('signalr-game', 'connection reconnected', {
             connectionId: getConnectionDebugId(conn, 'game'),
             transportConnectionId: connectionId,
@@ -1624,7 +1590,9 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         reconnectInProgress = false;
         setSignalRConnection(conn);
         setConnectionStatus('reconnecting', '连接已恢复，正在同步...');
-        requestFullStateSync("auto-reconnect");
+        void requestFullStateSync("auto-reconnect").catch(error => {
+            console.error("MAIN: 自动重连同步失败。", error);
+        });
         // Request latest state after reconnection if server doesn't push automatically
         // connection.invoke("RequestInitialGameState").catch(err => console.error("Request state after reconnect failed:", err));
     });
@@ -1632,16 +1600,18 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 }
 
 async function requestFullStateSync(reason) {
-    if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
+    const requestedConnection = connection;
+    if (!requestedConnection || requestedConnection.state !== signalR.HubConnectionState.Connected) {
         console.warn("MAIN: Skip full state sync (connection not ready).", reason || "");
         await handleStateHydrationFailure('重连失败');
         return false;
     }
     try {
-        await connection.invoke("RequestInitialGameState");
+        await requestedConnection.invoke("RequestInitialGameState");
         return true;
     } catch (err) {
         console.error("MAIN: RequestInitialGameState failed:", err);
+        if (connection !== requestedConnection) return false;
         await handleStateHydrationFailure('重连失败');
         return false;
     }
@@ -1734,8 +1704,8 @@ async function performManualReconnect() {
         return;
     }
 
+    const pageSession = gamePageSession;
     reconnectInProgress = true;
-    manualReconnectInProgress = true;
     setConnectionStatus('reconnecting', '正在重连...');
 
     try {
@@ -1749,18 +1719,6 @@ async function performManualReconnect() {
             });
         }
 
-        if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
-            await connection.stop();
-        }
-        if (guestConnection && guestConnection.state !== signalR.HubConnectionState.Disconnected) {
-            await guestConnection.stop();
-        }
-
-        connection = null;
-        guestConnection = null;
-        setSignalRConnection(null);
-        setGuestSignalRConnection(null);
-
         initialStateReceived = true;
         forceFullStateOnNextReceive = true;
 
@@ -1769,6 +1727,7 @@ async function performManualReconnect() {
             : setupSignalRConnection(handshake.gameId, handshake.playerId, handshake.token, null, { skipInitialReset: true });
 
         const newConnection = await connPromise;
+        if (pageSession !== gamePageSession) return false;
         setSignalRConnection(newConnection);
 
         if (handshake.role !== "spectator" && handshake.dualControl && handshake.guestPlayerId && handshake.guestToken) {
@@ -1785,12 +1744,15 @@ async function performManualReconnect() {
             throw new Error("请求完整状态失败");
         }
     } catch (err) {
+        if (pageSession !== gamePageSession) {
+            console.info('MAIN: 页面已退出，重连操作已取消。');
+            return false;
+        }
         console.error("MAIN: Manual reconnect failed:", err);
         setConnectionStatus('disconnected', '重连失败，请重试');
         alert(`重连失败：${err?.message || '未知错误'}`);
     } finally {
-        reconnectInProgress = false;
-        manualReconnectInProgress = false;
+        if (pageSession === gamePageSession) reconnectInProgress = false;
     }
 }
 
@@ -1918,10 +1880,7 @@ async function initializeApp() {
             // Handle errors from loadCards, setupSignalRConnection, or state reception issues
             alert(`游戏初始化失败：${error.message || '未知错误'} 请刷新页面重试。`);
             // Optionally disable UI or show persistent error
-            const cached = getReconnectHandshake();
-            if (cached?.gameId) {
-                setConnectionStatus('disconnected', '连接失败，请点击重连');
-            }
+            await handleStateHydrationFailure('连接失败，请点击重连');
             return false; // Stop initialization on error
         }
         // --- M6 Coordination Logic End ---
@@ -4861,121 +4820,80 @@ function setupMetaProgressionUI() {
     refresh().catch(() => { });
 }
 
-// 设置路由系统的游戏初始化钩子
-document.addEventListener('initializeGame', async () => {
-    logPerfDebug('route-game', 'initializeGame event received', {
-        route: router.getCurrentRoute ? router.getCurrentRoute() : '',
-        alreadyInitialized: window.gameInitialized === true,
-        isInitializing
-    });
-    if (!window.gameInitialized) {
-        const initialized = await initializeApp();
-        if (initialized) {
-            window.gameInitialized = true;
-            logPerfDebug('route-game', 'initializeGame completed', {
-                route: router.getCurrentRoute ? router.getCurrentRoute() : '',
-                initialized: true
-            });
-        }
-    }
-});
-
-function ensureGameRouteInitialization() {
-    const hashRoute = getRouteNameFromHash(window.location.hash);
-    const routerRoute = (typeof router?.getCurrentRoute === 'function')
-        ? router.getCurrentRoute()
-        : '';
-    const activeRoute = hashRoute || routerRoute;
-
-    if (activeRoute !== 'game') return;
-    if (window.gameInitialized === true || isInitializing) return;
-
-    document.dispatchEvent(new CustomEvent('initializeGame'));
+async function initializeGamePage() {
+    if (gameInitialized) return;
+    gamePageSession++;
+    gameInitialized = await initializeApp();
 }
 
-// Router may dispatch initializeGame before this module finishes listener registration.
-// Run a fallback check once listener wiring is complete.
-ensureGameRouteInitialization();
-
-// 设置路由系统的游戏清理钩子
-document.addEventListener('cleanupGame', () => {
-    logPerfDebug('route-game', 'cleanupGame event received', {
-        route: router.getCurrentRoute ? router.getCurrentRoute() : '',
-        hadConnection: Boolean(connection),
-        hadGuestConnection: Boolean(guestConnection)
-    });
-    // 这里可以添加游戏清理逻辑
+async function cleanupGamePage() {
+    gamePageSession++;
+    reconnectInProgress = false;
     const handshake = getActiveNonAiRoomHandshake();
     const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
         pendingRouteTransition?.fromRoute,
         pendingRouteTransition?.toRoute,
         handshake,
-        {
-            gameOver: gameState.gameOver === true,
-            surrenderSubmitted: confirmedBattleExitSurrender === true
-        }
+        { gameOver: gameState.gameOver === true, surrenderSubmitted: confirmedBattleExitSurrender === true }
     );
-    if (shouldDeferLeave) {
-        rememberPendingRoomExitDecision();
-    } else if (confirmedBattleExitSurrender === true) {
-        clearCachedHandshake();
-    } else {
-        // Best-effort: if this is a PVP room, explicitly close it so the opponent can be notified.
-        leaveCurrentPvpRoom("cleanupGame").catch(() => { });
+    if (shouldDeferLeave) rememberPendingRoomExitDecision();
+    document.dispatchEvent(new CustomEvent('cleanupGame'));
+    try {
+        const closeConnections = disconnectGameConnections();
+        let leaveRoom;
+        if (shouldDeferLeave) {
+            leaveRoom = Promise.resolve();
+        } else if (confirmedBattleExitSurrender) {
+            clearCachedHandshake();
+            leaveRoom = Promise.resolve();
+        } else {
+            leaveRoom = leaveCurrentPvpRoom('cleanupGame');
+        }
+        const completed = await Promise.allSettled([closeConnections, leaveRoom]);
+        const failures = completed.filter(item => item.status === 'rejected').map(item => item.reason);
+        if (failures.length) throw new AggregateError(failures, '退出对战未完成，请重试');
+        resetTransientConnectionUiState();
+    } catch (error) {
+        clearPendingRoomExitDecision();
+        setConnectionStatus('disconnected', error.message);
+        throw error;
+    } finally {
+        clearGameSession();
+        initialStateReceived = false;
+        forceFullStateOnNextReceive = false;
+        confirmedBattleExitSurrender = false;
+        gameInitialized = false;
+        clearTransientMatchQueryParams();
     }
+}
 
-    if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
-        connection.stop().catch(err => {
-            console.error('MAIN: Error stopping SignalR connection:', err);
-        });
-    }
-    if (guestConnection && guestConnection.state !== signalR.HubConnectionState.Disconnected) {
-        guestConnection.stop().catch(err => {
-            console.error('MAIN: Error stopping guest SignalR connection:', err);
-        });
-    }
-    stopConnectionHeartbeat(connection);
-    stopConnectionHeartbeat(guestConnection);
-    connection = null;
-    guestConnection = null;
-    initialStateReceived = false;
-    resetTransientConnectionUiState();
-    clearTransientMatchQueryParams();
-    // clearCachedHandshake() is called inside leaveCurrentPvpRoom (or directly for VS-AI)
-    confirmedBattleExitSurrender = false;
-    window.gameInitialized = false;
-});
-
-document.addEventListener('cleanupMultiplayer', () => {
-    // When transitioning from lobby -> game, DO NOT leave/close the room.
+async function cleanupMultiplayerPage() {
+    document.body.classList.remove('show-multiplayer');
+    stopMultiplayerPolling();
     if (suppressMultiplayerLeaveOnce) {
         suppressMultiplayerLeaveOnce = false;
-        stopMultiplayerPolling();
         return;
     }
-
     const handshake = getActiveNonAiRoomHandshake();
-    const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
-        pendingRouteTransition?.fromRoute,
-        pendingRouteTransition?.toRoute,
-        handshake,
-        { gameOver: false }
-    );
-    if (shouldDeferLeave) {
+    if (shouldDeferRoomLeaveForDecision(
+        pendingRouteTransition?.fromRoute, pendingRouteTransition?.toRoute, handshake, { gameOver: false }
+    )) {
         rememberPendingRoomExitDecision();
     } else {
-        // Leaving the multiplayer page (e.g., back to main menu) is treated as leaving the current room
-        // to avoid stale pendingHandshake reuse and to notify the other participant.
-        leaveCurrentPvpRoom("cleanupMultiplayer").catch(() => { });
+        await leaveCurrentPvpRoom('cleanupMultiplayer');
     }
-
-    stopMultiplayerPolling();
     stopConnectionHeartbeat(connection);
     stopConnectionHeartbeat(guestConnection);
-});
+}
+
+// 入口拥有连接与页面业务；路由等待这些生命周期，DOM 事件仅通知视图清理。
+router.setRouteLifecycle('game', { init: initializeGamePage, cleanup: cleanupGamePage });
+router.setRouteLifecycle('multiplayer', { cleanup: cleanupMultiplayerPage });
+registerRoomExitDecisionRouteHooks();
+registerBeforeUnloadGuard();
 
 document.addEventListener('requestReconnect', () => {
-    performManualReconnect().catch(() => { });
+    performManualReconnect().catch(error => console.error('MAIN: 重连处理失败。', error));
 });
 
 // 初始化开发者控制台（如果需要）
@@ -5049,7 +4967,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-        void registerPwaServiceWorker({ productionMode: import.meta.env.PROD });
+        await registerPwaServiceWorker({ productionMode: import.meta.env.PROD });
     } catch (error) {
         console.error('MAIN: Failed to register PWA service worker:', error);
     }
@@ -5081,24 +4999,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('MAIN: Failed to initialize menu starry sky:', error);
     }
 
-    try {
-        registerBattleExitHooks();
-    } catch (error) {
-        console.error('MAIN: Failed to register battle exit hooks:', error);
-    }
-
-    try {
-        registerRoomExitDecisionRouteHooks();
-    } catch (error) {
-        console.error('MAIN: Failed to register room exit decision route hooks:', error);
-    }
-
-    try {
-        registerBeforeUnloadGuard();
-    } catch (error) {
-        console.error('MAIN: Failed to register beforeunload guard:', error);
-    }
-
     // Meta progression panel is currently hidden on main menu; keep wiring disabled.
 
 });
@@ -5118,3 +5018,13 @@ document.addEventListener(DECK_VALIDATION_RULES_UPDATED_EVENT, () => {
 });
 
 // 注意：不再自动启动游戏，而是通过路由系统按需启动
+
+function startRouter() {
+    initializeRouter().catch(error => console.error('MAIN: 初始页面加载失败。', error));
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startRouter, { once: true });
+} else {
+    startRouter();
+}

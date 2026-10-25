@@ -1,3 +1,4 @@
+import { getAstChildSlots } from "./ast-children.js";
 import { createValueNode, validateAST, findIncompleteNode, getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 import { PIPELINE_STAGE_META, isListOperationNode, extractListPipeline, rebuildListChainFromStages, createStageNode } from "./pipeline.js";
 import { finalizeDraftInputs } from "./ast-normalize.js";
@@ -180,44 +181,8 @@ function findPipelineTargetLocation(editor, root, requestedSource) {
             return;
         }
 
-        if (node.type === "operator") {
-            visit(node.leftOperand, node, "left", null);
-            visit(node.rightOperand, node, "right", null);
-            return;
-        }
-
-        if (node.type === "functionCall") {
-            (node.args || []).forEach((arg, argIndex) => visit(arg, node, "arg", argIndex));
-            return;
-        }
-
-        if (node.type === "listQuery") {
-            visit(node.source, node, "source", null);
-            visit(node.filterExpression, node, "filterExpression", null);
-            return;
-        }
-
-        if (node.type === "listSort") {
-            visit(node.source, node, "source", null);
-            visit(node.sortExpression, node, "sortExpression", null);
-            return;
-        }
-
-        if (node.type === "listTake") {
-            visit(node.source, node, "source", null);
-            visit(node.countExpression, node, "countExpression", null);
-            return;
-        }
-
-        if (node.type === "listDistinct") {
-            visit(node.source, node, "source", null);
-            visit(node.keyExpression, node, "keyExpression", null);
-            return;
-        }
-
-        if (node.type === "listSelect") {
-            visit(node.source, node, "source", null);
-            visit(node.selectExpression, node, "selectExpression", null);
+        for (const child of getAstChildSlots(node)) {
+            if (child.slot !== "innerAST") visit(child.node, node, child.slot, child.index);
         }
     };
 
@@ -254,44 +219,8 @@ function collectPipelineCandidates(root) {
             }
         }
 
-        if (node.type === "operator") {
-            visit(node.leftOperand, node, "left", null);
-            visit(node.rightOperand, node, "right", null);
-            return;
-        }
-
-        if (node.type === "functionCall") {
-            (node.args || []).forEach((arg, argIndex) => visit(arg, node, "arg", argIndex));
-            return;
-        }
-
-        if (node.type === "listQuery") {
-            visit(node.source, node, "source", null);
-            visit(node.filterExpression, node, "filterExpression", null);
-            return;
-        }
-
-        if (node.type === "listSort") {
-            visit(node.source, node, "source", null);
-            visit(node.sortExpression, node, "sortExpression", null);
-            return;
-        }
-
-        if (node.type === "listTake") {
-            visit(node.source, node, "source", null);
-            visit(node.countExpression, node, "countExpression", null);
-            return;
-        }
-
-        if (node.type === "listDistinct") {
-            visit(node.source, node, "source", null);
-            visit(node.keyExpression, node, "keyExpression", null);
-            return;
-        }
-
-        if (node.type === "listSelect") {
-            visit(node.source, node, "source", null);
-            visit(node.selectExpression, node, "selectExpression", null);
+        for (const child of getAstChildSlots(node)) {
+            if (child.slot !== "innerAST") visit(child.node, node, child.slot, child.index);
         }
     };
 

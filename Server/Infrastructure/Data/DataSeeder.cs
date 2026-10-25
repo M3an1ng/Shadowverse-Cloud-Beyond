@@ -134,12 +134,12 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
             {
                 var jsonData = await File.ReadAllTextAsync(seedPath);
                 var seeds = JsonSerializer.Deserialize<List<CardPackSeedDto>>(jsonData, jsonOptions);
-                return seeds ?? new List<CardPackSeedDto>();
+                return seeds ?? throw new JsonException($"Card pack seed data must be an array: {seedPath}");
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to read card pack seed file at {SeedPath}.", seedPath);
-                return new List<CardPackSeedDto>();
+                throw;
             }
         }
 
@@ -637,8 +637,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
 
                         if (!Directory.Exists(dataDirectory))
                         {
-                            logger.LogError("Seed data directory not found at {Directory}. Cannot seed database.", dataDirectory);
-                            return;
+                            throw new DirectoryNotFoundException($"Seed data directory not found: {dataDirectory}");
                         }
 
                         var cardDataFiles = Directory
@@ -647,8 +646,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                             .ToArray();
                         if (cardDataFiles.Length == 0)
                         {
-                            logger.LogError("No card_data*.json files found in {Directory}. Cannot seed database.", dataDirectory);
-                            return;
+                            throw new FileNotFoundException($"No card_data*.json files found in {dataDirectory}.");
                         }
 
                         logger.LogInformation("Reading seed data files: {Files}", string.Join(", ", cardDataFiles.Select(Path.GetFileName)));
@@ -657,7 +655,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                         {
                             logger.LogInformation("Reading seed data file: {FilePath}", cardDataFile);
                             var jsonData = await File.ReadAllTextAsync(cardDataFile);
-                            var fileCards = JsonSerializer.Deserialize<List<CardDataSeedDto>>(jsonData, jsonOptions);
+                            var fileCards = JsonSerializer.Deserialize<List<CardDataSeedDto>>(jsonData, jsonOptions)
+                                ?? throw new JsonException($"Card seed data must be an array: {cardDataFile}");
                             if (fileCards == null || fileCards.Count == 0)
                             {
                                 logger.LogWarning("No card data found in {FilePath}.", cardDataFile);
@@ -832,22 +831,22 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 catch (JsonException jsonEx)
                 {
                     logger.LogError(jsonEx, "Error deserializing seed data from {Directory}. Please check the JSON format.", dataDirectory);
-                    // Optionally rethrow or handle to prevent app startup? For now, log and continue.
+                    throw;
                 }
                 catch (DbUpdateException dbEx)
                 {
                     logger.LogError(dbEx, "Error saving seed data to the database. Check database connection, schema, and permissions.");
-                    // Optionally rethrow or handle
+                    throw;
                 }
                 catch (IOException ioEx)
                 {
                     logger.LogError(ioEx, "Error reading seed data files from {Directory}.", dataDirectory);
-                    // Optionally rethrow or handle
+                    throw;
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "An unexpected error occurred during database seeding operation.");
-                    // Optionally rethrow or handle to prevent app startup
+                    throw;
                 }
             }
         }

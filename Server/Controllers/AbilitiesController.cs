@@ -3,11 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities;
-using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -105,7 +103,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
                 var abilities = abilityEntities.Select(ca =>
                 {
-                    var keywords = ExtractAbilityKeywords(ca.JsonConfig);
+                    var keywords = AbilityConfigJson.ReadKeywords(ca.JsonConfig);
                     return new
                     {
                         id = ca.Id,
@@ -157,7 +155,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 }
 
                 // 解析JsonConfig以获取详细的能力配置
-                var keywords = ExtractAbilityKeywords(cardAbility.JsonConfig);
+                var keywords = AbilityConfigJson.ReadKeywords(cardAbility.JsonConfig);
                 object? jsonConfig = null;
                 if (!string.IsNullOrEmpty(cardAbility.JsonConfig))
                 {
@@ -165,21 +163,10 @@ namespace ShadowverseBeyond.Server.Controllers
                     {
                         jsonConfig = System.Text.Json.JsonSerializer.Deserialize<object>(cardAbility.JsonConfig);
                     }
-                    catch (Exception jsonEx)
+                    catch (JsonException jsonEx)
                     {
-                        _logger.LogWarning(jsonEx, "Failed to parse JsonConfig for ability {AbilityId}", id);
-                        // 如果解析失败，使用默认结构
-                        jsonConfig = new
-                        {
-                            id = $"ability_{cardAbility.Id}",
-                            name = cardAbility.Name ?? $"Ability {cardAbility.Id}",
-                            type = "Triggered",
-                            abilityKeywords = BuildAbilityKeywordDtos(keywords),
-                            trigger = new { },
-                            conditions = new object[] { },
-                            targets = new object[] { },
-                            effects = new object[] { }
-                        };
+                        _logger.LogError(jsonEx, "Invalid JsonConfig for ability {AbilityId}", id);
+                        throw new InvalidOperationException($"Ability {id} contains invalid JsonConfig.", jsonEx);
                     }
                 }
                 else
@@ -230,6 +217,7 @@ namespace ShadowverseBeyond.Server.Controllers
         /// <returns>更新结果</returns>
         [HttpPut("{id:long}")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> UpdateAbility(long id, [FromBody] JsonElement abilityData)
@@ -243,6 +231,19 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     _logger.LogWarning("Ability with ID {AbilityId} not found", id);
                     return NotFound(new { error = $"Ability {id} not found" });
+                }
+
+                var jsonConfig = abilityData.TryGetProperty("jsonConfig", out var jsonConfigProp)
+                    ? jsonConfigProp.ValueKind == JsonValueKind.String ? jsonConfigProp.GetString() : jsonConfigProp.GetRawText()
+                    : abilityData.GetRawText();
+                try
+                {
+                    AbilityConfigJson.ReadKeywords(jsonConfig);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Invalid ability configuration for update {AbilityId}", id);
+                    return BadRequest(new { error = "jsonConfig contains invalid ability configuration" });
                 }
 
                 // 更新常用字段（可选）
@@ -270,25 +271,32 @@ namespace ShadowverseBeyond.Server.Controllers
                         cardAbility.IsActive = parsedActive;
                     }
                 }
-                var incomingKeywords = ExtractAbilityKeywords(abilityData);
-
                 // 将前端完整配置保存为 JsonConfig（优先使用 jsonConfig 字段）
-                if (abilityData.TryGetProperty("jsonConfig", out var jsonConfigProp))
-                {
-                    cardAbility.JsonConfig = jsonConfigProp.ValueKind == JsonValueKind.String
-                        ? jsonConfigProp.GetString()
-                        : jsonConfigProp.GetRawText();
-                }
-                else
-                {
-                    cardAbility.JsonConfig = abilityData.GetRawText();
-                }
+                cardAbility.JsonConfig = jsonConfig;
 
                 cardAbility.UpdateTimestamp();
                 var cardDefinition = await TouchCardMetadataAsync(cardAbility.CardId);
 
                 await _context.SaveChangesAsync();
-                await RefreshCardCacheAsync(cardAbility.CardId);
+                try
+                {
+                    await RefreshCardCacheAsync(cardAbility.CardId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Ability {AbilityId} was saved but its cache refresh failed", id);
+                    return StatusCode(500, new
+                    {
+                        error = "Ability saved, but game data cache refresh failed",
+                        code = "ABILITY_CACHE_REFRESH_FAILED",
+                        saved = true,
+                        operation = "update",
+                        id,
+                        cardId = cardAbility.CardId,
+                        cardUpdatedAt = cardDefinition?.UpdatedAt,
+                        cardUpdatedBy = cardDefinition?.UpdatedBy
+                    });
+                }
 
                 _logger.LogInformation("Ability {AbilityId} updated successfully", id);
                 AppendDataRevisionHeader();
@@ -343,8 +351,6 @@ namespace ShadowverseBeyond.Server.Controllers
 
                 var description = abilityData.TryGetProperty("description", out var descProp) ? descProp.GetString() : null;
 
-                var incomingKeywords = ExtractAbilityKeywords(abilityData);
-
                 var abilityType = abilityData.TryGetProperty("abilityType", out var typeProp) && typeProp.ValueKind == JsonValueKind.Number
                     ? typeProp.GetInt32()
                     : 1;
@@ -363,6 +369,17 @@ namespace ShadowverseBeyond.Server.Controllers
                         : jsonConfigProp.GetRawText();
                 }
 
+                List<AbilityKeywordConfig> createdKeywords;
+                try
+                {
+                    createdKeywords = AbilityConfigJson.ReadKeywords(jsonConfig);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Invalid ability configuration for card {CardId}", cardId);
+                    return BadRequest(new { error = "jsonConfig contains invalid ability configuration" });
+                }
+
                 var entity = new AbilityDefinition
                 {
                     CardId = cardId,
@@ -376,18 +393,41 @@ namespace ShadowverseBeyond.Server.Controllers
                     UpdatedAt = DateTime.UtcNow
                 };
 
-                _context.CardAbilities.Add(entity);
-                await TouchCardMetadataAsync(cardId);
-                await _context.SaveChangesAsync();
-
-                if (!cardDefinition.AbilityIds.Contains(entity.Id))
+                // 能力 ID 由数据库生成，两次保存必须作为同一个整体提交。
+                await using (var transaction = await _context.Database.BeginTransactionAsync())
                 {
-                    cardDefinition.AbilityIds.Add(entity.Id);
+                    _context.CardAbilities.Add(entity);
+                    await TouchCardMetadataAsync(cardId);
                     await _context.SaveChangesAsync();
-                }
-                await RefreshCardCacheAsync(cardId);
 
-                var createdKeywords = ExtractAbilityKeywords(entity.JsonConfig);
+                    if (!cardDefinition.AbilityIds.Contains(entity.Id))
+                    {
+                        cardDefinition.AbilityIds.Add(entity.Id);
+                        await _context.SaveChangesAsync();
+                    }
+
+                    await transaction.CommitAsync();
+                }
+                try
+                {
+                    await RefreshCardCacheAsync(cardId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Ability {AbilityId} was created but its cache refresh failed", entity.Id);
+                    return StatusCode(500, new
+                    {
+                        error = "Ability saved, but game data cache refresh failed",
+                        code = "ABILITY_CACHE_REFRESH_FAILED",
+                        saved = true,
+                        operation = "create",
+                        id = entity.Id,
+                        cardId,
+                        cardUpdatedAt = cardDefinition.UpdatedAt,
+                        cardUpdatedBy = cardDefinition.UpdatedBy
+                    });
+                }
+
                 var created = new
                 {
                     id = entity.Id,
@@ -498,93 +538,6 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 _logger.LogError(ex, "Error retrieving ability counts snapshot");
                 return StatusCode(500, new { error = "Failed to retrieve ability counts" });
-            }
-        }
-
-        private static List<AbilityKeywordConfig> ExtractAbilityKeywords(JsonElement abilityData)
-        {
-            if (abilityData.ValueKind == JsonValueKind.Object &&
-                abilityData.TryGetProperty("abilityKeywords", out var keywordsProp))
-            {
-                var parsed = DeserializeAbilityKeywords(keywordsProp);
-                if (parsed.Count > 0)
-                {
-                    return parsed;
-                }
-            }
-
-            if (abilityData.ValueKind == JsonValueKind.Object &&
-                abilityData.TryGetProperty("jsonConfig", out var jsonConfigProp))
-            {
-                var jsonConfigText = jsonConfigProp.ValueKind == JsonValueKind.String
-                    ? jsonConfigProp.GetString()
-                    : jsonConfigProp.GetRawText();
-                var config = TryDeserializeAbilityConfig(jsonConfigText);
-                if (config != null)
-                {
-                    config.NormalizeKeywords();
-                    return config.AbilityKeywords;
-                }
-            }
-
-            return new List<AbilityKeywordConfig>();
-        }
-
-        private static List<AbilityKeywordConfig> ExtractAbilityKeywords(string? jsonConfig)
-        {
-            var config = TryDeserializeAbilityConfig(jsonConfig);
-            if (config == null)
-            {
-                return new List<AbilityKeywordConfig>();
-            }
-
-            config.NormalizeKeywords();
-            return config.AbilityKeywords;
-        }
-
-        private static AbilityConfig? TryDeserializeAbilityConfig(string? jsonConfig)
-        {
-            if (string.IsNullOrWhiteSpace(jsonConfig))
-            {
-                return null;
-            }
-
-            try
-            {
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    Converters = { new LenientEffectKeywordConverter(), new JsonStringEnumConverter() }
-                };
-                return JsonSerializer.Deserialize<AbilityConfig>(jsonConfig, options);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static List<AbilityKeywordConfig> DeserializeAbilityKeywords(JsonElement element)
-        {
-            try
-            {
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    Converters =
-                    {
-                        new AbilityKeywordConfigListConverter(),
-                        new LenientEffectKeywordConverter(),
-                        new JsonStringEnumConverter()
-                    }
-                };
-
-                return JsonSerializer.Deserialize<List<AbilityKeywordConfig>>(element.GetRawText(), options)
-                    ?? new List<AbilityKeywordConfig>();
-            }
-            catch
-            {
-                return new List<AbilityKeywordConfig>();
             }
         }
 

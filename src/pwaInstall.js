@@ -70,12 +70,7 @@ export async function registerPwaServiceWorker({ productionMode = false } = {}) 
         return null;
     }
 
-    try {
-        return await navigator.serviceWorker.register('/sw.js');
-    } catch (error) {
-        console.warn('PWA: Failed to register service worker.', error);
-        return null;
-    }
+    return navigator.serviceWorker.register('/sw.js');
 }
 
 export function setupPwaInstallUI() {

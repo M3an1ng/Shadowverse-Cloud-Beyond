@@ -1,3 +1,4 @@
+using ShadowverseBeyond.Server.Mappings;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -83,7 +84,13 @@ namespace ShadowverseBeyond.Server.Services
                             _logger.LogError("Cannot trigger AI choice because game state is null for GameId {GameId}", gameId);
                             return;
                         }
-                        var gameStateDto = _mapper.Map<GameStateDto>(game); // Create a snapshot for the AI to use.
+                        var accessor = scope.ServiceProvider.GetRequiredService<IGameContextAccessor>();
+                        GameStateDto gameStateDto;
+                        using (var gameContext = new Domain.Events.GameContext(
+                            scope.ServiceProvider, _mapper, accessor, game, request.RequestingPlayerId, cancellationToken))
+                        {
+                            gameStateDto = GameStateProjection.Create(game, gameContext);
+                        }
 
                         var aiResult = await aiService.DecideTargetChoiceAsync(request, gameStateDto);
 
@@ -100,20 +107,15 @@ namespace ShadowverseBeyond.Server.Services
                         // 因为游戏循环正在等待这个Task返回，入队新动作会导致死锁
                         // AI的决定需要立刻、同步地恢复游戏循环
                         _logger.LogInformation("[AI_CHOICE_SUBMIT] AI {PlayerId} submitting choice for {ChoiceId}", player.PlayerId, dto.PendingChoiceId);
-                        gameService.SubmitTargetChoiceAsync(game.GameId, player.PlayerId, dto);
+                        await gameService.SubmitTargetChoiceAsync(game.GameId, player.PlayerId, dto);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error in background AI choice decision task for choice {ChoiceId}.", request.PendingChoiceId);
-                        // If the AI fails, we should probably cancel the choice to prevent the game from stalling.
-                        var cancellationDto = new SubmitTargetChoiceActionDto
+                        _logger.LogError(ex, "AI choice decision failed for pending choice {ChoiceId}.", request.PendingChoiceId);
+                        if (_pendingChoices.TryRemove(request.PendingChoiceId, out var failedContext))
                         {
-                            PendingChoiceId = request.PendingChoiceId,
-                            SourceAbilityRuntimeId = request.SourceAbilityRuntimeId,
-                            TargetKey = request.TargetKey,
-                            WasCancelled = true
-                        };
-                        CompletePlayerChoice(request.PendingChoiceId, cancellationDto);
+                            failedContext.Tcs.TrySetException(ex);
+                        }
                     }
                 }, cancellationToken);
             }

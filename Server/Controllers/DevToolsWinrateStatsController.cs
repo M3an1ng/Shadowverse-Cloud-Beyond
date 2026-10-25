@@ -5,9 +5,9 @@ using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Services.Abstractions;
-using System.Data;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Controllers;
 
@@ -17,6 +17,11 @@ public class DevToolsWinrateStatsController : ControllerBase
 {
     private const int DefaultTop = 50;
     private const int MaxTop = 2000;
+    private static readonly JsonSerializerOptions CardIdJsonOptions = new()
+    {
+        // Historical statistics also store IDs as numeric strings.
+        NumberHandling = JsonNumberHandling.AllowReadingFromString
+    };
 
     private readonly ApplicationDbContext _db;
     private readonly IDeckCodeService _deckCodeService;
@@ -71,7 +76,6 @@ public class DevToolsWinrateStatsController : ControllerBase
         }
 
         var take = Math.Clamp(top, 1, MaxTop);
-        var hasEndTurnNumberColumn = await HasColumnAsync("GameParticipantStatsFacts", "EndTurnNumber", cancellationToken);
         var factsQuery = _db.GameParticipantStatsFacts
             .AsNoTracking()
             .Where(item =>
@@ -124,103 +128,48 @@ public class DevToolsWinrateStatsController : ControllerBase
             .Where(item => cardIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, item => item.Name, cancellationToken);
 
-        List<DeckAggregateRow> deckAggs;
-        if (hasEndTurnNumberColumn)
-        {
-            deckAggs = await factsQuery
-                .GroupBy(item => new { item.DeckShapeHash, item.DeckClass })
-                .Select(group => new DeckAggregateRow
-                {
-                    DeckShapeHash = group.Key.DeckShapeHash,
-                    DeckClass = group.Key.DeckClass,
-                    TotalGames = group.Count(),
-                    TotalWins = group.Sum(item => item.IsWinner ? 1 : 0),
-                    GoingFirstGames = group.Sum(item => item.IsFirstPlayer == true ? 1 : 0),
-                    GoingFirstWins = group.Sum(item => item.IsFirstPlayer == true && item.IsWinner ? 1 : 0),
-                    GoingSecondGames = group.Sum(item => item.IsFirstPlayer == false ? 1 : 0),
-                    GoingSecondWins = group.Sum(item => item.IsFirstPlayer == false && item.IsWinner ? 1 : 0),
-                    AverageEndTurn = group.Average(item => (double?)item.EndTurnNumber),
-                    GoingFirstAverageEndTurn = group.Average(item => item.IsFirstPlayer == true ? (double?)item.EndTurnNumber : null),
-                    GoingSecondAverageEndTurn = group.Average(item => item.IsFirstPlayer == false ? (double?)item.EndTurnNumber : null),
-                    UpdatedAtUtc = group.Max(item => item.EndedAtUtc)
-                })
-                .OrderByDescending(item => item.TotalGames)
-                .ThenByDescending(item => item.TotalWins)
-                .Take(take)
-                .ToListAsync(cancellationToken);
-        }
-        else
-        {
-            deckAggs = await factsQuery
-                .GroupBy(item => new { item.DeckShapeHash, item.DeckClass })
-                .Select(group => new DeckAggregateRow
-                {
-                    DeckShapeHash = group.Key.DeckShapeHash,
-                    DeckClass = group.Key.DeckClass,
-                    TotalGames = group.Count(),
-                    TotalWins = group.Sum(item => item.IsWinner ? 1 : 0),
-                    GoingFirstGames = group.Sum(item => item.IsFirstPlayer == true ? 1 : 0),
-                    GoingFirstWins = group.Sum(item => item.IsFirstPlayer == true && item.IsWinner ? 1 : 0),
-                    GoingSecondGames = group.Sum(item => item.IsFirstPlayer == false ? 1 : 0),
-                    GoingSecondWins = group.Sum(item => item.IsFirstPlayer == false && item.IsWinner ? 1 : 0),
-                    AverageEndTurn = null,
-                    GoingFirstAverageEndTurn = null,
-                    GoingSecondAverageEndTurn = null,
-                    UpdatedAtUtc = group.Max(item => item.EndedAtUtc)
-                })
-                .OrderByDescending(item => item.TotalGames)
-                .ThenByDescending(item => item.TotalWins)
-                .Take(take)
-                .ToListAsync(cancellationToken);
-        }
+        var deckAggs = await factsQuery
+            .GroupBy(item => new { item.DeckShapeHash, item.DeckClass })
+            .Select(group => new DeckAggregateRow
+            {
+                DeckShapeHash = group.Key.DeckShapeHash,
+                DeckClass = group.Key.DeckClass,
+                TotalGames = group.Count(),
+                TotalWins = group.Sum(item => item.IsWinner ? 1 : 0),
+                GoingFirstGames = group.Sum(item => item.IsFirstPlayer == true ? 1 : 0),
+                GoingFirstWins = group.Sum(item => item.IsFirstPlayer == true && item.IsWinner ? 1 : 0),
+                GoingSecondGames = group.Sum(item => item.IsFirstPlayer == false ? 1 : 0),
+                GoingSecondWins = group.Sum(item => item.IsFirstPlayer == false && item.IsWinner ? 1 : 0),
+                AverageEndTurn = group.Average(item => (double?)item.EndTurnNumber),
+                GoingFirstAverageEndTurn = group.Average(item => item.IsFirstPlayer == true ? (double?)item.EndTurnNumber : null),
+                GoingSecondAverageEndTurn = group.Average(item => item.IsFirstPlayer == false ? (double?)item.EndTurnNumber : null),
+                UpdatedAtUtc = group.Max(item => item.EndedAtUtc)
+            })
+            .OrderByDescending(item => item.TotalGames)
+            .ThenByDescending(item => item.TotalWins)
+            .Take(take)
+            .ToListAsync(cancellationToken);
 
-        List<ClassAggregateRow> classAggs;
-        if (hasEndTurnNumberColumn)
-        {
-            classAggs = await factsQuery
-                .GroupBy(item => item.DeckClass)
-                .Select(group => new ClassAggregateRow
-                {
-                    DeckClass = group.Key,
-                    TotalGames = group.Count(),
-                    TotalWins = group.Sum(item => item.IsWinner ? 1 : 0),
-                    GoingFirstGames = group.Sum(item => item.IsFirstPlayer == true ? 1 : 0),
-                    GoingFirstWins = group.Sum(item => item.IsFirstPlayer == true && item.IsWinner ? 1 : 0),
-                    GoingSecondGames = group.Sum(item => item.IsFirstPlayer == false ? 1 : 0),
-                    GoingSecondWins = group.Sum(item => item.IsFirstPlayer == false && item.IsWinner ? 1 : 0),
-                    AverageEndTurn = group.Average(item => (double?)item.EndTurnNumber),
-                    GoingFirstAverageEndTurn = group.Average(item => item.IsFirstPlayer == true ? (double?)item.EndTurnNumber : null),
-                    GoingSecondAverageEndTurn = group.Average(item => item.IsFirstPlayer == false ? (double?)item.EndTurnNumber : null),
-                    UpdatedAtUtc = group.Max(item => item.EndedAtUtc)
-                })
-                .OrderByDescending(item => item.TotalGames)
-                .ThenByDescending(item => item.TotalWins)
-                .Take(take)
-                .ToListAsync(cancellationToken);
-        }
-        else
-        {
-            classAggs = await factsQuery
-                .GroupBy(item => item.DeckClass)
-                .Select(group => new ClassAggregateRow
-                {
-                    DeckClass = group.Key,
-                    TotalGames = group.Count(),
-                    TotalWins = group.Sum(item => item.IsWinner ? 1 : 0),
-                    GoingFirstGames = group.Sum(item => item.IsFirstPlayer == true ? 1 : 0),
-                    GoingFirstWins = group.Sum(item => item.IsFirstPlayer == true && item.IsWinner ? 1 : 0),
-                    GoingSecondGames = group.Sum(item => item.IsFirstPlayer == false ? 1 : 0),
-                    GoingSecondWins = group.Sum(item => item.IsFirstPlayer == false && item.IsWinner ? 1 : 0),
-                    AverageEndTurn = null,
-                    GoingFirstAverageEndTurn = null,
-                    GoingSecondAverageEndTurn = null,
-                    UpdatedAtUtc = group.Max(item => item.EndedAtUtc)
-                })
-                .OrderByDescending(item => item.TotalGames)
-                .ThenByDescending(item => item.TotalWins)
-                .Take(take)
-                .ToListAsync(cancellationToken);
-        }
+        var classAggs = await factsQuery
+            .GroupBy(item => item.DeckClass)
+            .Select(group => new ClassAggregateRow
+            {
+                DeckClass = group.Key,
+                TotalGames = group.Count(),
+                TotalWins = group.Sum(item => item.IsWinner ? 1 : 0),
+                GoingFirstGames = group.Sum(item => item.IsFirstPlayer == true ? 1 : 0),
+                GoingFirstWins = group.Sum(item => item.IsFirstPlayer == true && item.IsWinner ? 1 : 0),
+                GoingSecondGames = group.Sum(item => item.IsFirstPlayer == false ? 1 : 0),
+                GoingSecondWins = group.Sum(item => item.IsFirstPlayer == false && item.IsWinner ? 1 : 0),
+                AverageEndTurn = group.Average(item => (double?)item.EndTurnNumber),
+                GoingFirstAverageEndTurn = group.Average(item => item.IsFirstPlayer == true ? (double?)item.EndTurnNumber : null),
+                GoingSecondAverageEndTurn = group.Average(item => item.IsFirstPlayer == false ? (double?)item.EndTurnNumber : null),
+                UpdatedAtUtc = group.Max(item => item.EndedAtUtc)
+            })
+            .OrderByDescending(item => item.TotalGames)
+            .ThenByDescending(item => item.TotalWins)
+            .Take(take)
+            .ToListAsync(cancellationToken);
 
         var response = new WinrateStatsSummaryResponse
         {
@@ -349,7 +298,8 @@ public class DevToolsWinrateStatsController : ControllerBase
             return NotFound("Deck composition not found.");
         }
 
-        if (!TryDeserializeDeckCounts(fact.InitialDeckCardCountsJson, out var deckCounts) || deckCounts.Count == 0)
+        var deckCounts = DeserializeDeckCounts(fact.InitialDeckCardCountsJson);
+        if (deckCounts.Count == 0)
         {
             return NotFound("Deck composition payload is empty.");
         }
@@ -360,19 +310,26 @@ public class DevToolsWinrateStatsController : ControllerBase
             .Where(item => cardIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, item => item, cancellationToken);
 
+        // Deleted definitions cannot provide a faithful historical composition.
+        var missingCardIds = cardIds.Except(cardDefinitions.Keys).ToArray();
+        if (missingCardIds.Length > 0)
+        {
+            return NotFound($"Card definitions are no longer available: {string.Join(", ", missingCardIds)}.");
+        }
+
         var cards = deckCounts
             .Select(pair =>
             {
-                cardDefinitions.TryGetValue(pair.Key, out var definition);
+                var definition = cardDefinitions[pair.Key];
                 return new DeckCompositionCard
                 {
                     CardDefinitionId = pair.Key,
                     Count = pair.Value,
-                    Name = definition?.Name ?? $"Card #{pair.Key}",
-                    Cost = definition?.Cost ?? 0,
-                    Type = definition?.Type.ToString() ?? CardType.Follower.ToString(),
-                    Rarity = definition?.Rarity.ToString() ?? CardRarity.Bronze.ToString(),
-                    ArtPreview = definition?.ArtPreview
+                    Name = definition.Name,
+                    Cost = definition.Cost,
+                    Type = definition.Type.ToString(),
+                    Rarity = definition.Rarity.ToString(),
+                    ArtPreview = definition.ArtPreview
                 };
             })
             .OrderBy(item => item.Cost)
@@ -421,7 +378,8 @@ public class DevToolsWinrateStatsController : ControllerBase
             return true;
         }
 
-        return Enum.TryParse(raw.Trim(), ignoreCase: true, out environment);
+        return Enum.TryParse(raw.Trim(), ignoreCase: true, out environment)
+            && Enum.IsDefined(environment);
     }
 
     private static bool TryParseDeckRule(string? raw, out DeckRule rule)
@@ -432,7 +390,8 @@ public class DevToolsWinrateStatsController : ControllerBase
             return true;
         }
 
-        return Enum.TryParse(raw.Trim(), ignoreCase: true, out rule);
+        return Enum.TryParse(raw.Trim(), ignoreCase: true, out rule)
+            && Enum.IsDefined(rule);
     }
 
     private static string? NormalizeKeyword(string? raw)
@@ -547,137 +506,28 @@ public class DevToolsWinrateStatsController : ControllerBase
         return Math.Round(value.Value, 2);
     }
 
-    private async Task<bool> HasColumnAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    private static Dictionary<int, int> DeserializeDeckCounts(string rawJson)
     {
-        var connection = _db.Database.GetDbConnection();
-        var shouldClose = connection.State != ConnectionState.Open;
-        if (shouldClose)
+        var deckCounts = JsonSerializer.Deserialize<Dictionary<int, int>>(rawJson)
+            ?? throw new JsonException("InitialDeckCardCountsJson must be a JSON object.");
+        if (deckCounts.Any(pair => pair.Key <= 0 || pair.Value <= 0))
         {
-            await connection.OpenAsync(cancellationToken);
+            throw new JsonException("InitialDeckCardCountsJson requires positive card IDs and counts.");
         }
 
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = $"PRAGMA table_info('{tableName}')";
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            var nameOrdinal = reader.GetOrdinal("name");
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                var currentName = reader.IsDBNull(nameOrdinal) ? string.Empty : reader.GetString(nameOrdinal);
-                if (string.Equals(currentName, columnName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-        finally
-        {
-            if (shouldClose)
-            {
-                await connection.CloseAsync();
-            }
-        }
+        return deckCounts;
     }
 
-    private static bool TryDeserializeDeckCounts(string? rawJson, out Dictionary<int, int> deckCounts)
+    private static HashSet<int> DeserializeCardIds(string rawJson)
     {
-        deckCounts = new Dictionary<int, int>();
-        if (string.IsNullOrWhiteSpace(rawJson))
+        var cardIds = JsonSerializer.Deserialize<HashSet<int>>(rawJson, CardIdJsonOptions)
+            ?? throw new JsonException("Card IDs must be a JSON array.");
+        if (cardIds.Any(cardId => cardId <= 0))
         {
-            return false;
+            throw new JsonException("Card IDs must be positive.");
         }
 
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<Dictionary<int, int>>(rawJson);
-            if (parsed != null && parsed.Count > 0)
-            {
-                deckCounts = parsed.Where(item => item.Value > 0).ToDictionary(item => item.Key, item => item.Value);
-                return deckCounts.Count > 0;
-            }
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, int>>(rawJson);
-            if (parsed == null || parsed.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (var pair in parsed)
-            {
-                if (!int.TryParse(pair.Key, out var cardDefinitionId) || pair.Value <= 0)
-                {
-                    continue;
-                }
-
-                deckCounts[cardDefinitionId] = pair.Value;
-            }
-
-            return deckCounts.Count > 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool TryDeserializeCardIds(string? rawJson, out HashSet<int> cardIds)
-    {
-        cardIds = new HashSet<int>();
-        if (string.IsNullOrWhiteSpace(rawJson))
-        {
-            return false;
-        }
-
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<int[]>(rawJson);
-            if (parsed != null)
-            {
-                foreach (var cardId in parsed)
-                {
-                    if (cardId > 0)
-                    {
-                        cardIds.Add(cardId);
-                    }
-                }
-
-                return cardIds.Count > 0;
-            }
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<string[]>(rawJson);
-            if (parsed == null)
-            {
-                return false;
-            }
-
-            foreach (var raw in parsed)
-            {
-                if (int.TryParse(raw, out var cardId) && cardId > 0)
-                {
-                    cardIds.Add(cardId);
-                }
-            }
-        }
-        catch
-        {
-        }
-
-        return cardIds.Count > 0;
+        return cardIds;
     }
 
     private static Dictionary<int, CardAggregateRow> BuildCardAggMap(IReadOnlyList<CardFactRow> facts)
@@ -685,13 +535,9 @@ public class DevToolsWinrateStatsController : ControllerBase
         var result = new Dictionary<int, CardAggregateRow>();
         foreach (var fact in facts)
         {
-            if (!TryDeserializeDeckCounts(fact.InitialDeckCardCountsJson, out var deckCounts) || deckCounts.Count == 0)
-            {
-                continue;
-            }
-
-            TryDeserializeCardIds(fact.DrawnCardIdsJson, out var drawnCardIds);
-            TryDeserializeCardIds(fact.PlayedCardIdsJson, out var playedCardIds);
+            var deckCounts = DeserializeDeckCounts(fact.InitialDeckCardCountsJson);
+            var drawnCardIds = DeserializeCardIds(fact.DrawnCardIdsJson);
+            var playedCardIds = DeserializeCardIds(fact.PlayedCardIdsJson);
 
             foreach (var cardDefinitionId in deckCounts.Keys)
             {

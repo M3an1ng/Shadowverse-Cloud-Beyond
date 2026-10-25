@@ -71,16 +71,16 @@ namespace ShadowverseBeyond.Server.Controllers
                 return BadRequest(configError ?? "配置参数无效。");
             }
 
-            var createResult = _matchService.Create(request.UserId, useAiFallback: mode == "ai");
+            var devMatchConfig = safeConfig ?? new DevMatchConfig();
+            devMatchConfig.IgnoreDeckFormatConsistency = true;
+            devMatchConfig.AllowIncompleteDecks = true;
+            var createResult = _matchService.Create(request.UserId, useAiFallback: mode == "ai", devMatchConfig: devMatchConfig);
             if (!createResult.Success || createResult.Room == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, createResult.Message ?? "创建房间失败。");
             }
 
             var room = createResult.Room;
-            room.DevMatchConfig = safeConfig ?? new DevMatchConfig();
-            room.DevMatchConfig.IgnoreDeckFormatConsistency = true;
-            room.DevMatchConfig.AllowIncompleteDecks = true;
 
             Guid? guestPlayerId = null;
             string? guestToken = null;

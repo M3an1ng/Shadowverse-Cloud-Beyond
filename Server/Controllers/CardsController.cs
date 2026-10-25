@@ -20,10 +20,8 @@ using AutoMapper;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using System.Text.Json;
 using ShadowverseBeyond.Server.Domain.Abilities;
-using ShadowverseBeyond.Server.Domain.Abilities.JsonConverters;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos.Enums;
-using System.Text.Json.Serialization;
 using System.IO;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -367,19 +365,12 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                         return null;
                     }
 
-                    try
-                    {
-                        return JsonSerializer.Deserialize<object>(jsonConfig);
-                    }
-                    catch
-                    {
-                        return jsonConfig;
-                    }
+                    return JsonSerializer.Deserialize<object>(jsonConfig);
                 }
 
                 var abilities = abilityEntities.Select(a =>
                 {
-                    var keywords = ExtractAbilityKeywords(a.JsonConfig);
+                    var keywords = AbilityConfigJson.ReadKeywords(a.JsonConfig);
                     return new
                     {
                         id = a.Id,
@@ -447,7 +438,14 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 await TouchCardMetadataAsync(card);
 
                 await _db.SaveChangesAsync();
-                await RefreshCardCacheAsync(oldCardId, cardId);
+                try
+                {
+                    await RefreshCardCacheAsync(oldCardId, cardId);
+                }
+                catch (Exception ex)
+                {
+                    return AbilityCacheRefreshFailed(card, abilityId, "link", ex);
+                }
 
                 AppendDataRevisionHeader();
                 return Ok(new
@@ -490,7 +488,14 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 }
                 await TouchCardMetadataAsync(card);
                 await _db.SaveChangesAsync();
-                await RefreshCardCacheAsync(cardId);
+                try
+                {
+                    await RefreshCardCacheAsync(cardId);
+                }
+                catch (Exception ex)
+                {
+                    return AbilityCacheRefreshFailed(card, abilityId, "unlink", ex);
+                }
 
                 AppendDataRevisionHeader();
                 return Ok(new
@@ -507,6 +512,22 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 _logger.LogError(ex, "Error unlinking ability {AbilityId} from card {CardId}", abilityId, cardId);
                 return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Failed to unlink ability" });
             }
+        }
+
+        private ObjectResult AbilityCacheRefreshFailed(CardDefinition card, long abilityId, string operation, Exception exception)
+        {
+            _logger.LogError(exception, "Ability {AbilityId} {Operation} was saved for card {CardId}, but its cache refresh failed", abilityId, operation, card.Id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                error = "Ability change saved, but game data cache refresh failed",
+                code = "ABILITY_CACHE_REFRESH_FAILED",
+                saved = true,
+                operation,
+                id = abilityId,
+                cardId = card.Id,
+                cardUpdatedAt = card.UpdatedAt,
+                cardUpdatedBy = card.UpdatedBy
+            });
         }
 
         [HttpDelete("{id:int}")]
@@ -534,40 +555,6 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             {
                 _logger.LogError(ex, "Error deleting card {CardId}", id);
                 return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Failed to delete card" });
-            }
-        }
-
-        private static List<AbilityKeywordConfig> ExtractAbilityKeywords(string? jsonConfig)
-        {
-            var config = TryDeserializeAbilityConfig(jsonConfig);
-            if (config == null)
-            {
-                return new List<AbilityKeywordConfig>();
-            }
-
-            config.NormalizeKeywords();
-            return config.AbilityKeywords;
-        }
-
-        private static AbilityConfig? TryDeserializeAbilityConfig(string? jsonConfig)
-        {
-            if (string.IsNullOrWhiteSpace(jsonConfig))
-            {
-                return null;
-            }
-
-            try
-            {
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    Converters = { new LenientEffectKeywordConverter(), new JsonStringEnumConverter() }
-                };
-                return JsonSerializer.Deserialize<AbilityConfig>(jsonConfig, options);
-            }
-            catch
-            {
-                return null;
             }
         }
 

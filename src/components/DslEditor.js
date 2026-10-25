@@ -1,3 +1,6 @@
+import { normalizeLoadedAst } from "./dsl_editor/ast-normalize.js";
+import { normalizeDisplayTypeName } from "./dsl_editor/type-names.js";
+import { getAstChildSlots } from "./dsl_editor/ast-children.js";
 // src/components/DslEditor.js - 可视化DSL编辑器
 //
 // 相关文档:
@@ -230,110 +233,8 @@ export class DslEditor extends MetadataDrivenComponent {
         await this.preloadEnumLocalizations();
     }
 
-    splitGenericTypeArguments(raw) {
-        const text = String(raw || "").trim();
-        if (!text) return [];
-        const result = [];
-        let depth = 0;
-        let current = "";
-        for (let i = 0; i < text.length; i++) {
-            const ch = text[i];
-            if (ch === "<") {
-                depth++;
-                current += ch;
-                continue;
-            }
-            if (ch === ">") {
-                depth = Math.max(0, depth - 1);
-                current += ch;
-                continue;
-            }
-            if (ch === "," && depth === 0) {
-                const token = current.trim();
-                if (token) result.push(token);
-                current = "";
-                continue;
-            }
-            current += ch;
-        }
-        const tail = current.trim();
-        if (tail) result.push(tail);
-        return result;
-    }
-
     normalizeTypeName(typeName) {
-        if (!typeName) return null;
-        const trimmed = String(typeName).trim().replace(/^global::/i, "");
-        if (!trimmed) return null;
-
-        const simpleAliasMap = {
-            "bool": "Boolean",
-            "boolean": "Boolean",
-            "system.boolean": "Boolean",
-            "string": "String",
-            "system.string": "String",
-            "object": "Object",
-            "system.object": "Object",
-            "guid": "Guid",
-            "system.guid": "Guid",
-            "int": "Int32",
-            "int32": "Int32",
-            "system.int32": "Int32",
-            "long": "Int64",
-            "int64": "Int64",
-            "system.int64": "Int64",
-            "float": "Single",
-            "single": "Single",
-            "system.single": "Single",
-            "double": "Double",
-            "system.double": "Double",
-            "decimal": "Decimal",
-            "system.decimal": "Decimal",
-            "number": "Number"
-        };
-
-        const lower = trimmed.toLowerCase();
-        if (Object.prototype.hasOwnProperty.call(simpleAliasMap, lower)) {
-            return simpleAliasMap[lower];
-        }
-
-        const nullable = trimmed.match(/^Nullable<(.+)>$/i);
-        if (nullable) {
-            return this.normalizeTypeName(nullable[1]) || nullable[1].trim();
-        }
-
-        const genericMatch = trimmed.match(/^([^<]+)<(.+)>$/);
-        if (genericMatch) {
-            const containerRaw = genericMatch[1].trim();
-            const containerLower = containerRaw.toLowerCase();
-            const rawArgs = this.splitGenericTypeArguments(genericMatch[2]);
-            const normalizedArgs = rawArgs.map(arg => this.normalizeTypeName(arg) || arg.trim());
-
-            if (["list", "ienumerable", "ireadonlylist", "ireadonlycollection", "icollection"].includes(containerLower)) {
-                const inner = normalizedArgs[0] || "Object";
-                return `List<${inner}>`;
-            }
-
-            if (["dictionary", "idictionary", "ireadonlydictionary"].includes(containerLower)) {
-                const keyType = normalizedArgs[0] || "Object";
-                const valueType = normalizedArgs[1] || "Object";
-                const dictionaryNameMap = {
-                    dictionary: "Dictionary",
-                    idictionary: "IDictionary",
-                    ireadonlydictionary: "IReadOnlyDictionary"
-                };
-                const name = dictionaryNameMap[containerLower] || containerRaw;
-                return `${name}<${keyType}, ${valueType}>`;
-            }
-
-            return `${containerRaw}<${normalizedArgs.join(", ")}>`;
-        }
-
-        if (["list", "ienumerable", "ireadonlylist", "ireadonlycollection", "icollection"].includes(lower)) {
-            return "List<Object>";
-        }
-
-        return trimmed;
+        return normalizeDisplayTypeName(typeName);
     }
 
     resolveTypeAlias(typeName) {
@@ -1321,15 +1222,8 @@ export class DslEditor extends MetadataDrivenComponent {
     }
 
     normalizeLoadedAst() {
-        const normalize = (node) => {
-            if (!node) return;
-            this.maintainASTRelationships(node);
-            refreshValueNodeReturnTypes(this, node);
-            refreshCompleteness(node);
-            this.maintainASTRelationships(node);
-        };
-        normalize(this.virtualRoot.main);
-        normalize(this.workspaceAST);
+        normalizeLoadedAst(this, this.virtualRoot.main);
+        normalizeLoadedAst(this, this.workspaceAST);
     }
 
     applyRawTextFallback(expression, message, errors = []) {
@@ -1380,35 +1274,7 @@ export class DslEditor extends MetadataDrivenComponent {
     }
 
     collectAstChildren(node) {
-        if (!node) return [];
-        const children = [];
-        if (node.type === "operator") {
-            if (node.leftOperand) children.push(node.leftOperand);
-            if (node.rightOperand) children.push(node.rightOperand);
-        } else if (node.type === "functionCall") {
-            (node.args || []).forEach((arg) => {
-                if (arg) children.push(arg);
-            });
-        } else if (node.type === "listQuery") {
-            if (node.source) children.push(node.source);
-            if (node.filterExpression) children.push(node.filterExpression);
-        } else if (node.type === "listSort") {
-            if (node.source) children.push(node.source);
-            if (node.sortExpression) children.push(node.sortExpression);
-        } else if (node.type === "listTake") {
-            if (node.source) children.push(node.source);
-            if (node.countExpression) children.push(node.countExpression);
-        } else if (node.type === "listDistinct") {
-            if (node.source) children.push(node.source);
-            if (node.keyExpression) children.push(node.keyExpression);
-        } else if (node.type === "listSelect") {
-            if (node.source) children.push(node.source);
-            if (node.selectExpression) children.push(node.selectExpression);
-        }
-        if (node.metadata?.innerAST) {
-            children.push(node.metadata.innerAST);
-        }
-        return children;
+        return getAstChildSlots(node).map(child => child.node);
     }
 
     isNodeAttachedToMainAst(targetNode) {

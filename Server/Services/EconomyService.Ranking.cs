@@ -15,10 +15,13 @@ public partial class EconomyService
             return null;
         }
 
-        var userEconomy = await GetOrCreateUserEconomyAsync(userId);
-        var userRanking = await GetOrCreateUserRankingAsync(userId);
-        var userDailyReward = await GetOrCreateUserDailyRewardAsync(userId);
-        return UserRankDto.FromEntities(userEconomy, userRanking, userDailyReward);
+        return await _transactionService.ExecuteInTransactionAsync(async () =>
+        {
+            var userEconomy = await GetOrCreateUserEconomyAsync(userId);
+            var userRanking = await GetOrCreateUserRankingAsync(userId);
+            var userDailyReward = await GetOrCreateUserDailyRewardAsync(userId);
+            return UserRankDto.FromEntities(userEconomy, userRanking, userDailyReward);
+        });
     }
 
     public async Task<MetaProgressionStateDto> GetMetaProgressionStateAsync(Guid userId, string? environment = null, string? deckRule = null)
@@ -147,7 +150,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "更新用户排名失败: UserId={UserId}", userId);
-            return false;
+            throw;
         }
     }
 

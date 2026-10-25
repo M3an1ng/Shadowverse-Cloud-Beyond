@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
@@ -73,7 +74,7 @@ public class CardCommunityController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
-        var voteStats = await BuildVoteStatsAsync(cardId, userId, cancellationToken);
+        var voteStats = await _cardCommunityService.GetVoteSummaryAsync(cardId, userId, cancellationToken);
         var voteActivities = await _db.CardVotes
             .AsNoTracking()
             .Where(vote => vote.CardDefinitionId == cardId)
@@ -83,7 +84,7 @@ public class CardCommunityController : ControllerBase
             {
                 UserId = vote.UserId,
                 Username = vote.User.Username,
-                VoteType = vote.VoteType == CardVoteType.Upvote ? "up" : "down",
+                VoteType = CardVoteLabels.ToLabel(vote.VoteType),
                 UpdatedAt = vote.UpdatedAt
             })
             .ToListAsync(cancellationToken);
@@ -204,7 +205,10 @@ public class CardCommunityController : ControllerBase
             return BadRequest(new { error = "voteType must be 'up' or 'down'." });
         }
 
-        if (!await ValidateUserAsync(request.UserId, cancellationToken))
+        var user = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == request.UserId, cancellationToken);
+        if (user == null || !user.IsActive)
         {
             return NotFound(new { error = $"User {request.UserId} not found." });
         }
@@ -212,14 +216,6 @@ public class CardCommunityController : ControllerBase
         if (!await ValidateCardAsync(cardId, cancellationToken))
         {
             return NotFound(new { error = $"Card {cardId} not found." });
-        }
-
-        var user = await _db.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.Id == request.UserId, cancellationToken);
-        if (user == null || !user.IsActive)
-        {
-            return NotFound(new { error = $"User {request.UserId} not found." });
         }
 
         var result = await _cardCommunityService.VoteAsync(cardId, user, voteType, cancellationToken);
@@ -234,25 +230,6 @@ public class CardCommunityController : ControllerBase
     private async Task<bool> ValidateCardAsync(int cardId, CancellationToken cancellationToken)
     {
         return await _db.CardDefinitions.AnyAsync(card => card.Id == cardId, cancellationToken);
-    }
-
-    private async Task<(int UpvoteCount, int DownvoteCount, string? UserVote)> BuildVoteStatsAsync(
-        int cardId,
-        Guid userId,
-        CancellationToken cancellationToken)
-    {
-        var upvoteCount = await _db.CardVotes.CountAsync(
-            vote => vote.CardDefinitionId == cardId && vote.VoteType == CardVoteType.Upvote,
-            cancellationToken);
-        var downvoteCount = await _db.CardVotes.CountAsync(
-            vote => vote.CardDefinitionId == cardId && vote.VoteType == CardVoteType.Downvote,
-            cancellationToken);
-        var userVoteType = await _db.CardVotes
-            .Where(vote => vote.CardDefinitionId == cardId && vote.UserId == userId)
-            .Select(vote => (CardVoteType?)vote.VoteType)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return (upvoteCount, downvoteCount, ToVoteLabel(userVoteType));
     }
 
     private static bool TryParseVote(string? raw, out CardVoteType voteType)
@@ -274,16 +251,6 @@ public class CardCommunityController : ControllerBase
         return false;
     }
 
-    private static string? ToVoteLabel(CardVoteType? voteType)
-    {
-        return voteType switch
-        {
-            CardVoteType.Upvote => "up",
-            CardVoteType.Downvote => "down",
-            _ => null
-        };
-    }
-
     public class CreateCardCommentRequest
     {
         public Guid UserId { get; set; }
@@ -296,57 +263,4 @@ public class CardCommunityController : ControllerBase
         public string VoteType { get; set; } = string.Empty;
     }
 
-    public class CardVoteSummaryDto
-    {
-        public int CardDefinitionId { get; set; }
-        public int UpvoteCount { get; set; }
-        public int DownvoteCount { get; set; }
-        public string? UserVote { get; set; }
-        public bool RewardGranted { get; set; }
-        public int RewardCoins { get; set; }
-        public int? CurrentCoins { get; set; }
-        public QuestProgressDto? QuestProgress { get; set; }
-    }
-
-    public class CardCommunityResponse : CardVoteSummaryDto
-    {
-        public int TotalComments { get; set; }
-        public int Page { get; set; }
-        public int Limit { get; set; }
-        public List<CardCommentDto> Comments { get; set; } = new();
-        public List<CardVoteActivityDto> VoteActivities { get; set; } = new();
-    }
-
-    public class CardVoteActivityDto
-    {
-        public Guid UserId { get; set; }
-        public string Username { get; set; } = string.Empty;
-        public string VoteType { get; set; } = string.Empty;
-        public DateTime UpdatedAt { get; set; }
-    }
-
-    public class CardCommentDto
-    {
-        public Guid Id { get; set; }
-        public int CardDefinitionId { get; set; }
-        public Guid UserId { get; set; }
-        public string Username { get; set; } = string.Empty;
-        public string? AvatarUrl { get; set; }
-        public string Content { get; set; } = string.Empty;
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
-        public bool CanDelete { get; set; }
-        public bool RewardGranted { get; set; }
-        public int RewardCoins { get; set; }
-        public int? CurrentCoins { get; set; }
-        public QuestProgressDto? QuestProgress { get; set; }
-    }
-
-    public class QuestProgressDto
-    {
-        public List<Guid> UpdatedQuestIds { get; set; } = new();
-        public List<Guid> CompletedQuestIds { get; set; } = new();
-        public int ClaimableCount { get; set; }
-        public bool IgnoredAsDuplicate { get; set; }
-    }
 }

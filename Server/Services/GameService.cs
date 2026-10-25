@@ -1,4 +1,5 @@
-﻿using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Mappings;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 // Server/Services/GameService.cs
@@ -110,6 +111,7 @@ namespace ShadowverseBeyond.Server.Services
             if (string.IsNullOrEmpty(gameId) || actionWrapper == null)
             {
                 _logger.LogWarning("[EnqueuePlayerActionAsync] Invalid arguments: gameId or actionWrapper is null/empty.");
+                actionWrapper?.MarkRejected("The game ID or action request is invalid.");
                 return Task.FromResult(false);
             }
 
@@ -117,9 +119,16 @@ namespace ShadowverseBeyond.Server.Services
 
             lock (_gameLoopLock)
             {
+                if (actionWrapper.CancellationToken.IsCancellationRequested)
+                {
+                    actionWrapper.MarkCancelled("The AI turn was cancelled before queue admission.");
+                    return Task.FromResult(false);
+                }
+
                 if (_retiringGameIds.ContainsKey(gameId) || !_gameStates.ContainsKey(gameId))
                 {
                     _logger.LogWarning("[EnqueuePlayerActionAsync:{GameId}] Action rejected because the game is no longer active.", gameId);
+                    actionWrapper.MarkCancelled("The game is no longer active.");
                     return Task.FromResult(false);
                 }
 
@@ -185,15 +194,18 @@ namespace ShadowverseBeyond.Server.Services
                     if (actionQueue.TryDequeue(out var actionWrapper))
                     {
                         processedItem = true;
-                        cancellationToken.ThrowIfCancellationRequested();
-                        _logger.LogDebug("[GameProcessingLoop:{GameId}] Dequeued action: {ActionType} for Player {PlayerId}", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
-
-                        await using var scope = _serviceScopeFactory.CreateAsyncScope();
-                        var sp = scope.ServiceProvider;
-                        var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
-
                         try
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (actionWrapper.CancellationToken.IsCancellationRequested)
+                            {
+                                actionWrapper.MarkCancelled("The AI turn was cancelled before the action could run.");
+                                continue;
+                            }
+
+                            await using var scope = _serviceScopeFactory.CreateAsyncScope();
+                            var sp = scope.ServiceProvider;
+                            var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
                             var initialEvents = await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper);
                             if (initialEvents.Count != 0)
                             {
@@ -224,26 +236,34 @@ namespace ShadowverseBeyond.Server.Services
                                             if (turnStartEvent.Source.Player.IsAI)
                                             {
                                                 _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", turnStartEvent.Source.Player.PlayerId);
-                                                var aiService = sp.GetRequiredService<IAiService>();
-                                                // 【BUG修复】为AI行动创建一个新的后台任务，并确保它拥有自己的DI作用域和GameContext
+                                                var aiPlayerId = turnStartEvent.Source.Player.PlayerId;
+                                                var aiTurnNumber = turnStartEvent.Source.Player.TurnNumber;
                                                 _ = Task.Run(async () =>
                                                 {
-                                                    // 为这个后台任务创建一个新的、独立的作用域
-                                                    await using var aiScope = _serviceScopeFactory.CreateAsyncScope();
-                                                    var aiSp = aiScope.ServiceProvider;
-                                                    var gameContextAccessor = aiSp.GetRequiredService<IGameContextAccessor>();
-                                                    var mapper = aiSp.GetRequiredService<IMapper>();
-
-                                                    // 获取最新的游戏状态
-                                                    if (_gameStates.TryGetValue(gameId, out var currentGameState))
+                                                    try
                                                     {
-                                                        // 创建并设置GameContext
-                                                        using (var aiGameContext = new GameContext(aiSp, mapper, gameContextAccessor, currentGameState, turnStartEvent.Source.Player.PlayerId, cancellationToken))
+                                                        // 不能在当前处理循环内等待 AI：AI 自身还要向此循环提交动作。
+                                                        var completion = await actionWrapper.Completion.WaitAsync(cancellationToken);
+                                                        if (completion.Status != PlayerActionCompletionStatus.Completed
+                                                            || !_gameStates.TryGetValue(gameId, out var currentGameState)
+                                                            || currentGameState.IsGameOver
+                                                            || currentGameState.CurrentPlayerId != aiPlayerId
+                                                            || currentGameState.GetPlayerState(aiPlayerId)!.TurnNumber != aiTurnNumber)
                                                         {
-                                                            // 现在，在拥有正确上下文的情况下调用AI服务
-                                                            var aiServiceFromScope = aiSp.GetRequiredService<IAiService>();
-                                                            await aiServiceFromScope.RequestAiActionAsync(gameId, turnStartEvent.Source.Player.PlayerId);
+                                                            return;
                                                         }
+
+                                                        await using var aiScope = _serviceScopeFactory.CreateAsyncScope();
+                                                        var aiService = aiScope.ServiceProvider.GetRequiredService<IAiService>();
+                                                        await aiService.RequestAiActionAsync(gameId, aiPlayerId, cancellationToken);
+                                                    }
+                                                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                                                    {
+                                                        _logger.LogInformation("[AI:{GameId}:{PlayerId}] AI turn cancelled.", gameId, aiPlayerId);
+                                                    }
+                                                    catch (Exception ex)
+                                                    {
+                                                        _logger.LogError(ex, "[AI:{GameId}:{PlayerId}] AI turn failed.", gameId, aiPlayerId);
                                                     }
                                                 }, cancellationToken);
                                             }
@@ -253,24 +273,21 @@ namespace ShadowverseBeyond.Server.Services
                                         {
                                             StopTurnTimer(gameId, true);
                                         }
+
+                                        if (transactionResult.IsCancelled)
+                                        {
+                                            actionWrapper.MarkCancelled("The action transaction was cancelled.");
+                                        }
                                     }
                                     else
                                     {
                                         var warningMessage = BuildActionRejectedWarningMessage(actionWrapper.ActionType, transactionResult.ErrorMessage);
                                         _logger.LogWarning("Transaction failed for action {ActionType}: {Error}", actionWrapper.ActionType, warningMessage);
+                                        actionWrapper.MarkRejected(warningMessage);
                                         await NotifyActionRejectedAsync(gameId, actionWrapper.PlayerId, warningMessage, "ACTION_BLOCKED");
                                     }
 
-                                    // --- BUG-FIX: Action Completion Logic ---
-                                    // This logic MUST run here, after a transaction successfully completes.
-                                    // It cannot run in a separate block that relies on the queue being empty,
-                                    // as that block would incorrectly access a stale `actionWrapper` after a `continue`.
-                                    _logger.LogInformation("[GameProcessingLoop:{GameId}] Action chain for Player {PlayerId} completed.", gameId, actionWrapper.PlayerId);
-
-                                    // 1. Complete the task for the action that just finished.
-                                    // The TaskCompletionSource logic has been removed to prevent deadlocks.
-
-                                    // 2. Update playability for all relevant players.
+                                    // 先发布本次状态，再允许 AI 读取下一次决策所需的可用性。
                                     await UpdateAndBroadcastHandPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
                                     await UpdateAndBroadcastActPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
                                     var opponentId = gameState.GetOpponentPlayerState(actionWrapper.PlayerId)?.PlayerId;
@@ -279,23 +296,40 @@ namespace ShadowverseBeyond.Server.Services
                                         await UpdateAndBroadcastHandPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
                                         await UpdateAndBroadcastActPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
                                     }
-                                    // --- End BUG-FIX ---
+
+                                    if (transactionResult.IsSuccess && !transactionResult.IsCancelled)
+                                    {
+                                        actionWrapper.MarkCompleted();
+                                    }
+
+                                }
+                                else
+                                {
+                                    actionWrapper.MarkCancelled("The game was released before action processing.");
                                 }
                             }
                             else
                             {
                                 _logger.LogWarning("[GameProcessingLoop:{GameId}] Action {ActionType} did not generate initial events.", gameId, actionWrapper.ActionType);
+                                actionWrapper.MarkRejected("The action did not generate an executable game event.");
                             }
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            actionWrapper.MarkCancelled("Game action processing was cancelled.");
+                            throw;
                         }
                         catch (GameLogicException glex)
                         {
                             _logger.LogWarning(glex, "[GameProcessingLoop:{GameId}] Game logic error for action {ActionType} by Player {PlayerId}. Action rejected.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
                             var warningMessage = BuildActionRejectedWarningMessage(actionWrapper.ActionType, glex.Message);
+                            actionWrapper.MarkRejected(warningMessage);
                             await NotifyActionRejectedAsync(gameId, actionWrapper.PlayerId, warningMessage, "ACTION_REJECTED");
                         }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "[GameProcessingLoop:{GameId}] Error processing action {ActionType} by Player {PlayerId}.", gameId, actionWrapper.ActionType, actionWrapper.PlayerId);
+                            actionWrapper.MarkFailed(ex.Message);
                         }
                         finally
                         {
@@ -326,16 +360,22 @@ namespace ShadowverseBeyond.Server.Services
             catch (OperationCanceledException)
             {
                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop canceled.", gameId);
+                CancelQueuedActions(gameId, "The game processing loop was cancelled.");
             }
             catch (Exception ex)
             {
                 _logger.LogCritical(ex, "[GameProcessingLoop:{GameId}] Unhandled exception in processing loop. Terminating.", gameId);
+                CancelQueuedActions(gameId, "The game processing loop terminated unexpectedly.");
             }
             finally
             {
                 _logger.LogInformation("[GameProcessingLoop:{GameId}] Loop finished.", gameId);
                 lock (_gameLoopLock)
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        CancelQueuedActions(gameId, "The game processing loop was cancelled.");
+                    }
                     ReleaseProcessingLoop(gameId, loopCancellation);
                     if (_playerActionQueues.TryGetValue(gameId, out var remainingQueue) && !remainingQueue.IsEmpty)
                     {
@@ -417,6 +457,19 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        private void CancelQueuedActions(string gameId, string reason)
+        {
+            if (!_playerActionQueues.TryGetValue(gameId, out var actionQueue))
+            {
+                return;
+            }
+
+            while (actionQueue.TryDequeue(out var queuedAction))
+            {
+                queuedAction.MarkCancelled(reason);
+            }
+        }
+
 
         /// <summary>
         /// Executes the initial validation and event generation step for a player action dequeued from the action queue.
@@ -440,6 +493,7 @@ namespace ShadowverseBeyond.Server.Services
 
             if (gameState.IsGameOver && actionWrapper.ActionType != "DebugCommand")
             {
+                actionWrapper.MarkCancelled("The game has ended.");
                 throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game is already over.");
             }
 
@@ -447,6 +501,12 @@ namespace ShadowverseBeyond.Server.Services
             if (playerState == null)
             {
                 throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Player state not found for {actionWrapper.PlayerId} in game {gameId}.");
+            }
+
+            if (actionWrapper.ExpectedTurnNumber.HasValue &&
+                (_retiringGameIds.ContainsKey(gameId) || playerState.TurnNumber != actionWrapper.ExpectedTurnNumber.Value))
+            {
+                throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action belongs to an earlier AI turn.");
             }
 
             // Phase-specific validations
@@ -2192,7 +2252,7 @@ namespace ShadowverseBeyond.Server.Services
                 List<CardInstanceDto> dtos;
                 using (var gameContext = new GameContext(sp, mapper, gameContextAccessor, gameState, requestingPlayerId))
                 {
-                    dtos = mapper.Map<List<CardInstanceDto>>(updatedCards);
+                    dtos = updatedCards.Select(card => CardInstanceProjection.Create(card, gameContext)).ToList();
                 }
                 if (dtos.Count == 0)
                 {
@@ -2509,7 +2569,7 @@ namespace ShadowverseBeyond.Server.Services
                     // Create a temporary context for the AI's decision-making process.
                     using (var tempContext = new GameContext(sp, mapper, gameContextAccessor, gameState, gameState.Player2.PlayerId, cancellationToken))
                     {
-                        var gameStateDto = mapper.Map<GameStateDto>(gameState);
+                        var gameStateDto = GameStateProjection.Create(gameState, tempContext);
                         var cardsToReplace = await aiService.DecideMulliganAsync(gameStateDto, gameState.Player2.PlayerId);
                         cardGuidsToReplace = cardsToReplace
                             .Select(cardId => Guid.TryParse(cardId, out var guid) ? guid : Guid.Empty)

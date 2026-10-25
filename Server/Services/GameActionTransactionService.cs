@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using ShadowverseBeyond.Server.Mappings;
+using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
@@ -110,6 +111,11 @@ namespace ShadowverseBeyond.Server.Services
             public Guid RootEventId { get; init; }
             public string Step { get; init; } = string.Empty;
         }
+
+        private sealed record TransactionBroadcastItem(
+            IGameEvent Event,
+            string? Announcement,
+            IReadOnlyList<GameEventDto> Dtos);
 
         private sealed class CommitPlan
         {
@@ -3318,120 +3324,13 @@ namespace ShadowverseBeyond.Server.Services
             var bundleId = Guid.NewGuid();
             var cardUpdateEventAdded = false;
 
-            async Task<(List<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)> BroadcastPlan, List<CommittedEventWriteDto> RecordedEvents)> BuildBroadcastArtifactsAsync(
-                IReadOnlyList<IGameEvent> eventsToBroadcast)
-            {
-                var broadcastPlan = new List<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)>(eventsToBroadcast.Count);
-                var recordedEvents = new List<CommittedEventWriteDto>(eventsToBroadcast.Count);
-
-                foreach (var gameEvent in eventsToBroadcast)
-                {
-                    var announcement = (gameEvent as ILogAnnounceableEvent)?.GetAnnouncement(gameContext.CurrentGameState);
-                    if (!string.IsNullOrWhiteSpace(announcement))
-                    {
-                        announcement = AnnouncementTokens.WithTurn(gameContext.CurrentGameState, announcement);
-                    }
-                    List<GameEventDto> dtos;
-                    try
-                    {
-                        var processorResult = await _eventProcessor.ProcessEventAsync(gameEvent, gameContext);
-                        dtos = processorResult.ResultingDtos.ToList();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(
-                            ex,
-                            "Failed to map processed event {EventType} ({EventId}) to client DTOs during transaction finalization.",
-                            gameEvent.EventType,
-                            gameEvent.EventId);
-
-                        var sourcePlayerId = gameEvent.Source?.Player?.PlayerId ?? Guid.Empty;
-                        var fallbackMessage = !string.IsNullOrWhiteSpace(announcement)
-                            ? announcement
-                            : $"event-mapping-failed: {gameEvent.EventType}";
-                        dtos = new List<GameEventDto>
-                        {
-                            new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), fallbackMessage, sourcePlayerId)
-                        };
-                    }
-
-                    if (dtos.Count == 0 && !string.IsNullOrWhiteSpace(announcement))
-                    {
-                        var sourcePlayerId = gameEvent.Source?.Player?.PlayerId ?? Guid.Empty;
-                        dtos.Add(new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), announcement, sourcePlayerId));
-                    }
-
-                    var envelopes = _replayOptions.PersistClientDtos
-                        ? _recordedEventMapper.MapClientDtos(dtos)
-                        : Array.Empty<RecordedClientDtoEnvelopeDto>();
-                    string? rawEventJson = null;
-                    try
-                    {
-                        rawEventJson = _rawEventMapper.MapToOutputRawEventJson(gameContext.CurrentGameState, gameEvent);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Failed to map {EventType} (ID: {EventId}) to RawEventJson.", gameEvent.EventType, gameEvent.EventId);
-                    }
-
-                    var targets = gameEvent.Target?.Select(t => t.InstanceId).ToArray() ?? Array.Empty<Guid>();
-                    recordedEvents.Add(new CommittedEventWriteDto(
-                        gameEvent.EventId,
-                        gameEvent.EventType.ToString(),
-                        gameEvent.Timestamp,
-                        announcement,
-                        gameEvent.Source?.InstanceId,
-                        targets,
-                        envelopes,
-                        rawEventJson));
-
-                    broadcastPlan.Add((gameEvent, announcement, dtos));
-                }
-
-                return (broadcastPlan, recordedEvents);
-            }
-
-            async Task BroadcastPlanAsync(
-                string groupName,
-                IReadOnlyList<(IGameEvent Event, string? Announcement, IReadOnlyList<GameEventDto> Dtos)> broadcastPlan)
-            {
-                foreach (var item in broadcastPlan)
-                {
-                    var announcement = item.Announcement;
-                    var hasDto = item.Dtos.Count > 0;
-                    foreach (var dto in item.Dtos)
-                    {
-                        if (!string.IsNullOrWhiteSpace(announcement) && dto is GameEventDto gameEventDto)
-                        {
-                            gameEventDto.Announcement ??= announcement;
-                        }
-
-                        await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, dto);
-                    }
-
-                    if (!hasDto && !string.IsNullOrWhiteSpace(announcement))
-                    {
-                        var sourcePlayerId = item.Event.Source?.Player?.PlayerId ?? Guid.Empty;
-                        var logDto = new LogEventDto(item.Event.EventId, item.Event.EventType.ToString(), announcement, sourcePlayerId);
-                        await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, logDto);
-                    }
-                }
-            }
-
             async Task<PausableTransactionResult> FinalizeFailedTransactionAsync(PausableTransactionResult failureResult)
             {
                 var failureMessage = failureResult.ErrorMessage ?? "Transaction commit failed.";
 
                 if (!cardUpdateEventAdded)
                 {
-                    var updatedCards = CollectUpdatedCardInstances(gameContext, processedEvents);
-                    if (updatedCards.Count > 0)
-                    {
-                        var cardUpdateEvent = new CardInstanceUpdatedEvent(updatedCards);
-                        processedEvents.Add(cardUpdateEvent);
-                        await RecordEventHistoryAsync(gameContext, cardUpdateEvent);
-                    }
-
+                    await AppendCardUpdateEventAsync(gameContext, processedEvents);
                     cardUpdateEventAdded = true;
                 }
 
@@ -3441,7 +3340,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (processedEvents.Count > 0)
                 {
-                    var (broadcastPlan, _) = await BuildBroadcastArtifactsAsync(processedEvents);
+                    var (broadcastPlan, _) = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
                     _logger.LogWarning(
                         "Transaction failed after partial commit. Broadcasting {Count} processed events. Error: {Error}",
                         processedEvents.Count,
@@ -3512,14 +3411,7 @@ namespace ShadowverseBeyond.Server.Services
 
             if (!cardUpdateEventAdded)
             {
-                var updatedCards = CollectUpdatedCardInstances(gameContext, processedEvents);
-                if (updatedCards.Count > 0)
-                {
-                    var cardUpdateEvent = new CardInstanceUpdatedEvent(updatedCards);
-                    processedEvents.Add(cardUpdateEvent);
-                    await RecordEventHistoryAsync(gameContext, cardUpdateEvent);
-                }
-
+                await AppendCardUpdateEventAsync(gameContext, processedEvents);
                 cardUpdateEventAdded = true;
             }
 
@@ -3527,47 +3419,9 @@ namespace ShadowverseBeyond.Server.Services
             // (attack/health/cost/keywords) before materializing broadcast DTOs.
             gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_end");
 
-            var (broadcastPlan, recordedEvents) = await BuildBroadcastArtifactsAsync(processedEvents);
+            var (broadcastPlan, recordedEvents) = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
 
-            // Persist the committed event bundle for replay/debug export (best-effort; do not break the match).
-            if (ShouldPersistReplay(gameContext.CurrentGameState))
-            {
-                try
-                {
-                    var appendResult = await _eventJournal.AppendBundleAsync(
-                        gameContext.CurrentGameState.GameId,
-                        bundleId,
-                        recordedEvents,
-                        gameContext.CancellationToken);
-
-                    if (_replayOptions.EnableSnapshots && appendResult.EndSeq > 0)
-                    {
-                        var shouldSnapshot =
-                            (_replayOptions.SnapshotOnGameStart && processedEvents.Any(e => e.EventType == EventType.GameStart)) ||
-                            (_replayOptions.SnapshotOnTurnStart && processedEvents.Any(e => e.EventType == EventType.TurnStart)) ||
-                            (_replayOptions.SnapshotOnGameEnd && processedEvents.Any(e => e.EventType == EventType.GameEnd)) ||
-                            (_replayOptions.SnapshotEveryBundles > 0 && appendResult.BundleSeq % _replayOptions.SnapshotEveryBundles == 0);
-
-                        if (shouldSnapshot)
-                        {
-                            var snapshot = gameContext.Mapper.Map<GameStateDto>(gameContext.CurrentGameState);
-                            await _snapshotStore.SaveSnapshotAsync(
-                                gameContext.CurrentGameState.GameId,
-                                appendResult.EndSeq,
-                                snapshot,
-                                gameContext.CancellationToken);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to persist replay bundle {BundleId} for GameId={GameId}.", bundleId, gameContext.CurrentGameState.GameId);
-                }
-            }
-            else
-            {
-                _logger.LogDebug("Skipping replay persistence for game {GameId} (disabled by config or AI match).", gameContext.CurrentGameState.GameId);
-            }
+            await PersistReplayArtifactsAsync(gameContext, processedEvents, recordedEvents, bundleId);
 
             // --- Broadcast all processed events AFTER the entire transaction is complete ---
             // Apply meta-progression updates (economy/profile/quests) after state commit, before broadcasting.
@@ -3580,6 +3434,175 @@ namespace ShadowverseBeyond.Server.Services
 
             _logger.LogInformation("--- Transaction End: All events and effects processed successfully. ---");
             return PausableTransactionResult.Success(processedEvents);
+        }
+
+        private async Task<(List<TransactionBroadcastItem> BroadcastPlan, List<CommittedEventWriteDto> RecordedEvents)> BuildBroadcastArtifactsAsync(
+            GameContext gameContext,
+            IReadOnlyList<IGameEvent> eventsToBroadcast)
+        {
+            var broadcastPlan = new List<TransactionBroadcastItem>(eventsToBroadcast.Count);
+            var recordedEvents = new List<CommittedEventWriteDto>(eventsToBroadcast.Count);
+
+            foreach (var gameEvent in eventsToBroadcast)
+            {
+                var announcement = (gameEvent as ILogAnnounceableEvent)?.GetAnnouncement(gameContext.CurrentGameState);
+                if (!string.IsNullOrWhiteSpace(announcement))
+                {
+                    announcement = AnnouncementTokens.WithTurn(gameContext.CurrentGameState, announcement);
+                }
+                List<GameEventDto> dtos;
+                try
+                {
+                    var processorResult = await _eventProcessor.ProcessEventAsync(gameEvent, gameContext);
+                    dtos = processorResult.ResultingDtos.ToList();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to map processed event {EventType} ({EventId}) to client DTOs during transaction finalization.",
+                        gameEvent.EventType,
+                        gameEvent.EventId);
+
+                    var sourcePlayerId = gameEvent.Source?.Player?.PlayerId ?? Guid.Empty;
+                    var fallbackMessage = !string.IsNullOrWhiteSpace(announcement)
+                        ? announcement
+                        : $"event-mapping-failed: {gameEvent.EventType}";
+                    dtos = new List<GameEventDto>
+                    {
+                        new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), fallbackMessage, sourcePlayerId)
+                    };
+                }
+
+                if (dtos.Count == 0 && !string.IsNullOrWhiteSpace(announcement))
+                {
+                    var sourcePlayerId = gameEvent.Source?.Player?.PlayerId ?? Guid.Empty;
+                    dtos.Add(new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), announcement, sourcePlayerId));
+                }
+
+                var envelopes = _replayOptions.PersistClientDtos
+                    ? _recordedEventMapper.MapClientDtos(dtos)
+                    : Array.Empty<RecordedClientDtoEnvelopeDto>();
+                string? rawEventJson = null;
+                try
+                {
+                    rawEventJson = _rawEventMapper.MapToOutputRawEventJson(gameContext.CurrentGameState, gameEvent);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to map {EventType} (ID: {EventId}) to RawEventJson.", gameEvent.EventType, gameEvent.EventId);
+                }
+
+                var targets = gameEvent.Target?.Select(t => t.InstanceId).ToArray() ?? Array.Empty<Guid>();
+                recordedEvents.Add(new CommittedEventWriteDto(
+                    gameEvent.EventId,
+                    gameEvent.EventType.ToString(),
+                    gameEvent.Timestamp,
+                    announcement,
+                    gameEvent.Source?.InstanceId,
+                    targets,
+                    envelopes,
+                    rawEventJson));
+
+                broadcastPlan.Add(new TransactionBroadcastItem(gameEvent, announcement, dtos));
+            }
+
+            return (broadcastPlan, recordedEvents);
+        }
+
+        private async Task BroadcastPlanAsync(
+            string groupName,
+            IReadOnlyList<TransactionBroadcastItem> broadcastPlan)
+        {
+            foreach (var item in broadcastPlan)
+            {
+                var announcement = item.Announcement;
+                var hasDto = item.Dtos.Count > 0;
+                foreach (var dto in item.Dtos)
+                {
+                    if (!string.IsNullOrWhiteSpace(announcement) && dto is GameEventDto gameEventDto)
+                    {
+                        gameEventDto.Announcement ??= announcement;
+                    }
+
+                    await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, dto);
+                }
+
+                if (!hasDto && !string.IsNullOrWhiteSpace(announcement))
+                {
+                    var sourcePlayerId = item.Event.Source?.Player?.PlayerId ?? Guid.Empty;
+                    var logDto = new LogEventDto(item.Event.EventId, item.Event.EventType.ToString(), announcement, sourcePlayerId);
+                    await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, logDto);
+                }
+            }
+        }
+
+
+        private async Task AppendCardUpdateEventAsync(GameContext gameContext, List<IGameEvent> processedEvents)
+        {
+            var updatedCards = CollectUpdatedCardInstances(gameContext, processedEvents);
+            if (updatedCards.Count == 0)
+            {
+                return;
+            }
+
+            var cardUpdateEvent = new CardInstanceUpdatedEvent(updatedCards);
+            processedEvents.Add(cardUpdateEvent);
+            await RecordEventHistoryAsync(gameContext, cardUpdateEvent);
+        }
+
+        private async Task PersistReplayArtifactsAsync(
+            GameContext gameContext,
+            IReadOnlyList<IGameEvent> processedEvents,
+            IReadOnlyList<CommittedEventWriteDto> recordedEvents,
+            Guid bundleId)
+        {
+            if (!ShouldPersistReplay(gameContext.CurrentGameState))
+            {
+                _logger.LogDebug("Skipping replay persistence for game {GameId} (disabled by config or AI match).", gameContext.CurrentGameState.GameId);
+                return;
+            }
+
+            try
+            {
+                var appendResult = await _eventJournal.AppendBundleAsync(
+                    gameContext.CurrentGameState.GameId,
+                    bundleId,
+                    recordedEvents,
+                    gameContext.CancellationToken);
+
+                if (!ShouldSaveReplaySnapshot(processedEvents, appendResult))
+                {
+                    return;
+                }
+
+                var snapshot = GameStateProjection.Create(gameContext.CurrentGameState, gameContext);
+                await _snapshotStore.SaveSnapshotAsync(
+                    gameContext.CurrentGameState.GameId,
+                    appendResult.EndSeq,
+                    snapshot,
+                    gameContext.CancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to persist replay bundle {BundleId} for GameId={GameId}.", bundleId, gameContext.CurrentGameState.GameId);
+            }
+        }
+
+        private bool ShouldSaveReplaySnapshot(
+            IReadOnlyList<IGameEvent> processedEvents,
+            CommittedBundleAppendResult appendResult)
+        {
+            if (!_replayOptions.EnableSnapshots || appendResult.EndSeq <= 0)
+            {
+                return false;
+            }
+
+            return
+                (_replayOptions.SnapshotOnGameStart && processedEvents.Any(e => e.EventType == EventType.GameStart)) ||
+                (_replayOptions.SnapshotOnTurnStart && processedEvents.Any(e => e.EventType == EventType.TurnStart)) ||
+                (_replayOptions.SnapshotOnGameEnd && processedEvents.Any(e => e.EventType == EventType.GameEnd)) ||
+                (_replayOptions.SnapshotEveryBundles > 0 && appendResult.BundleSeq % _replayOptions.SnapshotEveryBundles == 0);
         }
 
         private static List<CardInstance> CollectUpdatedCardInstances(GameContext gameContext, IReadOnlyList<IGameEvent> processedEvents)

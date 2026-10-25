@@ -106,7 +106,7 @@ public class AuthController : ControllerBase
             Username = username,
             AvatarUrl = user.AvatarUrl,
             Role = user.Role.ToString(),
-            PermissionLevel = ResolvePermissionLevel(user.Role),
+            PermissionLevel = UserRolePermissions.GetPermissionLevel(user.Role),
             MigratedDecks = migrated,
             FailedDecks = failed
         });
@@ -157,7 +157,7 @@ public class AuthController : ControllerBase
             Username = user.Username,
             AvatarUrl = user.AvatarUrl,
             Role = user.Role.ToString(),
-            PermissionLevel = ResolvePermissionLevel(user.Role),
+            PermissionLevel = UserRolePermissions.GetPermissionLevel(user.Role),
             MigratedDecks = 0,
             FailedDecks = 0
         });
@@ -166,16 +166,6 @@ public class AuthController : ControllerBase
     private static string NormalizeUsername(string? username)
     {
         return string.IsNullOrWhiteSpace(username) ? string.Empty : username.Trim();
-    }
-
-    private static int ResolvePermissionLevel(UserRole role)
-    {
-        return role switch
-        {
-            UserRole.Admin => 100,
-            UserRole.Player => 10,
-            _ => 0
-        };
     }
 
     public class RegisterRequest

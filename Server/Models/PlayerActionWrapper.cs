@@ -1,4 +1,7 @@
 using System;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Models
 {
@@ -7,6 +10,9 @@ namespace ShadowverseBeyond.Server.Models
     /// </summary>
     public class PlayerActionWrapper
     {
+        private readonly TaskCompletionSource<PlayerActionCompletion> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         /// <summary>
         /// A unique identifier for this specific action instance, used for tracking its completion.
         /// </summary>
@@ -39,6 +45,27 @@ namespace ShadowverseBeyond.Server.Models
         /// </summary>
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 
+        /// <summary>
+        /// Completes only after the game loop has accepted, rejected, or cancelled this action.
+        /// Queue admission alone is not evidence that the action changed game state.
+        /// </summary>
+        [JsonIgnore]
+        public Task<PlayerActionCompletion> Completion => _completion.Task;
+
+        [JsonIgnore]
+        public CancellationToken CancellationToken { get; init; }
+
+        [JsonIgnore]
+        public int? ExpectedTurnNumber { get; init; }
+
+        public void MarkCompleted() => _completion.TrySetResult(PlayerActionCompletion.Completed);
+
+        public void MarkRejected(string reason) => _completion.TrySetResult(PlayerActionCompletion.Rejected(reason));
+
+        public void MarkCancelled(string reason) => _completion.TrySetResult(PlayerActionCompletion.Cancelled(reason));
+
+        public void MarkFailed(string reason) => _completion.TrySetResult(new(PlayerActionCompletionStatus.Failed, reason));
+
         // Parameterless constructor for serialization/deserialization if needed
         public PlayerActionWrapper() { }
 
@@ -49,5 +76,22 @@ namespace ShadowverseBeyond.Server.Models
             PlayerId = playerId;
             ActionData = actionData;
         }
+    }
+
+    public sealed record PlayerActionCompletion(PlayerActionCompletionStatus Status, string? Reason)
+    {
+        public static PlayerActionCompletion Completed { get; } = new(PlayerActionCompletionStatus.Completed, null);
+
+        public static PlayerActionCompletion Rejected(string reason) => new(PlayerActionCompletionStatus.Rejected, reason);
+
+        public static PlayerActionCompletion Cancelled(string reason) => new(PlayerActionCompletionStatus.Cancelled, reason);
+    }
+
+    public enum PlayerActionCompletionStatus
+    {
+        Completed,
+        Rejected,
+        Cancelled,
+        Failed
     }
 }

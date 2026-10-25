@@ -1,3 +1,4 @@
+using ShadowverseBeyond.Server.Mappings;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -269,7 +270,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                         SelectableTargetIds = selectableTargets.Select(t => t.InstanceId).ToList(),
                         SelectableCardInstances = selectableTargets
                             .Where(t => t.Type == TargetType.Card && t.Card != null)
-                            .Select(t => context.Mapper.Map<CardInstanceDto>(t.Card!))
+                            .Select(t => CardInstanceProjection.Create(t.Card!, context))
                             .ToList(),
                         MinSelectionCount = requestMinSelectionCount,
                         MaxSelectionCount = maxSelectionCount,

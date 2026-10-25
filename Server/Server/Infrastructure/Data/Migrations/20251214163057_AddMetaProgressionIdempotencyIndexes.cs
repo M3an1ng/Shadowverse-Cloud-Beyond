@@ -10,33 +10,7 @@ namespace ShadowverseBeyond.Server.Server.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // Best-effort de-duplication before enforcing unique constraints (safe to re-run).
-            migrationBuilder.Sql(
-                """
-                DELETE FROM UserQuests
-                WHERE Id IN (
-                    SELECT Id FROM (
-                        SELECT Id,
-                               ROW_NUMBER() OVER (PARTITION BY UserId, QuestDefinitionId ORDER BY AssignedAt DESC, Id DESC) AS rn
-                        FROM UserQuests
-                    ) t
-                    WHERE t.rn > 1
-                );
-                """);
-
-            migrationBuilder.Sql(
-                """
-                DELETE FROM CoinTransactions
-                WHERE Id IN (
-                    SELECT Id FROM (
-                        SELECT Id,
-                               ROW_NUMBER() OVER (PARTITION BY UserId, Type, RelatedEntityId ORDER BY CreatedAt ASC, Id ASC) AS rn
-                        FROM CoinTransactions
-                        WHERE RelatedEntityId IS NOT NULL AND Type IN (1, 2, 3, 4)
-                    ) t
-                    WHERE t.rn > 1
-                );
-                """);
+            // Conflicting history must fail the unique constraint, never discard quests or ledger entries.
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserQuests_UserId_QuestDefinitionId",

@@ -1,3 +1,4 @@
+using ShadowverseBeyond.Server.Mappings;
 // File: Server/Hubs/GameHub.cs
 //
 // 相关文档:
@@ -288,7 +289,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     Context.ConnectionAborted
                 ))
                 {
-                    currentState = _mapper.Map<GameStateDto>(currentStateEntity);
+                    currentState = GameStateProjection.Create(currentStateEntity, tempContext);
                 }
 
                 await Clients.Caller.ReceiveGameState(currentState);
@@ -1101,7 +1102,7 @@ namespace ShadowverseBeyond.Server.Hubs
                         Context.ConnectionAborted
                     ))
                     {
-                        currentState = _mapper.Map<GameStateDto>(currentStateEntity);
+                        currentState = GameStateProjection.Create(currentStateEntity, tempContext);
                     }
 
                     await Clients.Caller.ReceiveGameState(currentState);
@@ -1241,7 +1242,7 @@ namespace ShadowverseBeyond.Server.Hubs
                         Context.ConnectionAborted // Use the connection's cancellation token
                     ))
                     {
-                        currentState = _mapper.Map<GameStateDto>(currentStateEntity);
+                        currentState = GameStateProjection.Create(currentStateEntity, tempContext);
                     }
 
                     _logger.LogInformation("Sending initial game state to caller for Room {RoomId}, Game {GameId}, Player {PlayerId}",

@@ -72,22 +72,6 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
 
             migrationBuilder.Sql("DROP INDEX IF EXISTS IX_UserQuests_UserId_QuestDefinitionId;");
 
-            migrationBuilder.Sql(
-                """
-                DELETE FROM UserQuests
-                WHERE Id IN (
-                    SELECT Id FROM (
-                        SELECT Id,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY UserId, QuestDefinitionId, PeriodKey
-                                   ORDER BY AssignedAt DESC, Id DESC
-                               ) AS rn
-                        FROM UserQuests
-                    ) t
-                    WHERE t.rn > 1
-                );
-                """);
-
             migrationBuilder.CreateTable(
                 name: "QuestProgressEvents",
                 columns: table => new
@@ -176,22 +160,6 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
             migrationBuilder.DropColumn(
                 name: "DeduplicationPolicy",
                 table: "QuestDefinitions");
-
-            migrationBuilder.Sql(
-                """
-                DELETE FROM UserQuests
-                WHERE Id IN (
-                    SELECT Id FROM (
-                        SELECT Id,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY UserId, QuestDefinitionId
-                                   ORDER BY AssignedAt DESC, Id DESC
-                               ) AS rn
-                        FROM UserQuests
-                    ) t
-                    WHERE t.rn > 1
-                );
-                """);
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserQuests_UserId_QuestDefinitionId",

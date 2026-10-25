@@ -235,7 +235,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         section.className = 'config-section';
         section.innerHTML = '<h5 class="section-title">叠加规则</h5>';
 
-        const stackToggle = this.createToggleSwitch(
+        const stackToggle = this.createAccordionToggleSwitch(
             !!buff.canStack,
             (checked) => this.updateBuffConfig(index, { canStack: checked }),
             '允许叠加'
@@ -978,40 +978,6 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
 
         header.appendChild(label);
         return header;
-    }
-
-    createToggleSwitch(checked, onChange, labelText, options = {}) {
-        const wrapper = document.createElement('label');
-        wrapper.className = 'toggle-switch-wrapper';
-        if (options.compact) {
-            wrapper.classList.add('compact');
-        }
-        wrapper.addEventListener('click', (e) => e.stopPropagation());
-
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        input.setAttribute('aria-label', labelText || '切换');
-        input.addEventListener('click', (e) => e.stopPropagation());
-        input.addEventListener('change', (e) => {
-            e.stopPropagation();
-            onChange(e.target.checked);
-        });
-
-        const slider = document.createElement('span');
-        slider.className = 'toggle-slider';
-
-        wrapper.appendChild(input);
-        wrapper.appendChild(slider);
-
-        if (labelText) {
-            const label = document.createElement('span');
-            label.className = 'toggle-label';
-            label.textContent = labelText;
-            wrapper.appendChild(label);
-        }
-
-        return wrapper;
     }
 
     normalizeBuffConfigList(list) {

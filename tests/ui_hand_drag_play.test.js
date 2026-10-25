@@ -1,30 +1,34 @@
-jest.mock('../src/gameManager.js', () => ({
-    gameState: {
-        localPlayerId: 'player-1',
-        currentPlayerId: 'player-1',
-        phase: 'Main',
-        isSpectator: false,
-        players: []
-    },
-    playCard: jest.fn(),
-    findCardInstanceByUid: jest.fn(),
-    getCurrentPlayerId: jest.fn(() => 'player-1'),
-    getPlayerState: jest.fn(),
-    initiateAttack: jest.fn(),
-    selectAttackTarget: jest.fn(),
-    cancelSelection: jest.fn(),
-    evolveCard: jest.fn(),
-    superEvolveCard: jest.fn(),
-    requestAct: jest.fn(),
-    requestFusion: jest.fn(),
-    requestPpBoost: jest.fn(),
-    getActPlayabilityForCard: jest.fn(() => null),
-    getPlayabilityForCard: jest.fn(() => ({ isPlayable: true })),
-    submitMulligan: jest.fn(),
-    endTurnRequest: jest.fn(),
-    submitPlayerChoice: jest.fn(),
-    cancelPlayerChoice: jest.fn()
-}));
+jest.mock('../src/gameManager.js', () => {
+    const actual = jest.requireActual('../src/gameManager.js');
+    return {
+        ...actual,
+        gameState: Object.assign(actual.gameState, {
+            localPlayerId: 'player-1',
+            currentPlayerId: 'player-1',
+            phase: 'Main',
+            isSpectator: false,
+            players: []
+        }),
+        playCard: jest.fn(),
+        findCardInstanceByUid: jest.fn(),
+        getCurrentPlayerId: jest.fn(() => 'player-1'),
+        getPlayerState: jest.fn(),
+        initiateAttack: jest.fn(),
+        selectAttackTarget: jest.fn(),
+        cancelSelection: jest.fn(),
+        evolveCard: jest.fn(),
+        superEvolveCard: jest.fn(),
+        requestAct: jest.fn(),
+        requestFusion: jest.fn(),
+        requestPpBoost: jest.fn(),
+        getActPlayabilityForCard: jest.fn(() => null),
+        getPlayabilityForCard: jest.fn(() => ({ isPlayable: true })),
+        submitMulligan: jest.fn(),
+        endTurnRequest: jest.fn(),
+        submitPlayerChoice: jest.fn(),
+        cancelPlayerChoice: jest.fn()
+    };
+});
 
 jest.mock('../src/previewSlate.js', () => ({
     buildPreviewSlateHtml: jest.fn(() => '')

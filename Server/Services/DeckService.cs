@@ -235,51 +235,44 @@ public class DeckService : IDeckService
 
         var environment = request.Environment ?? DefaultEnvironment;
         var rule = request.Rule ?? DefaultRule;
-        if (!TryResolveSecondaryClass(request.Class, rule, request.SecondaryClass, out var secondaryClass, out var formatError, requireComplete: false))
+        if (!DeckValidationService.TryResolveSecondaryClass(request.Class, rule, request.SecondaryClass, out var secondaryClass, out var formatError, requireComplete: false))
         {
             return DeckOperationResult<DeckDetailDto>.Fail(formatError ?? "Deck format is invalid.");
         }
 
-        if (owner.IsGuest)
+        var ownerId = owner.IsGuest ? owner.GetGuestIdOrNull() : owner.GetUserIdOrNull();
+        if (!ownerId.HasValue || ownerId.Value == Guid.Empty)
         {
-            var guestId = owner.GetGuestIdOrNull();
-            if (!guestId.HasValue || guestId.Value == Guid.Empty)
-            {
-                return DeckOperationResult<DeckDetailDto>.Fail("GuestId is required.");
-            }
-
-            var deck = _guestStore.Create(guestId.Value, request.Name.Trim(), request.Class, secondaryClass, environment, rule);
-            if (request.Cards != null && request.Cards.Count > 0)
-            {
-                var validation = await _deckValidation.ValidateAsync(request.Class, secondaryClass, request.Cards, environment, rule, requireComplete: false, cancellationToken);
-                if (!validation.Success)
-                {
-                    return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
-                }
-
-                _guestStore.SaveCards(guestId.Value, deck.DeckId, request.Class, secondaryClass, environment, rule, validation.Data!);
-                deck = _guestStore.Get(guestId.Value, deck.DeckId) ?? deck;
-            }
-
-            return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(deck, isGuest: true));
+            return DeckOperationResult<DeckDetailDto>.Fail(owner.IsGuest ? "GuestId is required." : "UserId is required.");
         }
 
-        var userId = owner.GetUserIdOrNull();
-        if (!userId.HasValue || userId.Value == Guid.Empty)
-        {
-            return DeckOperationResult<DeckDetailDto>.Fail("UserId is required.");
-        }
-
-        var userExists = await _db.Users.AnyAsync(user => user.Id == userId.Value, cancellationToken);
-        if (!userExists)
+        if (!owner.IsGuest && !await _db.Users.AnyAsync(user => user.Id == ownerId.Value, cancellationToken))
         {
             return DeckOperationResult<DeckDetailDto>.Fail("User does not exist.");
+        }
+
+        var cards = new List<DeckCardEntryDto>();
+        if (request.Cards is { Count: > 0 })
+        {
+            var validation = await _deckValidation.ValidateAsync(request.Class, secondaryClass, request.Cards, environment, rule, requireComplete: false, cancellationToken);
+            if (!validation.Success)
+            {
+                return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
+            }
+
+            cards = validation.Data!;
+        }
+
+        if (owner.IsGuest)
+        {
+            var deck = _guestStore.Create(ownerId.Value, request.Name.Trim(), request.Class, secondaryClass, environment, rule, cards);
+            return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(deck, isGuest: true));
         }
 
         var deckEntity = new UserDeck
         {
             Id = Guid.NewGuid(),
-            UserId = userId.Value,
+            UserId = ownerId.Value,
             Name = request.Name.Trim(),
             Class = request.Class,
             SecondaryClass = secondaryClass,
@@ -288,25 +281,7 @@ public class DeckService : IDeckService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
-
-        if (request.Cards != null && request.Cards.Count > 0)
-        {
-            var validation = await _deckValidation.ValidateAsync(request.Class, secondaryClass, request.Cards, environment, rule, requireComplete: false, cancellationToken);
-            if (!validation.Success)
-            {
-                return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
-            }
-
-            deckEntity.Cards = validation.Data!
-                .Select(entry => new UserDeckCard
-                {
-                    Id = Guid.NewGuid(),
-                    DeckId = deckEntity.Id,
-                    CardDefinitionId = entry.CardDefinitionId,
-                    Count = entry.Count
-                })
-                .ToList();
-        }
+        deckEntity.Cards = cards.Select(entry => ToDeckCard(deckEntity.Id, entry)).ToList();
 
         _db.UserDecks.Add(deckEntity);
         await _db.SaveChangesAsync(cancellationToken);
@@ -330,45 +305,38 @@ public class DeckService : IDeckService
                 return DeckOperationResult<DeckDetailDto>.Fail("Deck not found.");
             }
 
-            if (!string.IsNullOrWhiteSpace(request.Name))
-            {
-                _guestStore.Rename(guestId.Value, deckId, request.Name.Trim());
-            }
-
             var targetClass = request.Class ?? existing.Class;
             var guestEnvironment = request.Environment ?? existing.Environment;
             var guestRule = request.Rule ?? existing.Rule;
-            if (!TryResolveSecondaryClass(targetClass, guestRule, request.SecondaryClass ?? existing.SecondaryClass, out var guestTargetSecondaryClass, out var guestFormatError, requireComplete: false))
+            if (!DeckValidationService.TryResolveSecondaryClass(targetClass, guestRule, request.SecondaryClass ?? existing.SecondaryClass, out var guestTargetSecondaryClass, out var guestFormatError, requireComplete: false))
             {
                 return DeckOperationResult<DeckDetailDto>.Fail(guestFormatError ?? "Deck format is invalid.");
             }
-            if (request.Cards != null)
+
+            var cards = request.Cards ?? existing.Cards;
+            if (request.Cards != null || ((request.Class.HasValue || request.SecondaryClass.HasValue || request.Rule.HasValue) && cards.Count > 0))
             {
-                var validation = await _deckValidation.ValidateAsync(targetClass, guestTargetSecondaryClass, request.Cards, guestEnvironment, guestRule, requireComplete: false, cancellationToken);
+                var validation = await _deckValidation.ValidateAsync(targetClass, guestTargetSecondaryClass, cards, guestEnvironment, guestRule, requireComplete: false, cancellationToken);
                 if (!validation.Success)
                 {
                     return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
                 }
 
-                _guestStore.SaveCards(guestId.Value, deckId, targetClass, guestTargetSecondaryClass, guestEnvironment, guestRule, validation.Data!);
-            }
-            else if ((request.Class.HasValue || request.SecondaryClass.HasValue || request.Rule.HasValue) && existing.Cards.Count > 0)
-            {
-                var validation = await _deckValidation.ValidateAsync(targetClass, guestTargetSecondaryClass, existing.Cards, guestEnvironment, guestRule, requireComplete: false, cancellationToken);
-                if (!validation.Success)
-                {
-                    return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
-                }
-
-                _guestStore.SaveCards(guestId.Value, deckId, targetClass, guestTargetSecondaryClass, guestEnvironment, guestRule, validation.Data!);
-            }
-            else if (request.Environment.HasValue || request.Rule.HasValue || request.SecondaryClass.HasValue)
-            {
-                _guestStore.SaveCards(guestId.Value, deckId, targetClass, guestTargetSecondaryClass, guestEnvironment, guestRule, existing.Cards);
+                cards = validation.Data!;
             }
 
-            var updated = _guestStore.Get(guestId.Value, deckId) ?? existing;
-            return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(updated, isGuest: true));
+            var updated = _guestStore.Update(guestId.Value, existing with
+            {
+                Name = string.IsNullOrWhiteSpace(request.Name) ? existing.Name : request.Name.Trim(),
+                Class = targetClass,
+                SecondaryClass = guestTargetSecondaryClass,
+                Environment = guestEnvironment,
+                Rule = guestRule,
+                Cards = cards
+            });
+            return updated == null
+                ? DeckOperationResult<DeckDetailDto>.Fail("Deck not found.")
+                : DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(updated, isGuest: true));
         }
 
         var userId = owner.GetUserIdOrNull();
@@ -384,11 +352,6 @@ public class DeckService : IDeckService
         if (deckEntity == null)
         {
             return DeckOperationResult<DeckDetailDto>.Fail("Deck not found.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Name))
-        {
-            deckEntity.Name = request.Name.Trim();
         }
 
         var previousDeckShapeHash = BuildDeckShapeHash(deckEntity.Class, deckEntity.SecondaryClass, deckEntity.Rule, deckEntity.Cards);
@@ -409,7 +372,7 @@ public class DeckService : IDeckService
         var targetEnvironment = request.Environment ?? deckEntity.Environment;
         var targetDeckClass = request.Class ?? deckEntity.Class;
         var targetRule = request.Rule ?? deckEntity.Rule;
-        if (!TryResolveSecondaryClass(targetDeckClass, targetRule, request.SecondaryClass ?? deckEntity.SecondaryClass, out var targetSecondaryClass, out var targetFormatError, requireComplete: false))
+        if (!DeckValidationService.TryResolveSecondaryClass(targetDeckClass, targetRule, request.SecondaryClass ?? deckEntity.SecondaryClass, out var targetSecondaryClass, out var targetFormatError, requireComplete: false))
         {
             return DeckOperationResult<DeckDetailDto>.Fail(targetFormatError ?? "Deck format is invalid.");
         }
@@ -443,6 +406,11 @@ public class DeckService : IDeckService
         else if ((request.Class.HasValue || request.SecondaryClass.HasValue || request.Rule.HasValue) && deckEntity.Cards.Count == 0)
         {
             nextDeckShapeHash = BuildDeckShapeHash(targetDeckClass, targetSecondaryClass, targetRule, Array.Empty<DeckCardEntryDto>());
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+        {
+            deckEntity.Name = request.Name.Trim();
         }
 
         deckEntity.Class = targetDeckClass;
@@ -619,184 +587,95 @@ public class DeckService : IDeckService
             return DeckOperationResult<DeckDetailDto>.Fail(error ?? "Deck code is invalid.");
         }
 
-        var targetEnvironment = request.Environment ?? decodedEnvironment ?? DefaultEnvironment;
-        var targetRule = request.Rule ?? decodedRule ?? DefaultRule;
-        if (!TryResolveSecondaryClass(deckClass, targetRule, request.SecondaryClass ?? decodedSecondaryClass, out var targetSecondaryClass, out var targetFormatError))
+        var ownerId = owner.IsGuest ? owner.GetGuestIdOrNull() : owner.GetUserIdOrNull();
+        if (!ownerId.HasValue || ownerId.Value == Guid.Empty)
         {
-            return DeckOperationResult<DeckDetailDto>.Fail(targetFormatError ?? "Deck format is invalid.");
+            return DeckOperationResult<DeckDetailDto>.Fail(owner.IsGuest ? "GuestId is required." : "UserId is required.");
         }
-        var validation = await _deckValidation.ValidateAsync(deckClass, targetSecondaryClass, cards, targetEnvironment, targetRule, requireComplete: true, cancellationToken);
+
+        if (!owner.IsGuest && !await _db.Users.AnyAsync(user => user.Id == ownerId.Value, cancellationToken))
+        {
+            return DeckOperationResult<DeckDetailDto>.Fail("User does not exist.");
+        }
+
+        GuestDeckRecord? guestDeck = null;
+        UserDeck? userDeck = null;
+        if (request.TargetDeckId.HasValue)
+        {
+            if (owner.IsGuest)
+            {
+                guestDeck = _guestStore.Get(ownerId.Value, request.TargetDeckId.Value);
+            }
+            else
+            {
+                userDeck = await _db.UserDecks.Include(deck => deck.Cards)
+                    .FirstOrDefaultAsync(deck => deck.Id == request.TargetDeckId.Value && deck.UserId == ownerId.Value, cancellationToken);
+            }
+
+            if (guestDeck == null && userDeck == null)
+            {
+                return DeckOperationResult<DeckDetailDto>.Fail("Target deck not found.");
+            }
+        }
+
+        var environment = request.Environment ?? decodedEnvironment ?? guestDeck?.Environment ?? userDeck?.Environment ?? DefaultEnvironment;
+        var rule = request.Rule ?? decodedRule ?? guestDeck?.Rule ?? userDeck?.Rule ?? DefaultRule;
+        var requestedSecondaryClass = request.SecondaryClass ?? decodedSecondaryClass ?? guestDeck?.SecondaryClass ?? userDeck?.SecondaryClass;
+        if (!DeckValidationService.TryResolveSecondaryClass(deckClass, rule, requestedSecondaryClass, out var secondaryClass, out var formatError))
+        {
+            return DeckOperationResult<DeckDetailDto>.Fail(formatError ?? "Deck format is invalid.");
+        }
+
+        var validation = await _deckValidation.ValidateAsync(deckClass, secondaryClass, cards, environment, rule, requireComplete: true, cancellationToken);
         if (!validation.Success)
         {
             return DeckOperationResult<DeckDetailDto>.Fail(validation.Error ?? "Deck validation failed.");
         }
 
+        var name = string.IsNullOrWhiteSpace(request.Name)
+            ? guestDeck?.Name ?? userDeck?.Name ?? "Imported Deck"
+            : request.Name.Trim();
         if (owner.IsGuest)
         {
-            var guestId = owner.GetGuestIdOrNull();
-            if (!guestId.HasValue || guestId.Value == Guid.Empty)
+            if (guestDeck == null)
             {
-                return DeckOperationResult<DeckDetailDto>.Fail("GuestId is required.");
+                var created = _guestStore.Create(ownerId.Value, name, deckClass, secondaryClass, environment, rule, validation.Data!);
+                return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(created, isGuest: true));
             }
 
-            if (request.TargetDeckId.HasValue)
+            var updated = _guestStore.Update(ownerId.Value, guestDeck with
             {
-                var existing = _guestStore.Get(guestId.Value, request.TargetDeckId.Value);
-                if (existing == null)
-                {
-                    return DeckOperationResult<DeckDetailDto>.Fail("Target deck not found.");
-                }
-
-                if (!string.IsNullOrWhiteSpace(request.Name))
-                {
-                    _guestStore.Rename(guestId.Value, existing.DeckId, request.Name.Trim());
-                }
-
-                var environment = request.Environment ?? decodedEnvironment ?? existing.Environment;
-                var rule = request.Rule ?? decodedRule ?? existing.Rule;
-                if (!TryResolveSecondaryClass(deckClass, rule, request.SecondaryClass ?? decodedSecondaryClass ?? existing.SecondaryClass, out var secondaryClass, out var guestFormatError))
-                {
-                    return DeckOperationResult<DeckDetailDto>.Fail(guestFormatError ?? "Deck format is invalid.");
-                }
-                _guestStore.SaveCards(guestId.Value, existing.DeckId, deckClass, secondaryClass, environment, rule, validation.Data!);
-                var updated = _guestStore.Get(guestId.Value, existing.DeckId) ?? existing;
-                return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(updated, isGuest: true));
-            }
-
-            var name = string.IsNullOrWhiteSpace(request.Name) ? "Imported Deck" : request.Name.Trim();
-            var created = _guestStore.Create(guestId.Value, name, deckClass, targetSecondaryClass, targetEnvironment, targetRule);
-            _guestStore.SaveCards(guestId.Value, created.DeckId, deckClass, targetSecondaryClass, targetEnvironment, targetRule, validation.Data!);
-            var finalDeck = _guestStore.Get(guestId.Value, created.DeckId) ?? created;
-            return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(finalDeck, isGuest: true));
+                Name = name,
+                Class = deckClass,
+                SecondaryClass = secondaryClass,
+                Environment = environment,
+                Rule = rule,
+                Cards = validation.Data!
+            });
+            return updated == null
+                ? DeckOperationResult<DeckDetailDto>.Fail("Target deck not found.")
+                : DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(updated, isGuest: true));
         }
 
-        var userId = owner.GetUserIdOrNull();
-        if (!userId.HasValue || userId.Value == Guid.Empty)
+        if (userDeck == null)
         {
-            return DeckOperationResult<DeckDetailDto>.Fail("UserId is required.");
+            userDeck = new UserDeck { Id = Guid.NewGuid(), UserId = ownerId.Value, CreatedAt = DateTime.UtcNow };
+            userDeck.Cards = validation.Data!.Select(entry => ToDeckCard(userDeck.Id, entry)).ToList();
+            _db.UserDecks.Add(userDeck);
+        }
+        else
+        {
+            ReplaceCards(userDeck, validation.Data!);
         }
 
-        var userExists = await _db.Users.AnyAsync(user => user.Id == userId.Value, cancellationToken);
-        if (!userExists)
-        {
-            return DeckOperationResult<DeckDetailDto>.Fail("User does not exist.");
-        }
-
-        if (request.TargetDeckId.HasValue)
-        {
-            var existing = await _db.UserDecks
-                .Include(deck => deck.Cards)
-                .FirstOrDefaultAsync(deck => deck.Id == request.TargetDeckId.Value && deck.UserId == userId.Value, cancellationToken);
-
-            if (existing == null)
-            {
-                return DeckOperationResult<DeckDetailDto>.Fail("Target deck not found.");
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.Name))
-            {
-                existing.Name = request.Name.Trim();
-            }
-
-            existing.Class = deckClass;
-            existing.Environment = request.Environment ?? decodedEnvironment ?? existing.Environment;
-            existing.Rule = request.Rule ?? decodedRule ?? existing.Rule;
-            if (!TryResolveSecondaryClass(deckClass, existing.Rule, request.SecondaryClass ?? decodedSecondaryClass ?? existing.SecondaryClass, out var existingSecondaryClass, out var existingFormatError))
-            {
-                return DeckOperationResult<DeckDetailDto>.Fail(existingFormatError ?? "Deck format is invalid.");
-            }
-
-            existing.SecondaryClass = existingSecondaryClass;
-            ReplaceCards(existing, validation.Data!);
-            existing.Touch();
-            await _db.SaveChangesAsync(cancellationToken);
-            return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(existing, isGuest: false));
-        }
-
-        var newDeck = new UserDeck
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId.Value,
-            Name = string.IsNullOrWhiteSpace(request.Name) ? "Imported Deck" : request.Name.Trim(),
-            Class = deckClass,
-            SecondaryClass = targetSecondaryClass,
-            Environment = targetEnvironment,
-            Rule = targetRule,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-            Cards = validation.Data!
-                .Select(entry => new UserDeckCard
-                {
-                    Id = Guid.NewGuid(),
-                    DeckId = Guid.Empty,
-                    CardDefinitionId = entry.CardDefinitionId,
-                    Count = entry.Count
-                })
-                .ToList()
-        };
-
-        foreach (var card in newDeck.Cards)
-        {
-            card.DeckId = newDeck.Id;
-        }
-
-        _db.UserDecks.Add(newDeck);
+        userDeck.Name = name;
+        userDeck.Class = deckClass;
+        userDeck.SecondaryClass = secondaryClass;
+        userDeck.Environment = environment;
+        userDeck.Rule = rule;
+        userDeck.Touch();
         await _db.SaveChangesAsync(cancellationToken);
-
-        return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(newDeck, isGuest: false));
-    }
-
-    private static bool TryResolveSecondaryClass(
-        CardClass primaryClass,
-        DeckRule rule,
-        CardClass? requestedSecondaryClass,
-        out CardClass? resolvedSecondaryClass,
-        out string? error,
-        bool requireComplete = true)
-    {
-        resolvedSecondaryClass = null;
-        error = null;
-
-        if (!Enum.IsDefined(rule))
-        {
-            error = "Deck rule is invalid.";
-            return false;
-        }
-
-        if (rule == DeckRule.Standard)
-        {
-            return true;
-        }
-
-        if (rule != DeckRule.DualClass)
-        {
-            error = "Deck rule is not supported.";
-            return false;
-        }
-
-        if (!requireComplete)
-        {
-            if (requestedSecondaryClass.HasValue && requestedSecondaryClass.Value != primaryClass)
-            {
-                resolvedSecondaryClass = requestedSecondaryClass.Value;
-            }
-            return true;
-        }
-
-        if (!requestedSecondaryClass.HasValue)
-        {
-            error = "Secondary class is required for dual-class rule.";
-            return false;
-        }
-
-        if (requestedSecondaryClass.Value == primaryClass)
-        {
-            error = "Primary class and secondary class must be different in dual-class rule.";
-            return false;
-        }
-
-        resolvedSecondaryClass = requestedSecondaryClass.Value;
-        return true;
+        return DeckOperationResult<DeckDetailDto>.Ok(ToDetailDto(userDeck, isGuest: false));
     }
 
     private static DeckSummaryDto ToSummaryDto(GuestDeckRecord deck, bool isGuest)
@@ -878,17 +757,19 @@ public class DeckService : IDeckService
             return;
         }
 
-        var newCards = cards.Select(entry => new UserDeckCard
-        {
-            Id = Guid.NewGuid(),
-            DeckId = deck.Id,
-            CardDefinitionId = entry.CardDefinitionId,
-            Count = entry.Count
-        }).ToList();
+        var newCards = cards.Select(entry => ToDeckCard(deck.Id, entry)).ToList();
 
         _db.UserDeckCards.AddRange(newCards);
         deck.Cards.AddRange(newCards);
     }
+
+    private static UserDeckCard ToDeckCard(Guid deckId, DeckCardEntryDto entry) => new()
+    {
+        Id = Guid.NewGuid(),
+        DeckId = deckId,
+        CardDefinitionId = entry.CardDefinitionId,
+        Count = entry.Count
+    };
 
     private async Task<DefaultDeckPlan?> BuildDefaultDeckPlanAsync(CancellationToken cancellationToken)
     {
@@ -1014,19 +895,12 @@ public class DeckService : IDeckService
         return Math.Clamp(configured, 0, GameConstants.Cards.MaxCopiesPerCard);
     }
 
-    private static string BuildDeckShapeHash(CardClass deckClass, CardClass? secondaryClass, DeckRule rule, IEnumerable<UserDeckCard> cards)
-    {
-        var payload = string.Join(",",
-            cards
-                .Where(card => card.Count > 0)
-                .GroupBy(card => card.CardDefinitionId)
-                .OrderBy(group => group.Key)
-                .Select(group => $"{group.Key}:{group.Sum(item => item.Count)}"));
-
-        var raw = $"{deckClass}|{secondaryClass?.ToString() ?? string.Empty}|{rule}|{payload}";
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
-        return Convert.ToHexString(hash);
-    }
+    private static string BuildDeckShapeHash(CardClass deckClass, CardClass? secondaryClass, DeckRule rule, IEnumerable<UserDeckCard> cards) =>
+        BuildDeckShapeHash(deckClass, secondaryClass, rule, cards.Select(card => new DeckCardEntryDto
+        {
+            CardDefinitionId = card.CardDefinitionId,
+            Count = card.Count
+        }));
 
     private static string BuildDeckShapeHash(CardClass deckClass, CardClass? secondaryClass, DeckRule rule, IEnumerable<DeckCardEntryDto> cards)
     {

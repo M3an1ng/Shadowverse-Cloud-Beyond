@@ -1,3 +1,4 @@
+import { getAstChildSlots } from "./ast-children.js";
 import { getSemanticNodeType as getCoreSemanticNodeType } from "./core.js";
 import { resolvePropertyChain } from "./property-chain-resolver.js";
 import { resolveScopedSelfContextFromSource } from "./event-translation.js";
@@ -150,26 +151,8 @@ export function finalizeDraftInputs(editor, node) {
         }
     }
 
-    if (node.type === "operator") {
-        finalizeDraftInputs(editor, node.leftOperand);
-        finalizeDraftInputs(editor, node.rightOperand);
-    } else if (node.type === "functionCall") {
-        (node.args || []).forEach((arg) => finalizeDraftInputs(editor, arg));
-    } else if (node.type === "listQuery") {
-        finalizeDraftInputs(editor, node.source);
-        finalizeDraftInputs(editor, node.filterExpression);
-    } else if (node.type === "listSort") {
-        finalizeDraftInputs(editor, node.source);
-        finalizeDraftInputs(editor, node.sortExpression);
-    } else if (node.type === "listTake") {
-        finalizeDraftInputs(editor, node.source);
-        finalizeDraftInputs(editor, node.countExpression);
-    } else if (node.type === "listDistinct") {
-        finalizeDraftInputs(editor, node.source);
-        finalizeDraftInputs(editor, node.keyExpression);
-    } else if (node.type === "listSelect") {
-        finalizeDraftInputs(editor, node.source);
-        finalizeDraftInputs(editor, node.selectExpression);
+    for (const child of getAstChildSlots(node)) {
+        if (child.slot !== "innerAST") finalizeDraftInputs(editor, child.node);
     }
 }
 
@@ -421,29 +404,19 @@ export function refreshCompleteness(node) {
         refreshCompleteness(node.metadata.innerAST);
     }
 
-    if (node.type === "operator") {
-        refreshCompleteness(node.leftOperand);
-        refreshCompleteness(node.rightOperand);
-    } else if (node.type === "functionCall") {
-        (node.args || []).forEach((arg) => refreshCompleteness(arg));
-    } else if (node.type === "listQuery") {
-        refreshCompleteness(node.source);
-        refreshCompleteness(node.filterExpression);
-    } else if (node.type === "listSort") {
-        refreshCompleteness(node.source);
-        refreshCompleteness(node.sortExpression);
-    } else if (node.type === "listTake") {
-        refreshCompleteness(node.source);
-        refreshCompleteness(node.countExpression);
-    } else if (node.type === "listDistinct") {
-        refreshCompleteness(node.source);
-        refreshCompleteness(node.keyExpression);
-    } else if (node.type === "listSelect") {
-        refreshCompleteness(node.source);
-        refreshCompleteness(node.selectExpression);
+    for (const child of getAstChildSlots(node)) {
+        if (child.slot !== "innerAST") refreshCompleteness(child.node);
     }
 
     if (typeof node.updateCompleteness === "function") {
         node.updateCompleteness();
     }
+}
+
+export function normalizeLoadedAst(editor, node) {
+    if (!node) return;
+    editor.maintainASTRelationships(node);
+    refreshValueNodeReturnTypes(editor, node);
+    refreshCompleteness(node);
+    editor.maintainASTRelationships(node);
 }

@@ -200,7 +200,7 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
         const headerActions = document.createElement('div');
         headerActions.className = 'header-actions';
 
-        const toggle = this.createToggleSwitch(
+        const toggle = this.createAccordionToggleSwitch(
             condition.isEnabled !== false,
             (checked) => {
                 this.updateCondition(index, { isEnabled: checked });
@@ -216,7 +216,7 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
                 }
             },
             '',
-            { compact: true }
+            { compact: true, ariaLabel: '启用条件' }
         );
         toggle.title = condition.isEnabled !== false ? '点击禁用条件' : '点击启用条件';
 
@@ -317,41 +317,6 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
     }
 
     /**
-     * 创建条件描述编辑器
-     */
-    /**
-     * 复用 Toggle Switch 创建逻辑
-     */
-    createToggleSwitch(checked, onChange, labelText, options = {}) {
-        const wrapper = document.createElement('label');
-        wrapper.className = 'toggle-switch-wrapper';
-        if (options.compact) {
-            wrapper.classList.add('compact');
-        }
-        wrapper.addEventListener('click', (e) => e.stopPropagation());
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        input.setAttribute('aria-label', labelText || '启用条件');
-        input.addEventListener('click', (e) => e.stopPropagation());
-        input.addEventListener('change', (e) => {
-            e.stopPropagation();
-            onChange(e.target.checked);
-        });
-        const slider = document.createElement('span');
-        slider.className = 'toggle-slider';
-        wrapper.appendChild(input);
-        wrapper.appendChild(slider);
-        if (labelText) {
-            const label = document.createElement('span');
-            label.className = 'toggle-label';
-            label.textContent = labelText;
-            wrapper.appendChild(label);
-        }
-        return wrapper;
-    }
-
-    /**
      * 添加新条件
      */
     addCondition() {
@@ -432,28 +397,10 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
                     errors.push(`条件 ${index + 1}: 表达式不能为空`);
                 }
                 
-                // 简单的表达式语法检查
-                if (condition.expression && !this.isValidExpression(condition.expression)) {
-                    errors.push(`条件 ${index + 1}: 表达式语法可能有误`);
-                }
             }
         });
 
         return errors;
-    }
-
-    /**
-     * 简单的表达式验证
-     * @param {string} expression - 表达式字符串
-     */
-    isValidExpression(expression) {
-        // 这是一个简化的验证，实际项目中应该使用更完善的语法检查
-        if (!expression || expression.trim() === '') {
-            return false;
-        }
-
-        // 宽松验证：只要有非空字符即可，避免误报
-        return expression.length > 0;
     }
 
     /**

@@ -1702,6 +1702,38 @@ CardEditor.prototype.refreshAbilityDataCacheAfterSave = async function() {
     }
 };
 
+CardEditor.prototype.readAbilityWriteResponse = async function(response) {
+    if (response.ok) {
+        return await response.json();
+    }
+
+    const failure = await response.json();
+    if (failure.code === 'ABILITY_CACHE_REFRESH_FAILED') {
+        const change = failure.operation === 'unlink' ? `能力 ${failure.id} 的移除操作` : `能力 ${failure.id}`;
+        const repeatWarning = failure.operation === 'create' ? '请勿重复新增' : '请勿重复提交';
+        const savedMessage = `${change}已保存，但运行时缓存刷新失败，尚未生效。${repeatWarning}，请先排查服务端错误并刷新游戏数据缓存。`;
+        // 数据已提交，撤销本地旧缓存并关闭新增表单，避免把缓存故障当作未创建。
+        this.invalidateAbilityLibraryCache();
+        this.invalidateAbilitiesForCard(failure.cardId);
+        this.invalidateAbilityDetailCache(failure.id);
+        markAbilityDataCacheDirty();
+        if (this.getCardIdKey(this.getCurrentCardId()) === this.getCardIdKey(failure.cardId)) {
+            this.applyCardEditMetadata(failure);
+            if (failure.operation === 'create') {
+                this.closeAddAbilityModal();
+            }
+            try {
+                await this.renderAbilitiesList({ force: true });
+            } catch (error) {
+                throw new Error(`${savedMessage} 重新读取能力列表也失败：${error.message}`, { cause: error });
+            }
+        }
+        throw new Error(savedMessage);
+    }
+
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+};
+
 CardEditor.prototype.updateAbilityCachesAfterSave = function(ability, cardId) {
     if (!ability) {
         markAbilityDataCacheDirty();
@@ -4265,10 +4297,7 @@ try {
         body: JSON.stringify(abilityData)
     });
 
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    const result = await response.json();
+    const result = await this.readAbilityWriteResponse(response);
     this.applyDataRevisionFromResponse(response, {
         reason: 'ability-created',
         changedCardIds: currentCardId != null ? [currentCardId] : []
@@ -4938,10 +4967,7 @@ CardEditor.prototype.createNewAbility = async function() {
         body: JSON.stringify(abilityConfig)
     });
 
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    const result = await response.json();
+    const result = await this.readAbilityWriteResponse(response);
     this.applyDataRevisionFromResponse(response, {
         reason: 'ability-created',
         changedCardIds: currentCardId != null ? [currentCardId] : []
@@ -5004,10 +5030,7 @@ CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
         body: JSON.stringify(abilityData)
     });
 
-    if (!createRes.ok) {
-        throw new Error(`HTTP ${createRes.status}: ${createRes.statusText}`);
-    }
-    const created = await createRes.json();
+    const created = await this.readAbilityWriteResponse(createRes);
     this.applyDataRevisionFromResponse(createRes, {
         reason: 'ability-created',
         changedCardIds: currentCardId != null ? [currentCardId] : []
@@ -5068,10 +5091,7 @@ CardEditor.prototype.removeAbility = async function(abilityId) {
                 headers: buildEditorIdentityHeaders()
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const result = await response.json();
+            const result = await this.readAbilityWriteResponse(response);
             this.applyDataRevisionFromResponse(response, {
                 reason: 'ability-unlinked',
                 changedCardIds: currentCardId != null ? [currentCardId] : []
@@ -5283,10 +5303,7 @@ CardEditor.prototype.saveAbilityChanges = async function(originalAbility, update
             body: JSON.stringify(updatedConfig)
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        const result = await response.json();
+        const result = await this.readAbilityWriteResponse(response);
         this.applyDataRevisionFromResponse(response, {
             reason: 'ability-updated',
             changedCardIds: [this.getCurrentCardId() ?? result?.cardId ?? originalAbility?.cardId].filter(value => value != null)

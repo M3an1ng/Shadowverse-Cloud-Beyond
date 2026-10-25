@@ -131,7 +131,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const headerActions = document.createElement('div');
         headerActions.className = 'header-actions';
 
-        const toggle = this.createToggleSwitch(
+        const toggle = this.createAccordionToggleSwitch(
             isEnabled,
             (checked) => {
                 this.updateTarget(index, { isEnabled: checked });
@@ -147,7 +147,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
                 }
             },
             '',
-            { compact: true }
+            { compact: true, ariaLabel: '启用目标' }
         );
         toggle.title = isEnabled ? '点击禁用目标' : '点击启用目标';
 
@@ -502,7 +502,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         header.className = 'section-header-with-toggle';
         
         const enabled = target.playerChoiceOptions != null;
-        const toggle = this.createToggleSwitch(enabled, (checked) => {
+        const toggle = this.createAccordionToggleSwitch(enabled, (checked) => {
             if (checked) {
                 this.updateTarget(index, {
                     playerChoiceOptions: { isRequired: true, minCount: 1, maxCount: 1 }
@@ -532,7 +532,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             
             grid.appendChild(this.createFormGroup('选择数量', rangeSlider));
 
-            const inverseToggle = this.createToggleSwitch(
+            const inverseToggle = this.createAccordionToggleSwitch(
                 opts.isInverseSelection === true,
                 (checked) => {
                     this.updatePlayerChoiceOption(index, { isInverseSelection: checked });
@@ -688,38 +688,6 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         return container;
     }
 
-    // ... 辅助方法 (createToggleSwitch, updateTargetNode, etc.) ...
-    // 复用 AbilityEditor 中的 createToggleSwitch 逻辑或将其提取到 MetadataDrivenComponent
-    createToggleSwitch(checked, onChange, labelText, options = {}) {
-        const wrapper = document.createElement('label');
-        wrapper.className = 'toggle-switch-wrapper';
-        if (options.compact) {
-            wrapper.classList.add('compact');
-        }
-        wrapper.addEventListener('click', (e) => e.stopPropagation());
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        input.setAttribute('aria-label', labelText || '启用目标');
-        input.addEventListener('click', (e) => e.stopPropagation());
-        input.addEventListener('change', (e) => {
-            e.stopPropagation();
-            onChange(e.target.checked);
-        });
-        const slider = document.createElement('span');
-        slider.className = 'toggle-slider';
-        wrapper.appendChild(input);
-        wrapper.appendChild(slider);
-        if (labelText) {
-            const label = document.createElement('span');
-            label.className = 'toggle-label';
-            label.textContent = labelText;
-            wrapper.appendChild(label);
-        }
-        return wrapper;
-    }
-
-    // ... 其他逻辑保持不变，主要是 updateTargetNode 需要适配新的 createTargetNode ...
     updateTargetNode(index) {
         const listContainer = this.container.querySelector('#targets-list-container');
         if (!listContainer) return;
@@ -925,7 +893,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             
             grid.appendChild(this.createFormGroup('选择数量', slider));
 
-            const inverseToggle = this.createToggleSwitch(
+            const inverseToggle = this.createAccordionToggleSwitch(
                 opts.isInverseSelection === true,
                 (checked) => {
                     this.updateSimplifiedTarget(index, {

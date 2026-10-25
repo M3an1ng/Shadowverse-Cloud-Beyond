@@ -33,48 +33,56 @@ function shouldHandleRequest(request) {
         || request.destination === 'font';
 }
 
-async function networkFirst(request) {
-    const cache = await caches.open(RUNTIME_CACHE_NAME);
-
+async function readCachedResponse(cacheName, request) {
     try {
-        const response = await fetch(request);
-        cache.put(request, response.clone());
-        return response;
+        const cached = await (await caches.open(cacheName)).match(request);
+        // 历史缓存可能已被错误页污染，不把失败响应当作离线资源。
+        if (cached && !cached.ok) throw new Error(`缓存包含失败响应：${cached.status}`);
+        return cached;
     } catch (error) {
-        const cached = await cache.match(request);
-        if (cached) {
-            return cached;
-        }
-
-        if (request.mode === 'navigate' || request.destination === 'document') {
-            return (await caches.open(STATIC_CACHE_NAME)).match('/index.html');
-        }
-
-        throw error;
+        console.error('PWA: 读取离线缓存失败。', error);
+        return undefined;
     }
 }
 
-async function staleWhileRevalidate(request) {
-    const cache = await caches.open(RUNTIME_CACHE_NAME);
-    const cached = await cache.match(request);
-
-    const networkPromise = fetch(request)
-        .then((response) => {
-            cache.put(request, response.clone());
-            return response;
-        })
-        .catch(() => null);
-
-    if (cached) {
-        return cached;
+async function cacheNetworkResponse(request, response) {
+    if (!response.ok) return;
+    try {
+        const cache = await caches.open(RUNTIME_CACHE_NAME);
+        await cache.put(request, response.clone());
+    } catch (error) {
+        // 缓存写入不是网络读取的成功条件；保留真实响应，同时报告存储错误。
+        console.error('PWA: 保存离线资源失败。', error);
     }
+}
 
-    const networkResponse = await networkPromise;
-    if (networkResponse) {
-        return networkResponse;
+async function networkFirst(request) {
+    let response;
+    try {
+        response = await fetch(request);
+    } catch (error) {
+        const cached = await readCachedResponse(RUNTIME_CACHE_NAME, request);
+        if (cached) return cached;
+        const shell = await readCachedResponse(STATIC_CACHE_NAME, '/index.html');
+        if (shell) return shell;
+        throw error;
     }
+    await cacheNetworkResponse(request, response);
+    return response;
+}
 
-    throw new Error(`Unable to resolve request: ${request.url}`);
+async function staleWhileRevalidate(event) {
+    const request = event.request;
+    const networkPromise = fetch(request).then(async response => {
+        await cacheNetworkResponse(request, response);
+        return response;
+    });
+    // 返回缓存后，刷新仍属于本次请求的生命周期，不能依赖 worker 偶然存活。
+    event.waitUntil(networkPromise.then(() => undefined, error => {
+        console.warn('PWA: 离线资源的网络刷新失败。', error);
+    }));
+    const cached = await readCachedResponse(RUNTIME_CACHE_NAME, request);
+    return cached || networkPromise;
 }
 
 self.addEventListener('install', (event) => {
@@ -87,7 +95,8 @@ self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((cacheNames) => Promise.all(
             cacheNames
-                .filter((cacheName) => cacheName !== STATIC_CACHE_NAME && cacheName !== RUNTIME_CACHE_NAME)
+                .filter((cacheName) => cacheName.startsWith('svb-')
+                    && cacheName !== STATIC_CACHE_NAME && cacheName !== RUNTIME_CACHE_NAME)
                 .map((cacheName) => caches.delete(cacheName))
         )).then(() => self.clients.claim())
     );
@@ -103,5 +112,5 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    event.respondWith(staleWhileRevalidate(event.request));
+    event.respondWith(staleWhileRevalidate(event));
 });

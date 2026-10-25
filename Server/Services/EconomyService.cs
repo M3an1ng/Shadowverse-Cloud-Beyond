@@ -60,22 +60,8 @@ public partial class EconomyService : IEconomyService
     /// <returns>用户排名实体</returns>
     private async Task<UserRanking> GetOrCreateUserRankingAsync(Guid userId)
     {
-        if (!await UserExistsAsync(userId))
-        {
-            return new UserRanking
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                Rank = 0,
-                RankPoints = 0,
-                SeasonStartAt = DateTime.UtcNow,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-        }
-
-        var userRanking = await _context.UserRankings
-            .FirstOrDefaultAsync(ur => ur.UserId == userId);
+        var userRanking = _context.UserRankings.Local.FirstOrDefault(ur => ur.UserId == userId)
+            ?? await _context.UserRankings.FirstOrDefaultAsync(ur => ur.UserId == userId);
 
         if (userRanking == null)
         {
@@ -103,21 +89,8 @@ public partial class EconomyService : IEconomyService
     /// <returns>用户每日奖励实体</returns>
     private async Task<UserDailyReward> GetOrCreateUserDailyRewardAsync(Guid userId)
     {
-        if (!await UserExistsAsync(userId))
-        {
-            return new UserDailyReward
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                LastClaimedAt = DateTime.MinValue,
-                ConsecutiveDays = 0,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-        }
-
-        var userDailyReward = await _context.UserDailyRewards
-            .FirstOrDefaultAsync(udr => udr.UserId == userId);
+        var userDailyReward = _context.UserDailyRewards.Local.FirstOrDefault(udr => udr.UserId == userId)
+            ?? await _context.UserDailyRewards.FirstOrDefaultAsync(udr => udr.UserId == userId);
 
         if (userDailyReward == null)
         {
@@ -143,28 +116,19 @@ public partial class EconomyService : IEconomyService
     /// <returns>生成的卡片列表</returns>
     private async Task<List<UserCard>> GenerateCardsForPackAsync(UserCardPack userCardPack)
     {
-        // TODO: 实现真正的卡片生成逻辑
-        // 这里先返回一个简单的示例实现
         var cards = new List<UserCard>();
         var random = new Random();
 
         // 获取所有可收集的卡片
-        var setDefinitionId = userCardPack.CardPackDefinition?.CardSetDefinitionId;
+        var setDefinitionId = userCardPack.CardPackDefinition!.CardSetDefinitionId;
         var availableCards = await _context.CardDefinitions
-            .Where(cd => cd.IsCollectible && (!setDefinitionId.HasValue || cd.CardSetDefinitionId == setDefinitionId))
+            .Where(cd => cd.IsCollectible && cd.CardSetDefinitionId == setDefinitionId)
             .ToListAsync();
 
-        if (!availableCards.Any())
+        if (availableCards.Count == 0)
         {
-            availableCards = await _context.CardDefinitions
-                .Where(cd => cd.IsCollectible)
-                .ToListAsync();
-        }
-
-        if (!availableCards.Any())
-        {
-            _logger.LogWarning("没有可收集的卡片定义");
-            return cards;
+            throw new InvalidOperationException(
+                $"No collectible cards for card pack {userCardPack.CardPackDefinitionId}, card set {setDefinitionId}.");
         }
 
         // 生成指定数量的卡片

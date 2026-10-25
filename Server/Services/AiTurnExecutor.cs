@@ -1,160 +1,126 @@
-// Server/Services/AiTurnExecutor.cs
-//
-// 相关文档:
-// - AI决策系统: 文档/05-游戏系统/05-AI决策系统.md
-// - 回合管理系统: 文档/05-游戏系统/03-回合管理系统.md
-// - 服务层设计: 文档/02-后端架构/01-服务层设计.md
-//
-using Microsoft.Extensions.Logging;
-using ShadowverseBeyond.Server.Exceptions;
-using ShadowverseBeyond.Server.Dtos;
-using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
-using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState
-using ShadowverseBeyond.Server.Domain.Events.ActionRequests; // For ActionRequest events
-using ShadowverseBeyond.Server.Domain.Events; // For IEventProcessor
-using AutoMapper; // Added for IMapper
-using System;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Collections.Generic; // Added for List<>
-using ShadowverseBeyond.Server.Models; // For GameActionContext
-using ShadowverseBeyond.Server.Services.Abstractions;
+using AutoMapper;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Mappings;
+using ShadowverseBeyond.Server.Models;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
-namespace ShadowverseBeyond.Server.Services
+namespace ShadowverseBeyond.Server.Services;
+
+public class AiTurnExecutor
 {
-    public class AiTurnExecutor
+    private const int ActionObservationDelayMilliseconds = 1000;
+    private readonly IGameService _gameService;
+    private readonly IAiService _aiService;
+    private readonly ILogger<AiTurnExecutor> _logger;
+    private readonly IMapper _mapper;
+    private readonly IServiceProvider _serviceProvider;
+
+    public AiTurnExecutor(
+        IGameService gameService,
+        IAiService aiService,
+        ILogger<AiTurnExecutor> logger,
+        IMapper mapper,
+        IServiceProvider serviceProvider)
     {
-        private readonly IGameService _gameService;
-        private readonly IAiService _aiService;
-        private readonly ILogger<AiTurnExecutor> _logger;
-        private readonly IMapper _mapper;
-        private readonly IServiceProvider _serviceProvider;
+        _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
+        _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+    }
 
-        public AiTurnExecutor(
-            IGameService gameService,
-            IAiService aiService,
-            ILogger<AiTurnExecutor> logger,
-            IMapper mapper,
-            IServiceProvider serviceProvider)
+    public async Task ExecuteTurnAsync(string gameId, Guid aiPlayerId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var game = _gameService.GetGameState(gameId);
+        if (game == null || game.IsGameOver || game.CurrentPlayerId != aiPlayerId)
         {
-            _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
-            _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+            return;
         }
 
-        public async Task ExecuteTurnAsync(string gameId, Guid aiPlayerId)
+        var turnNumber = game.GetPlayerState(aiPlayerId)!.TurnNumber;
+        while (IsCurrentTurn(game, aiPlayerId, turnNumber))
         {
-            _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI turn execution started.", gameId, aiPlayerId);
-
-            try
+            cancellationToken.ThrowIfCancellationRequested();
+            using var scope = _serviceProvider.CreateScope();
+            var services = scope.ServiceProvider;
+            var accessor = services.GetRequiredService<IGameContextAccessor>();
+            ShadowverseBeyond.Server.Dtos.GameStateDto snapshot;
+            using (var context = new GameContext(services, _mapper, accessor, game, aiPlayerId, cancellationToken))
             {
-                bool actionTakenInLoop;
-                do
-                {
-                    actionTakenInLoop = false;
-                    using var scope = _serviceProvider.CreateScope();
-                    var scopedServiceProvider = scope.ServiceProvider;
-                    var contextAccessor = scopedServiceProvider.GetRequiredService<IGameContextAccessor>();
-
-                    var gameStateEntity = _gameService.GetGameState(gameId);
-                    if (gameStateEntity == null || gameStateEntity.IsGameOver || gameStateEntity.CurrentPlayerId != aiPlayerId)
-                    {
-                        _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Aborting AI turn: Game state invalid, game over, or not AI's turn.", gameId, aiPlayerId);
-                        return;
-                    }
-
-                    GameStateDto gameStateDto;
-                    using (var gameContext = new GameContext(scopedServiceProvider, _mapper, contextAccessor, gameStateEntity, aiPlayerId, CancellationToken.None))
-                    {
-                        gameStateDto = _mapper.Map<GameStateDto>(gameStateEntity);
-                    }
-
-                    // 1. Decide to use PP+1
-                    var usePpBoost = await _aiService.DecidePpBoostAsync(gameStateDto, aiPlayerId);
-                    if (usePpBoost)
-                    {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to USE PP+1.", gameId, aiPlayerId);
-                        var wrapper = new PlayerActionWrapper { ActionType = "PerformPpBoost", PlayerId = aiPlayerId, ActionData = new { } };
-                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
-                        actionTakenInLoop = true;
-                        await Task.Delay(1000);
-                        continue;
-                    }
-
-                    // 2. Decide to play a card
-                    var playCardAction = await _aiService.DecidePlayCardAsync(gameStateDto, aiPlayerId);
-                    if (playCardAction != null)
-                    {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to PLAY CARD: {CardUid}.", gameId, aiPlayerId, playCardAction.CardUid);
-                        var wrapper = new PlayerActionWrapper { ActionType = "PlayCard", PlayerId = aiPlayerId, ActionData = playCardAction };
-                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
-                        actionTakenInLoop = true;
-                        await Task.Delay(1000); // 为玩家增加1秒的反应时间
-                        continue;
-                    }
-
-                    // 3. Decide to evolve a unit
-                    var evolveAction = await _aiService.DecideEvolveAsync(gameStateDto, aiPlayerId);
-                    if (evolveAction != null)
-                    {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to EVOLVE unit: {UnitUid}.", gameId, aiPlayerId, evolveAction.UnitUid);
-                        var wrapper = new PlayerActionWrapper { ActionType = "PerformEvolve", PlayerId = aiPlayerId, ActionData = evolveAction };
-                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
-                        actionTakenInLoop = true;
-                        await Task.Delay(1000); // 为玩家增加1秒的反应时间
-                        continue;
-                    }
-
-                    // 4. Decide to perform the next single attack
-                    var nextAttackAction = await _aiService.DecideNextAttackAsync(gameStateDto, aiPlayerId);
-                    if (nextAttackAction != null)
-                    {
-                        _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI decided to PERFORM ATTACK: {AttackerUid} -> {TargetUid}.",
-                            gameId, aiPlayerId, nextAttackAction.AttackerUid, nextAttackAction.TargetUid);
-
-                        var wrapper = new PlayerActionWrapper { ActionType = "PerformAttack", PlayerId = aiPlayerId, ActionData = nextAttackAction };
-                        await _gameService.EnqueuePlayerActionAsync(gameId, wrapper);
-                        actionTakenInLoop = true;
-                        await Task.Delay(1000); // Pause after the attack for observation
-                        continue;
-                    }
-
-                } while (actionTakenInLoop);
-
-                // 4. If no other actions are taken, end the turn.
-                _logger.LogInformation("[AI_EXECUTOR:{GameId}:{PlayerId}] AI has no more actions and will END TURN.", gameId, aiPlayerId);
-                var endTurnWrapper = new PlayerActionWrapper
-                {
-                    ActionType = "EndTurn",
-                    PlayerId = aiPlayerId,
-                    ActionData = new { }
-                };
-                await _gameService.EnqueuePlayerActionAsync(gameId, endTurnWrapper);
+                snapshot = GameStateProjection.Create(game, context);
             }
-            catch (Exception ex)
+
+            // 保留原来的决策优先级；所有动作共用同一完成边界，避免不同分支再次漂移。
+            var actionType = "EndTurn";
+            object actionData = new { };
+            if (await _aiService.DecidePpBoostAsync(snapshot, aiPlayerId))
             {
-                _logger.LogError(ex, "[AI_EXECUTOR:{GameId}:{PlayerId}] Critical error during AI turn execution.", gameId, aiPlayerId);
-                // Emergency End Turn
-                try
-                {
-                    var emergencyEndTurnWrapper = new PlayerActionWrapper
-                    {
-                        ActionType = "EndTurn",
-                        PlayerId = aiPlayerId,
-                        ActionData = new { Emergency = true }
-                    };
-                    await _gameService.EnqueuePlayerActionAsync(gameId, emergencyEndTurnWrapper);
-                    _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Enqueued emergency EndTurn due to an error.", gameId, aiPlayerId);
-                }
-                catch (Exception emergencyEx)
-                {
-                    _logger.LogError(emergencyEx, "[AI_EXECUTOR:{GameId}:{PlayerId}] Failed to enqueue emergency EndTurn.", gameId, aiPlayerId);
-                }
+                actionType = "PerformPpBoost";
             }
+            else if (await _aiService.DecidePlayCardAsync(snapshot, aiPlayerId) is { } playCard)
+            {
+                actionType = "PlayCard";
+                actionData = playCard;
+            }
+            else if (await _aiService.DecideEvolveAsync(snapshot, aiPlayerId) is { } evolve)
+            {
+                actionType = "PerformEvolve";
+                actionData = evolve;
+            }
+            else if (await _aiService.DecideNextAttackAsync(snapshot, aiPlayerId) is { } attack)
+            {
+                actionType = "PerformAttack";
+                actionData = attack;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentTurn(game, aiPlayerId, turnNumber))
+            {
+                return;
+            }
+
+            var action = new PlayerActionWrapper(actionType, aiPlayerId, actionData)
+            {
+                ExpectedTurnNumber = turnNumber,
+                CancellationToken = cancellationToken
+            };
+            if (!await _gameService.EnqueuePlayerActionAsync(gameId, action))
+            {
+                _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Action {ActionType} was not admitted.",
+                    gameId, aiPlayerId, actionType);
+                return;
+            }
+
+            var completion = await action.Completion.WaitAsync(cancellationToken);
+            if (completion.Status == PlayerActionCompletionStatus.Failed)
+            {
+                throw new InvalidOperationException(completion.Reason);
+            }
+            if (completion.Status != PlayerActionCompletionStatus.Completed)
+            {
+                _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Action {ActionType} {Status}: {Reason}",
+                    gameId, aiPlayerId, actionType, completion.Status, completion.Reason);
+                return;
+            }
+            if (actionType == "EndTurn")
+            {
+                return;
+            }
+
+            // 演出等待不再充当动作完成证明；取消会立即停止等待及后续决策。
+            await Task.Delay(ActionObservationDelayMilliseconds, cancellationToken);
         }
+    }
+
+    private bool IsCurrentTurn(GameState game, Guid playerId, int turnNumber)
+    {
+        return ReferenceEquals(_gameService.GetGameState(game.GameId), game)
+            && !game.IsGameOver
+            && game.CurrentPlayerId == playerId
+            && game.GetPlayerState(playerId)!.TurnNumber == turnNumber;
     }
 }

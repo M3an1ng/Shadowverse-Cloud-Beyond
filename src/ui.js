@@ -13,6 +13,8 @@
 // Import necessary functions and the gameState object
 import {
     gameState,
+    selectHandCard,
+    switchSpectatorPerspective,
     playCard,
     findCardInstanceByUid,
     getCurrentPlayerId,
@@ -1124,7 +1126,7 @@ function activateAttackDragIfNeeded() {
 
 function resetMulliganSelection() {
     mulliganSelectedUids = new Set();
-    gameState.selectedCardUid = null;
+    selectHandCard(null);
     try {
         player1HandEl?.querySelectorAll?.('.card.selected-for-mulligan')?.forEach?.(el => el.classList.remove('selected-for-mulligan'));
         document.querySelectorAll('.hand-card.hand-card-floated')
@@ -1146,9 +1148,7 @@ function clearMulliganVisualState() {
 }
 
 function setFloatingHandCard(cardUid) {
-    const normalizedUid = String(cardUid ?? '').trim();
-    const nextUid = normalizedUid || null;
-    gameState.selectedCardUid = nextUid;
+    const nextUid = selectHandCard(cardUid);
 
     document.querySelectorAll('.hand-card.hand-card-floated')
         .forEach(el => el.classList.remove('hand-card-floated'));
@@ -4841,8 +4841,6 @@ function setConnectionStatus(status, message) {
     isConnectionLocked = !isConnected;
 
     if (!isConnected) {
-        gameState.turnEndsAtUtc = null;
-        gameState.turnStartedAtUtc = null;
         updateTurnTimerDisplay(0, 0, false);
     }
 
@@ -5366,14 +5364,7 @@ function handleGameClick(event) {
 
     const clickedSpectatorToggle = event.target.closest('#spectator-toggle-view');
     if (clickedSpectatorToggle) {
-        if (!gameState.isSpectator) return;
-        const playerIds = (gameState.players || []).map(p => p?.id).filter(Boolean);
-        if (playerIds.length < 2) return;
-
-        const next = playerIds.find(id => id !== gameState.localPlayerId) || playerIds[0];
-        gameState.localPlayerId = next;
-        clearSelectionHighlights();
-        renderGame(gameState);
+        switchSpectatorPerspective();
         return;
     }
 

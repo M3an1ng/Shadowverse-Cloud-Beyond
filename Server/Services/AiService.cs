@@ -18,7 +18,6 @@ using ShadowverseBeyond.Server.Dtos.SignalR.Actions; // For Action DTOs
 using System; // For Exception, ArgumentNullException
 using System.Collections.Generic;
 using System.Linq; // For Linq methods
-using System.Text.Json; // For deep copy using JSON serialization
 using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -288,28 +287,6 @@ namespace ShadowverseBeyond.Server.Services
         #region Helper Methods
 
         /// <summary>
-        /// Creates a deep copy of an object using JSON serialization.
-        /// Returns default if serialization/deserialization fails.
-        /// </summary>
-        private T? DeepCopy<T>(T obj)
-        {
-            if (obj == null)
-            {
-                return default;
-            }
-            try
-            {
-                var json = JsonSerializer.Serialize(obj);
-                return JsonSerializer.Deserialize<T>(json);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during deep copy of object type {ObjectType}", typeof(T).Name);
-                return default; // Return default on error
-            }
-        }
-
-        /// <summary>
         /// Gets the AI's state and the opponent's state from the game state.
         /// Returns null if states cannot be determined.
         /// </summary>
@@ -520,29 +497,20 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <inheritdoc />
-        public async Task RequestAiActionAsync(string gameId, Guid aiPlayerId)
+        public async Task RequestAiActionAsync(string gameId, Guid aiPlayerId, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _logger.LogInformation("[AiService:{GameId}] Received request to execute AI action for player {PlayerId}.", gameId, aiPlayerId);
 
-            try
+            // 执行失败由调用方的后台任务边界记录；此处吞错会把失败回合伪装成正常结束。
+            using (var scope = _serviceScopeFactory.CreateScope())
             {
-                // 创建作用域以解析 Scoped 依赖项，如 AiTurnExecutor
-                using (var scope = _serviceScopeFactory.CreateScope())
-                {
-                    var aiTurnExecutor = scope.ServiceProvider.GetRequiredService<AiTurnExecutor>();
-                    _logger.LogDebug("[AiService:{GameId}] Resolved AiTurnExecutor within scope for player {PlayerId}.", gameId, aiPlayerId);
+                var aiTurnExecutor = scope.ServiceProvider.GetRequiredService<AiTurnExecutor>();
+                _logger.LogDebug("[AiService:{GameId}] Resolved AiTurnExecutor within scope for player {PlayerId}.", gameId, aiPlayerId);
 
-                    // 异步执行 AI 的回合逻辑
-                    await aiTurnExecutor.ExecuteTurnAsync(gameId, aiPlayerId);
+                await aiTurnExecutor.ExecuteTurnAsync(gameId, aiPlayerId, cancellationToken);
 
-                    _logger.LogInformation("[AiService:{GameId}] AiTurnExecutor completed action for player {PlayerId}.", gameId, aiPlayerId);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[AiService:{GameId}] Error occurred while executing AI action for player {PlayerId}.", gameId, aiPlayerId);
-                // 根据需求，我们可能需要更优雅地处理此问题，
-                // 例如，以错误状态结束 AI 回合，但目前仅记录日志。
+                _logger.LogInformation("[AiService:{GameId}] AiTurnExecutor completed action for player {PlayerId}.", gameId, aiPlayerId);
             }
         }
 

@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
-using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Services;
 
@@ -42,39 +41,12 @@ public partial class EconomyService
                     .ToListAsync();
 
                 bool anyCompleted = false;
-                var period = QuestProgressService.ResolvePeriodForDefinition(DateTime.UtcNow, QuestCategory.Daily, 24);
+                var now = DateTime.UtcNow;
 
                 foreach (var definition in questDefinitions)
                 {
-                    period = QuestProgressService.ResolvePeriodForDefinition(
-                        DateTime.UtcNow,
-                        definition.Category,
-                        definition.RefreshIntervalHours);
-                    var userQuest = await _context.UserQuests
-                        .Include(uq => uq.QuestDefinition)
-                        .FirstOrDefaultAsync(uq => uq.UserId == userId
-                            && uq.QuestDefinitionId == definition.Id
-                            && uq.PeriodKey == period.Key);
-
-                    if (userQuest == null)
-                    {
-                        userQuest = new UserQuest
-                        {
-                            Id = Guid.NewGuid(),
-                            UserId = userId,
-                            QuestDefinitionId = definition.Id,
-                            CurrentProgress = 0,
-                            IsCompleted = false,
-                            IsRewardClaimed = false,
-                            AssignedAt = DateTime.UtcNow,
-                            ExpiresAt = period.EndUtc,
-                            PeriodKey = period.Key,
-                            PeriodStartUtc = period.StartUtc,
-                            PeriodEndUtc = period.EndUtc,
-                            QuestDefinition = definition
-                        };
-                        _context.UserQuests.Add(userQuest);
-                    }
+                    var userQuest = await QuestProgressState.GetOrCreateAsync(
+                        _context, userId, definition, now);
 
                     bool completed = userQuest.UpdateProgress(increment);
 
@@ -92,7 +64,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "更新任务进度失败: UserId={UserId}, Type={Type}", userId, type);
-            return false;
+            throw;
         }
     }
 
@@ -129,13 +101,13 @@ public partial class EconomyService
                     return null;
                 }
 
-                var coinReward = userQuest.QuestDefinition?.CoinReward ?? 0;
+                var coinReward = userQuest.QuestDefinition.CoinReward;
 
                 var success = await AddCoinsAsync(
                     userId,
                     coinReward,
                     CoinTransactionType.QuestCompletion,
-                    $"领取任务奖励: {userQuest.QuestDefinition?.Name}",
+                    $"领取任务奖励: {userQuest.QuestDefinition.Name}",
                     relatedEntityId: userQuest.Id.ToString());
 
                 if (!success)
@@ -157,47 +129,45 @@ public partial class EconomyService
                     QuestDefinitionId = userQuest.QuestDefinitionId,
                     CoinReward = coinReward,
                     CurrentCoins = currentCoins,
-                    ClaimedAtUtc = userQuest.RewardClaimedAt ?? DateTime.UtcNow
+                    ClaimedAtUtc = userQuest.RewardClaimedAt!.Value
                 };
             });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "领取任务奖励失败: UserId={UserId}, UserQuestId={UserQuestId}", userId, userQuestId);
-            return null;
+            throw;
         }
     }
 
     public async Task<List<UserQuestDto>> CheckAndCompleteQuestsAsync(Guid userId)
     {
-        var completedQuests = new List<UserQuestDto>();
-
         if (!await EnsurePersistedUserAsync(userId, nameof(CheckAndCompleteQuestsAsync)))
         {
-            return completedQuests;
+            return new List<UserQuestDto>();
         }
 
         try
         {
-            // 检查各种类型的任务
-            await UpdateQuestProgressAsync(userId, QuestType.WinGames, 0);
-            await UpdateQuestProgressAsync(userId, QuestType.PlayGames, 0);
+            return await _transactionService.ExecuteInTransactionAsync(async () =>
+            {
+                await UpdateQuestProgressAsync(userId, QuestType.WinGames, 0);
+                await UpdateQuestProgressAsync(userId, QuestType.PlayGames, 0);
 
-            // 获取刚完成的任务
-            var recentlyCompleted = await _context.UserQuests
-                .Include(uq => uq.QuestDefinition)
-                .Where(uq => uq.UserId == userId && uq.IsCompleted &&
-                            uq.CompletedAt.HasValue && uq.CompletedAt.Value >= DateTime.UtcNow.AddMinutes(-5))
-                .ToListAsync();
+                var recentlyCompleted = await _context.UserQuests
+                    .Include(uq => uq.QuestDefinition)
+                    .Where(uq => uq.UserId == userId && uq.IsCompleted &&
+                                uq.CompletedAt.HasValue && uq.CompletedAt.Value >= DateTime.UtcNow.AddMinutes(-5))
+                    .ToListAsync();
 
-            completedQuests = recentlyCompleted.Select(UserQuestDto.FromEntity).ToList();
+                return recentlyCompleted.Select(UserQuestDto.FromEntity).ToList();
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "检查完成任务失败: UserId={UserId}", userId);
+            throw;
         }
-
-        return completedQuests;
     }
 
     #endregion

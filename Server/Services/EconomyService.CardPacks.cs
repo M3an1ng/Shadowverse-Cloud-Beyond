@@ -90,7 +90,7 @@ public partial class EconomyService
         {
             _logger.LogError(ex, "购买卡包失败: UserId={UserId}, CardPackDefinitionId={CardPackDefinitionId}",
                 userId, cardPackDefinitionId);
-            return null;
+            throw;
         }
     }
 
@@ -139,7 +139,7 @@ public partial class EconomyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "开启卡包失败: UserId={UserId}, CardPackId={CardPackId}", userId, cardPackId);
-            return new List<UserCardDto>();
+            throw;
         }
     }
 

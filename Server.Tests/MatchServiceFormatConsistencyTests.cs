@@ -130,13 +130,12 @@ public sealed class MatchServiceFormatConsistencyTests
         var hostId = Guid.NewGuid();
         var guestId = Guid.NewGuid();
 
-        var create = service.Create(hostId, useAiFallback: false);
-        Assert.True(create.Success);
-        var room = create.Room!;
-        room.DevMatchConfig = new DevMatchConfig
+        var create = service.Create(hostId, useAiFallback: false, devMatchConfig: new DevMatchConfig
         {
             IgnoreDeckFormatConsistency = true
-        };
+        });
+        Assert.True(create.Success);
+        var room = create.Room!;
 
         var join = service.TryJoin(room.RoomId, room.JoinCode, guestId);
         Assert.True(join.Success, join.Message);

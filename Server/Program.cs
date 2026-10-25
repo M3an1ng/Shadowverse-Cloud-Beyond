@@ -201,7 +201,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
         options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db"));
     // options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/shadowverse.db")); // Original line
-    Log.Information("Successfully registered ApplicationDbContext (using hardcoded path for debugging)."); // Added Log
+    Log.Information("Registered ApplicationDbContext with the configured SQLite connection."); // Added Log
     // Configure System.Text.Json serialization options globally to handle enums as strings
     // The configuration is now handled by AddJsonOptions on AddControllers, so this is redundant.
 
@@ -461,11 +461,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Events.IEventProcessor, ShadowverseBeyond.Server.Domain.Events.EventProcessor>();
     Log.Information("Registered IEventProcessor as Scoped.");
 
-    // Register Effect Queue System
-    builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue.IEffectQueue, ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue.EffectQueue>();
-    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.Abstractions.IEffectQueueService, ShadowverseBeyond.Server.Services.EffectQueueService>();
 
-    Log.Information("Registered Effect Queue System.");
 
     // Register Event History Service
     builder.Services.AddSingleton<InMemoryEventHistoryService>();
@@ -733,8 +729,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         // Use the application's logger instance directly if scope creation fails or during seeding
         var logger = app.Services.GetRequiredService<ILogger<Program>>();
         logger.LogError(ex, "An error occurred during database migration or seeding.");
-        // Depending on the severity, you might want to stop the application:
-        // Environment.Exit(1);
+        throw;
     }
 
     // --- Run the Application ---
@@ -746,6 +741,7 @@ catch (Exception ex)
     // Print the full exception details directly to the console
     Console.WriteLine($"[FATAL] Application terminated unexpectedly: {ex.ToString()}");
     Log.Fatal(ex, "Application terminated unexpectedly"); // Also log via Serilog
+    throw;
 }
 finally
 {

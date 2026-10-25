@@ -106,7 +106,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
                     foreach (var mod in modifiers)
                     {
-                        value = ApplyKeywordModification(value, mod);
+                        value = BuffValueCalculation.Apply(value, mod.Layer, mod.Value);
                     }
                 }
             }
@@ -167,7 +167,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     .OrderBy(m => m.Layer);
                 foreach (var mod in attackMods)
                 {
-                    attack = ApplyStatModification(attack, mod);
+                    attack = BuffValueCalculation.Apply(attack, mod.Layer, mod.Value);
                 }
 
                 var healthMods = buff.GetStatModifications()
@@ -175,7 +175,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     .OrderBy(m => m.Layer);
                 foreach (var mod in healthMods)
                 {
-                    maxHealth = ApplyStatModification(maxHealth, mod);
+                    maxHealth = BuffValueCalculation.Apply(maxHealth, mod.Layer, mod.Value);
                 }
 
                 var costMods = buff.GetStatModifications()
@@ -183,7 +183,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     .OrderBy(m => m.Layer);
                 foreach (var mod in costMods)
                 {
-                    cost = ApplyStatModification(cost, mod);
+                    cost = BuffValueCalculation.Apply(cost, mod.Layer, mod.Value);
                 }
 
                 if (!card.IsSilenced)
@@ -216,7 +216,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
                                 foreach (var modification in actionGroup.OrderBy(static modification => modification.Layer))
                                 {
-                                    currentLimit = ApplyActionUsageLimitModification(currentLimit, modification);
+                                    currentLimit = BuffValueCalculation.Apply(currentLimit, modification.Layer, modification.Value);
                                 }
 
                                 actionUsageLimits[actionGroup.Key] = Math.Max(0, currentLimit);
@@ -251,44 +251,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 ActionUsageLimits = actionUsageLimits
             };
         }
-
-        private static int ApplyStatModification(int currentValue, StatModification modification)
-        {
-            return modification.Layer switch
-            {
-                ModifierLayer.Additive => currentValue + (int)modification.Value,
-                ModifierLayer.Multiplicative => CeilToInt(currentValue * modification.Value),
-                ModifierLayer.Set => CeilToInt(modification.Value),
-                ModifierLayer.Base => CeilToInt(modification.Value),
-                _ => currentValue,
-            };
-        }
-
-        private static int ApplyKeywordModification(int currentValue, AbilityKeywordModification modification)
-        {
-            return modification.Layer switch
-            {
-                ModifierLayer.Additive => currentValue + (int)modification.Value,
-                ModifierLayer.Set => CeilToInt(modification.Value),
-                ModifierLayer.Multiplicative => CeilToInt(currentValue * modification.Value),
-                ModifierLayer.Base => CeilToInt(modification.Value),
-                _ => currentValue,
-            };
-        }
-
-        private static int ApplyActionUsageLimitModification(int currentValue, ActionUsageLimitModification modification)
-        {
-            return modification.Layer switch
-            {
-                ModifierLayer.Additive => currentValue + (int)modification.Value,
-                ModifierLayer.Set => CeilToInt(modification.Value),
-                ModifierLayer.Multiplicative => CeilToInt(currentValue * modification.Value),
-                ModifierLayer.Base => CeilToInt(modification.Value),
-                _ => currentValue,
-            };
-        }
-
-        private static int CeilToInt(double value) => (int)Math.Ceiling(value);
 
         public void RefreshDerivedStateCache(GameContext context, string reason)
         {
