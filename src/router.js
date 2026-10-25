@@ -363,7 +363,7 @@ class Router {
 
         try {
             const module = await import('./devToolsMatchLab.js');
-            await module.initializeDevToolsMatchLab();
+            await module.initializeDevToolsMatchLab({ navigateTo: route => this.navigateTo(route) });
         } catch (error) {
             console.error('Router: Failed to initialize match lab:', error);
             throw error;

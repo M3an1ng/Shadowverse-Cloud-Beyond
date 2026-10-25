@@ -1,5 +1,4 @@
 import { getDeckOwnerQuery, getUserSession } from "./userSession.js";
-import { router } from "./router.js";
 import { setStoredValue } from "./storageFallback.js";
 
 let initialized = false;
@@ -155,7 +154,7 @@ function applyPreset(inputs, preset) {
     }
 }
 
-export async function initializeDevToolsMatchLab() {
+export async function initializeDevToolsMatchLab({ navigateTo }) {
     if (initialized) return;
     initialized = true;
 
@@ -265,7 +264,7 @@ export async function initializeDevToolsMatchLab() {
                 console.warn("Failed to cache devtools handshake: no writable storage backend.");
             }
 
-            await router.navigateTo("game");
+            await navigateTo("game");
         } catch (err) {
             setStatus(statusEl, `创建失败：${err.message || String(err)}`, true);
         }
