@@ -94,8 +94,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 result.ResultingDtos.Add(new ErrorOccurredEventDto(context.RequestingPlayerId, $"Error processing event {initialEvent.EventType}: {ex.Message}"));
             }
 
-            _logger.LogDebug("[EventProcessor] Event processing completed. Identified {AbilityCount} activated abilities and generated {DtoCount} DTOs.",
-                result.ActivatedAbilities.Count, result.ResultingDtos.Count);
+            _logger.LogDebug("[EventProcessor] Event processing completed. Generated {DtoCount} DTOs.",
+                result.ResultingDtos.Count);
 
             return result;
         }
