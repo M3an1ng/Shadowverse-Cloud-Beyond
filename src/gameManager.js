@@ -2586,8 +2586,7 @@ export function updateFullGameState(serverState) {
     gameState.turnTimeoutSeconds = Number.isFinite(timeoutSeconds) ? timeoutSeconds : gameState.turnTimeoutSeconds;
     gameState.turnStartedAtUtc = serverState.TurnStartedAtUtc ?? serverState.turnStartedAtUtc ?? null;
     gameState.turnEndsAtUtc = serverState.TurnEndsAtUtc ?? serverState.turnEndsAtUtc ?? null;
-    // Use PascalCase: GameOver
-    gameState.gameOver = readStateField(serverState, 'GameOver', 'gameOver') || false; // PascalCase/camelCase
+    gameState.gameOver = readStateField(serverState, 'IsGameOver', 'isGameOver') || false;
     // Use PascalCase: Winner
     gameState.winner = readStateField(serverState, 'Winner', 'winner') || null; // PascalCase/camelCase
     gameState.selectedCardUid = null; // Reset selections on full update
