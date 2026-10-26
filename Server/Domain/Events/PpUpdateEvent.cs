@@ -1,10 +1,8 @@
 using System;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
-using ShadowverseBeyond.Server.Domain.Events; // EventType, GameContext
 using ShadowverseBeyond.Server.Domain.Abilities.Effects; // DomainOperationResult
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
-using ShadowverseBeyond.Server.Domain.Identifiers;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -53,13 +51,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public string GetAnnouncement(GameState gameState)
         {
             return string.Empty;
-            var player = TargetPlayer;
-            if (player == null)
-            {
-                return string.Empty;
-            }
-
-            return $"{AnnouncementTokens.Player(player)}的PP变为 {AnnouncementTokens.Number(CurrentPp)}。";
         }
     }
 }

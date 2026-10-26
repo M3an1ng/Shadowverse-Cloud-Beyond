@@ -6,7 +6,6 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Factories;
 using ShadowverseBeyond.Server.Dtos.Enums;
-using ShadowverseBeyond.Server.Domain.Identifiers;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -82,14 +81,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public string GetAnnouncement(GameState gameState)
         {
             return string.Empty;
-            var player = TargetPlayer;
-            var source = SourceCard;
-            if (player == null || source == null)
-            {
-                return string.Empty;
-            }
-
-            return $"{AnnouncementTokens.Player(player)}复制了{AnnouncementTokens.Card(source)}。";
         }
     }
 }
