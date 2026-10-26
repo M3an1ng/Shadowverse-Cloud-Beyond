@@ -21,6 +21,19 @@ function pickValue(source, camelKey, pascalKey) {
     return null;
 }
 
+async function readJsonResponse(response) {
+    if (response.ok) return response.json();
+    const rawText = await response.text();
+    let message = rawText.trim();
+    try {
+        const payload = JSON.parse(rawText);
+        message = payload?.message || payload?.Message || (typeof payload === "string" ? payload : message);
+    } catch {
+        // Error responses may be plain text; successful JSON responses must parse.
+    }
+    throw new Error(message || response.statusText || `HTTP ${response.status}`);
+}
+
 function normalizeEnvironment(value) {
     return normalizeDeckEnvironmentShared(value, getDefaultDeckEnvironment());
 }
@@ -78,6 +91,9 @@ class DevToolsCopyLimitPolicies {
         this.cardPickerCurrentPage = 1;
         this.cardPickerFilteredEntries = [];
         this.cardPickerSelectedId = null;
+        this.requestOwner = {};
+        this.editorOwner = {};
+        this.queryRequest = null;
     }
 
     async init() {
@@ -127,6 +143,7 @@ class DevToolsCopyLimitPolicies {
         }
 
         await this.loadEnvironmentOptions();
+        if (!this.initialized) return;
 
         // Move modals to document body to avoid local stacking-context conflicts.
         if (this.modalEl && this.modalEl.parentElement !== document.body) {
@@ -155,6 +172,7 @@ class DevToolsCopyLimitPolicies {
 
     async loadEnvironmentOptions() {
         await ensureDeckEnvironmentOptions();
+        if (!this.initialized) return;
         fillDeckEnvironmentSelect(this.queryEnvironmentInput, this.queryEnvironmentInput?.value);
         fillDeckEnvironmentSelect(this.editorEnvironmentInput, this.editorEnvironmentInput?.value);
     }
@@ -205,7 +223,7 @@ class DevToolsCopyLimitPolicies {
 
         if (this.queryEnvironmentInput) {
             const handler = () => {
-                void this.refreshQueryPolicies(true);
+                void this.refreshQueryPolicies();
             };
             this.queryEnvironmentInput.addEventListener("change", handler);
             this.handlers.push(() => this.queryEnvironmentInput.removeEventListener("change", handler));
@@ -213,7 +231,7 @@ class DevToolsCopyLimitPolicies {
 
         if (this.queryRuleInput) {
             const handler = () => {
-                void this.refreshQueryPolicies(true);
+                void this.refreshQueryPolicies();
             };
             this.queryRuleInput.addEventListener("change", handler);
             this.handlers.push(() => this.queryRuleInput.removeEventListener("change", handler));
@@ -229,7 +247,7 @@ class DevToolsCopyLimitPolicies {
 
         if (this.queryRefreshBtn) {
             const handler = () => {
-                void this.refreshQueryPolicies(true);
+                void this.refreshQueryPolicies();
             };
             this.queryRefreshBtn.addEventListener("click", handler);
             this.handlers.push(() => this.queryRefreshBtn.removeEventListener("click", handler));
@@ -373,8 +391,11 @@ class DevToolsCopyLimitPolicies {
         }
 
         const sessionHandler = () => {
+            this.invalidateRequests();
+            this.clearQuery();
+            this.closeEditorModal();
             if (this.isModalOpen) {
-                void this.refreshQueryPolicies(true);
+                void this.refreshQueryPolicies();
             }
         };
         document.addEventListener(USER_SESSION_CHANGED_EVENT, sessionHandler);
@@ -383,14 +404,18 @@ class DevToolsCopyLimitPolicies {
 
     async openModal() {
         if (!this.modalEl) return;
+        this.invalidateRequests();
+        this.clearQuery();
         this.modalEl.classList.add("active");
         this.modalEl.setAttribute("aria-hidden", "false");
         this.isModalOpen = true;
-        await this.refreshQueryPolicies(true);
+        await this.refreshQueryPolicies();
     }
 
     closeModal() {
         if (!this.modalEl) return;
+        this.invalidateRequests();
+        this.clearQuery();
         this.closeCardPickerModal();
         this.closeEditorModal();
         this.modalEl.classList.remove("active");
@@ -398,8 +423,27 @@ class DevToolsCopyLimitPolicies {
         this.isModalOpen = false;
     }
 
+    invalidateRequests() {
+        this.requestOwner = {};
+        this.queryRequest?.abort();
+        this.queryRequest = null;
+        this.setQueryBusy(false);
+    }
+
+    ownsRequest(owner) {
+        return this.initialized && this.isModalOpen && this.requestOwner === owner;
+    }
+
+    clearQuery() {
+        this.queryItems = [];
+        this.renderQueryRows([]);
+        this.setAdminPanelVisible(false);
+    }
+
     openEditorModal() {
         if (!this.editorModalEl) return;
+        this.editorOwner = {};
+        this.setEditorBusy(false);
         this.editorModalEl.hidden = false;
         this.editorModalEl.setAttribute("aria-hidden", "false");
         this.editorModalEl.style.display = "flex";
@@ -408,6 +452,9 @@ class DevToolsCopyLimitPolicies {
 
     closeEditorModal() {
         if (!this.editorModalEl) return;
+        this.editorOwner = {};
+        this.setEditorBusy(false);
+        this.setMessage("");
         this.closeCardPickerModal();
         this.editorModalEl.hidden = true;
         this.editorModalEl.setAttribute("aria-hidden", "true");
@@ -509,10 +556,8 @@ class DevToolsCopyLimitPolicies {
     }
 
     normalizeCardEntry(card) {
-        const id = toInt(pickValue(card, "id", "Id"), 0);
-        if (id <= 0) return null;
-
-        const name = String(pickValue(card, "name", "Name") || `卡牌 #${id}`);
+        const id = pickValue(card, "id", "Id");
+        const name = pickValue(card, "name", "Name");
         const cost = toInt(pickValue(card, "cost", "Cost"), 0);
         const cardType = String(
             pickValue(card, "cardType", "CardType") ??
@@ -536,110 +581,80 @@ class DevToolsCopyLimitPolicies {
     }
 
     filterCollectiblePolicyItems(items) {
-        const source = Array.isArray(items) ? items : [];
-        if (this.collectibleCardIdSet.size <= 0) {
-            return source;
-        }
-        return source.filter((item) => this.collectibleCardIdSet.has(item.cardDefinitionId));
+        return items.filter(item => this.collectibleCardIdSet.has(item.cardDefinitionId));
     }
 
-    async ensureCardIndexLoaded() {
+    async ensureCardIndexLoaded(signal) {
         if (this.cardIndexLoaded) return;
-
-        const response = await fetch(CARDS_ENDPOINT, { method: "GET" });
-        let payload = null;
-        try {
-            payload = await response.json();
-        } catch {
-            payload = null;
+        const response = await fetch(CARDS_ENDPOINT, { method: "GET", signal });
+        const cards = await readJsonResponse(response);
+        if (signal.aborted) return;
+        if (!Array.isArray(cards)) throw new Error("卡牌目录响应必须为数组。");
+        for (const card of cards) {
+            const id = pickValue(card, "id", "Id");
+            const name = pickValue(card, "name", "Name");
+            if (!Number.isInteger(id) || id < 0 || typeof name !== "string" || !name.trim()
+                || typeof pickValue(card, "isCollectible", "IsCollectible") !== "boolean") {
+                throw new Error("卡牌目录响应中的 ID、名称或可构筑标记无效。");
+            }
         }
-
-        if (!response.ok) {
-            const message = payload?.message || payload?.Message || response.statusText;
-            throw new Error(message || `HTTP ${response.status}`);
-        }
-
-        const cards = Array.isArray(payload) ? payload : [];
+        // Card 0 is the catalogue leader placeholder, not a deck card.
+        const entries = cards
+            .filter(card => pickValue(card, "id", "Id") > 0 && this.isCollectibleCard(card))
+            .map(card => this.normalizeCardEntry(card))
+            .sort((left, right) => left.id - right.id);
         this.cardNameById.clear();
         this.collectibleCardIdSet.clear();
-        this.cardEntries = cards
-            .filter((item) => this.isCollectibleCard(item))
-            .map((item) => this.normalizeCardEntry(item))
-            .filter((item) => item != null)
-            .sort((left, right) => left.id - right.id);
-
-        this.cardEntries.forEach((entry) => {
+        this.cardEntries = entries;
+        for (const entry of entries) {
             this.cardNameById.set(entry.id, entry.name);
             this.collectibleCardIdSet.add(entry.id);
-        });
-
+        }
         this.cardIndexLoaded = true;
     }
 
-    async verifyAdminAccess(session) {
-        if (!session?.userId) return false;
-
+    async verifyAdminAccess(session, signal) {
         const params = new URLSearchParams();
         params.set("actorUserId", session.userId);
         params.set("limit", "1");
-
-        const response = await fetch(`${USERS_ENDPOINT}?${params.toString()}`, { method: "GET" });
-        if (response.status === 403) {
-            return false;
+        const response = await fetch(`${USERS_ENDPOINT}?${params.toString()}`, { method: "GET", signal });
+        if (response.status === 403) return false;
+        const payload = await readJsonResponse(response);
+        if (!Array.isArray(pickValue(payload, "items", "Items"))) {
+            throw new Error("管理员查询响应中的 items 必须为数组。");
         }
-
-        let payload = null;
-        try {
-            payload = await response.json();
-        } catch {
-            payload = null;
-        }
-
-        if (!response.ok) {
-            const message = payload?.message || payload?.Message || response.statusText;
-            throw new Error(message || `HTTP ${response.status}`);
-        }
-
         return true;
     }
 
-    normalizePolicyItems(payload) {
-        const source = Array.isArray(payload?.items)
-            ? payload.items
-            : (Array.isArray(payload?.Items) ? payload.Items : []);
-
-        return source
-            .map((item) => {
-                const cardDefinitionId = toInt(pickValue(item, "cardDefinitionId", "CardDefinitionId"), 0);
-                if (cardDefinitionId <= 0) return null;
-
-                const maxCopies = normalizeLimit(pickValue(item, "maxCopies", "MaxCopies"));
-                const updatedAtUtc = String(pickValue(item, "updatedAtUtc", "UpdatedAtUtc") || "");
-                return { cardDefinitionId, maxCopies, updatedAtUtc };
-            })
-            .filter((item) => item != null)
-            .sort((left, right) => left.cardDefinitionId - right.cardDefinitionId);
+    normalizePolicyItems(payload, environment, rule) {
+        const responseEnvironment = pickValue(payload, "environment", "Environment");
+        const responseRule = pickValue(payload, "rule", "Rule");
+        if (typeof responseEnvironment !== "string" || responseEnvironment.toLowerCase() !== environment.toLowerCase()
+            || typeof responseRule !== "string" || responseRule.toLowerCase() !== rule.toLowerCase()) {
+            throw new Error("规则响应的环境或对战规则与请求不符。");
+        }
+        const items = pickValue(payload, "items", "Items");
+        if (!Array.isArray(items)) throw new Error("规则响应中的 items 必须为数组。");
+        return items.map(item => {
+            const cardDefinitionId = pickValue(item, "cardDefinitionId", "CardDefinitionId");
+            const maxCopies = pickValue(item, "maxCopies", "MaxCopies");
+            if (!Number.isInteger(cardDefinitionId) || cardDefinitionId <= 0) {
+                throw new Error("规则响应中的 cardDefinitionId 必须为正整数。");
+            }
+            if (!Number.isInteger(maxCopies) || maxCopies < 0 || maxCopies > DEFAULT_LIMIT) {
+                throw new Error(`规则响应中的 maxCopies 必须为 0 到 ${DEFAULT_LIMIT} 的整数。`);
+            }
+            const updatedAtUtc = String(pickValue(item, "updatedAtUtc", "UpdatedAtUtc") || "");
+            return { cardDefinitionId, maxCopies, updatedAtUtc };
+        }).sort((left, right) => left.cardDefinitionId - right.cardDefinitionId);
     }
 
-    async fetchPolicies(environment, rule) {
+    async fetchPolicies(environment, rule, signal) {
         const params = new URLSearchParams();
         params.set("environment", environment);
         params.set("rule", rule);
-
-        const response = await fetch(`${POLICY_ENDPOINT}?${params.toString()}`, { method: "GET" });
-        let payload = null;
-        try {
-            payload = await response.json();
-        } catch {
-            payload = null;
-        }
-
-        if (!response.ok) {
-            const message = payload?.message || payload?.Message || response.statusText;
-            throw new Error(message || `HTTP ${response.status}`);
-        }
-
-        return this.normalizePolicyItems(payload);
+        const response = await fetch(`${POLICY_ENDPOINT}?${params.toString()}`, { method: "GET", signal });
+        return this.normalizePolicyItems(await readJsonResponse(response), environment, rule);
     }
 
     renderQueryRows(items) {
@@ -683,110 +698,77 @@ class DevToolsCopyLimitPolicies {
         this.tableBody.innerHTML = html;
     }
 
-    async refreshQueryPolicies(force = false) {
-        if (!this.isModalOpen && !force) return;
-
+    async refreshQueryPolicies() {
+        if (!this.isModalOpen) return;
+        this.queryRequest?.abort();
+        const request = new AbortController();
+        // Retain the displayed-query identity so late writes cannot replace another query.
+        this.queryRequest = request;
+        const owner = this.requestOwner;
+        const ownsQuery = () => this.ownsRequest(owner) && this.queryRequest === request;
+        const environment = this.getQueryEnvironment();
+        const rule = this.getQueryRule();
         const session = getUserSession();
         if (!this.isLoggedInSession(session)) {
-            this.queryItems = [];
-            this.renderQueryRows([]);
-            this.setAdminPanelVisible(false);
-            this.closeCardPickerModal();
+            this.clearQuery();
             this.closeEditorModal();
             this.setMessage("请先登录后再访问禁限卡牌管理。", true);
             return;
         }
-
         this.setQueryBusy(true);
         this.setMessage("正在加载禁限卡牌...");
-
         try {
-            const isAdmin = await this.verifyAdminAccess(session);
+            const isAdmin = await this.verifyAdminAccess(session, request.signal);
+            if (!ownsQuery()) return;
             if (!isAdmin) {
-                this.queryItems = [];
-                this.renderQueryRows([]);
-                this.setAdminPanelVisible(false);
-                this.closeCardPickerModal();
+                this.clearQuery();
                 this.closeEditorModal();
                 this.setMessage("仅管理员可访问禁限卡牌管理。", true);
                 return;
             }
-
-            await this.ensureCardIndexLoaded();
-            const environment = this.getQueryEnvironment();
-            const rule = this.getQueryRule();
-            this.queryItems = this.filterCollectiblePolicyItems(await this.fetchPolicies(environment, rule));
-
+            await this.ensureCardIndexLoaded(request.signal);
+            if (!ownsQuery()) return;
+            const items = await this.fetchPolicies(environment, rule, request.signal);
+            if (!ownsQuery()) return;
+            this.queryItems = this.filterCollectiblePolicyItems(items);
             this.renderQueryRows(this.queryItems);
             this.setAdminPanelVisible(true);
             this.setMessage(`已加载 ${this.queryItems.length} 条规则。`);
         } catch (error) {
-            this.queryItems = [];
-            this.renderQueryRows([]);
-            this.setAdminPanelVisible(false);
+            if (!ownsQuery()) return;
+            this.clearQuery();
             this.setMessage(`加载失败：${error?.message || String(error)}`, true);
         } finally {
-            this.setQueryBusy(false);
+            if (ownsQuery()) this.setQueryBusy(false);
         }
     }
 
     async upsertItems(environment, rule, items) {
         const session = getUserSession();
-        if (!this.isLoggedInSession(session)) {
-            throw new Error("请先登录。");
-        }
-
-        const body = {
-            actorUserId: session.userId,
-            environment,
-            rule,
-            items
-        };
-
+        if (!this.isLoggedInSession(session)) throw new Error("请先登录。");
         const response = await fetch(POLICY_ENDPOINT, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
+            body: JSON.stringify({ actorUserId: session.userId, environment, rule, items })
         });
-
-        let payload = null;
-        try {
-            payload = await response.json();
-        } catch {
-            payload = null;
+        const savedItems = this.normalizePolicyItems(await readJsonResponse(response), environment, rule);
+        if (!items.every(item => savedItems.some(saved => saved.cardDefinitionId === item.cardDefinitionId && saved.maxCopies === item.maxCopies))) {
+            throw new Error("保存响应未包含请求的卡牌规则。");
         }
-
-        if (!response.ok) {
-            const message = payload?.message || payload?.Message || response.statusText;
-            throw new Error(message || `HTTP ${response.status}`);
-        }
-
-        return this.normalizePolicyItems(payload);
+        return savedItems;
     }
 
     async deleteItem(environment, rule, cardDefinitionId) {
         const session = getUserSession();
-        if (!this.isLoggedInSession(session)) {
-            throw new Error("请先登录。");
-        }
-
+        if (!this.isLoggedInSession(session)) throw new Error("请先登录。");
         const params = new URLSearchParams();
         params.set("actorUserId", session.userId);
         params.set("environment", environment);
         params.set("rule", rule);
         params.set("cardDefinitionId", String(cardDefinitionId));
-
         const response = await fetch(`${POLICY_ENDPOINT}?${params.toString()}`, { method: "DELETE" });
-        if (!response.ok) {
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch {
-                payload = null;
-            }
-            const message = payload?.message || payload?.Message || response.statusText;
-            throw new Error(message || `HTTP ${response.status}`);
-        }
+        if (!response.ok) await readJsonResponse(response);
+        if (response.status !== 204) throw new Error("删除接口必须返回 204。");
     }
 
     openCreateEditorModal() {
@@ -839,11 +821,9 @@ class DevToolsCopyLimitPolicies {
         this.editorCardDisplayEl.textContent = `${name} (#${cardId})`;
     }
 
-    async openCardPickerModal() {
+    openCardPickerModal() {
         if (!this.isEditorOpen) return;
         if (this.editorMode === "edit") return;
-
-        await this.ensureCardIndexLoaded();
 
         this.cardPickerSelectedId = toInt(this.editorCardDefinitionId, 0) || null;
         this.cardPickerCurrentPage = 1;
@@ -949,6 +929,11 @@ class DevToolsCopyLimitPolicies {
     }
 
     async saveEditorPolicy() {
+        if (!this.isModalOpen || !this.isEditorOpen) return;
+        const owner = this.requestOwner;
+        const editor = this.editorOwner;
+        const query = this.queryRequest;
+        const ownsEditor = () => this.ownsRequest(owner) && this.isEditorOpen && this.editorOwner === editor;
         const cardDefinitionId = toInt(this.editorCardDefinitionId, 0);
         if (cardDefinitionId <= 0) {
             this.setEditorSummary("请选择卡牌后再保存。", true);
@@ -968,23 +953,30 @@ class DevToolsCopyLimitPolicies {
         this.setMessage(`正在保存 ${this.getCardName(cardDefinitionId)} 的规则...`);
         try {
             const items = await this.upsertItems(environment, rule, [{ cardDefinitionId, maxCopies }]);
-            this.setMessage(`保存成功：${this.getCardName(cardDefinitionId)} 上限 ${maxCopies}。`);
-            this.closeEditorModal();
+            // Confirmed rule changes still invalidate deck caches after this view closes.
             this.notifyDeckValidationRulesUpdated(environment, rule);
-
-            if (environment === this.getQueryEnvironment() && rule === this.getQueryRule()) {
+            if (!this.ownsRequest(owner)) return;
+            if (query === this.queryRequest && environment === this.getQueryEnvironment() && rule === this.getQueryRule()) {
                 this.queryItems = this.filterCollectiblePolicyItems(items);
                 this.renderQueryRows(this.queryItems);
             }
+            if (!ownsEditor()) return;
+            this.closeEditorModal();
+            this.setMessage(`保存成功：${this.getCardName(cardDefinitionId)} 上限 ${maxCopies}。`);
         } catch (error) {
+            if (!ownsEditor()) return;
             this.setEditorSummary(`保存失败：${error?.message || String(error)}`, true);
             this.setMessage(`保存失败：${error?.message || String(error)}`, true);
         } finally {
-            this.setEditorBusy(false);
+            if (ownsEditor()) this.setEditorBusy(false);
         }
     }
 
     async deletePolicyForCard(cardDefinitionId, button) {
+        if (!this.isModalOpen) return;
+        const owner = this.requestOwner;
+        const query = this.queryRequest;
+        const ownsQuery = () => this.ownsRequest(owner) && this.queryRequest === query;
         const confirmed = window.confirm(`确认删除卡牌 ${cardDefinitionId} 的规则并恢复默认上限吗？`);
         if (!confirmed) return;
 
@@ -995,25 +987,31 @@ class DevToolsCopyLimitPolicies {
         this.setMessage(`正在删除 ${this.getCardName(cardDefinitionId)} 的规则...`);
         try {
             await this.deleteItem(environment, rule, cardDefinitionId);
-            this.setMessage(`已删除 ${this.getCardName(cardDefinitionId)} 的规则。`);
             this.notifyDeckValidationRulesUpdated(environment, rule);
-            this.queryItems = this.filterCollectiblePolicyItems(await this.fetchPolicies(environment, rule));
+            if (!ownsQuery()) return;
+            const items = await this.fetchPolicies(environment, rule, query.signal);
+            if (!ownsQuery()) return;
+            this.queryItems = this.filterCollectiblePolicyItems(items);
             this.renderQueryRows(this.queryItems);
+            this.setMessage(`已删除 ${this.getCardName(cardDefinitionId)} 的规则。`);
         } catch (error) {
+            if (!ownsQuery()) return;
             this.setMessage(`删除失败：${error?.message || String(error)}`, true);
         } finally {
-            button?.removeAttribute("disabled");
+            if (ownsQuery()) button?.removeAttribute("disabled");
         }
     }
 
     async dispose() {
+        this.initialized = false;
         this.closeModal();
         this.handlers.forEach((remove) => remove());
         this.handlers = [];
         this.queryItems = [];
         this.cardEntries = [];
         this.cardNameById.clear();
-        this.initialized = false;
+        this.collectibleCardIdSet.clear();
+        this.cardIndexLoaded = false;
     }
 }
 
