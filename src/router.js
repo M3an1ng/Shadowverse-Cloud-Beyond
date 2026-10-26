@@ -154,6 +154,9 @@ class Router {
                 return false;
             }
             const currentRouteConfig = this.routes.get(oldRoute);
+            if (oldRoute !== route && currentRouteConfig?.beforeLeave && !await currentRouteConfig.beforeLeave()) {
+                return false;
+            }
             const newRouteConfig = this.routes.get(route);
             try {
                 if (currentRouteConfig?.cleanup) await currentRouteConfig.cleanup();
@@ -262,10 +265,9 @@ class Router {
         try {
             // 动态导入牌组编辑器模块
             const deckBuilderModule = await import('./deckBuilder.js');
+            this.setRouteLifecycle('deck-builder', { beforeLeave: deckBuilderModule.beforeLeaveDeckBuilder });
             await deckBuilderModule.initializeDeckBuilder({
-                getCurrentRoute: () => this.getCurrentRoute(),
-                getBeforeRouteChange: () => this.beforeRouteChange,
-                setBeforeRouteChange: callback => this.setBeforeRouteChange(callback)
+                getCurrentRoute: () => this.getCurrentRoute()
             });
         } catch (error) {
             console.error('Router: Failed to initialize deck builder:', error);

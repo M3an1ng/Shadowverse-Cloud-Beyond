@@ -144,8 +144,6 @@ const state = {
 };
 const deckBattleReadyCache = new Map();
 const deckBattleReadyInFlight = new Map();
-let deckBuilderRouteGuardInstalled = false;
-let previousDeckBuilderRouteGuard = null;
 let routeAccess = null;
 let nextPendingDeckCreationRequestId = 1;
 
@@ -237,8 +235,6 @@ export async function initializeDeckBuilder(routeCapabilities) {
         });
         cardCatalogInvalidationListenerBound = true;
     }
-
-    ensureDeckBuilderRouteGuard();
 
     try {
         await loadEnvironmentOptions();
@@ -742,27 +738,8 @@ async function handleDeckEditorExit({ renderSelectionOnComplete = true } = {}) {
     return false;
 }
 
-function ensureDeckBuilderRouteGuard() {
-    if (deckBuilderRouteGuardInstalled) {
-        return;
-    }
-
-    previousDeckBuilderRouteGuard = routeAccess.getBeforeRouteChange();
-    routeAccess.setBeforeRouteChange(async (oldRoute, newRoute, routeButton) => {
-        if (typeof previousDeckBuilderRouteGuard === 'function') {
-            const shouldContinue = await previousDeckBuilderRouteGuard(oldRoute, newRoute, routeButton);
-            if (!shouldContinue) {
-                return false;
-            }
-        }
-
-        if (oldRoute !== 'deck-builder' || newRoute === 'deck-builder') {
-            return true;
-        }
-
-        return await handleDeckEditorExit({ renderSelectionOnComplete: false });
-    });
-    deckBuilderRouteGuardInstalled = true;
+export async function beforeLeaveDeckBuilder() {
+    return await handleDeckEditorExit({ renderSelectionOnComplete: false });
 }
 
 function getDeckPreviewItems(deck) {
