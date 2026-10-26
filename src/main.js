@@ -392,28 +392,34 @@ function rebuildAvailableDeckBuckets() {
     deckSelectionState.available.multiplayer = validDecks;
 }
 
-async function validateDeckForSelection(deck, options = {}) {
+async function validateDeckForSelection(deck) {
     const deckId = resolveDeckId(deck);
     if (!deckId) return false;
-    const force = options.force === true;
 
     const cacheKey = getDeckValidationCacheKey(deck);
-    if (!force && cacheKey && deckSelectionState.validationCache.has(cacheKey)) {
+    if (cacheKey && deckSelectionState.validationCache.has(cacheKey)) {
         return deckSelectionState.validationCache.get(cacheKey) === true;
     }
 
-    if (!force && cacheKey && deckSelectionState.validationInFlight.has(cacheKey)) {
+    if (cacheKey && deckSelectionState.validationInFlight.has(cacheKey)) {
         return await deckSelectionState.validationInFlight.get(cacheKey);
     }
 
     const validatePromise = (async () => {
         const query = getDeckOwnerQuery();
-        try {
-            const response = await fetch(`/api/decks/${encodeURIComponent(deckId)}/code?${query}`, { method: 'GET' });
-            return response.ok;
-        } catch {
+        const response = await fetch(`/api/decks/${encodeURIComponent(deckId)}/code?${query}`, { method: 'GET' });
+        // 此端点以 400 表示牌组规则拒绝，以 404 表示牌组不存在；其他失败不是校验结论。
+        if (response.status === 400 || response.status === 404) {
             return false;
         }
+        if (!response.ok) {
+            throw new Error(`卡组校验请求失败（HTTP ${response.status}）。`);
+        }
+        const payload = await response.json();
+        if (typeof payload?.code !== 'string' || !payload.code.trim()) {
+            throw new Error('卡组校验响应缺少有效的牌组代码。');
+        }
+        return true;
     })();
 
     if (cacheKey) {
@@ -422,12 +428,12 @@ async function validateDeckForSelection(deck, options = {}) {
 
     try {
         const valid = await validatePromise;
-        if (cacheKey) {
+        if (cacheKey && deckSelectionState.validationInFlight.get(cacheKey) === validatePromise) {
             deckSelectionState.validationCache.set(cacheKey, valid);
         }
         return valid;
     } finally {
-        if (cacheKey) {
+        if (cacheKey && deckSelectionState.validationInFlight.get(cacheKey) === validatePromise) {
             deckSelectionState.validationInFlight.delete(cacheKey);
         }
     }
@@ -491,11 +497,11 @@ async function refreshSelectableDecks() {
         return;
     }
 
-    await Promise.all(deckSelectionState.decks.map(async (deck) => {
-        const valid = await validateDeckForSelection(deck);
-        deck.isBattleReady = valid === true;
-        return valid;
-    }));
+    const decks = deckSelectionState.decks;
+    const readiness = await Promise.all(decks.map(deck => validateDeckForSelection(deck)));
+    decks.forEach((deck, index) => {
+        deck.isBattleReady = readiness[index];
+    });
 
     deckSelectionState.needsValidationRefresh = false;
     rebuildAvailableDeckBuckets();
@@ -581,11 +587,17 @@ async function ensureDecksLoaded() {
         deckSelectionState.needsValidationRefresh = true;
         await refreshSelectableDecks();
         deckSelectionState.loaded = true;
-        deckSelectionState.loading = null;
         return deckSelectionState.decks;
     })();
 
-    return deckSelectionState.loading;
+    const loading = deckSelectionState.loading;
+    try {
+        return await loading;
+    } finally {
+        if (deckSelectionState.loading === loading) {
+            deckSelectionState.loading = null;
+        }
+    }
 }
 
 function updateDeckPickerDisplay(currentEl, selectBtn, key, emptyText = '没有可用卡组') {
@@ -2319,35 +2331,39 @@ function setupMultiplayerUI() {
     };
 
     deckSelectBtn?.addEventListener('click', async () => {
-        const targetRoomId = inputJoinGame?.value?.trim();
-        if (targetRoomId && isValidGuid(targetRoomId)) {
-            try {
-                const room = await getMatch(targetRoomId);
-                updateMultiplayerFormatFromRoom(room);
-            } catch {
-                // Ignore probing errors while just opening deck picker.
+        try {
+            const targetRoomId = inputJoinGame?.value?.trim();
+            if (targetRoomId && isValidGuid(targetRoomId)) {
+                try {
+                    const room = await getMatch(targetRoomId);
+                    updateMultiplayerFormatFromRoom(room);
+                } catch {
+                    // Ignore probing errors while just opening deck picker.
+                }
             }
-        }
 
-        await ensureDecksLoaded();
-        await refreshSelectableDecks();
-        if (!getDecksForKey('multiplayer').length) {
-            setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
-            return;
+            await ensureDecksLoaded();
+            await refreshSelectableDecks();
+            if (!getDecksForKey('multiplayer').length) {
+                setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
+                return;
+            }
+            const selectedDeckId = await pickDeckFromModal({
+                key: 'multiplayer',
+                title: '选择多人对战卡组',
+                skipRefresh: true
+            });
+            if (!selectedDeckId) return;
+            deckSelectionState.selected.multiplayer = selectedDeckId;
+            updateMultiplayerDeckSwitcher();
+            setDeckOutput('');
+            void syncSelectedDeckToRoom(selectedDeckId, {
+                silentWhenNoRoom: true,
+                silentWhenAlreadySynced: true
+            });
+        } catch (error) {
+            setDeckOutput(`卡组加载失败：${error.message}`, true);
         }
-        const selectedDeckId = await pickDeckFromModal({
-            key: 'multiplayer',
-            title: '选择多人对战卡组',
-            skipRefresh: true
-        });
-        if (!selectedDeckId) return;
-        deckSelectionState.selected.multiplayer = selectedDeckId;
-        updateMultiplayerDeckSwitcher();
-        setDeckOutput('');
-        void syncSelectedDeckToRoom(selectedDeckId, {
-            silentWhenNoRoom: true,
-            silentWhenAlreadySynced: true
-        });
     });
 
     refreshDeckSelectionUI().catch(() => {
@@ -2357,13 +2373,13 @@ function setupMultiplayerUI() {
     bindButton(btnCreateHost, async () => {
         if (!outCreate) return;
         mpNotificationSoundPlayer.unlock();
-        const deckId = await getSelectedMultiplayerDeckId();
-        if (!deckId) {
-            setDeckOutput('请先选择卡组。', true);
-            return;
-        }
-        setOutput(outCreate, '创建房间中...');
         try {
+            const deckId = await getSelectedMultiplayerDeckId();
+            if (!deckId) {
+                setDeckOutput('请先选择卡组。', true);
+                return;
+            }
+            setOutput(outCreate, '创建房间中...');
             const handshake = await createMatch(false);
             await markReady(handshake.gameId, handshake.playerId, handshake.token);
             const selection = await submitDeckSelection(handshake, { deckId });
@@ -2433,56 +2449,56 @@ function setupMultiplayerUI() {
             return;
         }
 
-        await ensureDecksLoaded();
-        const selectedDeckId = normalizeDeckId(deckSelectionState.selected.multiplayer);
-        if (!selectedDeckId) {
-            setDeckOutput('请先在多人对战中选择卡组。', true);
-            return;
-        }
-        const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
-        if (!selectedDeck) {
-            setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
-            return;
-        }
-
-        let requiredFormat = null;
         try {
-            const room = await getMatch(gameId);
-            const environment = normalizeEnvironment(
-                room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
-                ''
-            );
-            const rule = normalizeDeckRule(
-                room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
-                ''
-            );
-            if (environment && rule) {
-                requiredFormat = { environment, rule };
+            await ensureDecksLoaded();
+            const selectedDeckId = normalizeDeckId(deckSelectionState.selected.multiplayer);
+            if (!selectedDeckId) {
+                setDeckOutput('请先在多人对战中选择卡组。', true);
+                return;
             }
-        } catch {
-            // Ignore here and let join flow surface authoritative errors.
-        }
+            const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
+            if (!selectedDeck) {
+                setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
+                return;
+            }
 
-        const selectedDeckValid = await validateDeckForSelection(selectedDeck);
-        if (!selectedDeckValid) {
-            setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
-            return;
-        }
+            let requiredFormat = null;
+            try {
+                const room = await getMatch(gameId);
+                const environment = normalizeEnvironment(
+                    room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
+                    ''
+                );
+                const rule = normalizeDeckRule(
+                    room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
+                    ''
+                );
+                if (environment && rule) {
+                    requiredFormat = { environment, rule };
+                }
+            } catch {
+                // Ignore here and let join flow surface authoritative errors.
+            }
 
-        if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
-            setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
-            return;
-        }
+            const selectedDeckValid = await validateDeckForSelection(selectedDeck);
+            if (!selectedDeckValid) {
+                setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
+                return;
+            }
 
-        if (requiredFormat) {
-            setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
-        }
-        await refreshSelectableDecks();
-        updateMultiplayerDeckSwitcher();
-        setDeckOutput('');
+            if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
+                setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
+                return;
+            }
 
-        setOutput(outJoin, '加入房间中...');
-        try {
+            if (requiredFormat) {
+                setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
+            }
+            await refreshSelectableDecks();
+            updateMultiplayerDeckSwitcher();
+            setDeckOutput('');
+
+            setOutput(outJoin, '加入房间中...');
             const handshake = await joinMatch(gameId, joinCode);
             await markReady(handshake.gameId, handshake.playerId, handshake.token);
             const selection = await submitDeckSelection(handshake, { deckId: selectedDeckId });
@@ -2724,21 +2740,25 @@ function setupSingleplayerUI() {
     };
 
     playerDeckSelectBtn?.addEventListener('click', async () => {
-        await ensureDecksLoaded();
-        await refreshSelectableDecks();
-        if (!getDecksForKey('singleplayer').length) {
-            setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
-            return;
+        try {
+            await ensureDecksLoaded();
+            await refreshSelectableDecks();
+            if (!getDecksForKey('singleplayer').length) {
+                setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
+                return;
+            }
+            const selectedDeckId = await pickDeckFromModal({
+                key: 'singleplayer',
+                title: '选择玩家卡组',
+                skipRefresh: true
+            });
+            if (!selectedDeckId) return;
+            deckSelectionState.selected.singleplayer = selectedDeckId;
+            updateSingleplayerDeckSwitcher();
+            setDeckOutput('');
+        } catch (error) {
+            setDeckOutput(`卡组加载失败：${error.message}`, true);
         }
-        const selectedDeckId = await pickDeckFromModal({
-            key: 'singleplayer',
-            title: '选择玩家卡组',
-            skipRefresh: true
-        });
-        if (!selectedDeckId) return;
-        deckSelectionState.selected.singleplayer = selectedDeckId;
-        updateSingleplayerDeckSwitcher();
-        setDeckOutput('');
     });
 
     modeSelect?.addEventListener('change', () => {
@@ -2747,24 +2767,28 @@ function setupSingleplayerUI() {
     });
 
     aiDeckSelectBtn?.addEventListener('click', async () => {
-        await ensureDecksLoaded();
-        await refreshSelectableDecks();
-        if (!getDecksForKey('ai').length) {
-            setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
-            return;
+        try {
+            await ensureDecksLoaded();
+            await refreshSelectableDecks();
+            if (!getDecksForKey('ai').length) {
+                setDeckOutput('没有通过校验的可用卡组，请先在牌组编辑中修正。', true);
+                return;
+            }
+            const title = normalizeSingleplayerMode(modeSelect?.value || deckSelectionState.singleplayerMode) === 'dual'
+                ? '选择对手卡组'
+                : '选择 AI 卡组';
+            const selectedDeckId = await pickDeckFromModal({
+                key: 'ai',
+                title,
+                skipRefresh: true
+            });
+            if (!selectedDeckId) return;
+            deckSelectionState.selected.ai = selectedDeckId;
+            updateSingleplayerAiDeckSwitcher();
+            setDeckOutput('');
+        } catch (error) {
+            setDeckOutput(`卡组加载失败：${error.message}`, true);
         }
-        const title = normalizeSingleplayerMode(modeSelect?.value || deckSelectionState.singleplayerMode) === 'dual'
-            ? '选择对手卡组'
-            : '选择 AI 卡组';
-        const selectedDeckId = await pickDeckFromModal({
-            key: 'ai',
-            title,
-            skipRefresh: true
-        });
-        if (!selectedDeckId) return;
-        deckSelectionState.selected.ai = selectedDeckId;
-        updateSingleplayerAiDeckSwitcher();
-        setDeckOutput('');
     });
 
     refreshDeckSelectionUI().catch(() => {
@@ -2773,17 +2797,17 @@ function setupSingleplayerUI() {
     applySingleplayerMode(deckSelectionState.singleplayerMode);
 
     bindButton(btnStart, async () => {
-        const mode = getSingleplayerMode();
-        const playerDeckId = await getSelectedSingleplayerDeckId();
-        const aiDeckId = ensureSelectedDeckId('ai', getDecksForKey('ai'));
-        if (!playerDeckId || !aiDeckId) {
-            const opponentLabelText = mode === 'dual' ? '对手' : 'AI';
-            setDeckOutput(`请先选择玩家与 ${opponentLabelText} 卡组。`, true);
-            return;
-        }
-
-        setStartOutput('创建对战中...');
         try {
+            const mode = getSingleplayerMode();
+            const playerDeckId = await getSelectedSingleplayerDeckId();
+            const aiDeckId = ensureSelectedDeckId('ai', getDecksForKey('ai'));
+            if (!playerDeckId || !aiDeckId) {
+                const opponentLabelText = mode === 'dual' ? '对手' : 'AI';
+                setDeckOutput(`请先选择玩家与 ${opponentLabelText} 卡组。`, true);
+                return;
+            }
+
+            setStartOutput('创建对战中...');
             resetTransientConnectionUiState();
             clearTransientMatchQueryParams();
             clearCachedHandshake();
