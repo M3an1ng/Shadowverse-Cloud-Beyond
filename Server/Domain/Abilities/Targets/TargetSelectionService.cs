@@ -14,9 +14,6 @@ using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
-using Microsoft.AspNetCore.SignalR;
-using ShadowverseBeyond.Server.Hubs;
-using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 
 using System.Threading.Tasks;
 
@@ -481,66 +478,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             int targetCount,
             string message)
         {
-            if (entries == null)
+            if (entries != null)
             {
-                return;
-            }
-
-            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
-            var hubContext = context.ServiceProvider.GetService<IHubContext<GameHub, IGameClient>>();
-            if (traceSettings == null || hubContext == null || context.CurrentGameState == null)
-            {
-                return;
-            }
-            var matchService = context.ServiceProvider.GetService<IMatchService>();
-            var roomScopedId = matchService != null
-                && matchService.TryGetRoomIdByGameId(context.CurrentGameState.GameId, out var roomId)
-                && !string.IsNullOrWhiteSpace(roomId)
-                    ? roomId
-                    : context.CurrentGameState.GameId;
-
-            var sourceCard = ability.SourceCard;
-            var cardName = sourceCard?.Name ?? "UnknownCard";
-            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
-
-            var playerIds = new[]
-            {
-                context.CurrentGameState.Player1?.PlayerId,
-                context.CurrentGameState.Player2?.PlayerId
-            };
-
-            foreach (var playerId in playerIds.Where(id => id.HasValue).Select(id => id!.Value).Distinct())
-            {
-                if (playerId == Guid.Empty || !traceSettings.IsTargetEnabled(playerId))
-                {
-                    continue;
-                }
-
-                var dto = new ConditionTraceFailedDto
-                {
-                    GameId = context.CurrentGameState.GameId,
-                    AbilityRuntimeId = ability.RuntimeId,
-                    AbilityName = ability.Name ?? string.Empty,
-                    CardName = cardName,
-                    CardId = cardId,
-                    Success = success,
-                    TraceKind = "Target",
-                    TargetCount = targetCount,
-                    ConditionId = string.Empty,
-                    Expression = entries.Count > 0 ? entries[0].Expression : string.Empty,
-                    Trace = entries.Count > 0 ? entries[0].Trace : string.Empty,
-                    Conditions = entries,
-                    Message = message
-                };
-
-                if (success)
-                {
-                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceSucceeded(dto);
-                }
-                else
-                {
-                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceFailed(dto);
-                }
+                context.ServiceProvider.GetService<IAbilityTracePublisher>()?.PublishTarget(context, ability, success, entries, targetCount, message);
             }
         }
 

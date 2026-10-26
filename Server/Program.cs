@@ -61,6 +61,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddSingleton<LogStreamBuffer>();
     builder.Services.AddSingleton<LogStreamSink>();
     builder.Services.AddSingleton<IConditionTraceSettings, ConditionTraceSettings>();
+    builder.Services.AddSingleton<IAbilityTracePublisher, AbilityTracePublisher>();
 
     // --- Serilog Integration ---
     // Configure Serilog using the standard ASP.NET Core configuration pipeline

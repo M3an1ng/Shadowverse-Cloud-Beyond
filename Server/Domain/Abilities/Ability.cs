@@ -33,9 +33,6 @@ using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
-using Microsoft.AspNetCore.SignalR;
-using ShadowverseBeyond.Server.Hubs;
-using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities
@@ -443,61 +440,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
         private void SendConditionTrace(GameContext context, bool success, IReadOnlyList<ConditionTraceEntryDto> entries, string message)
         {
-            var traceSettings = context.ServiceProvider.GetService<IConditionTraceSettings>();
-            var hubContext = context.ServiceProvider.GetService<IHubContext<GameHub, IGameClient>>();
-            if (traceSettings == null || hubContext == null || context.CurrentGameState == null)
-            {
-                return;
-            }
-            var matchService = context.ServiceProvider.GetService<IMatchService>();
-            var roomScopedId = matchService != null
-                && matchService.TryGetRoomIdByGameId(context.CurrentGameState.GameId, out var roomId)
-                && !string.IsNullOrWhiteSpace(roomId)
-                    ? roomId
-                    : context.CurrentGameState.GameId;
-
-            var sourceCard = SourceCard;
-            var cardName = sourceCard?.Name ?? "UnknownCard";
-            var cardId = sourceCard?.InstanceId.ToString() ?? "UnknownId";
-
-            var playerIds = new[]
-            {
-                context.CurrentGameState.Player1?.PlayerId,
-                context.CurrentGameState.Player2?.PlayerId
-            };
-
-            foreach (var playerId in playerIds.Where(id => id.HasValue).Select(id => id!.Value).Distinct())
-            {
-                if (playerId == Guid.Empty || !traceSettings.IsConditionEnabled(playerId))
-                {
-                    continue;
-                }
-
-                var dto = new ConditionTraceFailedDto
-                {
-                    GameId = context.CurrentGameState.GameId,
-                    AbilityRuntimeId = RuntimeId,
-                    AbilityName = Name ?? string.Empty,
-                    CardName = cardName,
-                    CardId = cardId,
-                    Success = success,
-                    TraceKind = "Condition",
-                    ConditionId = string.Empty,
-                    Expression = entries.Count > 0 ? entries[0].Expression : string.Empty,
-                    Trace = entries.Count > 0 ? entries[0].Trace : string.Empty,
-                    Conditions = entries,
-                    Message = message
-                };
-
-                if (success)
-                {
-                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceSucceeded(dto);
-                }
-                else
-                {
-                    _ = hubContext.Clients.Group(SignalRGroupNames.Player(roomScopedId, playerId)).ConditionTraceFailed(dto);
-                }
-            }
+            context.ServiceProvider.GetService<IAbilityTracePublisher>()?.PublishCondition(context, this, success, entries, message);
         }
 
         /// <summary>
