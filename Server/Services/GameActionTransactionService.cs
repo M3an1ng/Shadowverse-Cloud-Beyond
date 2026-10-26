@@ -3421,18 +3421,37 @@ namespace ShadowverseBeyond.Server.Services
 
             var (broadcastPlan, recordedEvents) = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
 
-            await PersistReplayArtifactsAsync(gameContext, processedEvents, recordedEvents, bundleId);
+            var persistenceFailures = new List<LogEventDto>();
+            var replayFailure = await PersistReplayArtifactsAsync(gameContext, processedEvents, recordedEvents, bundleId);
+            if (replayFailure != null)
+            {
+                persistenceFailures.Add(replayFailure);
+            }
 
-            // --- Broadcast all processed events AFTER the entire transaction is complete ---
-            // Apply meta-progression updates (economy/profile/quests) after state commit, before broadcasting.
-            await _metaProgressionService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
-            await _winrateStatsService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
+            // Rules are already committed. Persistence failures must not turn the action into
+            // a rejection or hide its events; settlement still precedes statistics, without retry.
+            var persistenceStage = "结算保存失败，统计尚未执行";
+            try
+            {
+                await _metaProgressionService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
+                persistenceStage = "统计保存失败";
+                await _winrateStatsService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Post-commit persistence failed for GameId={GameId}: {Stage}.", gameContext.CurrentGameState.GameId, persistenceStage);
+                persistenceFailures.Add(CreatePersistenceFailureLog(persistenceStage));
+            }
 
             _logger.LogInformation("Broadcasting {Count} processed events at the end of the transaction.", processedEvents.Count);
             string groupName = SignalRGroupNames.Game(ResolveRoomScopedId(gameContext.CurrentGameState.GameId));
             await BroadcastPlanAsync(groupName, broadcastPlan);
+            foreach (var failure in persistenceFailures)
+            {
+                await _clientMethodMapper.BroadcastEventToGroupAllAsync(groupName, failure);
+            }
 
-            _logger.LogInformation("--- Transaction End: All events and effects processed successfully. ---");
+            _logger.LogInformation("--- Transaction End: Rules committed; {PersistenceFailureCount} persistence failures reported. ---", persistenceFailures.Count);
             return PausableTransactionResult.Success(processedEvents);
         }
 
@@ -3551,7 +3570,10 @@ namespace ShadowverseBeyond.Server.Services
             await RecordEventHistoryAsync(gameContext, cardUpdateEvent);
         }
 
-        private async Task PersistReplayArtifactsAsync(
+        private static LogEventDto CreatePersistenceFailureLog(string failure) =>
+            new LogEventDto(Guid.NewGuid(), "PostCommitPersistenceFailed", $"对局操作已生效，但{failure}。未自动重试。");
+
+        private async Task<LogEventDto?> PersistReplayArtifactsAsync(
             GameContext gameContext,
             IReadOnlyList<IGameEvent> processedEvents,
             IReadOnlyList<CommittedEventWriteDto> recordedEvents,
@@ -3560,7 +3582,7 @@ namespace ShadowverseBeyond.Server.Services
             if (!ShouldPersistReplay(gameContext.CurrentGameState))
             {
                 _logger.LogDebug("Skipping replay persistence for game {GameId} (disabled by config or AI match).", gameContext.CurrentGameState.GameId);
-                return;
+                return null;
             }
 
             try
@@ -3573,7 +3595,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (!ShouldSaveReplaySnapshot(processedEvents, appendResult))
                 {
-                    return;
+                    return null;
                 }
 
                 var snapshot = GameStateProjection.Create(gameContext.CurrentGameState, gameContext);
@@ -3582,10 +3604,12 @@ namespace ShadowverseBeyond.Server.Services
                     appendResult.EndSeq,
                     snapshot,
                     gameContext.CancellationToken);
+                return null;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to persist replay bundle {BundleId} for GameId={GameId}.", bundleId, gameContext.CurrentGameState.GameId);
+                return CreatePersistenceFailureLog("回放保存失败");
             }
         }
 
