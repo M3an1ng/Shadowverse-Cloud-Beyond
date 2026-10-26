@@ -466,8 +466,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     // Register Event History Service
     builder.Services.AddSingleton<InMemoryEventHistoryService>();
-    builder.Services.AddSingleton<IEventHistoryService, JournalBackedEventHistoryService>();
-    Log.Information("Registered IEventHistoryService as Singleton (JournalBackedEventHistoryService).");
+    builder.Services.AddSingleton<IEventHistoryService>(services => services.GetRequiredService<InMemoryEventHistoryService>());
+    Log.Information("Registered IEventHistoryService as Singleton (InMemoryEventHistoryService).");
 
     builder.Services.Configure<ReplayOptions>(builder.Configuration.GetSection("Replay"));
     Log.Information("Configured ReplayOptions (Replay section).");
