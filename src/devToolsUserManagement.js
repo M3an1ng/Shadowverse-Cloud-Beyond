@@ -2,7 +2,6 @@ import { getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from "./us
 
 const USERS_ENDPOINT = "/api/users";
 const MIN_PASSWORD_LENGTH = 6;
-const DEFAULT_COINS = 1000;
 const MANAGED_ROLES = [
     { value: "Player", label: "普通用户", level: 10 },
     { value: "Admin", label: "管理员", level: 100 }
@@ -17,16 +16,56 @@ function pickValue(source, camelKey, pascalKey) {
 
 function normalizeRole(role) {
     const text = String(role || "").trim().toLowerCase();
-    if (text === "admin") return "Admin";
-    return "Player";
+    const managedRole = MANAGED_ROLES.find(item => item.value.toLowerCase() === text);
+    if (!managedRole) throw new Error("用户响应中的 role 无效。");
+    return managedRole.value;
 }
 
 function resolvePermissionLevel(role) {
-    return normalizeRole(role) === "Admin" ? 100 : 10;
+    return MANAGED_ROLES.find(item => item.value === role).level;
 }
 
 function roleLabel(role) {
-    return normalizeRole(role) === "Admin" ? "管理员" : "普通用户";
+    return role === "Admin" ? "管理员" : "普通用户";
+}
+
+async function readJsonResponse(response) {
+    if (response.ok) return response.json();
+    const rawText = await response.text();
+    let message = rawText.trim();
+    try {
+        const payload = JSON.parse(rawText);
+        message = payload?.message || payload?.Message || (typeof payload === "string" ? payload : message);
+    } catch {
+        // Error responses may be plain text; successful responses must be JSON.
+    }
+    throw new Error(message || response.statusText || `HTTP ${response.status}`);
+}
+
+function readResponseUserId(payload, expectedUserId) {
+    const userId = pickValue(payload, "userId", "UserId");
+    if (typeof userId !== "string" || !userId.trim() || (expectedUserId && userId !== expectedUserId)) {
+        throw new Error("用户响应缺少有效或匹配的 userId。");
+    }
+    return userId;
+}
+
+function readUserSummary(payload, expectedUserId) {
+    const userId = readResponseUserId(payload, expectedUserId);
+    const username = pickValue(payload, "username", "Username");
+    const role = normalizeRole(pickValue(payload, "role", "Role"));
+    const permissionLevel = pickValue(payload, "permissionLevel", "PermissionLevel");
+    const coins = pickValue(payload, "coins", "Coins");
+    const isActive = pickValue(payload, "isActive", "IsActive");
+    if (typeof username !== "string" || !username.trim()) throw new Error("用户响应中的 username 无效。");
+    if (permissionLevel !== resolvePermissionLevel(role)) throw new Error("用户响应中的 permissionLevel 与角色不符。");
+    if (!Number.isInteger(coins) || coins < 0) throw new Error("用户响应中的 coins 必须为非负整数。");
+    if (typeof isActive !== "boolean") throw new Error("用户响应中的 isActive 必须为布尔值。");
+    return {
+        userId, username, role, permissionLevel, coins, isActive,
+        createdAt: pickValue(payload, "createdAt", "CreatedAt"),
+        lastLoginAt: pickValue(payload, "lastLoginAt", "LastLoginAt")
+    };
 }
 
 class DevToolsUserManagement {
@@ -35,6 +74,8 @@ class DevToolsUserManagement {
         this.handlers = [];
         this.currentUsers = [];
         this.isModalOpen = false;
+        this.requestOwner = {};
+        this.usersRequest = null;
     }
 
     async init() {
@@ -96,7 +137,7 @@ class DevToolsUserManagement {
 
         if (this.refreshBtn) {
             const handler = () => {
-                void this.refreshUsers(true);
+                void this.refreshUsers();
             };
             this.refreshBtn.addEventListener("click", handler);
             this.handlers.push(() => this.refreshBtn.removeEventListener("click", handler));
@@ -104,7 +145,7 @@ class DevToolsUserManagement {
 
         if (this.searchBtn) {
             const handler = () => {
-                void this.refreshUsers(true);
+                void this.refreshUsers();
             };
             this.searchBtn.addEventListener("click", handler);
             this.handlers.push(() => this.searchBtn.removeEventListener("click", handler));
@@ -114,7 +155,7 @@ class DevToolsUserManagement {
             const handler = (event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                void this.refreshUsers(true);
+                void this.refreshUsers();
             };
             this.searchInput.addEventListener("keydown", handler);
             this.handlers.push(() => this.searchInput.removeEventListener("keydown", handler));
@@ -145,8 +186,11 @@ class DevToolsUserManagement {
         }
 
         const sessionHandler = () => {
+            this.invalidateRequests();
+            this.clearUsers();
+            this.setMessage("");
             if (this.isModalOpen) {
-                void this.refreshUsers(true);
+                void this.refreshUsers();
             }
         };
         document.addEventListener(USER_SESSION_CHANGED_EVENT, sessionHandler);
@@ -155,17 +199,40 @@ class DevToolsUserManagement {
 
     async openModal() {
         if (!this.modalEl) return;
+        this.invalidateRequests();
+        this.clearUsers();
         this.modalEl.classList.add("active");
         this.modalEl.setAttribute("aria-hidden", "false");
         this.isModalOpen = true;
-        await this.refreshUsers(true);
+        await this.refreshUsers();
     }
 
     closeModal() {
         if (!this.modalEl) return;
+        this.invalidateRequests();
+        this.clearUsers();
+        this.setMessage("");
         this.modalEl.classList.remove("active");
         this.modalEl.setAttribute("aria-hidden", "true");
         this.isModalOpen = false;
+    }
+
+    invalidateRequests() {
+        // A reopened modal or the same account after switching is a new owner.
+        this.requestOwner = {};
+        this.usersRequest?.abort();
+        this.usersRequest = null;
+        this.setBusy(false);
+    }
+
+    ownsRequest(owner) {
+        return this.initialized && this.isModalOpen && this.requestOwner === owner;
+    }
+
+    clearUsers() {
+        this.currentUsers = [];
+        this.renderRows([]);
+        this.setAdminPanelVisible(false);
     }
 
     setBusy(busy) {
@@ -190,14 +257,18 @@ class DevToolsUserManagement {
         return keyword || "";
     }
 
-    async refreshUsers(force = false) {
-        if (!this.isModalOpen && !force) return;
+    async refreshUsers() {
+        if (!this.isModalOpen) return;
+
+        this.usersRequest?.abort();
+        const request = new AbortController();
+        this.usersRequest = request;
+        const owner = this.requestOwner;
+        const ownsListRequest = () => this.usersRequest === request && this.ownsRequest(owner);
 
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) {
-            this.setAdminPanelVisible(false);
-            this.currentUsers = [];
-            this.renderRows([]);
+            this.clearUsers();
             this.setMessage("请先登录后再访问用户管理。", true);
             return;
         }
@@ -213,30 +284,20 @@ class DevToolsUserManagement {
         this.setBusy(true);
         this.setMessage("正在加载用户列表...");
         try {
-            const response = await fetch(`${USERS_ENDPOINT}?${params.toString()}`, { method: "GET" });
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (err) {
-                // ignore parse errors
-            }
+            const response = await fetch(`${USERS_ENDPOINT}?${params.toString()}`, { method: "GET", signal: request.signal });
+            if (!ownsListRequest()) return;
 
             if (response.status === 403) {
-                this.setAdminPanelVisible(false);
-                this.currentUsers = [];
-                this.renderRows([]);
+                this.clearUsers();
                 this.setMessage("仅管理员可访问用户管理。", true);
                 return;
             }
 
-            if (!response.ok) {
-                const message = payload?.message || payload?.Message || response.statusText;
-                throw new Error(message || `HTTP ${response.status}`);
-            }
-
-            const items = Array.isArray(payload?.items)
-                ? payload.items
-                : (Array.isArray(payload?.Items) ? payload.Items : []);
+            const payload = await readJsonResponse(response);
+            if (!ownsListRequest()) return;
+            const rows = pickValue(payload, "items", "Items");
+            if (!Array.isArray(rows)) throw new Error("用户列表响应中的 items 必须为数组。");
+            const items = rows.map(item => readUserSummary(item));
 
             this.currentUsers = items;
             this.renderRows(items);
@@ -253,12 +314,14 @@ class DevToolsUserManagement {
                 });
             }
         } catch (error) {
-            this.setAdminPanelVisible(false);
-            this.currentUsers = [];
-            this.renderRows([]);
+            if (!ownsListRequest()) return;
+            this.clearUsers();
             this.setMessage(`加载失败：${error?.message || String(error)}`, true);
         } finally {
-            this.setBusy(false);
+            if (ownsListRequest()) {
+                this.usersRequest = null;
+                this.setBusy(false);
+            }
         }
     }
 
@@ -266,13 +329,13 @@ class DevToolsUserManagement {
         if (!this.tableBody) return;
         this.tableBody.innerHTML = "";
         if (this.countEl) {
-            this.countEl.textContent = String(Array.isArray(items) ? items.length : 0);
+            this.countEl.textContent = String(items.length);
         }
 
         const session = getUserSession();
         const currentUserId = session.mode === "user" ? session.userId : null;
 
-        if (!Array.isArray(items) || items.length === 0) {
+        if (items.length === 0) {
             const emptyRow = document.createElement("tr");
             emptyRow.innerHTML = `<td colspan="9" class="admin-user-empty">暂无用户数据</td>`;
             this.tableBody.appendChild(emptyRow);
@@ -280,20 +343,7 @@ class DevToolsUserManagement {
         }
 
         for (const item of items) {
-            const userId = String(pickValue(item, "userId", "UserId") || "");
-            const username = String(pickValue(item, "username", "Username") || "未命名");
-            const role = normalizeRole(pickValue(item, "role", "Role"));
-            const permissionLevel = Number.parseInt(
-                String(pickValue(item, "permissionLevel", "PermissionLevel") ?? resolvePermissionLevel(role)),
-                10
-            );
-            const coins = Number.parseInt(
-                String(pickValue(item, "coins", "Coins") ?? DEFAULT_COINS),
-                10
-            );
-            const createdAt = String(pickValue(item, "createdAt", "CreatedAt") || "");
-            const lastLoginAt = String(pickValue(item, "lastLoginAt", "LastLoginAt") || "");
-            const isActive = Boolean(pickValue(item, "isActive", "IsActive"));
+            const { userId, username, role, permissionLevel, coins, createdAt, lastLoginAt, isActive } = item;
             const isCurrent = currentUserId && currentUserId === userId;
 
             const row = document.createElement("tr");
@@ -301,8 +351,8 @@ class DevToolsUserManagement {
                 <td class="admin-user-cell-id" title="${userId}">${userId || "-"}</td>
                 <td>${username}${isCurrent ? ' <span class="admin-user-self-tag">当前账号</span>' : ''}</td>
                 <td>${roleLabel(role)}</td>
-                <td>L${Number.isFinite(permissionLevel) ? permissionLevel : resolvePermissionLevel(role)}</td>
-                <td>${Number.isFinite(coins) ? coins : DEFAULT_COINS}</td>
+                <td>L${permissionLevel}</td>
+                <td>${coins}</td>
                 <td>${isActive ? "启用" : "禁用"}</td>
                 <td>${createdAt ? new Date(createdAt).toLocaleString() : "-"}</td>
                 <td>${lastLoginAt ? new Date(lastLoginAt).toLocaleString() : "-"}</td>
@@ -332,15 +382,12 @@ class DevToolsUserManagement {
     }
 
     resolveUsername(targetUserId) {
-        const item = this.currentUsers.find(user => String(pickValue(user, "userId", "UserId") || "") === String(targetUserId));
-        return String(pickValue(item, "username", "Username") || targetUserId || "User");
+        const item = this.currentUsers.find(user => user.userId === targetUserId);
+        return item?.username ?? targetUserId;
     }
 
     resolveUserCoins(targetUserId) {
-        const item = this.currentUsers.find(user => String(pickValue(user, "userId", "UserId") || "") === String(targetUserId));
-        const coins = Number.parseInt(String(pickValue(item, "coins", "Coins") ?? DEFAULT_COINS), 10);
-        if (!Number.isFinite(coins) || coins < 0) return DEFAULT_COINS;
-        return coins;
+        return this.currentUsers.find(user => user.userId === targetUserId).coins;
     }
 
     collectNewPassword(targetUserId) {
@@ -383,10 +430,12 @@ class DevToolsUserManagement {
             return null;
         }
 
-        return { coins, oldCoins };
+        return { coins };
     }
 
     async resetUserPassword(targetUserId, button) {
+        if (!this.isModalOpen) return;
+        const owner = this.requestOwner;
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) return;
 
@@ -405,27 +454,22 @@ class DevToolsUserManagement {
                 })
             });
 
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (err) {
-                // ignore parse errors
-            }
-
-            if (!response.ok) {
-                const message = payload?.message || payload?.Message || response.statusText;
-                throw new Error(message || `HTTP ${response.status}`);
-            }
+            const payload = await readJsonResponse(response);
+            if (!this.ownsRequest(owner)) return;
+            readResponseUserId(payload, targetUserId);
 
             this.setMessage(`已重置 ${this.resolveUsername(targetUserId)} 的密码。`);
         } catch (error) {
+            if (!this.ownsRequest(owner)) return;
             this.setMessage(`重置密码失败：${error?.message || String(error)}`, true);
         } finally {
-            button.removeAttribute("disabled");
+            if (this.ownsRequest(owner)) button.removeAttribute("disabled");
         }
     }
 
     async updateUserCoins(targetUserId, button) {
+        if (!this.isModalOpen) return;
+        const owner = this.requestOwner;
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) return;
 
@@ -444,38 +488,27 @@ class DevToolsUserManagement {
                 })
             });
 
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (err) {
-                // ignore parse errors
+            const payload = await readJsonResponse(response);
+            if (!this.ownsRequest(owner)) return;
+            readResponseUserId(payload, targetUserId);
+            const oldCoins = pickValue(payload, "oldCoins", "OldCoins");
+            const newCoins = pickValue(payload, "coins", "Coins");
+            if (!Number.isInteger(oldCoins) || oldCoins < 0 || !Number.isInteger(newCoins) || newCoins < 0) {
+                throw new Error("金币更新响应必须包含有效的 oldCoins 和 coins。");
             }
-
-            if (!response.ok) {
-                const message = payload?.message || payload?.Message || response.statusText;
-                throw new Error(message || `HTTP ${response.status}`);
-            }
-
-            const oldCoins = Number.parseInt(
-                String(pickValue(payload, "oldCoins", "OldCoins") ?? payloadInput.oldCoins),
-                10
-            );
-            const newCoins = Number.parseInt(
-                String(pickValue(payload, "coins", "Coins") ?? payloadInput.coins),
-                10
-            );
-            const oldValue = Number.isFinite(oldCoins) ? oldCoins : payloadInput.oldCoins;
-            const newValue = Number.isFinite(newCoins) ? newCoins : payloadInput.coins;
-            this.setMessage(`已更新 ${this.resolveUsername(targetUserId)} 的金币：${oldValue} -> ${newValue}。`);
-            await this.refreshUsers(true);
+            this.setMessage(`已更新 ${this.resolveUsername(targetUserId)} 的金币：${oldCoins} -> ${newCoins}。`);
+            await this.refreshUsers();
         } catch (error) {
+            if (!this.ownsRequest(owner)) return;
             this.setMessage(`更新金币失败：${error?.message || String(error)}`, true);
         } finally {
-            button.removeAttribute("disabled");
+            if (this.ownsRequest(owner)) button.removeAttribute("disabled");
         }
     }
 
     async updateUserRole(targetUserId, button) {
+        if (!this.isModalOpen) return;
+        const owner = this.requestOwner;
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) return;
         const select = this.tableBody?.querySelector(`select[data-user-id="${targetUserId}"]`);
@@ -494,39 +527,28 @@ class DevToolsUserManagement {
                 })
             });
 
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (err) {
-                // ignore parse errors
-            }
-
-            if (!response.ok) {
-                const message = payload?.message || payload?.Message || response.statusText;
-                throw new Error(message || `HTTP ${response.status}`);
-            }
+            const payload = await readJsonResponse(response);
+            if (!this.ownsRequest(owner)) return;
+            const user = readUserSummary(payload, targetUserId);
 
             if (targetUserId === session.userId) {
-                const newRole = normalizeRole(pickValue(payload, "role", "Role") || nextRole);
-                const newLevel = Number.parseInt(
-                    String(pickValue(payload, "permissionLevel", "PermissionLevel") ?? resolvePermissionLevel(newRole)),
-                    10
-                );
                 setUserSession({
                     userId: session.userId,
                     username: session.displayName,
                     avatar: session.avatar,
-                    role: newRole,
-                    permissionLevel: Number.isFinite(newLevel) ? newLevel : resolvePermissionLevel(newRole)
+                    role: user.role,
+                    permissionLevel: user.permissionLevel
                 });
+                return;
             }
 
             this.setMessage("权限更新成功。");
-            await this.refreshUsers(true);
+            await this.refreshUsers();
         } catch (error) {
+            if (!this.ownsRequest(owner)) return;
             this.setMessage(`更新失败：${error?.message || String(error)}`, true);
         } finally {
-            button.removeAttribute("disabled");
+            if (this.ownsRequest(owner)) button.removeAttribute("disabled");
         }
     }
 
@@ -534,7 +556,6 @@ class DevToolsUserManagement {
         this.closeModal();
         this.handlers.forEach(remove => remove());
         this.handlers = [];
-        this.currentUsers = [];
         this.initialized = false;
     }
 }
