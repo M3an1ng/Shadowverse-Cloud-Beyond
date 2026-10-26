@@ -1,9 +1,8 @@
-import { getDeckOwnerQuery, getUserSession } from "./userSession.js";
+import { getDeckOwnerQuery, getUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
 import { setStoredValue } from "./storageFallback.js";
 
-let initialized = false;
+let activePage = null;
 let handlers = [];
-let decksCache = [];
 
 const START_ENDPOINT = "/api/devtools/matches/start";
 const HANDSHAKE_STORAGE_KEY = "svb.lobby.handshake";
@@ -63,14 +62,14 @@ async function apiPostJson(url, body) {
     return readJsonResponse(response);
 }
 
-async function apiGetJson(url) {
-    const response = await fetch(url, { method: "GET" });
+async function apiGetJson(url, signal) {
+    const response = await fetch(url, { method: "GET", signal });
     return readJsonResponse(response);
 }
 
-async function loadDecks() {
+async function loadDecks(signal) {
     const query = getDeckOwnerQuery();
-    const decks = await apiGetJson(`/api/decks?${query}`);
+    const decks = await apiGetJson(`/api/decks?${query}`, signal);
     if (!Array.isArray(decks)) {
         throw new Error("卡组列表响应必须为数组。");
     }
@@ -156,8 +155,9 @@ function applyPreset(inputs, preset) {
 }
 
 export async function initializeDevToolsMatchLab({ navigateTo }) {
-    if (initialized) return;
-    initialized = true;
+    if (activePage) return;
+    const page = { session: null };
+    activePage = page;
 
     const pageEl = document.getElementById("dev-tools-match-lab-page");
     const lockEl = document.getElementById("dev-tools-match-lab-lock");
@@ -178,21 +178,41 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
         seed: document.getElementById("match-lab-seed")
     };
 
-    const session = getUserSession();
-    const isUser = session.mode === "user" && !!session.userId;
-    setLocked(pageEl, lockEl, !isUser);
-    if (!isUser) {
-        setStatus(statusEl, "请先登录后再使用对战实验室。", true);
-        return;
-    }
+    // Account IDs alone cannot distinguish an old request after switching away and back.
+    const ownsSession = session => activePage === page && page.session === session;
 
-    try {
-        decksCache = await loadDecks();
-        fillDeckSelect(playerDeckEl, decksCache);
-        fillDeckSelect(opponentDeckEl, decksCache);
-    } catch (err) {
-        setStatus(statusEl, `卡组加载失败：${err.message || String(err)}`, true);
-    }
+    const refreshSession = async () => {
+        page.session?.request?.abort();
+        const user = getUserSession();
+        const isUser = user.mode === "user" && !!user.userId;
+        const session = {
+            userId: isUser ? user.userId : null,
+            request: isUser ? new AbortController() : null
+        };
+        page.session = session;
+        setLocked(pageEl, lockEl, !isUser);
+        fillDeckSelect(playerDeckEl, []);
+        fillDeckSelect(opponentDeckEl, []);
+        startBtn.disabled = true;
+        setStatus(statusEl, "");
+        if (!isUser) {
+            setStatus(statusEl, "请先登录后再使用对战实验室。", true);
+            return;
+        }
+
+        try {
+            const decks = await loadDecks(session.request.signal);
+            if (!ownsSession(session)) return;
+            fillDeckSelect(playerDeckEl, decks);
+            fillDeckSelect(opponentDeckEl, decks);
+            startBtn.disabled = decks.length === 0;
+        } catch (err) {
+            if (!ownsSession(session)) return;
+            setStatus(statusEl, `卡组加载失败：${err.message || String(err)}`, true);
+        }
+    };
+
+    bind(document, USER_SESSION_CHANGED_EVENT, refreshSession);
 
     const updateMode = () => {
         const mode = (modeEl?.value || "ai").toLowerCase();
@@ -222,6 +242,8 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
     });
 
     bind(startBtn, "click", async () => {
+        const session = page.session;
+        if (!session.userId) return;
         setStatus(statusEl, "");
         const mode = (modeEl?.value || "ai").toLowerCase();
         const playerDeckId = playerDeckEl?.value || "";
@@ -232,6 +254,7 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
         }
 
         const config = buildConfig(inputs);
+        startBtn.disabled = true;
         setStatus(statusEl, "创建对战中...");
         try {
             const payload = {
@@ -242,6 +265,7 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
                 config
             };
             const response = await apiPostJson(START_ENDPOINT, payload);
+            if (!ownsSession(session)) return;
 
             const requiredFields = ["gameId", "hostPlayerId", "hostToken", "joinCode"];
             if (mode === "dual") {
@@ -280,15 +304,21 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
 
             await navigateTo("game");
         } catch (err) {
+            if (!ownsSession(session)) return;
             setStatus(statusEl, `创建失败：${err.message || String(err)}`, true);
+        } finally {
+            if (ownsSession(session)) startBtn.disabled = false;
         }
     });
 
     updateMode();
+    await refreshSession();
 }
 
 export async function cleanupDevToolsMatchLab() {
+    const page = activePage;
+    activePage = null;
+    page?.session?.request?.abort();
     handlers.forEach(cleanup => cleanup());
     handlers = [];
-    initialized = false;
 }
