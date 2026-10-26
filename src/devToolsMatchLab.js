@@ -38,48 +38,49 @@ function parseNumberInput(inputEl) {
     return Math.trunc(parsed);
 }
 
+async function readJsonResponse(response) {
+    if (response.ok) {
+        return response.json();
+    }
+
+    const rawText = await response.text();
+    let message = rawText.trim();
+    try {
+        const payload = JSON.parse(rawText);
+        message = payload?.message || payload?.Message || (typeof payload === "string" ? payload : message);
+    } catch {
+        // Error responses may contain plain text; successful responses must be JSON.
+    }
+    throw new Error(message || response.statusText || `HTTP ${response.status}`);
+}
+
 async function apiPostJson(url, body) {
     const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body ?? {})
     });
-    let payload = null;
-    let rawText = "";
-    try {
-        rawText = await response.text();
-        if (rawText) {
-            payload = JSON.parse(rawText);
-        }
-    } catch (err) {
-        // keep raw text fallback
-    }
-    if (!response.ok) {
-        const message = payload?.message || payload?.Message || rawText?.trim() || response.statusText;
-        throw new Error(message || `HTTP ${response.status}`);
-    }
-    return payload;
+    return readJsonResponse(response);
 }
 
 async function apiGetJson(url) {
     const response = await fetch(url, { method: "GET" });
-    let payload = null;
-    try {
-        payload = await response.json();
-    } catch (err) {
-        // ignore
-    }
-    if (!response.ok) {
-        const message = payload?.message || payload?.Message || response.statusText;
-        throw new Error(message || `HTTP ${response.status}`);
-    }
-    return payload;
+    return readJsonResponse(response);
 }
 
 async function loadDecks() {
     const query = getDeckOwnerQuery();
     const decks = await apiGetJson(`/api/decks?${query}`);
-    return Array.isArray(decks) ? decks : [];
+    if (!Array.isArray(decks)) {
+        throw new Error("卡组列表响应必须为数组。");
+    }
+    for (const deck of decks) {
+        const deckId = resolveDeckId(deck);
+        if (typeof deckId !== "string" || !deckId.trim()) {
+            throw new Error("卡组列表响应缺少有效的卡组 ID。");
+        }
+    }
+    return decks;
 }
 
 function formatDeckLabel(deck) {
@@ -241,6 +242,19 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
                 config
             };
             const response = await apiPostJson(START_ENDPOINT, payload);
+
+            const requiredFields = ["gameId", "hostPlayerId", "hostToken", "joinCode"];
+            if (mode === "dual") {
+                requiredFields.push("guestPlayerId", "guestToken");
+            }
+            for (const field of requiredFields) {
+                if (typeof response?.[field] !== "string" || !response[field].trim()) {
+                    throw new Error(`对战创建响应缺少有效的 ${field}。`);
+                }
+            }
+            if (typeof response.useAiFallback !== "boolean") {
+                throw new Error("对战创建响应中的 useAiFallback 必须为布尔值。");
+            }
 
             const handshake = {
                 gameId: response.gameId,
