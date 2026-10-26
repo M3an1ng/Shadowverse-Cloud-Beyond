@@ -75,7 +75,8 @@ namespace ShadowverseBeyond.Server.Services
         // Removed EventBroadcastHandler delegate and _eventHandlers dictionary
 
         private readonly IGameDataProvider _gameDataProvider; // Inject GameDataProvider for cached data access
-        private readonly IPendingActionService _pendingActionService; // Add PendingActionService
+        private readonly IPendingActionService _pendingActionService;
+        private readonly IGameStatsRuntimeTracker _statsRuntimeTracker;
         private readonly IMatchService _matchService;
         private readonly IFirstPlayerSelector _firstPlayerSelector;
 
@@ -163,7 +164,8 @@ namespace ShadowverseBeyond.Server.Services
             IMatchService matchService,
             IFirstPlayerSelector firstPlayerSelector,
             IServiceScopeFactory serviceScopeFactory,
-            IPendingActionService pendingActionService)
+            IPendingActionService pendingActionService,
+            IGameStatsRuntimeTracker statsRuntimeTracker)
         {
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -175,6 +177,7 @@ namespace ShadowverseBeyond.Server.Services
             _firstPlayerSelector = firstPlayerSelector ?? throw new ArgumentNullException(nameof(firstPlayerSelector));
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
+            _statsRuntimeTracker = statsRuntimeTracker;
         }
 
 
@@ -426,6 +429,7 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             StopTurnTimer(gameId);
+            _statsRuntimeTracker.Clear(gameId);
             _gameStates.TryRemove(gameId, out _);
             _playerActionQueues.TryRemove(gameId, out _);
             _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);

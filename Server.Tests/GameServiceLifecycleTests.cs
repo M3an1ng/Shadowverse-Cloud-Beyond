@@ -75,7 +75,8 @@ public class GameServiceLifecycleTests
             Mock.Of<IMatchService>(),
             Mock.Of<IFirstPlayerSelector>(),
             services.GetRequiredService<IServiceScopeFactory>(),
-            Mock.Of<IPendingActionService>());
+            Mock.Of<IPendingActionService>(),
+            new GameStatsRuntimeTracker());
 
         var states = GetStore<GameState>(gameService, "_gameStates");
         states[gameState.GameId] = gameState;
@@ -143,7 +144,8 @@ public class GameServiceLifecycleTests
             matchService,
             Mock.Of<IFirstPlayerSelector>(),
             services.GetRequiredService<IServiceScopeFactory>(),
-            pendingActions);
+            pendingActions,
+            new GameStatsRuntimeTracker());
     }
 
     private static ConcurrentDictionary<string, TValue> GetStore<TValue>(GameService gameService, string fieldName)

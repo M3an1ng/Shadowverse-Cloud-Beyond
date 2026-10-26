@@ -510,6 +510,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         var firstPlayerSelector = provider.GetRequiredService<IFirstPlayerSelector>();
         var serviceScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var pendingActionService = provider.GetRequiredService<IPendingActionService>();
+        var statsRuntimeTracker = provider.GetRequiredService<IGameStatsRuntimeTracker>();
 
         return new GameService(
             hubContext,
@@ -520,7 +521,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             matchService,
             firstPlayerSelector,
             serviceScopeFactory,
-            pendingActionService
+            pendingActionService,
+            statsRuntimeTracker
         );
     });
     Log.Information("Registered IGameService as Singleton.");

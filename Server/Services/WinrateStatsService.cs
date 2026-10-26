@@ -50,71 +50,65 @@ public sealed class WinrateStatsService : IWinrateStatsService
             return;
         }
 
-        try
+        await _transactionService.ExecuteInTransactionAsync(async () =>
         {
-            await _transactionService.ExecuteInTransactionAsync(async () =>
+            var snapshot = _runtimeTracker.GetSnapshot(gameState.GameId);
+            if (snapshot == null)
             {
-                var snapshot = _runtimeTracker.GetSnapshot(gameState.GameId);
-                if (snapshot == null)
+                _logger.LogWarning("[WinrateStats] Runtime snapshot is missing for GameId={GameId}.", gameState.GameId);
+                return;
+            }
+
+            var officialMatch = await _officialMatchEvaluator.EvaluateAsync(gameState, gameEndEvent, cancellationToken);
+
+            foreach (var participant in snapshot.Participants.Values)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var exists = await _db.GameParticipantStatsFacts
+                    .AsNoTracking()
+                    .AnyAsync(
+                        fact => fact.GameId == snapshot.GameId && fact.PlayerId == participant.PlayerId,
+                        cancellationToken);
+
+                if (exists)
                 {
-                    _logger.LogWarning("[WinrateStats] Runtime snapshot is missing for GameId={GameId}.", gameState.GameId);
-                    return;
+                    continue;
                 }
 
-                var officialMatch = await _officialMatchEvaluator.EvaluateAsync(gameState, gameEndEvent, cancellationToken);
-
-                foreach (var participant in snapshot.Participants.Values)
+                var isWinner = participant.PlayerId == gameEndEvent.WinnerId;
+                var endTurnNumber = gameState.GetPlayerState(participant.PlayerId)?.TurnNumber;
+                _db.GameParticipantStatsFacts.Add(new GameParticipantStatsFact
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    Id = Guid.NewGuid(),
+                    GameId = snapshot.GameId,
+                    PlayerId = participant.PlayerId,
+                    IsWinner = isWinner,
+                    IsFirstPlayer = participant.IsFirstPlayer,
+                    EndTurnNumber = endTurnNumber,
+                    EndedAtUtc = gameEndEvent.Timestamp,
+                    DeckClass = participant.DeckClass,
+                    Environment = participant.Environment,
+                    Rule = participant.Rule,
+                    DeckShapeHash = participant.DeckShapeHash,
+                    UserDeckId = participant.UserDeckId,
+                    InitialDeckCardCountsJson = JsonSerializer.Serialize(participant.InitialDeckCardCounts),
+                    DrawnCardIdsJson = JsonSerializer.Serialize(participant.DrawnCardDefinitionIds.OrderBy(id => id).ToArray()),
+                    PlayedCardIdsJson = JsonSerializer.Serialize(participant.PlayedCardDefinitionIds.OrderBy(id => id).ToArray()),
+                    IsOfficial = officialMatch.IsOfficial
+                });
 
-                    var exists = await _db.GameParticipantStatsFacts
-                        .AsNoTracking()
-                        .AnyAsync(
-                            fact => fact.GameId == snapshot.GameId && fact.PlayerId == participant.PlayerId,
-                            cancellationToken);
-
-                    if (exists)
-                    {
-                        continue;
-                    }
-
-                    var isWinner = participant.PlayerId == gameEndEvent.WinnerId;
-                    var endTurnNumber = gameState.GetPlayerState(participant.PlayerId)?.TurnNumber;
-                    _db.GameParticipantStatsFacts.Add(new GameParticipantStatsFact
-                    {
-                        Id = Guid.NewGuid(),
-                        GameId = snapshot.GameId,
-                        PlayerId = participant.PlayerId,
-                        IsWinner = isWinner,
-                        IsFirstPlayer = participant.IsFirstPlayer,
-                        EndTurnNumber = endTurnNumber,
-                        EndedAtUtc = gameEndEvent.Timestamp,
-                        DeckClass = participant.DeckClass,
-                        Environment = participant.Environment,
-                        Rule = participant.Rule,
-                        DeckShapeHash = participant.DeckShapeHash,
-                        UserDeckId = participant.UserDeckId,
-                        InitialDeckCardCountsJson = JsonSerializer.Serialize(participant.InitialDeckCardCounts),
-                        DrawnCardIdsJson = JsonSerializer.Serialize(participant.DrawnCardDefinitionIds.OrderBy(id => id).ToArray()),
-                        PlayedCardIdsJson = JsonSerializer.Serialize(participant.PlayedCardDefinitionIds.OrderBy(id => id).ToArray()),
-                        IsOfficial = officialMatch.IsOfficial
-                    });
-
-                    if (!officialMatch.IsOfficial)
-                    {
-                        continue;
-                    }
-
-                    await UpdateCardAggAsync(participant, isWinner, cancellationToken);
-                    await UpdateDeckAggAsync(participant, isWinner, cancellationToken);
-                    await UpdateUserClassAggAsync(participant.PlayerId, participant.DeckClass, isWinner, cancellationToken);
+                if (!officialMatch.IsOfficial)
+                {
+                    continue;
                 }
-            });
-        }
-        finally
-        {
-            _runtimeTracker.Clear(gameState.GameId);
-        }
+
+                await UpdateCardAggAsync(participant, isWinner, cancellationToken);
+                await UpdateDeckAggAsync(participant, isWinner, cancellationToken);
+                await UpdateUserClassAggAsync(participant.PlayerId, participant.DeckClass, isWinner, cancellationToken);
+            }
+        });
+        _runtimeTracker.Clear(gameState.GameId);
     }
 
     private async Task UpdateCardAggAsync(
