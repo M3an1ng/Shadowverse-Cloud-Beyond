@@ -37,15 +37,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
         private readonly IEffectExecutor _effectExecutor; // Added IEffectExecutor field
         private readonly IGameDataProvider _gameDataProvider; // 【修复】添加IGameDataProvider依赖
         private readonly IEventHistoryService _eventHistoryService; // Added for event history
-        private readonly IServiceProvider _serviceProvider; // Added for service location
 
-        public EventProcessor(ILogger<EventProcessor> logger, IEffectExecutor effectExecutor, IGameDataProvider gameDataProvider, IEventHistoryService eventHistoryService, IServiceProvider serviceProvider) // Inject IServiceProvider
+        public EventProcessor(ILogger<EventProcessor> logger, IEffectExecutor effectExecutor, IGameDataProvider gameDataProvider, IEventHistoryService eventHistoryService)
         {
             _logger = logger;
             _effectExecutor = effectExecutor ?? throw new ArgumentNullException(nameof(effectExecutor)); // Store IEffectExecutor
             _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider)); // Store IGameDataProvider
             _eventHistoryService = eventHistoryService ?? throw new ArgumentNullException(nameof(eventHistoryService)); // Store IEventHistoryService
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider)); // Store IServiceProvider
         }
 
         /// <summary>
