@@ -9,7 +9,6 @@ using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
-using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters; // 【修复BUG-017】添加AttackTargetType
 using ShadowverseBeyond.Server.Domain.Buffs; // Added for Buff effects
 using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
@@ -20,7 +19,6 @@ using ShadowverseBeyond.Server.Dtos.SignalR;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Dtos.Enums;
  // Added for IMapper
-using ShadowverseBeyond.Server.Services.Abstractions; // 【修复】添加IGameDataProvider
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Domain.Events.Services; // Added for IEventHistoryService
 
@@ -32,17 +30,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// </summary>
     public class EventProcessor : IEventProcessor // Implement the interface
     {
-        private readonly Queue<IGameEvent> _eventQueue = new();
         private readonly ILogger<EventProcessor> _logger;
-        private readonly IEffectExecutor _effectExecutor; // Added IEffectExecutor field
-        private readonly IGameDataProvider _gameDataProvider; // 【修复】添加IGameDataProvider依赖
         private readonly IEventHistoryService _eventHistoryService; // Added for event history
 
-        public EventProcessor(ILogger<EventProcessor> logger, IEffectExecutor effectExecutor, IGameDataProvider gameDataProvider, IEventHistoryService eventHistoryService)
+        public EventProcessor(ILogger<EventProcessor> logger, IEventHistoryService eventHistoryService)
         {
             _logger = logger;
-            _effectExecutor = effectExecutor ?? throw new ArgumentNullException(nameof(effectExecutor)); // Store IEffectExecutor
-            _gameDataProvider = gameDataProvider ?? throw new ArgumentNullException(nameof(gameDataProvider)); // Store IGameDataProvider
             _eventHistoryService = eventHistoryService ?? throw new ArgumentNullException(nameof(eventHistoryService)); // Store IEventHistoryService
         }
 
