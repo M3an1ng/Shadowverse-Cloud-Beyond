@@ -3592,7 +3592,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('MAIN: Failed to initialize menu starry sky:', error);
     }
 
-    // Meta progression panel is currently hidden on main menu; keep wiring disabled.
 
 });
 
