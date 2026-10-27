@@ -19,18 +19,16 @@ function renderDefinitionCardSummary(entry, tags) {
 // 选择弹窗只拥有交互状态，复用调用方的目录，不承担效果或授予配置。
 export class DefinitionPicker {
     #catalog;
-    #activeAbilityOverlay = null;
-    #activeCardOverlay = null;
+    // 同类替换按取消结束旧选择；收尾只释放自己的弹窗。
+    #activeAbilitySelection = null;
+    #activeCardSelection = null;
 
     constructor(catalog) {
         this.#catalog = catalog;
     }
 
     async openAbilities(selectedIds = [], options = {}) {
-        if (this.#activeAbilityOverlay) {
-            this.#activeAbilityOverlay.remove();
-            this.#activeAbilityOverlay = null;
-        }
+        this.#activeAbilitySelection?.cancel();
 
         return await new Promise((resolve) => {
             const allowMultiple = options.allowMultiple !== false;
@@ -86,19 +84,19 @@ export class DefinitionPicker {
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
 
-            this.#activeAbilityOverlay = overlay;
             const modalLoader = getBlockingLoader(modal);
 
             const finish = (value) => {
                 resolve(value);
                 modalLoader?.hide();
-                if (this.#activeAbilityOverlay) {
-                    this.#activeAbilityOverlay.remove();
-                    this.#activeAbilityOverlay = null;
+                overlay.remove();
+                if (this.#activeAbilitySelection?.overlay === overlay) {
+                    this.#activeAbilitySelection = null;
                 }
             };
 
             const close = () => finish([]);
+            this.#activeAbilitySelection = { overlay, cancel: close };
             closeBtn.addEventListener('click', close);
 
             const searchInput = content.querySelector('#remove-ability-card-search');
@@ -334,10 +332,7 @@ export class DefinitionPicker {
     }
 
     async openCards(selectedIds = [], options = {}) {
-        if (this.#activeCardOverlay) {
-            this.#activeCardOverlay.remove();
-            this.#activeCardOverlay = null;
-        }
+        this.#activeCardSelection?.cancel();
 
         return await new Promise((resolve) => {
             const allowMultiple = options.allowMultiple !== false;
@@ -393,19 +388,19 @@ export class DefinitionPicker {
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
 
-            this.#activeCardOverlay = overlay;
             const modalLoader = getBlockingLoader(modal);
 
             const finish = (value) => {
                 resolve(value);
                 modalLoader?.hide();
-                if (this.#activeCardOverlay) {
-                    this.#activeCardOverlay.remove();
-                    this.#activeCardOverlay = null;
+                overlay.remove();
+                if (this.#activeCardSelection?.overlay === overlay) {
+                    this.#activeCardSelection = null;
                 }
             };
 
             const close = () => finish([]);
+            this.#activeCardSelection = { overlay, cancel: close };
             closeBtn.addEventListener('click', close);
 
             const searchInput = content.querySelector('#card-definition-search');
