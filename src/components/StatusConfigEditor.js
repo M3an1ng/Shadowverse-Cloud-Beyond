@@ -5,6 +5,7 @@
 // - 元数据驱动UI: 文档/06-UI设计/05-元数据驱动UI开发实践指南.md
 //
 
+import { normalizeGrantedAbilityConfig } from './grantedAbilityConfig.js';
 import { MetadataDrivenComponent } from './MetadataDrivenComponent.js';
 import { ConditionConfigEditor } from './ConditionConfigEditor.js';
 import { EffectConfigEditor } from './EffectConfigEditor.js';
@@ -1049,7 +1050,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             : [];
         const rawAbilities = raw.grantedAbilities ?? raw.GrantedAbilities;
         const grantedAbilities = Array.isArray(rawAbilities)
-            ? rawAbilities.map(item => this.abilityListHelper.normalizeAbilityConfigForList(item)).filter(Boolean)
+            ? rawAbilities.map(normalizeGrantedAbilityConfig).filter(Boolean)
             : [];
 
         return {

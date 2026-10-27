@@ -5,6 +5,7 @@
 // - 元数据驱动UI: 文档/06-UI设计/05-元数据驱动UI开发实践指南.md
 //
 
+import { copyGrantedAbilityConfig, createGrantedAbilityEditorInput, extractGrantedAbilityEditorConfig } from './grantedAbilityConfig.js';
 import { MetadataDrivenComponent } from './MetadataDrivenComponent.js';
 import { ValueConfigEditor } from './ValueConfigEditor.js';
 import { DslEditor } from './DslEditor.js';
@@ -2574,78 +2575,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             return { items: value.filter(Boolean), didNormalize };
         }
 
-        normalizeAbilityConfigForList(ability) {
-            if (!ability || typeof ability !== 'object') return null;
 
-            const normalized = { ...ability };
-            const name = ability.name ?? ability.Name ?? '';
-            const description = ability.description ?? ability.Description ?? '';
-            const keywords = ability.abilityKeywords ?? ability.AbilityKeywords ?? [];
-            const trigger = ability.trigger ?? ability.Trigger ?? {
-                eventTypes: [],
-                relationType: '',
-                timing: 'On',
-                validZones: []
-            };
 
-            normalized.name = String(name || '').trim() || '未命名能力';
-            normalized.description = description ?? '';
-            normalized.abilityKeywords = Array.isArray(keywords) ? keywords : [];
-            const legacyExecutionKind = ability.executionKind ?? ability.ExecutionKind ?? null;
-            const rawType = ability.type ?? ability.Type ?? null;
-            normalized.type = rawType
-                || (String(legacyExecutionKind).toLowerCase() === 'aura' ? 'Continuous' : 'Triggered');
-            normalized.trigger = trigger;
-            normalized.conditions = ability.conditions ?? ability.Conditions ?? [];
-            normalized.targets = ability.targets ?? ability.Targets ?? [];
-            normalized.effects = ability.effects ?? ability.Effects ?? [];
-            normalized.auras = ability.auras ?? ability.Auras ?? [];
-            normalized.counterRegistrations = ability.counterRegistrations ?? ability.CounterRegistrations ?? [];
-            normalized.playerCounterRegistrations = ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [];
-            normalized.isActive = ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true;
-            normalized.broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
-            normalized.buffDisplay = ability.buffDisplay ?? ability.BuffDisplay ?? normalized.broadcastOnTrigger;
-            normalized.version = ability.version ?? ability.Version ?? '1.0';
-
-            delete normalized.id;
-            delete normalized.Id;
-            delete normalized.cardId;
-            delete normalized.CardId;
-            delete normalized.abilityType;
-            delete normalized.priority;
-            delete normalized.jsonConfig;
-            delete normalized.executionKind;
-            delete normalized.ExecutionKind;
-
-            return normalized;
-        }
-
-        parseAbilityConfigFromSource(ability) {
-            const raw = ability?.jsonConfig ?? ability?.JsonConfig ?? null;
-            if (!raw) return null;
-            const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                throw new TypeError('能力 JSON 配置必须是对象');
-            }
-            return parsed;
-        }
-
-        normalizeAbilityConfigFromSource(ability, parsedConfig) {
-            if (!ability && !parsedConfig) return null;
-            const base = parsedConfig || {};
-            const broadcastOnTrigger = ability?.broadcastOnTrigger ?? ability?.BroadcastOnTrigger ?? base.broadcastOnTrigger ?? true;
-            const config = {
-                ...base,
-                name: ability?.name ?? ability?.Name ?? base.name ?? '未命名能力',
-                description: ability?.description ?? ability?.Description ?? base.description ?? '',
-                abilityKeywords: ability?.abilityKeywords ?? ability?.AbilityKeywords ?? base.abilityKeywords ?? [],
-                isActive: ability?.isActive ?? ability?.IsActive ?? base.isActive ?? true,
-                broadcastOnTrigger,
-                buffDisplay: ability?.buffDisplay ?? ability?.BuffDisplay ?? base.buffDisplay ?? broadcastOnTrigger,
-                version: base.version ?? base.Version ?? '1.0'
-            };
-            return this.normalizeAbilityConfigForList(config);
-        }
 
         async fetchAbilityDetailById(abilityId) {
             const response = await fetch(`/api/abilities/${abilityId}`);
@@ -2661,7 +2592,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
         async buildAbilityConfigFromAbilityId(abilityId) {
             const detail = await this.fetchAbilityDetailById(abilityId);
-            return this.normalizeAbilityConfigFromSource(detail, this.parseAbilityConfigFromSource(detail));
+            return copyGrantedAbilityConfig(detail);
         }
 
         async openAbilityConfigPickerModal() {
@@ -2676,86 +2607,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             return await this.buildAbilityConfigFromAbilityId(Number(abilityId));
         }
 
-        buildAbilityEditorInput(ability) {
-            if (!ability) {
-                return {
-                    name: '',
-                    description: '',
-                    abilityKeywords: [],
-                    trigger: {
-                        eventTypes: [],
-                        relationType: '',
-                        timing: 'On',
-                        validZones: []
-                    },
-                conditions: [],
-                targets: [],
-                effects: [],
-                auras: [],
-                type: 'Triggered',
-                counterRegistrations: [],
-                playerCounterRegistrations: [],
-                isActive: true,
-                broadcastOnTrigger: true,
-                buffDisplay: true
-            };
-            }
 
-            const broadcastOnTrigger = ability.broadcastOnTrigger ?? ability.BroadcastOnTrigger ?? true;
-            return {
-                name: ability.name ?? ability.Name ?? '',
-                description: ability.description ?? ability.Description ?? '',
-                abilityKeywords: ability.abilityKeywords ?? ability.AbilityKeywords ?? [],
-                type: ability.type ?? ability.Type ?? 'Triggered',
-                trigger: ability.trigger ?? ability.Trigger ?? {
-                    eventTypes: [],
-                    relationType: '',
-                    timing: 'On',
-                    validZones: []
-                },
-                conditions: ability.conditions ?? ability.Conditions ?? [],
-                targets: ability.targets ?? ability.Targets ?? [],
-                effects: ability.effects ?? ability.Effects ?? [],
-                auras: ability.auras ?? ability.Auras ?? [],
-                counterRegistrations: ability.counterRegistrations ?? ability.CounterRegistrations ?? [],
-                playerCounterRegistrations: ability.playerCounterRegistrations ?? ability.PlayerCounterRegistrations ?? [],
-                isActive: ability.isActive ?? ability.IsActive ?? ability.isEnabled ?? ability.IsEnabled ?? true,
-                broadcastOnTrigger,
-                buffDisplay: ability.buffDisplay ?? ability.BuffDisplay ?? broadcastOnTrigger
-            };
-        }
-
-        extractAbilityConfigFromEditor(finalConfig) {
-            if (!finalConfig || typeof finalConfig !== 'object') return null;
-
-            const parsed = this.parseAbilityConfigFromSource(finalConfig);
-            if (parsed) return this.normalizeAbilityConfigForList(parsed);
-
-            const fallback = {
-                name: finalConfig.name ?? '',
-                description: finalConfig.description ?? '',
-                abilityKeywords: finalConfig.abilityKeywords ?? [],
-                type: finalConfig.type ?? 'Triggered',
-                trigger: finalConfig.trigger ?? {
-                    eventTypes: [],
-                    relationType: '',
-                    timing: 'On',
-                    validZones: []
-                },
-                conditions: finalConfig.conditions ?? [],
-                targets: finalConfig.targets ?? [],
-                effects: finalConfig.effects ?? [],
-                auras: finalConfig.auras ?? [],
-                counterRegistrations: finalConfig.counterRegistrations ?? [],
-                playerCounterRegistrations: finalConfig.playerCounterRegistrations ?? [],
-                isActive: finalConfig.isActive ?? true,
-                broadcastOnTrigger: finalConfig.broadcastOnTrigger ?? true,
-                buffDisplay: finalConfig.buffDisplay ?? true,
-                version: finalConfig.version ?? '1.0'
-            };
-
-            return this.normalizeAbilityConfigForList(fallback);
-        }
 
         formatAbilityTriggerName(ability, fallbackTrigger = null) {
         const trigger = fallbackTrigger
@@ -2876,7 +2728,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 const renderEditor = async () => {
                     const { AbilityEditor } = await import('./AbilityEditor.js');
                     const abilityEditor = new AbilityEditor();
-                    const editorInput = this.buildAbilityEditorInput(baseAbility);
+                    const editorInput = createGrantedAbilityEditorInput(baseAbility);
 
                     const options = editorOptions || {};
                     await abilityEditor.render(
@@ -2887,7 +2739,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                                 finish(null);
                                 return;
                             }
-                            const abilityConfig = this.extractAbilityConfigFromEditor(updatedConfig);
+                            const abilityConfig = extractGrantedAbilityEditorConfig(updatedConfig);
                             finish(abilityConfig);
                         },
                         options
