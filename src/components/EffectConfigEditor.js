@@ -10,7 +10,7 @@ import { MetadataDrivenComponent } from './MetadataDrivenComponent.js';
 import { ValueConfigEditor } from './ValueConfigEditor.js';
 import { DslEditor } from './DslEditor.js';
 import { getBlockingLoader } from './blockingLoader.js';
-import { ensureAbilityData, ensureCardDefinitions, getAbilityDataSnapshot } from '../abilityDataCache.js';
+import { DefinitionPickerCatalog } from './definitionPickerCatalog.js';
 import { ensureEnumLocalization } from '../enumLocalizationCache.js';
 import { validateDslExpression } from '../dslValidation.js';
 import { getSemanticNodeType as getCoreSemanticNodeType } from './dsl_editor/core.js';
@@ -32,12 +32,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         this.activeAbilityDefinitionPickerModal = null;
         this.activeCardDefinitionPickerModal = null;
         this.parameterModeCache = new Map();
-        this.cardDefinitionCache = null;
-        this.cardDefinitionIndex = new Map();
-        this.cardDefinitionPromise = null;
-        this.abilityDefinitionCache = null;
-        this.abilityDefinitionIndex = new Map();
-        this.abilityDefinitionPromise = null;
+        this.definitionPickerCatalog = new DefinitionPickerCatalog();
         this.outputEditorsByEffect = new Map();
         this.replaceEventParamMetadataCache = new Map();
         this.replaceEventParamMetadataRequests = new Map();
@@ -1702,100 +1697,9 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             }
         }
 
-        async loadCardDefinitions() {
-            const snapshot = getAbilityDataSnapshot();
-            if (snapshot.cards?.length) {
-                this.cardDefinitionCache = this.normalizeCardDefinitions(snapshot.cards);
-                this.cardDefinitionIndex = new Map(this.cardDefinitionCache.map(entry => [entry.id, entry]));
-                return this.cardDefinitionCache;
-            }
 
-            if (!this.cardDefinitionPromise) {
-                this.cardDefinitionPromise = ensureCardDefinitions()
-                    .then(cards => {
-                        this.cardDefinitionCache = this.normalizeCardDefinitions(cards);
-                        this.cardDefinitionIndex = new Map(this.cardDefinitionCache.map(entry => [entry.id, entry]));
-                        return this.cardDefinitionCache;
-                    })
-                    .finally(() => {
-                        this.cardDefinitionPromise = null;
-                    });
-            }
 
-            return await this.cardDefinitionPromise;
-        }
 
-        normalizeCardDefinitions(cards) {
-            const entries = (cards || [])
-                .map((card, index) => {
-                    const idRaw = card?.id ?? card?.Id ?? index;
-                    const id = Number(idRaw);
-                    if (!Number.isFinite(id) || id <= 0) {
-                        return null;
-                    }
-                    const name = (card?.name ?? card?.Name ?? `Card ${id}`).toString().trim() || `Card ${id}`;
-                    const description = (card?.description ?? card?.Description ?? '').toString().trim();
-                    const cost = Number(card?.cost ?? card?.Cost ?? 0);
-                    const cardClass = (card?.class ?? card?.Class ?? '').toString().trim();
-                    const cardType = (card?.type ?? card?.Type ?? '').toString().trim();
-                    const rarity = (card?.rarity ?? card?.Rarity ?? '').toString().trim();
-                    const searchText = [name, id, cost, description, cardClass, cardType, rarity].join(' ').toLowerCase();
-                    return { id, name, description, cost, cardClass, cardType, rarity, searchText };
-                })
-                .filter(Boolean)
-                .sort((a, b) => a.id - b.id);
-            return entries;
-        }
-
-        async loadAbilityDefinitions() {
-            const snapshot = getAbilityDataSnapshot();
-            if (snapshot.abilities?.length) {
-                await this.loadCardDefinitions();
-                this.abilityDefinitionCache = this.normalizeAbilityDefinitions(snapshot.abilities);
-                this.abilityDefinitionIndex = new Map(this.abilityDefinitionCache.map(entry => [entry.id, entry]));
-                return this.abilityDefinitionCache;
-            }
-
-            if (!this.abilityDefinitionPromise) {
-                this.abilityDefinitionPromise = ensureAbilityData()
-                    .then(async data => {
-                        await this.loadCardDefinitions();
-                        this.abilityDefinitionCache = this.normalizeAbilityDefinitions(data.abilities);
-                        this.abilityDefinitionIndex = new Map(this.abilityDefinitionCache.map(entry => [entry.id, entry]));
-                        return this.abilityDefinitionCache;
-                    })
-                    .finally(() => {
-                        this.abilityDefinitionPromise = null;
-                    });
-            }
-
-            return await this.abilityDefinitionPromise;
-        }
-
-        normalizeAbilityDefinitions(abilities) {
-            const entries = (abilities || [])
-                .map((ability, index) => {
-                    const idRaw = ability?.id ?? ability?.Id ?? index;
-                    const id = Number(idRaw);
-                    if (!Number.isFinite(id) || id <= 0) {
-                        return null;
-                    }
-                    const name = (ability?.name ?? ability?.Name ?? `Ability ${id}`).toString().trim() || `Ability ${id}`;
-                    const description = (ability?.description ?? ability?.Description ?? '').toString().trim();
-                    const cardId = Number(ability?.cardId ?? ability?.CardId ?? 0);
-                    const cardEntry = this.cardDefinitionIndex?.get?.(cardId);
-                    const cardName = cardEntry?.name ?? '';
-                    const keywords = Array.isArray(ability?.abilityKeywords)
-                        ? ability.abilityKeywords.map(item => item?.keyword ?? item?.Keyword ?? '').filter(Boolean)
-                        : [];
-                    const keywordText = keywords.join(' ');
-                    const searchText = [name, id, description, cardName, cardId, keywordText].join(' ').toLowerCase();
-                    return { id, name, description, cardId, cardName, keywords, searchText };
-                })
-                .filter(Boolean)
-                .sort((a, b) => a.id - b.id);
-            return entries;
-        }
 
         renderAbilityDefinitionIdEditor(container, options = {}) {
             const { values, onChange } = options;
@@ -1879,7 +1783,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                     chip.className = 'int-list-chip';
 
                     const label = document.createElement('span');
-                    const entry = this.abilityDefinitionIndex?.get?.(value);
+                    const entry = this.definitionPickerCatalog.getAbility(value);
                     const cardName = entry?.cardName ? ` · ${entry.cardName}` : '';
                     label.textContent = entry ? `${entry.name} (#${value})${cardName}` : String(value);
 
@@ -1902,7 +1806,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             };
 
             renderList();
-            void this.loadAbilityDefinitions().then(() => {
+            void this.definitionPickerCatalog.loadAbilities().then(() => {
                 renderList();
             }).catch(error => {
                 console.error('EffectConfigEditor: failed to load ability definitions', error);
@@ -2009,7 +1913,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                     chip.className = 'int-list-chip';
 
                     const label = document.createElement('span');
-                    const entry = this.cardDefinitionIndex?.get?.(value);
+                    const entry = this.definitionPickerCatalog.getCard(value);
                     label.textContent = entry ? `${entry.name} (#${value})` : String(value);
 
                     const remove = document.createElement('button');
@@ -2031,7 +1935,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             };
 
             renderList();
-            void this.loadCardDefinitions().then(() => {
+            void this.definitionPickerCatalog.loadCards().then(() => {
                 renderList();
             }).catch(error => {
                 console.error('EffectConfigEditor: failed to load card definitions', error);
@@ -2287,8 +2191,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 const init = async () => {
                     modalLoader?.show('正在加载能力库...');
                     try {
-                        const abilities = await this.loadAbilityDefinitions();
-                        const cards = Array.isArray(this.cardDefinitionCache) ? this.cardDefinitionCache : [];
+                        const abilities = await this.definitionPickerCatalog.loadAbilities();
+                        const cards = Array.isArray(this.definitionPickerCatalog.getCards()) ? this.definitionPickerCatalog.getCards() : [];
 
                         abilitiesByCard.clear();
                         abilities.forEach(ability => {
@@ -2928,7 +2832,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 const init = async () => {
                     modalLoader?.show('正在加载卡牌列表...');
                     try {
-                        const cards = await this.loadCardDefinitions();
+                        const cards = await this.definitionPickerCatalog.loadCards();
                         cardEntries = Array.isArray(cards) ? cards : [];
                         applyFilter('');
                     } catch (error) {
