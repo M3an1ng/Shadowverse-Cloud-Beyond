@@ -56,7 +56,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 var abilityName = (triggeredAbility as Ability)?.Name ?? triggeredAbility.Name;
 
                 _logger.LogInformation(
-                    "[EventProcessor] Identifying abilities for event {EventType}. Triggered ability: {AbilityName} (TriggerEventType: {TriggerEventType}, SourceCardName: {SourceCardName}, SourceCardId: {SourceCardId}).",
+                    "[EventProcessor] Processing event {EventType}. Triggered ability: {AbilityName} (TriggerEventType: {TriggerEventType}, SourceCardName: {SourceCardName}, SourceCardId: {SourceCardId}).",
                     initialEvent.EventType,
                     abilityName,
                     abilityTriggeredEvent.TriggerEventType,
@@ -65,7 +65,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
             else
             {
-                _logger.LogInformation("[EventProcessor] Identifying abilities for event {EventType}.", initialEvent.EventType);
+                _logger.LogInformation("[EventProcessor] Processing event {EventType}.", initialEvent.EventType);
             }
 
             try
