@@ -402,14 +402,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         var contextAccessor = provider.GetRequiredService<IGameContextAccessor>();
         if (contextAccessor.GameContext?.AbilityManager == null)
         {
-            // This can happen outside of a game context, which is valid.
-            // Return a transient, non-game-state-bound instance for such cases (e.g., API calls).
-            // The real, stateful manager is provided by the GameContext.
+            // Outside a game context, use the request-scoped manager rather than a game's manager.
             return provider.GetRequiredService<AbilityManager>();
         }
         return contextAccessor.GameContext.AbilityManager;
     });
-    Log.Information("Registered AbilityFactory and AbilityManager as Singleton.");
+    Log.Information("Registered AbilityFactory and AbilityManager as Scoped.");
 
     // Register System Abilities as IAbility
     builder.Services.AddSingleton<IAbility, ShadowverseBeyond.Server.Domain.Abilities.System.EarthSigilSystemAbility>();
@@ -424,7 +422,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         var contextAccessor = provider.GetRequiredService<IGameContextAccessor>();
         if (contextAccessor.GameContext?.BuffManager == null)
         {
-            // Similar to AbilityManager, provide a transient instance if outside a game context.
+            // Outside a game context, use the request-scoped manager.
             return provider.GetRequiredService<BuffManager>();
         }
         return contextAccessor.GameContext.BuffManager;
@@ -432,11 +430,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IBuffManager as Scoped.");
     builder.Services.AddScoped<IBuffEvaluator, BuffEvaluator>();
     Log.Information("Registered IBuffEvaluator as Scoped.");
-    // Register BuffFactory for creating Buff instances with GameDataProvider support
-    // Changed to Singleton to match GameService lifetime
-
-    // Register CardFactory
-    // Register BuffFactory from the correct namespace
+    // BuffFactory is scope-local; its game-data catalog is the host singleton.
     builder.Services.AddScoped<ShadowverseBeyond.Server.Domain.Buffs.IBuffFactory, ShadowverseBeyond.Server.Domain.Buffs.BuffFactory>();
     Log.Information("Registered IBuffFactory (from Domain.Buffs) as Scoped.");
 

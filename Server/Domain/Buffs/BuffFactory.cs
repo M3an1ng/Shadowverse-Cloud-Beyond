@@ -13,7 +13,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities; // For Ability class
-using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Constants;
 
 namespace ShadowverseBeyond.Server.Domain.Buffs
@@ -24,9 +24,12 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
     public class BuffFactory : IBuffFactory
     {
         private readonly ILogger<BuffFactory> _logger;
-        public BuffFactory(ILogger<BuffFactory> logger)
+        private readonly IGameDataProvider _gameDataProvider;
+
+        public BuffFactory(ILogger<BuffFactory> logger, IGameDataProvider gameDataProvider)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _gameDataProvider = gameDataProvider;
         }
 
         /// <inheritdoc />
@@ -271,7 +274,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             try
             {
                 // 从缓存获取BuffDefinition
-                var buffDefinition = GameDataProvider.Instance.GetBuffDefinition(buffDefinitionId);
+                var buffDefinition = _gameDataProvider.GetBuffDefinition(buffDefinitionId);
                 if (buffDefinition == null)
                 {
                     _logger.LogWarning("BuffDefinition not found in cache: {BuffDefinitionId}", buffDefinitionId);

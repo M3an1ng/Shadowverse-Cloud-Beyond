@@ -98,10 +98,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int BaseCost => CurrentDefinition?.Cost ?? 0;
 
         /// <summary>
-        /// The current play point cost of this card instance.
-        /// This can differ from the base cost defined in CardDefinition due to card effects.
-        /// Currently stored directly for backward compatibility.
-        /// Future enhancement: Calculate as BaseCost + buff modifications.
+        /// DSL-visible cost; callers with an explicit context should use GetCurrentCost.
+        /// Without an active game context, only the non-negative base cost is available.
         /// </summary>
         [DslExposable("当前费用", Description = "卡牌当前的费用（包含效果修正）")]
         public int CurrentCost => GetCurrentCost(GameServiceProvider.CurrentGameContext);
@@ -524,8 +522,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         #region Static Data Accessors
 
         /// <summary>
-        /// A private, cached accessor for the card's static definition.
-        /// This avoids repeated lookups in the GameDataProvider within the same instance context.
+        /// Preserves global-catalog access for DSL and context-free callers.
+        /// This is not an instance snapshot: later reads observe published catalog updates.
         /// </summary>
         [DslExposable("原始卡牌", Description = "卡牌的原型，包含卡牌在无附加效果情况下的基础属性和定义")]
         public CardDefinition? CurrentDefinition => GameDataProvider.Instance?.GetCardDefinition(CurrentDefinitionId);
