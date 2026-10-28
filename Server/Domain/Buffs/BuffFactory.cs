@@ -523,6 +523,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     targetCardInstanceId: target.InstanceId,
                     currentTurn: currentTurn,
                     effects: effects,
+                    definitionId: buffDefinition.Id,
                     durationType: durationType,
                     durationParameter: NormalizeDurationParameter(durationType, durationParameter),
                     removalCondition: config.Duration?.RemoveCondition
@@ -582,28 +583,20 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         private IBuffEffect? CreateEffectFromConfig(BuffEffectConfig effectConfig, Dictionary<string, object?>? customParameters)
         {
-            try
+            switch (effectConfig.Type.ToLowerInvariant())
             {
-                switch (effectConfig.Type.ToLowerInvariant())
-                {
-                    case "modifystats":
-                        return CreateStatEffectFromConfig(effectConfig, customParameters);
+                case "modifystats":
+                    return CreateStatEffectFromConfig(effectConfig, customParameters);
 
-                    case "addkeyword":
-                        return CreateKeywordEffectFromConfig(effectConfig, customParameters);
+                case "addkeyword":
+                    return CreateKeywordEffectFromConfig(effectConfig, customParameters);
 
-                    case "addtribe":
-                        return CreateTribeEffectFromConfig(effectConfig, customParameters);
+                case "addtribe":
+                    return CreateTribeEffectFromConfig(effectConfig, customParameters);
 
-                    default:
-                        _logger.LogWarning("Unknown effect type: {EffectType}", effectConfig.Type);
-                        return null;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating effect from config: {EffectType}", effectConfig.Type);
-                return null;
+                default:
+                    _logger.LogWarning("Unknown effect type: {EffectType}", effectConfig.Type);
+                    return null;
             }
         }
 
@@ -612,39 +605,31 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         private IBuffEffect? CreateStatEffectFromConfig(BuffEffectConfig effectConfig, Dictionary<string, object?>? customParameters)
         {
-            try
+            // 从配置中提取属性修改信息
+            var statType = GetParameterValue<string>(effectConfig.Parameters, "statType", customParameters) ?? "Attack";
+            var value = GetParameterValue<double?>(effectConfig.Parameters, "value", customParameters) ?? 1d;
+            var layer = GetParameterValue<string>(effectConfig.Parameters, "layer", customParameters) ?? "Additive";
+
+            // 解析StatType
+            if (!Enum.TryParse<StatType>(statType, true, out var parsedStatType))
             {
-                // 从配置中提取属性修改信息
-                var statType = GetParameterValue<string>(effectConfig.Parameters, "statType", customParameters) ?? "Attack";
-                var value = GetParameterValue<double?>(effectConfig.Parameters, "value", customParameters) ?? 1d;
-                var layer = GetParameterValue<string>(effectConfig.Parameters, "layer", customParameters) ?? "Additive";
-
-                // 解析StatType
-                if (!Enum.TryParse<StatType>(statType, true, out var parsedStatType))
-                {
-                    _logger.LogWarning("Invalid StatType: {StatType}, defaulting to Attack", statType);
-                    parsedStatType = StatType.Attack;
-                }
-
-                // 解析ModifierLayer
-                if (!Enum.TryParse<ModifierLayer>(layer, true, out var parsedLayer))
-                {
-                    _logger.LogWarning("Invalid ModifierLayer: {Layer}, defaulting to Additive", layer);
-                    parsedLayer = ModifierLayer.Additive;
-                }
-
-                // 创建StatModification
-                var statModification = new StatModification(parsedStatType, value, parsedLayer);
-                var statEffect = new StatBuffEffect(new List<StatModification> { statModification });
-
-                _logger.LogDebug("Created stat effect: {StatType} {Value} ({Layer})", parsedStatType, value, parsedLayer);
-                return statEffect;
+                _logger.LogWarning("Invalid StatType: {StatType}, defaulting to Attack", statType);
+                parsedStatType = StatType.Attack;
             }
-            catch (Exception ex)
+
+            // 解析ModifierLayer
+            if (!Enum.TryParse<ModifierLayer>(layer, true, out var parsedLayer))
             {
-                _logger.LogError(ex, "Error creating stat effect from config");
-                return null;
+                _logger.LogWarning("Invalid ModifierLayer: {Layer}, defaulting to Additive", layer);
+                parsedLayer = ModifierLayer.Additive;
             }
+
+            // 创建StatModification
+            var statModification = new StatModification(parsedStatType, value, parsedLayer);
+            var statEffect = new StatBuffEffect(new List<StatModification> { statModification });
+
+            _logger.LogDebug("Created stat effect: {StatType} {Value} ({Layer})", parsedStatType, value, parsedLayer);
+            return statEffect;
         }
 
         /// <summary>
@@ -652,55 +637,47 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         private IBuffEffect? CreateKeywordEffectFromConfig(BuffEffectConfig effectConfig, Dictionary<string, object?>? customParameters)
         {
-            try
+            // 从配置中提取关键字信息
+            var keyword = GetParameterValue<string>(effectConfig.Parameters, "keyword", customParameters);
+            var keywords = GetParameterValue<List<string>>(effectConfig.Parameters, "keywords", customParameters);
+
+            var keywordList = new List<string>();
+
+            // 处理单个关键字
+            if (!string.IsNullOrEmpty(keyword))
             {
-                // 从配置中提取关键字信息
-                var keyword = GetParameterValue<string>(effectConfig.Parameters, "keyword", customParameters);
-                var keywords = GetParameterValue<List<string>>(effectConfig.Parameters, "keywords", customParameters);
-
-                var keywordList = new List<string>();
-
-                // 处理单个关键字
-                if (!string.IsNullOrEmpty(keyword))
-                {
-                    keywordList.Add(keyword);
-                }
-
-                // 处理关键字列表
-                if (keywords != null && keywords.Any())
-                {
-                    keywordList.AddRange(keywords);
-                }
-
-                if (!keywordList.Any())
-                {
-                    _logger.LogWarning("No keywords specified for keyword effect");
-                    return null;
-                }
-
-                // Convert string list to enum list
-                var keywordEnumList = keywordList
-                    .Select(kStr => Enum.TryParse<CardKeyword>(kStr, true, out var kEnum) ? kEnum : CardKeyword.None)
-                    .Where(k => k != CardKeyword.None)
-                    .ToList();
-
-                if (!keywordEnumList.Any())
-                {
-                    _logger.LogWarning("No valid keywords could be parsed from the list: [{Keywords}]", string.Join(", ", keywordList));
-                    return null;
-                }
-
-                // 创建KeywordBuffEffect
-                var keywordEffect = new KeywordBuffEffect(keywordEnumList);
-
-                _logger.LogDebug("Created keyword effect: [{Keywords}]", string.Join(", ", keywordEnumList));
-                return keywordEffect;
+                keywordList.Add(keyword);
             }
-            catch (Exception ex)
+
+            // 处理关键字列表
+            if (keywords != null && keywords.Any())
             {
-                _logger.LogError(ex, "Error creating keyword effect from config");
+                keywordList.AddRange(keywords);
+            }
+
+            if (!keywordList.Any())
+            {
+                _logger.LogWarning("No keywords specified for keyword effect");
                 return null;
             }
+
+            // Convert string list to enum list
+            var keywordEnumList = keywordList
+                .Select(kStr => Enum.TryParse<CardKeyword>(kStr, true, out var kEnum) ? kEnum : CardKeyword.None)
+                .Where(k => k != CardKeyword.None)
+                .ToList();
+
+            if (!keywordEnumList.Any())
+            {
+                _logger.LogWarning("No valid keywords could be parsed from the list: [{Keywords}]", string.Join(", ", keywordList));
+                return null;
+            }
+
+            // 创建KeywordBuffEffect
+            var keywordEffect = new KeywordBuffEffect(keywordEnumList);
+
+            _logger.LogDebug("Created keyword effect: [{Keywords}]", string.Join(", ", keywordEnumList));
+            return keywordEffect;
         }
 
         /// <summary>
@@ -708,43 +685,35 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         private IBuffEffect? CreateTribeEffectFromConfig(BuffEffectConfig effectConfig, Dictionary<string, object?>? customParameters)
         {
-            try
+            var tribe = GetParameterValue<string>(effectConfig.Parameters, "tribe", customParameters);
+            var tribes = GetParameterValue<List<string>>(effectConfig.Parameters, "tribes", customParameters);
+
+            var tribeList = new List<string>();
+            if (!string.IsNullOrWhiteSpace(tribe))
             {
-                var tribe = GetParameterValue<string>(effectConfig.Parameters, "tribe", customParameters);
-                var tribes = GetParameterValue<List<string>>(effectConfig.Parameters, "tribes", customParameters);
-
-                var tribeList = new List<string>();
-                if (!string.IsNullOrWhiteSpace(tribe))
-                {
-                    tribeList.Add(tribe);
-                }
-
-                if (tribes != null && tribes.Any())
-                {
-                    tribeList.AddRange(tribes);
-                }
-
-                var normalized = tribeList
-                    .Where(static value => !string.IsNullOrWhiteSpace(value))
-                    .Select(static value => value.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                if (normalized.Count == 0)
-                {
-                    _logger.LogWarning("No tribes specified for tribe effect");
-                    return null;
-                }
-
-                var tribeEffect = new TribeBuffEffect(normalized);
-                _logger.LogDebug("Created tribe effect: [{Tribes}]", string.Join(", ", normalized));
-                return tribeEffect;
+                tribeList.Add(tribe);
             }
-            catch (Exception ex)
+
+            if (tribes != null && tribes.Any())
             {
-                _logger.LogError(ex, "Error creating tribe effect from config");
+                tribeList.AddRange(tribes);
+            }
+
+            var normalized = tribeList
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (normalized.Count == 0)
+            {
+                _logger.LogWarning("No tribes specified for tribe effect");
                 return null;
             }
+
+            var tribeEffect = new TribeBuffEffect(normalized);
+            _logger.LogDebug("Created tribe effect: [{Tribes}]", string.Join(", ", normalized));
+            return tribeEffect;
         }
 
         /// <summary>
@@ -752,47 +721,23 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// </summary>
         private T? GetParameterValue<T>(Dictionary<string, object?> configParameters, string key, Dictionary<string, object?>? customParameters)
         {
-            // 优先使用自定义参数
-            if (customParameters != null && customParameters.TryGetValue(key, out var customValue))
+            object? value;
+            if (customParameters == null || !customParameters.TryGetValue(key, out value))
             {
-                if (customValue is T typedCustomValue)
+                if (!configParameters.TryGetValue(key, out value))
                 {
-                    return typedCustomValue;
-                }
-
-                // 尝试转换类型
-                try
-                {
-                    if (customValue == null) return default;
-                    return (T)Convert.ChangeType(customValue, typeof(T));
-                }
-                catch
-                {
-                    _logger.LogWarning("Failed to convert custom parameter {Key} to type {Type}", key, typeof(T).Name);
+                    return default;
                 }
             }
 
-            // 使用配置参数
-            if (configParameters.TryGetValue(key, out var configValue))
+            // 只有缺失和 null 使用缺省值；类型错误由定义创建边界报告。
+            return value switch
             {
-                if (configValue is T typedConfigValue)
-                {
-                    return typedConfigValue;
-                }
-
-                // 尝试转换类型
-                try
-                {
-                    if (configValue == null) return default;
-                    return (T)Convert.ChangeType(configValue, typeof(T));
-                }
-                catch
-                {
-                    _logger.LogWarning("Failed to convert config parameter {Key} to type {Type}", key, typeof(T).Name);
-                }
-            }
-
-            return default(T);
+                null => default,
+                T typedValue => typedValue,
+                JsonElement jsonValue => jsonValue.Deserialize<T>(),
+                _ => JsonSerializer.SerializeToElement(value).Deserialize<T>()
+            };
         }
     }
 
