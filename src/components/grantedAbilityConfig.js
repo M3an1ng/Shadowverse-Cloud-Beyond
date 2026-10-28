@@ -157,3 +157,46 @@ export function extractGrantedAbilityEditorConfig(finalConfig) {
 export function copyGrantedAbilityConfig(ability) {
     return normalizeGrantedAbilityDefinition(ability, parseAbilityDefinitionConfig(ability));
 }
+
+export function normalizeInheritedTriggerFields(trigger) {
+    const source = trigger && typeof trigger === 'object' && !Array.isArray(trigger)
+        ? trigger
+        : {};
+    const rawEventTypes = source.eventTypes ?? source.EventTypes ?? [];
+    const rawValidZones = source.validZones ?? source.ValidZones ?? [];
+    return {
+        eventTypes: Array.isArray(rawEventTypes) ? rawEventTypes.filter(Boolean) : [],
+        relationType: source.relationType ?? source.RelationType ?? '',
+        timing: source.timing ?? source.Timing ?? 'On',
+        validZones: Array.isArray(rawValidZones) ? rawValidZones.filter(Boolean) : [],
+        revalidateZoneBeforeExecution: !!(source.revalidateZoneBeforeExecution ?? source.RevalidateZoneBeforeExecution ?? false)
+    };
+}
+
+export function mergeInheritedTriggerFields(trigger, inheritedTrigger) {
+    const existing = trigger && typeof trigger === 'object' && !Array.isArray(trigger)
+        ? { ...trigger }
+        : {};
+    const inherited = normalizeInheritedTriggerFields(inheritedTrigger);
+    const merged = {
+        ...existing,
+        eventTypes: [...inherited.eventTypes],
+        relationType: inherited.relationType,
+        timing: inherited.timing,
+        validZones: [...inherited.validZones],
+        revalidateZoneBeforeExecution: inherited.revalidateZoneBeforeExecution
+    };
+
+    delete merged.EventTypes;
+    delete merged.RelationType;
+    delete merged.Timing;
+    delete merged.ValidZones;
+    delete merged.RevalidateZoneBeforeExecution;
+
+    return merged;
+}
+
+export function isDecisionAbilityEffect(effectTypeName) {
+    const normalized = String(effectTypeName || '').trim().toLowerCase();
+    return normalized === 'choose' || normalized === 'random' || normalized === 'sequence';
+}

@@ -8,7 +8,10 @@
 import { normalizeGrantedAbilityConfig } from './grantedAbilityConfig.js';
 import { MetadataDrivenComponent } from './MetadataDrivenComponent.js';
 import { ConditionConfigEditor } from './ConditionConfigEditor.js';
-import { EffectConfigEditor } from './EffectConfigEditor.js';
+import { GrantedAbilityListEditor } from './GrantedAbilityListEditor.js';
+import { DefinitionPickerCatalog } from './definitionPickerCatalog.js';
+import { DefinitionPicker } from './DefinitionPicker.js';
+import { normalizeDurationType } from './buffDuration.js';
 import { ValueConfigEditor } from './ValueConfigEditor.js';
 import { ensureEnumLocalization } from '../enumLocalizationCache.js';
 
@@ -23,13 +26,13 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         this.onChange = null;
         this.container = null;
         this.options = {};
-        this.abilityListHelper = new EffectConfigEditor();
+        const definitionPicker = new DefinitionPicker(new DefinitionPickerCatalog());
+        this.grantedAbilityListEditor = new GrantedAbilityListEditor(definitionPicker, () => ({}));
         this.conditionHelper = new ConditionConfigEditor();
     }
 
     async render(container, buffConfigs = [], onChange = () => {}, options = {}) {
         await this.initialize();
-        await this.abilityListHelper.initialize();
         await this.conditionHelper.initialize();
 
         this.container = container;
@@ -253,7 +256,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         durationTypeControl.appendChild(durationTypeSelect);
         section.appendChild(this.createFormGroup(this.createParameterLabel('持续时间'), durationTypeControl));
 
-        if (this.normalizeDurationType(buff.durationType) === 'ConditionalRemoval') {
+        if (normalizeDurationType(buff.durationType) === 'ConditionalRemoval') {
             const removeConditionContainer = document.createElement('div');
             removeConditionContainer.className = 'parameter-control';
             this.conditionHelper.render(
@@ -668,7 +671,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             this.updateBuffConfig(buffIndex, { grantedAbilities: Array.isArray(next) ? next : [] });
         };
 
-        this.abilityListHelper.renderAbilityListEditor(
+        this.grantedAbilityListEditor.render(
             container,
             buff.grantedAbilities || [],
             updateAbilities,
@@ -1297,8 +1300,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
 
         const previousType = this.getBuffType(previous);
         const nextType = this.getBuffType(next);
-        const previousDurationType = this.normalizeDurationType(previous.durationType);
-        const nextDurationType = this.normalizeDurationType(next.durationType);
+        const previousDurationType = normalizeDurationType(previous.durationType);
+        const nextDurationType = normalizeDurationType(next.durationType);
         const shouldRefreshNode = previousType !== nextType || previousDurationType !== nextDurationType;
 
         if (shouldRefreshNode) {
@@ -1317,9 +1320,6 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         }
     }
 
-    normalizeDurationType(value) {
-        return this.abilityListHelper.normalizeDurationType(value);
-    }
 
     updateBuffNode(index) {
         const list = this.container?.querySelector('#buff-config-list-container');

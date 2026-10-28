@@ -235,13 +235,13 @@ describe('EffectConfigEditor (grant ability list type selection)', () => {
     document.body.appendChild(container);
 
     const opened = [];
-    editor.openGrantAbilityEditorModal = jest.fn(async (_baseAbility, options) => {
+    editor.grantedAbilityListEditor.openGrantAbilityEditorModal = jest.fn(async (_baseAbility, options) => {
       opened.push(options);
       return { name: '持续光环', type: 'Continuous', auras: [] };
     });
 
     const updates = [];
-    editor.renderAbilityListEditor(container, [], (value) => updates.push(value), {
+    editor.grantedAbilityListEditor.render(container, [], (value) => updates.push(value), {
       effectTypeName: 'GrantAbility'
     });
 
@@ -253,7 +253,7 @@ describe('EffectConfigEditor (grant ability list type selection)', () => {
     typeModal.querySelector('button[data-mode="aura"]').click();
     await waitFor(() => opened.length === 1);
 
-    expect(editor.openGrantAbilityEditorModal).toHaveBeenCalledTimes(1);
+    expect(editor.grantedAbilityListEditor.openGrantAbilityEditorModal).toHaveBeenCalledTimes(1);
     expect(opened[0]).toEqual(expect.objectContaining({ mode: 'aura' }));
     expect(updates.at(-1)).toEqual([
       expect.objectContaining({ name: '持续光环', type: 'Continuous' })

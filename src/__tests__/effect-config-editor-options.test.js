@@ -14,7 +14,7 @@ describe("EffectConfigEditor decision branch editor options", () => {
             triggeringEventOutputs: inheritedOutputs
         };
 
-        const options = editor.buildDecisionAbilityEditorOptions(null);
+        const options = editor.grantedAbilityListEditor.buildDecisionAbilityEditorOptions(null);
 
         expect(options.lockedTrigger.eventTypes).toEqual(["EffectCompleted"]);
         expect(options.lockedTrigger.relationType).toBe("Any");
@@ -28,7 +28,7 @@ describe("EffectConfigEditor decision branch editor options", () => {
         const editor = new EffectConfigEditor();
         editor.options = {};
 
-        expect(editor.getInheritedTriggeringEventOutputs()).toEqual([]);
+        expect(editor.grantedAbilityListEditor.getInheritedTriggeringEventOutputs()).toEqual([]);
     });
 
     test("shows only keyword parameter for TriggerAbility keyword mode", () => {
