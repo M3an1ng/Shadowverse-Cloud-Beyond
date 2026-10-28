@@ -1,6 +1,0 @@
-@ShadowverseBeyond.Server_HostAddress = http://localhost:5094
-
-GET {{ShadowverseBeyond.Server_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

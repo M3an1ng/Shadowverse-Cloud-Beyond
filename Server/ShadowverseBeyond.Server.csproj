@@ -9,10 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="ShadowverseBeyond.Server.Tests" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="AutoMapper" Version="14.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.0">
@@ -35,7 +31,8 @@
   <!-- Exclude test files accidentally placed in the main project -->
   <ItemGroup>
     <Compile Remove="Domain\Abilities\DSL\Functions\Tests\**\*.cs" />
-    <None Include="Domain\Abilities\DSL\Functions\Tests\**\*.cs" />
+    <Content Remove="Domain\Abilities\DSL\Functions\Tests\**" />
+    <None Remove="Domain\Abilities\DSL\Functions\Tests\**" />
   </ItemGroup>
 
   <!-- Guard against accidentally compiling generated/copied source trees -->

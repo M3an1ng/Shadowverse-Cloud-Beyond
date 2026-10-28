@@ -1,4 +1,0 @@
-interface:
-  display_name: "Checkpoint Code Map"
-  short_description: "Update checkpoint code maps for fast navigation."
-  default_prompt: "Build or refresh a checkpoint code map and use lookup before broad repo exploration."

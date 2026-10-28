@@ -30,7 +30,7 @@
 4. [editing-session.js](../src/components/dsl_editor/editing-session.js) 管理编辑路径与父槽回写；[pipeline-editor.js](../src/components/dsl_editor/pipeline-editor.js) 处理流水线编辑交互。
 5. [EffectConfigEditor](../src/components/EffectConfigEditor.js)、[StatusConfigEditor](../src/components/StatusConfigEditor.js) 分别承接效果和状态配置。
 
-编辑器改动应保持主表达式、局部节点与保存值一致。不要在某个 UI 分支创建独立的第二份表达式真值。相关测试入口：[dsl-editor-main-state.test.js](../src/__tests__/dsl-editor-main-state.test.js)、[effect_config_editor.test.js](../tests/effect_config_editor.test.js)、[status_config_editor.test.js](../tests/status_config_editor.test.js)。
+编辑器改动应保持主表达式、局部节点与保存值一致。不要在某个 UI 分支创建独立的第二份表达式真值。验证步骤见 [开发与验证](02-开发与验证.md)。
 
 ## 元数据与本地化
 
@@ -47,5 +47,3 @@
 - 编辑：打开、修改子节点、切换视图、回到主表达式，保存值一致。
 - 数据：保存后重新获取，卡牌/能力修订通知与缓存更新一致。
 - 运行：触发条件、目标玩家、目标区域、持续时间和决策分支至少覆盖本次改动场景。
-
-历史后端用例（已于 2026-10-23 归档，恢复前须按当前契约重写）：[DslMetadataServiceTests](../Server.Tests/Archive/2026-10-23-business/DslMetadataServiceTests.cs)、[AbilityKeywordParsingTests](../Server.Tests/Archive/2026-10-23-business/AbilityKeywordParsingTests.cs)、[DecisionEffectOutputTests](../Server.Tests/Archive/2026-10-23-business/DecisionEffectOutputTests.cs)。执行方法见 [开发与验证](02-开发与验证.md)。

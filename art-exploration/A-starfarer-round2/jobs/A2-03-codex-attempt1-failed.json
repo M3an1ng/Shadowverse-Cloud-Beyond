@@ -1,9 +1,0 @@
-{
-  "id": "A2-03-codex",
-  "job_id": "8cd77dce-ef7c-4669-a98e-23524c9666a5",
-  "status": "failed",
-  "requested_model": "gpt-image-2.5-sunburst",
-  "outputs": [],
-  "error_summary": "Local adapter model refresh returned 403; execution then reported selected model at capacity. No completed raster output. Raw diagnostic omitted to avoid persisting local adapter tokens.",
-  "retry": "One same-model retry, same prompt and references."
-}

@@ -1,114 +1,113 @@
-# Ignore archived documentation
-文档/Archive/
-
-# Ignore build artifacts
-[Oo]bj/
-[Bb]in/
-
-# Ignore user settings
-.vscode/
+# Local tool directories and editor state at any depth.
+.*/
+.tmp*
+.clinerules*
+.kilocodemodes
 *.suo
 *.user
-
-# Ignore database files (if not intended to be versioned)
-Server/Data/shadowverse.db
-Server/Data/shadowverse.db-shm
-Server/Data/shadowverse.db-wal
-
-# Ignore Rider/ReSharper files
-.idea/
 *.sln.DotSettings.user
+.DS_Store
+Thumbs.db
 
-# Ignore log files
-*.log
-
-# Ignore temporary files
+# Backups and scratch files, including timestamped and embedded bak names.
+*.[bB][aA][kK]*
+*_[bB][aA][kK]*
+*.backup*
 *.tmp
+*.temp
 *~
-# Ignore AI tool specific files
-.kilocode/
-
-# Ignore temporary reference files
-info/reference1/
-
-# Node/build artifacts
-node_modules/
-dist/
-.vite/
-test-results/
-playwright-report/
-coverage/
-
-# AI/local tooling artifacts
-.agent/
-.augment/
-.claude/
-.cursor/
-.gemini/
-.kiro/
-.opencode/
-.playwright-cli/
-.qoder/
-.roo/
-.shared/
-.superpowers/
-.trae/
-.windsurf/
-.codex_tmp/
-.tmp_obj/
-.tmp_out/
-.codex_tmp_*.py
-.tmp_db_*.py
-
-# Generated code-map cache
-.codex/code-map.json
-.codex/code-map.md
-
-# Python cache files
 __pycache__/
 *.pyc
 
-# Build/publish outputs
+# Dependencies and generated build/publish output.
+node_modules/
+/dist/
+/assets/
+/artifacts/
+/output/
+/Logs/
+/index.prod.html
+/manifest.webmanifest
+/sw.js
+/pwa-icon-*.png
+/cards.preserve-*/
+[Bb]in/
+[Oo]bj/
+bin_codex*/
+obj_codex*/
+bin_tmp/
+obj_tmp/
+publish/
+publish_release/
 artifacts/
-assets/
-Server/artifacts/
-Server/publish/
-Server/publish_release/
-Server.Tests/artifacts/
-Server.Tests/TestResults/
-**/TestResults/
+*.log
+*.db
+*.db-*
 
-# Local database files
-Server/Data/*.db
-Server/Data/*.db-*
-Server/*.db
+# Test projects, test pages and their output stay local.
+/Server.Tests/
+/Server/Server.Tests/
+/DslMetadataTest/
+/DslMetadataViewer/
+/MetadataTest/
+/tests/
+__tests__/
+/Server/Domain/Abilities/DSL/Functions/Tests/
+/Server/Infrastructure/Data/SeedData/test_insert.sql
+TestResults/
+test-results/
+playwright-report/
+coverage/
+*.test.js
+*-test.html
+/test-ui-styles.html
+/babel.config.js
+/run-tests.ps1
+/Server/ShadowverseBeyond.Server.http
 
-# Local logs
-server_run.log
-vite-dev.out.log
-vite-dev.err.log
+# One-off utilities, prototypes, reference downloads and design experiments.
+/art-exploration/
+/augment-unpacked/
+/design-system/
+/info/
+/openspec/
+/tools/
+/data/scrape/
+/data/scrape-playwright/
+/scripts/check-docs.py
+/scripts/tests/
+/scripts/migrate-card-detail-to-webp.ps1
+/analyze.js
+/dotnet-install.ps1
+/quick-start.ps1
+/dev-tools.html
+/dsl-card-data-report.html
+/dsl-ux-demo.html
+/pipeline-ui-compare.html
+/pipeline-ui-lite.html
+/webview.js
+/src/archive/
+/cards.7z
+/test.html
 
-# Local backup files
-index.prod.html.bak-*
-assets.bak-*/
+# Unused assets, editor styles and excluded legacy migrations stay local.
+/src/components/DslEditor.css
+/src/icon/svg/coin.svg
+/src/icon/svg/crystal.svg
+/Server/Server/Infrastructure/Data/Migrations/20260202093000_ClearReplayRecords.cs
+/Server/Server/Infrastructure/Data/Migrations/ApplicationDbContextModelSnapshot.cs
 
-# Temporary build/check artifacts
-.tmp-test-out/
-.tmpbuild/
-.tmp_build/
-.tmp_bin/
-.tmp_bool_probe/
-output/
-Server/.tmp_build/
-Server/.tmp_test_obj/
-Server/.tmp_test_out/
-Server.Tests/.tmp_test_*/
-
-# Local archives and scratch files
-cards.7z
-test.html
-Server/Data/.tmp_*.ps1
-Server/Data/*.bak*
-
-# OS generated files
-.DS_Store
+# Only the eight maintained documents belong in the repository.
+*.md
+*.docx
+*.pdf
+/docs/*
+!/docs/01-*.md
+!/docs/02-*.md
+!/docs/03-*.md
+!/docs/04-*.md
+!/docs/05-*.md
+!/docs/06-*.md
+!/docs/07-*.md
+!/docs/08-*.md
+/文档/

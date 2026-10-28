@@ -1,3 +1,0 @@
-id,name,status,trait,keyword,option,timing,cond_option,effect,description
-0,默认,0/0/0,none,none,none,none,none,none,测试测试[测试]
-1238,太古之森的賢狐,0/0/0,none,none,none,on_turn_start,me.isMyTurn=1,1208,下個自己的回合開始時，隨機將1張消費最低的精靈卡由自己的牌堆抽取到手牌中，並使其消費轉變為0。
