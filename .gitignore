@@ -97,8 +97,9 @@ coverage/
 /Server/Server/Infrastructure/Data/Migrations/20260202093000_ClearReplayRecords.cs
 /Server/Server/Infrastructure/Data/Migrations/ApplicationDbContextModelSnapshot.cs
 
-# Only the eight maintained documents belong in the repository.
+# Keep the root README and the eight maintained documents.
 *.md
+!/README.md
 *.docx
 *.pdf
 /docs/*
