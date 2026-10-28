@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using ShadowverseBeyond.Server.Services;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities;
@@ -14,9 +14,12 @@ namespace ShadowverseBeyond.Server.Controllers
     public class DiagnosticsController : ControllerBase
     {
         private readonly ILogger<DiagnosticsController> _logger;
-        public DiagnosticsController(ILogger<DiagnosticsController> logger)
+        private readonly IGameDataProvider _gameDataProvider;
+
+        public DiagnosticsController(ILogger<DiagnosticsController> logger, IGameDataProvider gameDataProvider)
         {
             _logger = logger;
+            _gameDataProvider = gameDataProvider;
         }
 
         /// <summary>
@@ -28,7 +31,7 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             try
             {
-                var abilities = GameDataProvider.Instance.GetAllAbilityConfigs();
+                var abilities = _gameDataProvider.GetAllAbilityConfigs();
                 return Ok(abilities);
             }
             catch (Exception ex)
@@ -47,11 +50,11 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             try
             {
-                var stats = GameDataProvider.Instance.GetCacheStatistics();
+                var stats = _gameDataProvider.GetCacheStatistics();
 
                 var result = new
                 {
-                    IsInitialized = GameDataProvider.Instance.IsInitialized,
+                    IsInitialized = _gameDataProvider.IsInitialized,
                     CardDefinitionCount = stats.CardDefinitionCount,
                     AbilityConfigCount = stats.AbilityConfigCount,
                     BuffDefinitionCount = stats.BuffDefinitionCount,
@@ -64,7 +67,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     CacheHitRatio = Math.Round(stats.CacheHitRatio * 100, 2),
                     Performance = new
                     {
-                        Status = GameDataProvider.Instance.IsInitialized ? "Optimized" : "Not Initialized",
+                        Status = _gameDataProvider.IsInitialized ? "Optimized" : "Not Initialized",
                         DatabaseQueriesEliminated = "All runtime card definition and ability config queries",
                         ExpectedPerformanceGain = "Significant reduction in I/O latency"
                     }
@@ -92,10 +95,10 @@ namespace ShadowverseBeyond.Server.Controllers
             try
             {
                 var startTime = DateTime.UtcNow;
-                await GameDataProvider.Instance.RefreshCacheAsync();
+                await _gameDataProvider.RefreshCacheAsync();
                 var duration = DateTime.UtcNow - startTime;
 
-                var stats = GameDataProvider.Instance.GetCacheStatistics();
+                var stats = _gameDataProvider.GetCacheStatistics();
 
                 var result = new
                 {
@@ -129,11 +132,11 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             try
             {
-                var stats = GameDataProvider.Instance.GetCacheStatistics();
+                var stats = _gameDataProvider.GetCacheStatistics();
 
                 var result = new
                 {
-                    OptimizationEnabled = GameDataProvider.Instance.IsInitialized,
+                    OptimizationEnabled = _gameDataProvider.IsInitialized,
                     OptimizationDetails = new
                     {
                         DatabaseQueriesEliminated = new[]
