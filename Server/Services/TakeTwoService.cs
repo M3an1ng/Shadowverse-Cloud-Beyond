@@ -25,7 +25,7 @@ public sealed record TakeTwoRound(int[][] Offer, List<int[][]> RedrawOffers, int
 public sealed record TakeTwoPlan(int[] Core, List<TakeTwoRound> Rounds, int Redraws);
 public sealed class TakeTwoRoom
 {
-    public string Id { get; init; } = Guid.NewGuid().ToString("N"); public string Code { get; init; } = RandomNumberGenerator.GetInt32(100000, 1000000).ToString(); public string Environment { get; set; } = "rotation"; public TakeTwoPool Pool { get; set; } = new([], [], [], new()); public List<CardDefinition> Catalog { get; set; } = new(); public List<TakeTwoSeat> Players { get; init; } = new(); public DateTime Expires { get; set; } = DateTime.UtcNow.AddHours(4); public bool Closed { get; set; }
+    public string Id { get; init; } = Guid.NewGuid().ToString("N"); public string Code { get; init; } = RandomNumberGenerator.GetInt32(100000, 1000000).ToString(); public string Environment { get; set; } = "rotation"; public TakeTwoPool Pool { get; set; } = new([], [], [], new()); public List<CardDefinition> Catalog { get; set; } = new(); public List<TakeTwoSeat> Players { get; init; } = new(); public DateTime Expires { get; set; } = DateTime.UtcNow.Add(RoomLifetime.DefaultTtl); public bool Closed { get; set; }
     public MatchRoom? Match { get; set; }
 }
 public sealed class TakeTwoService(IMatchService matches, IGameService? games = null)
@@ -36,14 +36,36 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
     {
         lock (room)
         {
-            if (room.Closed || room.Expires <= DateTime.UtcNow) return false;
-            if (room.Match == null) return true;
+            if (room.Closed) return false;
+            if (room.Match == null)
+            {
+                if (room.Expires > DateTime.UtcNow) return true;
+                MarkClosed(room); return false;
+            }
             // MatchService returns snapshots: always consult the live room after handoff.
             var current = matches.Get(room.Match.RoomId);
             if (!current.Success || current.Room == null || current.Room.Status != MatchStatus.Started ||
                 games?.GetGameState(current.Room.ActiveGameId ?? "")?.IsGameOver == true)
-            { room.Closed = true; return false; }
+            { MarkClosed(room); return false; }
+            room.Expires = current.Room.ExpiresAt;
             return true;
+        }
+    }
+    private static void MarkClosed(TakeTwoRoom room)
+    {
+        if (room.Closed) return;
+        room.Closed = true;
+        room.Expires = DateTime.UtcNow.Add(RoomLifetime.ClosedRetention);
+    }
+    public void CleanupExpired()
+    {
+        foreach (var (id, room) in rooms)
+        {
+            lock (room)
+            {
+                IsActive(room);
+                if (room.Closed && room.Expires <= DateTime.UtcNow) rooms.TryRemove(id, out _);
+            }
         }
     }
     private static readonly CardRarity[] rarities = [CardRarity.Bronze, CardRarity.Silver, CardRarity.Bronze, CardRarity.Silver, CardRarity.Bronze, CardRarity.Gold, CardRarity.Bronze, CardRarity.Silver, CardRarity.Bronze, CardRarity.Silver, CardRarity.Bronze, CardRarity.Silver, CardRarity.Bronze, CardRarity.Legend];
@@ -124,7 +146,7 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
     {
         lock (membershipGate)
         {
-            foreach (var stale in rooms.Where(p => p.Value.Expires < DateTime.UtcNow).Select(p => p.Key).ToArray()) rooms.TryRemove(stale, out _);
+            CleanupExpired();
             // Capture mutable settings so subsequent edits cannot change either player's room.
             var snapshot = JsonSerializer.Deserialize<TakeTwoPool>(JsonSerializer.Serialize(pool))!;
             var catalog = PoolCards(all, environment, snapshot);
@@ -134,18 +156,24 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
             return room;
         }
     }
-    public TakeTwoRoom Find(string id) => rooms.TryGetValue(id, out var room) && room.Expires > DateTime.UtcNow ? room : throw new InvalidOperationException("房间不存在或已过期");
+    public TakeTwoRoom Find(string id)
+    {
+        CleanupExpired();
+        return rooms.TryGetValue(id, out var room) ? room : throw new InvalidOperationException("房间不存在或已过期");
+    }
     public TakeTwoRoom Join(string code, Guid owner)
     {
         lock (membershipGate)
         {
-            var room = rooms.Values.SingleOrDefault(r => r.Code == code && r.Expires > DateTime.UtcNow) ?? throw new InvalidOperationException("房间不存在");
+            CleanupExpired();
+            var room = rooms.Values.SingleOrDefault(r => r.Code == code && IsActive(r)) ?? throw new InvalidOperationException("房间不存在");
             lock (room)
             {
                 if (!IsActive(room)) throw new InvalidOperationException("房间已结束");
                 if (room.Players.Any(p => p.PlayerId == owner)) return room;
                 if (room.Players.Count >= 2) throw new InvalidOperationException("房间已满");
                 room.Players.Add(Prepare(owner, room.Catalog, room.Pool, room.Environment));
+                room.Expires = DateTime.UtcNow.Add(RoomLifetime.DefaultTtl);
                 return room;
             }
         }
@@ -182,7 +210,7 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
         lock (room)
         {
             if (room.Closed) return;
-            room.Closed = true;
+            MarkClosed(room);
             if (room.Match != null) matches.Close(room.Match.RoomId, "对方退出了房间");
         }
     }
@@ -202,7 +230,16 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
             return guest;
         }
     }
-    public TakeTwoSeat Authorize(TakeTwoRoom room, Guid player, string token) => room.Players.SingleOrDefault(p => (p.PlayerId == player || p.LocalTestOwnerId == player) && CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(p.Token), System.Text.Encoding.UTF8.GetBytes(token))) ?? throw new UnauthorizedAccessException();
+    public TakeTwoSeat Authorize(TakeTwoRoom room, Guid player, string token)
+    {
+        lock (room)
+        {
+            var seat = room.Players.SingleOrDefault(p => (p.PlayerId == player || p.LocalTestOwnerId == player) && CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(p.Token), System.Text.Encoding.UTF8.GetBytes(token))) ?? throw new UnauthorizedAccessException();
+            // Authenticated participant polling is the draft heartbeat; spectators never touch TTL.
+            if (IsActive(room) && room.Match == null) room.Expires = DateTime.UtcNow.Add(RoomLifetime.DefaultTtl);
+            return seat;
+        }
+    }
     public void Act(TakeTwoRoom room, TakeTwoSeat seat, string action, int sequence, string? cls, int side)
     {
         lock (room)
@@ -215,6 +252,7 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
             else if (action == "redraw") { if (seat.Class == null || seat.Round < 1 || seat.Round > 14 || seat.Redraws <= 0) throw new InvalidOperationException("当前不能重抽"); var plan = seat.Plans[seat.Class]; var round = plan.Rounds[seat.Round - 1]; var index = round.RedrawIndex; plan.Rounds[seat.Round - 1] = round with { Offer = round.RedrawOffers[index], RedrawIndex = index + 1 }; seat.Redraws--; }
             else if (action == "ready") { if (seat.Cards.Count != 30) throw new InvalidOperationException("请先完成30张选牌"); seat.Ready = true; if (room.Players.Count == 2 && room.Players.All(p => p.Ready)) Start(room); }
             else throw new InvalidOperationException("不支持的操作"); seat.Sequence = sequence;
+            if (room.Match == null) room.Expires = DateTime.UtcNow.Add(RoomLifetime.DefaultTtl);
         }
     }
     private void Start(TakeTwoRoom room)
@@ -236,7 +274,7 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
                 room.Players.Select((p, i) => new SpectatorSeat(i == 0 ? "host" : "guest", p.Class, p.Cards.ToArray(), p.Round, p.Ready) { PlayerId = p.PlayerId }).ToArray());
         }
     }
-    public SpectatorRoom[] SpectatorRooms() => rooms.Values.Where(IsActive).Select(SpectatorView).Where(r => !r.Closed).ToArray();
+    public SpectatorRoom[] SpectatorRooms() { CleanupExpired(); return rooms.Values.Where(IsActive).Select(SpectatorView).Where(r => !r.Closed).ToArray(); }
     public object View(TakeTwoRoom room, TakeTwoSeat seat, bool includePlans = true) { lock (room) { IsActive(room); var enemy = room.Players.FirstOrDefault(p => p != seat); object? handshake = null; if (room.Match != null) { var host = room.Players[0] == seat; handshake = new { gameId = room.Match.RoomId, playerId = seat.PlayerId, token = host ? room.Match.HostToken : room.Match.GuestToken, joinCode = room.Match.JoinCode, role = host ? "host" : "guest", useAiFallback = false }; } return new { room.Id, room.Code, room.Environment, room.Closed, role = room.Players[0] == seat ? "host" : "guest", packs = room.Pool.Packs, player = new { seat.PlayerId, seat.Token, seat.Class, seat.Cards, seat.Round, seat.Redraws, seat.Ready, seat.Sequence, plans = includePlans ? seat.Plans : null }, opponentCount = enemy?.Cards.Count ?? 0, opponentReady = enemy?.Ready ?? false, opponentJoined = enemy != null, handshake }; } }
 }
 

@@ -23,8 +23,8 @@ namespace ShadowverseBeyond.Server.Services
         public event Action<string>? GameDetached;
         private readonly ConcurrentDictionary<string, MatchRoom> _rooms = new();
         private readonly ConcurrentDictionary<string, string> _gameToRoom = new(StringComparer.OrdinalIgnoreCase);
-        private readonly TimeSpan _defaultTtl = TimeSpan.FromMinutes(30);
-        private readonly TimeSpan _closedRetention = TimeSpan.FromMinutes(2);
+        private readonly TimeSpan _defaultTtl = RoomLifetime.DefaultTtl;
+        private readonly TimeSpan _closedRetention = RoomLifetime.ClosedRetention;
         private readonly ILogger<MatchService> _logger;
 
         public MatchService(ILogger<MatchService> logger)

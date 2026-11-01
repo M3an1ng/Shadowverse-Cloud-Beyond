@@ -1,4 +1,4 @@
-﻿using Scrutor; // Added for assembly scanning registration
+using Scrutor; // Added for assembly scanning registration
 using AutoMapper; // Added for IMapper
 using ShadowverseBeyond.Server.Dtos; // Added for DTO types like CardDefinitionDto
 using Serilog; // Added for Serilog configuration
@@ -527,6 +527,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     Log.Information("All services registered (or skipped). Attempting builder.Build()..."); // Modified Log
     builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.TakeTwoService>();
+    builder.Services.AddHostedService<ShadowverseBeyond.Server.Services.RoomCleanupHostedService>();
     var app = builder.Build();
     Log.Information("builder.Build() completed.");
 
