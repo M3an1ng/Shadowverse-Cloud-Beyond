@@ -1,4 +1,5 @@
-﻿import { mountStylePicker } from '../cardStyles.js';
+import { getCardStylePresenter } from '../cardStyleDom.js';
+import { mountStylePicker } from '../cardStyles.js';
 import { renderDescriptionHtml } from '../descriptionParser.js';
 import { hydrateAlternatePlayReferences, hydrateDescriptionReferences } from '../previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from '../enumLocalizationCache.js';
@@ -336,6 +337,13 @@ export function showCardDetailImageModal(detailUrl) {
 }
 
 export function showCardDetailModal(card, options = {}) {
+    if (card && !options.stylePreferenceApplied && !card.OwnerPlayerId) {
+        void getCardStylePresenter().then(present => {
+            const styled = present(card.styleOriginalCard || card);
+            showCardDetailModal(styled, { ...options, styleOriginalCard: card.styleOriginalCard || card, stylePreferenceApplied: true });
+        }).catch(() => showCardDetailModal(card, { ...options, stylePreferenceApplied: true }));
+        return;
+    }
     if (!card) return;
     const navigationMode = normalizeDetailNavigationMode(options.navigationMode);
     const modalOptions = { ...options };
@@ -919,7 +927,11 @@ export function showCardDetailModal(card, options = {}) {
 
     document.body.appendChild(overlay);
     ensureDetailEnumLocalization(overlay);
-    const openReferenceDetail = referencedCard => showCardDetailModal(referencedCard, { ...modalOptions, navigationMode: DETAIL_NAVIGATION_PUSH });
+    const openReferenceDetail = referencedCard => {
+        const referenceOptions = { ...modalOptions, navigationMode: DETAIL_NAVIGATION_PUSH };
+        for (const key of ['stylePreferenceApplied', 'styleOriginalCard', 'previewUrl', 'detailUrl']) delete referenceOptions[key];
+        showCardDetailModal(referencedCard, referenceOptions);
+    };
     void hydrateAlternatePlayReferences(overlay.querySelector('.ability-box'), currentCardId, { fallbackPreviewUrl: previewUrl, cards: modalOptions.cards, openCardDetail: openReferenceDetail });
     void hydrateDescriptionReferences(overlay, {
         openCardDetail: openReferenceDetail,

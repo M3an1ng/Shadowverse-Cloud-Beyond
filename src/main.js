@@ -2644,7 +2644,7 @@ function setupMultiplayerUI() {
 
     bindButton(btnSpectate, async () => {
         if (!outSpectate) return;
-        const gameId = inputSpectateGame?.value?.trim();
+        const gameId = draftGuid(inputSpectateGame?.value?.trim() || '');
         if (!gameId || !isValidGuid(gameId)) {
             setOutput(outSpectate, '请输入有效的 GameId（GUID）。', true);
             return;
